@@ -102,6 +102,10 @@ class IdentityStore(Protocol):
         """以 account_id 查找帳號。"""
         ...
 
+    def list_scoped_active_accounts(self, tenant_id: UUID | str) -> tuple[Account, ...]:
+        """Active tenant accounts with explicit grants; caller enforces resource scope."""
+        ...
+
     def find_account_by_username(self, tenant_id: UUID | str, username: str) -> Account | None:
         """以 tenant_id 與 username 查找帳號（case-insensitive）。"""
         ...
@@ -118,7 +122,7 @@ class IdentityStore(Protocol):
         """取得帳號所擁有的有效平台角色。"""
         ...
 
-    def get_account_scope(self, account_id: UUID | str) -> Scope:
+    def get_account_scope(self, account_id: UUID | str, *, require_explicit: bool = False) -> Scope:
         """取得帳號的資料範圍 (Scope)。"""
         ...
 
@@ -177,6 +181,15 @@ class InMemoryIdentityStore:
         aid = _parse_uuid(account_id)
         return self._accounts.get(aid)
 
+    def list_scoped_active_accounts(self, tenant_id: UUID | str) -> tuple[Account, ...]:
+        tid = _parse_uuid(tenant_id)
+        return tuple(sorted(
+            (account for account in self._accounts.values()
+             if account.tenant_id == tid and account.is_active
+             and account.account_id in self._scopes),
+            key=lambda account: str(account.account_id),
+        ))
+
     def find_account_by_username(self, tenant_id: UUID | str, username: str) -> Account | None:
         tid = _parse_uuid(tenant_id)
         u_lower = username.strip().lower()
@@ -230,10 +243,12 @@ class InMemoryIdentityStore:
         aid = _parse_uuid(account_id)
         self._scopes[aid] = scope
 
-    def get_account_scope(self, account_id: UUID | str) -> Scope:
+    def get_account_scope(self, account_id: UUID | str, *, require_explicit: bool = False) -> Scope:
         aid = _parse_uuid(account_id)
         if aid in self._scopes:
             return self._scopes[aid]
+        if require_explicit:
+            raise PermissionError("Explicit identity scope grant is unavailable")
         acc = self.find_account_by_id(aid)
         tenant_id = str(acc.tenant_id) if acc else None
         return Scope(tenant_id=tenant_id, clearance=DataClassification.CONFIDENTIAL)
@@ -249,6 +264,26 @@ class SqlIdentityStore:
 
     def __init__(self, connection_factory: Any = None) -> None:
         self._conn_factory = connection_factory
+
+    def list_scoped_active_accounts(self, tenant_id: UUID | str) -> tuple[Account, ...]:
+        tid = _parse_uuid(tenant_id)
+        with open_connection(self._conn_factory) as conn:
+            if conn is None:
+                raise RuntimeError("identity store connection unavailable")
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT a.account_id, a.tenant_id, a.username, a.email,
+                           a.display_name, a.status, a.created_at, a.created_by,
+                           a.updated_at, a.disabled_at, a.disabled_reason
+                    FROM identity.accounts a
+                    JOIN identity.account_scopes s ON s.account_id = a.account_id
+                    WHERE a.tenant_id = %s AND a.status = 'active'
+                    ORDER BY a.account_id
+                    """,
+                    (str(tid),),
+                )
+                return tuple(_row_to_account(row) for row in cur.fetchall())
 
     def find_account_by_id(self, account_id: UUID | str) -> Account | None:
         aid = _parse_uuid(account_id)
@@ -353,10 +388,12 @@ class SqlIdentityStore:
                         pass
                 return frozenset(roles)
 
-    def get_account_scope(self, account_id: UUID | str) -> Scope:
+    def get_account_scope(self, account_id: UUID | str, *, require_explicit: bool = False) -> Scope:
         aid = _parse_uuid(account_id)
         with open_connection(self._conn_factory) as conn:
             if conn is None:
+                if require_explicit:
+                    raise PermissionError("Explicit identity scope grant is unavailable")
                 return Scope()
             with conn.cursor() as cur:
                 cur.execute(
@@ -371,6 +408,8 @@ class SqlIdentityStore:
                 )
                 row = cur.fetchone()
                 if not row:
+                    if require_explicit:
+                        raise PermissionError("Explicit identity scope grant is unavailable")
                     # Resolve the tenant on the connection already held: going
                     # back to the pool here would hold two connections for one
                     # read and can deadlock a small pool.
@@ -387,6 +426,12 @@ class SqlIdentityStore:
                     return Scope(tenant_id=tenant_id, clearance=DataClassification.CONFIDENTIAL)
 
                 def _parse_list(val: Any) -> frozenset[str]:
+                    if require_explicit and (
+                        not isinstance(val, list)
+                        or any(not isinstance(item, str) or not item.strip()
+                               or item != item.strip() for item in val)
+                    ):
+                        raise PermissionError("Explicit identity scope grant is malformed")
                     if isinstance(val, list):
                         return frozenset(str(x) for x in val if x)
                     return frozenset()
@@ -397,6 +442,8 @@ class SqlIdentityStore:
                 try:
                     clearance = DataClassification[str(_col("clearance", 6)).upper()]
                 except (KeyError, AttributeError):
+                    if require_explicit:
+                        raise PermissionError("Explicit identity scope clearance is malformed") from None
                     clearance = DataClassification.CONFIDENTIAL
 
                 raw_tenant = _col("tenant_id", 7)

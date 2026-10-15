@@ -32,6 +32,8 @@ export type ListingMergeRequest = {
   targetLabel?: string;
   /** Stable for this merge across retries; see newMergeIdempotencyKey. */
   idempotencyKey: string;
+  ifMatch?: string;
+  targetIfMatch?: string;
 };
 
 export type ListingMergeForm = {
@@ -142,6 +144,7 @@ export function ListingMergeDialog({
               className={styles.reviewDialogInput}
               data-autofocus
               data-testid="listing-merge-reason"
+              disabled={busy}
               onChange={(event) => setReason(event.target.value)}
               placeholder="例：同地址、同租金，且來源證據確認為同一物件的重複刊登…"
               rows={3}
@@ -157,6 +160,7 @@ export function ListingMergeDialog({
             className={styles.reviewAckButton}
             data-checked={riskAcknowledged ? "true" : "false"}
             data-testid="listing-merge-risk-ack"
+            disabled={busy}
             onClick={() => setRiskAcknowledged((value) => !value)}
             type="button"
           >

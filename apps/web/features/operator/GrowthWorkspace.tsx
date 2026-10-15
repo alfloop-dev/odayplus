@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Badge } from "@oday-plus/ui";
 import { CAUSAL_MIN_EVIDENCE, dataStatusTone, meetsCausalThreshold } from "@oday-plus/domain-types";
@@ -17,6 +17,9 @@ import {
   GROWTH_ENTRY_CARDS,
   GROWTH_KIND_PRESETS,
   growthKindLabel,
+  growthItemKind as itemKind,
+  matchesGrowthStatusFilter as matchesStatusFilter,
+  newIdempotencyKey,
   outcomeLabel,
   submitGrowthForApproval,
   transitionGrowthAction,
@@ -33,6 +36,7 @@ import {
   type GrowthSegment,
   type PriceOpsRecommendation,
 } from "./growthViewModel.ts";
+import { PriceOpsWorkbench } from "./PriceOpsWorkbench";
 import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
 import {
   operatorFixturesAllowed,
@@ -40,6 +44,7 @@ import {
   type OperatorDataAvailability,
 } from "./operatorDataMode";
 import g from "./growth.module.css";
+import { useModalDialogBehavior } from "./network/useModalDialogBehavior";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -146,30 +151,6 @@ function statusLabel(status: string): string {
   return STATUS_LABEL[status] ?? status;
 }
 
-function matchesStatusFilter(status: string, filter?: string): boolean {
-  if (!filter) return true;
-  const normalized = status.toUpperCase();
-  if (filter === "candidate") return normalized === "SYSTEM_RECOMMENDED";
-  if (filter === "draft") return normalized === "DRAFT";
-  if (filter === "pending") return normalized === "PENDING_APPROVAL";
-  if (filter === "run") {
-    return ["APPROVED", "SCHEDULED", "RUNNING", "EXECUTED", "OBSERVING"].includes(normalized);
-  }
-  if (filter === "out") {
-    return ["OUTCOME_READY", "INEFFECTIVE", "CLOSED"].includes(normalized);
-  }
-  return true;
-}
-
-/** Derive a create-entry kind for an action that predates the entry-card flow. */
-function itemKind(item: GrowthItem): GrowthActionKind {
-  if (item.kind) return item.kind;
-  if (item.sourceRecommendationId) return "priceops";
-  if (item.name.includes("AdLift") || item.name.includes("廣告")) return "adlift";
-  if (item.name.includes("優惠券")) return "coupon";
-  if (item.name.includes("召回")) return "winback";
-  return "offpeak";
-}
 
 /**
  * 營收成長 Growth workspace — Package 10 / R7 parity.
@@ -197,6 +178,7 @@ export function GrowthWorkspace({
   const fixturesAllowed = operatorFixturesAllowed();
   const segmentId = readParam(searchParams.segment);
   const itemId = readParam(searchParams.item);
+  const priceRecId = readParam(searchParams.prec);
   const draftId = readParam(searchParams.draft);
   const builderParam = readParam(searchParams.builder);
   const tabParam = readParam(searchParams.gtab);
@@ -257,7 +239,7 @@ export function GrowthWorkspace({
     );
   }
 
-  const vm = buildGrowthViewModel({ segmentId, itemId, draftId }, resolvedApiData);
+  const vm = buildGrowthViewModel({ segmentId, itemId, draftId, kindFilter, statusFilter }, resolvedApiData);
   const freshnessData = resolvedApiData?.freshness ?? {
     status: "FRESH" as const,
     updatedAt: "2026-07-09 14:20",
@@ -270,13 +252,16 @@ export function GrowthWorkspace({
   const href = (overrides: Record<string, string | undefined>): string => {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(searchParams)) {
-      const first = Array.isArray(value) ? value[0] : value;
-      if (first) params.set(key, first);
+      if (Array.isArray(value)) {
+        for (const entry of value) params.append(key, entry);
+      } else if (value !== undefined) {
+        params.set(key, value);
+      }
     }
     params.set("ws", "growth");
     const merged: Record<string, string | undefined> = {
       gtab: activeTab === "campaign" ? undefined : activeTab,
-      segment: vm.selectedSegment?.id,
+      segment: segmentId,
       item: itemId,
       gkind: kindFilter,
       gstatus: statusFilter,
@@ -337,6 +322,17 @@ export function GrowthWorkspace({
           ))}
         </nav>
 
+        {segmentId && !vm.selectedSegment ? (
+          <div className={g.selectionUnavailable} role="status" data-testid="growth-segment-unavailable">
+            指定分群未取得，請選取目前範圍可用的分群。
+          </div>
+        ) : null}
+        {draftId && !builderKind && !vm.draftRecommendation ? (
+          <div className={g.selectionUnavailable} role="status" data-testid="growth-draft-unavailable">
+            指定建議未取得，請從建議清單重新選取。
+          </div>
+        ) : null}
+
         {activeTab === "segments" ? (
           <SegmentSection
             fixturesAllowed={fixturesAllowed}
@@ -347,6 +343,7 @@ export function GrowthWorkspace({
         ) : activeTab === "priceops" ? (
           <RecommendationSection
             recommendations={vm.recommendations}
+            selectedRecId={priceRecId}
             segments={vm.segments}
             href={href}
           />
@@ -354,6 +351,7 @@ export function GrowthWorkspace({
           <CampaignWorkbench
             items={vm.items}
             selected={vm.selectedItem}
+            requestedItemId={itemId}
             segments={vm.segments}
             kindFilter={kindFilter}
             statusFilter={statusFilter}
@@ -422,7 +420,7 @@ function formFromRecommendation(rec: PriceOpsRecommendation): GrowthBuilderForm 
     store: "全品牌",
     observationWindow: "平日 10:00–14:00",
     channel: "店內告示＋App 價格頁",
-    targetLift: rec.expectedRevenueLift.toFixed(1),
+    targetLift: rec.expectedRevenueLift?.toFixed(1) ?? "",
     budget: "0",
     rationale: "以 PriceOps 建議為基礎；待補齊對照組與 pre-trend 檢定後送審。",
     rollbackPlan: "14 天未達標即回滾。",
@@ -481,63 +479,20 @@ function SegmentSection({
 /** PriceOps tab — pricing recommendation table and interactive simulation workbench. */
 function RecommendationSection({
   recommendations,
+  selectedRecId,
   segments,
   href,
 }: {
   recommendations: PriceOpsRecommendation[];
+  selectedRecId?: string;
   segments: GrowthSegment[];
   href: (o: Record<string, string | undefined>) => string;
 }) {
   const segmentName = (id: string) => segments.find((segment) => segment.id === id)?.name ?? id;
 
-  const [selectedRecId, setSelectedRecId] = useState<string>(recommendations[0]?.id ?? "");
-  const selectedRec = recommendations.find((r) => r.id === selectedRecId) ?? recommendations[0];
-
-  const parseNumPrice = (val: string | number) => {
-    if (typeof val === "number") return val;
-    if (!val) return 0;
-    const cleaned = val.replace(/[^0-9.]/g, "");
-    const parsed = parseFloat(cleaned);
-    return isNaN(parsed) ? 0 : parsed;
-  };
-
-  const [candidatePriceInput, setCandidatePriceInput] = useState<string>(
-    selectedRec ? String(parseNumPrice(selectedRec.candidatePrice) || selectedRec.candidatePrice) : ""
-  );
-  const [decisionReason, setDecisionReason] = useState<string>(
-    "依定價情境模擬與毛利帶 (P10/P50/P90) 比較完成決策核准回寫"
-  );
-  const [decisionType, setDecisionType] = useState<"approved" | "rejected" | "scenario_selected">(
-    "approved"
-  );
-  const [writebackRecord, setWritebackRecord] = useState<{
-    decisionId: string;
-    actor: string;
-    writtenBackAt: string;
-    decision: string;
-  } | null>(null);
-
-  useEffect(() => {
-    if (selectedRec) {
-      const num = parseNumPrice(selectedRec.candidatePrice);
-      setCandidatePriceInput(num > 0 ? String(num) : selectedRec.candidatePrice);
-    }
-  }, [selectedRecId]);
-
-  const candidatePriceNum = parseNumPrice(candidatePriceInput);
-  const currentPriceNum = selectedRec ? parseNumPrice(selectedRec.currentPrice) : 0;
-  const isInvalidPrice = candidatePriceInput.trim() === "" || candidatePriceNum <= 0;
-  const isHardBlocked = selectedRec?.constraintStatus === "HARD_CONSTRAINT_FAILED" || isInvalidPrice;
-
-  const handleWriteback = () => {
-    if (isHardBlocked) return;
-    setWritebackRecord({
-      decisionId: `pricing-decision-${Math.random().toString(36).substring(2, 9)}`,
-      actor: "pricing-officer",
-      writtenBackAt: new Date().toISOString(),
-      decision: decisionType,
-    });
-  };
+  const selectedRec = selectedRecId
+    ? recommendations.find(rec => rec.id === selectedRecId)
+    : undefined;
 
   return (
     <section
@@ -563,7 +518,7 @@ function RecommendationSection({
           <tbody>
             {recommendations.map((rec) => {
               const blocked = rec.constraintStatus === "HARD_CONSTRAINT_FAILED";
-              const isSelected = rec.id === selectedRecId;
+              const isSelected = rec.id === selectedRec?.id;
               return (
                 <tr key={rec.id} style={isSelected ? { background: "#f0f4ff" } : undefined}>
                   <td>
@@ -576,29 +531,26 @@ function RecommendationSection({
                   <td>{rec.window ?? "待建立草稿"}</td>
                   <td className={g.priceMono}>{rec.currentPrice}</td>
                   <td>
-                    <span className={g.priceCandidate}>{rec.candidatePrice}</span>
+                    {rec.planId && rec.itemId ? (
+                      <Link className={g.priceCandidate} href={href({ prec: rec.id })}
+                        aria-label={`查看 ${rec.id} 定價情境`}>
+                        {rec.candidatePrice}
+                      </Link>
+                    ) : <span className={g.priceCandidate}>{rec.candidatePrice}</span>}
                     <span className={g.priceConstraint} data-constraint={rec.constraintStatus}>
                       {rec.constraintStatus}
                     </span>
                   </td>
                   <td className={g.priceMono}>{rec.expectedUtilization ?? "—"}</td>
-                  <td className={g.pricePositive}>{formatLift(rec.expectedRevenueLift)}</td>
+                  <td className={g.pricePositive}>{rec.expectedRevenueLift === null ? "未提供百分比" : formatLift(rec.expectedRevenueLift)}</td>
                   <td>
-                    {rec.marginRisk ?? formatLift(rec.expectedMarginLift)}
-                    <span className={g.priceLinked}>信心 {rec.confidence}</span>
+                    {rec.marginRisk ?? (rec.expectedMarginLift === null ? "風險未提供" : formatLift(rec.expectedMarginLift))}
+                    <span className={g.priceLinked}>信心 {rec.confidence ?? "未提供"}</span>
                   </td>
                   <td className={g.priceRollback}>
                     {rec.rollbackCondition ?? "建立草稿時必填"}
                   </td>
                   <td style={{ display: "flex", gap: "6px" }}>
-                    <button
-                      type="button"
-                      className={g.segDraftBtn}
-                      onClick={() => setSelectedRecId(rec.id)}
-                      style={{ padding: "3px 8px", fontSize: "11px" }}
-                    >
-                      {isSelected ? "模擬中" : "情境模擬"}
-                    </button>
                     {blocked ? (
                       <span
                         className={g.priceDraftDisabled}
@@ -624,193 +576,10 @@ function RecommendationSection({
         </table>
       </div>
 
-      {/* Interactive Pricing Simulation & Decision Writeback Workbench */}
-      {selectedRec && (
-        <div
-          data-testid="priceops-scenario-workbench"
-          style={{
-            marginTop: "16px",
-            padding: "16px",
-            background: "#ffffff",
-            border: "1px solid #dbe2ef",
-            borderRadius: "12px",
-          }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-            <h4 style={{ margin: 0, color: "#112d4e", fontSize: "14px", fontWeight: 700 }}>
-              PriceOps 定價情境模擬 workbench — {selectedRec.store ?? segmentName(selectedRec.segmentId)} ({selectedRec.id})
-            </h4>
-            <span style={{ fontSize: "11px", color: "#666", background: "#f0f2f5", padding: "2px 8px", borderRadius: "4px" }}>
-              Policy: brand-pricing-policy-v1 | Solver: priceops-exhaustive-ladder-v1
-            </span>
-          </div>
-
-          {/* Fail Closed Alert when blocked or invalid */}
-          {isHardBlocked && (
-            <div
-              data-testid="priceops-fail-closed-alert"
-              style={{
-                marginBottom: "12px",
-                padding: "10px 14px",
-                background: "#fff0f0",
-                border: "1px solid #ffcdd2",
-                borderRadius: "8px",
-                color: "#c62828",
-                fontSize: "12px",
-                fontWeight: 600,
-              }}
-            >
-              ⚠️ Pricing Simulation Unavailable (Fail-Closed):{" "}
-              {isInvalidPrice
-                ? "無效的候選價格參數 (無效數字或 <= 0)，情境模擬已中斷。"
-                : `檢測到硬限制違規 (${selectedRec.constraintDetail ?? "Hard Constraint Failed"})，系統已封鎖情境執行與決策核准。`}
-            </div>
-          )}
-
-          {/* Scenario Input Parameter Controls */}
-          <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", marginBottom: "16px", alignItems: "center" }}>
-            <label style={{ fontSize: "12px", color: "#333", fontWeight: 600 }}>
-              調整情境價:
-              <input
-                type="number"
-                value={candidatePriceInput}
-                onChange={(e) => setCandidatePriceInput(e.target.value)}
-                style={{
-                  marginLeft: "8px",
-                  padding: "4px 8px",
-                  border: isInvalidPrice ? "1px solid #d32f2f" : "1px solid #ccc",
-                  borderRadius: "6px",
-                  fontSize: "12px",
-                  width: "100px",
-                }}
-              />
-            </label>
-            <span style={{ fontSize: "11px", color: "#555" }}>
-              Baseline 現價: <strong>${selectedRec.currentPrice}</strong>
-            </span>
-            <span style={{ fontSize: "11px", color: "#555" }}>
-              彈性信心: <strong>{selectedRec.confidence}</strong>
-            </span>
-            {isInvalidPrice && (
-              <span style={{ fontSize: "11px", color: "#d32f2f", fontWeight: 600 }}>
-                請輸入大於 0 之有效價格
-              </span>
-            )}
-          </div>
-
-          {/* Baseline vs Alternative Scenario Bands Comparison */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "16px" }}>
-            {/* Baseline Band */}
-            <div
-              data-testid="priceops-baseline-band"
-              style={{
-                padding: "12px",
-                background: "#f8f9fa",
-                border: "1px solid #e9ecef",
-                borderRadius: "8px",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
-                <span style={{ fontSize: "12px", fontWeight: 700, color: "#495057" }}>
-                  Baseline (目前價格)
-                </span>
-                <span style={{ fontSize: "10px", padding: "2px 6px", background: "#e9ecef", borderRadius: "4px" }}>
-                  Current View
-                </span>
-              </div>
-              <div style={{ fontSize: "12px", lineHeight: "1.6", color: "#333" }}>
-                <div>價格: <strong>${selectedRec.currentPrice}</strong></div>
-                <div>預期需求 (P10/P50/P90): <strong>{(currentPriceNum * 0.45).toFixed(1)} / {(currentPriceNum * 0.5).toFixed(1)} / {(currentPriceNum * 0.55).toFixed(1)}</strong></div>
-                <div>預期毛利 (P10/P50/P90): <strong>${(currentPriceNum * 0.5).toFixed(1)} / ${(currentPriceNum * 0.65).toFixed(1)} / ${(currentPriceNum * 0.8).toFixed(1)}</strong></div>
-              </div>
-            </div>
-
-            {/* Alternative Scenario Band */}
-            <div
-              data-testid="priceops-alternative-band"
-              style={{
-                padding: "12px",
-                background: "#f0f7ff",
-                border: "1px solid #bae0ff",
-                borderRadius: "8px",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
-                <span style={{ fontSize: "12px", fontWeight: 700, color: "#0050b3" }}>
-                  Alternative Scenario (情境模擬)
-                </span>
-                <span style={{ fontSize: "10px", padding: "2px 6px", background: "#e6f7ff", color: "#1890ff", borderRadius: "4px" }}>
-                  Alternative
-                </span>
-              </div>
-              <div style={{ fontSize: "12px", lineHeight: "1.6", color: "#333" }}>
-                <div>情境價格: <strong>${isNaN(candidatePriceNum) ? "—" : candidatePriceNum}</strong></div>
-                <div>預期需求 (P10/P50/P90): <strong>{((candidatePriceNum || 0) * 0.42).toFixed(1)} / {((candidatePriceNum || 0) * 0.48).toFixed(1)} / {((candidatePriceNum || 0) * 0.54).toFixed(1)}</strong></div>
-                <div>Δ 毛利預期: <strong style={{ color: "#2e7d32" }}>{formatLift(selectedRec.expectedMarginLift)}</strong></div>
-              </div>
-            </div>
-          </div>
-
-          {/* Idempotent Decision Writeback Controls */}
-          <div
-            style={{
-              padding: "12px",
-              background: "#fafafa",
-              border: "1px solid #f0f0f0",
-              borderRadius: "8px",
-            }}
-          >
-            <h5 style={{ margin: "0 0 8px", fontSize: "12px", fontWeight: 700, color: "#333" }}>
-              決策回寫 (Idempotent Decision Writeback)
-            </h5>
-            <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap", marginBottom: "8px" }}>
-              <select
-                value={decisionType}
-                onChange={(e) => setDecisionType(e.target.value as any)}
-                style={{ padding: "4px 8px", fontSize: "12px", borderRadius: "6px", border: "1px solid #ccc" }}
-              >
-                <option value="approved">核准情境 (Approved)</option>
-                <option value="rejected">退回情境 (Rejected)</option>
-                <option value="scenario_selected">選擇特定情境 (Scenario Selected)</option>
-              </select>
-              <input
-                type="text"
-                value={decisionReason}
-                onChange={(e) => setDecisionReason(e.target.value)}
-                placeholder="輸入決策原因..."
-                style={{ flex: 1, minWidth: "200px", padding: "4px 8px", fontSize: "12px", borderRadius: "6px", border: "1px solid #ccc" }}
-              />
-              <button
-                type="button"
-                data-testid="priceops-writeback-btn"
-                disabled={isHardBlocked}
-                onClick={handleWriteback}
-                className={isHardBlocked ? g.priceDraftDisabled : g.segDraftBtn}
-                style={{ margin: 0 }}
-              >
-                寫回決策 (Writeback)
-              </button>
-            </div>
-
-            {writebackRecord && (
-              <div
-                data-testid="priceops-audit-status"
-                style={{
-                  marginTop: "8px",
-                  padding: "8px 12px",
-                  background: "#e6f4ea",
-                  border: "1px solid #b7e1cd",
-                  borderRadius: "6px",
-                  fontSize: "11px",
-                  color: "#137333",
-                }}
-              >
-                ✓ 決策成功寫回與審計: ID <strong>{writebackRecord.decisionId}</strong> | 操作者: <strong>{writebackRecord.actor}</strong> | 決策: <strong>{writebackRecord.decision}</strong> | 時間: <strong>{new Date(writebackRecord.writtenBackAt).toLocaleTimeString()}</strong>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {selectedRec ? (
+        <PriceOpsWorkbench key={`${selectedRec.id}:${selectedRec.planId}:${selectedRec.itemId}`}
+          recommendation={selectedRec} segmentName={segmentName(selectedRec.segmentId)} />
+      ) : selectedRecId ? <p role="status" data-testid="priceops-selection-unavailable">指定定價建議未取得，請從清單重新選取。</p> : null}
 
       <p className={g.tabNote}>
         PriceOps 建議維持 SYSTEM_RECOMMENDED；調價需核准且附回滾條件，硬限制未通過時不可建立草稿。
@@ -827,6 +596,7 @@ function RecommendationSection({
 function CampaignWorkbench({
   items,
   selected,
+  requestedItemId,
   segments,
   kindFilter,
   statusFilter,
@@ -835,7 +605,8 @@ function CampaignWorkbench({
   governHref,
 }: {
   items: GrowthItem[];
-  selected: GrowthItem;
+  selected: GrowthItem | null;
+  requestedItemId?: string;
   segments: GrowthSegment[];
   kindFilter?: string;
   statusFilter?: string;
@@ -919,8 +690,8 @@ function CampaignWorkbench({
               <Link
                 key={item.id}
                 href={href({ item: item.id })}
-                className={[g.actionCard, item.id === selected.id ? g.actionCardSelected : ""].join(" ")}
-                aria-selected={item.id === selected.id}
+                className={[g.actionCard, item.id === selected?.id ? g.actionCardSelected : ""].join(" ")}
+                aria-selected={item.id === selected?.id}
                 data-testid={`growth-item-${item.id}`}
               >
                 <div className={g.actionTop}>
@@ -970,13 +741,22 @@ function CampaignWorkbench({
       </div>
 
       {/* Sticky lifecycle detail */}
-      <GrowthActionDetail
-        item={selected}
-        recommendation={recommendationFor(selected)}
-        segmentName={segmentName}
-        href={href}
-        governHref={governHref}
-      />
+      {selected ? (
+        <GrowthActionDetail
+          key={selected.id}
+          item={selected}
+          recommendation={recommendationFor(selected)}
+          segmentName={segmentName}
+          href={href}
+          governHref={governHref}
+        />
+      ) : (
+        <aside className={g.detailPanel} aria-label="Growth action unavailable" data-testid="growth-action-unavailable">
+          <p className={g.selectionUnavailable} role="status">
+            {requestedItemId ? "指定活動未取得，請從清單選取可用活動。" : "沒有符合目前條件的活動。"}
+          </p>
+        </aside>
+      )}
     </section>
   );
 }
@@ -1115,7 +895,7 @@ function GrowthActionDetail({
         />
       ) : null}
       {["OUTCOME_READY", "INEFFECTIVE", "CLOSED"].includes(status) ? (
-        <CloseoutPanel item={currentItem} gate={gate} href={href} />
+        <CloseoutPanel key={currentItem.id} item={currentItem} gate={gate} href={href} />
       ) : null}
 
       <div data-testid="growth-item-audit">
@@ -1156,7 +936,11 @@ function ApprovalFlowPanel({
   onStatusChange: (status: GrowthStatus) => void;
 }) {
   const [approvalId, setApprovalId] = useState<string | null>(item.approvalId ?? null);
-  const [growthStatus, setGrowthStatus] = useState<string>(item.status);
+  const growthStatus = item.status;
+  const submitKey = useRef(newIdempotencyKey());
+  const busyRef = useRef(false);
+  const mountedRef = useRef(true);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
   const [busy, setBusy] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
@@ -1167,17 +951,19 @@ function ApprovalFlowPanel({
   };
 
   const handleSubmit = async () => {
-    if (busy) return;
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setApiError(null);
-    const result = await submitGrowthForApproval({ actionId: item.id });
+    const result = await submitGrowthForApproval({ actionId: item.id, idempotencyKey: submitKey.current });
+    if (!mountedRef.current) return;
+    busyRef.current = false;
     setBusy(false);
     if (!result) {
-      setApiError("送審被伺服器衝突閘門拒絕或 API 不可用；請檢查衝突後重試。");
+      setApiError("尚未確認送審結果，請重試以核對此草稿。");
       return;
     }
     setApprovalId(result.approval.id);
-    setGrowthStatus(result.status);
     onStatusChange(result.status as GrowthStatus);
     audit("SUBMIT_FOR_APPROVAL", { approvalId: result.approval.id, status: result.status });
   };
@@ -1185,7 +971,7 @@ function ApprovalFlowPanel({
   return (
     <section className={g.actionPanel} data-testid="growth-approval-panel" data-growth-status={growthStatus}>
       {apiError ? (
-        <div className={g.inlineError} data-testid="growth-approval-error">
+        <div className={g.inlineError} role="alert" data-testid="growth-approval-error">
           <p>{apiError}</p>
         </div>
       ) : null}
@@ -1232,20 +1018,30 @@ function LifecycleTransitionPanel({
     RUNNING: { target: "OBSERVING", label: "啟動觀察" },
     EXECUTED: { target: "OBSERVING", label: "啟動觀察" },
   } as Partial<Record<GrowthStatus, { target: GrowthStatus; label: string }>>)[item.status];
+  const intentRef = useRef<{ signature: string; key: string } | null>(null);
+  const busyRef = useRef(false);
+  const mountedRef = useRef(true);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
   const [busy, setBusy] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
   const handleTransition = async () => {
-    if (!transition || busy) return;
+    if (!transition || busyRef.current) return;
+    busyRef.current = true;
+    const signature = JSON.stringify({ actionId: item.id, targetStatus: transition.target });
+    if (intentRef.current?.signature !== signature) intentRef.current = { signature, key: newIdempotencyKey() };
     setBusy(true);
     setApiError(null);
     const result = await transitionGrowthAction({
       actionId: item.id,
       targetStatus: transition.target,
+      idempotencyKey: intentRef.current.key,
     });
+    if (!mountedRef.current) return;
+    busyRef.current = false;
     setBusy(false);
     if (!result) {
-      setApiError("生命週期更新失敗；狀態未變更，請稍後重試。");
+      setApiError("尚未確認生命週期更新結果，請重試以核對。");
       return;
     }
     onStatusChange(result.status);
@@ -1253,7 +1049,7 @@ function LifecycleTransitionPanel({
 
   return (
     <section className={g.actionPanel} data-testid="growth-transition-panel">
-      {apiError ? <div className={g.inlineError}>{apiError}</div> : null}
+      {apiError ? <div className={g.inlineError} role="alert">{apiError}</div> : null}
       <button
         type="button"
         className={g.primaryAction}
@@ -1284,54 +1080,60 @@ function CloseoutPanel({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isApproved, setIsApproved] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
+  const [rationale, setRationale] = useState("");
+  const intent = useRef<{ signature: string; key: string } | null>(null);
   const blockClass = gate.canClose ? g.outcomeSuccess : g.outcomeWarning;
 
   const handleApprove = async () => {
-    if (!gate.canClose || isSubmitting) return;
+    if (!gate.canClose || isSubmitting || isApproved || !rationale.trim()) return;
     setIsSubmitting(true);
     setApiError(null);
 
-    // Write outcome to API with Idempotency-Key and X-Correlation-Id
-    const result = await writeGrowthOutcome({
+    const request = {
       actionId: item.id,
       outcome: gate.outcome,
       requiredAction: gate.requiredAction,
       observedLift: item.observedLift,
       evidenceLevel: item.evidenceLevel,
-      rationale: item.rationale,
-    });
-
-    // Console logging is diagnostic only and never substitutes for a durable write.
-    const auditPayload = {
-      action: "APPROVE_CLOSEOUT",
-      itemId: item.id,
-      decisionId: item.audit.decisionId,
-      outcome: gate.outcome,
-      requiredAction: gate.requiredAction,
-      apiResult: result ? { correlationId: result.correlationId } : "api-write-failed",
-      timestamp: new Date().toISOString(),
+      rationale: rationale.trim(),
     };
-    console.log(`[Console Audit] ${JSON.stringify(auditPayload)}`);
-
-    if (result === null) {
-      setApiError("API 暫時不可用，結案未送出。請稍後重試。");
-      setIsSubmitting(false);
-      return;
+    const signature = JSON.stringify(request);
+    if (intent.current?.signature !== signature) {
+      intent.current = { signature, key: newIdempotencyKey() };
     }
-
-    setIsSubmitting(false);
-    setIsApproved(true);
+    try {
+      const result = await writeGrowthOutcome({ ...request, idempotencyKey: intent.current.key });
+      if (result === null) {
+        setApiError("暫時無法確認提交結果，請保留理由並重試相同判斷。");
+        return;
+      }
+      if (result.actionId !== item.id || result.outcome !== gate.outcome) {
+        setApiError("提交回應與目前活動判斷不符，請重新整理後確認。");
+        return;
+      }
+      // Diagnostic only; the API remains the durable decision authority.
+      console.log(`[Console Audit] ${JSON.stringify({
+        action: "APPROVE_CLOSEOUT", itemId: item.id, decisionId: item.audit.decisionId,
+        outcome: gate.outcome, requiredAction: gate.requiredAction,
+        apiResult: { correlationId: result.correlationId }, timestamp: new Date().toISOString(),
+      })}`);
+      setIsApproved(true);
+    } catch {
+      setApiError("暫時無法確認提交結果，請保留理由並重試相同判斷。");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
     <section
       className={g.actionPanel}
-      data-screen-label="Dialog Growth Outcome"
       data-testid="growth-closeout-panel"
     >
       {isApproved ? (
         <div className={g.outcomeSuccess} data-testid="growth-closeout-success">
-          <p>結案已成功提交並記錄稽核日誌。等待後端決策回寫。</p>
+          <p>成效判斷已提交，請重新整理活動確認最新狀態。</p>
           {apiError ? <p className={g.actionNote}>{apiError}</p> : null}
         </div>
       ) : (
@@ -1343,11 +1145,11 @@ function CloseoutPanel({
         <button
           type="button"
           className={g.primaryAction}
-          disabled={!gate.canClose || isApproved || isSubmitting}
-          onClick={handleApprove}
-          data-testid="growth-close-button"
+          disabled={isSubmitting}
+          onClick={() => setIsOpen(true)}
+          data-testid="growth-outcome-open"
         >
-          {isSubmitting ? "提交中…" : isApproved ? "已結案" : "結案並回寫成效"}
+          {isApproved ? "檢視已提交判斷" : "判斷成效"}
         </button>
         {gate.requiredAction !== "CLOSE" && !isApproved ? (
           <span className={g.secondaryAction} data-testid="growth-required-action">
@@ -1363,7 +1165,64 @@ function CloseoutPanel({
           重新整理判定
         </Link>
       </p>
+      {isOpen ? (
+        <GrowthOutcomeDialog
+          item={item} gate={gate} rationale={rationale} setRationale={setRationale}
+          isSubmitting={isSubmitting} isSubmitted={isApproved} error={apiError}
+          onSubmit={handleApprove} onClose={() => { if (!isSubmitting) setIsOpen(false); }}
+        />
+      ) : null}
     </section>
+  );
+}
+
+function GrowthOutcomeDialog({
+  item, gate, rationale, setRationale, isSubmitting, isSubmitted, error, onSubmit, onClose,
+}: {
+  item: GrowthItem; gate: CloseoutGate; rationale: string; setRationale: (value: string) => void;
+  isSubmitting: boolean; isSubmitted: boolean; error: string | null;
+  onSubmit: () => Promise<void>; onClose: () => void;
+}) {
+  const panelRef = useModalDialogBehavior({ onClose, dismissible: !isSubmitting });
+  return (
+    <div className={`${g.modalBackdrop} ${g.outcomeBackdrop}`} data-screen-label="Dialog Growth Outcome"
+      data-testid="growth-outcome-modal" onMouseDown={(event) => { if (event.target === event.currentTarget && !isSubmitting) onClose(); }}>
+      <div className={g.outcomeDialog} ref={panelRef} role="dialog" aria-modal="true" aria-labelledby="growth-outcome-title">
+        <header className={g.outcomeDialogHeader}>
+          <h2 id="growth-outcome-title">活動成效判斷</h2><span className={g.mono}>{item.id}</span>
+          <button type="button" className={g.closeButton} aria-label="關閉活動成效判斷" onClick={onClose} disabled={isSubmitting}>×</button>
+        </header>
+        <div className={g.outcomeDialogBody}>
+          <table className={g.outcomeMetrics} aria-label="活動成效指標">
+            <thead><tr><th>指標</th><th>目標</th><th>實際</th><th>檢核</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">營收增量</th><td>{formatLift(item.targetLift)}</td><td>{formatLift(item.observedLift)}</td><td>{item.observedLift === null ? "待觀測" : item.observedLift >= item.targetLift ? "達標" : "未達標"}</td></tr>
+              <tr><th scope="row">證據等級</th><td>{CAUSAL_MIN_EVIDENCE}</td><td>{item.evidenceLevel ?? "未提供"}</td><td>{item.evidenceLevel && meetsCausalThreshold(item.evidenceLevel) ? "達標" : "不足"}</td></tr>
+            </tbody>
+          </table>
+          <div className={gate.canClose ? g.outcomeSuccess : g.outcomeWarning}>
+            <strong>{outcomeLabel[gate.outcome]}</strong><p>{gate.reason}</p>
+            {!gate.canClose ? <p>需先：{requiredActionLabel[gate.requiredAction]}</p> : null}
+          </div>
+          <label className={g.outcomeReason} htmlFor="growth-outcome-rationale">
+            判斷理由（寫入 Decision Log）
+            <textarea id="growth-outcome-rationale" rows={2} data-autofocus value={rationale}
+              onChange={(event) => setRationale(event.currentTarget.value)} readOnly={isSubmitting || isSubmitted}
+              required aria-describedby="growth-outcome-reason-help" />
+          </label>
+          <p id="growth-outcome-reason-help" className={g.actionNote}>請說明本次判斷依據；成效與證據不足時仍不可直接結案。</p>
+          {error ? <p className={g.outcomeWarning} role="alert">{error}</p> : null}
+          {isSubmitted ? <p className={g.outcomeSuccess} role="status">成效判斷已提交。</p> : null}
+        </div>
+        <footer className={g.outcomeDialogActions}>
+          <button type="button" className={g.secondaryAction} onClick={onClose} disabled={isSubmitting}>{isSubmitted ? "關閉" : "取消"}</button>
+          <button type="button" className={g.primaryAction} data-testid="growth-close-button" onClick={onSubmit}
+            disabled={!gate.canClose || !rationale.trim() || isSubmitting || isSubmitted}>
+            {isSubmitting ? "提交中…" : isSubmitted ? "已送出" : "確認判斷並結案"}
+          </button>
+        </footer>
+      </div>
+    </div>
   );
 }
 
@@ -1388,10 +1247,24 @@ function GrowthBuilderModal({
   const [form, setForm] = useState<GrowthBuilderForm>(initialForm);
   const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const busyRef = useRef(false);
+  const intentRef = useRef<{ signature: string; createKey: string; submitKey: string } | null>(null);
+  const [createdDraft, setCreatedDraft] = useState<Awaited<ReturnType<typeof createGrowthDraft>>>(null);
   const [apiError, setApiError] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState<ConflictCheck[] | null>(null);
   const [blocked, setBlocked] = useState(false);
   const [checking, setChecking] = useState(false);
+  const close = () => { if (!busyRef.current) router.push(closeHref); };
+  const panelRef = useModalDialogBehavior({ onClose: close, dismissible: !isSubmitting });
+
+  useEffect(() => {
+    const panel = panelRef.current;
+    const target = isSubmitting
+      ? panel?.querySelector<HTMLElement>('[data-testid="growth-builder-submit-status"]')
+      : panel?.querySelector<HTMLElement>(`[data-testid="growth-builder-step-${step}"] input, [data-testid="growth-builder-step-${step}"] select, [data-testid="growth-builder-step-${step}"] textarea`)
+        ?? panel?.querySelector<HTMLElement>(`[data-testid="growth-builder-step-${step}"]`);
+    target?.focus();
+  }, [step, isSubmitting, panelRef]);
 
   const set = (patch: Partial<GrowthBuilderForm>) =>
     setForm((prev) => ({ ...prev, ...patch }));
@@ -1433,97 +1306,75 @@ function GrowthBuilderModal({
   };
 
   const handleCreate = async (sendForApproval: boolean) => {
-    if (isSubmitting || (sendForApproval && (blocked || (!fixturesAllowed && conflicts === null)))) {
-      return;
-    }
+    if (busyRef.current || (sendForApproval && !createdDraft && (blocked || (!fixturesAllowed && conflicts === null)))) return;
+    if (createdDraft && !sendForApproval) { close(); return; }
+    busyRef.current = true;
     setIsSubmitting(true);
     setApiError(null);
-
-    const created = await createGrowthDraft({
-      name: form.name,
-      segmentId: form.segmentId,
-      sourceRecommendationId: form.sourceRecommendationId,
-      objective: form.objective,
-      targetLift: parseFloat(form.targetLift) || 0,
-      kind: form.kind,
-      store: form.store,
-      channel: form.channel,
-      budget: parseInt(form.budget, 10) || 0,
-      observationWindow: form.observationWindow,
-      rationale: form.rationale,
-      rollbackPlan: form.rollbackPlan,
-    });
-
-    let approvalId: string | null = null;
-    let submitFailed = false;
-    if (created && sendForApproval) {
-      const submitted = await submitGrowthForApproval({ actionId: created.id });
-      if (submitted) {
-        approvalId = submitted.approval.id;
-      } else {
-        submitFailed = true;
+    const payload = {
+      name: form.name, segmentId: form.segmentId, sourceRecommendationId: form.sourceRecommendationId,
+      objective: form.objective, targetLift: parseFloat(form.targetLift) || 0, kind: form.kind,
+      store: form.store, channel: form.channel, budget: parseInt(form.budget, 10) || 0,
+      observationWindow: form.observationWindow, rationale: form.rationale, rollbackPlan: form.rollbackPlan,
+    };
+    const signature = JSON.stringify(payload);
+    if (!intentRef.current || (!createdDraft && intentRef.current.signature !== signature)) {
+      intentRef.current = { signature, createKey: newIdempotencyKey(), submitKey: newIdempotencyKey() };
+    }
+    const created = createdDraft ?? await createGrowthDraft({ ...payload, idempotencyKey: intentRef.current.createKey });
+    if (!created) {
+      setApiError("尚未確認草稿建立結果。輸入已保留，請重試相同內容以核對結果。");
+      busyRef.current = false;
+      setIsSubmitting(false);
+      return;
+    }
+    setCreatedDraft(created);
+    if (sendForApproval) {
+      const submitted = await submitGrowthForApproval({ actionId: created.id, idempotencyKey: intentRef.current.submitKey });
+      if (!submitted) {
+        setApiError(`草稿 ${created.id} 已建立，但送審尚未確認。可重試送核准，或保留此草稿稍後處理。`);
+        busyRef.current = false;
+        setIsSubmitting(false);
+        return;
       }
     }
-
-    const auditPayload = {
-      action: sendForApproval ? "CREATE_AND_SUBMIT" : "CREATE_DRAFT",
-      kind: form.kind,
-      name: form.name,
-      store: form.store,
-      budget: form.budget,
-      apiResult: created
-        ? { id: created.id, correlationId: created.correlationId }
-        : "api-write-failed",
-      approvalId,
-      timestamp: new Date().toISOString(),
-    };
-    console.log(`[Console Audit] ${JSON.stringify(auditPayload)}`);
-
+    busyRef.current = false;
     setIsSubmitting(false);
-    if (created === null) {
-      setApiError("API 暫時不可用，草稿建立已記錄於本機稽核日誌。");
-      return;
-    }
-    if (submitFailed) {
-      setApiError("草稿已建立，但送審被伺服器衝突閘門拒絕，請回上一步檢查衝突。");
-      return;
-    }
     router.push(closeHref);
   };
 
   return (
     <div
-      className={g.modalBackdrop}
+      className={`${g.modalBackdrop} ${g.builderBackdrop}`}
       data-screen-label="Dialog Growth Draft Builder"
       data-testid="growth-draft-modal"
     >
-      <Link
-        href={closeHref}
-        className={g.modalDismiss}
-        aria-label="關閉建立草稿視窗"
-        tabIndex={-1}
-      />
+      <button type="button" onClick={close} disabled={isSubmitting}
+        className={g.modalDismiss} aria-label="關閉建立草稿視窗" tabIndex={-1} />
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="growth-draft-title"
         className={g.builderModal}
         data-step={step}
+        ref={panelRef}
       >
         <div className={g.builderHeader}>
           <div>
             <h2 id="growth-draft-title">建立 Growth Action 草稿</h2>
             <p>類型：{growthKindLabel[form.kind]}</p>
           </div>
-          <Link
-            href={closeHref}
+          <button
+            type="button"
+            onClick={close}
+            disabled={isSubmitting}
             className={g.closeButton}
             aria-label="關閉"
             title="關閉"
             data-testid="growth-draft-close"
           >
             ×
-          </Link>
+          </button>
         </div>
 
         <ol className={g.builderSteps} data-testid="growth-builder-steps">
@@ -1542,17 +1393,17 @@ function GrowthBuilderModal({
         </ol>
 
         {apiError ? (
-          <div className={g.formAlert} data-testid="growth-draft-api-error">
+          <div className={g.formAlert} role="alert" data-testid="growth-draft-api-error">
             <p>{apiError}</p>
           </div>
         ) : null}
 
-        <form className={g.builderForm}>
+        <form className={g.builderForm} onSubmit={(event) => event.preventDefault()}>
           {step === 1 ? (
             <div data-testid="growth-builder-step-1">
               <label>
                 活動名稱
-                <input value={form.name} onChange={(e) => set({ name: e.target.value })} name="name" />
+                <input data-autofocus value={form.name} onChange={(e) => set({ name: e.target.value })} name="name" />
               </label>
               <label>
                 門市
@@ -1620,7 +1471,7 @@ function GrowthBuilderModal({
           ) : null}
 
           {step === 4 ? (
-            <div data-testid="growth-builder-step-4">
+            <div data-testid="growth-builder-step-4" tabIndex={-1}>
               <p className={g.sectionHint}>
                 伺服器衝突閘門檢查（重疊／PriceOps／預算／打擾／核准）；任一項為 fail 即不可送審。
               </p>
@@ -1660,7 +1511,7 @@ function GrowthBuilderModal({
           ) : null}
 
           {step === 5 ? (
-            <div data-testid="growth-builder-step-5">
+            <div data-testid="growth-builder-step-5" tabIndex={-1}>
               <div className={g.summaryHeading}>DRAFT SUMMARY</div>
               <dl className={g.builderSummary}>
                 <dt>活動名稱</dt>
@@ -1687,16 +1538,16 @@ function GrowthBuilderModal({
 
           <div className={g.builderFooter}>
             {step > 1 ? (
-              <button type="button" className={g.secondaryAction} onClick={goPrev} data-testid="growth-builder-prev">
+              <button type="button" className={g.secondaryAction} onClick={goPrev} disabled={isSubmitting || checking || !!createdDraft} data-testid="growth-builder-prev">
                 ← 上一步
               </button>
             ) : (
-              <Link href={closeHref} className={g.secondaryAction}>
+              <button type="button" onClick={close} className={g.secondaryAction}>
                 取消
-              </Link>
+              </button>
             )}
             {step < 5 ? (
-              <button type="button" className={g.primaryAction} onClick={goNext} data-testid="growth-builder-next">
+              <button type="button" className={g.primaryAction} onClick={goNext} disabled={checking} data-testid="growth-builder-next">
                 下一步 →
               </button>
             ) : (
@@ -1708,21 +1559,22 @@ function GrowthBuilderModal({
                   disabled={isSubmitting}
                   data-testid="growth-draft-submit"
                 >
-                  {isSubmitting ? "建立中…" : "建立草稿"}
+                  {createdDraft ? "保留草稿" : isSubmitting ? "建立中…" : "建立草稿"}
                 </button>
                 <button
                   type="button"
                   className={g.primaryAction}
                   onClick={() => handleCreate(true)}
-                  disabled={isSubmitting || blocked || (!fixturesAllowed && conflicts === null)}
+                  disabled={isSubmitting || (!createdDraft && (blocked || (!fixturesAllowed && conflicts === null)))}
                   data-testid="growth-draft-submit-approval"
                 >
-                  {isSubmitting ? "送審中…" : "建立並送核准"}
+                  {isSubmitting ? "送審中…" : createdDraft ? "重試送核准" : "建立並送核准"}
                 </button>
               </>
             )}
           </div>
         </form>
+        {isSubmitting ? <p className={g.builderNote} role="status" tabIndex={0} data-testid="growth-builder-submit-status">{createdDraft ? "正在送出核准請求，請等待伺服器回應。" : "正在提交草稿，請等待伺服器回應。"}</p> : null}
         <p className={g.builderNote}>
           建立草稿僅產生 DRAFT，不自動執行；送審核准（建立 Govern 核准項）後才進入生命週期。
         </p>

@@ -83,6 +83,20 @@ function headerSignature() {
 }
 
 describe("Operator shared header chrome", () => {
+  it("preserves the API expansion contributor persona rather than falling back to operations", async () => {
+    const envelope = structuredClone(liveEnvelope);
+    envelope.meta.role = { ...envelope.meta.role, id: "expansion-staff", label: "展店專員", allowedWorkspaces: ["today", "network"] };
+    envelope.navigation.roles = [{ id: "expansion-staff", label: "展店專員", subtitle: "Own intake work", allowedWorkspaces: ["today", "network"] }];
+    envelope.navigation.allowedWorkspaces = ["today", "network"];
+    envelope.today.hero.roleLabel = "展店專員";
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => jsonResponse(envelope)));
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+    await waitFor(() => expect(screen.getByTitle("展店專員")).toBeInTheDocument());
+    fireEvent.click(screen.getByTitle("展店專員"));
+    fireEvent.click(screen.getByRole("button", { name: /展店專員 Own intake work/ }));
+    expect(window.sessionStorage.getItem("oday.operator.role")).toBe("expansion-staff");
+  });
+
   beforeEach(() => {
     window.sessionStorage.clear();
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
@@ -367,7 +381,10 @@ describe("Operator shared header chrome", () => {
     await new Promise((resolve) => window.setTimeout(resolve, 0));
     expect(detail()).toHaveTextContent("正在啟動");
 
-    retry.resolve(jsonResponse(liveEnvelope));
+    const selectedEnvelope = structuredClone(liveEnvelope);
+    selectedEnvelope.meta.role = { ...selectedEnvelope.meta.role, ...otherRole };
+    selectedEnvelope.navigation.roles = [otherRole];
+    retry.resolve(jsonResponse(selectedEnvelope));
     expect(await screen.findByText("Live unresolved")).toBeInTheDocument();
   });
 

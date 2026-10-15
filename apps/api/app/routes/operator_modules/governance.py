@@ -36,6 +36,7 @@ from apps.api.app.routes.operator_modules.live_service import resolve_service
 from modules.opsboard.application.governance import (
     DECISION_ACTIONS,
     GovernanceConflict,
+    GovernanceExportUnavailable,
     GovernanceNotFound,
     GovernancePolicyError,
     GovernanceService,
@@ -129,14 +130,26 @@ def create_governance_sub_router(
     """Return the Govern sub-router wired to a shared GovernanceService."""
     router = APIRouter(prefix="/governance", tags=["operator-governance"])
 
+    def verified_actor(request: Request) -> tuple[Principal, str]:
+        principal = getattr(request.state, "operator_principal", None)
+        role = getattr(request.state, "operator_role_id", None)
+        if not isinstance(principal, Principal) or not principal.authenticated or not principal.tenant_id:
+            raise HTTPException(status_code=401, detail="AUTHENTICATED_ACTOR_REQUIRED")
+        if not role:
+            raise HTTPException(status_code=401, detail="VERIFIED_ROLE_REQUIRED")
+        return principal, role
+
     read_deps: list[Any] = (
         [Depends(require_view_permission_fn)] if require_view_permission_fn else []
     )
+    def command_authority_unconfigured() -> None:
+        raise HTTPException(status_code=403, detail="GOVERNANCE_COMMAND_AUTHORITY_UNCONFIGURED")
+
     decision_deps: list[Any] = (
-        [Depends(require_decision_permission_fn)] if require_decision_permission_fn else []
+        [Depends(require_decision_permission_fn or command_authority_unconfigured)]
     )
     export_deps: list[Any] = (
-        [Depends(require_export_permission_fn)] if require_export_permission_fn else []
+        [Depends(require_export_permission_fn or command_authority_unconfigured)]
     )
 
     # ------------------------------------------------------------------
@@ -177,12 +190,14 @@ def create_governance_sub_router(
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ) -> dict[str, Any]:
         try:
+            principal, role = verified_actor(request)
             return resolve_service(request, service, service_resolver).decide(
                 approval_id=body.approvalId,
                 action=body.action,
                 reason=body.reason,
-                role=body.role,
-                actor_name=body.actorName,
+                role=role,
+                actor_name=principal.subject_id,
+                tenant_id=principal.tenant_id,
                 idempotency_key=idempotency_key,
                 correlation_id=request.state.correlation_id,
             )
@@ -201,20 +216,29 @@ def create_governance_sub_router(
         request: Request,
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ) -> dict[str, Any]:
-        return resolve_service(
-            request, service, service_resolver
-        ).export_evidence_package(
-            date_from=body.dateFrom,
-            date_to=body.dateTo,
-            modules=body.modules,
-            contents=body.contents,
-            fmt=body.format,
-            role=body.role,
-            actor_name=body.actorName,
-            retention_policy=body.retentionPolicy,
-            idempotency_key=idempotency_key,
-            correlation_id=request.state.correlation_id,
-        )
+        try:
+            principal, role = verified_actor(request)
+            return resolve_service(
+                request, service, service_resolver
+            ).export_evidence_package(
+                date_from=body.dateFrom,
+                date_to=body.dateTo,
+                modules=body.modules,
+                contents=body.contents,
+                fmt=body.format,
+                role=role,
+                actor_name=principal.subject_id,
+                tenant_id=principal.tenant_id,
+                retention_policy=body.retentionPolicy,
+                idempotency_key=idempotency_key,
+                correlation_id=request.state.correlation_id,
+            )
+        except GovernanceExportUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except GovernancePolicyError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except GovernanceConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return router
 

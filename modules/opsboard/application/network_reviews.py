@@ -31,10 +31,14 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import uuid
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from typing import Any
 
+from modules.sitescore.domain.scoring import SiteScoreReport
+from shared.domain.models import MEASUREMENT_MEASURED, MEASUREMENT_UNMEASURED
 from shared.workflow.sitescore import (
     DecisionAction,
     DecisionStatus,
@@ -83,6 +87,7 @@ STATUS_LABEL: dict[str, str] = {
     "onhold": "On Hold（WAIT）",
     "needdata": "退回補件（Need Data）",
     "rejected": "已駁回",
+    "unknown": "未記錄 Network 核決動作",
 }
 
 # The SiteScore recommendation each decision "agrees" with. A decision whose
@@ -142,6 +147,15 @@ def _now() -> str:
 
 def _copy(value: Any) -> Any:
     return copy.deepcopy(value)
+
+
+def _finite_measurement(value: Any) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _payload_fingerprint(
@@ -300,12 +314,16 @@ class NetworkReviewService:
         sitescore_repository: Any | None = None,
         decision_workflow: Any | None = None,
         require_canonical: bool = False,
+        audit_delivery_factory: Any | None = None,
+        candidate_workflow_service: Any | None = None,
     ) -> None:
         self._seed_fixtures = seed_fixtures
         self._decision_repository = decision_repository
         self._sitescore_repository = sitescore_repository
         self._decision_workflow = decision_workflow
         self._require_canonical = require_canonical
+        self._audit_delivery_factory = audit_delivery_factory
+        self._candidate_workflow_service = candidate_workflow_service
         if initial_state is not None:
             self._reviews = _copy(initial_state.get("reviews", []))
             self._candidates = _copy(initial_state.get("candidates", {}))
@@ -352,6 +370,42 @@ class NetworkReviewService:
             }
 
     # -- public API ----------------------------------------------------
+
+    def transaction_scope(self, engine: Any, tenant_id: str):
+        """Require all canonical mutation writes to share the loaded SQL unit."""
+        self._require_canonical_dependencies()
+        audit = self._decision_workflow.audit_log
+        if (self._decision_repository.engine is not engine
+                or self._decision_repository.tenant_id != tenant_id
+                or getattr(audit, "_engine", None) is not engine):
+            raise NetworkReviewRuntimeUnavailable("canonical review persistence must share the tenant SQL engine")
+        if self._decision_workflow._store is not self._decision_repository:
+            raise NetworkReviewRuntimeUnavailable("canonical workflow and review must share the decision repository")
+        if (getattr(self._sitescore_repository, "engine", None) is not engine
+                or getattr(self._sitescore_repository, "tenant_id", None) != tenant_id):
+            raise NetworkReviewRuntimeUnavailable("canonical SiteScore reader must share the tenant SQL engine")
+        approval_store = self._decision_workflow._approval_store
+        if approval_store is None or approval_store.engine is not engine or approval_store.tenant_id != tenant_id:
+            raise NetworkReviewRuntimeUnavailable("canonical approval must share the tenant SQL engine")
+        candidate_service = self._candidate_workflow_service
+        if candidate_service is None or (
+            candidate_service._listing_repository._store.engine is not engine
+            or candidate_service._listing_repository.tenant_id != tenant_id
+            or candidate_service._intakes._store.engine is not engine
+            or candidate_service._intakes._store.tenant_id != tenant_id
+            or candidate_service._tenant_id != tenant_id
+            or candidate_service._review_decision_repository is not self._decision_repository
+        ):
+            raise NetworkReviewRuntimeUnavailable("canonical candidate must share the tenant SQL engine")
+        if getattr(audit, "_worm_sink", None) is not None:
+            if self._audit_delivery_factory is None:
+                raise NetworkReviewRuntimeUnavailable("canonical review WORM requires a transactional durable delivery")
+            try:
+                delivery = self._audit_delivery_factory(tenant_id)
+            except ValueError as exc:
+                raise NetworkReviewRuntimeUnavailable(str(exc)) from exc
+            return audit.transactional_worm_sink(delivery)
+        return nullcontext()
 
     def reset(self) -> dict[str, Any]:
         if self._require_canonical:
@@ -438,7 +492,7 @@ class NetworkReviewService:
                 actor_role_id=actor_role_id,
             ),
         )
-        if idempotency_key and cache_key in self._idempotency_cache:
+        if not self._require_canonical and idempotency_key and cache_key in self._idempotency_cache:
             return {**_copy(self._idempotency_cache[cache_key]), "idempotentReplay": True}
 
         if self._require_canonical:
@@ -651,27 +705,87 @@ class NetworkReviewService:
             DecisionStatus.REJECTED: "rejected",
         }
         for decision in decisions:
-            report = self._decision_repository.get_report(decision.decision_id)
+            report, report_availability = self._retained_decision_report(decision)
             status_key = status_map[decision.status]
-            score = int(round(report.confidence * 100)) if report is not None else None
+            recorded_action = getattr(decision, "network_action", None)
+            if recorded_action is not None:
+                status_key = DECISION_REVIEW_STATUS[recorded_action]
+            elif decision.status in {DecisionStatus.DRAFT, DecisionStatus.APPROVED}:
+                status_key = "unknown"
+            # A report records forecasts and confidence, not a scalar suitability
+            # score. Use only this decision's frozen report, never latest(report).
+            score = None
+            confidence = (
+                report.confidence
+                if report is not None
+                and getattr(report, "confidence_status", MEASUREMENT_UNMEASURED) == MEASUREMENT_MEASURED
+                and _finite_measurement(report.confidence)
+                and 0 <= report.confidence <= 1
+                else None
+            )
             risks = list(report.key_negative_factors) if report is not None else []
+            recorded_action = getattr(decision, "network_action", None)
+            terminal = decision.history[-1] if recorded_action and decision.history else None
+            decision_view = None
+            if terminal is not None:
+                action = recorded_action
+                decision_view = {
+                    "decision": action,
+                    "finalLabel": DECISION_FINAL_LABEL[action],
+                    "mappedStatus": status_key,
+                    "reason": terminal.reason,
+                    "override": _is_override(action, decision.recommendation.value),
+                    "decidedAt": terminal.at.isoformat(),
+                    "decidedBy": terminal.actor,
+                    "decisionId": decision.decision_id,
+                    "conditions": getattr(decision, "conditions", None),
+                    "requiredData": (list(decision.required_data) if getattr(decision, "required_data", None) is not None else None),
+                    "overrideAck": getattr(decision, "override_ack", None),
+                    "actorRoleId": getattr(decision, "actor_role_id", None),
+                    "approvalId": getattr(decision, "approval_id", None),
+                }
             row = {
                 "id": decision.decision_id,
                 "candidateId": decision.candidate_site_id,
                 "candidateTitle": decision.candidate_site_id,
-                "zoneLabel": report.heat_zone_id if report is not None else "",
+                "zoneLabel": report.heat_zone_id if report is not None else None,
                 "recommendation": decision.recommendation.value,
                 "score": score,
-                "risk": risks,
+                "confidence": confidence,
+                "confidenceStatus": MEASUREMENT_MEASURED if confidence is not None else MEASUREMENT_UNMEASURED,
+                "reportAvailability": report_availability,
+                "risk": "、".join(risks),
                 "status": status_key,
-                "statusLabel": STATUS_LABEL[status_key],
+                "statusLabel": (
+                    "系統建議（尚未送審）"
+                    if decision.status is DecisionStatus.SYSTEM_RECOMMENDED
+                    else STATUS_LABEL[status_key]
+                ),
+                "pending": decision.status is DecisionStatus.PENDING_REVIEW,
+                "decided": recorded_action is not None,
                 "submittedAt": decision.created_at.isoformat(),
+                "requestedBy": decision.created_by,
                 "reviewerRole": "Site Reviewer",
-                "modelVersion": decision.model_version,
+                "dueAt": None,
+                "payback": self._recorded_number(report.payback_p50_months, " 個月") if report is not None else None,
+                "m12P50": self._recorded_number(report.m12.p50) if report is not None else None,
+                "rentReasonableness": self._recorded_number(report.rent_reasonableness) if report is not None else None,
+                "cannibalization": self._recorded_number(report.cannibalization_risk) if report is not None else None,
+                "sourceListingId": None,
+                "fieldVisit": None,
+                "brokerContact": None,
+                "notes": None,
+                "compareText": None,
+                "eventChips": [],
+                "modelVersion": (
+                    decision.model_version
+                    if isinstance(decision.model_version, str) and decision.model_version.strip()
+                    else None
+                ),
                 "datasetSnapshotId": (
                     report.source_snapshot_ids[0]
                     if report is not None and report.source_snapshot_ids
-                    else ""
+                    else None
                 ),
                 "history": [
                     {
@@ -683,7 +797,7 @@ class NetworkReviewService:
                     }
                     for transition in reversed(decision.history)
                 ],
-                "decision": decision.to_dict() if decision.is_terminal else None,
+                "decision": decision_view,
                 "canonicalDecisionStatus": decision.status.value,
                 "reportId": decision.report_id,
                 "reportVersion": decision.report_version,
@@ -697,48 +811,86 @@ class NetworkReviewService:
                     "recommendation": decision.recommendation.value,
                     "score": score,
                     "reviewId": decision.decision_id,
-                    "missingData": [],
+                    "missingData": (list(decision.required_data or ()) if recorded_action == "RETURN" else []),
                 }
             )
+            approval_store = self._decision_workflow._approval_store
+            approval_id = getattr(decision, "approval_id", None)
+            approval = approval_store.get(approval_id) if approval_store is not None and approval_id else None
+            approval_valid = approval is not None and approval.decision_id == decision.decision_id
             approvals.append(
                 {
-                    "id": decision.decision_id,
+                    "id": approval_id if approval_valid else None,
                     "reviewId": decision.decision_id,
                     "candidateId": decision.candidate_site_id,
                     "title": decision.candidate_site_id,
                     "systemRecommendation": decision.recommendation.value,
                     "risk": risks,
-                    "status": decision.status.value.lower(),
+                    "status": DECISION_APPROVAL_STATUS[recorded_action] if approval_valid and recorded_action else "pending" if approval_valid and decision.status in {DecisionStatus.SYSTEM_RECOMMENDED, DecisionStatus.PENDING_REVIEW} else None,
+                    "approvalStatus": approval.approval_status if approval_valid else None,
+                    "recordSource": "persisted" if approval_valid else "conflict" if approval_id else "unavailable",
                     "submittedAt": decision.created_at.isoformat(),
                     "decidedAt": (
-                        decision.history[-1].at.isoformat()
-                        if decision.is_terminal and decision.history
+                        approval.approved_at.isoformat()
+                        if approval_valid and approval.approved_at is not None
                         else None
                     ),
                     "decidedBy": (
-                        decision.history[-1].actor
-                        if decision.is_terminal and decision.history
+                        approval.approver_id
+                        if approval_valid and approval.approved_at is not None
                         else None
                     ),
                 }
             )
         reviews.sort(key=lambda row: (row["submittedAt"], row["id"]), reverse=True)
-        pending = sum(row["status"] == "pending" for row in reviews)
+        pending = sum(row["pending"] for row in reviews)
+        resources = {f"sitescore/decision/{row.decision_id}": row.decision_id for row in decisions}
+        audit_rows = [
+            {**event.to_dict(), "id": event.event_id, "targetType": "review",
+             "targetId": resources[event.resource], "occurredAt": event.occurred_at.isoformat(),
+             "actorName": event.actor, "actorRoleId": event.metadata.get("actor_role_id"),
+             "correlationId": event.correlation_id}
+            for event in self._decision_workflow.audit_log.list_events(
+                tenant_id=self._decision_repository.tenant_id or None)
+            if event.resource in resources and event.event_type == "sitescore.decision.v1"
+        ]
         return {
             "source": "canonical",
             "reviews": reviews,
             "candidates": candidates,
             "approvals": approvals,
             "decisions": [decision.to_dict() for decision in decisions],
-            "auditEvents": _copy(self._audit_events),
+            "auditEvents": audit_rows,
             "decisionMapping": dict(DECISION_FINAL_LABEL),
             "counts": {
                 "reviews": len(reviews),
                 "pending": pending,
-                "decided": len(reviews) - pending,
+                "decided": sum(row["decided"] for row in reviews),
             },
             "correlationId": correlation_id,
         }
+
+    def _retained_decision_report(self, decision: Any) -> tuple[SiteScoreReport | None, str]:
+        """Read this decision's retained report without repairing or substituting it."""
+        report = self._decision_repository.get_report(decision.decision_id)
+        if report is None:
+            return None, "unavailable"
+        if (
+            not isinstance(report, SiteScoreReport)
+            or report.candidate_site_id != decision.candidate_site_id
+            or report.report_id != decision.report_id
+            or report.report_version != decision.report_version
+            or report.model_version != decision.model_version
+        ):
+            return None, "conflict"
+        return report, "available"
+
+    @staticmethod
+    def _recorded_number(value: Any, suffix: str = "") -> str | None:
+        """Format an existing measurement without filling missing values."""
+        if not _finite_measurement(value):
+            return None
+        return f"{value:g}{suffix}"
 
     def _decide_canonical(
         self,
@@ -756,6 +908,8 @@ class NetworkReviewService:
         correlation_id: str | None,
     ) -> dict[str, Any]:
         self._require_canonical_dependencies()
+        if not isinstance(actor_name, str) or not actor_name.strip():
+            raise NetworkReviewRoleError("canonical review requires the authenticated actor")
         if action not in DECISION_ACTIONS:
             raise NetworkReviewPolicyError(
                 f"decision must be one of {', '.join(DECISION_ACTIONS)}"
@@ -776,6 +930,8 @@ class NetworkReviewService:
         existing = self._decision_repository.get_decision(review_id)
         if existing is None:
             raise NetworkReviewNotFound(f"review {review_id} not found")
+        if self._decision_repository.tenant_id and existing.tenant_id != self._decision_repository.tenant_id:
+            raise NetworkReviewConflict("canonical decision tenant differs from the repository tenant")
         natural = _NATURAL_ACTION.get(existing.recommendation.value)
         override = action not in {natural, "RETURN"}
         if override and not override_ack:
@@ -783,6 +939,41 @@ class NetworkReviewService:
                 "本決策覆寫系統建議，需勾選風險確認後才能送出"
             )
         actor = actor_name or actor_role_id
+        # A canonical receipt belongs to the verified actor, tenant and review.
+        # Payload reuse conflicts rather than starting a second RETURN revision.
+        canonical_key = ("canonical-decide", existing.tenant_id, actor, review_id, idempotency_key or "")
+        if idempotency_key and canonical_key in self._idempotency_cache:
+            receipt = self._idempotency_cache[canonical_key]
+            if receipt["requestFingerprint"] != cache_key[-1]:
+                raise NetworkReviewConflict("idempotency key was reused with a different decision payload")
+            return {**_copy(receipt["response"]), "idempotentReplay": True}
+        # Matching unknown values do not establish a usable frozen identity.
+        # Keep historical reads and authenticated receipt replay available;
+        # this check applies before any fresh submit/decision transition.
+        if (
+            not isinstance(existing.candidate_site_id, str)
+            or not existing.candidate_site_id.strip()
+            or not isinstance(existing.report_id, str)
+            or not existing.report_id.strip()
+            or isinstance(existing.report_version, bool)
+            or not isinstance(existing.report_version, int)
+            or existing.report_version < 1
+            or not isinstance(existing.model_version, str)
+            or not existing.model_version.strip()
+        ):
+            raise NetworkReviewConflict(
+                f"review {review_id} retained report identity is unavailable; decision was not changed"
+            )
+        _, report_availability = self._retained_decision_report(existing)
+        if report_availability != "available":
+            raise NetworkReviewConflict(
+                f"review {review_id} retained report is {report_availability}; decision was not changed"
+            )
+        if self._candidate_workflow_service is not None:
+            try:
+                self._candidate_workflow_service.validate_review_candidate(existing)
+            except RuntimeError as exc:
+                raise NetworkReviewConflict(str(exc)) from exc
         try:
             if existing.status in {
                 DecisionStatus.SYSTEM_RECOMMENDED,
@@ -797,16 +988,35 @@ class NetworkReviewService:
                 review_id,
                 action={
                     "GO": DecisionAction.APPROVE,
-                    "WAIT": DecisionAction.REQUEST_REVISION,
+                    "WAIT": DecisionAction.APPROVE,
                     "RETURN": DecisionAction.REQUEST_REVISION,
                     "REJECT": DecisionAction.REJECT,
                 }[action],
                 actor=actor,
                 reason=reason,
                 correlation_id=correlation_id or "",
+                network_action=action,
+                conditions=conditions,
+                required_data=required_data,
+                override_ack=override_ack,
+                actor_role_id=actor_role_id,
             )
         except SiteScoreDecisionError as exc:
             raise NetworkReviewConflict(str(exc)) from exc
+
+        if self._candidate_workflow_service is not None:
+            self._candidate_workflow_service.record_review_decision(outcome.decision)
+        review_record = {
+            "id": outcome.decision.decision_id, "candidateId": outcome.decision.candidate_site_id,
+            "approvalId": outcome.decision.approval_id, "reportId": outcome.decision.report_id,
+            "reportVersion": outcome.decision.report_version, "decisionVersion": outcome.decision.version,
+            "tenantId": outcome.decision.tenant_id, "networkAction": action,
+            "status": DECISION_REVIEW_STATUS[action], "canonicalDecisionStatus": outcome.decision.status.value,
+            "conditions": conditions, "requiredData": _copy(required_data), "overrideAck": override_ack,
+            "actor": actor, "actorRoleId": actor_role_id,
+            "decidedAt": outcome.decision.history[-1].at.isoformat(), "auditId": outcome.audit_event_id,
+        }
+        self._reviews = [row for row in self._reviews if row["id"] != review_id] + [review_record]
 
         result = {
             "review": outcome.decision.to_dict(),
@@ -816,6 +1026,7 @@ class NetworkReviewService:
                 "reviewId": outcome.decision.decision_id,
                 "decisionId": outcome.decision.decision_id,
                 "auditId": outcome.audit_event_id,
+                "approvalId": outcome.decision.approval_id,
             },
             "conditions": conditions,
             "requiredData": required_data,
@@ -824,7 +1035,7 @@ class NetworkReviewService:
             "idempotentReplay": False,
         }
         if idempotency_key:
-            self._idempotency_cache[cache_key] = _copy(result)
+            self._idempotency_cache[canonical_key] = {"requestFingerprint": cache_key[-1], "response": _copy(result)}
         return result
 
     def _review(self, review_id: str) -> dict[str, Any]:

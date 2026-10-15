@@ -9,7 +9,9 @@ file sink that rejects overwrites.
 
 from __future__ import annotations
 
+import json
 import os
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
@@ -22,6 +24,13 @@ from shared.audit.integrity import canonical_json, sha256_hex
 
 class AuditWormSinkError(RuntimeError):
     """Raised when the external immutable sink rejects an audit write."""
+
+
+class _NoGcsRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Neither the writer nor the recovery credential may leave the
+        # configured Cloud Storage endpoint via an HTTP redirect.
+        return None
 
 
 @dataclass(frozen=True)
@@ -80,6 +89,33 @@ class LocalAppendOnlyWormSink:
             payload=event.to_dict(),
         )
 
+    def lookup_audit_event(self, event: Any) -> AuditWormReceipt | None:
+        """Verify an existing immutable object after a delivery interruption."""
+        checksum = sha256_hex(event.to_dict())
+        path = self._root / _object_name(
+            record_type="audit-events",
+            record_id=event.event_id,
+            sequence=event.sequence,
+            checksum=checksum,
+        )
+        if not path.exists():
+            return None
+        envelope = json.loads(path.read_text(encoding="utf-8"))
+        if (
+            envelope.get("record_id") != event.event_id
+            or envelope.get("checksum") != checksum
+            or envelope.get("payload") != event.to_dict()
+        ):
+            raise AuditWormSinkError("existing WORM object does not match the audit event")
+        return AuditWormReceipt(
+            sink_id=self.sink_id,
+            object_uri=path.resolve().as_uri(),
+            record_type="audit-events",
+            record_id=event.event_id,
+            checksum=checksum,
+            written_at=datetime.fromisoformat(envelope["written_at"]),
+        )
+
     def write_retained_evidence(self, record: Any) -> AuditWormReceipt:
         return self._write(
             record_type="retained-evidence",
@@ -118,9 +154,7 @@ class LocalAppendOnlyWormSink:
         try:
             fd = os.open(path, flags, 0o440)
         except FileExistsError as exc:
-            raise AuditWormSinkError(
-                f"WORM object already exists: {path}"
-            ) from exc
+            raise AuditWormSinkError(f"WORM object already exists: {path}") from exc
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(canonical_json(envelope))
             handle.write("\n")
@@ -141,6 +175,9 @@ class GcsWormEvidenceSink:
     runtime impersonates a writer service account with ``storage.objectCreator``.
     The upload uses ``ifGenerationMatch=0`` so an existing object cannot be
     overwritten even if the caller retries with the same object name.
+    After a 412, recovery uses only an explicitly configured read credential
+    to verify the exact existing object. It never reuses the create-only
+    writer credential, and never marks an unreadable object delivered.
     """
 
     def __init__(
@@ -148,6 +185,7 @@ class GcsWormEvidenceSink:
         sink_uri: str,
         *,
         token: str | None = None,
+        recovery_token: str | None = None,
         timeout_seconds: float = 10.0,
     ) -> None:
         if not sink_uri.startswith("gs://"):
@@ -160,7 +198,9 @@ class GcsWormEvidenceSink:
         self._prefix = prefix.strip("/")
         self._sink_id = sink_uri.rstrip("/")
         self._token = token
+        self._recovery_token = recovery_token
         self._timeout_seconds = timeout_seconds
+        self._opener = urllib.request.build_opener(_NoGcsRedirect())
 
     @property
     def sink_id(self) -> str:
@@ -193,8 +233,7 @@ class GcsWormEvidenceSink:
         token = self._token or _configured_gcs_token()
         if not token:
             raise AuditWormSinkError(
-                "GCS WORM sink requires ODP_AUDIT_WORM_GCS_TOKEN or "
-                "GOOGLE_OAUTH_ACCESS_TOKEN"
+                "GCS WORM sink requires ODP_AUDIT_WORM_GCS_TOKEN or GOOGLE_OAUTH_ACCESS_TOKEN"
             )
         checksum = sha256_hex(payload)
         written_at = datetime.now(UTC)
@@ -233,10 +272,90 @@ class GcsWormEvidenceSink:
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout_seconds):
+            with self._opener.open(request, timeout=self._timeout_seconds):
                 pass
+        except urllib.error.HTTPError as exc:
+            if exc.code == 412:
+                exc.close()
+                return self._recover_existing(
+                    object_name=object_name,
+                    record_type=record_type,
+                    record_id=record_id,
+                    sequence=sequence,
+                    checksum=checksum,
+                    max_response_bytes=len(data) + 4096,
+                )
+            exc.close()
+            raise AuditWormSinkError(f"GCS WORM write failed with HTTP {exc.code}") from exc
         except OSError as exc:
             raise AuditWormSinkError(f"GCS WORM write failed: {exc}") from exc
+        return AuditWormReceipt(
+            sink_id=self.sink_id,
+            object_uri=f"gs://{self._bucket}/{object_name}",
+            record_type=record_type,
+            record_id=record_id,
+            checksum=checksum,
+            written_at=written_at,
+        )
+
+    def _recover_existing(
+        self,
+        *,
+        object_name: str,
+        record_type: str,
+        record_id: str,
+        sequence: int | None,
+        checksum: str,
+        max_response_bytes: int,
+    ) -> AuditWormReceipt:
+        token = (
+            self._recovery_token
+            if self._recovery_token is not None
+            else os.environ.get("ODP_AUDIT_WORM_GCS_RECOVERY_TOKEN", "").strip()
+        )
+        if not token:
+            raise AuditWormSinkError(
+                "Existing GCS WORM object requires an explicitly configured recovery credential"
+            )
+        endpoint = (
+            "https://storage.googleapis.com/storage/v1/b/"
+            f"{urllib.parse.quote(self._bucket, safe='')}/o/"
+            f"{urllib.parse.quote(object_name, safe='')}?alt=media"
+        )
+        request = urllib.request.Request(
+            endpoint,
+            method="GET",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        try:
+            with self._opener.open(request, timeout=self._timeout_seconds) as response:
+                data = response.read(max_response_bytes + 1)
+                if len(data) > max_response_bytes:
+                    raise ValueError("GCS WORM recovery object is larger than the expected record")
+                envelope = json.loads(data)
+        except urllib.error.HTTPError as exc:
+            exc.close()
+            raise AuditWormSinkError(
+                f"GCS WORM recovery read failed with HTTP {exc.code}"
+            ) from exc
+        except (OSError, ValueError) as exc:
+            raise AuditWormSinkError("GCS WORM recovery read is unavailable or invalid") from exc
+        if (
+            not isinstance(envelope, dict)
+            or envelope.get("record_type") != record_type
+            or envelope.get("record_id") != record_id
+            or type(envelope.get("sequence")) is not type(sequence)
+            or envelope.get("sequence") != sequence
+            or envelope.get("checksum") != checksum
+            or sha256_hex(envelope.get("payload")) != checksum
+        ):
+            raise AuditWormSinkError("Existing GCS WORM object does not match the committed record")
+        try:
+            written_at = datetime.fromisoformat(envelope["written_at"])
+            if written_at.tzinfo is None or written_at.utcoffset() is None:
+                raise ValueError("WORM object timestamp must include its timezone")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise AuditWormSinkError("Existing GCS WORM object timestamp is invalid") from exc
         return AuditWormReceipt(
             sink_id=self.sink_id,
             object_uri=f"gs://{self._bucket}/{object_name}",
@@ -287,6 +406,13 @@ def _object_name(
     return f"{record_type}/{prefix}-{_safe_object_token(record_id)}-{checksum[:16]}.json"
 
 
+def audit_event_object_name(record_id: str, sequence: int, checksum: str) -> str:
+    """The existing deterministic object key for a verified audit record."""
+    return _object_name(
+        record_type="audit-events", record_id=record_id, sequence=sequence, checksum=checksum
+    )
+
+
 def _safe_object_token(value: str) -> str:
     return "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in value)
 
@@ -297,5 +423,6 @@ __all__ = [
     "AuditWormSinkError",
     "GcsWormEvidenceSink",
     "LocalAppendOnlyWormSink",
+    "audit_event_object_name",
     "build_audit_worm_sink_from_env",
 ]

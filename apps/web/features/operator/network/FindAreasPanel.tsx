@@ -97,12 +97,12 @@ export function FindAreasPanel({
 }: FindAreasPanelProps) {
   const mapZones = useMemo<MapHeatZone[]>(() => heatZones.map(operatorHeatZoneToMapZone), [heatZones]);
   const mapListings = useMemo<MapListing[]>(
-    () => listings.map((l, i) => operatorListingToMapListing(l, heatZones, i)),
-    [listings, heatZones],
+    () => listings.map((l, i) => operatorListingToMapListing(l, heatZones, i, fixturesAllowed)),
+    [listings, heatZones, fixturesAllowed],
   );
   const mapCandidates = useMemo<MapCandidateSite[]>(
-    () => candidates.map((c, i) => operatorCandidateToMapSite(c, heatZones, i)),
-    [candidates, heatZones],
+    () => candidates.map(operatorCandidateToMapSite),
+    [candidates],
   );
   const lensScores = useMemo<HeatZoneLensScore[]>(
     () =>

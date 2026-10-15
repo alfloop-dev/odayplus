@@ -57,8 +57,8 @@ export type Listing = {
   area: string;
   geocode: string;
   duplicate: string;
-  heatZoneId: string;
-  coordinates: [number, number];
+  heatZoneId: string | null;
+  coordinates: [number, number] | null;
   updatedAt: string;
   action: string;
 };
@@ -75,8 +75,8 @@ export type CandidateSite = {
     | "approved"
     | "opened";
   heatZoneId: string;
-  coordinates: [number, number];
-  heatZoneScore: number;
+  coordinates: [number, number] | null;
+  heatZoneScore: number | null;
   rentArea: string;
   geocode: string;
   feasibility: string;

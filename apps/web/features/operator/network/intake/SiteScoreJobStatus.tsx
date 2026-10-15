@@ -118,9 +118,9 @@ export function SiteScoreJobStatus({
     }
   }
 
-  const scoreFailed = promotionStatus === "SCORE_FAILED";
+  const scoreFailed = promotionStatus === "SCORE_FAILED" || job?.status === "FAILED";
   const replayable = Boolean(
-    job && (REPLAYABLE.includes(job.status) || job.delivery_state === "DEAD_LETTER" || scoreFailed),
+    job && REPLAYABLE.includes(job.status) && job.delivery_state !== "DEAD_LETTER",
   );
   const showReplayControls = replayable && canReplay && Boolean(onReplay);
 
@@ -218,10 +218,10 @@ export function SiteScoreJobStatus({
         </div>
       )}
 
-      {/* SCORE_FAILED keeps the candidate — say so, and keep showing its ID. */}
+      {/* An accepted promotion stays completed even if its score job fails. */}
       {scoreFailed ? (
         <div className={styles.warnNote} data-testid="candidate-retained-note" role="status">
-          評分失敗（SCORE_FAILED），但 Candidate Site
+          評分失敗（{promotionStatus === "SCORE_FAILED" ? "SCORE_FAILED" : "FAILED"}），但 Candidate Site
           {candidateSiteId ? (
             <>
               {" "}
@@ -230,8 +230,10 @@ export function SiteScoreJobStatus({
           ) : (
             " "
           )}
-          仍然存在，不會被刪除。可由授權人員自 SCORE_QUEUED 檢查點以同一
-          Idempotency-Key 重放評分。
+          仍然存在，不會被刪除。
+          {job?.delivery_state === "DEAD_LETTER"
+            ? "已達重試上限，需先完成事件處理與授權程序。"
+            : "可由授權人員自 SCORE_QUEUED 檢查點以同一 Idempotency-Key 重放評分。"}
         </div>
       ) : null}
 

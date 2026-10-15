@@ -9,7 +9,8 @@ Owns the Listing Radar state used by ``/api/v1/operator/network-listings``:
 - R5 human-assisted URL intake (submit/correct/decide/retry/promote).
 
 Persistence is injected, not assumed. The service composes with two optional
-repositories and never reaches into their internals:
+repositories; the durable resolver additionally verifies their SQL engine and
+tenant binding before a mutation:
 
 - ``listing_repository`` for Listing Radar rows.
 - ``intake_repository`` (:class:`AssistedIntakeRepository`) for assisted intake
@@ -30,10 +31,53 @@ applying the effect twice.
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
+import math
 import uuid
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from contextlib import nullcontext
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from functools import wraps
 from typing import Any, Protocol
+
+from modules.listing.application.intake_authorization import (
+    LEGAL_HOLD_FIELDS,
+    recorded_legal_hold_state,
+)
+
+# These bindings are recorded by the property/observation pipeline. The
+# operator adapter carries them through writes; it never derives new IDs.
+_LISTING_LINEAGE_FIELDS = (
+    "property_id", "propertyId", "platform_property_id",
+    "listing_obs_id", "listingObsId", "platform_observation_id",
+)
+
+
+def _atomic_intake_submission(method: Callable[..., Any]) -> Callable[..., Any]:
+    """Keep the workflow, intake and existing actor-bound replay in one unit of work."""
+    @wraps(method)
+    def invoke(self: Any, *args: Any, **kwargs: Any) -> Any:
+        transaction = getattr(self._intakes, "transaction", None)
+        if transaction is None:
+            return method(self, *args, **kwargs)
+        before = copy.deepcopy((self._state, self._idempotency_cache, self._idempotency_bindings))
+        try:
+            with transaction(intake_id=kwargs.get("intake_id")):
+                self._load_intakes()
+                self._load_idempotency_cache()
+                if kwargs.get("intake_id"):
+                    authorize = kwargs.get("authorize_existing")
+                    if authorize is None and not self._seed_fixtures:
+                        raise NetworkListingPolicyError("INTAKE_SCOPE_CONTEXT_REQUIRED")
+                    if authorize is not None:
+                        authorize(_copy(self._listing_intake(kwargs["intake_id"])))
+                return method(self, *args, **kwargs)
+        except BaseException:
+            self._state, self._idempotency_cache, self._idempotency_bindings = before
+            raise
+    return invoke
 
 
 @dataclass(frozen=True)
@@ -43,6 +87,17 @@ class IntakeIdempotencyRecord:
     action: str
     key: str
     response: dict[str, Any]
+    actor_subject_id: str | None = None
+    request_sha256: str | None = None
+
+
+@dataclass(frozen=True)
+class OperatorWrite:
+    action: str
+    key: str | None
+    actor_subject_id: str
+    request_sha256: str
+    replayed_response: dict[str, Any] | None = None
 
 
 class AssistedIntakeRepository(Protocol):
@@ -159,6 +214,14 @@ class NetworkListingPolicyError(RuntimeError):
     """Raised when a mutation violates the network intake policy."""
 
 
+class NetworkListingPreconditionRequired(NetworkListingPolicyError):
+    """A governed write did not carry its actual listing revision."""
+
+
+class NetworkListingVersionUnavailable(NetworkListingPolicyError):
+    """The listing producer has not published an authoritative revision."""
+
+
 def _require_acknowledged_risk(
     *, risk_summary: str | None, risk_acknowledged: bool, action_label: str
 ) -> str:
@@ -250,12 +313,6 @@ def _missing_assisted_entry_fields(values: dict[str, Any]) -> list[str]:
             except (ValueError, TypeError):
                 missing.append(field_name)
     return missing
-
-
-def _optional_float(value: Any, *, default: float) -> float:
-    if value is None or value == "":
-        return default
-    return float(value)
 
 
 def _optional_number(value: Any, cast: Any) -> Any:
@@ -461,8 +518,12 @@ class NetworkListingService:
         initial_state: dict[str, Any] | None = None,
         seed_fixtures: bool = True,
         tenant_id: str | None = None,
+        high_risk_write_guard: Callable[[str], None] | None = None,
+        review_decision_repository: Any | None = None,
     ) -> None:
         self._seed_fixtures = seed_fixtures
+        self._high_risk_write_guard = high_risk_write_guard
+        self._review_decision_repository = review_decision_repository
         self._tenant_id = tenant_id.strip() if tenant_id and tenant_id.strip() else None
         self._listing_repository = listing_repository
         self._intakes: AssistedIntakeRepository = (
@@ -476,11 +537,107 @@ class NetworkListingService:
             else _empty_state()
         )
         self._idempotency_cache = _copy(state.pop("idempotencyCache", {}))
+        self._idempotency_bindings: dict[tuple[str, str], tuple[str | None, str | None]] = {}
         self._state = state
         self._load_intakes()
         self._load_idempotency_cache()
         self._load_listings()
         self._load_candidates()
+
+    def transaction_scope(self, engine: Any, tenant_id: str):
+        """Bind canonical records and replay metadata to the aggregate's SQL unit.
+
+        A repository on another engine would commit even when the outer
+        aggregate transaction rolls back. Unpartitioned metadata would also
+        defeat this tenant boundary. Refuse either composition before writing.
+        """
+        if self._tenant_id != tenant_id:
+            raise ValueError("Listing service must share the transaction tenant")
+        for repository in (self._listing_repository, self._intakes):
+            store = getattr(repository, "_store", None)
+            if (getattr(store, "engine", None) is not engine
+                    or getattr(store, "tenant_id", None) != tenant_id):
+                raise ValueError("Listing records and metadata must share the tenant SQL engine")
+        workflow_store = getattr(self._intakes, "_canonical", None)
+        if workflow_store is not None and getattr(workflow_store, "_engine", None) is not engine:
+            raise ValueError("Listing intake workflow must share the transaction SQL engine")
+        decisions = self._review_decision_repository
+        if decisions is not None and (
+            getattr(decisions, "engine", None) is not engine
+            or getattr(decisions, "tenant_id", None) != tenant_id
+        ):
+            raise ValueError("Listing review reader must share the tenant SQL engine")
+        return nullcontext()
+
+    def _require_actor(self, actor_name: str | None, actor_role_id: str) -> str:
+        if not isinstance(actor_name, str) or not actor_name.strip():
+            raise NetworkListingPolicyError("AUTHENTICATED_ACTOR_REQUIRED")
+        if not self._seed_fixtures:
+            try:
+                actor_name = str(uuid.UUID(actor_name))
+                uuid.UUID(self._tenant_id or "")
+            except ValueError as exc:
+                raise NetworkListingPolicyError("CANONICAL_ACTOR_TENANT_REQUIRED") from exc
+            if actor_role_id not in {"expansion_user", "site_reviewer", "executive", "data_owner", "finance_legal"}:
+                raise NetworkListingPolicyError("VERIFIED_PLATFORM_ROLE_REQUIRED")
+        return actor_name
+
+    def _require_tenant(self, tenant_id: str | None) -> str:
+        value = tenant_id or self._tenant_id
+        if not value:
+            if self._seed_fixtures:
+                return "tenant-a"
+            raise NetworkListingPolicyError("TENANT_SCOPE_REQUIRED")
+        if self._tenant_id and value != self._tenant_id:
+            raise NetworkListingPolicyError("TENANT_SCOPE_DENIED")
+        if not self._seed_fixtures:
+            try:
+                if str(uuid.UUID(value)) != value:
+                    raise ValueError("tenant identity is not canonical")
+            except ValueError as exc:
+                raise NetworkListingPolicyError("CANONICAL_TENANT_REQUIRED") from exc
+        return value
+
+    def _prepare_write(self, action: str, key: str | None, actor: str,
+                       request_value: dict[str, Any], correlation_id: str | None) -> OperatorWrite:
+        if not self._seed_fixtures:
+            key = _require_governed_write_context(
+                idempotency_key=key, correlation_id=correlation_id, action_label=action,
+            )
+        try:
+            encoded = json.dumps(request_value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise NetworkListingPolicyError("INVALID_REQUEST_CONTEXT") from exc
+        request_sha = hashlib.sha256(encoded.encode()).hexdigest()
+        scoped_key = None
+        if key:
+            scoped_key = hashlib.sha256(actor.encode()).hexdigest() + ":" + key
+            pair = (action, scoped_key)
+            cached = self._idempotency_cache.get(pair)
+            if cached is not None:
+                if self._idempotency_bindings.get(pair) != (actor, request_sha):
+                    raise NetworkListingConflict("IDEMPOTENCY_CONFLICT")
+                return OperatorWrite(action, scoped_key, actor, request_sha, _copy(cached))
+            if (action, key) in self._idempotency_cache:
+                # Legacy receipts cannot be attributed from a display name. Stop
+                # for governed reconciliation instead of replaying or reapplying.
+                raise NetworkListingConflict("UNBOUND_LEGACY_REPLAY")
+        high_risk = action in {"convert", "merge", "decide_intake", "promote_intake"}
+        if action == "correct_intake":
+            from modules.external_data.application.assisted_intake import IDENTITY_FIELDS
+
+            high_risk = any(field in IDENTITY_FIELDS for field in request_value["fields"])
+        if action == "retry_intake":
+            high_risk = self._listing_intake(request_value["intake_id"])["stage"] == "QUARANTINED"
+        if high_risk and self._high_risk_write_guard is not None:
+            self._high_risk_write_guard(self._require_tenant(None))
+        return OperatorWrite(action, scoped_key, actor, request_sha)
+
+    def _save_write(self, write: OperatorWrite, response: dict[str, Any]) -> None:
+        if write.key:
+            self._save_idempotency(write.action, write.key, response,
+                                   actor_subject_id=write.actor_subject_id,
+                                   request_sha256=write.request_sha256)
 
     def export_state(self) -> dict[str, Any]:
         return {
@@ -491,19 +648,20 @@ class NetworkListingService:
     def _load_listings(self) -> None:
         if self._listing_repository is not None:
             repo_listings = self._listing_repository.list_listings()
-            if repo_listings:
+            if repo_listings or not self._seed_fixtures:
                 self._state["listings"] = []
                 for lst in repo_listings:
                     self._state["listings"].append(self._listing_to_dict(lst))
             elif self._seed_fixtures:
                 for lst_dict in self._state["listings"]:
-                    lst_obj, addr_obj, key_obj = self._dict_to_listing(lst_dict)
-                    self._listing_repository.save_listing(lst_obj, addr_obj, key_obj)
+                    # Persist the explicit fixture verdict and provenance with
+                    # the row, so the next request reads the same evidence.
+                    self._sync_listing_to_repo(lst_dict["id"])
 
     def _load_candidates(self) -> None:
         if self._listing_repository is not None:
             repo_candidates = self._listing_repository.list_candidates()
-            if repo_candidates:
+            if repo_candidates or not self._seed_fixtures:
                 self._state["candidates"] = []
                 for cand in repo_candidates:
                     self._state["candidates"].append(self._candidate_to_dict(cand))
@@ -537,23 +695,30 @@ class NetworkListingService:
     def _listing_to_dict(self, lst: Any) -> dict[str, Any]:
         res = {
             "id": lst.listing_id,
+            "addressId": lst.address_id,
             "sourceId": lst.source_id,
             "sourceListingId": lst.source_listing_id,
             "status": lst.listing_status,
-            "rentPerMonth": int(lst.rent_amount),
+            "rentPerMonth": lst.rent_amount,
             "areaPing": lst.area_ping,
             "floor": lst.floor,
-            "frontageMeters": int(lst.frontage_m) if lst.frontage_m else 0,
+            "frontageMeters": lst.frontage_m,
             "listingConfidence": lst.effective_confidence,
             "listingConfidenceProvenance": lst.effective_confidence_provenance,
             # Not lst.confidence. That is extraction confidence -- how sure the
             # parser is about the rent and area it read -- and a listing whose
             # address never resolved would otherwise report a fully-confident
             # geocode to the promotion gate, which is the same fail-open the V1
-            # adapter had. 0.0 until the address below supplies a real value.
-            "geocodeConfidence": 0.0,
+            # adapter had. Unknown until the address supplies a real value.
+            "geocodeConfidence": None,
             "sourceUrl": lst.snapshot_id,
+            "snapshotId": lst.snapshot_id or None,
+            "hardRuleFailures": _copy(getattr(lst, "hard_rule_failures", None)),
         }
+        for name in _LISTING_LINEAGE_FIELDS:
+            value = getattr(lst, name, None)
+            if value is not None:
+                res[name] = value
         if self._tenant_id is not None:
             res["tenantId"] = self._tenant_id
         # Carry the persisted geocode through the dict layer. Without this the
@@ -574,6 +739,18 @@ class NetworkListingService:
         meta = self._get_listing_metadata(lst.listing_id)
         if meta:
             res.update(meta)
+            if any(name in res for name in LEGAL_HOLD_FIELDS):
+                # Expose the producer's custody state to the existing Radar
+                # controls. An older false display flag cannot conceal a hold
+                # or replace a revoked/invalid current observation.
+                custody_state = recorded_legal_hold_state(res)
+                res["hasLegalHold"] = custody_state
+                if "legalHold" in res:
+                    res["legalHold"] = custody_state
+            # Supplemental presentation metadata cannot reopen the listing
+            # aggregate's terminal archive, including on a later retry.
+            if str(lst.listing_status).upper() == "ARCHIVED":
+                res["status"] = lst.listing_status
         elif self._seed_fixtures:
             for item in _seed_state(tenant_id=self._tenant_id or "tenant-a")["listings"]:
                 if item["id"] == lst.listing_id:
@@ -586,61 +763,106 @@ class NetworkListingService:
     def _dict_to_listing(self, d: dict[str, Any]) -> tuple[Any, Any, Any]:
         from modules.listing.domain.models import ListingDedupKey
         from shared.domain.models import AddressLocation, Listing
-        address_id = f"ADDR-{d['id']}"
-        # Confidence and coordinates fail closed. A listing whose geocode was
-        # never resolved must stay at 0.0 so to_sitescore_model_row() rejects
-        # it; defaulting to 1.0 / Taipei city-hall coordinates presented an
-        # ungeocoded listing as a fully-confident point-in-time location.
-        geocode_confidence = _optional_float(d.get("geocodeConfidence"), default=0.0)
-        lst = Listing(
-            listing_id=d["id"],
-            source_listing_id=d["sourceListingId"],
-            source_id=d["sourceId"],
-            listing_status=d["status"],
-            address_id=address_id,
-            rent_amount=float(d["rentPerMonth"]),
-            area_ping=float(d["areaPing"]),
-            floor=d["floor"],
-            frontage_m=float(d.get("frontageMeters") or 0),
-            confidence=_optional_number(d.get("listingConfidence"), float),
-            snapshot_id=d.get("sourceUrl") or "",
+        existing = (
+            self._listing_repository.get_listing(d["id"])
+            if self._listing_repository is not None else None
         )
-        addr = AddressLocation(
-            address_id=address_id,
-            raw_address=d.get("address") or "",
-            normalized_address=d.get("address") or "",
-            latitude=_optional_float(
-                _first_present(d, "latitude", "lat"), default=0.0
-            ),
-            longitude=_optional_float(
-                _first_present(d, "longitude", "lng"), default=0.0
-            ),
-            geocode_confidence=geocode_confidence,
-            h3_res_9=d.get("h3Index") or d.get("h3_index") or d.get("heatZoneId") or "",
-        )
+        changes = {
+            "listing_status": d["status"], "rent_amount": float(d["rentPerMonth"]),
+            "area_ping": float(d["areaPing"]), "floor": d["floor"],
+        }
+        if existing is not None:
+            # Operator decisions edit these supplied facts/status only. The
+            # presentation omits other canonical measurements and exposes
+            # effective confidence, so rebuilding from it would erase source
+            # provenance, utilities, currency and recorded extension fields.
+            lst = replace(existing, **changes)
+            for name, value in vars(existing).items():
+                if name not in existing.__dataclass_fields__:
+                    object.__setattr__(lst, name, _copy(value))
+            address_id = existing.address_id
+        else:
+            address_id = d.get("addressId") or d.get("address_id") or f"ADDR-{d['id']}"
+            lst = Listing(
+                listing_id=d["id"], source_listing_id=d["sourceListingId"], source_id=d["sourceId"],
+                address_id=address_id, **changes,
+                frontage_m=float(d.get("frontageMeters") or 0),
+                confidence=_optional_number(d.get("listingConfidence"), float),
+                snapshot_id=(d.get("snapshotId") if "snapshotId" in d else d.get("sourceUrl")) or "",
+                tenant_id=d.get("tenantId") or self._tenant_id or "",
+            )
+        for name in _LISTING_LINEAGE_FIELDS:
+            value = d.get(name)
+            if value is not None and getattr(lst, name, None) is None:
+                object.__setattr__(lst, name, value)
+        # These commands do not authorize a new geocode or address revision.
+        # Retain the complete recorded address, including its raw text,
+        # precision, revisions and extension provenance, when already present.
+        addr = self._repo_address(address_id)
+        if addr is None:
+            addr = AddressLocation(
+                address_id=address_id, raw_address=d.get("address") or "",
+                normalized_address=d.get("address") or "",
+                latitude=_optional_number(_first_present(d, "latitude", "lat"), float),
+                longitude=_optional_number(_first_present(d, "longitude", "lng"), float),
+                geocode_confidence=_optional_number(d.get("geocodeConfidence"), float),
+                h3_res_9=d.get("h3Index") or d.get("h3_index") or "",
+                tenant_id=d.get("tenantId") or self._tenant_id or "",
+            )
         key = ListingDedupKey(
-            source_id=d["sourceId"],
-            source_listing_id=d["sourceListingId"],
-            normalized_address=d.get("address") or "",
-            rent_amount=float(d["rentPerMonth"]),
-            area_ping=float(d["areaPing"]),
+            source_id=lst.source_id, source_listing_id=lst.source_listing_id,
+            normalized_address=addr.normalized_address,
+            rent_amount=lst.rent_amount, area_ping=lst.area_ping,
         )
         return lst, addr, key
+
+    def validate_review_candidate(self, decision: Any) -> Any:
+        candidates = [row for row in self._listing_repository.list_candidates()
+                      if row.candidate_site.candidate_site_id == decision.candidate_site_id]
+        if len(candidates) != 1 or decision.tenant_id != self._tenant_id:
+            raise NetworkListingPolicyError("CANONICAL_REVIEW_CANDIDATE_ASSOCIATION_REQUIRED")
+        if candidates[0].review_id and candidates[0].review_id != decision.decision_id:
+            raise NetworkListingPolicyError("CANONICAL_REVIEW_CURRENT_CANDIDATE_REQUIRED")
+        return candidates[0]
+
+    def record_review_decision(self, decision: Any) -> dict[str, Any]:
+        """Persist Operator workflow status without inventing shared site enums."""
+        candidate = self.validate_review_candidate(decision)
+        action = decision.network_action
+        state = {"GO": "approved", "WAIT": "onhold", "RETURN": "needdata", "REJECT": "rejected"}[action]
+        # onhold/needdata are Operator workflow states; CandidateSite retains
+        # its existing domain enum and physical lifecycle status.
+        if action in {"GO", "REJECT"}:
+            candidate = replace(candidate, candidate_site=replace(candidate.candidate_site, site_status=state))
+        candidate = replace(candidate, review_id=decision.decision_id)
+        self._listing_repository.save_candidate(candidate)
+        metadata = self._get_candidate_metadata(decision.candidate_site_id)
+        metadata["reviewWorkflow"] = {
+            "decisionId": decision.decision_id, "approvalId": decision.approval_id,
+            "reportId": decision.report_id, "reportVersion": decision.report_version,
+            "decisionVersion": decision.version, "tenantId": decision.tenant_id,
+            "networkAction": action, "status": state,
+            "conditions": decision.conditions, "requiredData": list(decision.required_data or ()),
+        }
+        self._save_candidate_metadata(decision.candidate_site_id, metadata)
+        return _copy(metadata["reviewWorkflow"])
 
     def _candidate_to_dict(self, cand: Any) -> dict[str, Any]:
         snapshot_time = cand.feature_snapshot_time
         res = {
             "id": cand.candidate_site.candidate_site_id,
             "listingId": cand.listing.listing_id,
+            "targetFormatCode": cand.candidate_site.target_format_code,
             "heatZoneId": cand.heat_zone_id,
             "title": f"{cand.listing.listing_id} 候選點",
             "address": cand.address.raw_address,
-            "status": cand.status.value if hasattr(cand.status, "value") else str(cand.status),
-            "score": 68,
-            "recommendation": "WAIT",
-            "modelVersion": "SiteScore v2.3",
-            "datasetSnapshotId": "FS-20260704-0600",
-            "missingData": [],
+            "status": cand.candidate_site.site_status,
+            "score": cand.score,
+            "recommendation": cand.recommendation,
+            "modelVersion": cand.model_version,
+            "datasetSnapshotId": cand.dataset_snapshot_id,
+            "reviewId": cand.review_id,
+            "missingData": list(cand.feasibility_flags or ()),
             # SiteScore v2 point-in-time contract. These must survive the dict
             # round trip: _sync_candidate_to_repo() rewrites the persisted
             # draft from this dict, so anything omitted here is wiped from an
@@ -654,14 +876,48 @@ class NetworkListingService:
             ),
         }
         meta = self._get_candidate_metadata(cand.candidate_site.candidate_site_id)
-        if meta:
+        if meta and self._seed_fixtures:
             res.update(meta)
-        else:
+        elif meta:
+            # Presentation metadata cannot replace a committed worker result.
+            if meta.get("title"):
+                res["title"] = meta["title"]
+        workflow = meta.get("reviewWorkflow") if isinstance(meta, dict) else None
+        if isinstance(workflow, dict) and self._review_decision_repository is not None:
+            decision = self._review_decision_repository.get_decision(workflow.get("decisionId", ""))
+            if (decision is not None and decision.candidate_site_id == res["id"]
+                    and getattr(decision, "network_action", None) in {"GO", "WAIT", "RETURN", "REJECT"}
+                    and cand.review_id == decision.decision_id
+                    and decision.tenant_id == self._tenant_id
+                    and getattr(decision, "network_action", None) == workflow.get("networkAction")
+                    and decision.report_id == workflow.get("reportId")
+                    and decision.report_version == workflow.get("reportVersion")
+                    and getattr(decision, "version", None) == workflow.get("decisionVersion")
+                    and getattr(decision, "approval_id", None) == workflow.get("approvalId")
+                    and getattr(decision, "conditions", None) == workflow.get("conditions")
+                    and list(getattr(decision, "required_data", ()) or ()) == workflow.get("requiredData")
+                    and {"GO": "approved", "WAIT": "onhold", "RETURN": "needdata", "REJECT": "rejected"}.get(
+                        getattr(decision, "network_action", None)) == workflow.get("status")):
+                res["canonicalSiteStatus"] = res["status"]
+                res["status"] = workflow["status"]
+                res["reviewId"] = decision.decision_id
+                res["reviewWorkflow"] = _copy(workflow)
+                if decision.network_action == "RETURN":
+                    res["missingData"] = list(decision.required_data or ())
+        elif self._seed_fixtures:
             if res["id"] == "CS-1001":
                 res["title"] = "信義松仁候選點"
                 res["score"] = 82
                 res["recommendation"] = "GO"
                 res["reviewId"] = "RV-1001"
+        # Coordinates come only from the persisted candidate address, never
+        # operator presentation metadata or a HeatZone approximation.
+        res.update({
+            "latitude": cand.address.latitude,
+            "longitude": cand.address.longitude,
+            "geocodeConfidence": cand.address.geocode_confidence,
+            "h3Index": cand.address.h3_res_9 or None,
+        })
         return res
 
     def _dict_to_candidate(self, d: dict[str, Any]) -> Any:
@@ -672,12 +928,15 @@ class NetworkListingService:
         from shared.domain.models import CandidateSite
         listing = self._listing(d["listingId"])
         lst_obj, addr_obj, _ = self._dict_to_listing(listing)
-
-        cand_site = CandidateSite(
+        previous = next((candidate for candidate in self._listing_repository.list_candidates()
+                         if candidate.candidate_site.candidate_site_id == d["id"]), None) if self._listing_repository else None
+        site_status = d.get("canonicalSiteStatus", d["status"])
+        cand_site = replace(previous.candidate_site, site_status=site_status) if previous else CandidateSite(
             candidate_site_id=d["id"],
             listing_id=d["listingId"],
             address_id=addr_obj.address_id,
-            site_status=d["status"],
+            target_format_code=d.get("targetFormatCode") or "",
+            site_status=site_status,
         )
         heat_zone_id = d.get("heatZoneId")
         # A blank heat zone is the same data gap as an absent one: it makes the
@@ -691,18 +950,24 @@ class NetworkListingService:
                 f"({heat_zone_id!r}); refusing to persist a candidate site "
                 "with an unknown heat zone"
             )
-        # feasibility_flags are the recorded hard-rule verdict, not something to
-        # re-derive here: recomputing on every sync silently rewrote
-        # hardRule.pass / missingEvidence for existing candidates. An absent key
-        # means "no recorded failures", which is what the writer stores.
-        return CandidateSiteDraft(
+        # Preserve the recorded verdict. Unknown is not an empty passing list.
+        flags = d.get("feasibilityFlags")
+        if not self._seed_fixtures and (not isinstance(flags, list)
+                or not all(isinstance(item, str) for item in flags)):
+            raise ValueError("HARD_RULE_EVIDENCE_REQUIRED: candidate verdict is unknown")
+        draft = CandidateSiteDraft(
             listing=lst_obj,
             address=addr_obj,
             candidate_site=cand_site,
-            feasibility_flags=tuple(d.get("feasibilityFlags") or ()),
+            feasibility_flags=tuple(flags or ()),
             heat_zone_id=heat_zone_id,
             listing_source=listing.get("sourceId") or "",
             status=ListingPipelineStatus.CANDIDATE,
+            score=d.get("score"),
+            recommendation=d.get("recommendation"),
+            model_version=d.get("modelVersion"),
+            dataset_snapshot_id=d.get("datasetSnapshotId"),
+            review_id=d.get("reviewId"),
             prior_90d_cell_net_revenue=_optional_number(
                 _first_present(
                     d, "prior90dCellNetRevenue", "prior_90d_cell_net_revenue"
@@ -727,6 +992,16 @@ class NetworkListingService:
                 _first_present(d, "featureSnapshotTime", "feature_snapshot_time")
             ),
         )
+        if previous is not None:
+            # The operator projection does not carry every canonical lineage
+            # field. Preserve those persisted facts during a compatibility write.
+            return replace(previous, **{name: getattr(draft, name) for name in (
+                "candidate_site", "feasibility_flags", "heat_zone_id",
+                "score", "recommendation", "model_version",
+                "dataset_snapshot_id", "review_id", "prior_90d_cell_net_revenue",
+                "prior_90d_cell_transaction_count", "prior_90d_cell_store_count", "feature_snapshot_time",
+            )})
+        return draft
 
     def _sync_listing_to_repo(self, listing_id: str) -> None:
         if self._listing_repository is not None:
@@ -735,7 +1010,16 @@ class NetworkListingService:
             self._listing_repository.save_listing(lst_obj, addr_obj, key_obj)
 
             meta = {
+                # These facts belong to their durable producer (scope, hold,
+                # revision and custody). A presentation write may update its
+                # own fields but cannot erase facts it does not project.
+                **self._get_listing_metadata(listing_id),
                 "tenantId": listing.get("tenantId"),
+                "status": listing["status"],
+                # Listing.frontage_m retains its legacy numeric absent value;
+                # preserve explicit unknown in the operator presentation.
+                "frontageMeters": listing.get("frontageMeters"),
+                "sourceUrl": listing.get("sourceUrl"),
                 "heatZoneId": listing.get("heatZoneId"),
                 "hardRuleFailures": listing.get("hardRuleFailures"),
                 "hardRuleSummary": listing.get("hardRuleSummary"),
@@ -806,15 +1090,24 @@ class NetworkListingService:
         self._state["assistedIntakes"] = self._intakes.list_intakes()
 
     def _load_idempotency_cache(self) -> None:
+        records = self._intakes.list_idempotency_records()
         self._idempotency_cache = {
             (record.action, record.key): record.response
-            for record in self._intakes.list_idempotency_records()
+            for record in records
+        }
+        self._idempotency_bindings = {
+            (record.action, record.key): (getattr(record, "actor_subject_id", None),
+                                         getattr(record, "request_sha256", None))
+            for record in records
         }
 
-    def _save_idempotency(self, action: str, key: str, response: dict[str, Any]) -> None:
+    def _save_idempotency(self, action: str, key: str, response: dict[str, Any], *,
+                          actor_subject_id: str | None = None, request_sha256: str | None = None) -> None:
         self._idempotency_cache[(action, key)] = _copy(response)
+        self._idempotency_bindings[(action, key)] = (actor_subject_id, request_sha256)
         self._intakes.save_idempotency_record(
-            IntakeIdempotencyRecord(action=action, key=key, response=_copy(response))
+            IntakeIdempotencyRecord(action=action, key=key, response=_copy(response),
+                                    actor_subject_id=actor_subject_id, request_sha256=request_sha256)
         )
 
     def _save_intake_to_state(self, intake: dict[str, Any]) -> None:
@@ -826,6 +1119,7 @@ class NetworkListingService:
         self._state["assistedIntakes"].append(intake)
 
     def _save_intake(self, intake: dict[str, Any]) -> None:
+        intake["updatedAt"] = _now()
         self._save_intake_to_state(intake)
         self._intakes.save_intake(intake)
 
@@ -849,14 +1143,14 @@ class NetworkListingService:
             else _empty_state()
         )
         self._idempotency_cache = {}
+        self._idempotency_bindings = {}
         self._intakes.clear()
         self._state["assistedIntakes"] = []
 
         if self._listing_repository is not None and self._seed_fixtures:
             self._listing_repository.clear()
             for lst_dict in self._state["listings"]:
-                lst_obj, addr_obj, key_obj = self._dict_to_listing(lst_dict)
-                self._listing_repository.save_listing(lst_obj, addr_obj, key_obj)
+                self._sync_listing_to_repo(lst_dict["id"])
 
         return self.snapshot()
 
@@ -915,6 +1209,7 @@ class NetworkListingService:
             },
         }
 
+    @_atomic_intake_submission
     def convert_listing(
         self,
         *,
@@ -925,16 +1220,24 @@ class NetworkListingService:
         correlation_id: str | None,
     ) -> dict[str, Any]:
         # Server-side role check
-        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer"}
+        actor_name = self._require_actor(actor_name, actor_role_id)
+        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer", "executive", "data_owner"}
         if actor_role_id not in allowed_roles:
             raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to convert listing")
 
-        cache_key = ("convert", idempotency_key or "")
-        if idempotency_key and cache_key in self._idempotency_cache:
-            return _copy(self._idempotency_cache[cache_key])
+        write = self._prepare_write("convert", idempotency_key, actor_name,
+                                    {"listing_id": listing_id}, correlation_id)
+        if write.replayed_response is not None:
+            return write.replayed_response
 
+        if not self._seed_fixtures:
+            self._load_listings()
+            self._load_candidates()
         listing = self._listing(listing_id)
-        if listing.get("hardRuleFailures"):
+        failures = listing.get("hardRuleFailures")
+        if not isinstance(failures, list) or not all(isinstance(item, str) for item in failures):
+            raise NetworkListingPolicyError("HARD_RULE_EVIDENCE_REQUIRED: recorded hard-rule verdict is required")
+        if failures:
             raise NetworkListingPolicyError(
                 f"{listing_id} cannot convert until hard-rule failures are resolved"
             )
@@ -942,6 +1245,28 @@ class NetworkListingService:
             raise NetworkListingConflict(f"{listing_id} is {listing.get('status')} and cannot convert")
 
         existing = self._candidate_for_listing(listing_id)
+        if not self._seed_fixtures:
+            # This compatibility writer may resync an independently approved
+            # candidate, but it cannot create one or establish approval itself.
+            target = existing.get("targetFormatCode") if existing else None
+            approved = any(
+                promotion.get("tenant_id") == self._tenant_id
+                and promotion.get("listing_id") == listing_id
+                and promotion.get("candidate_site_id") == (existing or {}).get("id")
+                and promotion.get("decision_type") == "STANDARD"
+                and promotion.get("status") in {"SCORE_QUEUED", "COMPLETED"}
+                and promotion.get("target_format_code") == target
+                and bool(promotion.get("reviewed_at"))
+                and bool(promotion.get("proposer_subject_id") or promotion.get("proposer"))
+                and bool(promotion.get("reviewer_subject_id") or promotion.get("reviewer"))
+                and (promotion.get("proposer_subject_id") or promotion.get("proposer"))
+                    != (promotion.get("reviewer_subject_id") or promotion.get("reviewer"))
+                for promotion in self._intakes.list_promotions()
+            )
+            if existing is None or not isinstance(target, str) or not 1 <= len(target) <= 64 or not approved:
+                raise NetworkListingPolicyError(
+                    "PROMOTION_APPROVAL_REQUIRED: use the canonical intake promotion request and independent review"
+                )
         created = existing is None
         if existing is None:
             candidate_id = "CS-1001" if listing_id == "L-2024" else f"CS-{1000 + len(self._state['candidates']) + 1}"
@@ -951,13 +1276,13 @@ class NetworkListingService:
                 "heatZoneId": listing["heatZoneId"],
                 "title": "信義松仁候選點" if candidate_id == "CS-1001" else f"{listing_id} 候選點",
                 "address": listing["address"],
-                "status": "ready",
-                "score": 82 if candidate_id == "CS-1001" else 68,
-                "recommendation": "GO" if candidate_id == "CS-1001" else "WAIT",
-                "modelVersion": "SiteScore v2.3",
-                "datasetSnapshotId": "FS-20260704-0600",
+                "status": "ready" if self._seed_fixtures else "new",
+                "score": (82 if candidate_id == "CS-1001" else 68) if self._seed_fixtures else None,
+                "recommendation": ("GO" if candidate_id == "CS-1001" else "WAIT") if self._seed_fixtures else None,
+                "modelVersion": "SiteScore v2.3" if self._seed_fixtures else None,
+                "datasetSnapshotId": "FS-20260704-0600" if self._seed_fixtures else listing.get("snapshotId"),
                 "missingData": [],
-                "reviewId": "RV-1001" if candidate_id == "CS-1001" else None,
+                "reviewId": "RV-1001" if self._seed_fixtures and candidate_id == "CS-1001" else None,
                 # Propagate the SiteScore v2 point-in-time contract from the
                 # listing. The prior_90d_cell_* aggregates originate in the
                 # model-ready views (product_ops/modeling/sql/model_ready_views.sql);
@@ -1019,9 +1344,86 @@ class NetworkListingService:
             "correlationId": correlation_id,
             "expansionSteps": self._expansion_steps(selected_id=listing["heatZoneId"]),
         }
-        if idempotency_key:
-            self._save_idempotency("convert", idempotency_key, result)
+        self._save_write(write, result)
         return result
+
+    def _action_listing(self, listing_id: str) -> dict[str, Any]:
+        records = self._state.get("listings")
+        if not isinstance(records, list) or any(not isinstance(row, dict) for row in records):
+            raise NetworkListingPolicyError("LISTING_COLLECTION_UNAVAILABLE")
+        matches = [row for row in records if row.get("id") == listing_id]
+        if not matches:
+            raise NetworkListingNotFound(listing_id)
+        if len(matches) != 1:
+            raise NetworkListingConflict("AMBIGUOUS_LISTING_ID")
+        record = matches[0]
+        if self._tenant_id is not None and record.get("tenantId") not in (None, self._tenant_id):
+            raise PermissionError("TENANT_SCOPE_DENIED")
+        return record
+
+    def _authorize_listing_write(
+        self, records: list[dict[str, Any]], authorize_existing: Callable[[dict[str, Any]], None] | None,
+    ) -> None:
+        if authorize_existing is None and not self._seed_fixtures:
+            raise NetworkListingPolicyError("LISTING_SCOPE_CONTEXT_REQUIRED")
+        if authorize_existing is not None:
+            for record in records:
+                authorize_existing(_copy(record))
+
+    def _listing_write_records(self, action: str, key: str | None, actor: str, ids: list[str]) -> list[dict[str, Any]]:
+        lookup_key = key.strip() if key and (action == "merge" or not self._seed_fixtures) else key
+        cached = self._idempotency_cache.get((action, hashlib.sha256(actor.encode()).hexdigest() + ":" + lookup_key)) if lookup_key else None
+        if cached is not None:
+            fields = ("source", "target") if action == "merge" else ("listing",)
+            if any(not isinstance(cached.get(name), dict) or not isinstance(cached[name].get("id"), str) for name in fields):
+                raise NetworkListingPolicyError("REPLAY_RECEIPT_UNAVAILABLE")
+            # Authorize the durable receipt's actual resources before exposing
+            # it or rejecting a changed fingerprint. Never choose new body IDs
+            # as the authority for an existing logical operation.
+            ids = [cached[name]["id"] for name in fields]
+        return [self._action_listing(listing_id) for listing_id in ids]
+
+    def _check_listing_revision(self, record: dict[str, Any], if_match: str | None) -> None:
+        # Fixture compatibility is explicit. An absent canonical revision is
+        # unavailable, never an invented version 1 or a successful SQL CAS.
+        revision = record.get("version")
+        if self._seed_fixtures and revision is None and if_match is None:
+            return
+        if if_match is None:
+            raise NetworkListingPreconditionRequired("PRECONDITION_REQUIRED")
+        if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
+            raise NetworkListingVersionUnavailable("LISTING_VERSION_UNAVAILABLE")
+        if if_match != f'W/"{revision}"':
+            raise NetworkListingConflict("VERSION_CONFLICT")
+
+    def _guard_listing_hold(self, record: dict[str, Any]) -> None:
+        for hold_field in LEGAL_HOLD_FIELDS:
+            value = record.get(hold_field)
+            if hold_field in record and not isinstance(value, bool):
+                raise NetworkListingPolicyError("LEGAL_HOLD_STATE_UNAVAILABLE")
+            if value is True:
+                raise NetworkListingConflict("LEGAL_HOLD_CONFLICT")
+        if not self._seed_fixtures and not any(isinstance(record.get(name), bool) for name in LEGAL_HOLD_FIELDS):
+            raise NetworkListingPolicyError("LEGAL_HOLD_STATE_UNAVAILABLE")
+
+    def _guard_listing_retention(self, record: dict[str, Any]) -> None:
+        if str(record.get("status", "")).upper() == "ARCHIVED" or record.get("mergedIntoId"):
+            raise NetworkListingConflict("LISTING_TERMINAL")
+        self._guard_listing_hold(record)
+        candidates = self._state.get("candidates")
+        if not isinstance(candidates, list) or any(
+            not isinstance(candidate, dict) or not isinstance(candidate.get("id"), str)
+            or not candidate["id"] or not isinstance(candidate.get("listingId"), str)
+            or not candidate["listingId"] for candidate in candidates
+        ):
+            raise NetworkListingPolicyError("CANDIDATE_DEPENDENCIES_UNAVAILABLE")
+        direct_id = record.get("candidateId")
+        if direct_id is not None and (not isinstance(direct_id, str) or not direct_id):
+            raise NetworkListingPolicyError("CANDIDATE_DEPENDENCIES_UNAVAILABLE")
+        if direct_id or any(candidate["listingId"] == record["id"] for candidate in candidates):
+            # The identity executor's candidate-disposition plan is not owned
+            # by this legacy evidence-marker action. Do not silently reassign.
+            raise NetworkListingConflict("CANDIDATE_DISPOSITION_REQUIRED")
 
     def merge_listing(
         self,
@@ -1035,11 +1437,24 @@ class NetworkListingService:
         actor_name: str | None,
         idempotency_key: str | None,
         correlation_id: str | None,
+        if_match: str | None = None,
+        target_if_match: str | None = None,
+        authorize_existing: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         # Server-side role check
-        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer"}
+        actor_name = self._require_actor(actor_name, actor_role_id)
+        if not self._seed_fixtures:
+            self._load_listings()
+            self._load_candidates()
+            self._load_idempotency_cache()
+        source, target = self._listing_write_records("merge", idempotency_key, actor_name,
+                                                    [source_listing_id, target_listing_id])
+        self._authorize_listing_write([source, target], authorize_existing)
+        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer", "executive", "data_owner"}
         if actor_role_id not in allowed_roles:
             raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to merge listing")
+        self._guard_listing_hold(source)
+        self._guard_listing_hold(target)
 
         governed_key = _require_governed_write_context(
             idempotency_key=idempotency_key,
@@ -1057,25 +1472,34 @@ class NetworkListingService:
             action_label="merge listing",
         )
 
-        cache_key = ("merge", governed_key)
-        if cache_key in self._idempotency_cache:
-            return _copy(self._idempotency_cache[cache_key])
+        write = self._prepare_write("merge", governed_key, actor_name,
+                                    {"source_listing_id": source_listing_id, "target_listing_id": target_listing_id, "reason": reason, "risk_summary": risk_summary, "risk_acknowledged": risk_acknowledged, "if_match": if_match, "target_if_match": target_if_match}, correlation_id)
+        if write.replayed_response is not None:
+            return write.replayed_response
 
-        source = self._listing(source_listing_id)
-        target = self._listing(target_listing_id)
-        if source_listing_id == target_listing_id:
-            raise NetworkListingConflict("source and target listing must be different")
-        # Merge is terminal for the source. Replaying the SAME idempotency key is
-        # served from the cache above; reaching here with an already-merged source
-        # means a genuinely new request, which would append a second listing.merge
-        # audit event and overwrite the first merge's reason.
+        # Same-key replay has already returned its receipt; a new request
+        # preserves the established terminal explanation without another write.
         merged_into = source.get("mergedIntoId")
         if merged_into:
             raise NetworkListingConflict(
                 f"{source_listing_id} is already merged into {merged_into} and cannot be merged again"
             )
-
+        self._check_listing_revision(source, if_match)
+        self._check_listing_revision(target, target_if_match)
+        self._guard_listing_retention(source)
+        self._guard_listing_retention(target)
+        if source_listing_id == target_listing_id:
+            raise NetworkListingConflict("source and target listing must be different")
+        if source.get("duplicateOfId") != target_listing_id or target.get("duplicateOfId"):
+            raise NetworkListingConflict("EXACT_DUPLICATE_TARGET_REQUIRED")
+        for record in (source, target):
+            for evidence_field in ("sourceEvidence", "mergedSourceListingIds"):
+                values = record.get(evidence_field, [])
+                if not isinstance(values, list) or any(not isinstance(value, str) or not value for value in values):
+                    raise NetworkListingPolicyError("LISTING_EVIDENCE_UNAVAILABLE")
         source_before_status = source.get("status")
+        source_before_version = source.get("version")
+        target_before_version = target.get("version")
         target_before_evidence = list(target.get("sourceEvidence", []))
 
         source_evidence = list(source.get("sourceEvidence", []))
@@ -1101,6 +1525,7 @@ class NetworkListingService:
             correlation_id=correlation_id,
             metadata={
                 "sourceListingId": source_listing_id,
+                "targetListingId": target_listing_id,
                 # The operator's own words, recorded alongside the disclosure
                 # they acknowledged; archive does the same.
                 "reason": reason,
@@ -1109,10 +1534,14 @@ class NetworkListingService:
                 "before": {
                     "sourceStatus": source_before_status,
                     "targetEvidenceCount": len(target_before_evidence),
+                    "sourceVersion": source_before_version,
+                    "targetVersion": target_before_version,
                 },
                 "after": {
                     "sourceStatus": "duplicate",
                     "targetEvidenceCount": len(target["sourceEvidence"]),
+                    "sourceVersion": source.get("version"),
+                    "targetVersion": target.get("version"),
                 },
                 "riskSummary": risk_summary_text,
                 "riskAcknowledged": True,
@@ -1124,12 +1553,15 @@ class NetworkListingService:
         result = {
             "source": _copy(source),
             "target": _copy(target),
+            "actorSubjectId": actor_name,
+            "actorRoleId": actor_role_id,
+            "idempotencyKey": governed_key,
             "sourceEvidenceRetained": _copy(source_evidence),
             "auditEvent": audit,
             "correlationId": correlation_id,
             "expansionSteps": self._expansion_steps(selected_id=target["heatZoneId"]),
         }
-        self._save_idempotency("merge", governed_key, result)
+        self._save_write(write, result)
         return result
 
     def archive_listing(
@@ -1141,22 +1573,35 @@ class NetworkListingService:
         actor_name: str | None,
         idempotency_key: str | None,
         correlation_id: str | None,
+        if_match: str | None = None,
+        authorize_existing: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         # Server-side role check
-        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer"}
+        actor_name = self._require_actor(actor_name, actor_role_id)
+        if not self._seed_fixtures:
+            self._load_listings()
+            self._load_candidates()
+            self._load_idempotency_cache()
+        listing, = self._listing_write_records("archive", idempotency_key, actor_name, [listing_id])
+        self._authorize_listing_write([listing], authorize_existing)
+        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer", "executive", "data_owner"}
         if actor_role_id not in allowed_roles:
             raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to archive listing")
+        self._guard_listing_hold(listing)
 
         reason = reason.strip()
         if not reason:
             raise NetworkListingPolicyError("archive reason is required")
 
-        cache_key = ("archive", idempotency_key or "")
-        if idempotency_key and cache_key in self._idempotency_cache:
-            return _copy(self._idempotency_cache[cache_key])
+        write = self._prepare_write("archive", idempotency_key, actor_name,
+                                    {"listing_id": listing_id, "reason": reason, "if_match": if_match}, correlation_id)
+        if write.replayed_response is not None:
+            return write.replayed_response
 
-        listing = self._listing(listing_id)
+        self._check_listing_revision(listing, if_match)
+        self._guard_listing_retention(listing)
         before_status = listing.get("status")
+        before_version = listing.get("version")
 
         listing["status"] = "archived"
         listing["archivedReason"] = reason
@@ -1171,27 +1616,33 @@ class NetworkListingService:
             correlation_id=correlation_id,
             metadata={
                 "reason": reason,
-                "hardRuleFailures": list(listing.get("hardRuleFailures", [])),
-                "sourceEvidenceCount": len(listing.get("sourceEvidence", [])),
+                "hardRuleFailures": _copy(listing.get("hardRuleFailures")),
+                "sourceEvidenceCount": (len(listing["sourceEvidence"])
+                                        if isinstance(listing.get("sourceEvidence"), list) else None),
                 "before": {
                     "status": before_status,
+                    "version": before_version,
                 },
                 "after": {
                     "status": "archived",
+                    "version": listing.get("version"),
                 },
                 "effectSummary": f"Archive listing {listing_id}. Reason: {reason}",
             },
         )
         result = {
             "listing": _copy(listing),
+            "actorSubjectId": actor_name,
+            "actorRoleId": actor_role_id,
+            "idempotencyKey": write.key.split(":", 1)[1] if write.key else None,
             "auditEvent": audit,
             "correlationId": correlation_id,
             "expansionSteps": self._expansion_steps(selected_id=listing["heatZoneId"]),
         }
-        if idempotency_key:
-            self._save_idempotency("archive", idempotency_key, result)
+        self._save_write(write, result)
         return result
 
+    @_atomic_intake_submission
     def submit_intake(
         self,
         *,
@@ -1204,10 +1655,19 @@ class NetworkListingService:
         job_queue: Any | None = None,
         async_intake: bool = False,
         tenant_id: str | None = None,
+        authorize_existing: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
-        cache_key = ("submit_intake", idempotency_key or "")
-        if idempotency_key and cache_key in self._idempotency_cache:
-            return _copy(self._idempotency_cache[cache_key])
+        actor_name = self._require_actor(actor_name, actor_role_id)
+        tenant_id = self._require_tenant(tenant_id)
+        write = self._prepare_write("submit_intake", idempotency_key, actor_name,
+                                    {"url": url.strip(), "heat_zone_id": heat_zone_id, "async_intake": async_intake}, correlation_id)
+        if write.replayed_response is not None:
+            current = self._listing_intake(write.replayed_response["id"])
+            if authorize_existing is not None:
+                authorize_existing(_copy(current))
+            elif not self._seed_fixtures:
+                raise NetworkListingPolicyError("INTAKE_SCOPE_CONTEXT_REQUIRED")
+            return write.replayed_response
 
         from modules.external_data.application.assisted_intake import (
             PARSER_VERSION,
@@ -1229,8 +1689,13 @@ class NetworkListingService:
         self._state.setdefault("assistedIntakes", [])
         for intake in self._state["assistedIntakes"]:
             if intake.get("canonicalUrl") == canon_url:
+                if authorize_existing is not None:
+                    authorize_existing(_copy(intake))
+                elif not self._seed_fixtures:
+                    raise NetworkListingPolicyError("INTAKE_SCOPE_CONTEXT_REQUIRED")
                 if intake.get("stage") in {"NEEDS_REVIEW", "READY", "QUARANTINED", "FAILED", "AWAITING_ASSISTED_ENTRY"}:
                     # Exact duplicate before retrieval (terminal state idempotency)
+                    self._save_write(write, intake)
                     return _copy(intake)
                 else:
                     raise NetworkListingConflict(f"URL {url} is already being processed (intake {intake['id']})")
@@ -1239,16 +1704,21 @@ class NetworkListingService:
         intake_id = (
             f"IN-{3001 + len(self._state['assistedIntakes'])}"
             if self._seed_fixtures
-            else f"IN-{uuid.uuid4().hex[:12].upper()}"
+            else str(uuid.uuid4())
         )
 
+        submitted_at = _now()
         intake = {
             "id": intake_id,
-            "tenantId": tenant_id or "tenant-a",
+            "tenantId": tenant_id,
             "originalUrl": url,
             "canonicalUrl": canon_url,
-            "submitter": actor_name or "林曉青（展店）",
-            "owner": actor_name or "林曉青",
+            "submitter": actor_name,
+            "submittedBy": actor_name,
+            "submittedAt": submitted_at,
+            "updatedAt": submitted_at,
+            "lastObservedAt": None,
+            "owner": actor_name,
             "heatZoneId": heat_zone_id,
             "intakeMethod": "URL",
             "stage": "SUBMITTED",
@@ -1282,6 +1752,12 @@ class NetworkListingService:
         elif policy.policy in {"ASSISTED_ENTRY_ONLY", "AUTH_REQUIRED"}:
             intake["stage"] = "AWAITING_ASSISTED_ENTRY"
         elif policy.policy == "APPROVED_RETRIEVAL":
+            prepare_async = getattr(self._intakes, "prepare_async_submission", None)
+            if prepare_async is not None:
+                # A committed durable job owns retrieval/snapshot side effects.
+                # No HTTP or object-store writes occur in submission's SQL unit.
+                prepare_async(job_queue)
+                async_intake = True
             if async_intake and job_queue is not None:
                 intake["stage"] = "SUBMITTED"
                 from shared.jobs.queue import JobRequest
@@ -1297,17 +1773,21 @@ class NetworkListingService:
                     JobRequest(
                         job_type="assisted-listing-intake",
                         payload=payload_to_send,
-                        idempotency_key=idempotency_key,
+                        idempotency_key=(
+                            "intake-submit:" + hashlib.sha256(f"{tenant_id}:{write.key}".encode()).hexdigest()
+                            if prepare_async is not None else idempotency_key
+                        ),
                     ),
                     correlation_id=correlation_id or "system",
                 )
+                intake["jobId"] = job.job_id
             else:
                 intake["stage"] = "RETRIEVING"
                 import json
                 snapshot_service = self._get_snapshot_service()
                 gate = self._get_security_gate(snapshot_service)
                 
-                resolved_tenant_id = tenant_id or "00000000-0000-0000-0000-000000000001"
+                resolved_tenant_id = self._require_tenant(tenant_id)
                 retrieval_res = gate.fetch(
                     canon_url,
                     tenant_id=resolved_tenant_id,
@@ -1319,6 +1799,7 @@ class NetworkListingService:
                     redacted_raw = redact_sensitive_snapshot(raw_dict)
                     redacted_data = json.dumps(redacted_raw).encode("utf-8")
                     
+                    observed_at = datetime.now(UTC)
                     snapshot_id = snapshot_service.create_snapshot(
                         tenant_id=resolved_tenant_id,
                         intake_id=intake_id,
@@ -1330,7 +1811,7 @@ class NetworkListingService:
                         capture_method="SERVER_RETRIEVAL",
                         retention_class="STANDARD",
                         encryption_key_ref="kms://default-key",
-                        observed_at=datetime.now(UTC),
+                        observed_at=observed_at,
                         captured_at=datetime.now(UTC),
                         bucket="taiwan-snapshots",
                         redacted_data=redacted_data,
@@ -1339,6 +1820,7 @@ class NetworkListingService:
                     intake["stage"] = "PARSING"
                     intake["rawSnapshot"] = redacted_raw
                     intake["snapshotId"] = snapshot_id
+                    intake["lastObservedAt"] = observed_at.isoformat().replace("+00:00", "Z")
                     intake["capturedAt"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
                     
                     from modules.external_data.application.assisted_intake import RetrievalResult
@@ -1402,7 +1884,7 @@ class NetworkListingService:
             "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
             "occurredAt": _now(),
             "actorRoleId": actor_role_id,
-            "actorName": actor_name or "Expansion Manager",
+            "actorName": actor_name,
             "action": "intake.create",
             "targetId": intake_id,
             "message": f"Intake record {intake_id} created for {url}.",
@@ -1416,8 +1898,7 @@ class NetworkListingService:
         intake["auditEvents"].append(audit_evt)
         self._save_intake(intake)
 
-        if idempotency_key:
-            self._save_idempotency("submit_intake", idempotency_key, intake)
+        self._save_write(write, intake)
         return _copy(intake)
 
     def list_intakes(
@@ -1444,6 +1925,7 @@ class NetworkListingService:
                 return _copy(intake)
         raise NetworkListingNotFound(f"assisted intake record {intake_id} not found")
 
+    @_atomic_intake_submission
     def correct_intake(
         self,
         *,
@@ -1456,9 +1938,11 @@ class NetworkListingService:
         actor_name: str | None,
         idempotency_key: str | None,
         correlation_id: str | None,
+        authorize_existing: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         # Server-side role check
-        allowed_roles = {"expansionStaff", "expansion_user", "expansionManager", "expansion-manager", "dataSteward", "data_owner"}
+        actor_name = self._require_actor(actor_name, actor_role_id)
+        allowed_roles = {"expansionStaff", "expansion_user", "expansionManager", "expansion-manager", "dataSteward", "data_owner", "site_reviewer", "executive"}
         if actor_role_id not in allowed_roles:
             raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to correct intake")
 
@@ -1467,9 +1951,10 @@ class NetworkListingService:
             correlation_id=correlation_id,
             action_label="correct intake",
         )
-        cache_key = ("correct_intake", governed_key)
-        if cache_key in self._idempotency_cache:
-            return _copy(self._idempotency_cache[cache_key])
+        write = self._prepare_write("correct_intake", governed_key, actor_name,
+                                    {"intake_id": intake_id, "fields": fields, "reason": reason, "risk_summary": risk_summary, "risk_acknowledged": risk_acknowledged}, correlation_id)
+        if write.replayed_response is not None:
+            return write.replayed_response
 
         risk_summary_text = _require_acknowledged_risk(
             risk_summary=risk_summary,
@@ -1543,7 +2028,7 @@ class NetworkListingService:
             "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
             "occurredAt": _now(),
             "actorRoleId": actor_role_id,
-            "actorName": actor_name or "Expansion Manager",
+            "actorName": actor_name,
             "action": "intake.correct",
             "targetId": intake_id,
             "message": f"Fields corrected: {'; '.join(corrections_made)}. Reason: {reason}",
@@ -1559,8 +2044,9 @@ class NetworkListingService:
             }
         }
         intake["auditEvents"].append(audit_evt)
+        intake["version"] = intake.get("version", 0) + 1
         self._save_intake(intake)
-        self._save_idempotency("correct_intake", governed_key, intake)
+        self._save_write(write, intake)
         return _copy(intake)
 
     # A batch import row carries operator-supplied values, so it enters the
@@ -1669,6 +2155,12 @@ class NetworkListingService:
             "originalUrl": None,
             "canonicalUrl": None,
             "submitter": actor_name or "批次匯入",
+            # The legacy worker actor_name can be a display label; it does not
+            # establish a verified subject identity.
+            "submittedBy": None,
+            "submittedAt": now,
+            "updatedAt": now,
+            "lastObservedAt": None,
             "owner": actor_name or "批次匯入",
             "heatZoneId": heat_zone_id,
             "regionId": region_id,
@@ -1764,6 +2256,7 @@ class NetworkListingService:
         stored_intake, _ = self._create_intake_if_absent(intake)
         return _copy(stored_intake)
 
+    @_atomic_intake_submission
     def decide_intake(
         self,
         *,
@@ -1776,10 +2269,12 @@ class NetworkListingService:
         actor_name: str | None,
         idempotency_key: str | None,
         correlation_id: str | None,
+        authorize_existing: Callable[[dict[str, Any]], None] | None = None,
         target_listing_id: str | None = None,
     ) -> dict[str, Any]:
         # Server-side role check
-        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer", "dataSteward", "data_owner"}
+        actor_name = self._require_actor(actor_name, actor_role_id)
+        allowed_roles = {"expansionManager", "expansion-manager", "siteReviewer", "site_reviewer", "dataSteward", "data_owner", "executive"}
         if actor_role_id not in allowed_roles:
             raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to decide intake")
 
@@ -1788,9 +2283,10 @@ class NetworkListingService:
             correlation_id=correlation_id,
             action_label="decide intake",
         )
-        cache_key = ("decide_intake", governed_key)
-        if cache_key in self._idempotency_cache:
-            return _copy(self._idempotency_cache[cache_key])
+        write = self._prepare_write("decide_intake", governed_key, actor_name,
+                                    {"intake_id": intake_id, "action": action, "target_listing_id": target_listing_id, "reason": reason, "risk_summary": risk_summary, "risk_acknowledged": risk_acknowledged}, correlation_id)
+        if write.replayed_response is not None:
+            return write.replayed_response
 
         reason_text = (reason or "").strip()
         if not reason_text:
@@ -1816,24 +2312,53 @@ class NetworkListingService:
         effect_summary = f"Manual decision '{action}' recorded for intake {intake_id}."
 
         if action == "create":
-            new_id = f"L-{2031 + len(self._state['listings'])}"
+            missing = _missing_assisted_entry_fields(effective_vals)
+            address = effective_vals.get("address")
+            if not isinstance(address, str) or not address.strip():
+                missing.append("address")
+            for numeric_field in ("rent", "areaPing"):
+                value = effective_vals.get(numeric_field)
+                try:
+                    if isinstance(value, bool) or not math.isfinite(float(value)):
+                        missing.append(numeric_field)
+                except (TypeError, ValueError):
+                    missing.append(numeric_field)
+            if missing:
+                raise NetworkListingPolicyError(
+                    "required assisted-entry fields are missing or invalid: "
+                    + ", ".join(_dedupe(missing))
+                )
+
+            new_id = (
+                f"L-{2031 + len(self._state['listings'])}"
+                if self._seed_fixtures else str(uuid.uuid4())
+            )
+            snapshot_id = intake.get("snapshotId")
             new_listing = {
                 "id": new_id,
+                "addressId": f"ADDR-{new_id}" if self._seed_fixtures else str(uuid.uuid4()),
                 "tenantId": intake["tenantId"],
                 "sourceId": intake["sourceId"],
-                "sourceListingId": effective_vals.get("providerListingId", ""),
-                "heatZoneId": intake["heatZoneId"] or "HZ-01",
-                "address": effective_vals.get("address", ""),
+                "sourceListingId": effective_vals.get("providerListingId") or "",
+                "heatZoneId": intake.get("heatZoneId"),
+                "address": address,
                 "status": "new",
-                "rentPerMonth": effective_vals.get("rent", 0),
-                "areaPing": effective_vals.get("areaPing", 0),
-                "floor": effective_vals.get("floor", ""),
-                "frontageMeters": 5,
-                "geocodeConfidence": 0.9,
-                "hardRuleFailures": [],
-                "hardRuleSummary": "3/3 pass: area, floor, permitted use",
-                "sourceEvidence": [f"EV-{new_id}-RAW", f"EV-{new_id}-GEOCODE"],
-                "fitScore": 70,
+                "rentPerMonth": float(effective_vals["rent"]),
+                "areaPing": float(effective_vals["areaPing"]),
+                "floor": effective_vals.get("floor") or "",
+                # Assisted-entry corrections are source facts, not geocoder
+                # receipts, feasibility verdicts, or scoring measurements.
+                # None of those may be invented by a manual create decision.
+                "frontageMeters": None,
+                "geocodeConfidence": None,
+                "latitude": None,
+                "longitude": None,
+                "h3Index": None,
+                "hardRuleFailures": ["missing_geocode_evidence"],
+                "hardRuleSummary": "尚未檢核；缺少地理編碼證據",
+                "sourceEvidence": [snapshot_id] if snapshot_id else [],
+                "snapshotId": snapshot_id,
+                "fitScore": None,
                 "firstSeenAt": _now(),
                 "sourceUrl": intake["originalUrl"],
             }
@@ -1872,7 +2397,11 @@ class NetworkListingService:
             target["rentPerMonth"] = effective_vals.get("rent", target["rentPerMonth"])
             target["areaPing"] = effective_vals.get("areaPing", target["areaPing"])
             target["floor"] = effective_vals.get("floor", target["floor"])
-            target["sourceEvidence"] = _dedupe(list(target.get("sourceEvidence", [])) + [f"EV-{intake_id}-REVISION"])
+            snapshot_id = intake.get("snapshotId")
+            target["sourceEvidence"] = _dedupe(
+                list(target.get("sourceEvidence") or ())
+                + ([snapshot_id] if snapshot_id else [])
+            )
             target["status"] = "watching"
             self._sync_listing_to_repo(target_id)
             intake["stage"] = "READY"
@@ -1893,9 +2422,13 @@ class NetworkListingService:
             if not target_id:
                 raise NetworkListingConflict("no target listing found for duplicate merge")
             target = self._listing(target_id)
-            before_evidence_count = len(target.get("sourceEvidence", []))
+            before_evidence_count = len(target.get("sourceEvidence") or ())
 
-            target["sourceEvidence"] = _dedupe(list(target.get("sourceEvidence", [])) + [f"EV-{intake_id}-DUPLICATE"])
+            snapshot_id = intake.get("snapshotId")
+            target["sourceEvidence"] = _dedupe(
+                list(target.get("sourceEvidence") or ())
+                + ([snapshot_id] if snapshot_id else [])
+            )
             target["status"] = "watching"
             self._sync_listing_to_repo(target_id)
             intake["stage"] = "READY"
@@ -1946,7 +2479,7 @@ class NetworkListingService:
             "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
             "occurredAt": _now(),
             "actorRoleId": actor_role_id,
-            "actorName": actor_name or "Expansion Manager",
+            "actorName": actor_name,
             "action": f"intake.decide.{action}",
             "targetId": intake_id,
             "message": f"Intake decision '{action}' recorded. Reason: {reason_text}",
@@ -1963,10 +2496,12 @@ class NetworkListingService:
             }
         }
         intake["auditEvents"].append(audit_evt)
+        intake["version"] = intake.get("version", 0) + 1
         self._save_intake(intake)
-        self._save_idempotency("decide_intake", governed_key, intake)
+        self._save_write(write, intake)
         return _copy(intake)
 
+    @_atomic_intake_submission
     def retry_intake(
         self,
         *,
@@ -1976,33 +2511,61 @@ class NetworkListingService:
         correlation_id: str | None,
         job_queue: Any | None = None,
         tenant_id: str | None = None,
+        idempotency_key: str | None = None,
+        authorize_existing: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
+        actor_name = self._require_actor(actor_name, actor_role_id)
+        tenant_id = self._require_tenant(tenant_id)
+        write = self._prepare_write("retry_intake", idempotency_key, actor_name,
+                                    {"intake_id": intake_id}, correlation_id)
+        if write.replayed_response is not None:
+            return write.replayed_response
         intake = self._listing_intake(intake_id)
         if intake["stage"] not in {"FAILED", "READY", "NEEDS_REVIEW", "AWAITING_ASSISTED_ENTRY"}:
             raise NetworkListingConflict(f"intake {intake_id} is in stage {intake['stage']} and cannot be retried")
 
-        if job_queue is not None and intake.get("idempotencyKey"):
+        prepare_async = getattr(self._intakes, "prepare_async_submission", None)
+        job = None
+        if prepare_async is not None and intake.get("jobId"):
+            prepare_async(job_queue)
+            job = job_queue.get(intake["jobId"])
+            if (job is None or job.payload.get("tenant_id") != tenant_id
+                    or job.payload.get("intake_id") != intake_id):
+                raise NetworkListingPolicyError("INTAKE_JOB_BINDING_REQUIRED")
+        elif prepare_async is None and job_queue is not None and intake.get("idempotencyKey"):
             job = job_queue.get_by_idempotency_key(intake["idempotencyKey"])
-            if job is not None:
-                intake["stage"] = "SUBMITTED"
+        if job is not None:
+            if prepare_async is not None:
+                from shared.jobs.queue import JobStatus
+
+                if job.status not in {JobStatus.FAILED, JobStatus.PARTIAL}:
+                    raise NetworkListingConflict("INTAKE_JOB_NOT_RETRYABLE")
+                if (intake.get("failure") or {}).get("retryable") is False:
+                    raise NetworkListingConflict("INTAKE_FAILURE_NOT_RETRYABLE")
+            intake["stage"] = "SUBMITTED"
+            if prepare_async is not None:
+                job_queue.replay(job.job_id, expected_version=job.version, fence_token=job.fence_token)
+            else:
                 job_queue.replay(job.job_id)
-                audit_evt = {
-                    "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
-                    "occurredAt": _now(),
-                    "actorRoleId": actor_role_id,
-                    "actorName": actor_name or "Expansion Manager",
-                    "action": "intake.retry",
-                    "targetId": intake_id,
-                    "message": f"Replayed async intake job for {intake['originalUrl']}.",
-                    "correlationId": correlation_id,
-                    "metadata": {
-                        "job_id": job.job_id,
-                        "stage": intake["stage"],
-                    }
+            audit_evt = {
+                "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
+                "occurredAt": _now(),
+                "actorRoleId": actor_role_id,
+                "actorName": actor_name,
+                "action": "intake.retry",
+                "targetId": intake_id,
+                "message": f"Replayed async intake job for {intake['originalUrl']}.",
+                "correlationId": correlation_id,
+                "metadata": {
+                    "job_id": job.job_id,
+                    "stage": intake["stage"],
                 }
-                intake["auditEvents"].append(audit_evt)
-                self._save_intake(intake)
-                return _copy(intake)
+            }
+            intake["auditEvents"].append(audit_evt)
+            intake["version"] = intake.get("version", 0) + 1
+            self._save_intake(intake)
+            self._save_write(write, intake)
+            return _copy(intake)
 
 
         from modules.external_data.application.assisted_intake import (
@@ -2016,6 +2579,12 @@ class NetworkListingService:
         from modules.external_data.security import redact_sensitive_snapshot
 
         policy = resolve_source_policy(intake["originalUrl"])
+        if prepare_async is not None and policy.policy == "APPROVED_RETRIEVAL":
+            from modules.listing.application.intake_workflow_bootstrap import (
+                IntakeWorkflowUnavailable,
+            )
+
+            raise IntakeWorkflowUnavailable("Canonical retry requires its linked durable retrieval job")
         if policy.quarantines or policy.policy in {"POLICY_UNKNOWN", "SOURCE_BLOCKED"}:
             intake["stage"] = "QUARANTINED"
             intake["matchResult"] = {
@@ -2037,7 +2606,7 @@ class NetworkListingService:
             snapshot_service = self._get_snapshot_service()
             gate = self._get_security_gate(snapshot_service)
             
-            resolved_tenant_id = tenant_id or "00000000-0000-0000-0000-000000000001"
+            resolved_tenant_id = self._require_tenant(tenant_id)
             retrieval_res = gate.fetch(
                 intake["canonicalUrl"],
                 tenant_id=resolved_tenant_id,
@@ -2049,6 +2618,7 @@ class NetworkListingService:
                 redacted_raw = redact_sensitive_snapshot(raw_dict)
                 redacted_data = json.dumps(redacted_raw).encode("utf-8")
                 
+                observed_at = datetime.now(UTC)
                 snapshot_id = snapshot_service.create_snapshot(
                     tenant_id=resolved_tenant_id,
                     intake_id=intake_id,
@@ -2060,12 +2630,13 @@ class NetworkListingService:
                     capture_method="SERVER_RETRIEVAL",
                     retention_class="STANDARD",
                     encryption_key_ref="kms://default-key",
-                    observed_at=datetime.now(UTC),
+                    observed_at=observed_at,
                     captured_at=datetime.now(UTC),
                     bucket="taiwan-snapshots",
                     redacted_data=redacted_data,
                 )
                 
+                intake["lastObservedAt"] = observed_at.isoformat().replace("+00:00", "Z")
                 from modules.external_data.application.assisted_intake import RetrievalResult
                 retrieval = RetrievalResult(
                     snapshot_id=snapshot_id,
@@ -2093,7 +2664,7 @@ class NetworkListingService:
                 "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
                 "occurredAt": _now(),
                 "actorRoleId": actor_role_id,
-                "actorName": actor_name or "Expansion Manager",
+                "actorName": actor_name,
                 "action": "intake.retry",
                 "targetId": intake_id,
                 "message": f"Retried URL retrieval for {intake['originalUrl']}.",
@@ -2105,7 +2676,9 @@ class NetworkListingService:
                 }
             }
             intake["auditEvents"].append(audit_evt)
+            intake["version"] = intake.get("version", 0) + 1
             self._save_intake(intake)
+            self._save_write(write, intake)
             return _copy(intake)
 
         intake["stage"] = "RETRIEVING"
@@ -2181,7 +2754,7 @@ class NetworkListingService:
             "id": f"AUD-INTAKE-{uuid.uuid4().hex[:8]}",
             "occurredAt": _now(),
             "actorRoleId": actor_role_id,
-            "actorName": actor_name or "Expansion Manager",
+            "actorName": actor_name,
             "action": "intake.retry",
             "targetId": intake_id,
             "message": f"Retried URL retrieval for {intake['originalUrl']}.",
@@ -2192,7 +2765,9 @@ class NetworkListingService:
             }
         }
         intake["auditEvents"].append(audit_evt)
+        intake["version"] = intake.get("version", 0) + 1
         self._save_intake(intake)
+        self._save_write(write, intake)
         return _copy(intake)
 
     # Adapter methods for PromotionService
@@ -2254,6 +2829,7 @@ class NetworkListingService:
     def save_intake(self, intake: dict[str, Any]) -> None:
         self._save_intake(intake)
 
+    @_atomic_intake_submission
     def promote_intake(
         self,
         *,
@@ -2265,10 +2841,12 @@ class NetworkListingService:
         actor_name: str | None,
         idempotency_key: str | None,
         correlation_id: str | None,
+        authorize_existing: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
+        actor_name = self._require_actor(actor_name, actor_role_id)
         allowed_roles = {
             "expansionManager", "expansion-manager", "siteReviewer", "site_reviewer",
-            "expansionUser", "expansion-user", "expansion_user"
+            "expansionUser", "expansion-user", "expansion_user", "executive", "data_owner"
         }
         if actor_role_id not in allowed_roles:
             raise NetworkListingPolicyError(f"role {actor_role_id!r} is not allowed to promote intake")
@@ -2278,9 +2856,10 @@ class NetworkListingService:
             correlation_id=correlation_id,
             action_label="promote intake",
         )
-        cache_key = ("promote_intake", governed_key)
-        if cache_key in self._idempotency_cache:
-            return _copy(self._idempotency_cache[cache_key])
+        write = self._prepare_write("promote_intake", governed_key, actor_name,
+                                    {"intake_id": intake_id, "reason": reason, "risk_summary": risk_summary, "risk_acknowledged": risk_acknowledged}, correlation_id)
+        if write.replayed_response is not None:
+            return write.replayed_response
 
         reason_text = (reason or "").strip()
         if not reason_text:
@@ -2300,9 +2879,8 @@ class NetworkListingService:
         listing = self._listing(target_listing_id)
 
         # Enforce segregation of duties & run reviewed promotion saga
-        proposer_id = actor_name or intake.get("submitter") or "operator-expansion-staff"
+        proposer_id = actor_name
 
-        import hashlib
         gate_snap = str(listing.get("fitScore", 0))
         gate_snapshot_sha256 = hashlib.sha256(gate_snap.encode()).hexdigest()
 
@@ -2313,14 +2891,21 @@ class NetworkListingService:
             promotion_repository=self._intakes,
             listing_repository=self,
             intake_repository=self,
-            outbox_repository=getattr(self._listing_repository, "outbox_repository", None),
+            outbox_repository=(getattr(self._intakes, "outbox_repository", None)
+                               or getattr(self._listing_repository, "outbox_repository", None)),
         )
 
         # 1. Propose
+        if actor_role_id in {"site_reviewer", "executive", "expansionManager", "expansion-manager", "siteReviewer"}:
+            proposer_role = PrincipalRole.EXPANSION_MANAGER
+        elif actor_role_id in {"data_owner", "dataSteward"}:
+            proposer_role = PrincipalRole.DATA_STEWARD
+        else:
+            proposer_role = PrincipalRole.EXPANSION_STAFF
         proposer_actor = Actor(
             actor_id=proposer_id,
-            role=PrincipalRole.EXPANSION_STAFF,
-            tenant_id=listing.get("tenantId") or "tenant-a",
+            role=proposer_role,
+            tenant_id=self._require_tenant(listing.get("tenantId")),
         )
         proposer_context = TransitionContext(
             actor=proposer_actor,
@@ -2360,6 +2945,7 @@ class NetworkListingService:
             }
         }
         intake["auditEvents"].append(audit_evt)
+        intake["version"] = intake.get("version", 0) + 1
         self._save_intake(intake)
 
         result = {
@@ -2371,7 +2957,7 @@ class NetworkListingService:
             "created": False,
         }
 
-        self._save_idempotency("promote_intake", governed_key, result)
+        self._save_write(write, result)
         return result
 
     def _get_match_listings(self) -> list[dict[str, Any]]:
@@ -2476,7 +3062,7 @@ class NetworkListingService:
             "id": f"AUD-NET-{uuid.uuid4().hex[:10]}",
             "occurredAt": _now(),
             "actorRoleId": actor_role_id,
-            "actorName": actor_name or "Expansion Manager",
+            "actorName": actor_name,
             "category": "workflow",
             "action": action,
             "targetType": "listing",
@@ -2494,82 +3080,29 @@ class NetworkListingService:
         selected_id: str | None,
     ) -> list[dict[str, Any]]:
         if not self._seed_fixtures:
-            listing = self._state["listings"][0] if self._state["listings"] else None
-            candidate = (
-                self._state["candidates"][0]
-                if self._state["candidates"]
-                else None
-            )
-            review = (
-                self._state["siteReviews"][0]
-                if self._state["siteReviews"]
-                else None
-            )
+            # This endpoint owns listings, not a selected scoring/report/review
+            # context. Keep the six-step API shape without exposing a global
+            # first row or claiming that candidate existence requires scoring.
             return [
                 {
-                    "id": "find",
-                    "label": "Find Area",
-                    "tabIndex": 0,
-                    "state": "completed" if selected_id else "current",
-                    "entityId": selected_id,
+                    "id": step_id,
+                    "label": label,
+                    "tabIndex": tab_index,
+                    "state": "blocked",
+                    "entityId": None,
                     "summary": (
-                        "Live HeatZone selected."
-                        if selected_id
-                        else "No live HeatZone is available."
+                        "Select an exact candidate context; progress requires "
+                        "current authorized listing, report and review reads."
                     ),
-                },
-                {
-                    "id": "radar",
-                    "label": "Listing Radar",
-                    "tabIndex": 1,
-                    "state": "completed" if listing else "current",
-                    "entityId": listing.get("id") if listing else None,
-                    "summary": (
-                        "Live listing is available."
-                        if listing
-                        else "No live listing has been submitted."
-                    ),
-                },
-                {
-                    "id": "candidate",
-                    "label": "Candidate",
-                    "tabIndex": 2,
-                    "state": "completed" if candidate else "next",
-                    "entityId": candidate.get("id") if candidate else None,
-                    "summary": (
-                        "Live candidate exists."
-                        if candidate
-                        else "Candidate creation requires a live listing."
-                    ),
-                },
-                {
-                    "id": "sitescore",
-                    "label": "SiteScore",
-                    "tabIndex": 3,
-                    "state": "next" if candidate else "blocked",
-                    "entityId": candidate.get("id") if candidate else None,
-                    "summary": "Requires a production model binding.",
-                },
-                {
-                    "id": "compare",
-                    "label": "Compare",
-                    "tabIndex": 4,
-                    "state": "next" if candidate else "blocked",
-                    "entityId": candidate.get("id") if candidate else None,
-                    "summary": "Requires live scored candidates.",
-                },
-                {
-                    "id": "review",
-                    "label": "Review",
-                    "tabIndex": 5,
-                    "state": "current" if review else "blocked",
-                    "entityId": review.get("id") if review else None,
-                    "summary": (
-                        "Live review is ready."
-                        if review
-                        else "No live review packet is available."
-                    ),
-                },
+                }
+                for step_id, label, tab_index in (
+                    ("find", "Find Area", 0),
+                    ("radar", "Listing Radar", 1),
+                    ("candidate", "Candidate", 2),
+                    ("sitescore", "SiteScore", 3),
+                    ("compare", "Compare", 4),
+                    ("review", "Review", 5),
+                )
             ]
         has_selected_zone = any(zone["id"] == selected_id for zone in self._state["heatZones"])
         candidate = next(

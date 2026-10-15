@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.app.routes.operator_modules.network_listings import is_record_owner
 from apps.api.oday_api.main import create_app
+from modules.listing.domain.models import ListingDedupKey
 from modules.opsboard.application.network_listings import (
     NetworkListingConflict,
     NetworkListingService,
 )
 from shared.auth import Principal
+from shared.domain.models import AddressLocation, Listing
+from shared.infrastructure.persistence.factory import _memory_bundle
 
 HEADERS = {
     "x-subject-id": "operator-expansion-manager",
@@ -250,7 +255,7 @@ def test_ambiguous_entity_match_review_test() -> None:
     assert corrected_data["matchResult"]["outcome"] == "NEW"
 
 
-def test_created_listing_keeps_address_and_heat_zone_for_v1_promotion_gate() -> None:
+def test_created_listing_keeps_address_but_requires_measured_geocode_for_promotion() -> None:
     app = create_app()
     client = TestClient(app)
     submitted = client.post(
@@ -281,10 +286,16 @@ def test_created_listing_keeps_address_and_heat_zone_for_v1_promotion_gate() -> 
     repository = app.state.listing_repository
     listing = repository.get_listing(listing_id)
     assert listing is not None
+    # Explicit synthetic hard-rule evidence isolates the geocode gate below.
+    object.__setattr__(listing, "hard_rule_failures", [])
     assert listing.address_id == f"ADDR-{listing_id}"
     address = next(item for item in repository.addresses if item.address_id == listing.address_id)
     assert address.normalized_address
-    assert address.h3_res_9 == "HZ-02"
+    # A selected business heat zone is not geocoded H3 evidence. Manual
+    # creation keeps the supplied address and leaves measurement gaps unknown.
+    assert address.h3_res_9 == ""
+    assert address.geocode_confidence is None
+    assert address.latitude is None and address.longitude is None
 
     promotion = client.post(
         f"/api/v1/intakes/{intake['id']}/promotion-requests",
@@ -301,8 +312,9 @@ def test_created_listing_keeps_address_and_heat_zone_for_v1_promotion_gate() -> 
             "If-Match": f'W/"{decided.json()["version"]}"',
         },
     )
-    assert promotion.status_code == 202
-    assert promotion.json()["status"] == "PENDING_REVIEW"
+    assert promotion.status_code == 422, promotion.text
+    assert "SOURCE_POLICY_DENIED" in promotion.text
+    assert "geocode" in promotion.text
 
 
 def test_malformed_payload_contract_test() -> None:
@@ -431,10 +443,49 @@ def test_role_based_server_checks() -> None:
 
 
 def test_promote_intake_contract_test() -> None:
-    app = create_app()
+    bundle = _memory_bundle()
+    NetworkListingService(listing_repository=bundle.listing_repository)
+
+    # Promotion requires recorded measurements, not geocoding invented during
+    # manual creation. This explicitly synthetic fixture supplies those facts.
+    listing = Listing(
+        listing_id="L-SYNTHETIC-PROMOTION-CONTRACT",
+        source_listing_id="synthetic-measured-promotion-record",
+        source_id="synthetic-measured-source",
+        address_id=str(uuid4()),
+        listing_status="watching",
+        rent_amount=54000,
+        area_ping=22,
+        floor="1F",
+        frontage_m=5,
+        confidence=0.9,
+    )
+    object.__setattr__(listing, "property_id", str(uuid4()))
+    object.__setattr__(listing, "listing_obs_id", str(uuid4()))
+    # Seed the explicit synthetic verdict before the local service captures
+    # its projection; the revise command then preserves it in domain/metadata.
+    object.__setattr__(listing, "hard_rule_failures", [])
+    address = AddressLocation(
+        address_id=listing.address_id,
+        raw_address="Synthetic measured promotion address",
+        normalized_address="Synthetic measured promotion address",
+        geocode_confidence=0.95,
+        h3_res_9="8929a1d4d67ffff",
+    )
+    bundle.listing_repository.save_listing(
+        listing,
+        address,
+        ListingDedupKey(
+            source_id=listing.source_id,
+            source_listing_id=listing.source_listing_id,
+            normalized_address=address.normalized_address,
+            rent_amount=listing.rent_amount,
+            area_ping=listing.area_ping,
+        ),
+    )
+    app = create_app(persistence=bundle)
     client = TestClient(app)
 
-    # 1. Submit a revision URL to resolve it to L-2024
     url = "https://www.synthetic.example/detail-88520242.html"
     resp = client.post(
         "/api/v1/operator/network-listings/intake/submit",
@@ -446,8 +497,27 @@ def test_promote_intake_contract_test() -> None:
             "x-operator-role": "expansion-staff",
         },
     )
+    assert resp.status_code == 200, resp.text
     data = resp.json()
     intake_id = data["id"]
+
+    decided = client.post(
+        f"/api/v1/operator/network-listings/intake/{intake_id}/decide",
+        json={
+            "action": "revise",
+            "targetListingId": listing.listing_id,
+            "reason": "Revise the synthetic measured listing",
+            "riskSummary": "Synthetic local promotion contract",
+            "riskAcknowledged": True,
+        },
+        headers=_write_headers("promotion-measured-revise"),
+    )
+    assert decided.status_code == 200, decided.text
+    assert decided.json()["stage"] == "READY"
+    assert decided.json()["matchResult"]["targetListingId"] == listing.listing_id
+    assert app.state.operator_intake_repository.get_listing_metadata(
+        listing.listing_id
+    )["hardRuleFailures"] == []
 
     # Try promote without reason -> expect 422
     bad_promote = client.post(
@@ -468,7 +538,7 @@ def test_promote_intake_contract_test() -> None:
         },
         headers=_write_headers("good-promote"),
     )
-    assert promote_resp.status_code == 200
+    assert promote_resp.status_code == 200, promote_resp.text
     res_data = promote_resp.json()
     assert res_data["status"] == "PENDING_REVIEW"
     assert "candidate" not in res_data
@@ -486,9 +556,34 @@ def test_promote_intake_contract_test() -> None:
             "If-Match": f'W/"{res_data["version"]}"',
         },
     )
-    assert review_resp.status_code == 200, review_resp.text
-    assert review_resp.json()["status"] == "COMPLETED"
-    assert review_resp.json()["candidate_site_id"]
+    assert review_resp.status_code == 503, review_resp.text
+    assert "SCORE_DELIVERY_UNAVAILABLE" in review_resp.text
+    # The declared dependency response must match the actual error envelope,
+    # as well as leaving the pending review and candidate/job state untouched.
+    import json
+
+    from jsonschema import Draft202012Validator
+
+    from delivery_toolchain.openapi.generate_assisted_listing_intake_client import ARTIFACT
+
+    contract = json.loads(ARTIFACT.read_text())
+    response_ref = contract["paths"][
+        "/v1/promotion-decisions/{promotion_decision_id}/actions/review"
+    ]["post"]["responses"]["503"]["$ref"]
+    declared_response = contract["components"]["responses"][response_ref.rsplit("/", 1)[1]]
+    error_schema = {
+        **declared_response["content"]["application/json"]["schema"],
+        "components": contract["components"],
+    }
+    Draft202012Validator(error_schema).validate(review_resp.json())
+    retained = client.get(
+        f"/api/v1/promotion-decisions/{res_data['promotion_decision_id']}",
+        headers=_write_headers("read-pending-after-delivery-unavailable"),
+    )
+    assert retained.status_code == 200, retained.text
+    assert retained.json()["status"] == "PENDING_REVIEW"
+    assert not retained.json().get("candidate_site_id")
+    assert not retained.json().get("site_score_job_id")
 
 
 # --- Risk disclosure contract (ODP-OC-R5-011 review finding P0-2) ---

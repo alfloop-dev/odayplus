@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
 import type {
   AssignmentReceipt, AssistedIntake, AuditReference, CorrectionReceipt, DecisionReceipt,
   FieldValue, IntakeSubmissionReceipt, JobReceipt, PromotionDecisionReceipt, SlaReceipt, TransitionReceipt,
@@ -24,6 +24,8 @@ import {
 import styles from "./intake.module.css";
 
 export type IntakeProcessingDetailProps = {
+  activeSection?: string | null;
+  onSectionChange?: (section: string) => void;
   record: AssistedIntake;
   targetListing?: TargetListingData | null;
   detailHref?: string;
@@ -51,6 +53,21 @@ export type IntakeProcessingDetailProps = {
 };
 
 export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
+  const page = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const aliases: Record<string, string> = { property: "lineage", commercial: "lineage" };
+    const section = props.activeSection ? aliases[props.activeSection] ?? props.activeSection : null;
+    const allowed = ["submission", "processing", "source", "error", "lineage", "identity", "comparison", "promotion", "receipts", "audit"];
+    if (!section || !allowed.includes(section)) return;
+    const target = page.current?.querySelector<HTMLElement>(`[data-intake-section="${section}"]`);
+    target?.scrollIntoView?.({ block: "start", behavior: "instant" });
+  }, [props.activeSection, props.record.id]);
+  const rememberSection = (event: SyntheticEvent<HTMLElement>) => {
+    const target = (event.target as Element).closest?.<HTMLElement>("[data-intake-section]");
+    if (target && page.current?.contains(target) && target.dataset.intakeSection !== props.activeSection) {
+      props.onSectionChange?.(target.dataset.intakeSection!);
+    }
+  };
   const {
     record, targetListing, detailHref, busy = false, canCorrect = true, canDecide = true, canRetry = true, canReplay = true,
     error = null, history = [], jobs = [], sla, fields, auditReferences = [], submissionReceipt,
@@ -97,7 +114,7 @@ export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
   const submittedAt = rawRecord.submittedAt ?? rawRecord.submitted_at ?? "UNAVAILABLE";
 
   return (
-    <main className={styles.intakeFullPage} data-screen-label="Intake 收件處理詳情頁" data-testid={testId}>
+    <section aria-label="收件處理詳情" ref={page} onFocusCapture={rememberSection} onClickCapture={rememberSection} className={styles.intakeFullPage} data-screen-label="Intake 收件處理詳情頁" data-testid={testId}>
       <header className={styles.intakeFullPageHeader} data-testid="intake-detail-header">
         <button className={styles.secondaryButton} onClick={onClose} type="button" data-testid="intake-return-button">← 返回收件匣</button>
         <div>
@@ -116,7 +133,7 @@ export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
         {onRefresh ? <button className={styles.secondaryButton} onClick={onRefresh} type="button" data-testid="intake-refresh-button">重新整理</button> : null}
       </header>
 
-      <section className={styles.sectionBox} data-testid="intake-submission-summary">
+      <section data-intake-section="submission" className={styles.sectionBox} data-testid="intake-submission-summary">
         <div className={styles.sectionHead}>送件摘要 SUBMISSION SUMMARY</div>
         <div className={styles.metaGrid}>
           <Meta label="原始 URL" value={record.originalUrl} />
@@ -135,11 +152,11 @@ export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
         onClaim={onClaimAssignment} onOpenPause={onOpenPause} onOpenTransfer={onOpenTransfer}
         onResume={onResumeSla} record={record} slaResourceVersion={slaResourceVersion} />
 
-      <section data-testid="intake-processing-stages">
+      <section data-intake-section="processing" data-testid="intake-processing-stages">
         <IntakeStageTimeline record={record} mode="stages" onCancel={onCancel} />
       </section>
 
-      <section data-testid="intake-source-policy-evidence">
+      <section data-intake-section="source" data-testid="intake-source-policy-evidence">
         <div className={styles.intakeSectionToolbar}>
           <strong>來源政策與 WORM 證據</strong>
           <label><input checked={maskedView} onChange={(event) => setMaskedView(event.target.checked)} type="checkbox" data-testid="intake-masking-checkbox" /> 資安遮蔽</label>
@@ -148,7 +165,7 @@ export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
           maskedView={maskedView} section="source" />
       </section>
 
-      {hasRecoveryState ? <section data-testid="intake-error-recovery-section">
+      {hasRecoveryState ? <section data-intake-section="error" data-testid="intake-error-recovery-section">
         <IntakeErrorRecovery error={recoveryError} stage={record.stage} correlationId={record.correlationId}
           preservedInput={preservedInput} onRetry={canRetry ? onRetry : undefined} onReplayDlq={onReplayDlq}
           onCancel={onCancel} onOverride={onOverride}
@@ -158,15 +175,16 @@ export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
       {record.stage === "AWAITING_ASSISTED_ENTRY" && onAssistedEntrySave
         ? <AssistedEntryForm busy={busy} canEdit={canCorrect} onSave={onAssistedEntrySave} /> : null}
 
-      <section data-testid="intake-parsed-lineage">
+      <section data-intake-section="lineage" data-testid="intake-parsed-lineage">
         <EvidencePanel record={record} fields={evidenceFields} onOpenFix={canCorrect ? onOpenFix : undefined}
           maskedView={maskedView} section="lineage" />
       </section>
 
-      <section data-testid="intake-match-evidence-section"><MatchEvidencePanel record={record} /></section>
+      <section data-intake-section="identity" data-testid="intake-match-evidence-section"><MatchEvidencePanel record={record} /></section>
 
       {record.matchResult ? (
         <section
+          data-intake-section="comparison"
           className={outcome === "POSSIBLE_MATCH" ? styles.possibleMatchOutcome : styles.unambiguousMatchOutcome}
           data-match-outcome={outcome}
           data-testid="intake-comparison-decision-section"
@@ -201,7 +219,7 @@ export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
       ) : null}
 
       {promotionAvailable && currentOperator ? (
-        <section data-testid="intake-promotion-section">
+        <section data-intake-section="promotion" data-testid="intake-promotion-section">
           <PromotionReviewPanel busy={promotionBusy} canReplayScore={canReplayScore} canRequest={canRequestPromotion}
             canReview={canReviewPromotion} currentOperator={currentOperator} error={promotionError}
             gateSnapshotSha256={gateSnapshotSha256 ?? ""} idempotencyReplayed={promotionIdempotencyReplayed}
@@ -211,12 +229,12 @@ export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
         </section>
       ) : null}
 
-      <section data-testid="intake-receipts-section">
+      <section data-intake-section="receipts" data-testid="intake-receipts-section">
         <DurableReceiptPanel record={record} submissionReceipt={submissionReceipt} assignmentReceipt={assignmentReceipt}
           decisionReceipt={decisionReceipt} slaReceipt={slaReceipt} correctionReceipts={correctionReceipts} />
       </section>
 
-      <section data-testid="intake-timeline-audit-section">
+      <section data-intake-section="audit" data-testid="intake-timeline-audit-section">
         <IntakeStageTimeline record={record} history={history} jobs={jobs} sla={sla} canReplay={canReplay}
           mode="audit" onReplayJob={onReplayDlq} onCancel={onCancel} />
         <div className={styles.sectionBox} data-testid="intake-audit-references">
@@ -237,7 +255,7 @@ export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
           )) : <div className={styles.emptyState} data-testid="audit-references-unavailable">AUDIT REFERENCES: UNAVAILABLE</div>}
         </div>
       </section>
-    </main>
+    </section>
   );
 }
 

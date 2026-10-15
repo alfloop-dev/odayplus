@@ -66,6 +66,62 @@ test("Missing payment series stays unavailable; AI CTA opens action without a wr
 });
 
 for (const width of [1440, 1024, 390]) {
+  test(`Store workflow preserves pending and failed intent at ${width}`, async ({ page }, info) => {
+    await page.setViewportSize({ width, height: 900 });
+    await openStore(page);
+    let finish!: () => void;
+    const waitForRelease = new Promise<void>((resolve) => { finish = resolve; });
+    const keys: string[] = [];
+    await page.route("**/api/v1/operator/store-ops/issues/ISS-1024/triage", async (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      keys.push(route.request().headers()["idempotency-key"]);
+      if (keys.length === 1) {
+        await waitForRelease;
+        await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ detail: "synthetic response failure" }) });
+      } else {
+        await route.fulfill({ contentType: "application/json", body: JSON.stringify({ issue: ISSUE_FIXTURES.find((issue) => issue.id === "ISS-1024") }) });
+      }
+    });
+    const trigger = page.getByLabel("Action rail").getByRole("button", { name: "完成 Triage", exact: true });
+    await trigger.click();
+    const panel = page.getByRole("dialog", { name: "完成 Triage", exact: true });
+    await panel.getByLabel("根因分類").selectOption("payment");
+    await panel.getByRole("button", { name: "完成 Triage", exact: true }).click();
+    await expect(panel).toHaveAttribute("aria-busy", "true");
+    await expect(panel.getByRole("status")).toBeFocused();
+    await expect(panel.getByLabel("根因分類")).toBeDisabled();
+    await expect(panel.getByRole("button", { name: "關閉對話框" })).toBeDisabled();
+    await expect(panel.getByRole("button", { name: "取消" })).toBeDisabled();
+    await page.keyboard.press("Escape");
+    await expect(panel).toBeVisible();
+    await page.keyboard.press("Tab");
+    await expect(panel.getByRole("status")).toBeFocused();
+    const pending = await measure(panel);
+    expect(pending.width).toBe(Math.min(470, width - 40));
+    expect(pending.scrollWidth).toBeLessThanOrEqual(Math.ceil(pending.width));
+    const pendingAxe = await new AxeBuilder({ page }).include('[role="dialog"]').analyze();
+    expect(pendingAxe.violations).toEqual([]);
+    await save(page, info, `store-triage-pending-${width}`);
+    finish();
+    await expect(panel.getByRole("alert")).toContainText("HTTP 503");
+    await expect(panel.getByLabel("根因分類")).toHaveValue("payment");
+    await expect(panel.getByRole("alert")).toBeFocused();
+    await expect(panel.getByRole("button", { name: "完成 Triage", exact: true })).toBeEnabled();
+    const failedAxe = await new AxeBuilder({ page }).include('[role="dialog"]').analyze();
+    expect(failedAxe.violations).toEqual([]);
+    await save(page, info, `store-triage-failed-${width}`);
+    await panel.getByRole("button", { name: "完成 Triage", exact: true }).click();
+    await expect(panel).toHaveCount(0);
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).toBe(keys[0]);
+    await record(info, `store-triage-confirmation-${width}`, {
+      pending, pendingAccessibilityViolations: pendingAxe.violations,
+      failedAccessibilityViolations: failedAxe.violations, requestCount: keys.length, sameRetryKey: keys[1] === keys[0],
+    });
+  });
+}
+
+for (const width of [1440, 1024, 390]) {
   test(`Store content geometry and reachable bottom cards at ${width}`, async ({ page }, info) => {
     await page.setViewportSize({ width, height: 900 });
     await openStore(page);

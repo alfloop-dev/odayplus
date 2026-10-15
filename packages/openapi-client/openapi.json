@@ -1068,6 +1068,18 @@
         "title": "AssignmentRequest",
         "type": "object"
       },
+      "AssignmentState": {
+        "enum": [
+          "UNASSIGNED",
+          "ASSIGNED",
+          "CLAIMED",
+          "TRANSFERRED",
+          "ESCALATED",
+          "COMPLETED"
+        ],
+        "title": "AssignmentState",
+        "type": "string"
+      },
       "AssignmentStatus": {
         "enum": [
           "ASSIGNED",
@@ -1123,6 +1135,57 @@
           "handoff_note"
         ],
         "title": "AssignmentTransferRequest",
+        "type": "object"
+      },
+      "AssignmentTransferTarget": {
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "owner_role": {
+            "title": "Owner Role",
+            "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject_id",
+          "display_name",
+          "owner_role"
+        ],
+        "title": "AssignmentTransferTarget",
+        "type": "object"
+      },
+      "AssignmentTransferTargetPage": {
+        "properties": {
+          "assignment_id": {
+            "format": "uuid",
+            "title": "Assignment Id",
+            "type": "string"
+          },
+          "assignment_version": {
+            "title": "Assignment Version",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AssignmentTransferTarget"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "assignment_id",
+          "assignment_version",
+          "items"
+        ],
+        "title": "AssignmentTransferTargetPage",
         "type": "object"
       },
       "AttachmentUploadRequest": {
@@ -5866,6 +5929,51 @@
         "title": "NetworkListingActorPayload",
         "type": "object"
       },
+      "NetworkListingArchivePayload": {
+        "additionalProperties": true,
+        "properties": {
+          "actorName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actorname"
+          },
+          "actorRoleId": {
+            "default": "expansionManager",
+            "title": "Actorroleid",
+            "type": "string"
+          },
+          "expectedActorSubjectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedactorsubjectid"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "title": "NetworkListingArchivePayload",
+        "type": "object"
+      },
       "NetworkListingMergePayload": {
         "additionalProperties": true,
         "properties": {
@@ -5884,6 +5992,17 @@
             "default": "expansionManager",
             "title": "Actorroleid",
             "type": "string"
+          },
+          "expectedActorSubjectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedactorsubjectid"
           },
           "reason": {
             "anyOf": [
@@ -5912,6 +6031,17 @@
             ],
             "title": "Risksummary"
           },
+          "targetIfMatch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetifmatch"
+          },
           "targetListingId": {
             "title": "Targetlistingid",
             "type": "string"
@@ -5921,6 +6051,47 @@
           "targetListingId"
         ],
         "title": "NetworkListingMergePayload",
+        "type": "object"
+      },
+      "NetworkListingRadarReadResponse": {
+        "additionalProperties": true,
+        "description": "Narrow read contract preserving the existing authorized snapshot fields.",
+        "properties": {
+          "listings": {
+            "items": {
+              "$ref": "#/components/schemas/NetworkListingReadResponse"
+            },
+            "title": "Listings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "listings"
+        ],
+        "title": "NetworkListingRadarReadResponse",
+        "type": "object"
+      },
+      "NetworkListingReadResponse": {
+        "additionalProperties": true,
+        "description": "The recorded hard-rule verdict; other authorized listing fields survive.",
+        "properties": {
+          "hardRuleFailures": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Recorded hard-rule failures. Null or absent means unmeasured, not passed. An empty array means a recorded check found no failures; a nonempty array names recorded failures. This field alone does not authorize promotion.",
+            "title": "Hardrulefailures"
+          }
+        },
+        "title": "NetworkListingReadResponse",
         "type": "object"
       },
       "NetworkRebalanceCounts": {
@@ -6263,6 +6434,72 @@
             "default": "expansionManager",
             "title": "Actorroleid",
             "type": "string"
+          },
+          "expectedActorSubjectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedactorsubjectid"
+          },
+          "expectedJobVersion": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedjobversion"
+          },
+          "expectedReportId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedreportid"
+          },
+          "expectedReportVersion": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedreportversion"
+          },
+          "expectedTenantId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedtenantid"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
           }
         },
         "title": "NetworkScoringActorPayload",
@@ -6300,6 +6537,72 @@
               }
             ],
             "title": "Candidateids"
+          },
+          "expectedActorSubjectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedactorsubjectid"
+          },
+          "expectedJobVersion": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedjobversion"
+          },
+          "expectedReportId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedreportid"
+          },
+          "expectedReportVersion": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedreportversion"
+          },
+          "expectedTenantId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedtenantid"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
           }
         },
         "title": "NetworkScoringBatchPayload",
@@ -6330,6 +6633,72 @@
             },
             "title": "Candidateids",
             "type": "array"
+          },
+          "expectedActorSubjectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedactorsubjectid"
+          },
+          "expectedJobVersion": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedjobversion"
+          },
+          "expectedReportId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedreportid"
+          },
+          "expectedReportVersion": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedreportversion"
+          },
+          "expectedTenantId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedtenantid"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
           }
         },
         "required": [
@@ -7481,6 +7850,18 @@
           },
           "status": {
             "$ref": "#/components/schemas/PromotionStatus"
+          },
+          "target_format_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Target code persisted with this decision, verbatim; null for historical receipts without one.",
+            "title": "Target Format Code"
           },
           "version": {
             "minimum": 1.0,
@@ -9327,6 +9708,52 @@
           }
         },
         "title": "ScopePayload",
+        "type": "object"
+      },
+      "ScoreExecutionRetryPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedActorSubjectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedactorsubjectid"
+          },
+          "expectedJobVersion": {
+            "title": "Expectedjobversion",
+            "type": "integer"
+          },
+          "expectedTenantId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedtenantid"
+          },
+          "expectedVersion": {
+            "title": "Expectedversion",
+            "type": "integer"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expectedVersion",
+          "expectedJobVersion",
+          "reason"
+        ],
+        "title": "ScoreExecutionRetryPayload",
         "type": "object"
       },
       "SegmentMetricPayload": {
@@ -12171,6 +12598,16 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Claim Assignment",
@@ -12276,6 +12713,16 @@
             "description": "Assisted intake API error"
           },
           "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -12397,9 +12844,92 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Transfer Assignment",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/assignments/{assignment_id}/transfer-targets": {
+      "get": {
+        "operationId": "listAssignmentTransferTargets",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assignment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Assignment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssignmentTransferTargetPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          }
+        },
+        "summary": "Get Assignment Transfer Targets",
         "tags": [
           "assisted-listing-intake"
         ]
@@ -12611,6 +13141,9 @@
               }
             },
             "description": "Unexpected server error"
+          },
+          "503": {
+            "description": "Canonical production evidence inputs not admitted"
           }
         },
         "summary": "Export Evidence",
@@ -12829,6 +13362,129 @@
           }
         },
         "summary": "Get Retained Evidence",
+        "tags": [
+          "audit"
+        ]
+      }
+    },
+    "/api/v1/audit/evidence/exports/{export_id}/download": {
+      "get": {
+        "operationId": "download_retained_evidence_api_v1_audit_evidence_exports__export_id__download_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "export_id",
+            "required": true,
+            "schema": {
+              "title": "Export Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "default": "zip",
+              "enum": [
+                "zip",
+                "pdf"
+              ],
+              "title": "Format",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "application/zip": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Verified retained evidence PDF or JSON/CSV ZIP",
+            "headers": {
+              "X-Artifact-SHA256": {
+                "description": "SHA-256 of response bytes",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "description": "Export permission or sensitive-data authority required"
+          },
+          "404": {
+            "description": "No evidence owned by this subject and tenant"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "410": {
+            "description": "Expired authorization, purged or unavailable artifact"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          },
+          "503": {
+            "description": "Canonical production download admission required"
+          }
+        },
+        "summary": "Download Retained Evidence",
         "tags": [
           "audit"
         ]
@@ -19838,6 +20494,16 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Review Identity",
@@ -20208,6 +20874,16 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Submit Batch",
@@ -20285,6 +20961,16 @@
             "description": "Assisted intake API error"
           },
           "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -20748,6 +21434,16 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Submit Url",
@@ -20914,6 +21610,16 @@
             "description": "Assisted intake API error"
           },
           "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -21261,6 +21967,16 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Assign",
@@ -21361,6 +22077,16 @@
             "description": "Assisted intake API error"
           },
           "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -24176,6 +24902,26 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Get Job Receipt",
@@ -24407,6 +25153,16 @@
             "description": "Assisted intake API error"
           },
           "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -33177,9 +33933,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Network Listings Api V1 Operator Network Listings Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/NetworkListingRadarReadResponse"
                 }
               }
             },
@@ -33320,9 +34074,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Network Listings Api V1 Operator Network Listings  Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/NetworkListingRadarReadResponse"
                 }
               }
             },
@@ -33507,6 +34259,186 @@
               "default": "",
               "title": "Slastate",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sourceId",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 200,
+              "title": "Sourceid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "submittedBy",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 200,
+              "title": "Submittedby",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "ownerId",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 200,
+              "title": "Ownerid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "assignmentStatus",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/AssignmentState"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Assignmentstatus"
+            }
+          },
+          {
+            "in": "query",
+            "name": "assignedAreaId",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 200,
+              "title": "Assignedareaid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "observedFrom",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "format": "date-time",
+              "title": "Observedfrom"
+            }
+          },
+          {
+            "in": "query",
+            "name": "observedTo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "format": "date-time",
+              "title": "Observedto"
+            }
+          },
+          {
+            "in": "query",
+            "name": "updatedFrom",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "format": "date-time",
+              "title": "Updatedfrom"
+            }
+          },
+          {
+            "in": "query",
+            "name": "updatedTo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "format": "date-time",
+              "title": "Updatedto"
+            }
+          },
+          {
+            "in": "query",
+            "name": "masked",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Masked"
+            }
+          },
+          {
+            "in": "query",
+            "name": "restricted",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Restricted"
+            }
+          },
+          {
+            "in": "query",
+            "name": "retryable",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Retryable"
             }
           },
           {
@@ -34331,6 +35263,22 @@
           },
           {
             "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
             "name": "X-Correlation-Id",
             "required": false,
             "schema": {
@@ -34490,13 +35438,45 @@
               ],
               "title": "X-Correlation-Id"
             }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Actor-Match"
+            }
           }
         ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/NetworkListingActorPayload"
+                "$ref": "#/components/schemas/NetworkListingArchivePayload"
               }
             }
           },
@@ -34781,6 +35761,38 @@
                 }
               ],
               "title": "X-Correlation-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Actor-Match"
             }
           }
         ],
@@ -36738,6 +37750,110 @@
         ]
       }
     },
+    "/api/v1/operator/network-scoring/candidates/{candidate_id}/execution-context": {
+      "get": {
+        "operationId": "execution_context_api_v1_operator_network_scoring_candidates__candidate_id__execution_context_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Execution Context Api V1 Operator Network Scoring Candidates  Candidate Id  Execution Context Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Execution Context",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
     "/api/v1/operator/network-scoring/candidates/{candidate_id}/score": {
       "post": {
         "operationId": "score_candidate_api_v1_operator_network_scoring_candidates__candidate_id__score_post",
@@ -36781,6 +37897,22 @@
                 }
               ],
               "title": "X-Correlation-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Actor-Match"
             }
           }
         ],
@@ -37000,6 +38132,272 @@
           }
         },
         "summary": "Set Compare",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
+    "/api/v1/operator/network-scoring/execution-requests/{request_id}": {
+      "get": {
+        "operationId": "execution_request_api_v1_operator_network_scoring_execution_requests__request_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Execution Request Api V1 Operator Network Scoring Execution Requests  Request Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Execution Request",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
+    "/api/v1/operator/network-scoring/execution-requests/{request_id}/retry": {
+      "post": {
+        "operationId": "retry_execution_request_api_v1_operator_network_scoring_execution_requests__request_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Correlation-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Actor-Match"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScoreExecutionRetryPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Retry Execution Request Api V1 Operator Network Scoring Execution Requests  Request Id  Retry Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Retry Execution Request",
         "tags": [
           "operator"
         ]
@@ -44279,6 +45677,24 @@
     "/api/v1/priceops/exploration-candidates": {
       "post": {
         "operationId": "generate_exploration_candidates_api_v1_priceops_exploration_candidates_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -44618,6 +46034,9 @@
             },
             "description": "Resource not found"
           },
+          "405": {
+            "description": "Gate mutation requires workflow approval"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -44747,6 +46166,9 @@
               }
             },
             "description": "Resource not found"
+          },
+          "405": {
+            "description": "Gate mutation requires workflow approval"
           },
           "409": {
             "content": {
@@ -47105,6 +48527,16 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Review Promotion",
@@ -48385,6 +49817,16 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Pause Sla",
@@ -48490,6 +49932,16 @@
             "description": "Assisted intake API error"
           },
           "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {

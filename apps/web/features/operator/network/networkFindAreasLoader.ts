@@ -19,6 +19,7 @@
  */
 
 import type { OdpApiClient } from "@oday-plus/openapi-client";
+import { cellToLatLng, isValidCell } from "h3-js";
 import type { ApiBinding } from "../../../src/lib/api/binding.ts";
 import { loadApiBinding } from "../../../src/lib/api/binding.ts";
 import type { Candidate, Listing, OperatorHeatZone } from "../types.ts";
@@ -42,17 +43,27 @@ function adaptHeatZone(raw: Record<string, unknown>): OperatorHeatZone {
   // The backend scores use h3_index as the stable zone id; we propagate it
   // directly so the frontend lens map can show real IDs.
   const id = (raw["h3_index"] as string | undefined) ?? String(raw["id"] ?? "HZ-UNKNOWN");
-  const unmetDemand = Number(raw["unmet_demand"] ?? raw["unmetDemand"] ?? 0);
+  const unmetDemand = Number(raw["unmet_demand_score"] ?? raw["unmet_demand"] ?? raw["unmetDemand"] ?? 0);
   const confidence = raw["confidence"] != null ? Number(raw["confidence"]) : null;
+  const observedCentroid = raw["centroid"];
+  let centroid: [number, number];
+  if (Array.isArray(observedCentroid) && observedCentroid.length === 2
+    && observedCentroid.every((value) => typeof value === "number" && Number.isFinite(value))
+    && Math.abs(observedCentroid[0]) <= 180 && Math.abs(observedCentroid[1]) <= 90) {
+    centroid = observedCentroid as [number, number];
+  } else if (observedCentroid == null && typeof raw["h3_index"] === "string" && isValidCell(raw["h3_index"])) {
+    // The cell center is derived geometry, not a fabricated address geocode.
+    const [lat, lng] = cellToLatLng(raw["h3_index"]);
+    centroid = [lng, lat];
+  } else {
+    throw new Error("HEATZONE_GEOMETRY_UNAVAILABLE");
+  }
 
   return {
     id,
     label: (raw["label"] as string | undefined) ?? id,
-    rank: Number(raw["rank"] ?? 999),
-    // centroid: [lng, lat] — fall back to [0,0] if not provided
-    centroid: Array.isArray(raw["centroid"])
-      ? (raw["centroid"] as [number, number])
-      : [0, 0],
+    rank: Number(raw["priority_rank"] ?? raw["rank"] ?? 999),
+    centroid,
     demandGap: unmetDemand,
     competitionIndex: Number(raw["competition_index"] ?? raw["competitionIndex"] ?? 0),
     cannibalizationRisk:
@@ -71,6 +82,26 @@ function adaptHeatZone(raw: Record<string, unknown>): OperatorHeatZone {
   };
 }
 
+function measuredScore(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
+}
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function recommendationValue(value: unknown): Candidate["recommendation"] {
+  if (typeof value !== "string") return null;
+  const normalized = value.toUpperCase();
+  return normalized === "GO" || normalized === "WAIT" || normalized === "REJECT" || normalized === "INVESTIGATE"
+    ? normalized : null;
+}
+
+function recordedString(raw: Record<string, unknown>, primary: string, secondary: string): string | null {
+  const value = primary in raw ? raw[primary] : raw[secondary];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
 function adaptCandidate(raw: Record<string, unknown>): Candidate {
   const id =
     (raw["candidateSiteId"] as string | undefined) ??
@@ -78,15 +109,9 @@ function adaptCandidate(raw: Record<string, unknown>): Candidate {
     (raw["id"] as string | undefined) ??
     "CS-UNKNOWN";
 
-  const recommendation = (() => {
-    const r =
-      (raw["recommendation"] as string | undefined) ??
-      (raw["final_recommendation"] as string | undefined) ??
-      "WAIT";
-    if (r === "GO" || r === "go") return "GO" as const;
-    if (r === "REJECT" || r === "reject") return "REJECT" as const;
-    return "WAIT" as const;
-  })();
+  const recommendation = recommendationValue(
+    "recommendation" in raw ? raw["recommendation"] : raw["final_recommendation"],
+  );
 
   return {
     id,
@@ -98,18 +123,15 @@ function adaptCandidate(raw: Record<string, unknown>): Candidate {
       "",
     title: (raw["title"] as string | undefined) ?? (raw["address"] as string | undefined) ?? id,
     address: (raw["address"] as string | undefined) ?? "",
-    status: (raw["status"] as Candidate["status"]) ?? "scoring",
-    score: Number(raw["score"] ?? raw["composite_score"] ?? 0),
+    latitude: finiteNumber(raw["latitude"]),
+    longitude: finiteNumber(raw["longitude"]),
+    geocodeConfidence: finiteNumber(raw["geocodeConfidence"]),
+    h3Index: recordedString(raw, "h3Index", "h3_index"),
+    status: (raw["siteStatus"] as Candidate["status"]) ?? (raw["status"] as Candidate["status"]) ?? "new",
+    score: measuredScore("score" in raw ? raw["score"] : raw["composite_score"]),
     recommendation,
-    modelVersion:
-      (raw["modelVersion"] as string | undefined) ??
-      (raw["model_version"] as string | undefined) ??
-      "unknown",
-    datasetSnapshotId:
-      (raw["datasetSnapshotId"] as string | undefined) ??
-      (raw["dataset_snapshot_id"] as string | undefined) ??
-      (raw["featureSnapshotTime"] as string | undefined) ??
-      "",
+    modelVersion: recordedString(raw, "modelVersion", "model_version"),
+    datasetSnapshotId: recordedString(raw, "datasetSnapshotId", "dataset_snapshot_id"),
     missingData: Array.isArray(raw["missingData"])
       ? (raw["missingData"] as string[])
       : Array.isArray(raw["feasibilityFlags"])
@@ -193,16 +215,20 @@ export async function loadNetworkFindAreasBindings(
       const enrichedItems = rawCandidateBinding.items.map((candidate) => {
         const report = reportByCandidateId.get(candidate.id);
         if (!report) return candidate;
-        const rawRec = (report["recommendation"] as string | undefined) ?? "";
-        const recommendation: Candidate["recommendation"] =
-          rawRec === "GO" ? "GO" : rawRec === "REJECT" ? "REJECT" : "WAIT";
+        const recommendation = recommendationValue(report["recommendation"]);
+        const confidence = report["confidence"];
+        const confidenceStatus = report["confidenceStatus"] ?? report["confidence_status"];
+        const measuredConfidence = confidenceStatus === "measured" && typeof confidence === "number"
+          && Number.isFinite(confidence) && confidence >= 0 && confidence <= 1
+          ? confidence : null;
         return {
           ...candidate,
-          score: Number(report["confidence"] ?? candidate.score),
+          score: null,
+          confidence: measuredConfidence,
+          status: (["new", "scoring", "SCORING_FAILED", "CANDIDATE"].includes(candidate.status)
+            ? "scored" : candidate.status) as Candidate["status"],
           recommendation,
           modelVersion: (report["modelVersion"] as string | undefined) ?? candidate.modelVersion,
-          datasetSnapshotId:
-            (report["featureSnapshotTime"] as string | undefined) ?? candidate.datasetSnapshotId,
         };
       });
       candidates = { ...rawCandidateBinding, items: enrichedItems };

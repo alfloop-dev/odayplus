@@ -197,6 +197,9 @@ export type AssignmentRequest = {
   reason: string;
 };
 
+/** AssignmentState */
+export type AssignmentState = "UNASSIGNED" | "ASSIGNED" | "CLAIMED" | "TRANSFERRED" | "ESCALATED" | "COMPLETED";
+
 /** AssignmentStatus */
 export type AssignmentStatus = "ASSIGNED" | "CLAIMED" | "TRANSFERRED" | "ESCALATED" | "COMPLETED";
 
@@ -207,6 +210,20 @@ export type AssignmentTransferRequest = {
   reason: string;
   target_owner_role: string;
   target_owner_subject_id: string;
+};
+
+/** AssignmentTransferTarget */
+export type AssignmentTransferTarget = {
+  display_name: string;
+  owner_role: string;
+  subject_id: string;
+};
+
+/** AssignmentTransferTargetPage */
+export type AssignmentTransferTargetPage = {
+  assignment_id: string;
+  assignment_version: number;
+  items: AssignmentTransferTarget[];
 };
 
 /** Write body for POST /operator/store-ops/issues/{issue_id}/attachments. */
@@ -1174,14 +1191,35 @@ export type NetworkListingActorPayload = {
   reason?: string | null;
 };
 
+/** NetworkListingArchivePayload */
+export type NetworkListingArchivePayload = {
+  actorName?: string | null;
+  actorRoleId?: string;
+  expectedActorSubjectId?: string | null;
+  reason?: string | null;
+};
+
 /** NetworkListingMergePayload */
 export type NetworkListingMergePayload = {
   actorName?: string | null;
   actorRoleId?: string;
+  expectedActorSubjectId?: string | null;
   reason?: string | null;
   riskAcknowledged?: boolean;
   riskSummary?: string | null;
+  targetIfMatch?: string | null;
   targetListingId: string;
+};
+
+/** Narrow read contract preserving the existing authorized snapshot fields. */
+export type NetworkListingRadarReadResponse = {
+  listings: NetworkListingReadResponse[];
+};
+
+/** The recorded hard-rule verdict; other authorized listing fields survive. */
+export type NetworkListingReadResponse = {
+  /** Recorded hard-rule failures. Null or absent means unmeasured, not passed. An empty array means a recorded check found no failures; a nonempty array names recorded failures. This field alone does not authorize promotion. */
+  hardRuleFailures?: string[] | null;
 };
 
 /** NetworkRebalanceCounts */
@@ -1240,6 +1278,12 @@ export type NetworkRebalanceSnapshotResponse = {
 export type NetworkScoringActorPayload = {
   actorName?: string | null;
   actorRoleId?: string;
+  expectedActorSubjectId?: string | null;
+  expectedJobVersion?: number | null;
+  expectedReportId?: string | null;
+  expectedReportVersion?: number | null;
+  expectedTenantId?: string | null;
+  reason?: string | null;
 };
 
 /** NetworkScoringBatchPayload */
@@ -1247,6 +1291,12 @@ export type NetworkScoringBatchPayload = {
   actorName?: string | null;
   actorRoleId?: string;
   candidateIds?: string[] | null;
+  expectedActorSubjectId?: string | null;
+  expectedJobVersion?: number | null;
+  expectedReportId?: string | null;
+  expectedReportVersion?: number | null;
+  expectedTenantId?: string | null;
+  reason?: string | null;
 };
 
 /** NetworkScoringComparePayload */
@@ -1254,6 +1304,12 @@ export type NetworkScoringComparePayload = {
   actorName?: string | null;
   actorRoleId?: string;
   candidateIds: string[];
+  expectedActorSubjectId?: string | null;
+  expectedJobVersion?: number | null;
+  expectedReportId?: string | null;
+  expectedReportVersion?: number | null;
+  expectedTenantId?: string | null;
+  reason?: string | null;
 };
 
 /** Per-role notification delivery preferences. */
@@ -1450,6 +1506,8 @@ export type PromotionDecisionReceipt = {
   reviewer_subject_id?: string | null;
   site_score_job_id?: string | null;
   status: PromotionStatus;
+  /** Target code persisted with this decision, verbatim; null for historical receipts without one. */
+  target_format_code?: string | null;
   version: number;
 };
 
@@ -1738,6 +1796,15 @@ export type ScopePayload = {
   region_ids?: string[];
   store_ids?: string[];
   tenant_id?: string;
+};
+
+/** ScoreExecutionRetryPayload */
+export type ScoreExecutionRetryPayload = {
+  expectedActorSubjectId?: string | null;
+  expectedJobVersion: number;
+  expectedTenantId?: string | null;
+  expectedVersion: number;
+  reason: string;
 };
 
 /** SegmentMetricPayload */
@@ -2080,10 +2147,12 @@ export const API_PATHS = {
   "/api/v1/assignments/{assignment_id}/actions/claim": ["POST"],
   "/api/v1/assignments/{assignment_id}/actions/complete": ["POST"],
   "/api/v1/assignments/{assignment_id}/actions/transfer": ["POST"],
+  "/api/v1/assignments/{assignment_id}/transfer-targets": ["GET"],
   "/api/v1/audit/events": ["GET"],
   "/api/v1/audit/evidence/export": ["POST"],
   "/api/v1/audit/evidence/exports": ["GET"],
   "/api/v1/audit/evidence/exports/{export_id}": ["GET"],
+  "/api/v1/audit/evidence/exports/{export_id}/download": ["GET"],
   "/api/v1/audit/evidence/exports/{export_id}/legal-hold": ["POST"],
   "/api/v1/audit/evidence/retention/expired": ["GET"],
   "/api/v1/audit/evidence/retention/purge": ["POST"],
@@ -2273,8 +2342,11 @@ export const API_PATHS = {
   "/api/v1/operator/network-reviews/{review_id}/decide": ["POST"],
   "/api/v1/operator/network-scoring": ["GET"],
   "/api/v1/operator/network-scoring/": ["GET"],
+  "/api/v1/operator/network-scoring/candidates/{candidate_id}/execution-context": ["GET"],
   "/api/v1/operator/network-scoring/candidates/{candidate_id}/score": ["POST"],
   "/api/v1/operator/network-scoring/compare": ["POST"],
+  "/api/v1/operator/network-scoring/execution-requests/{request_id}": ["GET"],
+  "/api/v1/operator/network-scoring/execution-requests/{request_id}/retry": ["POST"],
   "/api/v1/operator/network-scoring/reset": ["POST"],
   "/api/v1/operator/network-scoring/score": ["POST"],
   "/api/v1/operator/privacy/export": ["POST"],

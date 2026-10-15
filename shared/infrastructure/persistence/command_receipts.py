@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from typing import Any
 
@@ -41,12 +42,36 @@ class TenantScopedCommandReceiptStore:
     service: str
     replay_wait_timeout_seconds: float = 10.0
     replay_poll_interval_seconds: float = 0.01
+    transaction_factory: Callable[[], AbstractContextManager[Any]] | None = None
 
     @property
     def is_durable(self) -> bool:
         return isinstance(self.queue, DurableJobQueue)
 
     def run(
+        self,
+        *,
+        tenant_id: str,
+        idempotency_key: str | None,
+        scope: str,
+        payload: Any,
+        correlation_id: str,
+        operation: Callable[[str], dict[str, Any]],
+    ) -> CommandReceiptOutcome:
+        """Optionally commit reservation, operation and final receipt atomically.
+
+        Only a caller that binds every participating repository to the same
+        engine may supply this context. Existing reservation-only callers keep
+        their crash-safe, incomplete-receipt behavior.
+        """
+        context = self.transaction_factory() if self.transaction_factory else nullcontext()
+        with context:
+            return self._run(
+                tenant_id=tenant_id, idempotency_key=idempotency_key, scope=scope,
+                payload=payload, correlation_id=correlation_id, operation=operation,
+            )
+
+    def _run(
         self,
         *,
         tenant_id: str,

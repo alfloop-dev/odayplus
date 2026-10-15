@@ -67,6 +67,67 @@ services:
       timeout: 3s
       retries: 30
 
+  # The canonical positive promotion journeys use physical workflow.jobs and
+  # the real worker. This disposable synthetic composition is not admission
+  # of a production source, model, retry policy, or authentication mode.
+  score-postgres:
+    image: postgis/postgis:16-3.5
+    environment:
+      POSTGRES_DB: odp_score_browser_e2e
+      POSTGRES_USER: synthetic_browser
+      POSTGRES_PASSWORD: synthetic-browser-disposable-only
+    volumes:
+      - score-browser-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synthetic_browser -d odp_score_browser_e2e"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  score-api:
+    image: odayplus/api:e2e
+    command: ["python", "-m", "uvicorn", "tests.support.intake_score_browser_server:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      ODP_SCORE_BROWSER_MODE: isolated-synthetic
+      ODP_SCORE_BROWSER_DATABASE_URL: postgresql://synthetic_browser:synthetic-browser-disposable-only@score-postgres:5432/odp_score_browser_e2e
+      ODP_SCORE_BROWSER_CONTROL_KEY: synthetic-browser-control-20261013-local-only
+      ODP_INTAKE_SCORE_ATTEMPT_SIGNING_KEY: synthetic-browser-attempt-key-20261013-local-only
+      ODP_INTAKE_SCORE_RETRY_POLICY_JSON: '{"policy_id":"synthetic-local-score-retry-v1","version":1,"max_attempts":5,"backoff_seconds":[10,30,120,600]}'
+      ODP_PRODUCT_MODE: poc
+      ODP_DEPLOY_ENV: e2e
+      ODP_AUDIT_WORM_SINK_URI: file:///storage/synthetic-score-audit
+    ports:
+      - "127.0.0.1:${ODP_SCORE_BROWSER_API_PORT:-38299}:8000"
+    volumes:
+      - score-browser-storage:/storage
+    depends_on:
+      api:
+        condition: service_healthy
+      score-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/_synthetic/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  score-web:
+    image: odayplus/web:e2e
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+      ODP_API_BASE_URL: http://score-api:8000
+      ODP_DATA_BINDING_MODE: fixture
+      ODP_PRODUCT_MODE: poc
+      ODP_DEPLOY_ENV: e2e
+      ODP_E2E_MODE: "true"
+    ports:
+      - "127.0.0.1:${ODP_SCORE_BROWSER_WEB_PORT:-38300}:3000"
+    depends_on:
+      score-api:
+        condition: service_healthy
+
   worker:
     image: odayplus/api:e2e
     command: ["python", "delivery_toolchain/e2e/worker_heartbeat.py", "--interval", "15"]
@@ -85,3 +146,5 @@ services:
 volumes:
   e2e-db:
   e2e-storage:
+  score-browser-db:
+  score-browser-storage:

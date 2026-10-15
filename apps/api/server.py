@@ -104,11 +104,11 @@ def build_server(persistence: PersistenceBundle | None = None) -> Any:
     return create_app(persistence=bundle)
 
 
-def build_worker(persistence: PersistenceBundle) -> ODayWorker:
+def build_worker(persistence: PersistenceBundle, *, audit_only: bool = False) -> ODayWorker:
     """Construct the runtime worker bound to the shared bundle."""
     from apps.worker.oday_worker.main import ODayWorker
 
-    return ODayWorker(persistence=persistence)
+    return ODayWorker(persistence=persistence, audit_only=audit_only)
 
 
 def build_scheduler(persistence: PersistenceBundle) -> ODayScheduler:

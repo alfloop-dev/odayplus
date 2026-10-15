@@ -14,6 +14,7 @@ export type OperatorRoleId =
   | "field-lead"
   | "marketing-manager"
   | "expansion-manager"
+  | "expansion-staff"
   | "pm-audit";
 
 export type OperatorRole = {
@@ -67,13 +68,13 @@ export const OPERATOR_ROLES: OperatorRole[] = [
     id: "ops-lead",
     label: "營運主管",
     subtitle: "全域監控、跨域指派與核准",
-    allowedWorkspaces: ["today", "store", "growth", "network", "govern"],
+    allowedWorkspaces: ["today", "store", "govern"],
   },
   {
     id: "cs-lead",
     label: "客服主管",
     subtitle: "評論、客服案件與門市回覆",
-    allowedWorkspaces: ["today", "store", "govern"],
+    allowedWorkspaces: ["today", "store"],
   },
   {
     id: "field-lead",
@@ -85,19 +86,25 @@ export const OPERATOR_ROLES: OperatorRole[] = [
     id: "marketing-manager",
     label: "行銷經理",
     subtitle: "活動、分群、定價建議",
-    allowedWorkspaces: ["today", "growth", "govern"],
+    allowedWorkspaces: ["today", "growth"],
   },
   {
     id: "expansion-manager",
     label: "展店經理",
     subtitle: "HeatZone、候選點與 SiteScore",
-    allowedWorkspaces: ["today", "network", "govern"],
+    allowedWorkspaces: ["today", "network"],
+  },
+  {
+    id: "expansion-staff",
+    label: "展店專員",
+    subtitle: "送件、資料補正與自有案件追蹤",
+    allowedWorkspaces: ["today", "network"],
   },
   {
     id: "pm-audit",
     label: "PM／稽核",
     subtitle: "模型、決策追蹤與稽核線索",
-    allowedWorkspaces: ["today", "store", "network", "govern"],
+    allowedWorkspaces: ["today", "network", "govern"],
   },
 ];
 

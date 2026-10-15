@@ -1,0 +1,447 @@
+{
+  "approvals": [
+    {
+      "id": "ap-store-1042",
+      "module": "Store Ops",
+      "title": "Close escalated service issue",
+      "requestor": "Store Ops Lead",
+      "submittedAt": "2026-07-05 08:12",
+      "status": "pending",
+      "priority": "high",
+      "owner": "營運主管",
+      "sla": "42m",
+      "entityRef": "ISS-1042",
+      "summary": "Manager requests closure after staff resolution and customer callback.",
+      "systemRecommendation": "Approve with customer follow-up audit retained.",
+      "risk": "Customer-facing escalation",
+      "roleNote": "營運主管 can decide after reviewing evidence package.",
+      "evidence": [
+        {
+          "id": "ev-issue",
+          "label": "Issue timeline",
+          "type": "issue",
+          "state": "ready"
+        },
+        {
+          "id": "ev-call",
+          "label": "Customer callback",
+          "type": "note",
+          "state": "ready"
+        },
+        {
+          "id": "ev-photo",
+          "label": "Counter photo",
+          "type": "camera",
+          "state": "ready"
+        }
+      ]
+    },
+    {
+      "id": "ap-growth-2207",
+      "module": "Growth",
+      "title": "Schedule promo campaign",
+      "requestor": "Growth Manager",
+      "submittedAt": "2026-07-05 07:48",
+      "status": "pending",
+      "priority": "medium",
+      "owner": "行銷經理",
+      "sla": "2h 10m",
+      "entityRef": "CMP-2207",
+      "summary": "Campaign needs final governance approval before audience export.",
+      "systemRecommendation": "Return unless audience mask proof is attached.",
+      "risk": "Export and consent policy",
+      "roleNote": "Return requires a reason for downstream Growth revision.",
+      "evidence": [
+        {
+          "id": "ev-draft",
+          "label": "Campaign draft",
+          "type": "growth",
+          "state": "ready"
+        },
+        {
+          "id": "ev-mask",
+          "label": "Masking proof",
+          "type": "export",
+          "state": "missing"
+        }
+      ]
+    },
+    {
+      "id": "ap-network-3319",
+      "module": "Network",
+      "title": "Approve SiteScore override",
+      "requestor": "Expansion Manager",
+      "submittedAt": "2026-07-05 06:35",
+      "status": "pending",
+      "priority": "critical",
+      "owner": "展店經理",
+      "sla": "18m",
+      "entityRef": "SITE-3319",
+      "summary": "Team requests WAIT to GO override for a high-traffic corner candidate.",
+      "systemRecommendation": "Reject override due to competitor density and lease risk.",
+      "risk": "Model override",
+      "roleNote": "展店經理 decision must include model and dataset snapshot context.",
+      "evidence": [
+        {
+          "id": "ev-score",
+          "label": "SiteScore v4.8",
+          "type": "model",
+          "state": "ready"
+        },
+        {
+          "id": "ev-snapshot",
+          "label": "Dataset 2026-W27",
+          "type": "dataset",
+          "state": "ready"
+        },
+        {
+          "id": "ev-comp",
+          "label": "Competitor scan",
+          "type": "network",
+          "state": "ready"
+        }
+      ]
+    },
+    {
+      "id": "ap-govern-0903",
+      "module": "Govern",
+      "title": "Evidence package export",
+      "requestor": "PM／稽核",
+      "submittedAt": "2026-07-05 05:22",
+      "status": "pending",
+      "priority": "high",
+      "owner": "PM／稽核",
+      "sla": "1h 05m",
+      "entityRef": "EXP-0903",
+      "summary": "Auditor requests signed export for an external review packet.",
+      "systemRecommendation": "Approve with seven-day retention and masked actor fields.",
+      "risk": "Retention and signed URL policy",
+      "roleNote": "PM／稽核 can approve export after retention policy review.",
+      "evidence": [
+        {
+          "id": "ev-policy",
+          "label": "Retention policy",
+          "type": "system",
+          "state": "ready"
+        },
+        {
+          "id": "ev-mask-2",
+          "label": "Actor masking",
+          "type": "export",
+          "state": "ready"
+        },
+        {
+          "id": "ev-audit",
+          "label": "Audit bundle",
+          "type": "audit",
+          "state": "ready"
+        }
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "dec-8841",
+      "module": "Store Ops",
+      "item": "ISS-0994 resolution close",
+      "systemRecommendation": "Approve",
+      "finalDecision": "Approved",
+      "reason": "Evidence package matched closure policy.",
+      "actor": "營運主管",
+      "decidedAt": "2026-07-05 04:51",
+      "model": "ops-risk-v2.2",
+      "datasetSnapshot": "ops-2026-W27",
+      "approvalId": "ap-store-0994"
+    },
+    {
+      "id": "dec-8840",
+      "module": "Growth",
+      "item": "CMP-2198 audience export",
+      "systemRecommendation": "Return",
+      "finalDecision": "Returned",
+      "reason": "Audience masking proof was incomplete.",
+      "actor": "PM／稽核",
+      "decidedAt": "2026-07-04 19:18",
+      "model": "campaign-guard-v1.9",
+      "datasetSnapshot": "growth-2026-W27",
+      "approvalId": "ap-growth-2198"
+    },
+    {
+      "id": "dec-8839",
+      "module": "Network",
+      "item": "SITE-3308 WAIT override",
+      "systemRecommendation": "Reject",
+      "finalDecision": "Rejected",
+      "reason": "Lease sensitivity exceeded override threshold.",
+      "actor": "展店經理",
+      "decidedAt": "2026-07-04 17:44",
+      "model": "sitescore-v4.8",
+      "datasetSnapshot": "network-2026-W27",
+      "approvalId": "ap-network-3308"
+    }
+  ],
+  "auditRows": [
+    {
+      "id": "aud-7101",
+      "category": "approval",
+      "timestamp": "2026-07-05 08:12",
+      "actor": "Store Ops Lead",
+      "action": "Approval requested",
+      "module": "Store Ops",
+      "entityRef": "ISS-1042",
+      "summary": "Issue closure approval entered queue.",
+      "correlationId": "corr-iss-1042"
+    },
+    {
+      "id": "aud-7100",
+      "category": "camera",
+      "timestamp": "2026-07-05 08:08",
+      "actor": "Camera service",
+      "action": "Evidence attached",
+      "module": "Store Ops",
+      "entityRef": "ISS-1042",
+      "summary": "Counter photo linked to closure packet.",
+      "correlationId": "corr-iss-1042"
+    },
+    {
+      "id": "aud-7099",
+      "category": "growth",
+      "timestamp": "2026-07-05 07:48",
+      "actor": "Growth Manager",
+      "action": "Campaign submitted",
+      "module": "Growth",
+      "entityRef": "CMP-2207",
+      "summary": "Promo campaign submitted for governance review.",
+      "correlationId": "corr-cmp-2207"
+    },
+    {
+      "id": "aud-7098",
+      "category": "network",
+      "timestamp": "2026-07-05 06:35",
+      "actor": "Expansion Manager",
+      "action": "Override requested",
+      "module": "Network",
+      "entityRef": "SITE-3319",
+      "summary": "SiteScore WAIT to GO override requested.",
+      "correlationId": "corr-site-3319"
+    },
+    {
+      "id": "aud-7097",
+      "category": "export",
+      "timestamp": "2026-07-05 05:22",
+      "actor": "PM／稽核",
+      "action": "Export approval requested",
+      "module": "Govern",
+      "entityRef": "EXP-0903",
+      "summary": "Evidence Package export queued for approval.",
+      "correlationId": "corr-exp-0903"
+    },
+    {
+      "id": "aud-7096",
+      "category": "system",
+      "timestamp": "2026-07-05 05:10",
+      "actor": "Policy engine",
+      "action": "Retention rule evaluated",
+      "module": "Govern",
+      "entityRef": "EXP-0903",
+      "summary": "Seven-day signed URL retention selected.",
+      "correlationId": "corr-exp-0903"
+    }
+  ],
+  "statusBoard": {
+    "dataQuality": [
+      {
+        "source": "Google Reviews Connector",
+        "status": "正常",
+        "good": true,
+        "note": "15 分鐘前同步 · 覆蓋 12/12 門市"
+      },
+      {
+        "source": "Camera Events",
+        "status": "延遲",
+        "good": false,
+        "note": "事件延遲 12 分鐘 · 影響即時性"
+      },
+      {
+        "source": "POS／支付交易",
+        "status": "正常",
+        "good": true,
+        "note": "即時串流 · 缺漏 0.2%"
+      },
+      {
+        "source": "591 物件源",
+        "status": "正常",
+        "good": true,
+        "note": "每日 06:00 匯入 · 昨日新增 14 筆"
+      },
+      {
+        "source": "IoT 心跳",
+        "status": "注意",
+        "good": false,
+        "note": "1 台設備 >3h 未回報（ISS-1021）"
+      }
+    ],
+    "models": [
+      {
+        "name": "SiteScore",
+        "version": "v2.3",
+        "status": "上線",
+        "good": true,
+        "note": "選址評分 · 每週再訓練 · 用於 Network"
+      },
+      {
+        "name": "CS Intent",
+        "version": "v1.8",
+        "status": "上線",
+        "good": true,
+        "note": "客服意圖分類 · 準確率 91%"
+      },
+      {
+        "name": "PriceOps",
+        "version": "v0.9",
+        "status": "Shadow",
+        "good": false,
+        "note": "動態定價 · 影子模式驗證中"
+      },
+      {
+        "name": "Camera Event",
+        "version": "v1.2",
+        "status": "上線",
+        "good": true,
+        "note": "場域事件偵測 · 不含人臉"
+      }
+    ],
+    "connectors": [
+      {
+        "name": "Google Business Profile",
+        "status": "已連接",
+        "good": true,
+        "note": "評價／回覆 API"
+      },
+      {
+        "name": "LINE 官方帳號",
+        "status": "已連接",
+        "good": true,
+        "note": "客服＋推播"
+      },
+      {
+        "name": "591 租屋網",
+        "status": "已連接",
+        "good": true,
+        "note": "每日物件匯入"
+      },
+      {
+        "name": "TapPay 金流閘道",
+        "status": "已連接",
+        "good": true,
+        "note": "交易／退款 webhook"
+      }
+    ],
+    "sla": [
+      {
+        "name": "核准處理 SLA",
+        "status": "達成",
+        "good": true,
+        "note": "P95 42m · 目標 <2h"
+      },
+      {
+        "name": "事件升級 SLA",
+        "status": "達成",
+        "good": true,
+        "note": "橘/紅燈 30m 內升級"
+      },
+      {
+        "name": "證據匯出 SLA",
+        "status": "注意",
+        "good": false,
+        "note": "1 筆匯出等待簽章 >1h"
+      }
+    ],
+    "users": [
+      {
+        "name": "營運主管",
+        "status": "啟用",
+        "good": true,
+        "note": "全域監控、跨域指派與核准"
+      },
+      {
+        "name": "PM／稽核",
+        "status": "啟用",
+        "good": true,
+        "note": "模型、決策追蹤與稽核線索"
+      },
+      {
+        "name": "行銷經理",
+        "status": "啟用",
+        "good": true,
+        "note": "活動、分群、定價建議"
+      },
+      {
+        "name": "展店經理",
+        "status": "啟用",
+        "good": true,
+        "note": "HeatZone、候選點與 SiteScore"
+      }
+    ],
+    "runbooks": [
+      {
+        "name": "災備演練 (Disaster Recovery)",
+        "status": "正常",
+        "good": true,
+        "note": "Completed 2026-07-01 · 復原時間 18m"
+      },
+      {
+        "name": "資料備份與還原 (Backup & Restore)",
+        "status": "正常",
+        "good": true,
+        "note": "每日 03:00 自動備份 · 驗證成功"
+      },
+      {
+        "name": "事件管理與升級 (Incident Management)",
+        "status": "運作中",
+        "good": true,
+        "note": "SLA 升級規則已啟用 · 監控端點正常"
+      },
+      {
+        "name": "系統觀測性 (Observability)",
+        "status": "正常",
+        "good": true,
+        "note": "Prometheus/Grafana 指標正常 · 心跳正常"
+      }
+    ]
+  },
+  "evidencePackages": [
+    {
+      "id": "EVD-2026-0701-01",
+      "range": "2026-06-01 – 2026-06-30",
+      "mod": "Store Ops＋Growth＋Network",
+      "fmt": "PDF",
+      "t": "2026-07-01 10:15",
+      "by": "周明德"
+    },
+    {
+      "id": "EVD-2026-0615-02",
+      "range": "2026-05-01 – 2026-05-31",
+      "mod": "Store Ops＋Network",
+      "fmt": "CSV",
+      "t": "2026-06-15 14:22",
+      "by": "周明德"
+    }
+  ],
+  "counts": {
+    "pendingApprovals": 4,
+    "decisions": 3,
+    "auditRows": 6
+  },
+  "role_id": null,
+  "correlation_id": "synthetic-governance-ui",
+  "source": "api",
+  "actionAuthority": {
+    "verified": true,
+    "systemRoles": [
+      "operations_manager"
+    ],
+    "decide": true,
+    "exportEvidence": true
+  }
+}

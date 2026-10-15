@@ -497,6 +497,11 @@ export function HeatZoneMap({
           {caption
             ? `${caption} · ${liveTiles ? `底圖 ${boundaryConfig.attribution || "已設定圖磚"}` : "示意底圖（離線）· 座標為 POC 示意"}`
             : `資料 ${freshness.status} · 快照 ${freshness.sourceSnapshotId} · 模型 ${freshness.modelVersion}`}
+          {candidates.some((candidate) => candidate.coordinates === null) ? (
+            <span data-testid="map-unlocated-candidates" role="status">
+              <br />{candidates.filter((candidate) => candidate.coordinates === null).length} 個候選點尚無已驗證座標，未顯示地圖標記；可在候選點清單查看。
+            </span>
+          ) : null}
         </p>
       </div>
       <div className={styles.legend} aria-label="Map legend">
@@ -750,9 +755,9 @@ function buildDeckLayers({
       lineWidthMaxPixels: 8,
       pickable: false,
     }),
-    new ScatterplotLayer<Listing>({
+    new ScatterplotLayer<Listing & { coordinates: [number, number] }>({
       id: "odp-listing-points",
-      data: listings,
+      data: listings.filter((item): item is Listing & { coordinates: [number, number] } => item.coordinates !== null),
       visible: visible.listings,
       getPosition: (item) => item.coordinates,
       getFillColor: [43, 108, 176, 210],
@@ -764,9 +769,9 @@ function buildDeckLayers({
       filled: true,
       pickable: true,
     }),
-    new ScatterplotLayer<CandidateSite>({
+    new ScatterplotLayer<CandidateSite & { coordinates: [number, number] }>({
       id: "odp-candidate-sites",
-      data: candidates,
+      data: candidates.filter((item): item is CandidateSite & { coordinates: [number, number] } => item.coordinates !== null),
       visible: visible.candidates,
       getPosition: (item) => item.coordinates,
       getFillColor: (item) => item.readiness === "ready" ? [107, 70, 193, 230] : [192, 86, 33, 230],
@@ -929,12 +934,14 @@ function nearestProjected<T>(
   items: T[],
   point: { x: number; y: number },
   map: maplibregl.Map,
-  getCoordinates: (item: T) => [number, number],
+  getCoordinates: (item: T) => [number, number] | null,
   maxDistance: number,
 ): T | undefined {
   let nearest: { item: T; distance: number } | undefined;
   for (const item of items) {
-    const projected = map.project(getCoordinates(item));
+    const coordinates = getCoordinates(item);
+    if (coordinates === null) continue;
+    const projected = map.project(coordinates);
     const distance = Math.hypot(projected.x - point.x, projected.y - point.y);
     if (distance <= maxDistance && (!nearest || distance < nearest.distance)) {
       nearest = { item, distance };
