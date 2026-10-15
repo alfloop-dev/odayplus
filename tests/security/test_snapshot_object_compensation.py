@@ -1,5 +1,6 @@
 """Snapshot failures may delete only object generations created by that call."""
 
+import json
 from datetime import UTC, datetime
 from hashlib import sha256
 from uuid import NAMESPACE_DNS, uuid4, uuid5
@@ -22,15 +23,19 @@ def capture():
     )
 
 
-def object_key(capture, kind):
+def object_key(capture, kind, *, native=False):
     digest = sha256(capture["raw_data"]).hexdigest()
-    snapshot = uuid5(NAMESPACE_DNS, f"{capture['tenant_id']}:{capture['source_id']}:{digest}")
+    name = ("intake-v2:" + json.dumps(
+                [capture["tenant_id"], capture["intake_id"], capture["source_id"], digest], separators=(",", ":"),
+            ) if native else
+            f"{capture['tenant_id']}:{capture['source_id']}:{digest}")
+    snapshot = uuid5(NAMESPACE_DNS, name)
     return f"tenants/{capture['tenant_id']}/snapshots/{snapshot}/{kind}"
 
 
-def upload(store, capture, kind, data):
+def upload(store, capture, kind, data, *, native=False):
     return store.upload_object(
-        capture["tenant_id"], capture["bucket"], object_key(capture, kind), data, "text/html",
+        capture["tenant_id"], capture["bucket"], object_key(capture, kind, native=native), data, "text/html",
     )
 
 
@@ -70,7 +75,7 @@ def test_failed_metadata_write_compensates_only_created_generations(capture, rep
 
     store = Store()
     if prior_kind:
-        upload(store, capture, prior_kind, capture[prior_kind + "_data"])
+        upload(store, capture, prior_kind, capture[prior_kind + "_data"], native=True)
 
     class FailingMetadata(SourceSnapshotService):
         def _is_sqlite(self):
@@ -82,10 +87,14 @@ def test_failed_metadata_write_compensates_only_created_generations(capture, rep
             return "APPROVED_RETRIEVAL"
 
         def _execute(self, *_args, **_kwargs):
+            # Inject the metadata failure after both upload acknowledgements,
+            # allowing a preflight natural-key read to succeed without a row.
+            if len(store.list_objects(capture["tenant_id"], capture["bucket"])) < 2:
+                return []
             if replacement:
                 for kind in ("raw", "redacted"):
                     store.upload_object(
-                        capture["tenant_id"], capture["bucket"], object_key(capture, kind),
+                        capture["tenant_id"], capture["bucket"], object_key(capture, kind, native=True),
                         b"later writer", "text/html", if_generation_match=1,
                     )
             raise error
@@ -95,7 +104,7 @@ def test_failed_metadata_write_compensates_only_created_generations(capture, rep
         service.create_snapshot(**capture)
     assert failure.value is error
     assert sorted(store.deletes) == sorted((kind, 1) for kind in ("raw", "redacted") if kind != prior_kind)
-    expected = [object_key(capture, kind) for kind in ("raw", "redacted") if replacement or kind == prior_kind]
+    expected = [object_key(capture, kind, native=True) for kind in ("raw", "redacted") if replacement or kind == prior_kind]
     assert sorted(store.list_objects(capture["tenant_id"], capture["bucket"])) == sorted(expected)
     if replacement:
         for key in expected:

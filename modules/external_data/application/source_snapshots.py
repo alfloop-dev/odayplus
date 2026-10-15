@@ -371,10 +371,26 @@ class SourceSnapshotService:
 
         content_sha256 = hashlib.sha256(raw_data).hexdigest()
 
-        # Derive snapshot_id deterministically from tenant, source, and content_sha256 to be idempotent
+        # Native evidence belongs to one Intake even when its source bytes are
+        # identical. Reuse that exact natural key to preserve older recorded
+        # IDs and object references without adopting another Intake's snapshot.
         namespace = uuid.NAMESPACE_DNS
         name = f"{tenant_id}:{source_id}:{content_sha256}"
-        snapshot_id = str(uuid.uuid5(namespace, name))
+        if self.db_conn is not None and not self._is_sqlite():
+            existing = self._execute(
+                "SELECT source_snapshot_id FROM intake.source_snapshots "
+                "WHERE tenant_id=%s AND intake_id=%s AND source_id=%s AND content_sha256=%s",
+                (tenant_id, intake_id, source_id, content_sha256), tenant_id=tenant_id,
+            )
+            # Separate new names from the old tenant-prefixed format: source
+            # IDs are arbitrary text and can contain UUIDs and separators.
+            native_name = "intake-v2:" + json.dumps(
+                [tenant_id, intake_id, source_id, content_sha256], separators=(",", ":"),
+            )
+            snapshot_id = (str(existing[0]["source_snapshot_id"]) if existing else
+                           str(uuid.uuid5(namespace, native_name)))
+        else:
+            snapshot_id = str(uuid.uuid5(namespace, name))
 
         # Compute purge_after based on retention_class
         purge_after = None

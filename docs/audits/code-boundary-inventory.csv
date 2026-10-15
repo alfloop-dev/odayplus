@@ -1157,6 +1157,7 @@ tests/integration/test_model_ready_geo_views.py,verification,verification_only,f
 tests/integration/test_model_ready_materialization.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_model_registry_artifacts.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_model_training_release.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_native_snapshot_intake_lineage_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_native_snapshot_policy_authority_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_native_snapshot_sql_owner_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_native_solver_compatibility.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
