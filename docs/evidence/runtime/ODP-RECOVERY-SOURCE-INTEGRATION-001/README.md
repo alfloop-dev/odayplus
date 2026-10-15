@@ -9,6 +9,89 @@ Canonical reviewer: **Human/Ops**. Final admission is **PENDING**. This record
 grants no approval, merge arming, merge, promotion, deployment, recovery or
 credential/account/session effect.
 
+## Pi batch003 continuation — run pi-20261015T052543Z-a1757def
+
+**Incremental source only, NOT review-ready.** Manager-assigned353 paths/eight
+source documents and exact branch were verified. Fetched `origin/dev` remains
+`c0c8c8226acaab3cbe8bb76e79f01e5e6694abb3`, contained in HEAD. Six private-index
+anchors are committed/pushed; no shared auth fixture or CI trigger widening:
+
+- `6591e5a4510f`: SiteScore stored-owner isolation before GET/decision mutation,
+  both aliases/local and durable fallback; foreign/unknown ownership hidden404.
+- `ec602fcb1551`: new Intervention immutable tenant, serialization/memory/durable
+  preservation and HTTP ownership checks before command replay/read/mutation.
+  Legacy unknown stays hidden; adjustments/follow-ups retain tenant; conflict
+  detection separates tenants. Original lifecycle/concurrency assertions remain.
+- `0f5f2526aad0`: future AVM attribution uses authenticated operation scope, not
+  client metadata; PriceOps requires verified scope matching owning plan tenant;
+  privacy export uses owning manifest. Explicit module-local tenant/auditor
+  fixtures retain replay, expiry, sanitization, numerical and denial controls.
+- `9c6db6ef6da9`: production composition and actual AVM/PostGIS/artifact fixtures
+  use ephemeral signed synthetic service JWTs through normal config/boundary;
+  forged headers401, LightGBM/lifelines and real schema/rollback paths retained.
+  Platform/reliability fixtures use supported tenant-owned forecast + real seed
+  timeseries/retry handler, not unknown-job HTTP waivers.
+- `e838d987f0688`: throwaway Web external-origin wiring only. Actual current
+  standalone response reproduced same-browser CSRF403; configured origin reaches
+  deliberate unavailable upstream502 while hostile origin remains403. Initial
+  stale-image failure retained. This was NOT proof of all13 historical failures.
+- `934a8b2f85b82bc7583e78458d54d03fd1064a9d`, tree
+  `9ffb3b1b7f1d9c89aed107ee23bb80e2ee79df69`: masked parsed fields synthesize
+  only server-defined schema key/label. Current browser actually returned200
+  POSSIBLE_MATCH submit/detail then crashed at `field.key.toLowerCase()` because
+  projection removed the key. Client key/label/other metadata are NOT restored;
+  all sensitive values stay null and authoritative records unchanged. Three
+  adversarial field regressions fail before and pass after. Actual unchanged
+  canonical3 browser flow passes after the API fix, without mocking requests,
+  changing UI/assertions or extending timeouts. No full129 closure is claimed.
+
+### Measurements and next scope
+
+[Diagnostic index](pi-batch003-diagnostics.json) binds exact commands, real exits,
+head/tree, dirty flags, unchanged caps and log hashes under canonical scratch
+`pi-20261015T052543Z-a1757def`. These are **author diagnostics, NOT canonical
+receipts or independent reviewer execution**. Earlier diagnostics preceded their
+anchors; they must not be relabeled as final clean-head results.
+
+- At clean e838: owning Intervention/security composition exit0 (255.696s);
+  actual owned Docker PostgreSQL/PostGIS AVM + real artifacts composition exit0
+  (240.610s); twelve-module audit/numerical/contract/platform/reliability/
+  production composition exit0 (374.061s). Ruff/boundaries/OpenAPI also exit0.
+- At e838 plus explicit two-path mask diff: four-module security composition
+  exit0 (133.927s), actual unchanged canonical3 browser selection exit0 (25.409s),
+  Ruff/diff0. At clean934: new three-field security regression exit0 (13.777s)
+  and boundaries exit0 (11.212s). No proof transfer to documentation successors.
+- Initial Intervention concurrency tenant fixture, lint import ordering, platform
+  unsupported-job/retry fixtures and stale-image diagnostics genuinely failed;
+  originals remain. An initial browser diagnostic lacked Dockerfile public E2E
+  build flags and failed401 before reaching intake; separately rebuilt supported
+  diagnostic reaches the actual masked-key failure. Both failures are retained,
+  not silently replaced. All owned diagnostic APIs/containers were stopped.
+
+Normal e838 CI38689309039 has terminal successful orchestrator/Node/performance/
+security/API-contract leaves but **failed DB (4fail/8pass) and E2E
+(3fail/98pass/28notrun of129)**; overall/unit remain nonterminal at last readback.
+E2E's three failures are POSSIBLE_MATCH detail rendering, not browser CSRF now.
+Parent green leaves are not successor acceptance. At934 PR1478 is OPEN at that
+exact remote SHA with autoMergeRequest=null; normal successor CI38691575647 is
+in progress. No rerun/dispatch/approval/merge effect was requested.
+
+[Batch004 Manager request](MANAGER-SCOPE-BATCH004-REQUEST.md) identifies exactly
+ONE unleased path, `tests/integration/test_official_real_estate_postgresql.py`:
+its four HTTP concurrency cases still create tenantless principals despite real
+owning tenant/store rows, so creation correctly fails403. File remains untouched;
+Manager must authorize/serialize the explicit fixture repair, preserving every
+real PostgreSQL/CAS/version/200+409/audit/lineage assertion. No global `_authz.py`
+change or authorization weakening is requested. No new E2E path lease requested.
+
+Original COMPLETE blocked/six-reopen task is verified equal to prior baseline.
+Original failed history/refusals/quota, Human/Ops/PENDING, operational HOLD/
+quarantine/bindingNULL/cleanupUNKNOWN and goalfalse remain. Fresh final immutable
+head14 canonical and all17 supplemental selections, necessary new owning controls,
+terminal normal hosted CI, configured independent Codex2 assessment and Human/Ops
+acceptance remain owed. No submit_review/finalization, approval, merge arming,
+merge, done or live credential/recovery/deployment/cloud/business/data effect.
+
 ## Pi batch002 continuation — run pi-20261015T050836Z-858dccaf
 
 **Incremental source only, NOT review-ready.** Live Manager lease, correct branch,
