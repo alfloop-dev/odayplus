@@ -576,8 +576,15 @@ def test_sitescore_future_decisions_keep_owning_tenant_through_transitions(
             },
         )
         assert opened.status_code == 201, opened.text
-        path = prefix + "/sitescore/decisions/" + opened.json()["decision_id"] + "/decision"
+        decision_path = prefix + "/sitescore/decisions/" + opened.json()["decision_id"]
+        before = client.get(decision_path, headers=headers)
+        assert before.status_code == 200, before.text
+        assert before.json()["tenant_id"] == TENANT
+        path = decision_path + "/decision"
         for denied_headers in ({}, foreign):
+            hidden = client.get(decision_path, headers=denied_headers)
+            assert hidden.status_code in (401, 403, 404), hidden.text
+            assert opened.json()["decision_id"] not in hidden.text
             denied = client.post(
                 path,
                 headers=denied_headers,
@@ -588,6 +595,7 @@ def test_sitescore_future_decisions_keep_owning_tenant_through_transitions(
                 },
             )
             assert denied.status_code in (401, 403, 404), denied.text
+        assert client.get(decision_path, headers=headers).json() == before.json()
         denied_reason = client.post(
             path, headers=headers, json={"action": "APPROVE", "actor": "offline"}
         )

@@ -144,6 +144,19 @@ else:
                 )
             return decision_workflow
 
+        def require_owned_decision(
+            active_wf: SiteScoreDecisionWorkflow, decision_id: str, request: Request
+        ) -> Any:
+            decision = active_wf.get(decision_id)
+            # The local fallback is shared, unlike the durable tenant store.
+            # Check the owning record in BOTH modes before returning or mutating it.
+            # Unknown historical ownership cannot be inferred from this request.
+            if decision is None or not decision.tenant_id or decision.tenant_id != resolve_tenant_id(request):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="decision not found"
+                )
+            return decision
+
         router = APIRouter(
             prefix="/sitescore",
             tags=["sitescore"],
@@ -379,6 +392,7 @@ else:
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                 ) from exc
             active_wf = workflow_for_request(request)
+            require_owned_decision(active_wf, decision_id, request)
             try:
                 outcome = active_wf.decide(
                     decision_id,
@@ -403,12 +417,7 @@ else:
         )
         def get_decision(decision_id: str, request: Request) -> dict[str, Any]:
             active_wf = workflow_for_request(request)
-            decision = active_wf.get(decision_id)
-            if decision is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND, detail="decision not found"
-                )
-            return decision.to_dict()
+            return require_owned_decision(active_wf, decision_id, request).to_dict()
 
         @router.get(
             "/realized",
