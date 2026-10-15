@@ -870,6 +870,33 @@ def _operator_scope_decision(principal: Principal, resource: ResourceDescriptor)
     return Decision.allow("Operator Console scope accepted")
 
 
+def operator_permission_decision(
+    principal: Principal,
+    resource: ResourceDescriptor,
+    action: Action,
+    *,
+    scoped_read_resource: str | None = None,
+) -> Decision:
+    """Shared resource gate for Operator routes and navigation projection.
+
+    Authentication, session validation, persona selection and audit remain in
+    the route dependency. Navigation is advisory, never an authorization grant.
+    """
+    if not (
+        rbac_allows(principal, resource.type, action)
+        or (
+            action == Action.VIEW
+            and scoped_read_resource is not None
+            and rbac_allows(principal, scoped_read_resource, Action.VIEW)
+        )
+    ):
+        return Decision.deny(
+            f"role does not permit {action.value} on {resource.type}",
+            policy_id="rbac",
+        )
+    return _operator_scope_decision(principal, resource)
+
+
 def require_operator_permission(
     resource_type: str = OPERATOR_CONSOLE_RESOURCE,
     action: Action = Action.VIEW,
@@ -967,22 +994,9 @@ def require_operator_permission(
             _record_denial(active_engine, access, role_decision)
             _raise_forbidden(role_decision)
 
-        if not (
-            rbac_allows(principal, resource_type, action)
-            or (
-                action == Action.VIEW
-                and scoped_read_resource is not None
-                and rbac_allows(principal, scoped_read_resource, Action.VIEW)
-            )
-        ):
-            decision = Decision.deny(
-                f"role does not permit {action.value} on {resource_type}",
-                policy_id="rbac",
-            )
-            _record_denial(active_engine, access, decision)
-            _raise_forbidden(decision)
-
-        scope_decision = _operator_scope_decision(principal, resource)
+        scope_decision = operator_permission_decision(
+            principal, resource, action, scoped_read_resource=scoped_read_resource
+        )
         if not scope_decision.allowed:
             _record_denial(active_engine, access, scope_decision)
             _raise_forbidden(scope_decision)
