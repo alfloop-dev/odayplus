@@ -9,7 +9,86 @@ Canonical reviewer: **Human/Ops**. Final admission is **PENDING**. This record
 grants no approval, merge arming, merge, promotion, deployment, recovery or
 credential/account/session effect.
 
-## Pi admitted810 composition checkpoint — incoming Web failure, NOT final freeze
+## Pi batch008 owning corrections — new source/docs candidate, NOT acceptance
+
+Actual Manager run `pi-20261015T164215Z-d9425ec0` verified the running isolated
+workspace/serialized task lease, admitted810, canonical362 source entries/21
+source documents and materialized hashes BEFORE edits. The complete original
+blocked-six-reopen record, seven human-decision files and pinned dcf1 tree remain
+unchanged. The only new incoming edit lease is the scoped-snapshot TEST file;
+no production Web session or Operator caller was edited.
+
+F3 static question is now an executed OFFLINE owning replay, not just speculation.
+The real-route fixture invalidates A BEFORE returning200+distinct B; logout(A)
+returns401, while later C/D stay independent. At `fb266f5c79a3` the positive replay
+really fails because old cleanup reports UNKNOWN. Gate anchor `ab7d6ea703d6`
+retains A in custody and permits a SPECIFIC existing-operation release witness:
+known owned consumed A, correct distinct-password request/origin, complete exact
+existing success payload, one unambiguous distinct observed B and no prior custody
+uncertainty. The existing Web route durably creates B and revokes old sessions
+before issuing that full acknowledgement. This is a witness for ONLY consumed A,
+not a new account-wide cleanup operation or an inferred release of other cookies.
+An abbreviated response deliberately does not establish this conservative witness.
+A still needs BOTH specific-cookie Web401/API-denied reads; all safely observed
+B/C/D need their own bounded once-only logout acknowledgement and denied reads.
+Reports separately count rotation witnesses and ACTUAL logout attempts; no fake
+logout is recorded for A. Arbitrary/unresolvable logout401 alone is still UNKNOWN.
+Lost/partial/contradictory rotation, same-cookie replacement, live/lost denied reads,
+B cleanup loss and early exit have separate new owning cases. Native recovery's
+quarantine-before-delegated-cleanup path is unchanged, with no finally logout.
+
+UI diagnosis preceded another uninstrumented full300 attempt. A scratch-only
+observer recorded actual bootstrap/body completion, unselected/selected network
+requests and real DOM transitions. Initial observation02 reproduced the original
+failure with shell ready but snapshot pending; its fetch-descriptor observation
+was bypassed by vi.stubGlobal. Observation03 captured bootstrap body completion
+at20.938ms but shell ready1315.708ms/first snapshot request1361.167ms; that attempt
+also had FIVE observer-caused mock.calls errors, explicitly INVALID as acceptance
+or evidence of five new product defects. Corrected vi.fn observer04 passes12;
+observer05 passes full300. These are diagnostic contrasts, not proof of a unique
+historical flake/cause or substitutes for the required original command.
+
+Only the failing test's mount fixture now awaits standard async React `act`, owning
+the real bootstrap -> snapshot -> server-selected-zone effects before its existing
+assertions. No accepted-ready data is injected and no mock endpoint/body, tenant,
+role, denied read, selection semantics, test order/parallelism/member or timeout
+is changed. Static TypeScript inspection confirms ALL87 original assertion
+expressions and12 it declarations remain exact. ALL129 original base and80
+original dev-admin function ASTs remain exact against13c, including assertions.
+New F3 cases are outside unchanged original2178/178 selections.
+
+At exact source `12867b8682cd8a1ba5ba4d4622f42f3333ed4432` / tree
+`4d736335eb59215d07578d1f2246044c6d70b0e2`, real native outcomes under420 are:
+- Original Operator Web command:0/23.205s, full300/28 files, NO observer/config
+  override. Retained ECONNREFUSED diagnostics are not silently deleted or claimed
+  as a proven cause. Focused12 is NOT used as its replacement.
+- Full base+dev-admin owning command:0/36.595s, including faithful rotation,
+  uncertainty and early-exit controls. Initial new postrotation-count assertion
+  failure at ab7 remains; correction excludes the separate PRE-rotation403 probe.
+- Native recovery security module:0/22.151s; scoped Ruff:0/0.175s.
+
+All initial failures/refusals/invalid diagnostics/raw logs/native waits/ECHILD/
+accessible-owned-writer closure, exact own-container removal and seals are retained
+in [batch008 evidence](pi-batch008-owning-diagnostics.json). Offline Web/doubles are
+NOT actual-PG application proof merely because a real PG guard ran. External/
+inaccessible/non-owned writer visibility and historical missing exits stay UNKNOWN.
+These short runs do not establish sustained Manager observation for1200 commands.
+
+THIS documentation commit is the NEW candidate: resolve its exact head/tree from
+Git, then keep it frozen unless a genuine repair is needed. None of the12867,
+0137/13c or older passes transfers. ALL fresh14 canonical, unchanged17 supplemental
+(original2178 serial-n0/1200, others420), original178 plus applicable/new F1/F2/F3/
+UI/base/StoreOps owning controls, normal terminalCI/all129E2E/strict3x150/waves10,20,50/
+P95<3s and complete configured sequential Codex2 packets PLUS synthesis remain owed.
+Regenerate full bodies/imports/README/final terminals/cross-file coverage at this
+identity; cap1048576 INCLUDING common context, no tools/network/fallback, explicit
+omissions/late outcomes. Old rejected packet1/uninspected16 and underlying account
+independence UNRESOLVED remain. Actual-PG wrapper mapping for standalone Web skips
+must be verified, not invented. No task_finalize/review submission before complete
+author proof. Human/Ops finalPENDING, original failed-Pi/a129PR1459/HOLD/goalfalse/
+quarantine/bindingNULL/cleanupUNKNOWN persist; no approval/merge/done/live effects.
+
+## Historical Pi admitted810 checkpoint — incoming Web failure, later batch008 above
 
 Actual run162717-ad0baa9f composed/pushed two-parent anchor
 `0137a9faf2aef12a813f5df9784351da1da0b68a` / tree
