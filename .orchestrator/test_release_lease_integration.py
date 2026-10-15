@@ -62,6 +62,8 @@ def _manifest() -> dict:
 
 def _registry(manifest: dict) -> dict:
     cand_sha = manifest.get("candidate_sha") or CANDIDATE_SHA
+    # Complete synthetic admission data; never an operational approval/receipt.
+    fixture_ref = str(Path(__file__).resolve())
     return {
         "schema_version": "2.0.0",
         "release": {
@@ -71,6 +73,10 @@ def _registry(manifest: dict) -> dict:
             "environment": "dev",
             "admission_target": "dev",
             "decision": "go",
+            "human_signoff": {
+                "approver": "fixture-human-not-operational-approval",
+                "date": "2026-09-04",
+            },
         },
         "candidate_rebind": {
             "to_candidate_sha": cand_sha,
@@ -85,6 +91,18 @@ def _registry(manifest: dict) -> dict:
         "gates": [
             {
                 "id": f"gate-{index}",
+                "index": index,
+                "name": f"offline gate {index}",
+                "scope": "offline-test",
+                "owner": "fixture-author",
+                "reviewer": "fixture-reviewer",
+                "status_date": "2026-09-04",
+                "required_checks": ["offline-control"],
+                "blockers": [],
+                "evidence": [{
+                    "kind": "test", "ref": fixture_ref,
+                    "description": "synthetic fixture, not operational evidence",
+                }],
                 "status": "passed",
                 "release_sha": cand_sha,
                 "stage": "candidate-built",
@@ -93,6 +111,9 @@ def _registry(manifest: dict) -> dict:
                 "receipts": [
                     {
                         "receipt_id": f"receipt-{index}",
+                        "recorded_by": "fixture-reviewer",
+                        "recorded_at": "2026-09-04T11:00:00+00:00",
+                        "artifact": fixture_ref,
                         "release_sha": cand_sha,
                         "result": "pass",
                     }
@@ -1377,7 +1398,9 @@ def test_issuing_without_gcs_lease_terminates_blocked_without_loading_key(harnes
     assert any("issuing reservation has no durable lease" in err for err in record["receipt"]["errors"])
 
 
-def test_issuing_with_consumed_or_revoked_gcs_lease_terminates_blocked_without_loading_key(harness: dict) -> None:
+def test_issuing_with_consumed_or_revoked_gcs_lease_terminates_blocked_without_loading_key(
+    harness: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """When a task is in issuing state but the durable lease is consumed or revoked, recovery blocks without re-signing."""
     lease = build_lease(
         task_id=TASK_ID,
@@ -1394,7 +1417,13 @@ def test_issuing_with_consumed_or_revoked_gcs_lease_terminates_blocked_without_l
         approval_nonce_digest=bridge._safe_digest(harness["request"].get("nonce")),
     )
     harness["store"].record_issued(lease)
-    harness["store"].consume(lease, consumed_by="previous_runner")
+    # Arrange the prior consumption inside the fixed fixture's validity window.
+    # Restore the real clock before exercising recovery; expiry guards stay real.
+    from delivery_toolchain.release import release_lease as lease_module
+
+    with monkeypatch.context() as clock:
+        clock.setattr(lease_module, "_utc_now", lambda: NOW + timedelta(seconds=30))
+        harness["store"].consume(lease, consumed_by="previous_runner")
 
     current_status = _read_status(harness)
     task = current_status["tasks"][1]

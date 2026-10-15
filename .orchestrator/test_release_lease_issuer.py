@@ -60,6 +60,8 @@ def build_registry(
     admission_target: str = "dev",
     decision: str = "go",
 ) -> dict:
+    # Complete synthetic admission data; never an operational approval/receipt.
+    fixture_ref = str(Path(__file__).resolve())
     return {
         "schema_version": "2.0.0",
         "release": {
@@ -69,10 +71,26 @@ def build_registry(
             "environment": environment,
             "admission_target": admission_target,
             "decision": decision,
+            "human_signoff": {
+                "approver": "fixture-human-not-operational-approval",
+                "date": "2026-08-24",
+            },
         },
         "gates": [
             {
                 "id": f"gate-{index}",
+                "index": index,
+                "name": f"offline gate {index}",
+                "scope": "offline-test",
+                "owner": "fixture-author",
+                "reviewer": "fixture-reviewer",
+                "status_date": "2026-08-24",
+                "required_checks": ["offline-control"],
+                "blockers": [],
+                "evidence": [{
+                    "kind": "test", "ref": fixture_ref,
+                    "description": "synthetic fixture, not operational evidence",
+                }],
                 "status": "passed",
                 "release_sha": manifest["candidate_sha"],
                 "stage": stage,
@@ -81,6 +99,9 @@ def build_registry(
                 "receipts": [
                     {
                         "receipt_id": f"receipt-{index}",
+                        "recorded_by": "fixture-reviewer",
+                        "recorded_at": "2026-08-24T12:00:00+00:00",
+                        "artifact": fixture_ref,
                         "release_sha": manifest["candidate_sha"],
                         "result": "pass",
                     }
@@ -330,6 +351,29 @@ def test_a_no_go_registry_yields_no_lease(supervisor) -> None:
     with pytest.raises(LeaseIssuanceError) as excinfo:
         issue(supervisor, registry=registry)
     assert any("expected 'go'" in error for error in excinfo.value.errors)
+
+
+@pytest.mark.parametrize(
+    "mutate, expected",
+    [
+        (lambda r: r["release"].pop("human_signoff"), "human_signoff"),
+        (lambda r: r["release"]["human_signoff"].update(approver=""), "approver"),
+        (lambda r: r["gates"][0].update(evidence=[]), "evidence entry"),
+        (lambda r: r["gates"][0]["evidence"][0].update(ref="missing-fixture-evidence"), "does not exist"),
+        (lambda r: r["gates"][0].update(reviewer="fixture-author"), "reviewer must differ"),
+        (lambda r: r["gates"][0]["receipts"][0].update(result="fail"), "failing receipt"),
+        (lambda r: r["gates"][1].update(id="gate-0"), "duplicate/substituted"),
+    ],
+)
+def test_synthetic_go_still_requires_signoff_and_complete_gate_integrity(
+    supervisor, mutate, expected: str
+) -> None:
+    mutate(supervisor["registry"])
+    store = LeaseStateStore(supervisor["state_dir"])
+    with pytest.raises(LeaseIssuanceError) as excinfo:
+        issue(supervisor, state_store=store)
+    assert any(expected in error for error in excinfo.value.errors)
+    assert list(store.directory.glob("*.json")) == []
 
 
 def test_a_manifest_the_registry_does_not_name_yields_no_lease(supervisor) -> None:

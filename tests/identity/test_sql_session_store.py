@@ -188,6 +188,19 @@ def test_session_service_over_sql_repository_denies_revoked_session(pool: _FakeP
 # --- Connection lifecycle (pool exhaustion) --------------------------------
 
 
+def _read_persisted_scope(store: SqlIdentityStore, pool: _FakePool) -> None:
+    # A successful scope query needs an actual scope row, not an unknown account.
+    tenant_id = str(uuid4())
+    pool.connection_obj.next_row = {
+        "brand_ids": [], "region_ids": [], "store_ids": [],
+        "assigned_area_ids": [], "heat_zone_ids": [], "modules": ["forecasting"],
+        "clearance": "confidential", "tenant_id": tenant_id,
+    }
+    scope = store.get_account_scope(uuid4())
+    assert scope.tenant_id == tenant_id
+    assert scope.modules == frozenset({"forecasting"})
+
+
 @pytest.mark.parametrize(
     "call",
     [
@@ -200,7 +213,7 @@ def test_session_service_over_sql_repository_denies_revoked_session(pool: _FakeP
             id="identity_store.get_account_roles",
         ),
         pytest.param(
-            lambda store, pool: store.get_account_scope(uuid4()),
+            _read_persisted_scope,
             id="identity_store.get_account_scope",
         ),
     ],
@@ -215,6 +228,19 @@ def test_sql_identity_store_returns_pooled_connections(pool: _FakePool, call):
     assert pool.borrows == 5
     assert pool.checked_out == 0, "borrowed connection was never returned to the pool"
     assert pool.peak_checked_out == 1, "a single query must not hold two connections"
+
+
+def test_sql_identity_store_unknown_scope_refuses_and_returns_connection(pool: _FakePool):
+    store = SqlIdentityStore(connection_factory=pool.connection)
+
+    for _ in range(5):
+        with pytest.raises(ValueError, match="identity scope unavailable"):
+            store.get_account_scope(uuid4())
+
+    assert pool.borrows == 5
+    assert pool.checked_out == 0
+    assert pool.peak_checked_out == 1
+    assert len(pool.connection_obj.executed) == 10  # scope and account lookup per call
 
 
 def test_sql_session_repository_returns_pooled_connections(pool: _FakePool):
