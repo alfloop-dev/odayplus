@@ -186,7 +186,7 @@ export type ApprovalReadContext = {
 
 /** ApproveFlagPayload */
 export type ApproveFlagPayload = {
-  approver: string;
+  approver?: string | null;
 };
 
 /** AssignPayload */

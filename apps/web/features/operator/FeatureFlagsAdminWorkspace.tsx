@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./featureFlags.module.css";
+import { operatorFixturesAllowed } from "./operatorDataMode";
 import {
   approveFeatureFlag,
-  DEFAULT_FEATURE_FLAGS,
   disableFeatureFlag,
   enableFeatureFlag,
   fetchFeatureFlags,
@@ -20,8 +20,22 @@ export function FeatureFlagsAdminWorkspace({
   initialFlags,
   baseUrl = "",
 }: FeatureFlagsAdminWorkspaceProps) {
-  const [flags, setFlags] = useState<FeatureFlagDto[]>(initialFlags || DEFAULT_FEATURE_FLAGS);
-  const [loading, setLoading] = useState(false);
+  const fixturesAllowed = operatorFixturesAllowed();
+  const fixtureFlags = fixturesAllowed ? initialFlags : undefined;
+  const currentContext = useRef({ baseUrl, fixturesAllowed, mounted: true });
+  if (currentContext.current.baseUrl !== baseUrl || currentContext.current.fixturesAllowed !== fixturesAllowed) {
+    currentContext.current = { baseUrl, fixturesAllowed, mounted: true };
+  }
+  const renderContext = currentContext.current;
+  const isCurrentContext = useCallback(() => currentContext.current === renderContext && renderContext.mounted, [renderContext]);
+  const [apiReadContext, setApiReadContext] = useState<object | null>(fixtureFlags !== undefined ? renderContext : null);
+  const [flags, setFlags] = useState<FeatureFlagDto[]>(fixtureFlags ?? []);
+  const [loadState, setLoadState] = useState<"loading" | "ready" | "error">(
+    fixtureFlags !== undefined ? "ready" : "loading",
+  );
+  const loading = loadState === "loading" || apiReadContext !== renderContext;
+  const ready = loadState === "ready" && apiReadContext === renderContext;
+  const readSequence = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "active" | "disabled" | "high_risk" | "expired">("all");
@@ -32,37 +46,58 @@ export function FeatureFlagsAdminWorkspace({
   const [approverInput, setApproverInput] = useState("");
 
   const loadFlags = useCallback(async () => {
-    setLoading(true);
+    if (!isCurrentContext()) return;
+    setApiReadContext(renderContext);
+    const sequence = ++readSequence.current;
+    setLoadState("loading");
     setError(null);
+    setFlags([]);
+    setModalFlag(null);
+    setToast(null);
     try {
       const data = await fetchFeatureFlags(baseUrl);
+      if (sequence !== readSequence.current || !isCurrentContext()) return;
       setFlags(data);
-    } catch (err: any) {
-      setError(err.message || "Failed to load feature flags");
-    } finally {
-      setLoading(false);
+      setLoadState("ready");
+    } catch (err: unknown) {
+      if (sequence !== readSequence.current || !isCurrentContext()) return;
+      setError(err instanceof Error ? err.message : "Failed to load feature flags");
+      setLoadState("error");
     }
-  }, [baseUrl]);
+  }, [baseUrl, isCurrentContext, renderContext]);
 
   useEffect(() => {
-    if (!initialFlags) {
-      loadFlags();
+    renderContext.mounted = true;
+    setToast(null);
+    if (fixturesAllowed && initialFlags !== undefined) {
+      setApiReadContext(renderContext);
+      setFlags(initialFlags);
+      setLoadState("ready");
+      setError(null);
+      setModalFlag(null);
+    } else {
+      void loadFlags();
     }
-  }, [initialFlags, loadFlags]);
+    return () => { renderContext.mounted = false; readSequence.current += 1; };
+  }, [fixturesAllowed, initialFlags, loadFlags, renderContext]);
 
   const showToast = (msg: string) => {
     setToast(msg);
-    setTimeout(() => setToast(null), 4000);
+    setTimeout(() => { if (isCurrentContext()) setToast(null); }, 4000);
   };
 
   const handleToggle = async (flag: FeatureFlagDto) => {
+    const commandSequence = readSequence.current;
+    if (!ready || !isCurrentContext()) return;
     if (flag.is_active) {
       // Emergency Kill-Switch: Disable
       try {
         const updated = await disableFeatureFlag(flag.key, baseUrl);
+        if (!isCurrentContext() || commandSequence !== readSequence.current) return;
         setFlags((prev) => prev.map((f) => (f.key === flag.key ? updated : f)));
         showToast(`🛑 Kill-Switch engaged: Feature flag ${flag.key} disabled!`);
       } catch (err: any) {
+        if (!isCurrentContext() || commandSequence !== readSequence.current) return;
         setError(err.message || "Failed to disable flag");
       }
     } else {
@@ -72,9 +107,11 @@ export function FeatureFlagsAdminWorkspace({
       } else {
         try {
           const updated = await enableFeatureFlag(flag.key, flag.approved_by, baseUrl);
+          if (!isCurrentContext() || commandSequence !== readSequence.current) return;
           setFlags((prev) => prev.map((f) => (f.key === flag.key ? updated : f)));
           showToast(`✅ Feature flag ${flag.key} enabled!`);
         } catch (err: any) {
+          if (!isCurrentContext() || commandSequence !== readSequence.current) return;
           if (flag.high_risk) {
             setModalFlag(flag);
           } else {
@@ -86,26 +123,32 @@ export function FeatureFlagsAdminWorkspace({
   };
 
   const handleAddApproval = async () => {
-    if (!modalFlag || !approverInput.trim()) return;
+    const commandSequence = readSequence.current;
+    if (!ready || !isCurrentContext() || !modalFlag || (fixturesAllowed && !approverInput.trim())) return;
     try {
       const updated = await approveFeatureFlag(modalFlag.key, approverInput.trim(), baseUrl);
+      if (!isCurrentContext() || commandSequence !== readSequence.current) return;
       setModalFlag(updated);
       setFlags((prev) => prev.map((f) => (f.key === updated.key ? updated : f)));
       setApproverInput("");
-      showToast(`✍️ Recorded approval from ${approverInput.trim()}`);
+      showToast(fixturesAllowed ? `✍️ Recorded approval from ${approverInput.trim()}` : "已記錄目前登入帳號的核准。");
     } catch (err: any) {
+      if (!isCurrentContext() || commandSequence !== readSequence.current) return;
       setError(err.message || "Failed to record approval");
     }
   };
 
   const handleEnableFromModal = async () => {
-    if (!modalFlag) return;
+    const commandSequence = readSequence.current;
+    if (!ready || !isCurrentContext() || !modalFlag) return;
     try {
       const updated = await enableFeatureFlag(modalFlag.key, modalFlag.approved_by, baseUrl);
+      if (!isCurrentContext() || commandSequence !== readSequence.current) return;
       setFlags((prev) => prev.map((f) => (f.key === updated.key ? updated : f)));
       setModalFlag(null);
       showToast(`🚀 Dual approval complete! Feature flag ${modalFlag.key} enabled.`);
     } catch (err: any) {
+      if (!isCurrentContext() || commandSequence !== readSequence.current) return;
       setError(err.message || "Dual approval requirement not met");
     }
   };
@@ -154,12 +197,18 @@ export function FeatureFlagsAdminWorkspace({
       </div>
 
       {/* Error alert */}
-      {error && (
-        <div style={{ background: "rgba(239,68,68,0.2)", color: "#f87171", padding: "0.75rem", borderRadius: "6px", border: "1px solid #ef4444" }}>
+      {error && apiReadContext === renderContext && (
+        <div role="alert" style={{ background: "rgba(239,68,68,0.2)", color: "#f87171", padding: "0.75rem", borderRadius: "6px", border: "1px solid #ef4444" }}>
           ⚠️ 錯誤: {error}
         </div>
       )}
 
+      {loading && <div role="status">正在讀取 Feature Flag 設定…</div>}
+      {ready && flags.length === 0 && (
+        <div role="status">目前沒有 Feature Flag 設定。</div>
+      )}
+
+      {ready && flags.length > 0 && <>
       {/* Stats Summary Bar */}
       <div className={styles.statsBar}>
         <div className={styles.statCard}>
@@ -294,8 +343,10 @@ export function FeatureFlagsAdminWorkspace({
         ))}
       </div>
 
+      </>}
+
       {/* Dual Approval Modal */}
-      {modalFlag && (
+      {ready && modalFlag && (
         <div className={styles.modalOverlay} onClick={() => setModalFlag(null)}>
           <div className={styles.modalBox} onClick={(e) => e.stopPropagation()}>
             <h3 className={styles.modalTitle}>
@@ -324,16 +375,16 @@ export function FeatureFlagsAdminWorkspace({
             </div>
 
             <div style={{ display: "flex", gap: "0.5rem" }}>
-              <input
+              {fixturesAllowed && <input
                 type="text"
                 placeholder="輸入核准者 ID / 角色 (如 ops_lead_john)..."
                 className={styles.searchInput}
                 style={{ flex: 1 }}
                 value={approverInput}
                 onChange={(e) => setApproverInput(e.target.value)}
-              />
+              />}
               <button className={styles.approveBtn} onClick={handleAddApproval}>
-                + 簽名
+                {fixturesAllowed ? "+ 簽名" : "以目前登入帳號核准"}
               </button>
             </div>
 
@@ -361,7 +412,7 @@ export function FeatureFlagsAdminWorkspace({
       )}
 
       {/* Toast Notification */}
-      {toast && <div className={styles.toast}>{toast}</div>}
+      {ready && toast && <div className={styles.toast}>{toast}</div>}
     </div>
   );
 }

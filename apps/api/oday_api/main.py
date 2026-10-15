@@ -2488,10 +2488,15 @@ else:
         )
 
         from apps.api.oday_api.routes.feature_flags import create_feature_flags_router
+        from apps.api.oday_api.security.dependencies import build_engine, default_boundary
 
         mount_versioned(
             api,
-            create_feature_flags_router(audit_log=audit_log),
+            create_feature_flags_router(
+                audit_log=audit_log,
+                engine=build_engine(audit_log=audit_log),
+                boundary=default_boundary(),
+            ),
         )
 
         api.state.audit_log = audit_log

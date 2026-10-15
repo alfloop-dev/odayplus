@@ -491,6 +491,40 @@ else:
             payload["correlation_id"] = request.state.correlation_id
             return payload
 
+        def _model_version_payload(model_version: ModelVersion) -> dict[str, Any]:
+            """Bind review evidence to the exact registered version and dataset."""
+            row = model_version.to_dict()
+            row["release_revision"] = active_repository.get_release_revision(
+                model_version.model_name
+            )
+            card = active_repository.get_model_card(
+                model_version.model_name, model_version.version
+            )
+            if card is None or (
+                card.model_name != model_version.model_name
+                or card.model_version != model_version.version
+                or card.dataset_snapshot_id != model_version.dataset_snapshot_id
+            ):
+                return row
+
+            row["model_card"] = {
+                **card.to_dict(),
+                "is_complete": card.is_complete,
+                "is_approved": card.is_approved,
+            }
+            validation = active_repository.get_validation_run(card.validation_run_id)
+            if validation is not None and (
+                validation.validation_run_id == card.validation_run_id
+                and validation.model_name == model_version.model_name
+                and validation.model_version == model_version.version
+                and validation.dataset_snapshot_id == model_version.dataset_snapshot_id
+            ):
+                row["validation_run"] = {
+                    **validation.to_dict(),
+                    "passed": validation.passed,
+                }
+            return row
+
         @router.get(
             "/models",
             dependencies=[Depends(require_permission("model", Action.VIEW, engine=authz_engine))],
@@ -498,7 +532,7 @@ else:
         def list_models() -> dict[str, Any]:
             versions = active_repository.list_all_model_versions()
             rows = sorted(
-                (version.to_dict() for version in versions),
+                (_model_version_payload(version) for version in versions),
                 key=lambda item: (
                     str(item.get("model_name", "")),
                     str(item.get("version", "")),
@@ -511,7 +545,7 @@ else:
             versions = active_repository.list_model_versions(model_name)
             return {
                 "model_name": model_name,
-                "versions": [version.to_dict() for version in versions],
+                "versions": [_model_version_payload(version) for version in versions],
                 "release_decisions": [
                     _to_dict(decision)
                     for decision in active_repository.list_release_decisions()

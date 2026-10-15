@@ -14,6 +14,7 @@
  * Follows non-optimistic audit rules (FR-GOV-009) and pre-release gate checks.
  */
 import { operatorSecurityHeaders } from "../operatorSecurityHeaders";
+import { operatorFixturesAllowed, payloadContainsSeedData } from "../operatorDataMode";
 
 const LEARNINGHUB_API_BASE = "/api/v1/learninghub";
 
@@ -82,6 +83,7 @@ export type ModelVersionItem = {
   run_id?: string;
   git_sha?: string;
   rollback_target?: string | null;
+  release_revision?: number | null;
   monitoring_config?: Record<string, unknown>;
   created_at?: string;
   model_card?: ModelCard;
@@ -176,10 +178,36 @@ async function apiFetch<T>(
   }
 }
 
+// Runtime shapes protect the existing read-only .map/.some surfaces. Missing
+// optional evidence stays readable and incomplete; present malformed collections
+// are not admitted as a successful model response.
+function validModelReadRow(item: ModelVersionItem): boolean {
+  const record = (value: unknown) => value !== null && typeof value === "object" && !Array.isArray(value);
+  const strings = (value: unknown) => value == null || (Array.isArray(value) && value.every((row) => typeof row === "string"));
+  const records = (value: unknown) => value == null || (Array.isArray(value) && value.every(record));
+  const metrics = (value: unknown) => value == null || (record(value) && Object.values(value as Record<string, unknown>).every((row) => typeof row === "number" && Number.isFinite(row)));
+  if (!item || !record(item) || typeof item.model_name !== "string" || !item.model_name.trim() ||
+      typeof item.version !== "string" || !item.version.trim() || !strings(item.aliases) ||
+      (item.release_revision != null && (typeof item.release_revision !== "number" || !Number.isInteger(item.release_revision) || item.release_revision < 0))) return false;
+  const card = item.model_card;
+  if (card != null && (!record(card) || !strings(card.rollback_conditions) || !records(card.approvals) || !metrics(card.metrics_summary) ||
+      [card.is_complete, card.is_approved].some((value) => value != null && typeof value !== "boolean"))) return false;
+  const validation = item.validation_run;
+  if (validation != null && (!record(validation) || !records(validation.thresholds) ||
+      !metrics(validation.metrics) || !metrics(validation.baseline_metrics) ||
+      (validation.passed != null && typeof validation.passed !== "boolean") ||
+      (validation.thresholds ?? []).some((row) => typeof row.metric_name !== "string" || !row.metric_name.trim() ||
+        [row.min_value, row.max_value].some((value) => value != null && (typeof value !== "number" || !Number.isFinite(value)))))) return false;
+  return true;
+}
+
 /** Fetch all models registered in Learning Hub */
 export async function fetchModels(roleId?: string): Promise<ModelVersionItem[] | null> {
   const res = await apiFetch<{ items: ModelVersionItem[]; count: number }>("/models", { method: "GET", roleId });
-  return res.ok ? res.data.items : null;
+  if (!res.ok || !Array.isArray(res.data?.items) ||
+      !res.data.items.every(validModelReadRow) ||
+      (!operatorFixturesAllowed() && payloadContainsSeedData(res.data))) return null;
+  return res.data.items;
 }
 
 /** Fetch details and release decisions for a single model */
@@ -201,7 +229,11 @@ export async function fetchReleases(
 ): Promise<ModelReleaseDecisionItem[] | null> {
   const path = modelName ? `/releases?model_name=${encodeURIComponent(modelName)}` : "/releases";
   const res = await apiFetch<{ items: ModelReleaseDecisionItem[]; count: number }>(path, { method: "GET", roleId });
-  return res.ok ? res.data.items : null;
+  if (!res.ok || !Array.isArray(res.data?.items) ||
+      !res.data.items.every((item) => item && typeof item === "object" &&
+        typeof item.release_id === "string" && item.release_id.trim()) ||
+      (!operatorFixturesAllowed() && payloadContainsSeedData(res.data))) return null;
+  return res.data.items;
 }
 
 /** Approve or reject a Model Card */
@@ -244,9 +276,10 @@ export async function requestRelease(params: {
   release_scope?: string;
   roleId?: string;
 }): Promise<{ ok: true; decision: ModelReleaseDecisionItem } | { ok: false; status: number; detail: string }> {
+  const { requested_by: _requestedBy, ...verifiedActorPayload } = params;
   const res = await apiFetch<ModelReleaseDecisionItem>("/releases", {
     method: "POST",
-    body: JSON.stringify(params),
+    body: JSON.stringify(operatorFixturesAllowed() ? params : verifiedActorPayload),
     roleId: params.roleId,
   });
   if (res.ok) {
@@ -268,7 +301,7 @@ export async function monitorRelease(params: {
     body: JSON.stringify({
       observed_metrics: params.observed_metrics,
       guardrails: params.guardrails,
-      evaluated_by: params.evaluated_by,
+      ...(operatorFixturesAllowed() ? { evaluated_by: params.evaluated_by } : {}),
     }),
     roleId: params.roleId,
   });

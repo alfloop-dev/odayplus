@@ -1,3 +1,5 @@
+import { operatorFixturesAllowed, payloadContainsSeedData } from "./operatorDataMode";
+
 export type FeatureFlagDto = {
   key: string;
   owner: string;
@@ -85,19 +87,51 @@ export const DEFAULT_FEATURE_FLAGS: FeatureFlagDto[] = [
   },
 ];
 
+function isFeatureFlag(value: unknown): value is FeatureFlagDto {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const flag = value as Record<string, unknown>;
+  return (
+    typeof flag.key === "string" && flag.key.trim().length > 0 &&
+    typeof flag.owner === "string" && flag.owner.trim().length > 0 &&
+    typeof flag.enabled === "boolean" &&
+    typeof flag.readiness === "string" &&
+    ["experimental", "beta", "ga", "deprecated"].includes(flag.readiness) &&
+    typeof flag.high_risk === "boolean" &&
+    (flag.expires_on === null || typeof flag.expires_on === "string") &&
+    typeof flag.description === "string" &&
+    Array.isArray(flag.approved_by) && flag.approved_by.every((item) => typeof item === "string") &&
+    typeof flag.is_active === "boolean" && typeof flag.is_expired === "boolean"
+  );
+}
+
 export async function fetchFeatureFlags(baseUrl = ""): Promise<FeatureFlagDto[]> {
   try {
     const res = await fetch(`${baseUrl}/api/v1/admin/feature-flags`, {
       headers: { Accept: "application/json" },
       cache: "no-store",
     });
-    if (!res.ok) {
-      return DEFAULT_FEATURE_FLAGS;
+    if (!res.ok) throw new Error(`Feature Flag 讀取失敗 (HTTP ${res.status})`);
+    const data: unknown = await res.json();
+    if (typeof data !== "object" || data === null || Array.isArray(data)) {
+      throw new Error("Feature Flag 資料格式無效");
     }
-    const data = (await res.json()) as FeatureFlagListResponse;
-    return data.flags || DEFAULT_FEATURE_FLAGS;
+    if (!operatorFixturesAllowed() && payloadContainsSeedData(data)) {
+      throw new Error("Feature Flag API 回傳非正式資料來源");
+    }
+    const response = data as Record<string, unknown>;
+    if (
+      response.status !== "ok" ||
+      !Array.isArray(response.flags) ||
+      response.count !== response.flags.length ||
+      !response.flags.every(isFeatureFlag) ||
+      new Set(response.flags.map((flag) => flag.key)).size !== response.flags.length
+    ) {
+      throw new Error("Feature Flag 資料格式無效");
+    }
+    return response.flags;
   } catch (err) {
-    return DEFAULT_FEATURE_FLAGS;
+    if (operatorFixturesAllowed()) return DEFAULT_FEATURE_FLAGS;
+    throw err instanceof Error ? err : new Error("Feature Flag 資料讀取失敗");
   }
 }
 
@@ -109,7 +143,7 @@ export async function enableFeatureFlag(
   const res = await fetch(`${baseUrl}/api/v1/admin/feature-flags/${encodeURIComponent(key)}/enable`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ approvals }),
+    body: JSON.stringify(operatorFixturesAllowed() ? { approvals } : {}),
   });
   if (!res.ok) {
     const errorBody = await res.json().catch(() => ({ detail: "Failed to enable feature flag" }));
@@ -140,7 +174,7 @@ export async function approveFeatureFlag(
   const res = await fetch(`${baseUrl}/api/v1/admin/feature-flags/${encodeURIComponent(key)}/approve`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ approver }),
+    body: JSON.stringify(operatorFixturesAllowed() ? { approver } : {}),
   });
   if (!res.ok) {
     const errorBody = await res.json().catch(() => ({ detail: "Failed to add approval" }));

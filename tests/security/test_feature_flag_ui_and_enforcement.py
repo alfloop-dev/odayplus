@@ -27,7 +27,12 @@ from shared.jobs.queue import (
 
 
 @pytest.fixture(autouse=True)
-def reset_registry_before_test():
+def reset_registry_before_test(monkeypatch):
+    # Explicit local POC fixture identities; never production approver evidence.
+    monkeypatch.setenv("ODP_PRODUCT_MODE", "poc")
+    monkeypatch.setenv("ODP_DEPLOY_ENV", "test")
+    for name in ("ODP_RELEASE_PROFILE", "ODP_AUTH_MODE", "ODP_AUTH_OIDC_ENABLED", "ODP_REQUIRE_LIVE_DATA"):
+        monkeypatch.delenv(name, raising=False)
     reset_global_registry()
     yield
     reset_global_registry()
@@ -35,7 +40,7 @@ def reset_registry_before_test():
 
 def test_admin_feature_flags_list_and_get():
     app = create_app()
-    client = TestClient(app)
+    client = TestClient(app, headers={"x-subject-id": "unit-flag-admin", "x-roles": "platform_admin"})
 
     # 1. List admin feature flags
     res = client.get("/api/v1/admin/feature-flags")
@@ -60,7 +65,7 @@ def test_admin_feature_flags_list_and_get():
 
 def test_admin_feature_flag_dual_approval_workflow():
     app = create_app()
-    client = TestClient(app)
+    client = TestClient(app, headers={"x-subject-id": "unit-flag-admin", "x-roles": "platform_admin"})
     key = "high_risk.priceops.execute"
 
     # Attempt to enable with 0 approvals -> 403
@@ -96,7 +101,7 @@ def test_admin_feature_flag_dual_approval_workflow():
 
 def test_admin_register_custom_feature_flag():
     app = create_app()
-    client = TestClient(app)
+    client = TestClient(app, headers={"x-subject-id": "unit-flag-admin", "x-roles": "platform_admin"})
 
     new_flag_payload = {
         "key": "custom.experimental_feature",
@@ -157,7 +162,7 @@ def test_three_layers_shared_flag_state():
     """Verify that UI (API read), API security engine, and Job queue all share the exact same flag state."""
 
     app = create_app()
-    client = TestClient(app)
+    client = TestClient(app, headers={"x-subject-id": "unit-flag-admin", "x-roles": "platform_admin"})
     reg = default_registry()
     key = "high_risk.netplan.approve"
 

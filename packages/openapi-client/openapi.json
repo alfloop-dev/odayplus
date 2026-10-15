@@ -1057,14 +1057,18 @@
       "ApproveFlagPayload": {
         "properties": {
           "approver": {
-            "minLength": 1,
-            "title": "Approver",
-            "type": "string"
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approver"
           }
         },
-        "required": [
-          "approver"
-        ],
         "title": "ApproveFlagPayload",
         "type": "object"
       },
@@ -13067,11 +13071,18 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ApproveFlagPayload"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ApproveFlagPayload"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
