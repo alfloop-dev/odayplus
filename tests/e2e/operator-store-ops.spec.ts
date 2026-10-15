@@ -210,7 +210,11 @@ test("Package 10 issue detail exposes the four-light evidence without legacy fil
   );
   await page.getByText("ISS-1024", { exact: true }).first().click();
   await expect(page.getByText("FORECASTOPS 四燈")).toBeVisible();
-  await expect(page.getByText("設備 紅")).toBeVisible();
+  // This legacy mock has no health-owner metadata; its raw colors are not measurements.
+  for (const dimension of ["需求", "設備", "清潔", "利潤"]) {
+    await expect(page.getByText(`${dimension} 資料不可用`, { exact: true })).toBeVisible();
+  }
+  await expect(page.getByText("設備 紅", { exact: true })).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: /Operations Red 1/ }),
   ).toHaveCount(0);
