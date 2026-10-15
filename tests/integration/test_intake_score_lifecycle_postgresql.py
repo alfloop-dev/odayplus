@@ -14,11 +14,13 @@ from threading import Barrier, Event
 from uuid import uuid4
 
 import pytest
+from fastapi.testclient import TestClient
 
+from apps.api.oday_api.main import create_app
 from models.shared_ml.production_runtime import ProductionModelInputError
 from modules.sitescore.tests.test_sitescore_production_runtime import RecordingRuntime
 from shared.jobs.queue import JobDeliveryState, JobFenceRejectedError, JobRequest, JobStatus
-from tests.intake_registry_fixture import TENANT
+from tests.intake_registry_fixture import OWNER, TENANT
 from tests.integration.test_intake_registry_calendar_postgresql import _bundle
 from tests.integration.test_intake_score_delivery_postgresql import (
     _approved_score,
@@ -32,6 +34,10 @@ from tests.integration.test_intake_score_delivery_postgresql import (
 )
 from tests.integration.test_intake_score_delivery_postgresql import (
     explicit_local_signing_key as explicit_local_signing_key,
+)
+from tests.integration.test_operator_intake_workflow_postgresql import (
+    _headers,
+    _snapshot,
 )
 from tests.integration.test_operator_intake_workflow_postgresql import (
     bridge_database as bridge_database,
@@ -72,6 +78,81 @@ def _claim_all_other_jobs(bundle, score_job_id):
         assert job.job_type in {"canonical-audit-delivery", "synthetic-other-ready"}
         claimed.append(job)
     raise AssertionError("Synthetic fixture unexpectedly produced unbounded other jobs")
+
+
+def test_generic_intake_score_job_read_masks_inputs_and_refuses_unversioned_retry(bridge_database, monkeypatch):
+    bundle = _bundle(bridge_database, monkeypatch)
+    try:
+        versioned = _promotion_client(bundle)
+        _, _, receipt = _approved_score(bridge_database, bundle, versioned)
+        job_id = receipt["site_score_job_id"]
+        client = TestClient(create_app(persistence=bundle))
+        canonical = versioned.get(f"/api/v1/jobs/{job_id}/receipt", headers=_reviewer_headers())
+        assert canonical.status_code == 200, canonical.text
+        expected = {key: value for key, value in canonical.json().items() if value is not None}
+        before, physical, delivery = _snapshot(bundle), _physical(bridge_database, job_id), bundle.job_queue.get(job_id).to_dict()
+        assert physical["payload"]["admission"], "Use a real queued admission graph, not an empty masking fixture"
+        token = delivery["payload"]["attempt_token"]
+        for prefix in ("/jobs", "/api/v1/jobs"):
+            response = client.get(f"{prefix}/{job_id}", headers=_reviewer_headers())
+            assert response.status_code == 200, response.text
+            assert response.json() == expected
+            assert set(response.json()) == {"job_id", "status", "checkpoint", "attempt", "version", "correlation_id"}
+            assert token not in response.text
+            # This generic command must not bypass the existing versioned
+            # checkpoint command's actor/version/fence/retry-budget contract.
+            retry = client.post(f"{prefix}/{job_id}/retries", headers=_reviewer_headers())
+            assert retry.status_code == 400, retry.text
+            assert retry.json()["detail"]["code"] == "JOB_TYPE_NOT_SUPPORTED"
+        for headers, expected_status in (
+            ({}, 401),
+            (_headers(OWNER), 403),
+            ({**_reviewer_headers(), "x-region-ids": "synthetic-other-region"}, 403),
+            (_headers(tenant=str(uuid4())), 404),
+        ):
+            for prefix in ("/jobs", "/api/v1/jobs"):
+                for method, path in ((client.get, f"{prefix}/{job_id}"), (client.post, f"{prefix}/{job_id}/retries")):
+                    denied = method(path, headers=headers)
+                    assert denied.status_code == expected_status, denied.text
+                    assert token not in denied.text
+        assert _snapshot(bundle) == before
+        assert _physical(bridge_database, job_id) == physical
+        assert bundle.job_queue.get(job_id).to_dict() == delivery
+        _assert_no_result(bundle, receipt["candidate_site_id"])
+    finally:
+        bundle.engine.close()
+
+
+@pytest.mark.parametrize("binding", ["intake_tenant", "promotion_tenant", "promotion_intake", "promotion_candidate", "promotion_job"])
+def test_generic_intake_score_job_refuses_broken_canonical_parents(bridge_database, monkeypatch, binding):
+    bundle = _bundle(bridge_database, monkeypatch)
+    try:
+        _, _, receipt = _approved_score(bridge_database, bundle, _promotion_client(bundle))
+        job_id = receipt["site_score_job_id"]
+        client = TestClient(create_app(persistence=bundle))
+        assert client.get(f"/api/v1/jobs/{job_id}", headers=_reviewer_headers()).status_code == 200
+        store = bundle.assisted_intake_store
+        store.refresh(TENANT)
+        with store.transaction():
+            if binding == "intake_tenant":
+                store.intakes[receipt["intake_id"]]["scope"]["tenant_id"] = str(uuid4())
+            else:
+                field = {"promotion_tenant": "tenant_id", "promotion_intake": "intake_id",
+                         "promotion_candidate": "candidate_site_id", "promotion_job": "site_score_job_id"}[binding]
+                store.promotions[receipt["promotion_decision_id"]][field] = str(uuid4())
+            store.flush()
+        before, physical, delivery = _snapshot(bundle), _physical(bridge_database, job_id), bundle.job_queue.get(job_id).to_dict()
+        for prefix in ("/jobs", "/api/v1/jobs"):
+            for method, path in ((client.get, f"{prefix}/{job_id}"), (client.post, f"{prefix}/{job_id}/retries")):
+                response = method(path, headers=_reviewer_headers())
+                assert response.status_code == 403, response.text
+                assert "SITESCORE_PARENT_BINDING_DENIED" in response.text
+        assert _snapshot(bundle) == before
+        assert _physical(bridge_database, job_id) == physical
+        assert bundle.job_queue.get(job_id).to_dict() == delivery
+        _assert_no_result(bundle, receipt["candidate_site_id"])
+    finally:
+        bundle.engine.close()
 
 
 def test_worker_acceptance_is_committed_before_inference_finishes(bridge_database, monkeypatch):
