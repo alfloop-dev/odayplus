@@ -1117,7 +1117,10 @@ def test_other_preflight_failures_do_not_enter_worker(dependency: str) -> None:
     assert not report["ok"]
     assert driver.calls == 0
     assert all(" GET " in f" {call}" for call in http.calls + web.calls)
-    assert "worker" not in report
+    # Read-only worker diagnostics may remain present; they must explicitly
+    # report no dispatch, never imply that execution passed or was waived.
+    if "worker" in report:
+        assert report["worker"] == {"skipped": False, "dispatched": False}
 
 
 # ---------------------------------------------------------------------------
