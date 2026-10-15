@@ -721,12 +721,12 @@ def test_tenants_never_see_or_overwrite_each_others_state(
         cross_write = client.post(
             f"{BASE}/store-ops/issues/ISS-FC-alert-a/triage",
             headers=_headers(OTHER_TENANT_ID),
-            json={"payload": {"severity": "low"}},
+            json={"severity": "low"},
         )
         own_write = client.post(
             f"{BASE}/store-ops/issues/ISS-FC-alert-a/triage",
             headers={**_headers(), "Idempotency-Key": "shared-key"},
-            json={"payload": {"severity": "high"}},
+            json={"severity": "high"},
         )
 
     assert other_before.status_code == 503
@@ -750,18 +750,21 @@ def test_tenants_never_see_or_overwrite_each_others_state(
     assert document_store.state(OTHER_TENANT_ID)["issues"] == []
     assert document_store.state(OTHER_TENANT_ID)["auditEvents"] == []
 
-    # Idempotency results are partitioned too: the same key in another tenant
-    # is not a replay of tenant A's transition.
+    # Use the actual subject/operation/key receipt namespace, then read the
+    # identical storage key in both tenants to verify tenant partitioning.
+    receipt_key = binding_hash([
+        _headers()["x-subject-id"], "store_ops.transition", "shared-key",
+    ])
     assert (
         DurableStoreOpsRepository(document_store)
         .for_tenant(OTHER_TENANT_ID)
-        .get_idempotency_result("shared-key")
+        .get_idempotency_result(receipt_key)
         is None
     )
     assert (
         DurableStoreOpsRepository(document_store)
         .for_tenant(TENANT_ID)
-        .get_idempotency_result("shared-key")
+        .get_idempotency_result(receipt_key)
         is not None
     )
     # Nonempty tenant/operator/idempotency isolation remains covered by the
@@ -1173,10 +1176,17 @@ def test_live_partial_health_keeps_typed_issue_workflow_and_read_does_not_rewrit
         green = client.get(f"{BASE}/store-ops/issues?light=staffing&lightStatus=green", headers=_headers())
         assert summary.status_code == issues.status_code == green.status_code == 200
         assert repository.read_versioned_state() == before
+        nested = client.post(
+            f"{BASE}/store-ops/issues/ISS-FC-alert-red/triage",
+            headers={**_headers(), "Idempotency-Key": "partial-invalid-nested-triage"},
+            json={"payload": {"severity": "high"}},
+        )
+        assert nested.status_code == 422
+        assert repository.read_versioned_state() == before
         transition = client.post(
             f"{BASE}/store-ops/issues/ISS-FC-alert-red/triage",
             headers={**_headers(), "Idempotency-Key": "partial-native-triage"},
-            json={"payload": {"severity": "high"}},
+            json={"severity": "high"},
         )
     assert summary.json()["stores"][0]["lights"] == {
         "demand": "red", "operations": None, "staffing": None, "margin": None,
@@ -1305,7 +1315,7 @@ def test_optional_health_owner_failure_is_partial_and_never_grants_foreign_obser
     with _client(document_store) as client:
         transition = client.post(
             f"{BASE}/store-ops/issues/ISS-FC-alert-red/triage", headers=_headers(),
-            json={"payload": {"severity": "high"}},
+            json={"severity": "high"},
         )
     assert transition.status_code == 200
     assert transition.json()["issue"]["status"] == "triaged"

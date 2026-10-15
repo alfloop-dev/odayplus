@@ -445,7 +445,8 @@ describe("production workspace data contracts", () => {
     expect(inspectStoreOpsApiPayload(livePayload)).toBe("ready");
     expect(inspectStoreOpsApiPayload({ ...livePayload, source: undefined })).toBe("ready");
     expect(inspectStoreOpsApiPayload({ ...livePayload, source: "fixture-store-ops" })).toBe("seed");
-    expect(inspectStoreOpsApiPayload({ ...livePayload, issues: [] })).toBe("empty");
+    expect(inspectStoreOpsApiPayload({ ...livePayload, issues: [] })).toBe("ready");
+    expect(inspectStoreOpsApiPayload({ ...livePayload, stores: [], issues: [] })).toBe("empty");
   });
 
   it("requires non-seed, non-empty Network and Listing API snapshots", () => {
@@ -837,9 +838,9 @@ describe("production workspace data contracts", () => {
     });
     function mockCanonical(payload: unknown, productionMode = "true") {
       vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", productionMode);
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), {
+      vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify(payload), {
         status: 200, headers: { "Content-Type": "application/json" },
-      })));
+      }))));
     }
 
     it.each(["true", "false"])("masks only valid legacy health without provenance and preserves the actual issue action when production=%s", async (mode) => {
