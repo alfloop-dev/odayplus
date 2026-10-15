@@ -205,7 +205,9 @@ describe("Govern workspace admits only governance rows", () => {
     expect(screen.queryByText("SiteScore APR-501 複審")).not.toBeInTheDocument();
     expect(screen.queryByText("會員回流活動核准")).not.toBeInTheDocument();
     expect(screen.getAllByText("目前沒有核准請求").length).toBeGreaterThan(0);
-    expect(screen.getByLabelText("核准佇列")).toHaveTextContent("0 全部");
+    const queue = screen.getByLabelText("核准佇列");
+    expect(within(queue).getByText("目前沒有核准請求")).toBeInTheDocument();
+    expect(within(queue).queryAllByRole("button")).toHaveLength(0);
   });
 
   it("drops malformed approval, decision and audit rows without throwing", async () => {
@@ -232,7 +234,9 @@ describe("Govern workspace admits only governance rows", () => {
     // Every row above is missing a field that identifies it as governance data,
     // so none of them reaches the queue under a fabricated value.
     expect(screen.queryByText("No module or status")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("核准佇列")).toHaveTextContent("0 全部");
+    const queue = screen.getByLabelText("核准佇列");
+    expect(within(queue).getByText("目前沒有核准請求")).toBeInTheDocument();
+    expect(within(queue).queryAllByRole("button")).toHaveLength(0);
   });
 
   it("renders an incomplete governance row with explicit unavailable fields", async () => {
