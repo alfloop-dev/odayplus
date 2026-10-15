@@ -172,6 +172,7 @@ def authorize_intake_action(
     waiver_registry: TenantAccessWaiverRegistry | None = None,
     tenant_id: str | None = None,
     collection_scope: dict[str, Any] | None = None,
+    collection_rows_projected: bool = False,
 ) -> None:
     """Enforce deny-by-default assisted intake authorization and segregation.
 
@@ -191,6 +192,11 @@ def authorize_intake_action(
     ``collection_scope`` carries the brand/region/area/heat-zone filters of a
     collection request so those axes are still enforced without dressing the
     filters up as a target resource.
+
+    ``collection_rows_projected`` is a server-owned contract for a collection
+    owner that applies current scope/ownership before pagination and authorizes
+    every returned row. It never relaxes object or CREATE checks and must not
+    be copied from request data. Existing collection owners keep their default.
     """
     def map_action_to_enum(action_str: str) -> Action:
         mapping = {
@@ -293,7 +299,7 @@ def authorize_intake_action(
             collection_filters_in_scope(principal, scope_subject)
             if is_collection_request
             and action == "view"
-            and collection_rows_are_scope_projected(principal)
+            and (collection_rows_projected or collection_rows_are_scope_projected(principal))
             else intake_resource_in_scope(principal, scope_subject)
         )
         if not in_scope:

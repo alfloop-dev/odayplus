@@ -1,5 +1,6 @@
 """Native Intake submission/read; processing remains an explicit next stage."""
 
+import base64
 import hashlib
 import json
 from datetime import datetime
@@ -7,14 +8,15 @@ from typing import Annotated, Literal
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, Request, Response
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from apps.api.app.routes.canonical_match_cases import _http_errors
 from apps.api.oday_api.security.dependencies import principal_from_headers
 from modules.listing.application.intake_authorization import authorize_intake_action
 from modules.listing.domain.intake_states import IntakeStage
 from shared.audit.backlog import CanonicalAuditBacklog
+from shared.auth import Role
 
 
 class NativeIntakeScope(BaseModel):
@@ -78,6 +80,21 @@ class CanonicalIntakeSummary(BaseModel):
     scope: NativeIntakeScope
 
 
+class CanonicalIntakePage(BaseModel):
+    items: list[CanonicalIntakeSummary]
+    next_cursor: str | None
+
+
+class _IntakeCursor(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: Literal[1]
+    tenant_id: UUID
+    processing_state: IntakeStage | None
+    submitted_at: AwareDatetime
+    intake_id: UUID
+
+
 def create_canonical_intakes_router(store) -> APIRouter:
     router = APIRouter(tags=["assisted-listing-intake"])
 
@@ -114,6 +131,47 @@ def create_canonical_intakes_router(store) -> APIRouter:
         (404, "Native Intake not found"), (409, "Concurrent command or idempotency conflict"),
         (422, "Invalid native submission"), (503, "Canonical storage or audit unavailable"),
     )}
+
+    @router.get("/canonical-intakes", operation_id="listCanonicalIntakes",
+                response_model=CanonicalIntakePage, responses=errors)
+    def page(request: Request, processing_state: IntakeStage | None = None,
+             page_size: Annotated[int, Query(ge=1, le=100)] = 25,
+             cursor: Annotated[str | None, Query(max_length=2048)] = None):
+        with _http_errors():
+            principal, repo = context(request)
+            tenant = principal.tenant_id
+            # Server-owned contract: SQL projects all native scope axes and
+            # staff ownership before LIMIT; each row is reauthorized below.
+            # This opt-in cannot be supplied through a query/body parameter.
+            authorize_intake_action(principal, "view", tenant_id=tenant,
+                collection_scope={}, collection_rows_projected=True,
+                audit_log=getattr(request.app.state, "audit_log", None),
+                correlation_id=request.headers.get("x-correlation-id"))
+            position = None
+            if cursor is not None:
+                try:
+                    decoded = _IntakeCursor.model_validate_json(base64.b64decode(cursor, altchars=b"-_", validate=True))
+                except ValueError as exc:
+                    raise HTTPException(422, "INVALID_CANONICAL_INTAKE_CURSOR") from exc
+                if str(decoded.tenant_id) != tenant or decoded.processing_state != processing_state:
+                    raise HTTPException(422, "CANONICAL_INTAKE_CURSOR_QUERY_MISMATCH")
+                position = decoded.submitted_at.isoformat(), str(decoded.intake_id)
+            is_staff = principal.has_role(Role.EXPANSION_USER) and not principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE)
+            with repo.graph.transaction(tenant):
+                rows = repo.page(tenant, scope=principal.scope, owner=principal.subject_id if is_staff else None,
+                                 state=processing_state.value if processing_state else None,
+                                 before=position, limit=page_size + 1)
+                for row in rows:
+                    authorize(request, principal, row)
+                selected = rows[:page_size]
+                next_cursor = None
+                if len(rows) > page_size:
+                    last = selected[-1]
+                    value = _IntakeCursor(version=1, tenant_id=tenant, processing_state=processing_state,
+                                          submitted_at=last["submitted_at"], intake_id=last["intake_id"])
+                    next_cursor = base64.urlsafe_b64encode(value.model_dump_json().encode()).decode()
+                return {"items": [{**row, "scope": {key: row[key] for key in NativeIntakeScope.model_fields}}
+                                  for row in selected], "next_cursor": next_cursor}
 
     @router.get("/canonical-intakes/{intake_id}", operation_id="getCanonicalIntake",
                 response_model=CanonicalIntakeSummary, responses=errors)

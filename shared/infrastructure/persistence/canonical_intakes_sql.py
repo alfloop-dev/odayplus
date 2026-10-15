@@ -18,6 +18,38 @@ class CanonicalIntakeRepository:
                 (tenant, intake_id),
             )
 
+    def page(self, tenant: str, *, scope, owner: str | None, state: str | None,
+             before: tuple[str, str] | None, limit: int) -> list[dict]:
+        """Project current native scope/ownership before applying a page limit.
+
+        The route still authorizes every returned row, including the lookahead.
+        A cursor is an untrusted position, never a tenant or permission grant.
+        Native Intakes have no store axis, so a store-restricted principal has
+        no representable row rather than receiving unscoped metadata.
+        """
+        from json import dumps
+
+        with self.graph.transaction(tenant):
+            return self.engine.query(
+                "SELECT intake_id,tenant_id,submitter_subject_id,intake_method,processing_state,version,"
+                "submitted_at,correlation_id,brand_id,region_id,assigned_area_id,heat_zone_id "
+                "FROM intake.intakes WHERE tenant_id=? AND deleted_at IS NULL "
+                "AND ?::boolean AND (?::uuid IS NULL OR submitter_subject_id=?::uuid) "
+                "AND (?::boolean OR jsonb_exists(?::jsonb,brand_id::text)) "
+                "AND (?::boolean OR jsonb_exists(?::jsonb,region_id::text)) "
+                "AND (?::boolean OR jsonb_exists(?::jsonb,assigned_area_id::text)) "
+                "AND (?::boolean OR jsonb_exists(?::jsonb,heat_zone_id::text)) "
+                "AND (?::text IS NULL OR processing_state=?::text) "
+                "AND (?::timestamptz IS NULL OR (submitted_at,intake_id)<(?::timestamptz,?::uuid)) "
+                "ORDER BY submitted_at DESC,intake_id DESC LIMIT ?",
+                (tenant, not scope.store_ids, owner, owner,
+                 not scope.brand_ids, dumps(sorted(scope.brand_ids)),
+                 not scope.region_ids, dumps(sorted(scope.region_ids)),
+                 not scope.assigned_area_ids, dumps(sorted(scope.assigned_area_ids)),
+                 not scope.heat_zone_ids, dumps(sorted(scope.heat_zone_ids)), state, state,
+                 before[0] if before else None, before[0] if before else None, before[1] if before else None, limit),
+            )
+
     def submit(self, tenant: str, actor: str, *, method: str, original_url: str | None,
                scope: dict, reason: str, idempotency_key: str) -> dict:
         """Commit SUBMITTED, its transition, audit and event in one SQL unit.

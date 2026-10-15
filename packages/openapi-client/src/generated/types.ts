@@ -373,6 +373,12 @@ export type CanonicalIdentitySummary = {
   version: number;
 };
 
+/** CanonicalIntakePage */
+export type CanonicalIntakePage = {
+  items: CanonicalIntakeSummary[];
+  next_cursor: string | null;
+};
+
 /** CanonicalIntakeReceipt */
 export type CanonicalIntakeReceipt = {
   audit_event_id: string;
@@ -2426,7 +2432,7 @@ export const API_PATHS = {
   "/api/v1/canonical-identity-decisions/{decision_id}/actions/cancel-job": ["POST"],
   "/api/v1/canonical-identity-decisions/{decision_id}/actions/review": ["POST"],
   "/api/v1/canonical-identity-decisions/{decision_id}/job": ["GET"],
-  "/api/v1/canonical-intakes": ["POST"],
+  "/api/v1/canonical-intakes": ["GET", "POST"],
   "/api/v1/canonical-intakes/{intake_id}": ["GET"],
   "/api/v1/external-data/freshness": ["GET"],
   "/api/v1/external-data/ingestion-runs": ["GET", "POST"],
