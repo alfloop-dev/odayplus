@@ -29,7 +29,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - optional API dependency
     APIRouter = None  # type: ignore[assignment]
 else:
-    from apps.api.app.routes._common import durable_store_required
+    from apps.api.app.routes._common import durable_store_required, resolve_tenant_id
 
     class OpenCasePayload(BaseModel):
         store_id: str = Field(min_length=1)
@@ -180,21 +180,7 @@ else:
             return store
 
         def tenant_id(request: Request) -> str:
-            principal = getattr(request.state, "operator_principal", None)
-            value = getattr(principal, "tenant_id", None)
-            if value:
-                return str(value)
-            if require_durable_commands:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail={
-                        "code": "TENANT_SCOPE_REQUIRED",
-                        "message": (
-                            "Intervention production commands require tenant scope"
-                        ),
-                    },
-                )
-            return "__local__"
+            return resolve_tenant_id(request)
 
         def run_command(
             *,
@@ -204,9 +190,14 @@ else:
             idempotency_key: str | None,
             operation: Any,
         ) -> dict[str, Any]:
+            active_tenant = tenant_id(request)
+            owning_id = request.path_params.get("intervention_id")
+            if owning_id is not None:
+                # Before receipt replay AND mutation, including shared local stores.
+                _get_or_404(str(owning_id), request)
             try:
                 outcome = command_store(request).run(
-                    tenant_id=tenant_id(request),
+                    tenant_id=active_tenant,
                     idempotency_key=idempotency_key,
                     scope=scope,
                     payload=payload,
@@ -242,9 +233,9 @@ else:
                 replayed=outcome.replayed,
             )
 
-        def _get_or_404(intervention_id: str):
+        def _get_or_404(intervention_id: str, request: Request):
             intervention = active_workflow.get(intervention_id)
-            if intervention is None:
+            if intervention is None or not intervention.tenant_id or intervention.tenant_id != tenant_id(request):
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND, detail="intervention not found"
                 )
@@ -268,6 +259,7 @@ else:
                         planned_start=_parse_time(body.planned_start),
                         planned_end=_parse_time(body.planned_end),
                         created_by=body.created_by,
+                        tenant_id=tenant_id(request),
                         action_spec=body.action_spec,
                         correlation_id=request.state.correlation_id,
                     )
@@ -294,6 +286,7 @@ else:
 
         @router.get("", dependencies=[Depends(require_permission("intervention", Action.VIEW, engine=authz_engine))])
         def list_interventions(
+            request: Request,
             store_id: str | None = None,
             assigned_to: str | None = None,
             status: str | None = None,
@@ -311,11 +304,13 @@ else:
                     status_code=422,
                     detail=str(exc),
                 ) from exc
+            active_tenant = tenant_id(request)
+            items = [i for i in items if i.tenant_id and i.tenant_id == active_tenant]
             return {"items": [i.to_dict() for i in items], "count": len(items)}
 
         @router.get("/{intervention_id}", dependencies=[Depends(require_permission("intervention", Action.VIEW, engine=authz_engine))])
-        def get_intervention(intervention_id: str) -> dict[str, Any]:
-            return _get_or_404(intervention_id).to_dict()
+        def get_intervention(intervention_id: str, request: Request) -> dict[str, Any]:
+            return _get_or_404(intervention_id, request).to_dict()
 
         @router.post("/{intervention_id}/assign", dependencies=[Depends(require_permission("intervention", Action.CREATE, engine=authz_engine))])
         def assign_case(
@@ -724,8 +719,8 @@ else:
             )
 
         @router.get("/{intervention_id}/label", dependencies=[Depends(require_permission("intervention", Action.VIEW, engine=authz_engine))])
-        def get_label(intervention_id: str) -> dict[str, Any]:
-            _get_or_404(intervention_id)
+        def get_label(intervention_id: str, request: Request) -> dict[str, Any]:
+            _get_or_404(intervention_id, request)
             label = registry.get(intervention_id)
             if label is None:
                 raise HTTPException(

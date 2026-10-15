@@ -34,6 +34,8 @@ class InMemoryInterventionRepository:
         with self._lock:
             existing = self._by_id.get(intervention.intervention_id)
             if existing is not None:
+                if intervention.tenant_id != existing.tenant_id:
+                    raise InterventionError("intervention tenant is immutable")
                 if existing.replacement_id:
                     if (
                         intervention.replacement_id != existing.replacement_id

@@ -1006,6 +1006,8 @@ class DurableInterventionRepository:
                         raise InterventionError(
                             f"stale update: intervention {intervention.intervention_id} was modified concurrently (current version {doc.version}, saving version {intervention.version})"
                         )
+            if doc is not None and intervention.tenant_id != doc.tenant_id:
+                raise InterventionError("intervention tenant is immutable")
             self._sync_sql(intervention)
             # Relational persistence is the production contract.  Write the
             # document mirror only after it succeeds so a migration/driver/FK
