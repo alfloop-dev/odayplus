@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 from hashlib import sha256
-from typing import Any
+from typing import Any, TypeVar
 
 from modules.opsboard.application.store_ops import (
     DurableStoreOpsRepository,
+    StoreOpsConcurrentWriteConflict,
     StoreOpsConflict,
     StoreOpsLiveDataUnavailable,
 )
 from modules.opsboard.domain.store_ops_reviews import record_contract
+
+_T = TypeVar("_T")
 
 
 def binding_hash(value: Any) -> str:
@@ -100,7 +103,7 @@ class ScopedStoreOpsRepository:
         ]
         return state
 
-    def save_state(self, state: Mapping[str, Any]) -> None:
+    def _merge_state(self, state: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         full = deepcopy(self._full_state())
         before = self.get_state()
         original_issues = {row["id"]: row for row in before["issues"]}
@@ -213,9 +216,39 @@ class ScopedStoreOpsRepository:
         ):
             raise StoreOpsConflict("Attachment identifier collides with another issue")
         full["attachments"] = [*hidden, *deepcopy(incoming_attachments)]
-        self._repository.save_state(full)
-        self._state = full
-        self.new_audits.extend(deepcopy(new_audits))
+        return full, new_audits
+
+    def update_state(self, mutate: Callable[[dict[str, Any]], _T]) -> _T:
+        """Rebuild the scoped view on every full-document CAS attempt."""
+        def apply(full: dict[str, Any]) -> tuple[_T, list[dict[str, Any]]]:
+            self._state = deepcopy(full)
+            visible = self.get_state()
+            result = mutate(visible)
+            merged, audits = self._merge_state(visible)
+            full.clear()
+            full.update(merged)
+            return result, audits
+
+        try:
+            result, audits = self._repository.update_state(apply)
+        finally:
+            self._state = None
+        self.new_audits.extend(deepcopy(audits))
+        return result
+
+    def save_state(self, state: Mapping[str, Any]) -> None:
+        """A detached edit cannot replace a more recent aggregate."""
+        baseline = deepcopy(self._full_state())
+
+        def replace_visible(visible: dict[str, Any]) -> None:
+            if self._full_state() != baseline:
+                raise StoreOpsConcurrentWriteConflict(
+                    "Store Ops state changed after the scoped read; retry the command"
+                )
+            visible.clear()
+            visible.update(deepcopy(dict(state)))
+
+        self.update_state(replace_visible)
 
     def _receipt_key(self, key: str) -> str:
         return binding_hash([self._subject_id, self._operation, key])

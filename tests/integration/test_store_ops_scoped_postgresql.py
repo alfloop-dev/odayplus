@@ -13,6 +13,7 @@ from modules.opsboard.application.operator_live_repository import OperatorLiveRe
 from modules.opsboard.application.store_ops import (
     DurableStoreOpsRepository,
     InMemoryStoreOpsRepository,
+    StoreOpsLiveDataUnavailable,
 )
 from modules.opsboard.application.store_ops_audit_delivery import COLLECTION
 from modules.opsboard.application.store_ops_scope import binding_hash
@@ -134,7 +135,7 @@ def case(intake_blank_db, monkeypatch, tmp_path):
     # Poison the legacy global aggregate; live reads/writes must ignore it.
     global_state = state([issue(str(uuid4()), store_a)])
     global_state["issues"][0]["title"] = "legacy global secret"
-    bundle.store_ops_repository.save_state(global_state)
+    documents.put("opsboard.store_ops.state", "default", global_state)
     headers = {
         "x-subject-id": subject,
         "x-tenant-id": tenant_a,
@@ -160,6 +161,7 @@ def case(intake_blank_db, monkeypatch, tmp_path):
             "hidden_issue": issue_hidden,
             "foreign_issue": issue_foreign,
             "global_state": global_state,
+            "legacy_documents": documents,
             "monkeypatch": monkeypatch,
         }
     finally:
@@ -174,6 +176,18 @@ def _transition(case, **body):
     )
 
 
+def test_public_unbound_factory_refuses_legacy_global_while_bound_owner_remains_valid(case):
+    documents = case["legacy_documents"]
+    before = documents.get("opsboard.store_ops.state", "default")
+    with pytest.raises(StoreOpsLiveDataUnavailable, match="authenticated tenant scope"):
+        case["bundle"].store_ops_repository.get_state()
+    with pytest.raises(StoreOpsLiveDataUnavailable, match="authenticated tenant scope"):
+        case["bundle"].store_ops_repository.save_state(before)
+    assert documents.get("opsboard.store_ops.state", "default") == before
+    assert case["repo"].tenant_id == case["tenant"]
+    assert case["repo"].get_state()["issues"][0]["id"] == case["issue"]
+
+
 def test_http_write_scoped_read_today_and_restart_share_the_committed_state(case):
     hidden_before = deepcopy(case["repo"].get_state()["issues"][1])
     response = _transition(case, actorName="forged actor", actorRoleId="auditPm")
@@ -184,7 +198,7 @@ def test_http_write_scoped_read_today_and_restart_share_the_committed_state(case
     assert body["auditEvent"]["actorName"] == case["subject"]
     assert body["auditEvent"]["actorRoleId"] == "opsLead"
     assert case["repo"].get_state()["issues"][1] == hidden_before
-    assert case["bundle"].store_ops_repository.get_state() == case["global_state"]
+    assert case["legacy_documents"].get("opsboard.store_ops.state", "default") == case["global_state"]
     read = _client(case["bundle"]).get(f"{BASE}/issues/{case['issue']}", headers=case["headers"])
     assert read.json()["issue"]["severity"] == "critical"
     state = OperatorLiveRepository(case["bundle"]).load_state(
@@ -367,7 +381,7 @@ def test_missing_tenant_materialization_is_not_seeded_from_global_or_fixture(cas
         == "Store Ops production state has not been materialized"
     )
     assert case["repo"]._store.get("opsboard.store_ops.state", "default") is None
-    assert case["bundle"].store_ops_repository.get_state() == case["global_state"]
+    assert case["legacy_documents"].get("opsboard.store_ops.state", "default") == case["global_state"]
 
 
 def test_materialized_tenant_fixture_is_rejected_before_any_mutation(case):

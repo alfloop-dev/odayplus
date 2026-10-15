@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from apps.api.oday_api.runtime_mode import live_data_required
 from modules.opsboard.application.store_ops import (
     DurableStoreOpsRepository,
+    StoreOpsConcurrentWriteConflict,
     StoreOpsConflict,
     StoreOpsLiveDataUnavailable,
     StoreOpsNotFound,
@@ -64,6 +65,7 @@ def create_operator_store_ops_router(
     repository: Any = None,
     store_repository: Any = None,
     machine_repository: Any = None,
+    forecastops_repository: Any = None,
     delivery_job_queue: Any = None,
     audit_log: InMemoryAuditLog | None = None,
     require_live_data: bool | None = None,
@@ -196,6 +198,7 @@ def create_operator_store_ops_router(
                 scoped_service = StoreOpsService(
                     repository=scoped_repository, audit_log=audit, require_live_data=True,
                     actor_subject_id=subject_id,
+                    forecastops_repository=forecastops_repository, tenant_id=tenant_id,
                 )
                 issue_id = kwargs.get("issue_id") or (args[0] if args else None)
                 if issue_id is not None:
@@ -252,6 +255,15 @@ def create_operator_store_ops_router(
                     if attach_delivery_status and isinstance(result, dict):
                         result["auditDelivery"] = {"status": "pending", "pending": None, "retryable": True}
             return result
+        except StoreOpsConcurrentWriteConflict as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "STORE_OPS_CONCURRENT_WRITE",
+                    "operation": operation,
+                    "message": str(exc),
+                },
+            ) from exc
         except StoreOpsLiveDataUnavailable as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -272,6 +284,8 @@ def create_operator_store_ops_router(
         return {
             "fourLightSummary": snapshot["fourLightSummary"],
             "stores": snapshot["stores"],
+            **({"healthAvailability": snapshot["healthAvailability"]}
+               if "healthAvailability" in snapshot else {}),
             "correlation_id": request.state.correlation_id,
         }
 

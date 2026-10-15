@@ -100,6 +100,42 @@ restored, retry the same committed event through the governed worker queue.
 Production requeue/rollback actions still require the incident and release
 authority specified by the existing runbooks.
 
+## Partial health and workflow availability
+
+Issue, evidence and audit availability is independent of optional health
+measurements. A valid scoped issue remains readable and its typed workflow
+remains usable when health slots are unavailable. Original tenant, store,
+actor, source-record hash, transaction, receipt and compare-and-swap checks
+still apply; malformed workflow data retains the existing unavailable error.
+
+Production summary/issues responses use nullable values for the existing
+three light enums and for `riskScore`. Each store's `healthAvailability`
+contains `state`, `complete`, four `lights` slots and a `riskScore` slot. Slots
+use `state`, `source`, optional `recordIds`, `reasonCode` and `message`.
+Top-level `healthAvailability` carries `totalCount`, `coveredCount`,
+`unavailableCount` and `warningCount`; warnings may overlap incomplete stores.
+Each `fourLightSummary` dimension adds `unavailableCount`. Unknown values are
+excluded from colored counts and green filters, while their stores and issues
+remain present. An empty store list has zero counts and is complete.
+
+Only alerts read from the existing ForecastOps owner during this authorized
+request can supply a demand observation. Closed/removed alerts cannot keep a
+retained issue's old color alive. Actual policy green is a single observed
+dimension, not overall healthy status. Missing/read-failed optional health
+ports yield null slots with generic availability reasons, without leaking
+connection details or failing an otherwise valid issue command. Generic
+issues, an empty queue, old colors, source-name strings, metadata flags and a
+zero score do not establish equipment, cleaning, margin or risk measurements.
+The current missing owners remain null; no source admission or model maturity
+is inferred. Evidence confidence is null when the source did not measure it.
+
+Snapshot normalization operates on a copy. Reads never rewrite the persisted
+store master or history used by scoped command validation. PostgreSQL fixture
+setup writes/observes legacy global poison through its raw document-store
+handle; the public unbound live repository still refuses access. The SQLite
+materializer tests use an explicit PostgreSQL-dialect unit double, and the CAS
+engineering controls use ordinary SQLite. Neither is native PostgreSQL proof.
+
 ## Protocol references
 
 - [Cloud Storage request preconditions](https://docs.cloud.google.com/storage/docs/request-preconditions)

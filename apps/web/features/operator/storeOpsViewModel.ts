@@ -35,7 +35,7 @@ export type StoreOpsProgressStep = {
 
 export type StoreOpsTrendPoint = {
   label: string;
-  value: number;
+  value: number | null;
   tone: StoreOpsTone;
 };
 
@@ -306,16 +306,20 @@ export function getEvidenceStrength(evidence: EvidenceItem[]) {
   const supporting = evidence.filter((item) => item.polarity === "supporting");
   const contrary = evidence.filter((item) => item.polarity === "contrary");
   const neutral = evidence.filter((item) => item.polarity === "neutral");
-  const averageConfidence =
-    evidence.length > 0
-      ? Math.round((evidence.reduce((total, item) => total + item.confidence, 0) / evidence.length) * 100)
-      : 0;
+  const knownConfidence = evidence.flatMap((item) =>
+    typeof item.confidence === "number" && Number.isFinite(item.confidence)
+      && item.confidence >= 0 && item.confidence <= 1 ? [item.confidence] : []);
+  const averageConfidence = knownConfidence.length > 0
+    ? Math.round((knownConfidence.reduce((total, value) => total + value, 0) / knownConfidence.length) * 100)
+    : null;
 
   return {
     supportingCount: supporting.length,
     contraryCount: contrary.length,
     neutralCount: neutral.length,
     averageConfidence,
+    confidenceCount: knownConfidence.length,
+    unavailableConfidenceCount: evidence.length - knownConfidence.length,
   };
 }
 
@@ -351,7 +355,8 @@ export function getTrendPoints(issue: Issue | undefined, evidence: EvidenceItem[
 
   return evidence.slice(0, 4).map((item) => ({
     label: item.sourceLabel,
-    value: Math.round(item.confidence * 100),
+    value: typeof item.confidence === "number" && Number.isFinite(item.confidence)
+      && item.confidence >= 0 && item.confidence <= 1 ? Math.round(item.confidence * 100) : null,
     tone: getPolarityTone(item.polarity),
   }));
 }

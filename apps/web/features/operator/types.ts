@@ -178,6 +178,28 @@ export type NavWorkspace = {
 };
 
 export type StoreLightStatus = "green" | "yellow" | "red";
+export type StoreHealthAvailabilityState = "available" | "degraded" | "unavailable";
+export type StoreHealthSlotAvailability = {
+  state: StoreHealthAvailabilityState;
+  source: string | null;
+  reasonCode?: string | null;
+  message?: string | null;
+  recordIds?: string[];
+};
+export type StoreHealthAvailability = {
+  state: StoreHealthAvailabilityState;
+  complete: boolean;
+  lights: Record<"demand" | "operations" | "staffing" | "margin", StoreHealthSlotAvailability>;
+  riskScore: StoreHealthSlotAvailability;
+};
+export type StoreOpsHealthAvailability = {
+  state: StoreHealthAvailabilityState;
+  complete: boolean;
+  totalCount: number;
+  coveredCount: number;
+  unavailableCount: number;
+  warningCount: number;
+};
 
 export type Store = {
   nativeSummary?: NativeStoreSummary;
@@ -187,12 +209,13 @@ export type Store = {
   city: string;
   manager: string;
   lights: {
-    demand: StoreLightStatus;
-    operations: StoreLightStatus;
-    staffing: StoreLightStatus;
-    margin: StoreLightStatus;
+    demand: StoreLightStatus | null;
+    operations: StoreLightStatus | null;
+    staffing: StoreLightStatus | null;
+    margin: StoreLightStatus | null;
   };
-  riskScore: number;
+  riskScore: number | null;
+  healthAvailability?: StoreHealthAvailability;
 };
 
 export type Issue = {
@@ -228,7 +251,7 @@ export type EvidenceItem = {
   sourceLabel: string;
   summary: string;
   polarity: EvidencePolarity;
-  confidence: number;
+  confidence: number | null;
   occurredAt: string;
   lockedReason?: string;
   /** Saved CameraPurpose fields; a missing lock reason is not an access receipt. */

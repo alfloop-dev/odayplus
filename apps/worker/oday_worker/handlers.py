@@ -26,6 +26,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 FORECAST_JOB_TYPE = "forecast"
 EXTERNAL_FETCH_JOB_TYPE = "external-fetch"
+STORE_OPS_MATERIALIZE_JOB_TYPE = "store-ops-materialize"
 
 
 def handle_forecast(job: JobRecord, persistence: PersistenceBundle) -> None:
@@ -821,6 +822,30 @@ def handle_batch_listing_intake(job: JobRecord, persistence: PersistenceBundle) 
         raise
 
 
+def handle_store_ops_materialize(job: JobRecord, persistence: PersistenceBundle) -> None:
+    """Project canonical stores and KPIs into the live Store Ops document.
+
+    The production Store Ops read path fails closed until this document exists,
+    and nothing in the request path may create it. A non-live (SQLite or
+    in-memory) bundle keeps its demo state, so the materializer skips there.
+    """
+    from modules.opsboard.application.store_ops_materializer import (
+        materialize_store_ops_state,
+    )
+
+    tenant_id = str(job.payload.get("tenant_id") or "").strip()
+    if not tenant_id:
+        raise NonRetryableJobError(
+            "Store Ops materialize job payload missing authenticated tenant scope"
+        )
+    materialize_store_ops_state(
+        repository=persistence.store_ops_repository,
+        store_repository=persistence.store_repository,
+        forecastops_repository=persistence.forecastops_repository,
+        tenant_id=tenant_id,
+    )
+
+
 def build_default_registry() -> JobRegistry:
     """The registry the runtime worker uses by default."""
     from apps.worker.assisted_listing_intake.worker import (
@@ -852,6 +877,7 @@ def build_default_registry() -> JobRegistry:
     registry.register(STORE_OPS_AUDIT_JOB_TYPE, handle_store_ops_audit_delivery)
     registry.register(CANONICAL_AUDIT_JOB_TYPE, handle_canonical_audit_delivery)
     registry.register(DURABLE_AUDIT_JOB_TYPE, handle_durable_audit_delivery)
+    registry.register(STORE_OPS_MATERIALIZE_JOB_TYPE, handle_store_ops_materialize)
     return registry
 
 
@@ -859,8 +885,10 @@ __all__ = [
     "BATCH_LISTING_INTAKE_JOB_TYPE",
     "EXTERNAL_FETCH_JOB_TYPE",
     "FORECAST_JOB_TYPE",
+    "STORE_OPS_MATERIALIZE_JOB_TYPE",
     "build_default_registry",
     "handle_batch_listing_intake",
     "handle_external_fetch",
     "handle_forecast",
+    "handle_store_ops_materialize",
 ]

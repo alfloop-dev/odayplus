@@ -650,6 +650,7 @@ modules/opsboard/application/priceops_read_scope.py,product_system,product_requi
 modules/opsboard/application/shell.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/opsboard/application/store_ops.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/opsboard/application/store_ops_audit_delivery.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/opsboard/application/store_ops_materializer.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/opsboard/application/store_ops_native_summary.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/opsboard/application/store_ops_scope.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/opsboard/application/today_metrics.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -1204,6 +1205,7 @@ tests/integration/test_store_opening_backfill.py,verification,verification_only,
 tests/integration/test_store_ops_native_summary_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_store_ops_review_persistence_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_store_ops_scoped_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_store_ops_state_materializer.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_store_ops_workflow_persistence_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_survey_workflow.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_worker_scheduler_runtime.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.

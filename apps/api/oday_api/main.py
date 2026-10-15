@@ -2335,6 +2335,7 @@ else:
                 repository=store_ops_repo,
                 store_repository=bundle.store_repository,
                 machine_repository=bundle.machine_repository,
+                forecastops_repository=forecast_repository,
                 delivery_job_queue=bundle.job_queue,
                 audit_log=audit_log,
                 require_live_data=require_live_data,

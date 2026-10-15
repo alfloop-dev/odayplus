@@ -12,9 +12,11 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from collections.abc import Iterable, Mapping, MutableMapping
+import math
+import threading
+from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from datetime import UTC, datetime
-from typing import Any, NoReturn, Protocol
+from typing import Any, NoReturn, Protocol, TypeVar
 
 from pydantic import ValidationError
 
@@ -42,6 +44,8 @@ LightStatus = str
 _STORE_OPS_STATE_DOC_ID = "default"
 _STORE_OPS_STATE_COLLECTION = "opsboard.store_ops.state"
 _STORE_OPS_IDEMPOTENCY_COLLECTION = "opsboard.store_ops.idempotency"
+_STORE_OPS_WRITE_ATTEMPTS = 8
+_T = TypeVar("_T")
 _STORE_OPS_FIXTURE_IDS = frozenset(
     {
         "ST-008",
@@ -113,12 +117,142 @@ class StoreOpsConflict(StoreOpsError):
     """Lifecycle transition is invalid for the current issue state."""
 
 
+class StoreOpsConcurrentWriteConflict(StoreOpsConflict):
+    """The Store Ops state kept changing under a write; nothing was saved."""
+
+
 class StoreOpsPolicyError(StoreOpsError):
     """Policy-controlled Store Ops action was rejected."""
 
 
 class StoreOpsLiveDataUnavailable(StoreOpsError):
     """The production Store Ops repository cannot provide canonical data."""
+
+
+def _validate_live_store_ops_state(state: Mapping[str, Any]) -> None:
+    """Reject malformed workflow data, independently of optional health facts."""
+    if not isinstance(state, Mapping):
+        raise StoreOpsLiveDataUnavailable("Store Ops workflow aggregate is invalid")
+    for key in ("stores", "issues", "evidence", "auditEvents"):
+        rows = state.get(key)
+        if not isinstance(rows, list) or not all(
+            isinstance(row, Mapping) and isinstance(row.get("id"), str) and row["id"].strip()
+            for row in rows
+        ):
+            raise StoreOpsLiveDataUnavailable(f"Store Ops {key} projection is invalid")
+        if len({row["id"] for row in rows}) != len(rows):
+            raise StoreOpsLiveDataUnavailable(f"Store Ops {key} has duplicate identifiers")
+    for issue in state["issues"]:
+        if (
+            not isinstance(issue.get("storeId"), str) or not issue["storeId"].strip()
+            or not isinstance(issue.get("evidenceIds", []), list)
+            or not all(isinstance(key, str) for key in issue.get("evidenceIds", []))
+        ):
+            raise StoreOpsLiveDataUnavailable("Store Ops issue scope or evidence is invalid")
+    for store in state["stores"]:
+        lights = store.get("lights", {})
+        if not isinstance(lights, Mapping) or any(
+            value is not None and (not isinstance(value, str) or value not in _LIGHT_STATUSES)
+            for value in lights.values()
+        ):
+            raise StoreOpsLiveDataUnavailable("Store Ops light values are invalid")
+        risk = store.get("riskScore")
+        if risk is not None:
+            try:
+                finite = not isinstance(risk, bool) and isinstance(risk, (int, float)) and math.isfinite(risk)
+            except OverflowError:
+                finite = False
+            if not finite:
+                raise StoreOpsLiveDataUnavailable("Store Ops risk score is invalid")
+
+
+def _unavailable_health_slot() -> dict[str, Any]:
+    return {
+        "state": "unavailable", "source": None,
+        "reasonCode": "CANONICAL_KPI_SOURCE_UNAVAILABLE", "message": "指標資料未取得",
+    }
+
+
+def _alert_fact(alert: Any, key: str) -> Any:
+    value = alert.get(key) if isinstance(alert, Mapping) else getattr(alert, key, None)
+    return getattr(value, "value", value)
+
+
+def project_store_ops_health(
+    state: Mapping[str, Any],
+    *,
+    alerts_by_store: Mapping[str, Iterable[Any] | None] | None = None,
+    tenant_id: str | None = None,
+) -> dict[str, Any]:
+    """Copy workflow data; only this read's canonical alerts can supply health.
+
+    Stored colors, source names, flags and retained issue/evidence references
+    cannot establish a current observation. No current owner read means null
+    health, while the original issues and their complete histories stay usable.
+    An issue queue is not an equipment, staffing, margin or risk measurement.
+    """
+    _validate_live_store_ops_state(state)
+    result = _clone(state)
+    for store in result["stores"]:
+        slots = {dimension: _unavailable_health_slot() for dimension in _LIGHT_DIMENSIONS}
+        lights: dict[str, str | None] = {dimension: None for dimension in _LIGHT_DIMENSIONS}
+        observations: list[tuple[str, str]] = []
+        if alerts_by_store is not None and tenant_id:
+            current = alerts_by_store.get(str(store["id"]))
+            invalid = current is None or not isinstance(current, (list, tuple))
+            for alert in current if not invalid else ():
+                if (
+                    _alert_fact(alert, "tenant_id") != tenant_id
+                    or _alert_fact(alert, "store_id") != store["id"]
+                ):
+                    invalid = True
+                    break
+                alert_id = _alert_fact(alert, "alert_id")
+                level = _alert_fact(alert, "alert_level")
+                if not isinstance(alert_id, str) or not alert_id.strip() or not isinstance(level, str):
+                    invalid = True
+                    break
+                level = level.lower()
+                if level not in {"red", "orange", "yellow", "green"}:
+                    invalid = True
+                    break
+                status = _alert_fact(alert, "status")
+                if not isinstance(status, str):
+                    invalid = True
+                    break
+                if status not in {"open", "acknowledged", "in_progress"}:
+                    continue
+                observations.append((alert_id, "red" if level == "red" else "green" if level == "green" else "yellow"))
+            if invalid:
+                observations = []
+                slots["demand"]["reasonCode"] = "FORECASTOPS_OBSERVATION_UNAVAILABLE"
+        if observations:
+            levels = {level for _, level in observations}
+            lights["demand"] = "red" if "red" in levels else "yellow" if "yellow" in levels else "green"
+            slots["demand"] = {
+                "state": "available", "source": "forecastops.alerts",
+                "recordIds": sorted({key for key, _ in observations}),
+                "message": "本次 ForecastOps 政策觀測；其他指標資料未取得",
+            }
+        store["lights"] = lights
+        store["riskScore"] = None
+        store["healthAvailability"] = {
+            "state": "degraded" if observations else "unavailable", "complete": False,
+            "lights": slots, "riskScore": _unavailable_health_slot(),
+        }
+    return result
+
+
+def _health_availability(stores: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    rows = list(stores)
+    covered = sum(row.get("healthAvailability", {}).get("complete") is True for row in rows)
+    warnings = sum(any(value in {"red", "yellow"} for value in row["lights"].values()) for row in rows)
+    observed = any(row.get("healthAvailability", {}).get("state") == "degraded" for row in rows)
+    return {
+        "state": "available" if covered == len(rows) else "degraded" if observed else "unavailable",
+        "complete": covered == len(rows), "totalCount": len(rows), "coveredCount": covered,
+        "unavailableCount": len(rows) - covered, "warningCount": warnings,
+    }
 
 
 class StoreOpsRepository(Protocol):
@@ -143,8 +277,15 @@ def _clone(value: Any) -> Any:
 
 
 def _contains_fixture_signature(state: Mapping[str, Any]) -> bool:
+    if not isinstance(state, Mapping):
+        raise StoreOpsLiveDataUnavailable("Store Ops workflow aggregate is invalid")
     for collection in ("stores", "issues", "auditEvents"):
-        for item in state.get(collection, ()):
+        rows = state.get(collection, ())
+        if not isinstance(rows, (list, tuple)):
+            # Shape validation owns unavailable aggregates; signature probing
+            # must not turn malformed metadata into an unrelated TypeError.
+            continue
+        for item in rows:
             if isinstance(item, Mapping) and str(item.get("id")) in _STORE_OPS_FIXTURE_IDS:
                 return True
     return False
@@ -466,20 +607,37 @@ def _seed_state() -> dict[str, Any]:
     }
 
 
+def _tenant_partition(tenant_id: str) -> str:
+    return hashlib.sha256(tenant_id.encode("utf-8")).hexdigest()
+
+
 class InMemoryStoreOpsRepository:
+    """Single-tenant demo repository; never live, so never tenant-partitioned."""
+
     def __init__(self, initial_state: Mapping[str, Any] | None = None) -> None:
         self._state = _clone(initial_state or _seed_state())
         self._idempotency_results: dict[str, dict[str, Any]] = {}
+        self._lock = threading.RLock()
 
     @property
     def is_live(self) -> bool:
         return False
+
+    def for_tenant(self, tenant_id: str) -> InMemoryStoreOpsRepository:
+        return self
 
     def get_state(self) -> dict[str, Any]:
         return _clone(self._state)
 
     def save_state(self, state: Mapping[str, Any]) -> None:
         self._state = _clone(state)
+
+    def update_state(self, mutate: Callable[[dict[str, Any]], _T]) -> _T:
+        with self._lock:
+            state = self.get_state()
+            result = mutate(state)
+            self.save_state(state)
+            return result
 
     def get_idempotency_result(self, key: str) -> dict[str, Any] | None:
         result = self._idempotency_results.get(key)
@@ -492,20 +650,29 @@ class InMemoryStoreOpsRepository:
 class UnavailableStoreOpsRepository:
     """Fail-closed repository used when production wiring is incomplete."""
 
+    def __init__(
+        self,
+        message: str = "Store Ops production routes require a PostgreSQL repository",
+    ) -> None:
+        self._message = message
+
     @property
     def is_live(self) -> bool:
         return False
 
-    @staticmethod
-    def _raise() -> NoReturn:
-        raise StoreOpsLiveDataUnavailable(
-            "Store Ops production routes require a PostgreSQL repository"
-        )
+    def for_tenant(self, tenant_id: str) -> UnavailableStoreOpsRepository:
+        return self
+
+    def _raise(self) -> NoReturn:
+        raise StoreOpsLiveDataUnavailable(self._message)
 
     def get_state(self) -> dict[str, Any]:
         self._raise()
 
     def save_state(self, state: Mapping[str, Any]) -> None:
+        self._raise()
+
+    def update_state(self, mutate: Callable[[dict[str, Any]], _T]) -> _T:
         self._raise()
 
     def get_idempotency_result(self, key: str) -> dict[str, Any] | None:
@@ -516,56 +683,190 @@ class UnavailableStoreOpsRepository:
 
 
 class DurableStoreOpsRepository:
-    def __init__(self, store: Any) -> None:
+    """Store Ops state in the shared document store, partitioned per tenant.
+
+    A live (PostgreSQL) repository only serves a tenant-scoped instance from
+    :meth:`for_tenant`: each tenant's state, idempotency results and audit trail
+    live under their own opaque collection, so one tenant can neither read nor
+    overwrite another's. The unscoped instance is only a factory on PostgreSQL
+    and fails closed if used directly.
+
+    Every write is a versioned compare-and-swap on the state document, so a
+    write computed from a stale read is retried against the fresh state instead
+    of silently replacing it (operator lifecycle writes and the recurring
+    materializer can interleave freely).
+    """
+
+    def __init__(self, store: Any, *, tenant_id: str | None = None) -> None:
         self._store = store
+        tenant = None if tenant_id is None else str(tenant_id).strip()
+        if tenant_id is not None and not tenant:
+            raise StoreOpsLiveDataUnavailable("Store Ops tenant scope must not be blank")
+        bound_tenant = getattr(store, "tenant_id", None)
+        self._store_tenant_id = None if bound_tenant is None else str(bound_tenant).strip()
+        if bound_tenant is not None and not self._store_tenant_id:
+            raise StoreOpsLiveDataUnavailable("Store Ops document-store tenant scope must not be blank")
+        if self._store_tenant_id is not None and tenant not in (None, self._store_tenant_id):
+            raise StoreOpsLiveDataUnavailable("Store Ops repository and document-store tenant scopes differ")
+        self._tenant_id = self._store_tenant_id if self._store_tenant_id is not None else tenant
 
     @property
     def is_live(self) -> bool:
         engine = getattr(self._store, "engine", None)
         return str(getattr(engine, "dialect", "")).strip().lower() == "postgresql"
 
-    def get_state(self) -> dict[str, Any]:
-        try:
-            state = self._store.get(
-                _STORE_OPS_STATE_COLLECTION,
-                _STORE_OPS_STATE_DOC_ID,
+    @property
+    def tenant_id(self) -> str | None:
+        return self._tenant_id
+
+    def for_tenant(self, tenant_id: str) -> DurableStoreOpsRepository:
+        if self._tenant_id is not None and str(tenant_id).strip() != self._tenant_id:
+            raise StoreOpsLiveDataUnavailable("Store Ops repository belongs to another tenant")
+        return DurableStoreOpsRepository(self._store, tenant_id=tenant_id)
+
+    def _collection(self, collection: str) -> str:
+        if self._tenant_id is None or self._store_tenant_id is not None:
+            return collection
+        return f"{collection}.tenant.{_tenant_partition(self._tenant_id)}"
+
+    def _require_scope(self) -> None:
+        if self.is_live and self._tenant_id is None:
+            raise StoreOpsLiveDataUnavailable(
+                "Store Ops production state requires an authenticated tenant scope"
             )
+
+    def read_versioned_state(self) -> tuple[dict[str, Any] | None, int | None]:
+        """``(state, version)`` as persisted; ``(None, None)`` if never written.
+
+        Neither seeds nor rejects fixture data -- the materializer, the one
+        writer allowed to create the production document, decides. A read
+        failure still raises :class:`StoreOpsLiveDataUnavailable`.
+        """
+        self._require_scope()
+        collection = self._collection(_STORE_OPS_STATE_COLLECTION)
+        try:
+            get_versioned = getattr(self._store, "get_versioned", None)
+            if get_versioned is not None:
+                row = get_versioned(collection, _STORE_OPS_STATE_DOC_ID)
+            else:
+                state = self._store.get(collection, _STORE_OPS_STATE_DOC_ID)
+                row = None if state is None else (state, 0)
         except Exception as exc:
             raise StoreOpsLiveDataUnavailable(
                 f"Store Ops repository read failed: {type(exc).__name__}: {exc}"
             ) from exc
-        if state is None:
-            if self.is_live:
-                raise StoreOpsLiveDataUnavailable(
-                    "Store Ops production state has not been materialized"
-                )
-            state = _seed_state()
-            self.save_state(state)
-        if self.is_live and _contains_fixture_signature(state):
-            raise StoreOpsLiveDataUnavailable(
-                "Store Ops production state contains canonical fixture identifiers"
-            )
-        return _clone(state)
+        if row is None:
+            return None, None
+        state, version = row
+        return _clone(state), int(version)
 
-    def save_state(self, state: Mapping[str, Any]) -> None:
+    def compare_and_save_state(
+        self,
+        state: Mapping[str, Any],
+        *,
+        expected_version: int | None,
+    ) -> bool:
+        """Persist ``state`` only if the document is still at ``expected_version``.
+
+        ``expected_version=None`` creates the document only if it is absent.
+        Returns ``False`` when another writer changed it first.
+        """
+        self._require_scope()
         if self.is_live and _contains_fixture_signature(state):
             raise StoreOpsLiveDataUnavailable(
                 "Store Ops production writes cannot persist canonical fixture data"
             )
+        if self.is_live:
+            _validate_live_store_ops_state(state)
+        collection = self._collection(_STORE_OPS_STATE_COLLECTION)
+        compare_and_put = getattr(self._store, "compare_and_put", None)
+        if compare_and_put is None:
+            if self.is_live:
+                raise StoreOpsLiveDataUnavailable(
+                    "Store Ops production writes require a compare-and-swap document store"
+                )
+            self._put(collection, _STORE_OPS_STATE_DOC_ID, state)
+            return True
         try:
-            self._store.put(
-                _STORE_OPS_STATE_COLLECTION,
+            version = compare_and_put(
+                collection,
                 _STORE_OPS_STATE_DOC_ID,
                 _clone(state),
+                expected_version=expected_version,
             )
         except Exception as exc:
             raise StoreOpsLiveDataUnavailable(
                 f"Store Ops repository write failed: {type(exc).__name__}: {exc}"
             ) from exc
+        return version is not None
+
+    def _validated(self, state: dict[str, Any] | None) -> dict[str, Any] | None:
+        if state is None and self.is_live:
+            raise StoreOpsLiveDataUnavailable(
+                "Store Ops production state has not been materialized"
+            )
+        if state is not None and self.is_live and _contains_fixture_signature(state):
+            raise StoreOpsLiveDataUnavailable(
+                "Store Ops production state contains canonical fixture identifiers"
+            )
+        if state is not None and self.is_live:
+            _validate_live_store_ops_state(state)
+        return state
+
+    def get_state(self) -> dict[str, Any]:
+        state, _version = self.read_versioned_state()
+        if self._validated(state) is None:
+            state = _seed_state()
+            self.compare_and_save_state(state, expected_version=None)
+        return state
+
+    def update_state(self, mutate: Callable[[dict[str, Any]], _T]) -> _T:
+        """Apply ``mutate`` to the current state and save it atomically.
+
+        On a lost race the state is re-read and ``mutate`` re-applied, so it
+        must only touch the state it is given (side effects belong after the
+        call). Gives up with :class:`StoreOpsConcurrentWriteConflict` after
+        ``_STORE_OPS_WRITE_ATTEMPTS`` lost races, having saved nothing.
+        """
+        for _attempt in range(_STORE_OPS_WRITE_ATTEMPTS):
+            state, version = self.read_versioned_state()
+            if self._validated(state) is None:
+                self.compare_and_save_state(_seed_state(), expected_version=None)
+                continue
+            assert state is not None
+            result = mutate(state)
+            if self.compare_and_save_state(state, expected_version=version):
+                return result
+        raise StoreOpsConcurrentWriteConflict(
+            "Store Ops state changed concurrently; the write was not applied, retry"
+        )
+
+    def save_state(self, state: Mapping[str, Any]) -> None:
+        """Replace the whole state (last writer wins) while still bumping its version."""
+        for _attempt in range(_STORE_OPS_WRITE_ATTEMPTS):
+            _current, version = self.read_versioned_state()
+            if self.compare_and_save_state(state, expected_version=version):
+                return
+        raise StoreOpsConcurrentWriteConflict(
+            "Store Ops state changed concurrently; the write was not applied, retry"
+        )
+
+    def _put(self, collection: str, doc_id: str, value: Mapping[str, Any]) -> None:
+        try:
+            self._store.put(collection, doc_id, _clone(value))
+        except Exception as exc:
+            raise StoreOpsLiveDataUnavailable(
+                f"Store Ops repository write failed: {type(exc).__name__}: {exc}"
+            ) from exc
+
+    @staticmethod
+    def contains_fixture_signature(state: Mapping[str, Any]) -> bool:
+        return _contains_fixture_signature(state)
 
     def get_idempotency_result(self, key: str) -> dict[str, Any] | None:
+        self._require_scope()
         try:
-            result = self._store.get(_STORE_OPS_IDEMPOTENCY_COLLECTION, key)
+            result = self._store.get(self._collection(_STORE_OPS_IDEMPOTENCY_COLLECTION), key)
         except Exception as exc:
             raise StoreOpsLiveDataUnavailable(
                 f"Store Ops idempotency read failed: {type(exc).__name__}: {exc}"
@@ -573,9 +874,10 @@ class DurableStoreOpsRepository:
         return None if result is None else _clone(result)
 
     def save_idempotency_result(self, key: str, result: Mapping[str, Any]) -> None:
+        self._require_scope()
         try:
             self._store.put(
-                _STORE_OPS_IDEMPOTENCY_COLLECTION,
+                self._collection(_STORE_OPS_IDEMPOTENCY_COLLECTION),
                 key,
                 _clone(result),
             )
@@ -593,6 +895,8 @@ class StoreOpsService:
         audit_log: InMemoryAuditLog | None = None,
         require_live_data: bool = False,
         actor_subject_id: str | None = None,
+        forecastops_repository: Any = None,
+        tenant_id: str | None = None,
     ) -> None:
         if require_live_data and (
             repository is None or not bool(getattr(repository, "is_live", False))
@@ -602,6 +906,19 @@ class StoreOpsService:
             self._repository = repository or InMemoryStoreOpsRepository()
         self._audit_log = audit_log or InMemoryAuditLog()
         self._actor_subject_id = actor_subject_id
+        self._require_live_data = require_live_data
+        self._forecastops_repository = forecastops_repository
+        self._tenant_id = tenant_id
+
+    def _update_state(self, mutate: Callable[[dict[str, Any]], _T]) -> _T:
+        """Read-modify-write the state through the repository's atomic update."""
+        update_state = getattr(self._repository, "update_state", None)
+        if update_state is not None:
+            return update_state(mutate)
+        state = self._repository.get_state()
+        result = mutate(state)
+        self._repository.save_state(state)
+        return result
 
     def snapshot(
         self,
@@ -616,6 +933,24 @@ class StoreOpsService:
         light_status: str | None = None,
     ) -> dict[str, Any]:
         state = self._repository.get_state()
+        if self._require_live_data:
+            alerts_by_store = None
+            if self._forecastops_repository is not None and self._tenant_id:
+                _validate_live_store_ops_state(state)
+                alerts_by_store = {}
+                for store in state["stores"]:
+                    store_id = str(store["id"])
+                    try:
+                        alerts_by_store[store_id] = self._forecastops_repository.list_alerts_by_store(
+                            self._tenant_id, store_id,
+                        )
+                    except Exception:
+                        # Optional health is isolated from the native issue
+                        # workflow. Do not expose exception/connection details.
+                        alerts_by_store[store_id] = None
+            state = project_store_ops_health(
+                state, alerts_by_store=alerts_by_store, tenant_id=self._tenant_id,
+            )
         stores = state["stores"]
         issues = self._filter_issues(
             state,
@@ -628,7 +963,7 @@ class StoreOpsService:
             light=light,
             light_status=light_status,
         )
-        return {
+        result = {
             "stores": stores,
             "issues": issues,
             "evidence": state["evidence"],
@@ -646,6 +981,9 @@ class StoreOpsService:
                 "lightStatus": light_status,
             },
         }
+        if self._require_live_data:
+            result["healthAvailability"] = _health_availability(stores)
+        return result
 
     def get_issue(self, issue_id: str) -> dict[str, Any]:
         state = self._repository.get_state()
@@ -702,55 +1040,56 @@ class StoreOpsService:
         tenant_id: str = "tenant-a",
         correlation_id: str = "",
     ) -> dict[str, Any]:
-        state = self._repository.get_state()
-        _find_issue(state, issue_id)
-        filename = str(payload.get("filename", "")).strip()
-        if not filename:
-            raise StoreOpsPolicyError("attachment filename is required")
+        def mutate(state: dict[str, Any]) -> dict[str, Any]:
+            _find_issue(state, issue_id)
+            filename = str(payload.get("filename", "")).strip()
+            if not filename:
+                raise StoreOpsPolicyError("attachment filename is required")
 
-        existing = [a for a in state.get("attachments", []) if a.get("issueId") == issue_id]
-        att_id = f"ATT-{issue_id.split('-')[-1]}-{len(existing) + 1:02d}"
-        file_type = str(payload.get("fileType", "application/octet-stream"))
-        classification = str(payload.get("classification", "site_photo"))
-        sensitivity = str(payload.get("sensitivityLevel", "controlled"))
-        content_b64 = payload.get("contentBase64") or None
-        size_bytes = len(content_b64) if content_b64 else int(payload.get("sizeBytes", 1024))
+            existing = [a for a in state.get("attachments", []) if a.get("issueId") == issue_id]
+            att_id = f"ATT-{issue_id.split('-')[-1]}-{len(existing) + 1:02d}"
+            file_type = str(payload.get("fileType", "application/octet-stream"))
+            classification = str(payload.get("classification", "site_photo"))
+            sensitivity = str(payload.get("sensitivityLevel", "controlled"))
+            content_b64 = payload.get("contentBase64") or None
+            size_bytes = len(content_b64) if content_b64 else int(payload.get("sizeBytes", 1024))
 
-        attachment_record = {
-            "id": att_id,
-            "issueId": issue_id,
-            "tenantId": tenant_id,
-            "filename": filename,
-            "fileType": file_type,
-            "sizeBytes": size_bytes,
-            "classification": classification,
-            "sensitivityLevel": sensitivity,
-            "uploadedBy": actor_name or actor_role_id,
-            "uploadedAt": _now_iso(),
-            "storageUri": f"store-ops/attachments/{issue_id}/{att_id}-{filename}",
-            "contentBase64": content_b64,
-        }
-        if "attachments" not in state:
-            state["attachments"] = []
-        state["attachments"].append(attachment_record)
-
-        _append_audit_event(
-            state,
-            actor_role_id=actor_role_id,
-            actor_name=actor_name or actor_role_id,
-            action="attachment.uploaded",
-            category="attachment",
-            message=f"Attachment {att_id} ({filename}) uploaded to issue {issue_id}.",
-            metadata={
+            attachment_record = {
+                "id": att_id,
                 "issueId": issue_id,
-                "attachmentId": att_id,
+                "tenantId": tenant_id,
+                "filename": filename,
+                "fileType": file_type,
+                "sizeBytes": size_bytes,
                 "classification": classification,
                 "sensitivityLevel": sensitivity,
-                "filename": filename,
-            },
-        )
-        self._repository.save_state(state)
-        return mask_attachment(attachment_record, masking_profile="masked")
+                "uploadedBy": actor_name or actor_role_id,
+                "uploadedAt": _now_iso(),
+                "storageUri": f"store-ops/attachments/{issue_id}/{att_id}-{filename}",
+                "contentBase64": content_b64,
+            }
+            if "attachments" not in state:
+                state["attachments"] = []
+            state["attachments"].append(attachment_record)
+
+            _append_audit_event(
+                state,
+                actor_role_id=actor_role_id,
+                actor_name=actor_name or actor_role_id,
+                action="attachment.uploaded",
+                category="attachment",
+                message=f"Attachment {att_id} ({filename}) uploaded to issue {issue_id}.",
+                metadata={
+                    "issueId": issue_id,
+                    "attachmentId": att_id,
+                    "classification": classification,
+                    "sensitivityLevel": sensitivity,
+                    "filename": filename,
+                },
+            )
+            return attachment_record
+
+        return mask_attachment(self._update_state(mutate), masking_profile="masked")
 
     def download_attachment(
         self,
@@ -769,22 +1108,24 @@ class StoreOpsService:
             user_roles=user_roles,
             tenant_id=tenant_id,
         )
-        state = self._repository.get_state()
-        roles_list = list(user_roles or ["opsLead"])
-        _append_audit_event(
-            state,
-            actor_role_id=actor_role_id or (roles_list[0] if roles_list else "opsLead"),
-            actor_name=actor_name or (roles_list[0] if roles_list else "Operator"),
-            action="attachment.downloaded",
-            category="attachment",
-            message=f"Attachment {attachment_id} downloaded for issue {issue_id} (masked={att.get('masked')}).",
-            metadata={
-                "issueId": issue_id,
-                "attachmentId": attachment_id,
-                "masked": att.get("masked"),
-            },
-        )
-        self._repository.save_state(state)
+
+        def mutate(state: dict[str, Any]) -> None:
+            roles_list = list(user_roles or ["opsLead"])
+            _append_audit_event(
+                state,
+                actor_role_id=actor_role_id or (roles_list[0] if roles_list else "opsLead"),
+                actor_name=actor_name or (roles_list[0] if roles_list else "Operator"),
+                action="attachment.downloaded",
+                category="attachment",
+                message=f"Attachment {attachment_id} downloaded for issue {issue_id} (masked={att.get('masked')}).",
+                metadata={
+                    "issueId": issue_id,
+                    "attachmentId": attachment_id,
+                    "masked": att.get("masked"),
+                },
+            )
+
+        self._update_state(mutate)
         return att
 
     def delete_attachment(
@@ -797,33 +1138,34 @@ class StoreOpsService:
         tenant_id: str = "tenant-a",
         correlation_id: str = "",
     ) -> dict[str, Any]:
-        state = self._repository.get_state()
-        _find_issue(state, issue_id)
-        attachments = state.get("attachments", [])
-        found_idx = -1
-        for idx, att in enumerate(attachments):
-            if att.get("issueId") == issue_id and att.get("id") == attachment_id:
-                if tenant_id and att.get("tenantId") and att.get("tenantId") != tenant_id:
-                    raise StoreOpsNotFound(f"attachment not found for tenant: {attachment_id}")
-                found_idx = idx
-                break
-        if found_idx == -1:
-            raise StoreOpsNotFound(f"attachment not found: {attachment_id}")
+        def mutate(state: dict[str, Any]) -> None:
+            _find_issue(state, issue_id)
+            attachments = state.get("attachments", [])
+            found_idx = -1
+            for idx, att in enumerate(attachments):
+                if att.get("issueId") == issue_id and att.get("id") == attachment_id:
+                    if tenant_id and att.get("tenantId") and att.get("tenantId") != tenant_id:
+                        raise StoreOpsNotFound(f"attachment not found for tenant: {attachment_id}")
+                    found_idx = idx
+                    break
+            if found_idx == -1:
+                raise StoreOpsNotFound(f"attachment not found: {attachment_id}")
 
-        attachments.pop(found_idx)
-        _append_audit_event(
-            state,
-            actor_role_id=actor_role_id,
-            actor_name=actor_name or actor_role_id,
-            action="attachment.deleted",
-            category="attachment",
-            message=f"Attachment {attachment_id} deleted from issue {issue_id}.",
-            metadata={
-                "issueId": issue_id,
-                "attachmentId": attachment_id,
-            },
-        )
-        self._repository.save_state(state)
+            attachments.pop(found_idx)
+            _append_audit_event(
+                state,
+                actor_role_id=actor_role_id,
+                actor_name=actor_name or actor_role_id,
+                action="attachment.deleted",
+                category="attachment",
+                message=f"Attachment {attachment_id} deleted from issue {issue_id}.",
+                metadata={
+                    "issueId": issue_id,
+                    "attachmentId": attachment_id,
+                },
+            )
+
+        self._update_state(mutate)
         return {"success": True, "deletedAttachmentId": attachment_id}
 
     def transition_issue(
@@ -843,75 +1185,77 @@ class StoreOpsService:
                 replay["idempotentReplay"] = True
                 return replay
 
-        state = self._repository.get_state()
-        issue = _find_issue(state, issue_id)
-        previous_status = issue["status"]
-        normalized_action = _normalize_action(action_type)
-        source_updated_at = issue["updatedAt"]
-        review_submission = None
-        workflow_submission = None
+        def mutate(state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], AuditEvent]:
+            issue = _find_issue(state, issue_id)
+            previous_status = issue["status"]
+            normalized_action = _normalize_action(action_type)
+            source_updated_at = issue["updatedAt"]
+            review_submission = None
+            workflow_submission = None
 
-        if normalized_action == "triage":
-            workflow_submission = self._apply_triage(issue, payload)
-        elif normalized_action == "assign":
-            workflow_submission = self._apply_assign(issue, payload)
-        elif normalized_action == "actions":
-            workflow_submission = self._apply_action(issue, payload)
-        elif normalized_action == "field-report":
-            workflow_submission = self._apply_field_report(issue, payload)
-        elif normalized_action == "outcome":
-            review_submission = self._apply_outcome(issue, payload)
-        elif normalized_action == "escalate":
-            workflow_submission = self._apply_escalation(issue, payload)
-        elif normalized_action == "reply-review":
-            review_submission = self._apply_reply_review(issue, payload)
-        elif normalized_action == "transfer":
-            workflow_submission = self._apply_transfer(issue, payload)
-        else:
-            raise StoreOpsNotFound(f"unknown Store Ops action: {action_type}")
+            if normalized_action == "triage":
+                workflow_submission = self._apply_triage(issue, payload)
+            elif normalized_action == "assign":
+                workflow_submission = self._apply_assign(issue, payload)
+            elif normalized_action == "actions":
+                workflow_submission = self._apply_action(issue, payload)
+            elif normalized_action == "field-report":
+                workflow_submission = self._apply_field_report(issue, payload)
+            elif normalized_action == "outcome":
+                review_submission = self._apply_outcome(issue, payload)
+            elif normalized_action == "escalate":
+                workflow_submission = self._apply_escalation(issue, payload)
+            elif normalized_action == "reply-review":
+                review_submission = self._apply_reply_review(issue, payload)
+            elif normalized_action == "transfer":
+                workflow_submission = self._apply_transfer(issue, payload)
+            else:
+                raise StoreOpsNotFound(f"unknown Store Ops action: {action_type}")
 
-        issue["updatedAt"] = _now_iso()
-        audit = _append_audit_event(
-            state,
-            action=f"issue.{normalized_action}",
-            actor_role_id=actor_role_id,
-            actor_name=actor_name,
-            category="workflow",
-            message=f"{issue_id} {normalized_action} moved {previous_status} -> {issue['status']}.",
-            metadata={
-                "issueId": issue_id,
-                "previousStatus": previous_status,
-                "status": issue["status"],
-                "actionType": normalized_action,
-                "idempotencyKey": idempotency_key,
-            },
-        )
-        shared_audit = AuditEvent(
-            event_type="operator.store_ops.issue_transition",
-            actor=self._actor_subject_id or actor_name,
-            action=normalized_action,
-            resource=f"operator/store-ops/issues/{issue_id}",
-            outcome="accepted",
-            correlation_id=correlation_id,
-            metadata=audit["metadata"],
-        )
-        if review_submission is not None:
-            self._append_submission_record(
-                state, issue, audit, shared_audit,
-                record_type=OutcomeReviewRecord if normalized_action == "outcome" else ReplyReviewRecord,
-                history_key="outcomeReviews" if normalized_action == "outcome" else "replyReviews",
-                submission=review_submission, source_updated_at=source_updated_at,
-                actor_name=actor_name, actor_role_id=actor_role_id, correlation_id=correlation_id,
+            issue["updatedAt"] = _now_iso()
+            audit = _append_audit_event(
+                state,
+                action=f"issue.{normalized_action}",
+                actor_role_id=actor_role_id,
+                actor_name=actor_name,
+                category="workflow",
+                message=f"{issue_id} {normalized_action} moved {previous_status} -> {issue['status']}.",
+                metadata={
+                    "issueId": issue_id,
+                    "previousStatus": previous_status,
+                    "status": issue["status"],
+                    "actionType": normalized_action,
+                    "idempotencyKey": idempotency_key,
+                },
             )
-        elif workflow_submission is not None:
-            self._append_submission_record(
-                state, issue, audit, shared_audit,
-                record_type=WORKFLOW_RECORD_TYPES[normalized_action], history_key="workflowRecords",
-                submission=workflow_submission, source_updated_at=source_updated_at,
-                actor_name=actor_name, actor_role_id=actor_role_id, correlation_id=correlation_id,
+            shared_audit = AuditEvent(
+                event_type="operator.store_ops.issue_transition",
+                actor=self._actor_subject_id or actor_name,
+                action=normalized_action,
+                resource=f"operator/store-ops/issues/{issue_id}",
+                outcome="accepted",
+                correlation_id=correlation_id,
+                metadata=audit["metadata"],
             )
+            if review_submission is not None:
+                self._append_submission_record(
+                    state, issue, audit, shared_audit,
+                    record_type=OutcomeReviewRecord if normalized_action == "outcome" else ReplyReviewRecord,
+                    history_key="outcomeReviews" if normalized_action == "outcome" else "replyReviews",
+                    submission=review_submission, source_updated_at=source_updated_at,
+                    actor_name=actor_name, actor_role_id=actor_role_id, correlation_id=correlation_id,
+                )
+            elif workflow_submission is not None:
+                self._append_submission_record(
+                    state, issue, audit, shared_audit,
+                    record_type=WORKFLOW_RECORD_TYPES[normalized_action], history_key="workflowRecords",
+                    submission=workflow_submission, source_updated_at=source_updated_at,
+                    actor_name=actor_name, actor_role_id=actor_role_id, correlation_id=correlation_id,
+                )
+            return _clone(issue), _clone(audit), shared_audit
+
+        issue, audit, shared_audit = self._update_state(mutate)
         self._audit_log.record(shared_audit)
-        self._repository.save_state(state)
 
         result = self.snapshot()
         result.update(
@@ -979,59 +1323,61 @@ class StoreOpsService:
                 replay["idempotentReplay"] = True
                 return replay
 
-        state = self._repository.get_state()
-        issue = _find_issue(state, issue_id)
-        camera_evidence = _find_camera_evidence(state, issue)
-        source_updated_at = issue["updatedAt"]
-        submission = _review_submission(CameraPurposeSubmission, issue, payload)
-        payload = submission.model_dump(exclude_none=True)
-        _validate_camera_purpose(payload)
+        def mutate(state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], AuditEvent]:
+            issue = _find_issue(state, issue_id)
+            camera_evidence = _find_camera_evidence(state, issue)
+            source_updated_at = issue["updatedAt"]
+            submission = _review_submission(CameraPurposeSubmission, issue, payload)
+            validated_payload = submission.model_dump(exclude_none=True)
+            _validate_camera_purpose(validated_payload)
 
-        camera_evidence.pop("lockedReason", None)
-        camera_evidence["purpose"] = str(payload.get("purpose", "")).strip()
-        camera_evidence["cameraLocation"] = str(payload.get("cameraLocation", "")).strip()
-        camera_evidence["timeWindow"] = str(payload.get("timeWindow", "")).strip()
-        camera_evidence["retentionHours"] = int(payload.get("retentionHours") or 24)
-        camera_evidence["unlockedAt"] = _now_iso()
-        camera_evidence["summary"] = (
-            "Camera evidence unlocked for a recorded, audit-scoped purpose."
-        )
-        issue["updatedAt"] = _now_iso()
+            camera_evidence.pop("lockedReason", None)
+            camera_evidence["purpose"] = str(validated_payload.get("purpose", "")).strip()
+            camera_evidence["cameraLocation"] = str(validated_payload.get("cameraLocation", "")).strip()
+            camera_evidence["timeWindow"] = str(validated_payload.get("timeWindow", "")).strip()
+            camera_evidence["retentionHours"] = int(validated_payload.get("retentionHours") or 24)
+            camera_evidence["unlockedAt"] = _now_iso()
+            camera_evidence["summary"] = (
+                "Camera evidence unlocked for a recorded, audit-scoped purpose."
+            )
+            issue["updatedAt"] = _now_iso()
 
-        audit = _append_audit_event(
-            state,
-            action="evidence.camera_purpose.recorded",
-            actor_role_id=actor_role_id,
-            actor_name=actor_name,
-            category="evidence",
-            message=f"{issue_id} camera evidence purpose recorded before access.",
-            metadata={
-                "issueId": issue_id,
-                "evidenceId": camera_evidence["id"],
-                "purpose": camera_evidence["purpose"],
-                "cameraLocation": camera_evidence["cameraLocation"],
-                "timeWindow": camera_evidence["timeWindow"],
-                "retentionHours": camera_evidence["retentionHours"],
-                "idempotencyKey": idempotency_key,
-            },
-        )
-        shared_audit = AuditEvent(
-            event_type="operator.store_ops.camera_purpose",
-            actor=self._actor_subject_id or actor_name,
-            action="record_camera_purpose",
-            resource=f"operator/store-ops/issues/{issue_id}/evidence/{camera_evidence['id']}",
-            outcome="accepted",
-            correlation_id=correlation_id,
-            metadata=audit["metadata"],
-        )
-        self._append_submission_record(
-            state, issue, audit, shared_audit,
-            record_type=WORKFLOW_RECORD_TYPES["camera-purpose"], history_key="workflowRecords",
-            submission=submission, source_updated_at=source_updated_at,
-            actor_name=actor_name, actor_role_id=actor_role_id, correlation_id=correlation_id,
-        )
+            audit = _append_audit_event(
+                state,
+                action="evidence.camera_purpose.recorded",
+                actor_role_id=actor_role_id,
+                actor_name=actor_name,
+                category="evidence",
+                message=f"{issue_id} camera evidence purpose recorded before access.",
+                metadata={
+                    "issueId": issue_id,
+                    "evidenceId": camera_evidence["id"],
+                    "purpose": camera_evidence["purpose"],
+                    "cameraLocation": camera_evidence["cameraLocation"],
+                    "timeWindow": camera_evidence["timeWindow"],
+                    "retentionHours": camera_evidence["retentionHours"],
+                    "idempotencyKey": idempotency_key,
+                },
+            )
+            shared_audit = AuditEvent(
+                event_type="operator.store_ops.camera_purpose",
+                actor=self._actor_subject_id or actor_name,
+                action="record_camera_purpose",
+                resource=f"operator/store-ops/issues/{issue_id}/evidence/{camera_evidence['id']}",
+                outcome="accepted",
+                correlation_id=correlation_id,
+                metadata=audit["metadata"],
+            )
+            self._append_submission_record(
+                state, issue, audit, shared_audit,
+                record_type=WORKFLOW_RECORD_TYPES["camera-purpose"], history_key="workflowRecords",
+                submission=submission, source_updated_at=source_updated_at,
+                actor_name=actor_name, actor_role_id=actor_role_id, correlation_id=correlation_id,
+            )
+            return _clone(issue), _clone(camera_evidence), _clone(audit), shared_audit
+
+        issue, camera_evidence, audit, shared_audit = self._update_state(mutate)
         self._audit_log.record(shared_audit)
-        self._repository.save_state(state)
 
         result = self.snapshot()
         result.update(
@@ -1409,9 +1755,11 @@ def _four_light_summary(
     for dimension in _LIGHT_DIMENSIONS:
         counts = {status: 0 for status in _LIGHT_STATUSES}
         issue_counts = {status: 0 for status in _LIGHT_STATUSES}
+        unavailable_count = 0
         for store in store_list:
-            light_status = str(store.get("lights", {}).get(dimension, "green"))
+            light_status = store.get("lights", {}).get(dimension)
             if light_status not in counts:
+                unavailable_count += 1
                 continue
             counts[light_status] += 1
             issue_counts[light_status] += len(issues_by_store.get(str(store.get("id")), []))
@@ -1426,6 +1774,7 @@ def _four_light_summary(
                 }[dimension],
                 "counts": counts,
                 "issueCounts": issue_counts,
+                "unavailableCount": unavailable_count,
             }
         )
     return summary
@@ -1434,6 +1783,7 @@ def _four_light_summary(
 __all__ = [
     "DurableStoreOpsRepository",
     "InMemoryStoreOpsRepository",
+    "StoreOpsConcurrentWriteConflict",
     "StoreOpsConflict",
     "StoreOpsNotFound",
     "StoreOpsPolicyError",

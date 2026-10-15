@@ -14,7 +14,7 @@ import {
 } from "./operatorDataMode";
 import styles from "./designAligned.module.css";
 import { ISSUE_STATUSES } from "./types";
-import type { AuditEvent, EvidenceItem, Issue, Severity, Store, StoreLightStatus, OperatorRoleId } from "./types";
+import type { AuditEvent, EvidenceItem, Issue, Severity, Store, StoreLightStatus, OperatorRoleId, StoreHealthAvailability, StoreHealthSlotAvailability, StoreOpsHealthAvailability } from "./types";
 import { STORE_OPS_REFRESH_EVENT, type StoreOpsWorkflowDialogType } from "./storeOpsWorkflowTypes";
 import {
   filterStoreOpsIssues,
@@ -61,6 +61,7 @@ type StoreOpsLightSummary = {
   label: string;
   counts: Record<StoreLightStatus, number>;
   issueCounts: Record<StoreLightStatus, number>;
+  unavailableCount?: number;
 };
 
 type StoreOpsFullLightStatus = "red" | "orange" | "yellow" | "green";
@@ -73,6 +74,7 @@ type StoreOpsApiState = {
   evidence: EvidenceItem[];
   auditEvents: AuditEvent[];
   fourLightSummary: StoreOpsLightSummary[];
+  healthAvailability?: StoreOpsHealthAvailability;
   count: number;
   source?: string;
 };
@@ -161,7 +163,6 @@ export function inspectStoreOpsApiPayload(
     !stores ||
     !evidence ||
     !auditEvents ||
-    issues.length === 0 ||
     stores.length === 0
   ) {
     return "empty";
@@ -192,9 +193,10 @@ function hasStoreOpsRenderData(payload: unknown): payload is StoreOpsApiState {
       && row.outcomeMetrics.every((metric) => object(metric) && strings(metric, ["label", "before", "after"]))))
     && stores.every((row) => object(row)
       && strings(row, ["id", "name", "district", "city", "manager"])
-      && finite(row.riskScore) && object(row.lights)
+      && (row.riskScore === null || finite(row.riskScore)) && object(row.lights)
       && ["demand", "operations", "staffing", "margin"].every((dimension) =>
-        typeof (row.lights as Record<string, unknown>)[dimension] === "string"
+        (row.lights as Record<string, unknown>)[dimension] === null
+        || typeof (row.lights as Record<string, unknown>)[dimension] === "string"
         && ["green", "yellow", "red"].includes((row.lights as Record<string, string>)[dimension])))
     && evidence.every((row) => object(row)
       && strings(row, ["id", "issueId", "kind", "sourceLabel", "occurredAt", "polarity"])
@@ -210,6 +212,94 @@ function hasStoreOpsRenderData(payload: unknown): payload is StoreOpsApiState {
     && auditEvents.every((row) => object(row)
       && strings(row, ["id", "occurredAt", "actorRoleId", "actorName", "category", "action",
         "targetType", "targetId", "message"]));
+}
+
+const storeHealthDimensions = ["demand", "operations", "staffing", "margin"] as const;
+const storeHealthDimensionLabels = { demand: "需求", operations: "設備", staffing: "清潔", margin: "利潤" };
+
+function hasAvailableHealthSlot(value: unknown): value is StoreHealthSlotAvailability {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const slot = value as Record<string, unknown>;
+  return slot.state === "available" && typeof slot.source === "string" && !!slot.source.trim()
+    && (slot.reasonCode == null || typeof slot.reasonCode === "string")
+    && (slot.message == null || typeof slot.message === "string")
+    && (slot.recordIds === undefined || Array.isArray(slot.recordIds)
+      && slot.recordIds.every((id) => typeof id === "string" && !!id.trim()));
+}
+
+function completeStoreHealth(store: Store): boolean {
+  return storeHealthDimensions.every((dimension) => store.lights[dimension] !== null)
+    && typeof store.riskScore === "number" && Number.isFinite(store.riskScore)
+    && (!store.healthAvailability || store.healthAvailability.complete);
+}
+
+function storeHealthCoverage(stores: Store[]): StoreOpsHealthAvailability {
+  const coveredCount = stores.filter(completeStoreHealth).length;
+  const warningCount = stores.filter((store) => {
+    const status = classifyStoreLight(store);
+    return status !== null && status !== "green";
+  }).length;
+  const anyKnown = stores.some((store) => storeHealthDimensions.some((dimension) => store.lights[dimension] !== null)
+    || store.riskScore !== null);
+  return {
+    state: coveredCount === stores.length ? "available" : anyKnown ? "degraded" : "unavailable",
+    complete: coveredCount === stores.length,
+    totalCount: stores.length, coveredCount,
+    unavailableCount: stores.length - coveredCount, warningCount,
+  };
+}
+
+/** API compatibility masks unsupported health only, after validating supplied shapes.
+ * The canonical server verifies observations; this does not create source authority.
+ */
+export function normalizeStoreOpsApiHealth(payload: unknown): unknown {
+  // A malformed colour, number, issue or collection is still failed data; do
+  // not turn it into null merely because legacy provenance is absent.
+  if (!hasStoreOpsRenderData(payload) || payloadContainsSeedData(payload)
+    || isSeedDataSource(payload.source)) return payload;
+  const unavailable: StoreHealthSlotAvailability = {
+    state: "unavailable", source: null,
+    reasonCode: "CANONICAL_KPI_SOURCE_UNAVAILABLE", message: "指標資料未取得",
+  };
+  const stores = payload.stores.map((store): Store => {
+    const health: unknown = store.healthAvailability;
+    const row = health && typeof health === "object" && !Array.isArray(health)
+      ? health as Record<string, unknown> : null;
+    const validRow = row && ["available", "degraded", "unavailable"].includes(String(row.state))
+      && typeof row.complete === "boolean";
+    const slots = validRow && row?.lights && typeof row.lights === "object" && !Array.isArray(row.lights)
+      ? row.lights as Record<string, unknown> : null;
+    const lights = { ...store.lights };
+    const lightAvailability: StoreHealthAvailability["lights"] = {
+      demand: { ...unavailable }, operations: { ...unavailable },
+      staffing: { ...unavailable }, margin: { ...unavailable },
+    };
+    for (const dimension of storeHealthDimensions) {
+      const slot = slots?.[dimension];
+      if (lights[dimension] !== null && hasAvailableHealthSlot(slot)) {
+        lightAvailability[dimension] = { ...slot, ...(slot.recordIds ? { recordIds: [...slot.recordIds] } : {}) };
+      } else {
+        lights[dimension] = null;
+        lightAvailability[dimension] = { ...unavailable };
+      }
+    }
+    const riskSlot = row?.riskScore;
+    const riskKnown = !!validRow && typeof store.riskScore === "number"
+      && Number.isFinite(store.riskScore) && hasAvailableHealthSlot(riskSlot);
+    const riskScore = riskKnown ? store.riskScore : null;
+    const complete = !!validRow && row?.complete === true && row?.state === "available"
+      && storeHealthDimensions.every((dimension) => lights[dimension] !== null) && riskKnown;
+    const anyKnown = storeHealthDimensions.some((dimension) => lights[dimension] !== null) || riskKnown;
+    return {
+      ...store, lights, riskScore,
+      healthAvailability: {
+        state: complete ? "available" : anyKnown ? "degraded" : "unavailable", complete,
+        lights: lightAvailability,
+        riskScore: riskKnown && hasAvailableHealthSlot(riskSlot) ? { ...riskSlot } : { ...unavailable },
+      },
+    };
+  });
+  return { ...payload, stores, healthAvailability: storeHealthCoverage(stores) };
 }
 
 function sourceEvidenceText(item: EvidenceItem, field: "title" | "summary"): string {
@@ -273,13 +363,13 @@ const evidenceTabLabels: Partial<Record<EvidenceItem["kind"], string>> = {
   cleaning: "清潔",
 };
 
-function classifyStoreLight(store: Store): StoreOpsFullLightStatus {
+function classifyStoreLight(store: Store): StoreOpsFullLightStatus | null {
   const statuses = Object.values(store.lights);
   const yellowCount = statuses.filter((status) => status === "yellow").length;
   if (statuses.includes("red")) return "red";
-  if (yellowCount >= 2 || store.riskScore >= 70) return "orange";
+  if (yellowCount >= 2 || typeof store.riskScore === "number" && Number.isFinite(store.riskScore) && store.riskScore >= 70) return "orange";
   if (yellowCount > 0) return "yellow";
-  return "green";
+  return completeStoreHealth(store) ? "green" : null;
 }
 
 const kpis = [
@@ -672,7 +762,7 @@ export function DesignStoreOpsWorkspace({
           setApiState(null);
           setStoreOpsLoadState("loading");
         }
-        const data: unknown = await response.json();
+        const data: unknown = normalizeStoreOpsApiHealth(await response.json());
         if (!cancelled) {
           const inspection = inspectStoreOpsApiPayload(data);
           const usable = hasStoreOpsRenderData(data);
@@ -788,6 +878,8 @@ export function DesignStoreOpsWorkspace({
       (fixturePresentation ? ISSUE_FIXTURES[0] : EMPTY_STORE_OPS_ISSUE);
   }, [filteredIssues, fixturePresentation, selectedIssueId]);
 
+  const hasActualIssue = filteredIssues.length > 0;
+
   // 5. Generate 28-day revenue forecast band data based on selected store
   const forecastData = useMemo(() => {
     const baseVal = issue.storeId === "ST-014" ? 14000 : issue.storeId === "ST-021" ? 9000 : 20000;
@@ -896,9 +988,18 @@ export function DesignStoreOpsWorkspace({
       yellow: [],
       green: [],
     };
-    activeStores.forEach((store) => grouped[classifyStoreLight(store)].push(store));
+    activeStores.forEach((store) => {
+      const status = classifyStoreLight(store);
+      if (status !== null) grouped[status].push(store);
+    });
     return grouped;
   }, [activeStores]);
+
+  const healthCoverage = useMemo(() => storeHealthCoverage(activeStores), [activeStores]);
+  const readOnlyStores = activeStores.filter((store) =>
+    (!hasActualIssue || !issueSource.some((candidate) => candidate.storeId === store.id))
+    && (!selectedStoreLightStatus || classifyStoreLight(store) === selectedStoreLightStatus)
+    && (!selectedLightFilter || store.lights[selectedLightFilter.dimension] === selectedLightFilter.status));
 
   const sourceDistribution = useMemo(() => {
     const counts = {
@@ -951,12 +1052,14 @@ export function DesignStoreOpsWorkspace({
       "",
     );
     return [
-      `紅燈門市 ${storesByFullLight.red.length} 間`,
+      healthCoverage.unavailableCount > 0
+        ? `已觀測紅燈門市 ${storesByFullLight.red.length} 間 · PARTIAL，${healthCoverage.unavailableCount} 家資料不完整（已完整判定 ${healthCoverage.coveredCount}/${healthCoverage.totalCount}）`
+        : `紅燈門市 ${storesByFullLight.red.length} 間`,
       `高風險 Issue ${issueSource.filter((candidate) => ["critical", "high"].includes(candidate.severity)).length} 件`,
       `Outcome Ready ${issueSource.filter((candidate) => candidate.status === "outcomeready").length} 件`,
       latestUpdatedAt ? `更新 ${formatCompactDateTime(latestUpdatedAt)}` : "尚無更新時間",
     ];
-  }, [issueSource, storesByFullLight.red.length]);
+  }, [issueSource, storesByFullLight.red.length, healthCoverage]);
 
   // Interactive callbacks
   const toggleSource = (source: string) => {
@@ -1024,11 +1127,13 @@ export function DesignStoreOpsWorkspace({
     return "triage";
   };
 
+  const openIssueWorkflow = (dialogType: StoreOpsWorkflowDialogType) => {
+    if (hasActualIssue) onOpenWorkflow(dialogType, issue);
+  };
+
   const handleActionClick = (label: string) => {
     const dialogType = getDialogTypeFromLabel(label);
-    if (issue) {
-      onOpenWorkflow(dialogType, issue);
-    }
+    openIssueWorkflow(dialogType);
   };
 
   const primaryActionLabel = getPrimaryActionLabel(issue);
@@ -1084,6 +1189,7 @@ export function DesignStoreOpsWorkspace({
         aria-label="全店四燈摘要"
         className={styles.storeOverview}
         data-screen-label="Store Ops 全店四燈摘要"
+        data-health-state={healthCoverage.state}
       >
         <div className={styles.fullLightGrid}>
           {fullStoreLightOrder.map((status) => {
@@ -1104,7 +1210,9 @@ export function DesignStoreOpsWorkspace({
                   {meta.label}
                 </span>
                 <strong>{storesByFullLight[status].length}</strong>
-                <small>{meta.note}</small>
+                <small>{status === "green" && healthCoverage.unavailableCount > 0
+                  ? `另有 ${healthCoverage.unavailableCount} 家指標資料未取得`
+                  : meta.note}</small>
               </button>
             );
           })}
@@ -1253,12 +1361,13 @@ export function DesignStoreOpsWorkspace({
               );
             })}
             {filteredIssues.length === 0 && (
-              <div className={styles.queueEmpty}>沒有符合條件的項目，請調整篩選。</div>
+              <div className={styles.queueEmpty}>{issueSource.length === 0 ? "目前沒有門市事件。" : "沒有符合條件的項目，請調整篩選。"}</div>
             )}
           </div>
         </aside>
 
-        <section className={styles.storeDetail} aria-label={`${issue.id} detail`}>
+        <section className={styles.storeDetail} aria-label={hasActualIssue ? `${issue.id} detail` : "門市唯讀資訊"}>
+          {hasActualIssue ? (<>
           <section className={styles.issueHero}>
             <div className={styles.issueHeroTopline}>
               <span>
@@ -1325,9 +1434,9 @@ export function DesignStoreOpsWorkspace({
                       ["清潔", storeObj.lights.staffing],
                       ["利潤", storeObj.lights.margin],
                     ] as const).map(([label, status]) => (
-                      <span data-status={status} key={label}>
-                        <i aria-hidden="true">{status === "green" ? "✓" : status === "red" ? "!" : "•"}</i>
-                        {label} {lightStatusLabels[status]}
+                      <span data-status={status ?? undefined} key={label}>
+                        {status !== null ? <i aria-hidden="true">{status === "green" ? "✓" : status === "red" ? "!" : "•"}</i> : null}
+                        {label} {status === null ? "資料不可用" : lightStatusLabels[status]}
                       </span>
                     ))
                   : "API 未提供門市四燈"}
@@ -1346,7 +1455,9 @@ export function DesignStoreOpsWorkspace({
                 <small>Google 評價</small>
                 {evGoogleReview ? (
                   <>
-                    <strong>{fixturePresentation ? `★ ${(evGoogleReview.confidence * 5).toFixed(1)} 未回覆` : sourceEvidenceText(evGoogleReview, "title")}</strong>
+                    <strong>{fixturePresentation && typeof evGoogleReview.confidence === "number"
+                      && Number.isFinite(evGoogleReview.confidence) && evGoogleReview.confidence >= 0 && evGoogleReview.confidence <= 1
+                      ? `★ ${(evGoogleReview.confidence * 5).toFixed(1)} 未回覆` : sourceEvidenceText(evGoogleReview, "title")}</strong>
                     <p>{sourceEvidenceText(evGoogleReview, "summary")}</p>
                   </>
                 ) : (
@@ -1378,7 +1489,7 @@ export function DesignStoreOpsWorkspace({
                   evCamera.lockedReason ? (
                     <>
                       <strong style={{ color: "#d18700" }}>影像鎖定 • 需授權</strong>
-                      <button className={styles.cameraTrigger} onClick={() => onOpenWorkflow("cameraPurpose", issue)} type="button">點擊填寫調閱目的</button>
+                      <button className={styles.cameraTrigger} onClick={() => openIssueWorkflow("cameraPurpose")} type="button">點擊填寫調閱目的</button>
                     </>
                   ) : (
                     <>
@@ -1467,7 +1578,7 @@ export function DesignStoreOpsWorkspace({
             <div className={styles.aiBox}>
               <b>AI 建議</b><small>由證據融合產生 · 僅供參考</small>
               <p>{getAiRecommendation(issue)}</p>
-              <button onClick={() => onOpenWorkflow("action", issue)} type="button">採用建議並建立處置</button>
+              <button onClick={() => openIssueWorkflow("action")} type="button">採用建議並建立處置</button>
             </div>
           </section>
 
@@ -1536,7 +1647,7 @@ export function DesignStoreOpsWorkspace({
                   </div>
                 </dl>
                 {activeEvidenceItem.kind === "camera" && activeEvidenceItem.lockedReason ? (
-                  <button onClick={() => onOpenWorkflow("cameraPurpose", issue)} type="button">
+                  <button onClick={() => openIssueWorkflow("cameraPurpose")} type="button">
                     輸入調閱目的以檢視
                   </button>
                 ) : null}
@@ -1613,9 +1724,25 @@ export function DesignStoreOpsWorkspace({
             )) : null}
 
           </section>
+          </>) : null}
+          {readOnlyStores.map((store) => {
+            const labels = nativeStoreLabels(store.nativeSummary, store.id);
+            return <section className={styles.storeStrip} key={store.id} aria-label={`${store.id} 門市唯讀資訊`}>
+              <span><small>門市（唯讀）</small><strong>{store.id} · {store.name}</strong></span>
+              <span><small>型態</small><strong>{labels.format}</strong></span>
+              <span><small>機台</small><strong title={labels.machineDescription}>{labels.machines}</strong></span>
+              <span><small>今日營收</small><strong>不可用</strong></span>
+              <span><small>FORECASTOPS 四燈</small><strong className={styles.storeLightRow}>
+                {storeHealthDimensions.map((dimension) => {
+                  const status = store.lights[dimension];
+                  return <span key={dimension}>{storeHealthDimensionLabels[dimension]} {status === null ? "資料不可用" : lightStatusLabels[status]}</span>;
+                })}
+              </strong></span>
+            </section>;
+          })}
         </section>
 
-        <aside className={styles.actionRail} aria-label="Action rail">
+        {hasActualIssue ? <aside className={styles.actionRail} aria-label="Action rail">
           <section>
             <h2>ACTION RAIL <span>下一步</span></h2>
             <dl>
@@ -1678,7 +1805,7 @@ export function DesignStoreOpsWorkspace({
               )}
             </div>
           </section>
-        </aside>
+        </aside> : null}
       </div>
     </div>
   );

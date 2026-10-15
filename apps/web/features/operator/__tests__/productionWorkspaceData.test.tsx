@@ -5,6 +5,7 @@ import {
   DesignStoreOpsWorkspace,
   DesignTodayWorkspace,
   inspectStoreOpsApiPayload,
+  normalizeStoreOpsApiHealth,
   hasRecordedCameraPurpose,
 } from "../DesignAlignedWorkspaces";
 import type { AuditEvent, EvidenceItem, Issue } from "../types";
@@ -19,8 +20,9 @@ import {
   resolveNetworkTabGateState,
 } from "../NetworkFindAreasWorkspace";
 import { resolveGovernanceDecisionAuthority } from "../GovernanceWorkspace";
-import { HEAT_ZONE_FIXTURES, LISTING_FIXTURES, LISTING_SOURCE_FIXTURES } from "../fixtures";
+import { EVIDENCE_FIXTURES, ISSUE_FIXTURES, HEAT_ZONE_FIXTURES, LISTING_FIXTURES, LISTING_SOURCE_FIXTURES } from "../fixtures";
 import { normalizeGovernanceActionAuthority } from "../governance/governanceLoader";
+import { getEvidenceStrength, getTrendPoints } from "../storeOpsViewModel";
 import { STORE_OPS_REFRESH_EVENT } from "../storeOpsWorkflowTypes";
 import {
   operatorLoadFailureFromError,
@@ -811,4 +813,195 @@ describe("production workspace data contracts", () => {
     expect(normalizeGovernanceActionAuthority({ verified: true, decide: "true", exportEvidence: 1 }))
       .toEqual({ verified: true, systemRoles: [], decide: false, exportEvidence: false });
   });
+
+  describe("canonical partial health preserves real workflows", () => {
+    // Explicit synthetic HTTP unit inputs, never native KPI/source approval.
+    const slot = () => ({ state: "available" as const, source: "synthetic-http-unit-record", recordIds: ["unit-record-1"] });
+    const missingSlot = () => ({ state: "unavailable" as const, source: null });
+    const partialStore = () => ({
+      ...canonicalStoreOpsPayload.stores[0],
+      lights: { demand: "red", operations: null, staffing: null, margin: null }, riskScore: null,
+      healthAvailability: {
+        state: "degraded", complete: false,
+        lights: { demand: slot(), operations: missingSlot(), staffing: missingSlot(), margin: missingSlot() },
+        riskScore: missingSlot(),
+      },
+    });
+    const completeStore = () => ({
+      ...canonicalStoreOpsPayload.stores[0],
+      lights: { demand: "green", operations: "green", staffing: "green", margin: "green" }, riskScore: 0,
+      healthAvailability: {
+        state: "available", complete: true,
+        lights: { demand: slot(), operations: slot(), staffing: slot(), margin: slot() }, riskScore: slot(),
+      },
+    });
+    function mockCanonical(payload: unknown, productionMode = "true") {
+      vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", productionMode);
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      })));
+    }
+
+    it.each(["true", "false"])("masks only valid legacy health without provenance and preserves the actual issue action when production=%s", async (mode) => {
+      const payload = structuredClone(canonicalStoreOpsPayload);
+      const before = JSON.stringify(payload);
+      expect(normalizeStoreOpsApiHealth(payload)).toMatchObject({
+        stores: [{ lights: { demand: null, operations: null, staffing: null, margin: null }, riskScore: null }],
+        healthAvailability: { complete: false, coveredCount: 0, unavailableCount: 1, warningCount: 0 },
+      });
+      expect(JSON.stringify(payload)).toBe(before);
+      mockCanonical(payload, mode);
+      const onOpenWorkflow = vi.fn();
+      render(<DesignStoreOpsWorkspace onOpenWorkflow={onOpenWorkflow} />);
+      const detail = await screen.findByLabelText("LIVE-ISSUE-1 detail");
+      const strip = detail.querySelector('[class*="storeStrip"]')!;
+      expect(strip).toHaveTextContent("資料不可用");
+      expect(strip.querySelectorAll("[data-status], i")).toHaveLength(0);
+      expect(detail).toHaveTextContent("來源事件標題");
+      expect(screen.queryByTestId("operator-data-unavailable")).not.toBeInTheDocument();
+      expect(screen.getByText(/PARTIAL，1 家資料不完整/)).toBeInTheDocument();
+      fireEvent.click(within(screen.getByLabelText("Action rail")).getAllByRole("button")[0]);
+      expect(onOpenWorkflow).toHaveBeenCalledWith("triage", payload.issues[0]);
+    });
+
+    it.each(["colour", "risk"])("does not repair a malformed legacy %s into accepted missing health", async (field) => {
+      const payload = {
+        ...canonicalStoreOpsPayload,
+        stores: [{ ...canonicalStoreOpsPayload.stores[0], ...(field === "risk"
+          ? { riskScore: "0" }
+          : { lights: { ...canonicalStoreOpsPayload.stores[0].lights, demand: "blue" } }) }],
+      };
+      expect(normalizeStoreOpsApiHealth(payload)).toBe(payload);
+      mockCanonical(payload);
+      render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+      await waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "empty"));
+      expect(screen.queryByLabelText("Action rail")).not.toBeInTheDocument();
+    });
+
+    it("keeps a supported warning with incomplete coverage without counting it twice or painting unknown slots", async () => {
+      const payload = { ...canonicalStoreOpsPayload, stores: [partialStore()] };
+      expect(normalizeStoreOpsApiHealth(payload)).toMatchObject({
+        stores: [{ lights: { demand: "red", operations: null, staffing: null, margin: null }, riskScore: null }],
+        healthAvailability: { totalCount: 1, coveredCount: 0, unavailableCount: 1, warningCount: 1 },
+      });
+      mockCanonical(payload);
+      render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+      const detail = await screen.findByLabelText("LIVE-ISSUE-1 detail");
+      const strip = detail.querySelector('[class*="storeStrip"]')!;
+      expect(strip.querySelectorAll("[data-status=red]")).toHaveLength(1);
+      expect(strip.querySelectorAll("[data-status=green], [data-status=yellow]")).toHaveLength(0);
+      expect(strip.querySelectorAll("i")).toHaveLength(1);
+      expect(within(strip as HTMLElement).getAllByText(/資料不可用/)).toHaveLength(3);
+      const overview = screen.getByRole("region", { name: "全店四燈摘要" });
+      expect(overview).toHaveAttribute("data-health-state", "degraded");
+      expect(within(overview).getByRole("button", { name: /^紅燈/ }).querySelector("strong")).toHaveTextContent("1");
+      expect(within(overview).getByRole("button", { name: /^綠燈/ }).querySelector("strong")).toHaveTextContent("0");
+      expect(overview).not.toHaveTextContent("營運正常");
+    });
+
+    it("does not classify known green lights as overall healthy when risk is unavailable or revive them through the green filter", async () => {
+      const known = completeStore();
+      const payload = { ...canonicalStoreOpsPayload, stores: [{ ...known, riskScore: null,
+        healthAvailability: { ...known.healthAvailability, state: "degraded", complete: false, riskScore: missingSlot() },
+      }] };
+      mockCanonical(payload);
+      const onOpenWorkflow = vi.fn();
+      render(<DesignStoreOpsWorkspace onOpenWorkflow={onOpenWorkflow} />);
+      await screen.findByLabelText("LIVE-ISSUE-1 detail");
+      const green = screen.getByRole("button", { name: /^綠燈/ });
+      expect(green.querySelector("strong")).toHaveTextContent("0");
+      fireEvent.click(green);
+      await screen.findByText("沒有符合條件的項目，請調整篩選。");
+      expect(screen.queryByLabelText("Action rail")).not.toBeInTheDocument();
+      expect(within(screen.getByLabelText("門市 Issue queue")).queryAllByRole("button", { name: /LIVE-ISSUE-1/ })).toHaveLength(0);
+      expect(screen.queryByLabelText("LIVE-STORE-1 門市唯讀資訊")).not.toBeInTheDocument();
+      expect(onOpenWorkflow).not.toHaveBeenCalled();
+    });
+
+    it("preserves a supported real zero and accepts optional recordIds without adding a client admission gate", async () => {
+      const known = completeStore();
+      const payload = { ...canonicalStoreOpsPayload, stores: [{ ...known,
+        healthAvailability: { ...known.healthAvailability, riskScore: { ...slot(), recordIds: undefined } },
+      }] };
+      expect(normalizeStoreOpsApiHealth(payload)).toMatchObject({
+        stores: [{ riskScore: 0 }], healthAvailability: { complete: true, coveredCount: 1, unavailableCount: 0 },
+      });
+      mockCanonical(payload);
+      render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+      await screen.findByLabelText("LIVE-ISSUE-1 detail");
+      expect(screen.getByRole("button", { name: /^綠燈/ }).querySelector("strong")).toHaveTextContent("1");
+      expect(screen.getByText("營運正常")).toBeInTheDocument();
+    });
+
+    it("masks an invalid slot structure without hiding the usable issue", async () => {
+      const store = partialStore();
+      const payload = { ...canonicalStoreOpsPayload, stores: [{ ...store,
+        healthAvailability: { ...store.healthAvailability, lights: { ...store.healthAvailability.lights,
+          demand: { ...slot(), recordIds: [42] },
+        } },
+      }] };
+      mockCanonical(payload);
+      render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+      const detail = await screen.findByLabelText("LIVE-ISSUE-1 detail");
+      expect(detail.querySelectorAll('[class*="storeStrip"] [data-status], [class*="storeStrip"] i')).toHaveLength(0);
+      expect(screen.getByLabelText("Action rail")).toBeInTheDocument();
+    });
+
+    it("renders every real store with no issue in the existing read-only strips without creating issue controls", async () => {
+      const payload = { ...canonicalStoreOpsPayload, issues: [], count: 0, stores: [
+        { ...partialStore(), lights: { demand: null, operations: null, staffing: null, margin: null } },
+        { ...partialStore(), id: "LIVE-STORE-2", name: "第二間真實門市", lights: { demand: null, operations: null, staffing: null, margin: null } },
+      ] };
+      expect(inspectStoreOpsApiPayload(payload)).toBe("ready");
+      mockCanonical(payload);
+      const onOpenWorkflow = vi.fn();
+      render(<DesignStoreOpsWorkspace onOpenWorkflow={onOpenWorkflow} />);
+      const first = await screen.findByLabelText("LIVE-STORE-1 門市唯讀資訊");
+      const second = screen.getByLabelText("LIVE-STORE-2 門市唯讀資訊");
+      expect(first).toHaveTextContent("LIVE-STORE-1 · 正式門市");
+      expect(second).toHaveTextContent("LIVE-STORE-2 · 第二間真實門市");
+      expect(first).toHaveTextContent("資料不可用");
+      expect(first.querySelectorAll("button, [data-status], i")).toHaveLength(0);
+      expect(within(screen.getByLabelText("門市 Issue queue")).getByText("目前沒有門市事件。")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Action rail")).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "證據融合" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+      expect(onOpenWorkflow).not.toHaveBeenCalled();
+    });
+
+    it("keeps a real store without an issue visible alongside a different store's real issue", async () => {
+      mockCanonical({ ...canonicalStoreOpsPayload, stores: [partialStore(), { ...partialStore(), id: "LIVE-NO-ISSUE", name: "無事件門市" }] });
+      render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+      await screen.findByLabelText("LIVE-ISSUE-1 detail");
+      expect(screen.getByLabelText("LIVE-NO-ISSUE 門市唯讀資訊")).toHaveTextContent("無事件門市");
+      expect(screen.getByLabelText("Action rail")).toBeInTheDocument();
+    });
+
+    it("keeps null canonical confidence unavailable in the existing evidence panel instead of claiming 100%", async () => {
+      const evidence = { ...EVIDENCE_FIXTURES[0], id: "SYNTHETIC-FORECAST-EVIDENCE", issueId: "LIVE-ISSUE-1",
+        kind: "forecastOps", confidence: null, title: "原生訊號來源", sourceLabel: "Synthetic HTTP unit input" };
+      mockCanonical({ ...canonicalStoreOpsPayload, stores: [partialStore()], evidence: [evidence],
+        issues: [{ ...canonicalStoreOpsPayload.issues[0], evidenceIds: [evidence.id] }],
+      });
+      render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+      await screen.findByLabelText("LIVE-ISSUE-1 detail");
+      fireEvent.click(screen.getByRole("tab", { name: "ForecastOps" }));
+      // Forecast graph stays unavailable and no confidence score is invented.
+      expect(screen.getByTestId("store-forecast-unavailable")).toBeInTheDocument();
+      expect(screen.getByLabelText("LIVE-ISSUE-1 detail")).not.toHaveTextContent("100%");
+    });
+
+    it("excludes missing confidence from observed averages with explicit coverage and retains null trend points", () => {
+      const missing: EvidenceItem = { ...EVIDENCE_FIXTURES[0], confidence: null };
+      const measured: EvidenceItem = { ...EVIDENCE_FIXTURES[1], confidence: 0.8 };
+      expect(getEvidenceStrength([missing, measured])).toMatchObject({
+        averageConfidence: 80, confidenceCount: 1, unavailableConfidenceCount: 1,
+      });
+      expect(getEvidenceStrength([missing]).averageConfidence).toBeNull();
+      expect(getEvidenceStrength([{ ...measured, confidence: 0 }]).averageConfidence).toBe(0);
+      const issue: Issue = { ...ISSUE_FIXTURES[0], id: "SYNTHETIC-CONFIDENCE-CONTROL" };
+      expect(getTrendPoints(issue, [missing, measured]).map((point) => point.value)).toEqual([null, 80]);
+    });
+  });
+
 });
