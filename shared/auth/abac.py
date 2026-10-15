@@ -14,8 +14,10 @@ The SD-09 §5 rule is:
       AND data classification permits visibility
 
 This module implements the non-RBAC clauses as a deny-by-default chain of
-policies. Each policy inspects an :class:`AccessRequest` and either returns a
-denying :class:`Decision` (veto) or ``None`` to abstain. The orchestration in
+policies. Each policy inspects an :class:`AccessRequest` and returns a denying
+:class:`Decision` (veto), an allow with obligations, or ``None`` to abstain.
+Mandatory tenant enforcement is independent of the configurable policy list.
+The orchestration in
 :mod:`shared.auth.engine` combines RBAC and ABAC and wires the audit hook.
 """
 
@@ -160,7 +162,8 @@ def target_tenant_isolation(request: AccessRequest) -> Decision:
         "tenant_waiver"
     )
     if isinstance(waiver, TenantAccessWaiver) and (
-        default_waiver_registry().get(waiver.waiver_id) is not waiver
+        not isinstance(waiver.waiver_id, str)
+        or default_waiver_registry().get(waiver.waiver_id) is not waiver
     ):
         return Decision.deny(
             "waiver object is not the registered record", policy_id="tenant_isolation"

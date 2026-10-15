@@ -568,9 +568,64 @@ def test_waiver_and_early_allow_cannot_erase_later_policy_denial(registered_tena
     assert result.policy_id == "veto"
 
 
-def test_waiver_cannot_supply_missing_principal_ownership(registered_tenant_waiver) -> None:
-    p = principal(Role.AUDITOR)
+@pytest.mark.parametrize(
+    "principal_tenant,resource_tenant", [(None, "tenant-b"), ("tenant-a", None)]
+)
+def test_waiver_cannot_supply_missing_principal_ownership(
+    registered_tenant_waiver, principal_tenant, resource_tenant
+) -> None:
+    p = principal(Role.AUDITOR, tenant_id=principal_tenant)
     res = ResourceDescriptor(
-        type="audit", tenant_id="tenant-b", attributes={"tenant_waiver": registered_tenant_waiver}
+        type="audit",
+        tenant_id=resource_tenant,
+        attributes={"tenant_waiver": registered_tenant_waiver},
     )
     assert not AuthorizationEngine().authorize(AccessRequest(p, Action.VIEW, res)).allowed
+
+
+def test_waiver_cannot_erase_default_scope_or_viewer_rules(registered_tenant_waiver) -> None:
+    p = principal(Role.AUDITOR, tenant_id="tenant-a", brand_ids=frozenset({"own"}))
+    res = ResourceDescriptor(
+        type="audit",
+        tenant_id="tenant-b",
+        brand_id="foreign",
+        attributes={"tenant_waiver": registered_tenant_waiver},
+    )
+    result = AuthorizationEngine().authorize(AccessRequest(p, Action.VIEW, res))
+    assert not result.allowed
+    assert result.policy_id == "scope.brand"
+    # Even an otherwise registered waiver cannot relax the opt-in viewer rule.
+    p = Principal(
+        subject_id="user-auditor",
+        roles=frozenset({Role.AUDITOR, Role.OPERATOR_VIEWER}),
+        scope=Scope(tenant_id="tenant-a"),
+    )
+    result = AuthorizationEngine().authorize(AccessRequest(p, Action.VIEW, res))
+    assert not result.allowed
+    assert result.policy_id == "operator.tenant_isolation"
+
+
+@pytest.mark.parametrize("reference", ["not-registered", {}, True, 7])
+def test_malformed_or_unregistered_waiver_reference_denies(reference) -> None:
+    p = principal(Role.AUDITOR, tenant_id="tenant-a")
+    res = ResourceDescriptor(
+        type="audit", tenant_id="tenant-b", attributes={"tenant_waiver": reference}
+    )
+    result = AuthorizationEngine().authorize(AccessRequest(p, Action.VIEW, res))
+    assert not result.allowed
+    assert result.policy_id == "tenant_isolation"
+
+
+def test_malformed_waiver_object_id_denies_without_registry_coercion(
+    registered_tenant_waiver,
+) -> None:
+    from dataclasses import replace
+
+    malformed = replace(registered_tenant_waiver, waiver_id=[])
+    p = principal(Role.AUDITOR, tenant_id="tenant-a")
+    res = ResourceDescriptor(
+        type="audit", tenant_id="tenant-b", attributes={"tenant_waiver": malformed}
+    )
+    result = AuthorizationEngine().authorize(AccessRequest(p, Action.VIEW, res))
+    assert not result.allowed
+    assert result.policy_id == "tenant_isolation"
