@@ -55,8 +55,12 @@ Canonical scratch root:
   original command `uv run --frozen --python 3.12 pytest tests/identity/test_credential_and_policy.py -q -n 0`.
   Pytest's real fork deprecation warning is retained, not hidden or a skipped test.
 - `credential-ruff-initial/`: native1/0.178349s under420, one I001 import ordering
-  failure. This failure is retained; the subsequent source edit combines the two
-  argon2 imports. Initial tests are NOT transferred to that successor.
+  failure. This failure is retained. At documentation successor0094f3f5 the
+  complete owning command with JUnit also passes native0/40.400911s (50 cases:
+  31 original/19 new parametrized owning cases), but scoped Ruff STILL fails
+  I001/native1/0.172334s. A distinct read-only `ruff check --diff` diagnostic
+  native1/0.172909s shows the required multiline argon2 import. The subsequent
+  source edit follows that exact diagnostic; these passes are NOT transferred.
 
 Both have native root waits/ECHILD, no accessible owned writers, exact own
 PostgreSQL16/PostGIS removal and hash-verified seals BEFORE temporary evidence
