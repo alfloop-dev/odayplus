@@ -9,7 +9,73 @@ Canonical reviewer: **Human/Ops**. Final admission is **PENDING**. This record
 grants no approval, merge arming, merge, promotion, deployment, recovery or
 credential/account/session effect.
 
-## Pi batch004 / measurement freeze — run pi-20261015T062622Z-389a6bb6
+## Pi batch005 / new measurement freeze — run pi-20261015T093946Z-24adc955
+
+**Source checkpoint only; NOT review-ready or admitted.** Actual renewed Manager
+run/isolated-worktree lease,356 exact scope entries and12 materialized source
+contexts were verified. The new request digest is
+`2ab419c03b255113b2b5f4c5ae68b39a495733ce62482507f864f22dcd0346a7`.
+The fetched admitted base remains `c0c8c8226acaab3cbe8bb76e79f01e5e6694abb3`.
+Human/Ops is still the final reviewer; Pi is still a failed ORIGINAL owner and
+an author, not an independent assessor or failed-epoch clearance.
+
+Source anchor `4546a8f66f828d09aeecf7de7c2d2e567b3ea65c` / tree
+`46236a7a41db56e176fdf151940132542ba33766` changes ONLY the two newly leased
+Learning Hub adapter/test paths. The observed real MLflow SQLite initialization
+cost justified an owning optimization, not a unique historical timeout cause:
+
+- Build immutable empty schema bytes using the actual installed MLflow initial
+  tables and ALL its Alembic migrations, with upstream version verification and
+  engine disposal. Never snapshot a live application database/client/registry.
+  Upstream's migration-created default workspace is retained unchanged; runs,
+  models, aliases, tags and other application records do not enter the image.
+- Copy those bytes into a distinct private temporary SQLite file for EACH
+  default in-memory-domain repository. Each normal MlflowClient still performs
+  its own upstream table/schema-version initialization checks against that file.
+  No cached authority, model-binding, permission or schema-verdict substitution.
+- Cache only immutable bytes keyed by installed MLflow version, serialize cold
+  Alembic initialization, and reset cache/lock in a forked child. Failed migration
+  results are not cached. No shared mutable app database, client or registry.
+- Explicit URI, environment-configured URI, stable/durable repository path,
+  injected client and production remote-binding/auth paths are unchanged. Model,
+  artifact/run lineage, stage/alias compensation and governance checks unchanged.
+- Existing real-store tests retained; new controls inspect the actual migrated
+  image, concurrent real registration/run/tag/alias isolation, late-store
+  emptiness, stale-version rejection, initialization failure/recovery, version
+  keying and bypass exclusion for explicit/environment/durable stores. Negative
+  fault injection is NOT a real-store performance measurement.
+
+Working-diff author diagnostics (NOT final-head receipts) are retained under
+`$PANTHEON_STATUS_ROOT/.orchestrator/worker-runtime/scratch/pi-20261015T093946Z-24adc955/`.
+The initial image-inspection assertion genuinely failed because an upstream
+migration creates a default workspace row. Its log/native1 remains; the revised
+assertion checks that exact default row and every other non-Alembic table empty.
+The full adapter+production-runtime selection then exited0/92.609s under420;
+scoped Ruff exited0. No uninstrumented full-selection speed guarantee follows.
+
+This README is committed BEFORE new final measurement. The frozen measurement
+head/tree are resolved from the commit containing THIS batch005 section, not
+4546/e99 or any earlier source/documentation head. Do not append later results
+by moving that head. ALL14 canonical declarations, ALL17 unchanged supplemental
+selections, all owning controls, normal terminal hosted CI and configured
+non-contributing Codex2 supplied-text assessment must be fresh at that exact new
+head. No e99 greens transfer, including its canonical14/16 supplemental/CI129.
+The original2178 serial-n0 and178 owning-audit workloads and1200/420 caps remain;
+all129 E2E, real PG/PostGIS, frozen dependencies, Argon2/native/Web/transport/
+custody/auth/tenant/numerical/SoD/GO/expiry/model assertions remain unchanged.
+
+Historical e99 serial1200 and owning420 interruptions, missing exits, growing
+post-timeout logs, reconstructed1264/141-byte prefixes and wrong parent F/E
+claim/correction remain separate. Later contaminated F/Es establish no original
+defect or timeout cause. New execution requires authentic subreaper/adopted waits,
+current identity validation and owned closure BEFORE fixture removal; stable
+hashes alone do not prove exits or external writer exclusion. Prior whole-body/
+import/late-record/underlying-account-independence review gaps remain explicit.
+Finish owned author work before governed review submission. No approval, merge
+arming, merge, done, deployment/recovery or live effects; original complete
+blocked6/PR1459@a129, quarantine/bindingNULL/cleanupUNKNOWN/HOLD/goalfalse remain.
+
+## Pi batch004 / measurement freeze — run pi-20261015T062622Z-389a6bb6 (historical)
 
 **Source authoring checkpoint; NOT admission or review-ready.** Canonical live
 owner Pi / reviewer Human/Ops, renewed Manager workspace allocation and354-path
