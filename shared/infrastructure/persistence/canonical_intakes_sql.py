@@ -92,10 +92,11 @@ class CanonicalIntakeRepository:
                     or row["source_policy_state"] != "AUTH_REQUIRED"
                     or row["version"] != expected_version):
                 raise IdentityConflictError("CANNOT_CANCEL_AUTHORIZATION_WAIT")
-            for table in ("identity.match_cases", "expansion.promotion_decisions"):
-                if self.engine.query_one("SELECT 1 FROM " + table + " WHERE tenant_id=? AND intake_id=? LIMIT 1",
-                                         (tenant, intake_id)) is not None:
-                    raise IdentityConflictError("CANNOT_CANCEL_AUTHORIZATION_WAIT")
+            if (self.engine.query_one("SELECT 1 FROM identity.match_cases WHERE tenant_id=? AND intake_id=? LIMIT 1",
+                                      (tenant, intake_id)) is not None
+                    or self.engine.query_one("SELECT 1 FROM expansion.promotion_decisions WHERE tenant_id=? AND intake_id=? LIMIT 1",
+                                             (tenant, intake_id)) is not None):
+                raise IdentityConflictError("CANNOT_CANCEL_AUTHORIZATION_WAIT")
             jobs = self.engine.query(
                 "SELECT j.job_type,j.status,d.job_id AS delivery_id,d.status AS delivery_status,d.delivery_state "
                 "FROM workflow.jobs j LEFT JOIN durable_jobs d ON d.job_id::text=j.job_id::text "
