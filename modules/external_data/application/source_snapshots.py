@@ -45,14 +45,14 @@ class SnapshotProvenanceError(RuntimeError):
 
 
 def resolve_existing_object_generation(
-    object_store: Any, tenant_id: str, uri: str, snapshot_id: str
+    object_store: Any, tenant_id: str, uri: str, snapshot_id: str, *,
+    expected_sha256: str | None = None, expected_generation: int | None = None,
 ) -> int:
-    """Read back the generation of an object a previous attempt already uploaded.
+    """Verify an existing object version and, when requested, its actual bytes.
 
-    Reached after a Precondition Failed: the object is there, and what remains
-    is establishing which version it is. That version is persisted as the
-    snapshot's ``object_generation`` and is the anchor downstream consumers
-    resolve to fetch this exact object -- a masked release snapshot binds to it.
+    Native adoption and replay hash a generation-pinned download rather than
+    trust a checksum reported by object metadata. A recorded version is an
+    immutable anchor, so a different current generation cannot replace it.
 
     There is deliberately no fallback value. The previous code substituted a
     literal ``1`` when this read failed, which recorded a provenance claim
@@ -61,11 +61,22 @@ def resolve_existing_object_generation(
     """
     try:
         meta = object_store.head_object(tenant_id, uri)
-        return meta["generation"]
+        generation = meta["generation"]
+        if type(generation) is not int or generation < 1:
+            raise ValueError("A positive object generation is required")
+        if expected_generation is not None and (
+            type(expected_generation) is not int or generation != expected_generation
+        ):
+            raise ValueError("The object generation differs from the recorded evidence")
+        if expected_sha256 is not None:
+            data = object_store.download_object(tenant_id, uri, generation=generation)
+            if hashlib.sha256(data).hexdigest() != expected_sha256:
+                raise ValueError("The object bytes differ from the supplied evidence")
+        return generation
     except Exception as exc:
         raise SnapshotProvenanceError(
-            f"snapshot {snapshot_id}: raw object exists at {uri} but its generation "
-            "could not be read back; refusing to record a provenance claim without "
+            f"snapshot {snapshot_id}: object at {uri}: generation could not be read back or verified, "
+            "or content could not be verified; refusing to record a provenance claim without "
             "a verified object version"
         ) from exc
 
@@ -336,6 +347,29 @@ class SourceSnapshotService:
                 # upload/SQL exception that caused compensation.
                 logger.exception("Snapshot object compensation failed for generation %s", generation)
 
+    def _verified_native_replay(
+        self, tenant_id: str, snapshot: dict[str, Any] | None, content_sha256: str, redacted_data: bytes | None,
+    ) -> str:
+        """Reuse recorded immutable evidence without creating new objects."""
+        if snapshot is None:
+            raise SnapshotProvenanceError("The recorded snapshot is no longer available")
+        generation = snapshot.get("object_generation")
+        if type(generation) is not int or generation < 1:
+            raise SnapshotProvenanceError("The recorded snapshot has no verified object generation")
+        snapshot_id = str(snapshot["source_snapshot_id"])
+        resolve_existing_object_generation(
+            self.object_store, tenant_id, snapshot["raw_object_uri"], snapshot_id,
+            expected_sha256=content_sha256, expected_generation=generation,
+        )
+        if redacted_data is not None:
+            if not snapshot["redacted_object_uri"]:
+                raise SnapshotProvenanceError("The immutable snapshot has no recorded redacted representation")
+            resolve_existing_object_generation(
+                self.object_store, tenant_id, snapshot["redacted_object_uri"], snapshot_id,
+                expected_sha256=hashlib.sha256(redacted_data).hexdigest(),
+            )
+        return snapshot_id
+
     def create_snapshot(
         self,
         tenant_id: str,
@@ -359,11 +393,11 @@ class SourceSnapshotService:
         """Evaluate policy, validate residency, upload raw/redacted data to GCS, and commit SQL metadata."""
         # 1. Enforce source policy
         policy = self.check_source_policy(tenant_id, source_id)
+        native = self.db_conn is not None and not self._is_sqlite()
         # Supplied evidence is not a server retrieval grant. Native assisted
         # policy has the same current approval requirements as retrieval.
         assisted_capture = (
-            self.db_conn is not None and not self._is_sqlite()
-            and policy == "ASSISTED_ENTRY_ONLY"
+            native and policy == "ASSISTED_ENTRY_ONLY"
             and capture_method in ("MANUAL_ENTRY", "OPERATOR_UPLOAD")
         )
         if policy != "APPROVED_RETRIEVAL" and not assisted_capture:
@@ -383,19 +417,21 @@ class SourceSnapshotService:
         # IDs and object references without adopting another Intake's snapshot.
         namespace = uuid.NAMESPACE_DNS
         name = f"{tenant_id}:{source_id}:{content_sha256}"
-        if self.db_conn is not None and not self._is_sqlite():
+        if native:
             existing = self._execute(
-                "SELECT source_snapshot_id FROM intake.source_snapshots "
+                "SELECT source_snapshot_id,raw_object_uri,redacted_object_uri,object_generation "
+                "FROM intake.source_snapshots "
                 "WHERE tenant_id=%s AND intake_id=%s AND source_id=%s AND content_sha256=%s",
                 (tenant_id, intake_id, source_id, content_sha256), tenant_id=tenant_id,
             )
+            if existing:
+                return self._verified_native_replay(tenant_id, existing[0], content_sha256, redacted_data)
             # Separate new names from the old tenant-prefixed format: source
             # IDs are arbitrary text and can contain UUIDs and separators.
             native_name = "intake-v2:" + json.dumps(
                 [tenant_id, intake_id, source_id, content_sha256], separators=(",", ":"),
             )
-            snapshot_id = (str(existing[0]["source_snapshot_id"]) if existing else
-                           str(uuid.uuid5(namespace, native_name)))
+            snapshot_id = str(uuid.uuid5(namespace, native_name))
         else:
             snapshot_id = str(uuid.uuid5(namespace, name))
 
@@ -427,7 +463,8 @@ class SourceSnapshotService:
                 # Object already uploaded in a previous attempt. Ignore.
                 raw_uri = f"gs://{bucket}/{raw_key}"
                 raw_gen = resolve_existing_object_generation(
-                    self.object_store, tenant_id, raw_uri, snapshot_id
+                    self.object_store, tenant_id, raw_uri, snapshot_id,
+                    expected_sha256=content_sha256 if native else None,
                 )
             else:
                 raise exc
@@ -449,6 +486,11 @@ class SourceSnapshotService:
                 except ValueError as exc:
                     if "Precondition Failed" in str(exc):
                         redacted_uri = f"gs://{bucket}/{redacted_key}"
+                        if native:
+                            resolve_existing_object_generation(
+                                self.object_store, tenant_id, redacted_uri, snapshot_id,
+                                expected_sha256=hashlib.sha256(redacted_data).hexdigest(),
+                            )
                     else:
                         raise
         except Exception:
@@ -493,6 +535,19 @@ class SourceSnapshotService:
                 tenant_id=tenant_id,
             )
             if existing:
+                if native:
+                    recorded = self.get_snapshot(tenant_id, snapshot_id)
+                    verified_id = self._verified_native_replay(
+                        tenant_id, recorded, content_sha256, redacted_data,
+                    )
+                    # Another capture may have committed after our preflight.
+                    # Its immutable references win; remove only new versions
+                    # this attempt created that its record does not use.
+                    referenced = {recorded["raw_object_uri"], recorded["redacted_object_uri"]}
+                    self._compensate_snapshot_objects(
+                        tenant_id, [(uri, gen) for uri, gen in created_objects if uri not in referenced],
+                    )
+                    return verified_id
                 return snapshot_id
             sql = """
                 INSERT INTO intake.source_snapshots (
