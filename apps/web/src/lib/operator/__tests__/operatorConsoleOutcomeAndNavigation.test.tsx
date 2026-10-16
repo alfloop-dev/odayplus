@@ -9,7 +9,7 @@ const envelope = {
     source: "operator-shell-production", dataMode: "live",
     role: { id: "ops-lead", label: "Verified operations", subtitle: "Scoped", allowedWorkspaces: ["today"] },
   },
-  navigation: { roles: [], workspaces: [], allowedWorkspaces: ["today"] },
+  navigation: { roles: [], workspaces: [{ id: "today", label: "Today", shortLabel: "Today", description: "Live work", allowed: true }], allowedWorkspaces: ["today"] },
   today: {
     hero: { name: "Verified operator", roleLabel: "Operations", scope: "Tenant A", dateLabel: "2026-10-16" },
     kpis: [{ label: "Open", value: "1" }], queue: [], decisions: [], riskRows: [], auditFeed: [],

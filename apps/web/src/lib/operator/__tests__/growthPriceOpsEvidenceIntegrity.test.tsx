@@ -2,12 +2,13 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GrowthWorkspace } from "../../../../features/operator/GrowthWorkspace";
-import { FIXTURE_FRESHNESS, PRICEOPS_RECOMMENDATIONS, SEGMENTS } from "../../../../features/operator/growthViewModel";
+import { FIXTURE_FRESHNESS, GROWTH_ITEMS, PRICEOPS_RECOMMENDATIONS, SEGMENTS } from "../../../../features/operator/growthViewModel";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
 
@@ -15,7 +16,7 @@ const data = (live: boolean) => ({
   availability: live ? "ready" as const : "fixture" as const,
   fromApi: live,
   freshness: { ...FIXTURE_FRESHNESS, modelVersion: live ? "verified-model-version" : FIXTURE_FRESHNESS.modelVersion },
-  items: [], segments: SEGMENTS, recommendations: PRICEOPS_RECOMMENDATIONS,
+  items: GROWTH_ITEMS, segments: SEGMENTS, recommendations: PRICEOPS_RECOMMENDATIONS,
 });
 const props = { basePath: "/operator", searchParams: { gtab: "priceops" } };
 
