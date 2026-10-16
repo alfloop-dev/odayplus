@@ -18,6 +18,7 @@ from modules.opsboard.application.store_ops import (
     StoreOpsService,
 )
 from modules.opsboard.application.store_ops_audit_delivery import StoreOpsAuditDelivery
+from modules.opsboard.application.store_ops_forecast import current_issue_forecast
 from modules.opsboard.application.store_ops_native_summary import native_store_summary
 from modules.opsboard.application.store_ops_scope import ScopedStoreOpsRepository, binding_hash
 from modules.opsboard.domain.r4_dtos import AttachmentUploadRequest
@@ -206,6 +207,13 @@ def create_operator_store_ops_router(
                     # receipt; scope reduction cannot reveal an old response.
                     scoped_service.get_issue(str(issue_id))
                 result = getattr(scoped_service, method.__name__)(*args, **kwargs)
+                if operation == "store_ops.issue_evidence" and isinstance(result, dict):
+                    # Read the exact saved forecast only after current issue/store
+                    # authorization. This never changes the workflow aggregate.
+                    result["forecast"] = current_issue_forecast(
+                        issue=result["issue"], tenant_id=tenant_id,
+                        repository=forecastops_repository, engine=engine,
+                    )
                 if isinstance(result, dict) and result.get("idempotentReplay") is True:
                     result.update(scoped_service.snapshot())
                     if issue_id is not None:

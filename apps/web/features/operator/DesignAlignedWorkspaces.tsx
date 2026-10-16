@@ -3,7 +3,10 @@
 import { CSSProperties, useState, useMemo, useEffect } from "react";
 import { ISSUE_FIXTURES, EVIDENCE_FIXTURES, AUDIT_EVENT_FIXTURES, STORE_FIXTURES } from "./fixtures";
 import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
+import type { OperatorRoleId as NavigationOperatorRoleId } from "./navigation";
 import { nativeStoreLabels } from "./storeOpsNativeSummary";
+import { StoreOpsForecastQuality, StoreOpsForecastView, useStoreOpsForecastRead } from "./StoreOpsForecastSection";
+import { recordedAlertAtRun, recordedRecommendationAtAlert, savedForecastActionLabel, type ForecastReadGuardFactory } from "./storeOpsForecastClient";
 import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
 import {
   isSeedDataSource,
@@ -43,6 +46,9 @@ type DesignTodayWorkspaceProps = {
 };
 
 type DesignStoreOpsWorkspaceProps = {
+  activeRoleId?: NavigationOperatorRoleId;
+  forecastScopeKey?: string;
+  createAuthenticatedReadGuard?: ForecastReadGuardFactory;
   initialIssueId?: string;
   initialTabId?: string;
   onOpenWorkflow: (dialog: StoreOpsWorkflowDialogType, issue: Issue) => void;
@@ -127,6 +133,21 @@ export function hasRecordedCameraPurpose(
       && metadata.timeWindow === evidence.timeWindow
       && metadata.retentionHours === evidence.retentionHours;
   });
+}
+
+// This proves only a saved purpose record. A current media-content owner is
+// not connected here; neither this record nor retentionHours grants access.
+function hasCameraPurposeRecord(
+  evidence: EvidenceItem | undefined,
+  issue: Issue,
+  auditEvents: AuditEvent[],
+): boolean {
+  if (!evidence) return false;
+  return hasRecordedCameraPurpose({
+    ...evidence,
+    lockedReason: undefined,
+    unlockedAt: evidence.purposeRecordedAt ?? evidence.unlockedAt,
+  }, issue, auditEvents);
 }
 
 const EMPTY_STORE_OPS_ISSUE: Issue = {
@@ -666,6 +687,9 @@ export function DesignTodayWorkspace({
 }
 
 export function DesignStoreOpsWorkspace({
+  activeRoleId,
+  forecastScopeKey,
+  createAuthenticatedReadGuard,
   initialIssueId,
   initialTabId,
   onOpenWorkflow,
@@ -704,12 +728,10 @@ export function DesignStoreOpsWorkspace({
     (initialTabId as EvidenceItem["kind"]) || "googleReview",
   );
   const [mineOnly, setMineOnly] = useState(false);
-  const [selectedIssueId, setSelectedIssueId] = useState<string>(initialIssueId || "ISS-1024");
+  const [selectedIssueId, setSelectedIssueId] = useState<string>(initialIssueId || "");
 
   useEffect(() => {
-    if (initialIssueId) {
-      setSelectedIssueId(initialIssueId);
-    }
+    setSelectedIssueId(initialIssueId || "");
   }, [initialIssueId]);
 
   useEffect(() => {
@@ -873,12 +895,25 @@ export function DesignStoreOpsWorkspace({
 
   // 4. Resolve selected issue
   const issue = useMemo(() => {
-    return filteredIssues.find((i) => i.id === selectedIssueId) ??
-      filteredIssues[0] ??
+    if (selectedIssueId) {
+      return filteredIssues.find((candidate) => candidate.id === selectedIssueId) ?? EMPTY_STORE_OPS_ISSUE;
+    }
+    return filteredIssues[0] ??
       (fixturePresentation ? ISSUE_FIXTURES[0] : EMPTY_STORE_OPS_ISSUE);
   }, [filteredIssues, fixturePresentation, selectedIssueId]);
 
-  const hasActualIssue = filteredIssues.length > 0;
+  const hasActualIssue = filteredIssues.some((candidate) => candidate.id === issue.id);
+  const unresolvedRequestedIssue = Boolean(selectedIssueId) && !hasActualIssue;
+  // One captured current owner feeds both the top warning and Forecast tab.
+  const forecastRead = useStoreOpsForecastRead({
+    scopeKey: forecastScopeKey ? JSON.stringify([forecastScopeKey, storeOpsRefreshToken]) : "",
+    issueId: issue.id, storeId: issue.storeId, roleId: activeRoleId ?? roleId,
+    createAuthenticatedReadGuard,
+  }, !fixturePresentation && storeOpsLoadState === "ready" && hasActualIssue
+    && (issue.source === "forecastOps" || activeEvidenceTab === "forecastOps"));
+  const savedForecast = forecastRead.result?.state === "ready" ? forecastRead.result.forecast : null;
+  const savedForecastAlert = savedForecast ? recordedAlertAtRun(savedForecast) : null;
+  const savedForecastRecommendation = savedForecast ? recordedRecommendationAtAlert(savedForecast) : null;
 
   // 5. Generate 28-day revenue forecast band data based on selected store
   const forecastData = useMemo(() => {
@@ -951,6 +986,7 @@ export function DesignStoreOpsWorkspace({
   const evCsCase = issueEvidence.find((e) => e.kind === "csCase");
   const evCamera = issueEvidence.find((e) => e.kind === "camera");
   const cameraPurposeRecorded = hasRecordedCameraPurpose(evCamera, issue, activeAuditEvents);
+  const cameraPurposeRecordPresent = hasCameraPurposeRecord(evCamera, issue, activeAuditEvents);
   const evPayment = issueEvidence.find((e) => e.kind === "payment");
   const evIot = issueEvidence.find((e) => e.kind === "iot");
   const evForecastOps = issueEvidence.find((e) => e.kind === "forecastOps");
@@ -1177,7 +1213,7 @@ export function DesignStoreOpsWorkspace({
     <div
       className={styles.storeWorkspace}
       data-screen-label="Store Ops 門市營運"
-      data-selected-issue-id={selectedIssueId}
+      data-selected-issue-id={hasActualIssue ? issue.id : selectedIssueId || undefined}
       data-selected-tab-id={initialTabId}
     >
       <header className={styles.storeHeader}>
@@ -1367,6 +1403,7 @@ export function DesignStoreOpsWorkspace({
         </aside>
 
         <section className={styles.storeDetail} aria-label={hasActualIssue ? `${issue.id} detail` : "門市唯讀資訊"}>
+          {unresolvedRequestedIssue ? <p role="status">指定事件不存在、無權限或不在目前篩選範圍；未開啟其他事件。</p> : null}
           {hasActualIssue ? (<>
           <section className={styles.issueHero}>
             <div className={styles.issueHeroTopline}>
@@ -1398,7 +1435,11 @@ export function DesignStoreOpsWorkspace({
                 );
               })}
             </ol>
-            <div className={styles.nextStep}>下一步：{getAiRecommendation(issue)}</div>
+            <div className={styles.nextStep}>下一步：{!fixturePresentation && issue.source === "forecastOps"
+              ? savedForecastRecommendation?.state === "recorded"
+                ? "查看下方保存政策建議，確認後再依既有流程建立處置。"
+                : "此告警尚無可核對的保存建議。"
+              : getAiRecommendation(issue)}</div>
           </section>
 
           <section className={styles.storeStrip}>
@@ -1450,6 +1491,7 @@ export function DesignStoreOpsWorkspace({
               <span>EVIDENCE FUSION</span>
               <strong>證據強度 {fixturePresentation ? supportingEvidence.length >= 3 ? "強" : "中" : "不可用"}</strong>
             </div>
+            {!fixturePresentation && issue.source === "forecastOps" ? <StoreOpsForecastQuality read={forecastRead} /> : null}
             <div className={styles.evidenceCards}>
               <article>
                 <small>Google 評價</small>
@@ -1486,7 +1528,15 @@ export function DesignStoreOpsWorkspace({
               >
                 <small>Camera 影像</small>
                 {evCamera ? (
-                  evCamera.lockedReason ? (
+                  !fixturePresentation ? (
+                    <>
+                      <strong>{cameraPurposeRecordPresent ? "調閱目的已記錄" : "影像內容不可用"}</strong>
+                      <p>影像內容不可用；調閱目的紀錄不代表存取授權。</p>
+                      <button className={styles.cameraTrigger} onClick={() => openIssueWorkflow("cameraPurpose")} type="button">
+                        {cameraPurposeRecordPresent ? "更新調閱目的" : "填寫調閱目的"}
+                      </button>
+                    </>
+                  ) : evCamera.lockedReason ? (
                     <>
                       <strong style={{ color: "#d18700" }}>影像鎖定 • 需授權</strong>
                       <button className={styles.cameraTrigger} onClick={() => openIssueWorkflow("cameraPurpose")} type="button">點擊填寫調閱目的</button>
@@ -1567,17 +1617,32 @@ export function DesignStoreOpsWorkspace({
             <div className={styles.evidenceLists}>
               <section>
                 <h4>支持證據 {supportingEvidence.length}</h4>
-                {supportingEvidence.map((e) => <p key={e.id}>{e.title}：{e.summary}</p>)}
+                {supportingEvidence.map((e) => <p key={e.id}>{e.title}：{e.kind === "camera" && !fixturePresentation
+                  ? "影像內容不可用；調閱目的紀錄不代表存取授權。" : e.summary}</p>)}
               </section>
               <section>
                 <h4>反向證據 {contraryEvidence.length}</h4>
-                {contraryEvidence.map((e) => <p key={e.id}>{e.title}：{e.summary}</p>)}
+                {contraryEvidence.map((e) => <p key={e.id}>{e.title}：{e.kind === "camera" && !fixturePresentation
+                  ? "影像內容不可用；調閱目的紀錄不代表存取授權。" : e.summary}</p>)}
                 {contraryEvidence.length === 0 && <p>{fixturePresentation ? "目前無反向反駁證據" : "來源未提供反向證據"}</p>}
               </section>
             </div>
             <div className={styles.aiBox}>
-              <b>AI 建議</b><small>由證據融合產生 · 僅供參考</small>
-              <p>{getAiRecommendation(issue)}</p>
+              <b>AI 建議</b><small>{!fixturePresentation && issue.source === "forecastOps"
+                ? "原 ForecastOps 保存政策建議 · 僅供參考" : "由證據融合產生 · 僅供參考"}</small>
+              {!fixturePresentation && issue.source === "forecastOps" ? <div data-testid="forecast-saved-recommendation">
+                {savedForecastAlert?.state === "recorded" ? <p>
+                  保存告警：{savedForecastAlert.data.level}／{savedForecastAlert.data.reasonCode}；{savedForecastAlert.data.openedAt}
+                </p> : <p>保存告警證據未提供。</p>}
+                {savedForecastRecommendation?.state === "recorded" ? <>
+                  {savedForecastRecommendation.data.actionIds.map(action => <p key={action}>
+                    {savedForecastActionLabel(action)}（{action}）
+                  </p>)}
+                  <p>建議來源：{savedForecastRecommendation.data.handoffId}；{savedForecastRecommendation.data.createdAt}；
+                    保存轉交狀態：{savedForecastRecommendation.data.handoffStatus}</p>
+                </> : <p role="status">此告警尚無可核對的保存建議。</p>}
+                <p>自動根因候選、證據強度與資料信心尚未提供。保存建議不代表因果判定、核准或已執行處置。</p>
+              </div> : <p>{getAiRecommendation(issue)}</p>}
               <button onClick={() => openIssueWorkflow("action")} type="button">採用建議並建立處置</button>
             </div>
           </section>
@@ -1631,7 +1696,8 @@ export function DesignStoreOpsWorkspace({
                   <small>{evidenceTabLabels[activeEvidenceItem.kind]}</small>
                   <strong>{activeEvidenceItem.title}</strong>
                 </span>
-                <p>{activeEvidenceItem.summary}</p>
+                <p>{activeEvidenceItem.kind === "camera" && !fixturePresentation
+                  ? "影像內容不可用；調閱目的紀錄不代表存取授權。" : activeEvidenceItem.summary}</p>
                 <dl>
                   <div>
                     <dt>來源</dt>
@@ -1646,9 +1712,10 @@ export function DesignStoreOpsWorkspace({
                     <dd>{formatCompactDateTime(activeEvidenceItem.occurredAt)}</dd>
                   </div>
                 </dl>
-                {activeEvidenceItem.kind === "camera" && activeEvidenceItem.lockedReason ? (
+                {activeEvidenceItem.kind === "camera" && (activeEvidenceItem.lockedReason || !fixturePresentation) ? (
                   <button onClick={() => openIssueWorkflow("cameraPurpose")} type="button">
-                    輸入調閱目的以檢視
+                    {fixturePresentation ? "輸入調閱目的以檢視" : hasCameraPurposeRecord(activeEvidenceItem, issue, activeAuditEvents)
+                      ? "更新調閱目的" : "填寫調閱目的"}
                   </button>
                 ) : null}
               </div>
@@ -1717,10 +1784,7 @@ export function DesignStoreOpsWorkspace({
               </div>
               </div>
             ) : (
-              <div className={styles.forecastChartSection} data-testid="store-forecast-unavailable" role="tabpanel" id="store-evidence-panel" aria-labelledby="store-evidence-tab-forecastOps" tabIndex={0}>
-                <h4>28 天門市營運營收預測與異常帶</h4>
-                <p>FORECAST_DATA_UNAVAILABLE · Store Ops API 未提供正式 ForecastOps 序列。</p>
-              </div>
+              <StoreOpsForecastView read={forecastRead} storeId={issue.storeId} showQuality={false} />
             )) : null}
 
           </section>

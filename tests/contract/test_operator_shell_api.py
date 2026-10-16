@@ -597,3 +597,66 @@ def test_franchisee_report_rejects_unknown_category_and_blank_message(
         json={"category": "other", "message": "   "},
     )
     assert blank.status_code == 422
+
+
+def test_notification_acknowledgement_hint_follows_actual_principal(client: TestClient) -> None:
+    ops = client.get("/api/v1/operator/shell/notifications", headers=OPS_HEADERS)
+    auditor = client.get("/api/v1/operator/shell/notifications", headers=AUDITOR_HEADERS)
+    assert ops.status_code == auditor.status_code == 200
+    assert ops.json()["actions"]["acknowledge"]["allowed"] is True
+    assert auditor.json()["actions"]["acknowledge"]["allowed"] is False
+    notification_id = auditor.json()["items"][0]["notificationId"]
+    denied = client.post(
+        f"/api/v1/operator/shell/notifications/{notification_id}/acknowledgement",
+        headers=_write(AUDITOR_HEADERS, "notification-view-only"),
+    )
+    assert denied.status_code == 403
+    reread = client.get("/api/v1/operator/shell/notifications", headers=AUDITOR_HEADERS).json()
+    assert all(item["acknowledged"] is False for item in reread["items"])
+
+
+@pytest.mark.parametrize("view", ["initiated", "completed"])
+def test_canonical_task_views_keep_original_http_authority_for_anonymous_and_foreign_role(client: TestClient, view: str) -> None:
+    path = f"/api/v1/operator/shell/tasks?view={view}&taskId=explicit-id"
+    assert client.get(path).status_code == status.HTTP_401_UNAUTHORIZED
+    assert client.get(path, headers=FRANCHISEE_HEADERS).status_code == status.HTTP_403_FORBIDDEN
+
+
+def test_explicit_fixture_task_view_does_not_claim_created_by_or_complete_history(client: TestClient) -> None:
+    response = client.get("/api/v1/operator/shell/tasks?view=completed&taskId=missing", headers=OPS_HEADERS)
+    assert response.status_code == status.HTTP_200_OK
+    body = response.json()
+    assert body["items"] == []
+    assert body["selected"] is None
+    assert body["selectionUnavailable"] is True
+    assert body["meta"]["coverage"]["complete"] is False
+    assert body["meta"]["coverage"]["retentionComplete"] is False
+    assert client.get("/api/v1/operator/shell/tasks?view=invented", headers=OPS_HEADERS).status_code == 422
+
+
+@pytest.mark.parametrize(("headers", "allowed"), [(OPS_HEADERS, True), (AUDITOR_HEADERS, False)])
+def test_notification_preferences_advisory_update_matches_existing_authoritative_guard(client, headers, allowed):
+    before = client.get("/api/v1/operator/shell/notifications/preferences", headers=headers)
+    assert before.status_code == 200
+    assert before.json()["actions"]["update"]["allowed"] is allowed
+    if not allowed:
+        denied = client.put("/api/v1/operator/shell/notifications/preferences",
+            headers=_write(headers, "s4-read-only-denied"),
+            json={"channels": {"inApp": False}, "severityFloor": "critical", "digest": "immediate"})
+        assert denied.status_code == 403
+        after = client.get("/api/v1/operator/shell/notifications/preferences", headers=headers)
+        assert after.json()["preferences"] == before.json()["preferences"]
+
+
+def test_personal_notification_preferences_remain_subject_owned_with_the_same_role(client):
+    path = "/api/v1/operator/shell/notifications/preferences"
+    other = {**OPS_HEADERS, "x-subject-id": "other-real-operator"}
+    other_before = client.get(path, headers=other).json()["preferences"]
+    desired = {"channels": {"inApp": True, "email": False, "push": False}, "severityFloor": "critical", "digest": "immediate"}
+    saved = client.put(path, headers=_write(OPS_HEADERS, "s4-current-subject-preferences"), json=desired)
+    assert saved.status_code == 200
+    assert saved.json()["preferences"] == desired
+    assert saved.json()["auditEvent"]["actorSubjectId"] == OPS_HEADERS["x-subject-id"]
+    assert saved.json()["auditEvent"]["action"] == "update_preferences"
+    assert client.get(path, headers=OPS_HEADERS).json()["preferences"] == desired
+    assert client.get(path, headers=other).json()["preferences"] == other_before

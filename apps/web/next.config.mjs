@@ -52,11 +52,9 @@ const nextConfig = {
       { source: "/interventions", destination: "/operator", permanent: true },
       { source: "/learning", destination: "/operator", permanent: true },
       { source: "/netplan", destination: "/operator", permanent: true },
-      { source: "/notifications", destination: "/operator", permanent: true },
       { source: "/operations", destination: "/operator", permanent: true },
       { source: "/search", destination: "/operator", permanent: true },
       { source: "/settings", destination: "/operator", permanent: true },
-      { source: "/tasks", destination: "/operator", permanent: true },
       {
         source: "/w/operations/interventions",
         destination: "/operator?ws=today&tab=interventions",
@@ -67,7 +65,10 @@ const nextConfig = {
         destination: "/operator?ws=today&tab=interventions&entity=:interventionId",
         permanent: true,
       },
-      { source: "/w/:path*", destination: "/operator", permanent: true },
+      { source: "/w", destination: "/operator", permanent: true },
+      // Keep the original AVM list/detail routes executable; all other retired
+      // /w URLs retain their existing redirects.
+      { source: "/w/:path((?!dealroom/cases(?:/[^/]+)?/?$).*)", destination: "/operator", permanent: true },
     ];
   },
 };

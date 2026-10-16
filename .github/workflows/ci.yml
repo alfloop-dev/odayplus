@@ -515,6 +515,11 @@ jobs:
       - name: Verify Store Ops Package 10 geometry and accessibility
         run: npx playwright test --config tests/visual/operator-store-ops-parity.config.ts
 
+      # Preserve the two reviewed narrow-viewport engineering controls without
+      # adding them to the exact 18-spec/130-case product receipt inventory.
+      - name: Verify Governance long-record geometry at 390 and 1024
+        run: npx playwright test --config tests/visual/operator-governance-long-records.config.ts
+
       # A reviewed task PR must prove its current source through the complete
       # deterministic E2E runner. It must not manufacture production release
       # authority: a well-formed NO-GO Gate 0-6 registry is valid here, while

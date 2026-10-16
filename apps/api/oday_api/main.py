@@ -1983,6 +1983,47 @@ else:
             operator_document_store = SqliteDocumentStore(bundle.engine)
         else:
             operator_document_store = None
+        # The original native routes and Operator consumers share these exact
+        # tenant partitions. Never substitute the bundle's global repository.
+        if operator_document_store is not None:
+            def tenant_document_store(tenant_id: str) -> TenantScopedDocumentStore:
+                return TenantScopedDocumentStore(operator_document_store, tenant_id)
+
+
+            def avm_repository_for_tenant(
+                tenant_id: str,
+            ) -> DurableAVMRepository:
+                return DurableAVMRepository(tenant_document_store(tenant_id))
+
+
+            def netplan_repository_for_tenant(
+                tenant_id: str,
+            ) -> DurableNetPlanRepository:
+                return DurableNetPlanRepository(tenant_document_store(tenant_id))
+
+
+            from shared.infrastructure.persistence.operator_domains import (
+                DurableOperatorDomainStateRepository,
+            )
+            native_listing_state = DurableOperatorDomainStateRepository(operator_document_store, "network-listings")
+
+            def native_netplan_outcome_registry_for_tenant(*, repository, principal, authorize, correlation_id):
+                from shared.infrastructure.persistence.netplan_outcomes import (
+                    DurableNetPlanOutcomeRegistry,
+                )
+                # The request owner supplies its exact admitted tenant repo;
+                # no global/default partition or replacement principal exists.
+                return DurableNetPlanOutcomeRegistry(repository=repository, principal=principal,
+                    authorize=authorize, audit_log=audit_log, queue=job_queue, correlation_id=correlation_id)
+
+            def native_candidate_snapshot_for_tenant(tenant_id: str):
+                return native_listing_state.load(tenant_id) or {}
+        else:
+            avm_repository_for_tenant = None
+            netplan_repository_for_tenant = None
+            native_candidate_snapshot_for_tenant = None
+            native_netplan_outcome_registry_for_tenant = None
+
         from modules.adlift.application.campaign import AdLiftCampaignService
         from modules.adlift.application.campaign_authority import AdLiftCampaignBudgetAuthority
         campaign_budget_authority = AdLiftCampaignBudgetAuthority(
@@ -2153,6 +2194,15 @@ else:
                 require_production_model=require_live_data,
             ),
         )
+        from apps.api.app.routes.market_survey_assignments import (
+            create_canonical_survey_assignment_router,
+        )
+        from modules.market_survey.infrastructure.assignment_factory import CanonicalSurveyFactory
+
+        mount_versioned(api, create_canonical_survey_assignment_router(
+            factory=CanonicalSurveyFactory(bundle, audit_log=audit_log, queue=job_queue),
+            audit_log=audit_log, boundary=default_boundary(),
+        ))
         from modules.opsboard.audit.application.evidence_general_factory import (
             GeneralSiteScoreExportFactory,
         )
@@ -2261,9 +2311,34 @@ else:
                     depreciation_version_pin=avm_dep_pin,
                 )
 
+        from apps.api.app.routes._native_request_owner import NativeRequestOwnerFactory
+        from apps.api.oday_api.security.dependencies import build_engine
+        native_boundary = default_boundary()
+        # Header-only native embedders remain the existing non-live engineering
+        # contract. Any live deployment or configured authentication boundary
+        # uses request-bound tenant owners for both old URL aliases.
+        bind_native_request_owner = require_live_data or native_boundary is not None
+        native_authz = build_engine(audit_log=audit_log)
+        native_avm_owner = NativeRequestOwnerFactory(
+            resource="avm", repository_for_tenant=avm_repository_for_tenant,
+            stores=bundle.store_repository, brands=bundle.brand_repository,
+            audit_log=audit_log, queue=job_queue, boundary=native_boundary, engine=native_authz,
+            formal=require_live_data, production_executor=avm_production_executor,
+            depreciation_version_pin=avm_dep_pin, rollback_receipt=avm_rollback_receipt,
+        ) if bind_native_request_owner else None
+        native_netplan_owner = NativeRequestOwnerFactory(
+            resource="netplan", repository_for_tenant=netplan_repository_for_tenant,
+            stores=bundle.store_repository, brands=bundle.brand_repository,
+            audit_log=audit_log, queue=job_queue, boundary=native_boundary, engine=native_authz,
+            candidate_snapshot_for_tenant=native_candidate_snapshot_for_tenant,
+            outcome_registry_for_tenant=native_netplan_outcome_registry_for_tenant,
+            formal=require_live_data,
+        ) if bind_native_request_owner else None
+
         mount_versioned(
             api,
             create_avm_router(
+                request_owner=native_avm_owner,
                 repository=avm_repo,
                 audit_log=audit_log,
                 job_queue=job_queue,
@@ -2291,6 +2366,7 @@ else:
         mount_versioned(
             api,
             create_netplan_router(
+                request_owner=native_netplan_owner,
                 repository=netplan_repo,
                 feature_flags=feature_flags, job_queue=job_queue,
                 audit_log=audit_log,
@@ -2403,8 +2479,6 @@ else:
         )
         if operator_document_store is not None:
 
-            def tenant_document_store(tenant_id: str) -> TenantScopedDocumentStore:
-                return TenantScopedDocumentStore(operator_document_store, tenant_id)
 
             def listing_repository_for_tenant(
                 tenant_id: str,
@@ -2421,15 +2495,7 @@ else:
             ) -> DurableDecisionStore:
                 return DurableDecisionStore(tenant_document_store(tenant_id))
 
-            def avm_repository_for_tenant(
-                tenant_id: str,
-            ) -> DurableAVMRepository:
-                return DurableAVMRepository(tenant_document_store(tenant_id))
 
-            def netplan_repository_for_tenant(
-                tenant_id: str,
-            ) -> DurableNetPlanRepository:
-                return DurableNetPlanRepository(tenant_document_store(tenant_id))
 
             def priceops_repository_for_tenant(
                 tenant_id: str,
@@ -2447,8 +2513,6 @@ else:
             listing_repository_for_tenant = None
             sitescore_repository_for_tenant = None
             sitescore_decision_repository_for_tenant = None
-            avm_repository_for_tenant = None
-            netplan_repository_for_tenant = None
             priceops_repository_for_tenant = None
 
         identity_user_role_service: Any | None = None

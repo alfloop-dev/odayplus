@@ -47,6 +47,18 @@ export type AVMCasePayload = {
   working_capital?: number;
 };
 
+/** AVMCommand */
+export type AVMCommand = {
+  expectedVersion: string;
+  reason: string;
+  reservePrice?: number | null;
+};
+
+/** AVMCreateCommand */
+export type AVMCreateCommand = {
+  valuationInput: Record<string, unknown>;
+};
+
 /** AcquisitionGapPayload */
 export type AcquisitionGapPayload = {
   current_uncertainty_pct?: number;
@@ -376,6 +388,14 @@ export type CanonicalEvidenceExportPayload = {
   to_time: string;
 };
 
+/** ChangeFieldAssignment */
+export type ChangeFieldAssignment = {
+  assignedTo?: string | null;
+  expectedRevision: number;
+  expiresAt?: string | null;
+  reason: string;
+};
+
 /** ClosePayload */
 export type ClosePayload = {
   actor: string;
@@ -500,6 +520,15 @@ export type CreateActionPayload = {
   sourceRecommendationId?: string | null;
   store?: string;
   targetLift: number;
+};
+
+/** CreateFieldAssignment */
+export type CreateFieldAssignment = {
+  assignedTo: string;
+  expiresAt: string;
+  reason: string;
+  targetId: string;
+  targetKind: "CANDIDATE_SITE" | "HEAT_ZONE";
 };
 
 /** DataRoomExportPayload */
@@ -2059,6 +2088,26 @@ export type StoreOpsTransitionPayload = {
   storeName?: string | null;
 };
 
+/** SubmitFieldEvidence */
+export type SubmitFieldEvidence = {
+  attributes?: Record<string, unknown>;
+  confidence?: number | null;
+  expectedRevision: number;
+  location: SurveyLocationPayload;
+  mediaIds?: string[];
+  reason: string;
+  surveyedAt: string;
+};
+
+/** SurveyLocationPayload */
+export type SurveyLocationPayload = {
+  address?: string | null;
+  h3_index?: string | null;
+  latitude: number;
+  longitude: number;
+  srid?: number;
+};
+
 /** Assign a Task Center task to a role/subject. */
 export type TaskAssignRequest = {
   assigneeId: string;
@@ -2116,6 +2165,17 @@ export type UnmergeRequest = {
   reason: string;
   replacement_edges: IdentityPartition[];
   risk_acknowledged: true;
+};
+
+/** UploadFieldAttachment */
+export type UploadFieldAttachment = {
+  caption?: string | null;
+  capturedAt: string;
+  contentType: string;
+  dataBase64: string;
+  expectedRevision: number;
+  mediaKind: "PHOTO" | "VIDEO" | "AUDIO" | "DOCUMENT" | "SIGNATURE" | "OTHER";
+  reason: string;
 };
 
 /** UrlIntakeRequest */
@@ -2454,6 +2514,14 @@ export const API_PATHS = {
   "/api/v1/market-intelligence/health": ["GET"],
   "/api/v1/market-intelligence/sites/context/batch": ["POST"],
   "/api/v1/market-intelligence/sites/{site_id}/context": ["GET"],
+  "/api/v1/market-survey/assignees": ["GET"],
+  "/api/v1/market-survey/assignments": ["GET", "POST"],
+  "/api/v1/market-survey/assignments/{assignment_id}": ["GET"],
+  "/api/v1/market-survey/assignments/{assignment_id}/attachments": ["GET", "POST"],
+  "/api/v1/market-survey/assignments/{assignment_id}/attachments/{media_id}/content": ["GET"],
+  "/api/v1/market-survey/assignments/{assignment_id}/evidence": ["GET"],
+  "/api/v1/market-survey/assignments/{assignment_id}/submit": ["POST"],
+  "/api/v1/market-survey/assignments/{assignment_id}/{operation}": ["POST"],
   "/api/v1/match-cases/{match_case_id}/decisions": ["POST"],
   "/api/v1/netplan/scenarios": ["GET", "POST"],
   "/api/v1/netplan/scenarios/{scenario_id}": ["GET", "PUT"],
@@ -2465,6 +2533,15 @@ export const API_PATHS = {
   "/api/v1/netplan/scenarios/{scenario_id}/submit": ["POST"],
   "/api/v1/operator/approvals": ["GET"],
   "/api/v1/operator/approvals/{approval_id}/decision": ["POST"],
+  "/api/v1/operator/avm/cases": ["GET", "POST"],
+  "/api/v1/operator/avm/cases/{case_id}": ["GET"],
+  "/api/v1/operator/avm/cases/{case_id}/dataroom": ["POST"],
+  "/api/v1/operator/avm/cases/{case_id}/dataroom/exports": ["POST"],
+  "/api/v1/operator/avm/cases/{case_id}/dataroom/exports/{export_id}": ["GET"],
+  "/api/v1/operator/avm/cases/{case_id}/finance-approval": ["POST"],
+  "/api/v1/operator/avm/cases/{case_id}/normalize": ["POST"],
+  "/api/v1/operator/avm/cases/{case_id}/value": ["POST"],
+  "/api/v1/operator/avm/context": ["GET"],
   "/api/v1/operator/bootstrap": ["GET"],
   "/api/v1/operator/comments": ["GET", "POST"],
   "/api/v1/operator/comments/{comment_id}": ["PATCH"],
@@ -2539,6 +2616,7 @@ export const API_PATHS = {
   "/api/v1/operator/shell/franchisee": ["GET"],
   "/api/v1/operator/shell/franchisee/acknowledgement": ["POST"],
   "/api/v1/operator/shell/franchisee/reports": ["POST"],
+  "/api/v1/operator/shell/franchisee/reports/{report_id}": ["GET"],
   "/api/v1/operator/shell/home": ["GET"],
   "/api/v1/operator/shell/notifications": ["GET"],
   "/api/v1/operator/shell/notifications/preferences": ["GET", "PUT"],

@@ -259,3 +259,65 @@ def test_native_workflow_after_write_fault_rolls_back_then_same_request_commits(
     assert set(_events(case["bundle"], case["tenant"])) == after_ids
     assert _job_count(case["bundle"]) == before_jobs + 1
     client.close()
+
+
+
+def test_native_camera_purpose_is_a_record_not_current_media_authority(case):
+    client = _prepare_via_routes(case, "camera-purpose")
+    try:
+        # Explicit owned metadata fixture, not footage, an access credential or a provider.
+        state = case["repo"].get_state()
+        issue = next(item for item in state["issues"] if item["id"] == case["issue"])
+        camera = next(item for item in state["evidence"]
+                      if item["kind"] == "camera" and item["id"] in issue["evidenceIds"])
+        camera.update({"issueId": case["issue"], "title": "Synthetic camera incident",
+                       "sourceLabel": "Owned metadata fixture", "polarity": "supporting",
+                       "occurredAt": issue["createdAt"], "confidence": None,
+                       "unlockedAt": "2001-01-01T00:00:00Z",
+                       "mediaUrl": "fixture://never-served", "accessToken": "synthetic-never-valid",
+                       "content": "synthetic metadata only"})
+        camera.pop("lockedReason", None)  # A legacy declaration is not current authority.
+        case["repo"].save_state(state)
+        before = deepcopy(case["repo"].get_state())
+        before_ids = set(_events(case["bundle"], case["tenant"]))
+        before_jobs = _job_count(case["bundle"])
+        read = client.get(f"{BASE}/issues/{case['issue']}/evidence", headers=case["headers"])
+        assert read.status_code == 200, read.text
+        old_projection = next(item for item in read.json()["evidence"] if item["id"] == camera["id"])
+        assert old_projection["lockedReason"] and old_projection["unlockedAt"] == camera["unlockedAt"]
+        assert not {"mediaUrl", "accessToken", "content", "expiresAt"} & set(old_projection)
+        assert case["repo"].get_state() == before
+        key = "native-camera-purpose-only"
+        saved = _post(client, case, "camera-purpose", PAYLOADS["camera-purpose"], key)
+        assert saved.status_code == 200, saved.text
+        body = saved.json()
+        projection = body["evidenceItem"]
+        assert projection["purposeRecordedAt"] and projection["lockedReason"]
+        assert projection["purpose"] == PAYLOADS["camera-purpose"]["purpose"]
+        assert projection["retentionHours"] == 12
+        assert projection["unlockedAt"] == camera["unlockedAt"]  # Never renewed into access authority.
+        assert not {"mediaUrl", "accessToken", "content", "expiresAt"} & set(projection)
+        record = body["issue"]["workflowRecords"][-1]
+        assert record["action"] == "camera-purpose" and record["submission"] == PAYLOADS["camera-purpose"]
+        assert record["actorSubjectId"] == case["subject"]
+        events = _events(case["bundle"], case["tenant"])
+        assert set(events) - before_ids == {record["auditEventId"]}
+        event = events[record["auditEventId"]]
+        assert event.actor == case["subject"] and event.metadata["reviewRecordHash"] == binding_hash(record)
+        assert "auditNote" not in event.metadata
+        assert _job_count(case["bundle"]) == before_jobs + 1
+        raw = case["repo"].get_state()
+        raw_camera = next(item for item in raw["evidence"] if item["id"] == camera["id"])
+        assert raw_camera["mediaUrl"] == camera["mediaUrl"]  # Read masking does not rewrite history.
+        assert raw_camera["unlockedAt"] == camera["unlockedAt"]
+        again = client.get(f"{BASE}/issues/{case['issue']}/evidence", headers=case["headers"])
+        assert again.status_code == 200, again.text
+        current = next(item for item in again.json()["evidence"] if item["id"] == camera["id"])
+        assert current == projection
+        replay = _post(client, case, "camera-purpose", PAYLOADS["camera-purpose"], key)
+        assert replay.status_code == 200 and replay.json()["idempotentReplay"] is True
+        assert replay.json()["evidenceItem"] == projection
+        assert set(_events(case["bundle"], case["tenant"])) == set(events)
+        assert _job_count(case["bundle"]) == before_jobs + 1
+    finally:
+        client.close()

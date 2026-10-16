@@ -148,6 +148,15 @@ export type GrowthItem = {
   objective: string;
   status: GrowthStatus;
   observationWindow: string;
+  observationWindowDays?: number;
+  /** Canonical server clock/window readback; missing legacy anchors stay unknown. */
+  observation?: {
+    status: "MATURE" | "OBSERVING" | "UNAVAILABLE";
+    startedAt: string | null;
+    endsAt: string | null;
+    days: number | null;
+    observedAt: string;
+  };
   /** target lift the action was approved against, percent. */
   targetLift: number;
   /** observed lift once the window matures; null while still observing. */
@@ -300,6 +309,7 @@ export const GROWTH_ITEMS: GrowthItem[] = [
     objective: "晚餐時段營收 P50 +2.0%，毛利不低於現況。",
     status: "OUTCOME_READY",
     observationWindow: "2026-06-20 ~ 2026-07-04（14 天）",
+    observation: { status: "MATURE", startedAt: "2026-06-20T00:00:00+00:00", endsAt: "2026-07-04T00:00:00+00:00", days: 14, observedAt: "2026-07-04T06:10:00+00:00" },
     targetLift: 2.0,
     observedLift: 2.6,
     evidenceLevel: "L3",
@@ -324,6 +334,7 @@ export const GROWTH_ITEMS: GrowthItem[] = [
     objective: "宵夜外送訂單量 P50 +3.0%，營收不低於現況。",
     status: "OUTCOME_READY",
     observationWindow: "2026-06-18 ~ 2026-07-02（14 天）",
+    observation: { status: "MATURE", startedAt: "2026-06-18T00:00:00+00:00", endsAt: "2026-07-02T00:00:00+00:00", days: 14, observedAt: "2026-07-02T06:10:00+00:00" },
     targetLift: 3.0,
     observedLift: -1.4,
     evidenceLevel: "L2",
@@ -347,6 +358,7 @@ export const GROWTH_ITEMS: GrowthItem[] = [
     objective: "午餐加價包滲透率 P50 +1.5%，需求彈性可控。",
     status: "OUTCOME_READY",
     observationWindow: "2026-06-25 ~ 2026-07-09（14 天）",
+    observation: { status: "MATURE", startedAt: "2026-06-25T00:00:00+00:00", endsAt: "2026-07-09T00:00:00+00:00", days: 14, observedAt: "2026-07-09T06:10:00+00:00" },
     targetLift: 1.5,
     observedLift: 0.6,
     evidenceLevel: "L1",
@@ -959,8 +971,20 @@ const OUTCOME_STAGES: GrowthStatus[] = ["OUTCOME_READY", "CLOSED"];
  *     but below target                    → INCONCLUSIVE
  *   - met target with adequate evidence   → EFFECTIVE
  */
+export function hasMatureGrowthObservation(item: GrowthItem): boolean {
+  const window = item.observation;
+  if (!window || window.status !== "MATURE" || !Number.isInteger(window.days)
+      || window.days === null || window.days < 1 || window.days > 365
+      || !window.startedAt || !window.endsAt) return false;
+  const start = Date.parse(window.startedAt);
+  const end = Date.parse(window.endsAt);
+  const observed = Date.parse(window.observedAt);
+  return Number.isFinite(start) && Number.isFinite(end) && Number.isFinite(observed)
+    && end - start === window.days * 86_400_000 && observed >= end;
+}
+
 export function judgeEffectiveness(item: GrowthItem): GrowthOutcome {
-  if (!OUTCOME_STAGES.includes(item.status) || item.observedLift === null) {
+  if (!hasMatureGrowthObservation(item) || !OUTCOME_STAGES.includes(item.status) || item.observedLift === null) {
     return "PENDING";
   }
   if (item.observedLift <= 0) {

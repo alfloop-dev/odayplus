@@ -19,6 +19,7 @@
  */
 
 import type { OdpApiClient } from "@oday-plus/openapi-client";
+import { cellToLatLng, getResolution, isValidCell } from "h3-js";
 import type { ApiBinding } from "../../../src/lib/api/binding.ts";
 import { loadApiBinding } from "../../../src/lib/api/binding.ts";
 import type { Candidate, Listing, OperatorHeatZone } from "../types.ts";
@@ -38,27 +39,92 @@ export type CandidateBinding = ApiBinding<Candidate>;
 // missing optional fields get safe defaults.
 // ---------------------------------------------------------------------------
 
+function recordedPolygon(value: unknown): GeoJSON.Polygon | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const polygon = value as Record<string, unknown>;
+  if (polygon.type !== "Polygon" || !Array.isArray(polygon.coordinates) || polygon.coordinates.length === 0) return null;
+  const rings: number[][][] = [];
+  for (const ring of polygon.coordinates) {
+    if (!Array.isArray(ring) || ring.length < 4) return null;
+    const positions: number[][] = [];
+    for (const point of ring) {
+      if (!Array.isArray(point) || point.length !== 2
+        || typeof point[0] !== "number" || !Number.isFinite(point[0]) || Math.abs(point[0]) > 180
+        || typeof point[1] !== "number" || !Number.isFinite(point[1]) || Math.abs(point[1]) > 90) return null;
+      positions.push([point[0], point[1]]);
+    }
+    if (positions[0][0] !== positions[positions.length - 1][0]
+      || positions[0][1] !== positions[positions.length - 1][1]) return null;
+    rings.push(positions);
+  }
+  return { type: "Polygon", coordinates: rings };
+}
+
+function recordedHeatZoneEvidence(raw: Record<string, unknown>): OperatorHeatZone["mapEvidence"] {
+  const h3 = raw.h3_index;
+  const number = (key: string, max = 1) => {
+    const value = raw[key];
+    return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max;
+  };
+  const text = (key: string) => {
+    const value = raw[key];
+    return typeof value === "string" && value.trim().length > 0;
+  };
+  const time = (key: string) => text(key) && Number.isFinite(Date.parse(raw[key] as string));
+  const states = ["UNTOUCHED", "PARTIALLY_ABSORBED", "SATURATED", "UNDER_REALIZED", "STILL_EXPANDABLE", "SUPPRESSED_LOW_CONFIDENCE"] as const;
+  const state = states.find((value) => value === raw.state);
+  if (!text("heat_zone_id") || typeof h3 !== "string" || !isValidCell(h3)
+    || raw.h3_resolution !== getResolution(h3) || !number("score", 100)
+    || typeof raw.priority_rank !== "number" || !Number.isInteger(raw.priority_rank) || raw.priority_rank < 1
+    || !state || !number("confidence")
+    || !["unmet_demand_score", "format_fit_score", "cannibalization_risk_score", "rent_feasibility_score", "listing_availability_score"].every((key) => number(key))
+    || !text("model_version") || !text("feature_version")
+    || !["feature_snapshot_time", "prediction_origin_time", "last_scored_at"].every(time)
+    || !["reasons", "warnings"].every((key) => Array.isArray(raw[key])
+      && (raw[key] as unknown[]).every((value) => typeof value === "string"))
+    || !Array.isArray(raw.source_snapshot_ids) || raw.source_snapshot_ids.length === 0
+    || !raw.source_snapshot_ids.every((id) => typeof id === "string" && id.trim().length > 0)) return undefined;
+  // No geometry property in the list DTO, or explicit geometry:null, remains
+  // null. A real H3 reference alone does not override the native null contract.
+  return {
+    h3Index: h3, h3Resolution: getResolution(h3), geometry: recordedPolygon(raw.geometry),
+    score: raw.score as number, priorityRank: raw.priority_rank, state, confidence: raw.confidence as number,
+    unmetDemandScore: raw.unmet_demand_score as number, formatFitScore: raw.format_fit_score as number,
+    cannibalizationRisk: raw.cannibalization_risk_score as number, rentFeasibility: raw.rent_feasibility_score as number,
+    listingAvailability: raw.listing_availability_score as number, modelVersion: raw.model_version as string,
+    featureVersion: raw.feature_version as string, featureSnapshotTime: raw.feature_snapshot_time as string,
+    predictionOriginTime: raw.prediction_origin_time as string, lastScoredAt: raw.last_scored_at as string,
+    sourceSnapshotIds: [...raw.source_snapshot_ids] as string[],
+  };
+}
+
 function adaptHeatZone(raw: Record<string, unknown>): OperatorHeatZone {
   // The backend scores use h3_index as the stable zone id; we propagate it
   // directly so the frontend lens map can show real IDs.
-  const id = (raw["h3_index"] as string | undefined) ?? String(raw["id"] ?? "HZ-UNKNOWN");
-  const unmetDemand = Number(raw["unmet_demand"] ?? raw["unmetDemand"] ?? 0);
-  const confidence = raw["confidence"] != null ? Number(raw["confidence"]) : null;
+  const mapEvidence = recordedHeatZoneEvidence(raw);
+  const id = (typeof raw.heat_zone_id === "string" && raw.heat_zone_id.trim() ? raw.heat_zone_id : undefined)
+    ?? (raw["h3_index"] as string | undefined) ?? String(raw["id"] ?? "HZ-UNKNOWN");
+  const unitMetric = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1 ? value : null;
+  const demandGap = unitMetric(raw.demand_gap ?? raw.demandGap);
+  const rank = raw.rank;
+  const risk = raw.cannibalization_risk ?? raw.cannibalizationRisk;
+  const recordedRisk = typeof risk === "string" && ["low", "medium", "high", "critical"].includes(risk)
+    ? risk as OperatorHeatZone["cannibalizationRisk"] : null;
+  const confidence = unitMetric(raw.confidence);
+  const nativeCentroid = mapEvidence ? cellToLatLng(mapEvidence.h3Index) : null;
 
   return {
     id,
     label: (raw["label"] as string | undefined) ?? id,
-    rank: Number(raw["rank"] ?? 999),
-    // centroid: [lng, lat] — fall back to [0,0] if not provided
-    centroid: Array.isArray(raw["centroid"])
-      ? (raw["centroid"] as [number, number])
-      : [0, 0],
-    demandGap: unmetDemand,
-    competitionIndex: Number(raw["competition_index"] ?? raw["competitionIndex"] ?? 0),
-    cannibalizationRisk:
-      (raw["cannibalization_risk"] as OperatorHeatZone["cannibalizationRisk"]) ??
-      (raw["cannibalizationRisk"] as OperatorHeatZone["cannibalizationRisk"]) ??
-      "low",
+    rank: mapEvidence?.priorityRank ?? (typeof rank === "number" && Number.isInteger(rank) && rank >= 1 ? rank : null),
+    // A missing coordinate is unavailable, never a recorded [0,0].
+    centroid: nativeCentroid ? [nativeCentroid[1], nativeCentroid[0]] : Array.isArray(raw.centroid) && raw.centroid.length === 2
+      && raw.centroid.every((value) => typeof value === "number" && Number.isFinite(value))
+      && Math.abs(raw.centroid[0]) <= 180 && Math.abs(raw.centroid[1]) <= 90
+      ? [raw.centroid[0], raw.centroid[1]] : null,
+    demandGap,
+    competitionIndex: unitMetric(raw.competition_index ?? raw.competitionIndex),
+    cannibalizationRisk: recordedRisk,
     rentBand: (raw["rent_band"] as string | undefined) ?? (raw["rentBand"] as string | undefined) ?? "N/A",
     confidence,
     recommendedLens:
@@ -66,8 +132,10 @@ function adaptHeatZone(raw: Record<string, unknown>): OperatorHeatZone {
       (raw["recommendedLens"] as OperatorHeatZone["recommendedLens"]) ??
       "demand",
     reasons: Array.isArray(raw["reasons"]) ? (raw["reasons"] as string[]) : [],
-    risks: Array.isArray(raw["risks"]) ? (raw["risks"] as string[]) : [],
+    risks: mapEvidence ? [...raw.warnings as string[]]
+      : Array.isArray(raw["risks"]) ? (raw["risks"] as string[]) : [],
     nextStep: (raw["next_step"] as string | undefined) ?? (raw["nextStep"] as string | undefined) ?? "",
+    ...(mapEvidence ? { mapEvidence } : {}),
   };
 }
 

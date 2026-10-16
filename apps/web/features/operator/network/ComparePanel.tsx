@@ -122,7 +122,7 @@ export function ComparePanel({
                 {fallback.columns.map((column) => (
                   <th key={column.zoneId}>
                     {column.label}
-                    <small>rank #{column.rank}</small>
+                    <small>{column.rank === null ? "未排名" : `rank #${column.rank}`}</small>
                   </th>
                 ))}
               </tr>

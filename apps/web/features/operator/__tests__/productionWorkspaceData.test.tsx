@@ -143,13 +143,16 @@ describe("recorded CameraPurpose native producer contract", () => {
     expect(screen.queryByText("影像已解鎖")).not.toBeInTheDocument();
   });
 
-  it.each(["true", "false"])("renders recorded unlock from native receipt without reviving demo health when production=%s", async (productionMode) => {
+  it.each(["true", "false"])("renders a recorded purpose without claiming media access or reviving demo health when production=%s", async (productionMode) => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", productionMode);
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(nativeCameraPurpose.snapshot), {
       status: 200, headers: { "Content-Type": "application/json" },
     })));
     render(<DesignStoreOpsWorkspace initialIssueId="ISS-1024" onOpenWorkflow={vi.fn()} />);
-    expect(await screen.findByText("影像已解鎖")).toBeInTheDocument();
+    expect(await screen.findByText("調閱目的已記錄")).toBeInTheDocument();
+    expect(screen.queryByText("影像已解鎖")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Camera evidence unlocked for a recorded, audit-scoped purpose/)).not.toBeInTheDocument();
+    expect(screen.getAllByText("影像內容不可用；調閱目的紀錄不代表存取授權。").length).toBeGreaterThan(0);
     expect(screen.queryByText("14 台")).not.toBeInTheDocument();
     expect(screen.queryByText("交易正常")).not.toBeInTheDocument();
   });
@@ -169,6 +172,41 @@ describe("recorded CameraPurpose native producer contract", () => {
     await screen.findByLabelText("ISS-1024 detail");
     expect(screen.getAllByText(nativeCameraPurpose.evidenceItem.title).length).toBeGreaterThan(0);
     expect(screen.queryByText("影像已解鎖")).not.toBeInTheDocument();
+  });
+});
+
+describe("camera purpose metadata is not media access", () => {
+  it("shows a native purposeRecordedAt receipt while the current content remains unavailable", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    const snapshot = structuredClone(nativeCameraPurpose.snapshot);
+    const camera = snapshot.evidence.find((row) => row.id === nativeCameraPurpose.evidenceItem.id)! as EvidenceItem;
+    camera.purposeRecordedAt = camera.unlockedAt;
+    delete camera.unlockedAt;
+    camera.lockedReason = "Current camera content authorization is unavailable";
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify(snapshot), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    }))));
+    render(<DesignStoreOpsWorkspace initialIssueId="ISS-1024" onOpenWorkflow={vi.fn()} />);
+    expect(await screen.findByText("調閱目的已記錄")).toBeVisible();
+    expect(screen.getByRole("button", { name: "更新調閱目的" })).toBeVisible();
+    expect(screen.queryByText("影像已解鎖")).not.toBeInTheDocument();
+    expect(document.querySelector("img,video,audio")).toBeNull();
+    expect(screen.getAllByText("影像內容不可用；調閱目的紀錄不代表存取授權。").length).toBeGreaterThan(0);
+  });
+
+  it("does not label an unmatched camera purpose audit as a recorded purpose", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    const snapshot = structuredClone(nativeCameraPurpose.snapshot);
+    const audit = snapshot.auditEvents.find((row) => row.action === "evidence.camera_purpose.recorded")! as AuditEvent;
+    audit.metadata!.evidenceId = "different-owned-evidence";
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify(snapshot), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    }))));
+    render(<DesignStoreOpsWorkspace initialIssueId="ISS-1024" onOpenWorkflow={vi.fn()} />);
+    expect(await screen.findByText("影像內容不可用")).toBeVisible();
+    expect(screen.queryByText("調閱目的已記錄")).not.toBeInTheDocument();
+    expect(screen.queryByText("影像已解鎖")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "填寫調閱目的" })).toBeVisible();
   });
 });
 
@@ -393,7 +431,11 @@ describe("production workspace data contracts", () => {
 
     const detail = await screen.findByLabelText("LIVE-ISSUE-1 detail");
     const fusion = within(detail).getByRole("heading", { name: "證據融合" }).closest("section")!;
-    for (const kind of kinds) expect(within(fusion).getByText(`來源證據 ${kind}`)).toBeInTheDocument();
+    for (const kind of kinds.filter((kind) => kind !== "camera")) expect(within(fusion).getByText(`來源證據 ${kind}`)).toBeInTheDocument();
+    expect(within(fusion).queryByText("來源證據 camera")).not.toBeInTheDocument();
+    expect(within(fusion).queryByText("來源摘要 camera")).not.toBeInTheDocument();
+    expect(within(fusion).getByText("影像內容不可用")).toBeVisible();
+    expect(within(fusion).getByText("影像內容不可用；調閱目的紀錄不代表存取授權。")).toBeVisible();
     expect(fusion).not.toHaveTextContent(/★|未回覆|Zendesk 異常|交易延遲警告|Telemetry 警告|四燈評估警告|影像已解鎖/);
     const panel = within(screen.getByRole("tabpanel"));
     const confidence = panel.getByText("信心度").closest("div")!;

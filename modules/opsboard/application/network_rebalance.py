@@ -19,6 +19,7 @@ import copy
 import logging
 import uuid
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -354,6 +355,15 @@ class NetworkRebalanceService:
         if self._require_canonical:
             self._refresh_canonical_stores()
 
+    @contextmanager
+    def transaction_scope(self, engine: Any, tenant_id: str):
+        """Canonical mutations share the resolver's SQL tenant lock."""
+        if (tenant_id != self._tenant_id
+                or any(getattr(getattr(owner, "_store", None), "engine", None) is not engine
+                       for owner in (self._avm_repository, self._netplan_repository))):
+            raise NetworkRebalanceRuntimeUnavailable(model="AVM/NetPlan SQL owner", store_id="unscoped")
+        yield
+
     def reset(self) -> dict[str, Any]:
         if self._require_canonical:
             self._state["auditEvents"] = []
@@ -647,6 +657,7 @@ class NetworkRebalanceService:
         idempotency_key: str | None,
         correlation_id: str | None,
         simulate_unavailable: bool = False,
+        canonical_scenario_id: str | None = None,
     ) -> dict[str, Any]:
         cache_key = ("solve_netplan", idempotency_key or "")
         if idempotency_key and cache_key in self._idempotency_cache:
@@ -665,7 +676,8 @@ class NetworkRebalanceService:
                 self._netplan_repository.get_scenario(scenario_id) for scenario_id in scenario_ids
             ]
             scenario = next(
-                (item for item in scenarios if item is not None and item.status.value == "draft"),
+                (item for item in scenarios if item is not None and item.status.value == "draft"
+                 and (canonical_scenario_id is None or item.scenario_id == canonical_scenario_id)),
                 None,
             )
             if scenario is None:
@@ -2094,6 +2106,8 @@ class NetworkRebalanceService:
         the record of the numbers the operator was shown.
         """
 
+        if list(cache_key) in self._state.get("netPlanBuilderInvalidatedCommands", []):
+            raise NetworkRebalanceConflict("scenario inputs changed; use a new command after re-solving")
         result = _copy(self._idempotency_cache[cache_key])
         # Same condition under which a read re-derives the card. Fixture mode has
         # no report store to re-derive from, and holding replay to a rule the GET

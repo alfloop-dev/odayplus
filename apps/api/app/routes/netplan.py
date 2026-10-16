@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
+from apps.api.oday_api.runtime_mode import live_data_required
 from models.shared_ml import (
     ProductionExecutionConfigurationError,
     production_execution_required,
@@ -20,6 +22,11 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
 else:
+    from apps.api.app.routes._native_request_owner import (
+        native_audit_actor,
+        native_audit_metadata,
+        native_response,
+    )
     from modules.netplan.application import (
         NetPlanApprovalError,
         NetPlanNotFoundError,
@@ -96,6 +103,7 @@ else:
         runtime_mode: str | None = None,
         feature_flags: Any | None = None,
         job_queue: Any | None = None,
+        request_owner: Any | None = None,
     ) -> APIRouter:
         from apps.api.app.routes._common import runtime_binding_guard
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
@@ -123,6 +131,30 @@ else:
         active_audit_log = audit_log or InMemoryAuditLog()
         authz_engine = build_engine(audit_log=active_audit_log)
 
+
+        def permission(action):
+            return (request_owner.permission(action) if request_owner is not None else
+                    require_permission("netplan", action, engine=authz_engine))
+
+        @contextmanager
+        def owned_service(request, action, body=None):
+            if request_owner is None:
+                # Existing standalone native embedders are an engineering lane.
+                # They cannot become a live HTTP owner through environment drift.
+                if production_required or live_data_required():
+                    raise HTTPException(503, "NATIVE_REQUEST_OWNER_REQUIRED")
+                yield service
+                return
+            with request_owner.operation(request, action, body) as owner:
+                try:
+                    bound = NetPlanService(repository=owner.repository, production_executor=production_executor,
+                        approval_verifier=approval_verifier, policy_repository=policy_repository,
+                        runtime_mode=runtime_mode, feature_flags=feature_flags, job_queue=job_queue,
+                        outcome_tracker=owner.outcome_registry())
+                except ProductionExecutionConfigurationError as exc:
+                    raise HTTPException(503, {"code": exc.code, "message": str(exc)}) from exc
+                yield bound
+
         require_runtime_binding = runtime_binding_guard(composition_error)
 
         router = APIRouter(
@@ -131,195 +163,205 @@ else:
             dependencies=[Depends(require_runtime_binding)],
         )
 
-        @router.post("/scenarios", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("netplan", Action.CREATE, engine=authz_engine))])
+        @router.post("/scenarios", status_code=status.HTTP_201_CREATED, dependencies=[Depends(permission(Action.CREATE))])
         def create_scenario(body: NetPlanScenarioPayload, request: Request) -> dict[str, Any]:
-            try:
-                scenario = service.create_scenario(
-                    tenant_id=body.tenant_id,
-                    scenario_name=body.scenario_name,
-                    planning_horizon=body.planning_horizon,
-                    constraints=NetPlanConstraints.from_mapping(body.constraints),
-                    existing_stores=body.existing_stores,
-                    candidate_sites=body.candidate_sites,
-                    scenario_id=body.scenario_id,
-                    correlation_id=request.state.correlation_id,
-                    created_at=_parse_time(body.created_at),
+            with owned_service(request, Action.CREATE, body) as service:
+                try:
+                    scenario = service.create_scenario(
+                        tenant_id=body.tenant_id,
+                        scenario_name=body.scenario_name,
+                        planning_horizon=body.planning_horizon,
+                        constraints=NetPlanConstraints.from_mapping(body.constraints),
+                        existing_stores=body.existing_stores,
+                        candidate_sites=body.candidate_sites,
+                        scenario_id=body.scenario_id,
+                        correlation_id=request.state.correlation_id,
+                        created_at=_parse_time(body.created_at),
+                    )
+                except ValueError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=str(exc),
+                    ) from exc
+                payload = scenario.to_dict()
+                payload["audit_event_id"] = _record_audit(
+                    active_audit_log,
+                    request,
+                    event_type="netplan.scenario_created.v1",
+                    actor="system",
+                    action="create_scenario",
+                    resource=f"netplan/scenarios/{scenario.scenario_id}",
+                    outcome="created",
+                    metadata={"tenant_id": scenario.tenant_id},
                 )
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=str(exc),
-                ) from exc
-            payload = scenario.to_dict()
-            payload["audit_event_id"] = _record_audit(
-                active_audit_log,
-                request,
-                event_type="netplan.scenario_created.v1",
-                actor="system",
-                action="create_scenario",
-                resource=f"netplan/scenarios/{scenario.scenario_id}",
-                outcome="created",
-                metadata={"tenant_id": scenario.tenant_id},
-            )
-            return payload
+                return native_response(request, payload)
 
-        @router.put("/scenarios/{scenario_id}", dependencies=[Depends(require_permission("netplan", Action.CREATE, engine=authz_engine))])
+        @router.put("/scenarios/{scenario_id}", dependencies=[Depends(permission(Action.CREATE))])
         def update_scenario(scenario_id: str, body: NetPlanUpdateScenarioPayload, request: Request) -> dict[str, Any]:
-            try:
-                scenario = service.update_scenario(
-                    scenario_id,
-                    scenario_name=body.scenario_name,
-                    planning_horizon=body.planning_horizon,
-                    constraints=NetPlanConstraints.from_mapping(body.constraints) if body.constraints is not None else None,
-                    existing_stores=body.existing_stores,
-                    candidate_sites=body.candidate_sites,
+            with owned_service(request, Action.CREATE, body) as service:
+                try:
+                    scenario = service.update_scenario(
+                        scenario_id,
+                        scenario_name=body.scenario_name,
+                        planning_horizon=body.planning_horizon,
+                        constraints=NetPlanConstraints.from_mapping(body.constraints) if body.constraints is not None else None,
+                        existing_stores=body.existing_stores,
+                        candidate_sites=body.candidate_sites,
+                    )
+                except (NetPlanNotFoundError, ValueError) as exc:
+                    status_code = (
+                        status.HTTP_404_NOT_FOUND
+                        if isinstance(exc, NetPlanNotFoundError)
+                        else status.HTTP_422_UNPROCESSABLE_ENTITY
+                    )
+                    raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+                payload = scenario.to_dict()
+                payload["audit_event_id"] = _record_audit(
+                    active_audit_log,
+                    request,
+                    event_type="netplan.scenario_updated.v1",
+                    actor="system",
+                    action="update_scenario",
+                    resource=f"netplan/scenarios/{scenario.scenario_id}",
+                    outcome="updated",
+                    metadata={"tenant_id": scenario.tenant_id},
                 )
-            except (NetPlanNotFoundError, ValueError) as exc:
-                status_code = (
-                    status.HTTP_404_NOT_FOUND
-                    if isinstance(exc, NetPlanNotFoundError)
-                    else status.HTTP_422_UNPROCESSABLE_ENTITY
-                )
-                raise HTTPException(status_code=status_code, detail=str(exc)) from exc
-            payload = scenario.to_dict()
-            payload["audit_event_id"] = _record_audit(
-                active_audit_log,
-                request,
-                event_type="netplan.scenario_updated.v1",
-                actor="system",
-                action="update_scenario",
-                resource=f"netplan/scenarios/{scenario.scenario_id}",
-                outcome="updated",
-                metadata={"tenant_id": scenario.tenant_id},
-            )
-            return payload
+                return native_response(request, payload)
 
-        @router.get("/scenarios", dependencies=[Depends(require_permission("netplan", Action.VIEW, engine=authz_engine))])
-        def list_scenarios() -> dict[str, Any]:
-            scenarios = service.repository.list_scenarios()
-            return {"items": [scenario.to_dict() for scenario in scenarios], "count": len(scenarios)}
+        @router.get("/scenarios", dependencies=[Depends(permission(Action.VIEW))])
+        def list_scenarios(request: Request) -> dict[str, Any]:
+            with owned_service(request, Action.VIEW) as service:
+                scenarios = service.repository.list_scenarios()
+                return native_response(request, {"items": [scenario.to_dict() for scenario in scenarios], "count": len(scenarios)})
 
-        @router.get("/scenarios/{scenario_id}", dependencies=[Depends(require_permission("netplan", Action.VIEW, engine=authz_engine))])
-        def get_scenario(scenario_id: str) -> dict[str, Any]:
-            scenario = service.repository.get_scenario(scenario_id)
-            if scenario is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="scenario not found")
-            return _scenario_detail(service, scenario_id, scenario.to_dict())
+        @router.get("/scenarios/{scenario_id}", dependencies=[Depends(permission(Action.VIEW))])
+        def get_scenario(scenario_id: str, request: Request) -> dict[str, Any]:
+            with owned_service(request, Action.VIEW) as service:
+                scenario = service.repository.get_scenario(scenario_id)
+                if scenario is None:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="scenario not found")
+                return native_response(request, _scenario_detail(service, scenario_id, scenario.to_dict()))
 
-        @router.post("/scenarios/{scenario_id}/solve", dependencies=[Depends(require_permission("netplan", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/scenarios/{scenario_id}/solve", dependencies=[Depends(permission(Action.EXECUTE))])
         def solve(scenario_id: str, body: NetPlanSolvePayload, request: Request) -> dict[str, Any]:
-            return _run(
-                lambda: service.solve(
+            with owned_service(request, Action.EXECUTE, body) as service:
+                return native_response(request, _run(
+                    lambda: service.solve(
+                        scenario_id,
+                        actor=body.actor,
+                        reason=body.reason,
+                        solved_at=_parse_time(body.solved_at),
+                        alternative_limit=body.alternative_limit,
+                    ),
+                    active_audit_log,
+                    request,
+                    "netplan.solved.v1",
+                    body.actor,
+                    "run_solver",
+                    f"netplan/scenarios/{scenario_id}/solve",
                     scenario_id,
-                    actor=body.actor,
-                    reason=body.reason,
-                    solved_at=_parse_time(body.solved_at),
-                    alternative_limit=body.alternative_limit,
-                ),
-                active_audit_log,
-                request,
-                "netplan.solved.v1",
-                body.actor,
-                "run_solver",
-                f"netplan/scenarios/{scenario_id}/solve",
-                scenario_id,
-            )
+                ))
 
-        @router.post("/scenarios/{scenario_id}/submit", dependencies=[Depends(require_permission("netplan", Action.CREATE, engine=authz_engine))])
+        @router.post("/scenarios/{scenario_id}/submit", dependencies=[Depends(permission(Action.CREATE))])
         def submit(scenario_id: str, body: NetPlanActorPayload, request: Request) -> dict[str, Any]:
-            return _run(
-                lambda: service.submit_for_approval(
+            with owned_service(request, Action.CREATE, body) as service:
+                return native_response(request, _run(
+                    lambda: service.submit_for_approval(
+                        scenario_id,
+                        actor=body.actor,
+                        reason=body.reason or "submitted for network planning approval",
+                        occurred_at=_parse_time(body.occurred_at),
+                    ),
+                    active_audit_log,
+                    request,
+                    "netplan.submitted.v1",
+                    body.actor,
+                    "submit",
+                    f"netplan/scenarios/{scenario_id}/submit",
                     scenario_id,
-                    actor=body.actor,
-                    reason=body.reason or "submitted for network planning approval",
-                    occurred_at=_parse_time(body.occurred_at),
-                ),
-                active_audit_log,
-                request,
-                "netplan.submitted.v1",
-                body.actor,
-                "submit",
-                f"netplan/scenarios/{scenario_id}/submit",
-                scenario_id,
-            )
+                ))
 
-        @router.post("/scenarios/{scenario_id}/decide", dependencies=[Depends(require_permission("netplan", Action.APPROVE, engine=authz_engine))])
+        @router.post("/scenarios/{scenario_id}/decide", dependencies=[Depends(permission(Action.APPROVE))])
         def decide(scenario_id: str, body: NetPlanDecisionPayload, request: Request) -> dict[str, Any]:
-            return _run(
-                lambda: service.decide(
+            with owned_service(request, Action.APPROVE, body) as service:
+                return native_response(request, _run(
+                    lambda: service.decide(
+                        scenario_id,
+                        actor_id=body.actor_id,
+                        reason=body.reason,
+                        decision=body.decision,
+                        approval_receipt_id=body.approval_receipt_id,
+                        decided_at=_parse_time(body.decided_at),
+                    ),
+                    active_audit_log,
+                    request,
+                    "netplan.approved.v1" if body.decision.lower() == "approved" else "netplan.rejected.v1",
+                    body.actor_id,
+                    body.decision.lower(),
+                    f"netplan/scenarios/{scenario_id}/decide",
                     scenario_id,
-                    actor_id=body.actor_id,
-                    reason=body.reason,
-                    decision=body.decision,
-                    approval_receipt_id=body.approval_receipt_id,
-                    decided_at=_parse_time(body.decided_at),
-                ),
-                active_audit_log,
-                request,
-                "netplan.approved.v1" if body.decision.lower() == "approved" else "netplan.rejected.v1",
-                body.actor_id,
-                body.decision.lower(),
-                f"netplan/scenarios/{scenario_id}/decide",
-                scenario_id,
-            )
+                ))
 
-        @router.post("/scenarios/{scenario_id}/execute", dependencies=[Depends(require_permission("netplan", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/scenarios/{scenario_id}/execute", dependencies=[Depends(permission(Action.EXECUTE))])
         def execute(
             scenario_id: str, body: NetPlanExecutionPayload, request: Request
         ) -> dict[str, Any]:
-            return _run(
-                lambda: service.execute(
+            with owned_service(request, Action.EXECUTE, body) as service:
+                return native_response(request, _run(
+                    lambda: service.execute(
+                        scenario_id,
+                        executed_by=body.executed_by,
+                        executed_at=_parse_time(body.executed_at),
+                    ),
+                    active_audit_log,
+                    request,
+                    "netplan.executed.v1",
+                    body.executed_by,
+                    "execute",
+                    f"netplan/scenarios/{scenario_id}/execute",
                     scenario_id,
-                    executed_by=body.executed_by,
-                    executed_at=_parse_time(body.executed_at),
-                ),
-                active_audit_log,
-                request,
-                "netplan.executed.v1",
-                body.executed_by,
-                "execute",
-                f"netplan/scenarios/{scenario_id}/execute",
-                scenario_id,
-            )
+                ))
 
-        @router.post("/scenarios/{scenario_id}/outcomes", dependencies=[Depends(require_permission("netplan", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/scenarios/{scenario_id}/outcomes", dependencies=[Depends(permission(Action.EXECUTE))])
         def record_outcome(
             scenario_id: str, body: NetPlanOutcomePayload, request: Request
         ) -> dict[str, Any]:
-            return _run(
-                lambda: service.record_outcome(
+            with owned_service(request, Action.EXECUTE, body) as service:
+                return native_response(request, _run(
+                    lambda: service.record_outcome(
+                        scenario_id,
+                        actual_gross_margin=body.actual_gross_margin,
+                        observed_at=_parse_time(body.observed_at),
+                        source_snapshot_ids=body.source_snapshot_ids,
+                        actor=body.actor,
+                    ),
+                    active_audit_log,
+                    request,
+                    "netplan.outcome_observed.v1",
+                    body.actor,
+                    "record_outcome",
+                    f"netplan/scenarios/{scenario_id}/outcomes",
                     scenario_id,
-                    actual_gross_margin=body.actual_gross_margin,
-                    observed_at=_parse_time(body.observed_at),
-                    source_snapshot_ids=body.source_snapshot_ids,
-                    actor=body.actor,
-                ),
-                active_audit_log,
-                request,
-                "netplan.outcome_observed.v1",
-                body.actor,
-                "record_outcome",
-                f"netplan/scenarios/{scenario_id}/outcomes",
-                scenario_id,
-            )
+                ))
 
-        @router.post("/scenarios/{scenario_id}/close", dependencies=[Depends(require_permission("netplan", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/scenarios/{scenario_id}/close", dependencies=[Depends(permission(Action.EXECUTE))])
         def close(scenario_id: str, body: NetPlanActorPayload, request: Request) -> dict[str, Any]:
-            return _run(
-                lambda: service.close(
+            with owned_service(request, Action.EXECUTE, body) as service:
+                return native_response(request, _run(
+                    lambda: service.close(
+                        scenario_id,
+                        actor=body.actor,
+                        reason=body.reason or "netplan outcome written to label registry",
+                        occurred_at=_parse_time(body.occurred_at),
+                    ),
+                    active_audit_log,
+                    request,
+                    "netplan.closed.v1",
+                    body.actor,
+                    "close",
+                    f"netplan/scenarios/{scenario_id}/close",
                     scenario_id,
-                    actor=body.actor,
-                    reason=body.reason or "netplan outcome written to label registry",
-                    occurred_at=_parse_time(body.occurred_at),
-                ),
-                active_audit_log,
-                request,
-                "netplan.closed.v1",
-                body.actor,
-                "close",
-                f"netplan/scenarios/{scenario_id}/close",
-                scenario_id,
-            )
+                ))
 
         return router
 
@@ -413,12 +455,12 @@ else:
         return audit_log.record(
             AuditEvent(
                 event_type=event_type,
-                actor=actor,
+                actor=native_audit_actor(request, actor),
                 action=action,
                 resource=resource,
                 outcome=outcome,
                 correlation_id=request.state.correlation_id,
-                metadata=metadata or {},
+                metadata=native_audit_metadata(request, metadata),
             )
         ).event_id
 

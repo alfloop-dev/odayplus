@@ -24,10 +24,10 @@ const nullableRecommendation = (value: unknown) => value === null || recommendat
 // in the legacy UI status unions or deriving an eligibility decision.
 export function hasNetworkListingsRenderShape(value: unknown): boolean {
   if (!readObject(value)) return false;
-  return rows(value.heatZones, (zone) => text(zone.label) && number(zone.rank)
-      && Array.isArray(zone.centroid) && zone.centroid.length === 2 && zone.centroid.every(number)
-      && number(zone.demandGap) && number(zone.competitionIndex)
-      && text(zone.cannibalizationRisk)
+  return rows(value.heatZones, (zone) => text(zone.label) && nullableNumber(zone.rank)
+      && (zone.centroid === null || Array.isArray(zone.centroid) && zone.centroid.length === 2 && zone.centroid.every(number))
+      && nullableNumber(zone.demandGap) && nullableNumber(zone.competitionIndex)
+      && (zone.cannibalizationRisk === null || oneOf(zone.cannibalizationRisk, ["low", "medium", "high", "critical"]))
       && text(zone.rentBand) && optionalNumber(zone.confidence)
       && strings(zone.reasons) && strings(zone.risks) && text(zone.nextStep))
     && rows(value.listingSources, (source) => text(source.name)

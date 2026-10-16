@@ -99,6 +99,7 @@ class PersistenceBundle:
     current_model_admission: Any = None
     feature_flag_registry: Any = None
     adlift_campaign_repository: Any = None
+    survey_assignment_repository: Any = None
 
 
     @property
@@ -161,6 +162,10 @@ class PersistenceBundle:
         return DurableTenantServiceResolver(DurableOperatorDomainStateRepository(store, "network-reviews"),
             factory=factory, exporter=lambda value: value.export_state(),
             mutating_methods={"submit_review", "submit_native_report", "decide_review", "decide_native_review"}, transactional_mutations=True)
+
+    def survey_assignment_repository_for_tenant(self, tenant_id: str) -> Any | None:
+        repository = self.survey_assignment_repository
+        return None if repository is None else repository.for_tenant(tenant_id)
 
     def listing_repository_for_tenant(self, tenant_id: str) -> Any | None:
         return self._scoped_repository("listing_repository", tenant_id)
@@ -362,6 +367,9 @@ def _durable_bundle(
 ) -> PersistenceBundle:
     from modules.adlift.infrastructure.campaign_repository import DurableAdLiftCampaignRepository
     from modules.external_data.workers.scheduled_fetch import DurableExternalFetchStateStore
+    from modules.market_survey.infrastructure.assignment_repository import (
+        DurableSurveyAssignmentRepository,
+    )
     from modules.notifications import DurableNotificationRepository
     from modules.opsboard.application.store_ops import DurableStoreOpsRepository
     from modules.opsboard.audit.evidence_store import DurableEvidenceBundleStore
@@ -446,6 +454,7 @@ def _durable_bundle(
         sitescore_repository=DurableSiteScoreRepository(store),
         adlift_repository=DurableAdLiftRepository(store),
         adlift_campaign_repository=DurableAdLiftCampaignRepository(store),
+        survey_assignment_repository=DurableSurveyAssignmentRepository(store),
         store_ops_repository=DurableStoreOpsRepository(store),
         intervention_repository=DurableInterventionRepository(store),
         intervention_label_registry=DurableLabelRegistry(store),
@@ -486,6 +495,9 @@ def _postgres_bundle(
 ) -> PersistenceBundle:
     from modules.adlift.infrastructure.campaign_repository import DurableAdLiftCampaignRepository
     from modules.external_data.workers.scheduled_fetch import DurableExternalFetchStateStore
+    from modules.market_survey.infrastructure.assignment_repository import (
+        DurableSurveyAssignmentRepository,
+    )
     from modules.notifications import DurableNotificationRepository
     from modules.opsboard.application.store_ops import DurableStoreOpsRepository
     from modules.opsboard.audit.evidence_store import DurableEvidenceBundleStore
@@ -612,6 +624,7 @@ def _postgres_bundle(
         sitescore_repository=DurableSiteScoreRepository(store),
         adlift_repository=DurableAdLiftRepository(store),
         adlift_campaign_repository=DurableAdLiftCampaignRepository(store),
+        survey_assignment_repository=DurableSurveyAssignmentRepository(store),
         store_ops_repository=DurableStoreOpsRepository(store),
         intervention_repository=DurableInterventionRepository(store),
         intervention_label_registry=DurableLabelRegistry(store),

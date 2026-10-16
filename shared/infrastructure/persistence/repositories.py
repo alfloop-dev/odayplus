@@ -16,6 +16,8 @@ from collections.abc import Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
+from functools import wraps
+from inspect import signature
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -317,6 +319,19 @@ class DurableSiteScoreRepository:
         return self._store.get(self._SITESCORE_RUNS, sitescore_run_id)
 
 
+def _locked_avm_case_read(method):
+    """Legacy disposition may write; acquire its owner before the first read."""
+    method_signature = signature(method)
+
+    @wraps(method)
+    def invoke(self, *args, **kwargs):
+        arguments = method_signature.bind(self, *args, **kwargs).arguments
+        with self.case_transaction(arguments["case_id"]):
+            return method(self, *args, **kwargs)
+
+    return invoke
+
+
 class DurableAVMRepository:
     """Durable mirror of ``InMemoryAVMRepository``."""
 
@@ -328,6 +343,34 @@ class DurableAVMRepository:
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
+
+    @contextmanager
+    def case_transaction(self, case_id: str | None):
+        """Lock before the native service first reads a mutable case.
+
+        All native finance, valuation and DataRoom writers enter the same row
+        lock. A caller waiting for another engine cannot retain an old case.
+        """
+        engine = self._store.engine
+        with engine.transaction():
+            if getattr(engine, "dialect", None) == "postgresql":
+                tenant_id = getattr(self._store, "tenant_id", None)
+                if tenant_id:
+                    engine.query_one(
+                        "SELECT pg_advisory_xact_lock(hashtextextended(?, 0)) AS locked",
+                        (f"avm-case-owner:{tenant_id}",),
+                    )
+                collection = (self._store._collection(self._CASES)
+                              if hasattr(self._store, "_collection") else self._CASES)
+                if case_id is not None:
+                    engine.query_one(
+                        "SELECT doc_id FROM durable_documents "
+                        "WHERE collection = ? AND doc_id = ? FOR UPDATE",
+                        (collection, case_id),
+                    )
+            elif not engine._conn.in_transaction:
+                engine.execute("BEGIN IMMEDIATE")
+            yield
 
     def _migrate_legacy_case(self, case: ValuationCase | None) -> ValuationCase | None:
         """Stamp a durable status on cases stored before the field existed.
@@ -436,6 +479,7 @@ class DurableAVMRepository:
         self._store.put(self._CASES, case.case_id, case)
         return case
 
+    @_locked_avm_case_read
     def get_case(self, case_id: str) -> ValuationCase | None:
         return self._migrate_legacy_case(self._store.get(self._CASES, case_id))
 
@@ -443,7 +487,7 @@ class DurableAVMRepository:
         return [
             c
             for item in self._store.list_all(self._CASES)
-            if (c := self._migrate_legacy_case(item)) is not None
+            if (c := self.get_case(item.case_id)) is not None
         ]
 
     def save_margin(self, margin: NormalizedMargin) -> NormalizedMargin:
@@ -476,10 +520,12 @@ class DurableAVMRepository:
             self._store.replace_latest_in_group(self._REPORTS, report, group_key=report.case_id)
         return report
 
+    @_locked_avm_case_read
     def latest_report(self, case_id: str) -> ValuationReport | None:
         report = self._store.latest_in_group(self._REPORTS, case_id)
         return None if report is None else self._dispose_legacy_report(report)
 
+    @_locked_avm_case_read
     def report_history(self, case_id: str) -> list[ValuationReport]:
         return [
             self._dispose_legacy_report(report)
@@ -490,6 +536,7 @@ class DurableAVMRepository:
         self._store.put(self._DATAROOMS, dataroom.case_id, dataroom)
         return dataroom
 
+    @_locked_avm_case_read
     def get_dataroom(self, case_id: str) -> DataRoom | None:
         dataroom = self._store.get(self._DATAROOMS, case_id)
         return None if dataroom is None else self._dispose_legacy_dataroom(dataroom)
@@ -2045,6 +2092,39 @@ class DurableNetPlanRepository:
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
+
+    @contextmanager
+    def scenario_transaction(self, scenario_id: str | None):
+        """Serialize the first read and all writes of a canonical command.
+
+        Lock the physical document row, so another engine's ordinary native
+        writer participates without relying on an Operator-only advisory lock.
+        The service enters before loading scenario/solve state, never after a
+        stale result has already been computed. Nested same-engine entry is safe.
+        """
+        engine = self._store.engine
+        with engine.transaction():
+            if getattr(engine, "dialect", None) == "postgresql":
+                tenant_id = getattr(self._store, "tenant_id", None)
+                if tenant_id:
+                    # Match the existing Operator order: tenant advisory first,
+                    # scenario row second. This also serializes a newly created
+                    # scenario with the current implicit/latest selection.
+                    engine.query_one(
+                        "SELECT pg_advisory_xact_lock(hashtextextended(?, 0)) AS locked",
+                        (f"operator-domain:network-rebalance:{tenant_id}",),
+                    )
+                if scenario_id is not None:
+                    collection = (self._store._collection(self._SCENARIOS)
+                                  if hasattr(self._store, "_collection") else self._SCENARIOS)
+                    engine.query_one(
+                        "SELECT doc_id FROM durable_documents "
+                        "WHERE collection = ? AND doc_id = ? FOR UPDATE",
+                        (collection, scenario_id),
+                    )
+            elif not engine._conn.in_transaction:
+                engine.execute("BEGIN IMMEDIATE")
+            yield
 
     def save_scenario(self, scenario: NetPlanScenario) -> NetPlanScenario:
         self._store.put(self._SCENARIOS, scenario.scenario_id, scenario)

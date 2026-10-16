@@ -18,6 +18,8 @@ import pytest
 from models.shared_ml.production_runtime import ProductionModelInputError
 from modules.listing.domain.models import ListingDedupKey
 from modules.sitescore.tests.test_sitescore_production_runtime import RecordingRuntime
+from shared.audit.canonical_delivery import JOB_TYPE as CANONICAL_AUDIT_JOB_TYPE
+from shared.audit.durable_delivery import JOB_TYPE as DURABLE_AUDIT_JOB_TYPE
 from shared.jobs.queue import JobFenceRejectedError, JobStatus
 from tests.intake_registry_fixture import APPROVER, MANAGER, TENANT
 from tests.integration.test_intake_registry_calendar_postgresql import _bundle
@@ -203,7 +205,9 @@ def _claim(bundle, job_id):
         assert job is not None, "Canonical score delivery must actually be claimable"
         if job.job_id == job_id:
             return job
-        assert job.job_type == "canonical-audit-delivery"
+        # Both registered audit owners may precede score work in this same SQL queue.
+        # Claiming them here is not delivery, completion, or an external ACK.
+        assert job.job_type in {CANONICAL_AUDIT_JOB_TYPE, DURABLE_AUDIT_JOB_TYPE}
     raise AssertionError("Score work never reached the worker queue")
 
 

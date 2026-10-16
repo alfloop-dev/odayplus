@@ -49,9 +49,9 @@ function offsetFromZone(
 /** Derive a canonical HeatZone state from OperatorHeatZone metrics. */
 export function deriveHeatZoneState(zone: OperatorHeatZone): MapHeatZone["state"] {
   if (zone.confidence === null || zone.confidence < 0.7) return "SUPPRESSED_LOW_CONFIDENCE";
-  if (zone.demandGap >= 0.75) return "STILL_EXPANDABLE";
-  if (zone.demandGap >= 0.5) return "UNDER_REALIZED";
-  if (zone.competitionIndex >= 0.7) return "SATURATED";
+  if ((zone.demandGap ?? 0) >= 0.75) return "STILL_EXPANDABLE";
+  if ((zone.demandGap ?? 0) >= 0.5) return "UNDER_REALIZED";
+  if ((zone.competitionIndex ?? 0) >= 0.7) return "SATURATED";
   return "PARTIALLY_ABSORBED";
 }
 
@@ -67,12 +67,12 @@ export function operatorHeatZoneToMapZone(zone: OperatorHeatZone): MapHeatZone {
     // h3 is intentionally invalid so that zoneToFeature falls back to the
     // centroid-delta polygon – a deterministic, no-network fallback.
     h3: `h3-${zone.id}`,
-    centroid: zone.centroid,
+    centroid: zone.centroid ?? FALLBACK_CENTROID,
     h3Resolution: 9,
-    score: Math.round(zone.demandGap * 100),
+    score: Math.round((zone.demandGap ?? 0) * 100),
     confidence: zone.confidence,
     state: deriveHeatZoneState(zone),
-    rank: zone.rank,
+    rank: zone.rank ?? 999,
     listings: 0,
     warnings: zone.risks,
     reasons: zone.reasons,
@@ -82,19 +82,53 @@ export function operatorHeatZoneToMapZone(zone: OperatorHeatZone): MapHeatZone {
     predictionOriginTime: "",
     lastScoredAt: "",
     sourceSnapshotIds: ["snap-network-ops-local"],
-    unmetDemandScore: zone.demandGap,
-    formatFitScore: 1 - zone.competitionIndex,
+    unmetDemandScore: zone.demandGap ?? 0,
+    formatFitScore: 1 - (zone.competitionIndex ?? 0),
     cannibalizationRisk: zone.cannibalizationRisk === "low" ? 0.1 : zone.cannibalizationRisk === "medium" ? 0.35 : 0.65,
     rentFeasibility: 0.7,
     listingAvailability: 0.5,
     poiCount: 10,
-    competitorCount: Math.round(zone.competitionIndex * 10),
+    competitorCount: Math.round((zone.competitionIndex ?? 0) * 10),
     competitorCapacity: 20,
     medianListingRent: 0,
     existingStoreCount: 0,
     dataQualityScore: zone.confidence,
     isMerged: zone.id.startsWith("MZ-"),
     compositionKind: zone.id.startsWith("MZ-") ? "MERGED" : "ATOMIC",
+  };
+}
+
+/** Lossless recorded result mapping; prototype-only measurements stay unknown. */
+export function operatorRecordedHeatZoneToMapZone(zone: OperatorHeatZone): MapHeatZone | null {
+  const evidence = zone.mapEvidence;
+  if (!evidence || zone.centroid === null) return null;
+  return {
+    id: zone.id, district: zone.label, h3: evidence.h3Index, geometry: evidence.geometry,
+    centroid: zone.centroid, h3Resolution: evidence.h3Resolution, score: evidence.score,
+    confidence: evidence.confidence, state: evidence.state, rank: evidence.priorityRank,
+    listings: null, warnings: zone.risks, reasons: zone.reasons,
+    modelVersion: evidence.modelVersion, featureVersion: evidence.featureVersion,
+    featureSnapshotTime: evidence.featureSnapshotTime, predictionOriginTime: evidence.predictionOriginTime,
+    lastScoredAt: evidence.lastScoredAt, sourceSnapshotIds: [...evidence.sourceSnapshotIds],
+    unmetDemandScore: evidence.unmetDemandScore, formatFitScore: evidence.formatFitScore,
+    cannibalizationRisk: evidence.cannibalizationRisk, rentFeasibility: evidence.rentFeasibility,
+    listingAvailability: evidence.listingAvailability, dataQualityScore: null,
+    poiCount: null, competitorCount: null, competitorCapacity: null, medianListingRent: null, existingStoreCount: null,
+  };
+}
+
+/** A timestamp is recorded evidence, not an evaluated freshness policy. */
+export function operatorRecordedMapFreshness(zones: MapHeatZone[]) {
+  const single = (values: string[]) => {
+    const unique = [...new Set(values.filter((value) => value.trim()))];
+    return unique.length === 1 ? unique[0] : "";
+  };
+  return {
+    status: "MISSING",
+    updatedAt: single(zones.map((zone) => zone.lastScoredAt)),
+    modelVersion: single(zones.map((zone) => zone.modelVersion)),
+    featureSnapshotTime: single(zones.map((zone) => zone.featureSnapshotTime)),
+    sourceSnapshotId: single(zones.flatMap((zone) => zone.sourceSnapshotIds)),
   };
 }
 

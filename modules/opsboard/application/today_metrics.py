@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from modules.opsboard.application.growth import _DRAFT_TYPES, _LIFECYCLE_TRANSITIONS
 from modules.opsboard.application.store_ops import _ISSUE_STATUSES
 
 TODAY_CARD_LABELS = (
@@ -27,12 +28,59 @@ ROLE_CARD_LABELS = {
 ROLE_CARD_LABELS["expansion-staff"] = ROLE_CARD_LABELS["expansion-manager"]
 
 
+def _marketing_metrics(growth_facts: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Count the existing scoped Growth owner, without inventing candidate feeds.
+
+    PriceOps segments are neither Forecast opportunities nor lapsed members.
+    Those first two R7 cards stay unknown until their own sources exist.
+    """
+    draft = pending = outcome = None
+    if isinstance(growth_facts, dict):
+        actions = growth_facts.get("actions")
+        approvals = growth_facts.get("approvals")
+        if isinstance(actions, list) and all(
+            isinstance(row, dict)
+            and isinstance(row.get("id"), str) and bool(row["id"].strip())
+            and isinstance(row.get("kind"), str) and row["kind"] in _DRAFT_TYPES
+            and isinstance(row.get("status"), str) and row["status"] in _LIFECYCLE_TRANSITIONS
+            for row in actions
+        ) and len({row["id"] for row in actions}) == len(actions):
+            draft = sum(row["status"] == "DRAFT" for row in actions)
+            awaiting = [row for row in actions if row["status"] == "PENDING_APPROVAL"]
+            if isinstance(approvals, list) and all(isinstance(row, dict) for row in approvals) and all(
+                isinstance(action.get("approvalId"), str) and bool(action["approvalId"].strip())
+                and sum(row.get("id") == action["approvalId"] for row in approvals) == 1
+                and sum(row.get("id") == action["approvalId"] and row.get("ref") == action["id"]
+                        and row.get("status") == "pending" for row in approvals) == 1
+                for action in awaiting
+            ):
+                pending = len(awaiting)
+            ready = [row for row in actions if row["status"] == "OUTCOME_READY"]
+            # list_actions supplies this observation from the canonical recorded
+            # execution window. A legacy status alone is not maturity evidence.
+            if all(isinstance(row.get("observation"), dict)
+                   and row["observation"].get("status") == "MATURE" for row in ready):
+                outcome = len(ready)
+    values = (None, None, draft, pending, outcome)
+    descriptions = ("", "", "待送核准", "前往核准中心", "請完成 Outcome Review")
+    tones = ("neutral", "neutral", "info", "warning", "warning")
+    return [
+        {"label": label, "value": str(value) if value is not None else None,
+         "delta": "", "meta": description if value is not None else "資料尚未備妥",
+         "tone": tone, "availability": "available" if value is not None else "unavailable"}
+        for label, value, description, tone in zip(
+            ROLE_CARD_LABELS["marketing-manager"], values, descriptions, tones, strict=True,
+        )
+    ]
+
+
 def build_today_metrics(
     *,
     issues: list[dict[str, Any]] | None,
     approvals_count: int | None,
     now: datetime,
     role_id: str = "ops-lead",
+    growth_facts: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """An unavailable fact stays unavailable, including missing SLA day policy.
 
@@ -40,6 +88,8 @@ def build_today_metrics(
     issue contract supplies an absolute deadline but no approved business-day
     timezone/calendar. Do not invent a two-hour threshold or a UTC day policy.
     """
+    if role_id == "marketing-manager":
+        return _marketing_metrics(growth_facts)
     if role_id != "ops-lead":
         # These personas need their own domain projections. Never put the
         # operations card counts (or prototype example constants) under them.

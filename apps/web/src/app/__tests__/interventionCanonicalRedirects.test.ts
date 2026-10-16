@@ -69,9 +69,15 @@ describe("legacy Intervention URLs use the canonical owner through installed Nex
       expect(Object.fromEntries(url.searchParams)).toEqual({ ws: "today", tab: "interventions", entity });
       expect(url.search).toContain(`entity=${encodeURIComponent(entity)}`);
     }
-    for (const pathname of ["/w/operations/other", "/w/operations/interventions/deeper/path"]) {
+    // Original AVM A5 list/detail pages remain executable; neither can be
+    // swallowed by the retired-/w blanket after Intervention canonicalization.
+    for (const pathname of ["/w/dealroom/cases", "/w/dealroom/cases/693ec85b-7491-4169-a7af-5800c8b657a1"]) {
+      expect(redirect(pathname)).toBeNull();
+    }
+    for (const pathname of ["/w/operations/other", "/w/operations/interventions/deeper/path",
+      "/w/dealroom/cases-extra", "/w/dealroom/cases/case-id/deeper"]) {
       const other = redirect(pathname)!;
-      expect(other.source).toBe("/w/:path*");
+      expect(other.source).toBe("/w/:path((?!dealroom/cases(?:/[^/]+)?/?$).*)");
       expect(other.result.parsedUrl.pathname).toBe("/operator");
       expect(other.result.parsedUrl.search).toBe("");
     }

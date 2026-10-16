@@ -51,6 +51,9 @@ import {
   type NetworkFindAreasBindings,
 } from "./network/networkFindAreasLoader";
 import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
+import { ShellNotificationCenter } from "./ShellNotificationCenter";
+import { ShellTaskCenter } from "./ShellTaskCenter";
+import { ShellNotificationPage } from "./ShellNotificationPage";
 import {
   classifyLoadFailure,
   inspectOperatorShellPayload,
@@ -415,9 +418,15 @@ function dataModeBannerCopy(
 export function OperatorConsole({
   deploymentEnvironment,
   searchParams = {},
+  shellView,
+  notificationPreferences = false,
+  notificationReportId,
 }: {
   /** Deploy target from server config (ODP_DEPLOY_ENV); independent of the data policy. */
   deploymentEnvironment?: string | null;
+  shellView?: "tasks" | "notifications";
+  notificationPreferences?: boolean;
+  notificationReportId?: string;
   searchParams?: Record<string, string | string[] | undefined>;
 }) {
   const intakeDetailOpen = isIntakeDetailOpen(searchParams);
@@ -447,6 +456,7 @@ export function OperatorConsole({
   const [isRoleMenuOpen, setIsRoleMenuOpen] = useState(false);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [isTaskCenterOpen, setIsTaskCenterOpen] = useState(false);
+  const [confirmedTaskCount, setConfirmedTaskCount] = useState<number | null>(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [taskCenterLoadState, setTaskCenterLoadState] = useState<TaskCenterLoadState>("idle");
   const [taskCenterSource, setTaskCenterSource] = useState<TaskCenterSource>(
@@ -480,6 +490,7 @@ export function OperatorConsole({
   const [shellWarmingUp, setShellWarmingUp] = useState(false);
   const [shellReloadToken, setShellReloadToken] = useState(0);
   const [liveNotifications, setLiveNotifications] = useState<any[]>(fixturesAllowed ? notifications : []);
+  const [confirmedNotificationCount, setConfirmedNotificationCount] = useState<number | null>(null);
   const [liveIssues, setLiveIssues] = useState<Issue[]>(fixturesAllowed ? ISSUE_FIXTURES : []);
   const [liveNetworkBindings, setLiveNetworkBindings] = useState<NetworkFindAreasBindings | null>(null);
   const [liveApprovals, setLiveApprovals] = useState<any[]>([]);
@@ -652,9 +663,9 @@ export function OperatorConsole({
 
   const clearAuthenticatedRows = useCallback(() => {
     setShellEnvelope(normalizeShellEnvelope(undefined, { allowFixtureFallback: false }));
-    setLiveNotifications([]); setLiveIssues([]); setLiveNetworkBindings(null);
+    setLiveNotifications([]); setConfirmedNotificationCount(null); setLiveIssues([]); setLiveNetworkBindings(null);
     setLiveApprovals([]); setLiveGovernanceDecisions([]); setLiveGovernanceAuditRows([]);
-    setLiveTasks([]); setTaskCenterLoadState("idle");
+    setLiveTasks([]); setConfirmedTaskCount(null); setTaskCenterLoadState("idle");
   }, []);
 
   // A mounted read must recheck the server session even when no UI event
@@ -1154,7 +1165,7 @@ export function OperatorConsole({
       id: "action-notifications",
       group: "actions",
       title: "開啟通知",
-      subtitle: `${shellEnvelope.header.counts.notifications} notifications`,
+      subtitle: `${confirmedNotificationCount ?? shellEnvelope.header.counts.notifications} notifications`,
       keywords: ["notifications", "alerts"],
       tone: liveNotifications.some((notification) => notification.tone === "danger") ? "danger" : "info",
       execute: () => {
@@ -1258,6 +1269,14 @@ export function OperatorConsole({
 
     if (!isWorkspaceAllowed(activeRole, workspaceId)) {
       showToast(`${activeRole.label} 暫無 ${workspace.label} 權限`);
+      return;
+    }
+
+    if (shellView) {
+      const params = new URLSearchParams({ ws: workspaceId });
+      if (target.tab) params.set("tab", target.tab);
+      if (target.entityId) params.set("entity", target.entityId);
+      window.location.assign(`/operator?${params}`);
       return;
     }
 
@@ -1369,31 +1388,36 @@ export function OperatorConsole({
   }
 
   function handleTaskSelect(task: OperatorTask) {
-    setIsTaskCenterOpen(false);
-    if (task.workspace) {
-      handleTargetSelect({ workspace: task.workspace, entityId: task.id, tab: "overview" }, task.id);
-      return;
-    }
-
-    try {
-      const href = new URL(task.href, window.location.origin);
-      const ws = href.searchParams.get("ws");
-      if (href.pathname === "/operator" && ws && isWorkspaceId(ws)) {
-        handleTargetSelect(
-          {
-            workspace: ws,
-            entityId: href.searchParams.get("entity") ?? task.id,
-            tab: href.searchParams.get("tab") ?? "overview",
-          },
-          task.id,
-        );
+    if (task.source === "fixture" && fixturesAllowed && !bootstrapHasAuthenticatedSession.current) {
+      setIsTaskCenterOpen(false);
+      if (task.workspace) {
+        handleTargetSelect({ workspace: task.workspace, entityId: task.id, tab: "overview" }, task.id);
         return;
       }
-    } catch {
-      // Fall through to normal navigation for non-URL task hrefs.
-    }
 
-    window.location.assign(task.href);
+      try {
+        const href = new URL(task.href, window.location.origin);
+        const ws = href.searchParams.get("ws");
+        if (href.pathname === "/operator" && ws && isWorkspaceId(ws)) {
+          handleTargetSelect(
+            {
+              workspace: ws,
+              entityId: href.searchParams.get("entity") ?? task.id,
+              tab: href.searchParams.get("tab") ?? "overview",
+            },
+            task.id,
+          );
+          return;
+        }
+      } catch {
+        // Fall through to normal navigation for non-URL task hrefs.
+      }
+
+      window.location.assign(task.href);
+      return;
+    }
+    setIsTaskCenterOpen(false);
+    window.location.assign(`/tasks/${encodeURIComponent(task.id)}`);
   }
 
   function handleCommandKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
@@ -1580,10 +1604,16 @@ export function OperatorConsole({
 
             <div className={styles.popoverAnchor}>
               <button
-                aria-expanded={isNotificationOpen}
+                aria-expanded={shellView !== "notifications" && isNotificationOpen}
                 className={styles.headerAction}
                 data-testid="operator-notification-button"
                 onClick={() => {
+                  if (shellView === "notifications") {
+                    setIsNotificationOpen(false);
+                    if (window.location.pathname === "/notifications") document.getElementById("canonical-notifications-page")?.focus();
+                    else window.location.assign("/notifications");
+                    return;
+                  }
                   setIsNotificationOpen((open) => !open);
                   setIsTaskCenterOpen(false);
                   setIsRoleMenuOpen(false);
@@ -1594,22 +1624,31 @@ export function OperatorConsole({
                 <span
                   className={[
                     styles.headerCount,
-                    shellEnvelope.header.counts.notifications > 0 ? styles.headerCount_alert : "",
+                    (confirmedNotificationCount ?? shellEnvelope.header.counts.notifications) > 0 ? styles.headerCount_alert : "",
                   ].join(" ")}
                 >
-                  {shellEnvelope.header.counts.notifications}
+                  {confirmedNotificationCount ?? shellEnvelope.header.counts.notifications}
                 </span>
               </button>
-              {isNotificationOpen ? (
-                <div className={styles.notificationPanel} data-screen-label="Notifications">
-                  <div className={styles.popoverTitle}>Notifications</div>
-                  {liveNotifications.map((notification) => (
-                    <article className={styles.notificationItem} key={notification.id ?? notification.title}>
-                      <StatusBadge tone={notification.tone}>{notification.title}</StatusBadge>
-                      <p>{notification.detail}</p>
-                    </article>
-                  ))}
-                </div>
+              {shellView !== "notifications" && isNotificationOpen && canRenderWorkspace ? (
+                <ShellNotificationCenter
+                  scopeKey={JSON.stringify([bootstrapSequence.current, bootstrapAccount.current, bootstrapPersona.current?.roleId, activeRoleId])}
+                  headers={getSecurityHeaders(activeRoleId)}
+                  createAuthenticatedReadGuard={(readCurrent) => {
+                    const sequence = bootstrapSequence.current;
+                    const subject = bootstrapAccount.current;
+                    const persona = bootstrapPersona.current;
+                    const current = () => readCurrent() && sequence === bootstrapSequence.current
+                      && subject === bootstrapAccount.current && persona === bootstrapPersona.current;
+                    return () => pinAuthenticatedRead(subject, current);
+                  }}
+                  allowFixtureFallback={fixturesAllowed && bootstrapAuthMode === "fixture" && bootstrapAccount.current === null}
+                  fixtureRows={liveNotifications}
+                  onConfirmedUnreadCount={setConfirmedNotificationCount}
+                  onReportSelect={(reportId) => window.location.assign(`/notifications/reports/${encodeURIComponent(reportId)}`)}
+                  onTaskSelect={(taskId, requestKey) => window.location.assign(`/tasks/${encodeURIComponent(taskId)}?${new URLSearchParams({ view: "approvals", requestKey })}`)}
+                  onTargetSelect={handleTargetSelect}
+                />
               ) : null}
             </div>
 
@@ -1630,7 +1669,7 @@ export function OperatorConsole({
                       taskSummary.urgent > 0 && shellEnvelope.header.counts.taskCenter > 0 ? styles.headerCount_alert : "",
                     ].join(" ")}
                   >
-                    {shellEnvelope.header.counts.taskCenter}
+                    {confirmedTaskCount ?? shellEnvelope.header.counts.taskCenter}
                   </strong>
                 </span>
               </button>
@@ -1808,6 +1847,41 @@ export function OperatorConsole({
             onRetry={() => setShellReloadToken((token) => token + 1)}
             status={toUnavailableOperatorStatus(shellDataStatus)}
           />
+        ) : shellView === "notifications" ? (
+          <ShellNotificationPage preferencesPage={notificationPreferences} reportId={notificationReportId}
+            scopeKey={JSON.stringify([bootstrapSequence.current, bootstrapAccount.current, bootstrapPersona.current?.roleId, activeRoleId])}
+            expectedSubjectId={bootstrapAccount.current}
+            headers={getSecurityHeaders(activeRoleId)}
+            createAuthenticatedReadGuard={(readCurrent) => {
+              const sequence = bootstrapSequence.current;
+              const subject = bootstrapAccount.current;
+              const persona = bootstrapPersona.current;
+              const current = () => readCurrent() && sequence === bootstrapSequence.current
+                && subject === bootstrapAccount.current && persona === bootstrapPersona.current;
+              return () => pinAuthenticatedRead(subject, current);
+            }}
+            allowFixtureFallback={fixturesAllowed && bootstrapAuthMode === "fixture" && bootstrapAccount.current === null}
+            fixtureRows={liveNotifications}
+            onConfirmedUnreadCount={setConfirmedNotificationCount}
+            onReportSelect={(reportId) => window.location.assign(`/notifications/reports/${encodeURIComponent(reportId)}`)}
+            onTaskSelect={(taskId, requestKey) => window.location.assign(`/tasks/${encodeURIComponent(taskId)}?${new URLSearchParams({ view: "approvals", requestKey })}`)}
+            onTargetSelect={handleTargetSelect}
+          />
+        ) : shellView === "tasks" ? (
+          <ShellTaskCenter
+            scopeKey={JSON.stringify([bootstrapSequence.current, bootstrapAccount.current, bootstrapPersona.current, activeRoleId])}
+            headers={operatorSecurityHeaders(activeRoleId)}
+            createAuthenticatedReadGuard={(readCurrent) => {
+              const sequence = bootstrapSequence.current;
+              const subject = bootstrapAccount.current;
+              const persona = bootstrapPersona.current;
+              const current = () => readCurrent() && sequence === bootstrapSequence.current
+                && subject === bootstrapAccount.current && persona === bootstrapPersona.current;
+              return () => pinAuthenticatedRead(subject, current);
+            }}
+            onConfirmedActiveCount={setConfirmedTaskCount}
+            allowFixtureData={fixturesAllowed && bootstrapAuthMode === "fixture"}
+          />
         ) : activeWorkspaceId === "today" && activeTabId === "interventions" ? (
           <InterventionWorkspace selectedId={selectedEntityId ?? (typeof searchParams.selected === "string" ? searchParams.selected : undefined)}
             onSelect={(entityId) => handleTargetSelect({ workspace: "today", tab: "interventions", entityId }, "干預工作台")}
@@ -1822,6 +1896,16 @@ export function OperatorConsole({
           />
         ) : activeWorkspaceId === "store" ? (
           <DesignStoreOpsWorkspace
+            activeRoleId={activeRoleId}
+            forecastScopeKey={JSON.stringify([bootstrapSequence.current, bootstrapAccount.current, bootstrapPersona.current, activeRoleId])}
+            createAuthenticatedReadGuard={(readCurrent) => {
+              const sequence = bootstrapSequence.current;
+              const subject = bootstrapAccount.current;
+              const persona = bootstrapPersona.current;
+              const current = () => readCurrent() && sequence === bootstrapSequence.current
+                && subject === bootstrapAccount.current && persona === bootstrapPersona.current;
+              return () => pinAuthenticatedRead(subject, current);
+            }}
             initialIssueId={selectedEntityId ?? undefined}
             initialTabId={activeTabId}
             issues={liveIssues}

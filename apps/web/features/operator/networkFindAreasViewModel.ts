@@ -1,3 +1,4 @@
+import { operatorFixturesAllowed } from "./operatorDataMode";
 import type {
   Candidate,
   HeatZoneLens,
@@ -31,34 +32,34 @@ export type NetworkFindAreasZoneViewModel = {
   zone: OperatorHeatZone;
   id: string;
   label: string;
-  rank: number;
+  rank: number | null;
   centroidLabel: string;
-  demandGap: number;
+  demandGap: number | null;
   demandLabel: string;
-  fitScore: number;
+  fitScore: number | null;
   fitLabel: string;
-  competitionIndex: number;
+  competitionIndex: number | null;
   competitionLabel: string;
-  cannibalizationRisk: RiskLevel;
+  cannibalizationRisk: RiskLevel | null;
   cannibalizationLabel: string;
-  cannibalizationScore: number;
+  cannibalizationScore: number | null;
   rentBand: string;
-  rentScore: number;
+  rentScore: number | null;
   confidence: number | null;
   confidenceLabel: string;
-  trafficScore: number;
+  trafficScore: number | null;
   trafficLabel: string;
-  unmetScore: number;
+  unmetScore: number | null;
   unmetLabel: string;
-  lifeScore: number;
+  lifeScore: number | null;
   lifeLabel: string;
-  lensScore: number;
+  lensScore: number | null;
   lensLabel: string;
   /** Active lens score on the 0–100 scale the Package 10 cards print. */
-  lensPoints: number;
-  lensTier: ZoneScoreTier;
+  lensPoints: number | null;
+  lensTier: ZoneScoreTier | null;
   /** Composite (brand-fit) score, shown as 「HeatZone 綜合」. */
-  overallPoints: number;
+  overallPoints: number | null;
   /** Listings still open for sourcing: everything except archived/expired. */
   availableListingCount: number;
   detailRows: ZoneDetailRow[];
@@ -71,10 +72,10 @@ export type NetworkFindAreasZoneViewModel = {
   reasons: string[];
   risks: string[];
   nextStep: string;
-  mapX: number;
-  mapY: number;
-  mapSize: number;
-  mapTone: "good" | "watch" | "risk";
+  mapX: number | null;
+  mapY: number | null;
+  mapSize: number | null;
+  mapTone: "good" | "watch" | "risk" | null;
 };
 
 export type NetworkFindAreasMapPoint = {
@@ -152,13 +153,13 @@ export type SiteScoreLabRow = {
 export type CompareMetricRow = {
   key: string;
   label: string;
-  values: Array<{ zoneId: string; value: number; label: string; isLeader: boolean }>;
+  values: Array<{ zoneId: string; value: number | null; label: string; isLeader: boolean }>;
 };
 
 export type CompareColumn = {
   zoneId: string;
   label: string;
-  rank: number;
+  rank: number | null;
   lensLabel: string;
 };
 
@@ -257,6 +258,7 @@ export type NetworkFindAreasViewModel = {
 };
 
 export type BuildNetworkFindAreasViewModelInput = {
+  fixturesAllowed?: boolean;
   heatZones: OperatorHeatZone[];
   listings: Listing[];
   candidates: Candidate[];
@@ -427,6 +429,7 @@ function recommendationTone(recommendation: Candidate["recommendation"]): Networ
 
 export function buildNetworkFindAreasViewModel({
   activeLens = "demand",
+  fixturesAllowed = operatorFixturesAllowed(),
   candidates,
   heatZones,
   listings,
@@ -435,7 +438,7 @@ export function buildNetworkFindAreasViewModel({
   rebalanceStores = [],
   selectedHeatZoneId,
 }: BuildNetworkFindAreasViewModelInput): NetworkFindAreasViewModel {
-  const zones = [...heatZones].sort((left, right) => left.rank - right.rank);
+  const zones = [...heatZones].sort((left, right) => (left.rank ?? Infinity) - (right.rank ?? Infinity));
   const rents = zones.map((zone) => rentMidpoint(zone.rentBand)).filter((value) => value > 0);
   const minRent = rents.length ? Math.min(...rents) : 0;
   const maxRent = rents.length ? Math.max(...rents) : 0;
@@ -444,6 +447,7 @@ export function buildNetworkFindAreasViewModel({
   const zoneModels = zones.map((zone) =>
     buildZoneViewModel({
       activeLens,
+      fixturesAllowed,
       bounds,
       candidates: candidates.filter((candidate) => candidate.heatZoneId === zone.id),
       listings: listings.filter((listing) => listing.heatZoneId === zone.id),
@@ -459,10 +463,12 @@ export function buildNetworkFindAreasViewModel({
     zoneModels[0]?.id;
   const selectedZone = zoneModels.find((zone) => zone.id === selectedId) ?? null;
   const rankedZones = [...zoneModels].sort((left, right) => {
-    if (right.lensScore !== left.lensScore) {
+    if (left.lensScore === null && right.lensScore !== null) return 1;
+    if (right.lensScore === null && left.lensScore !== null) return -1;
+    if (left.lensScore !== null && right.lensScore !== null && left.lensScore !== right.lensScore) {
       return right.lensScore - left.lensScore;
     }
-    return left.rank - right.rank;
+    return (left.rank ?? Infinity) - (right.rank ?? Infinity);
   });
 
   const zoneLabelById = new Map(zoneModels.map((zone) => [zone.id, zone.label] as const));
@@ -484,7 +490,7 @@ export function buildNetworkFindAreasViewModel({
     compare,
     lenses: NETWORK_FIND_AREAS_LENSES,
     listingRadar,
-    mapPoints: buildMapPoints(zoneModels),
+    mapPoints: fixturesAllowed ? buildMapPoints(zoneModels) : [],
     rankedZones,
     rebalanceQueue,
     reviewQueue,
@@ -631,7 +637,7 @@ function buildSiteScoreLab(candidates: Candidate[], zoneLabelById: Map<string, s
 const COMPARE_METRICS: Array<{ key: string; label: string; pick: (zone: NetworkFindAreasZoneViewModel) => number | null }> = [
   { key: "demand", label: "Demand Gap", pick: (zone) => zone.demandGap },
   { key: "fit", label: "Brand Fit", pick: (zone) => zone.fitScore },
-  { key: "competition", label: "Competition (low better)", pick: (zone) => 1 - zone.competitionIndex },
+  { key: "competition", label: "Competition (low better)", pick: (zone) => zone.competitionIndex === null ? null : 1 - zone.competitionIndex },
   { key: "cannibalization", label: "Cannibalization (low better)", pick: (zone) => zone.cannibalizationScore },
   { key: "rent", label: "Rent Opportunity", pick: (zone) => zone.rentScore },
   { key: "traffic", label: "Traffic", pick: (zone) => zone.trafficScore },
@@ -660,7 +666,7 @@ function buildCompareViewModel(rankedZones: NetworkFindAreasZoneViewModel[]): Ne
       values: raw.map((entry) => ({
         isLeader: rankedZones.length > 1 && entry.value !== null && entry.value === maxValue && maxValue > 0,
         label: entry.value !== null ? formatPercent(entry.value) : "未評估",
-        value: entry.value ?? 0,
+        value: entry.value,
         zoneId: entry.zoneId,
       })),
     };
@@ -753,6 +759,7 @@ function formatCurrencyTwd(value: number) {
 
 function buildZoneViewModel({
   activeLens,
+  fixturesAllowed,
   bounds,
   candidates,
   listings,
@@ -761,6 +768,7 @@ function buildZoneViewModel({
   zone,
 }: {
   activeLens: NetworkFindAreasLens;
+  fixturesAllowed: boolean;
   bounds: ReturnType<typeof coordinateBounds>;
   candidates: Candidate[];
   listings: Listing[];
@@ -768,9 +776,11 @@ function buildZoneViewModel({
   minRent: number;
   zone: OperatorHeatZone;
 }): NetworkFindAreasZoneViewModel {
-  const demandGap = clamp01(zone.demandGap);
-  const competitionIndex = clamp01(zone.competitionIndex);
-  const cannibalizationWeight = RISK_WEIGHT[zone.cannibalizationRisk] ?? RISK_WEIGHT.medium;
+  if (!fixturesAllowed) return buildRecordedZoneViewModel({ activeLens, candidates, listings, zone });
+  const demandGap = clamp01(zone.demandGap ?? 0);
+  const competitionIndex = clamp01(zone.competitionIndex ?? 0);
+  const fixtureRisk = zone.cannibalizationRisk ?? "medium";
+  const cannibalizationWeight = RISK_WEIGHT[fixtureRisk] ?? RISK_WEIGHT.medium;
   const cannibalizationScore = clamp01(1 - cannibalizationWeight);
   const rentScore = rentOpportunityScore(zone.rentBand, minRent, maxRent);
   const confidence = zone.confidence !== null && zone.confidence !== undefined ? clamp01(zone.confidence) : null;
@@ -796,7 +806,7 @@ function buildZoneViewModel({
     rentScore,
     trafficScore,
     unmetScore,
-  });
+  }) ?? 0;
   const mapPosition = coordinatePosition(zone, bounds);
   const bestCandidate = candidates.filter((candidate) => candidate.score !== null && candidate.recommendation !== null)
     .sort(compareCandidateScore)[0];
@@ -809,7 +819,7 @@ function buildZoneViewModel({
     {
       key: "cannibalization",
       label: "自家稀釋",
-      value: RISK_LABEL_ZH[zone.cannibalizationRisk] ?? zone.cannibalizationRisk,
+      value: RISK_LABEL_ZH[fixtureRisk] ?? fixtureRisk,
     },
     { key: "rentBand", label: "租金帶", value: zone.rentBand },
     { key: "rentFeasibility", label: "租金可行性", value: levelWithPercent(rentScore) },
@@ -824,10 +834,10 @@ function buildZoneViewModel({
     candidateSummary: bestCandidate ? `${bestCandidate.id} ${bestCandidate.recommendation} · ${bestCandidate.score}`
       : candidates.some((candidate) => candidate.status === "scored") ? "已有評分報告，尚無比較排名"
       : candidates.length ? `${candidates.length} 個候選點等待評分` : "No candidate",
-    cannibalizationLabel: RISK_LABEL[zone.cannibalizationRisk] ?? zone.cannibalizationRisk,
-    cannibalizationRisk: zone.cannibalizationRisk,
+    cannibalizationLabel: RISK_LABEL[fixtureRisk] ?? fixtureRisk,
+    cannibalizationRisk: fixtureRisk,
     cannibalizationScore,
-    centroidLabel: `${zone.centroid[1].toFixed(4)}, ${zone.centroid[0].toFixed(4)}`,
+    centroidLabel: zone.centroid ? `${zone.centroid[1].toFixed(4)}, ${zone.centroid[0].toFixed(4)}` : "未定位",
     competitionIndex,
     competitionLabel: formatPercent(competitionIndex),
     confidence,
@@ -867,6 +877,56 @@ function buildZoneViewModel({
   };
 }
 
+
+/** Recorded rows never use prototype proxies or a missing value as a good signal. */
+function buildRecordedZoneViewModel({ activeLens, candidates, listings, zone }: {
+  activeLens: NetworkFindAreasLens; candidates: Candidate[]; listings: Listing[]; zone: OperatorHeatZone;
+}): NetworkFindAreasZoneViewModel {
+  const measured = (value: number | null | undefined) => typeof value === "number" && Number.isFinite(value)
+    && value >= 0 && value <= 1 ? value : null;
+  const native = zone.mapEvidence;
+  const demandGap = measured(zone.demandGap);
+  const competitionIndex = measured(zone.competitionIndex);
+  const confidence = measured(native?.confidence ?? zone.confidence);
+  const fitScore = measured(native?.formatFitScore);
+  const cannibalizationRisk = native ? null : zone.cannibalizationRisk;
+  const cannibalizationScore = native ? 1 - native.cannibalizationRisk : null;
+  const rentScore = measured(native?.rentFeasibility);
+  const unmetScore = measured(native?.unmetDemandScore);
+  const lensScore = lensValue(activeLens, { demandGap, competitionScore: competitionIndex === null ? null : 1 - competitionIndex,
+    confidence, fitScore, cannibalizationScore, rentScore, unmetScore, trafficScore: null, lifeScore: null });
+  const lensPoints = lensScore === null ? null : Math.round(lensScore * 100);
+  const bestCandidate = candidates.filter((candidate) => candidate.score !== null && candidate.recommendation !== null)
+    .sort(compareCandidateScore)[0];
+  const availableListingCount = listings.filter((listing) => !CLOSED_LISTING_STATUSES.has(listing.status)).length;
+  const riskLabel = cannibalizationRisk === null ? "未評估" : RISK_LABEL_ZH[cannibalizationRisk];
+  return {
+    zone, id: zone.id, label: zone.label, rank: native?.priorityRank ?? zone.rank,
+    centroidLabel: zone.centroid ? `${zone.centroid[1].toFixed(4)}, ${zone.centroid[0].toFixed(4)}` : "未定位",
+    demandGap, demandLabel: formatPercent(demandGap), competitionIndex, competitionLabel: formatPercent(competitionIndex),
+    cannibalizationRisk, cannibalizationScore, cannibalizationLabel: riskLabel,
+    fitScore, fitLabel: formatPercent(fitScore), rentBand: zone.rentBand, rentScore,
+    confidence, confidenceLabel: formatPercent(confidence), trafficScore: null, trafficLabel: "未評估",
+    lifeScore: null, lifeLabel: "未評估", unmetScore, unmetLabel: formatPercent(unmetScore),
+    lensScore, lensPoints, lensLabel: formatPercent(lensScore), lensTier: lensPoints === null ? null : scoreTier(lensPoints),
+    overallPoints: native?.score ?? null, availableListingCount, listingCount: listings.length, candidateCount: candidates.length,
+    bestCandidate, candidates, listings, candidateSummary: bestCandidate ? `${bestCandidate.id} ${bestCandidate.recommendation} · ${bestCandidate.score}`
+      : candidates.length ? `${candidates.length} 個候選點等待評分` : "No candidate",
+    detailRows: [
+      { key: "demand", label: "需求缺口", value: demandGap === null ? "未評估" : levelWithPercent(demandGap) },
+      { key: "competition", label: "競店壓力", value: competitionIndex === null ? "未評估" : levelWithPercent(competitionIndex) },
+      { key: "cannibalization", label: "自家稀釋", value: native ? formatPercent(native.cannibalizationRisk) : riskLabel },
+      { key: "rentBand", label: "租金帶", value: zone.rentBand },
+      { key: "rentFeasibility", label: "租金可行性", value: rentScore === null ? "未評估" : levelWithPercent(rentScore) },
+      { key: "listings", label: "可用物件", value: `${availableListingCount} 筆` },
+      { key: "confidence", label: "資料信心", value: confidence === null ? "未評估" : levelWithPercent(confidence) },
+    ],
+    reasons: zone.reasons.length ? zone.reasons : ["來源尚未提供說明。"],
+    risks: zone.risks.length ? zone.risks : ["風險資料尚未提供。"], nextStep: zone.nextStep,
+    mapX: null, mapY: null, mapSize: null, mapTone: null,
+  };
+}
+
 /** Package 10 colour bands: ≥80 teal, 70–79 indigo, 60–69 amber, below red. */
 export function scoreTier(points: number): ZoneScoreTier {
   if (points >= 80) return "high";
@@ -883,15 +943,15 @@ function levelWithPercent(value: number) {
 function lensValue(
   lens: NetworkFindAreasLens,
   values: {
-    cannibalizationScore: number;
-    competitionScore: number;
-    confidence: number;
-    demandGap: number;
-    fitScore: number;
-    lifeScore: number;
-    rentScore: number;
-    trafficScore: number;
-    unmetScore: number;
+    cannibalizationScore: number | null;
+    competitionScore: number | null;
+    confidence: number | null;
+    demandGap: number | null;
+    fitScore: number | null;
+    lifeScore: number | null;
+    rentScore: number | null;
+    trafficScore: number | null;
+    unmetScore: number | null;
   },
 ) {
   switch (lens) {
@@ -918,9 +978,9 @@ function lensValue(
 }
 
 function buildMapPoints(zones: NetworkFindAreasZoneViewModel[]): NetworkFindAreasMapPoint[] {
-  return zones.flatMap((zone) => [
+  return zones.filter((zone) => zone.mapX !== null && zone.mapY !== null).flatMap((zone) => [
     ...zone.listings.map((listing, index) => {
-      const point = offsetPoint(zone.mapX, zone.mapY, `${listing.id}:listing`, index, 5);
+      const point = offsetPoint(zone.mapX!, zone.mapY!, `${listing.id}:listing`, index, 5);
       return {
         heatZoneId: zone.id,
         id: listing.id,
@@ -932,7 +992,7 @@ function buildMapPoints(zones: NetworkFindAreasZoneViewModel[]): NetworkFindArea
       };
     }),
     ...zone.candidates.map((candidate, index) => {
-      const point = offsetPoint(zone.mapX, zone.mapY, `${candidate.id}:candidate`, index, 8);
+      const point = offsetPoint(zone.mapX!, zone.mapY!, `${candidate.id}:candidate`, index, 8);
       return {
         heatZoneId: zone.id,
         id: candidate.id,
@@ -951,8 +1011,10 @@ function coordinateBounds(zones: OperatorHeatZone[]) {
     return { maxLat: 0, maxLng: 0, minLat: 0, minLng: 0 };
   }
 
-  const lngs = zones.map((zone) => zone.centroid[0]);
-  const lats = zones.map((zone) => zone.centroid[1]);
+  const coordinates = zones.flatMap((zone) => zone.centroid ? [zone.centroid] : []);
+  if (!coordinates.length) return { maxLat: 0, maxLng: 0, minLat: 0, minLng: 0 };
+  const lngs = coordinates.map((point) => point[0]);
+  const lats = coordinates.map((point) => point[1]);
   return {
     maxLat: Math.max(...lats),
     maxLng: Math.max(...lngs),
@@ -962,7 +1024,7 @@ function coordinateBounds(zones: OperatorHeatZone[]) {
 }
 
 function coordinatePosition(zone: OperatorHeatZone, bounds: ReturnType<typeof coordinateBounds>) {
-  const [lng, lat] = zone.centroid;
+  const [lng, lat] = zone.centroid ?? [0, 0];
   const lngRange = bounds.maxLng - bounds.minLng;
   const latRange = bounds.maxLat - bounds.minLat;
   const fallbackX = deterministicScore(`${zone.id}:x`, 0.22, 0.78) * 100;

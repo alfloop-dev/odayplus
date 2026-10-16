@@ -463,6 +463,38 @@ class OperatorStateService:
             ),
         )
 
+    def get_task_center(
+        self,
+        *,
+        role_id: str | None = None,
+        subject_id: str | None = None,
+        system_roles: str | None = None,
+        tenant_id: str | None = None,
+        brand_ids: tuple[str, ...] = (),
+        region_ids: tuple[str, ...] = (),
+        store_ids: tuple[str, ...] = (),
+        read_projection: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Read retained owner facts through one verified request admission."""
+        role = self.resolve_role(operator_role_id=role_id, subject_id=subject_id, system_roles=system_roles)
+        state = self._load_state(tenant_id=tenant_id, brand_ids=brand_ids,
+                                 region_ids=region_ids, store_ids=store_ids)
+        if self._require_live_data:
+            if read_projection is None:
+                raise OperatorLiveRepositoryError("request-scoped task admission is required")
+            state = read_projection(state)
+            if state.get("_taskCenterRequestAdmitted") is not True:
+                raise OperatorLiveRepositoryError("task owner admission was not confirmed")
+        projection = state.get("taskCenterRecords")
+        if not isinstance(projection, dict):
+            # Explicit POC can still inspect its existing queue, but this is not
+            # evidence of a real initiator or a complete historical collection.
+            projection = {"records": [], "coverage": {"complete": False, "retentionComplete": False,
+                          "domains": [], "reasonCode": "TASK_FIXTURE_HAS_NO_CANONICAL_HISTORY"}}
+        return {"records": [_strip_roles(row) for row in projection["records"] if _has_role(row, role["id"])],
+                "coverage": deepcopy(projection["coverage"]),
+                "dataOrigin": deepcopy(state.get("_meta", {}).get("dataOrigin") or self.data_origin)}
+
     def get_approvals(
         self,
         *,
@@ -759,6 +791,7 @@ class OperatorStateService:
                     approvals_count=(counts["approvals"] if state.get("_meta", {}).get("sections", {}).get("approvals", {}).get("state") == "available" else None),
                     now=datetime.now(UTC),
                     role_id=role_id,
+                    growth_facts=state.get("todayGrowth"),
                 )
         response_role = deepcopy(role)
         response_roles = deepcopy(ROLES)

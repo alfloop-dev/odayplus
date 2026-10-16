@@ -887,6 +887,44 @@ class DurableStoreOpsRepository:
             ) from exc
 
 
+_CAMERA_TEXT_METADATA = (
+    "id", "issueId", "kind", "title", "sourceLabel", "summary", "polarity", "occurredAt",
+    "purpose", "cameraLocation", "timeWindow", "purposeRecordedAt", "unlockedAt",
+)
+
+
+def _camera_metadata_only(item: Mapping[str, Any]) -> dict[str, Any]:
+    """Read existing metadata; no current media-content authority is bound here."""
+    result = {key: value for key in _CAMERA_TEXT_METADATA
+              if isinstance((value := item.get(key)), str)}
+    confidence = item.get("confidence")
+    if confidence is None or type(confidence) in (int, float) and math.isfinite(confidence):
+        result["confidence"] = confidence
+    retention = item.get("retentionHours")
+    if type(retention) is int and 1 <= retention <= 72:
+        result["retentionHours"] = retention
+    reason = item.get("lockedReason")
+    result["lockedReason"] = reason if isinstance(reason, str) and reason.strip() else (
+        "Camera content authorization is unavailable; a recorded purpose is not an access grant."
+    )
+    return result
+
+
+def _camera_response_metadata(result: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep a legacy receipt readable without reusing its media-access claims."""
+    response = _clone(result)
+    if isinstance(response.get("evidence"), list):
+        response["evidence"] = [
+            _camera_metadata_only(item)
+            if isinstance(item, Mapping) and item.get("kind") == "camera" else item
+            for item in response["evidence"]
+        ]
+    item = response.get("evidenceItem")
+    if isinstance(item, Mapping) and item.get("kind") == "camera":
+        response["evidenceItem"] = _camera_metadata_only(item)
+    return response
+
+
 class StoreOpsService:
     def __init__(
         self,
@@ -966,7 +1004,10 @@ class StoreOpsService:
         result = {
             "stores": stores,
             "issues": issues,
-            "evidence": state["evidence"],
+            "evidence": [
+                _camera_metadata_only(item) if item.get("kind") == "camera" else _clone(item)
+                for item in state["evidence"]
+            ] if self._require_live_data or self._repository.is_live else state["evidence"],
             "auditEvents": _sorted_audit_events(state),
             "fourLightSummary": _four_light_summary(stores=stores, issues=state["issues"]),
             "count": len(issues),
@@ -993,7 +1034,10 @@ class StoreOpsService:
         state = self._repository.get_state()
         issue = _find_issue(state, issue_id)
         evidence = [item for item in state["evidence"] if item["id"] in issue["evidenceIds"]]
-        return {"issue": _clone(issue), "evidence": _clone(evidence)}
+        return {"issue": _clone(issue), "evidence": [
+            _camera_metadata_only(item) if item.get("kind") == "camera" else _clone(item)
+            for item in evidence
+        ] if self._require_live_data or self._repository.is_live else _clone(evidence)}
 
     def list_attachments(
         self,
@@ -1321,7 +1365,10 @@ class StoreOpsService:
             replay = self._repository.get_idempotency_result(idempotency_key)
             if replay is not None:
                 replay["idempotentReplay"] = True
-                return replay
+                return (
+                    _camera_response_metadata(replay)
+                    if self._require_live_data or self._repository.is_live else replay
+                )
 
         def mutate(state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], AuditEvent]:
             issue = _find_issue(state, issue_id)
@@ -1331,15 +1378,23 @@ class StoreOpsService:
             validated_payload = submission.model_dump(exclude_none=True)
             _validate_camera_purpose(validated_payload)
 
-            camera_evidence.pop("lockedReason", None)
             camera_evidence["purpose"] = str(validated_payload.get("purpose", "")).strip()
             camera_evidence["cameraLocation"] = str(validated_payload.get("cameraLocation", "")).strip()
             camera_evidence["timeWindow"] = str(validated_payload.get("timeWindow", "")).strip()
             camera_evidence["retentionHours"] = int(validated_payload.get("retentionHours") or 24)
-            camera_evidence["unlockedAt"] = _now_iso()
-            camera_evidence["summary"] = (
-                "Camera evidence unlocked for a recorded, audit-scoped purpose."
-            )
+            if self._require_live_data or self._repository.is_live:
+                camera_evidence["purposeRecordedAt"] = _now_iso()
+                camera_evidence["lockedReason"] = camera_evidence.get("lockedReason") or (
+                    "Camera content authorization is unavailable; a recorded purpose is not an access grant."
+                )
+                camera_evidence["summary"] = "Camera evidence purpose recorded; media content is not authorized."
+            else:
+                # Preserve the original explicit local/POC illustration.
+                camera_evidence.pop("lockedReason", None)
+                camera_evidence["unlockedAt"] = _now_iso()
+                camera_evidence["summary"] = (
+                    "Camera evidence unlocked for a recorded, audit-scoped purpose."
+                )
             issue["updatedAt"] = _now_iso()
 
             audit = _append_audit_event(
@@ -1383,7 +1438,8 @@ class StoreOpsService:
         result.update(
             {
                 "issue": _clone(issue),
-                "evidenceItem": _clone(camera_evidence),
+                "evidenceItem": _camera_metadata_only(camera_evidence)
+                    if self._require_live_data or self._repository.is_live else _clone(camera_evidence),
                 "auditEvent": _clone(audit),
                 "idempotentReplay": False,
             }

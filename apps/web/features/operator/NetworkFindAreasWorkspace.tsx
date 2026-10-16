@@ -62,6 +62,10 @@ import { hasNetworkListingsRenderShape, hasNetworkScoringRenderShape, hasCanonic
 import { FindAreasPanel } from "./network/FindAreasPanel";
 import { canPerform as canPerformIntake } from "./network/intake/intakePermissions";
 import type { RebalancePanelProps } from "./network/RebalancePanel";
+import { createNetPlanBuilderApi } from "./network/netplanBuilderClient";
+import { createSurveyAssignmentApi, type SurveyTarget } from "./network/surveyAssignmentClient";
+import { createSurveyEvidenceApi } from "./network/surveyEvidenceClient";
+import { SurveyAssignmentDialog } from "./network/SurveyAssignmentDialog";
 import type {
   HeatZoneMergeSplitPanelProps,
   HeatZoneProposal,
@@ -1768,6 +1772,30 @@ export function NetworkFindAreasWorkspace({
     }
   }
 
+  const [surveyRequest, setSurveyRequest] = useState<{ target: SurveyTarget; api: ReturnType<typeof createSurveyAssignmentApi>; tab: number } | null>(null);
+  const surveyBinding = useMemo(() => {
+    const context = navigationContext.current;
+    const locationVersion = navigationLocation.current.version;
+    const current = () => context === navigationContext.current
+      && locationVersion === navigationLocation.current.version && navigationLocation.current.mounted;
+    const capture = () => current() ? snapshotReadGuard() : async () => false;
+    const api = createSurveyAssignmentApi(NETWORK_OPERATOR_HEADERS, capture);
+    api.work = createSurveyEvidenceApi(NETWORK_OPERATOR_HEADERS, capture);
+    return { api, open(target: SurveyTarget, tab: number) {
+      if (current() && !fixturesAllowed) setSurveyRequest({ target, api, tab });
+    } };
+  }, [NETWORK_OPERATOR_HEADERS, navigationContextKey, navigationLocationKey, fixturesAllowed]);
+
+  const netPlanBuilderApi = useMemo(() => {
+    const context = navigationContext.current;
+    const locationVersion = navigationLocation.current.version;
+    const current = () => context === navigationContext.current
+      && locationVersion === navigationLocation.current.version && navigationLocation.current.mounted;
+    return createNetPlanBuilderApi(NETWORK_OPERATOR_HEADERS,
+      () => current() ? snapshotReadGuard() : async () => false,
+      async () => { if (current()) await reloadRebalanceSnapshot(); });
+  }, [NETWORK_OPERATOR_HEADERS, navigationContextKey, navigationLocationKey]);
+
   async function postRebalanceAction(
     storeId: string,
     action: "request-avm" | "complete-avm" | "solve-netplan" | "submit-review",
@@ -1887,6 +1915,7 @@ export function NetworkFindAreasWorkspace({
     () =>
       buildNetworkFindAreasViewModel({
         activeLens: effectiveLens,
+        fixturesAllowed,
         candidates: localCandidates,
         heatZones,
         listings: listingsEffective,
@@ -1895,7 +1924,7 @@ export function NetworkFindAreasWorkspace({
         selectedHeatZoneId: effectiveSelectedId,
         siteReviews: localSiteReviews,
       }),
-    [localCandidates, effectiveLens, effectiveSelectedId, heatZones, listingsEffective, listingSourcesEffective, rebalanceStoresEffective, localSiteReviews],
+    [fixturesAllowed, localCandidates, effectiveLens, effectiveSelectedId, heatZones, listingsEffective, listingSourcesEffective, rebalanceStoresEffective, localSiteReviews],
   );
 
   const selectedZone = viewModel.selectedZone;
@@ -2582,6 +2611,7 @@ export function NetworkFindAreasWorkspace({
           <CandidatePanel
             busyCandidateId={submissionBusy ? submissionOffer?.candidateId : busyCandidateId}
             submissionOffers={submissionCandidates}
+            onOpenSurvey={fixturesAllowed ? undefined : (target) => surveyBinding.open(target, activeTab)}
             onRequestSubmission={(offer) => { void requestReviewSubmission(offer); }}
             candidates={scoringNavigationGeneration === navigationContext.current.generation ? scoringSnapshot?.candidates ?? [] : []}
             fallbackRows={fixturesAllowed && !selectedCandidateId ? viewModel.candidatePipeline : []}
@@ -2654,6 +2684,7 @@ export function NetworkFindAreasWorkspace({
           />
         ) : activeTab === 6 ? (
           <RebalancePanel
+            builderApi={netPlanBuilderApi}
             apiError={rebalanceApiError}
             busyAction={busyRebalanceAction}
             onCompleteAvm={(storeId) => postRebalanceAction(storeId, "complete-avm")}
@@ -2685,6 +2716,7 @@ export function NetworkFindAreasWorkspace({
             listings={listingsEffective}
             candidates={localCandidates}
             onSelectZone={selectHeatZone}
+            onOpenSurvey={fixturesAllowed ? undefined : (id) => surveyBinding.open({ kind: "HEAT_ZONE", id }, activeTab)}
             onChangeLens={changeLens}
             onToggleTracked={toggleTracked}
             onSourceListings={sourceListings}
@@ -2708,6 +2740,9 @@ export function NetworkFindAreasWorkspace({
       {submissionOffer ? <ReviewSubmissionDialog candidateId={submissionOffer.candidateId} context={submissionContext} busy={submissionBusy}
         error={submissionError} correlationId={submissionCorrelation} onSubmit={(form) => { void submitCanonicalReview(form); }}
         onClose={() => { if (!submissionInFlight.current) { submissionSession.current = null; setSubmissionOffer(null); setSubmissionContext(null); setSubmissionError(null); } }} /> : null}
+      {surveyRequest?.api === surveyBinding.api && surveyRequest.tab === activeTab && (activeTab === 0 || activeTab === 2)
+        && allowedTabIndices.includes(activeTab) ? <SurveyAssignmentDialog api={surveyRequest.api} target={surveyRequest.target}
+          onClose={() => setSurveyRequest(null)} /> : null}
       {listingMergeDialog}
         {listingArchiveDialog}
     </section>

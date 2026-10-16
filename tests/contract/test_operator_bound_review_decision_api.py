@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from modules.opsboard.application.operator_live_repository import OperatorLiveRepository
+from tests.integration._operation_flag_fixtures import SITE_GO_FLAG, enable_operation_flag
 from tests.integration.test_network_review_canonical_atomicity import (
     business_bytes as durable_bytes,
 )
@@ -30,8 +31,13 @@ HEADERS = {
 }
 
 
-def pending(tmp_path):
+def pending(tmp_path, *, go_enabled=False):
     harness, resolver, candidate, _, submission = setup(tmp_path)
+    if go_enabled:
+        enable_operation_flag(
+            harness.bundle.feature_flag_registry, key=SITE_GO_FLAG, tenant_id=TENANT,
+            queue=harness.bundle.job_queue, audit_log=harness.bundle.audit_log,
+        )
     result = invoke(resolver, "submit_review", **arguments(submission))
     return harness, resolver, candidate, result["records"]["decisionId"]
 
@@ -80,7 +86,7 @@ def test_today_real_pending_producer_enters_exact_native_review_instead_of_appro
 def test_current_context_decides_exact_owner_and_replays_same_original_version_without_writes(
     tmp_path, action
 ):
-    harness, _, candidate, decision = pending(tmp_path)
+    harness, _, candidate, decision = pending(tmp_path, go_enabled=action == "GO")
     try:
         with TestClient(harness.app()) as client:
             before_context = durable_bytes(harness.bundle.engine)
@@ -180,7 +186,7 @@ def test_refused_context_and_policy_leave_entire_physical_graph_unchanged(
 
 
 def test_current_proposer_is_readable_but_cannot_decide_and_scope_replay_is_refused(tmp_path):
-    harness, _, candidate, decision = pending(tmp_path)
+    harness, _, candidate, decision = pending(tmp_path, go_enabled=True)
     try:
         with TestClient(harness.app()) as client:
             author_headers = {
@@ -254,10 +260,10 @@ def test_context_never_advertises_decidable_legacy_identity_that_fresh_owner_ref
         harness.close()
 
 
-def returned_pending_with_newer_report(tmp_path):
+def returned_pending_with_newer_report(tmp_path, *, go_enabled=False):
     from tests.unit.test_network_canonical_review_projection import report
 
-    harness, resolver, candidate, decision = pending(tmp_path)
+    harness, resolver, candidate, decision = pending(tmp_path, go_enabled=go_enabled)
     first = harness.decisions(TENANT).get_report(decision)
     returned = invoke(
         resolver,
@@ -298,7 +304,7 @@ def test_current_resubmitted_owner_decides_frozen_v1_preserving_latest_v2_and_pr
     tmp_path, action
 ):
     harness, _, candidate, decision, first, latest, old_approval_id = (
-        returned_pending_with_newer_report(tmp_path)
+        returned_pending_with_newer_report(tmp_path, go_enabled=action == "GO")
     )
     try:
         service = harness.bundle.network_review_resolver()._factory(None, TENANT)
@@ -412,7 +418,7 @@ def test_original_valid_context_cannot_transition_a_later_malformed_stored_decis
 def test_authorized_original_receipt_replay_precedes_fresh_recorded_identity_guard_without_rewriting_corruption(
     tmp_path,
 ):
-    harness, _, candidate, decision = pending(tmp_path)
+    harness, _, candidate, decision = pending(tmp_path, go_enabled=True)
     try:
         with TestClient(harness.app()) as client:
             original = context_read(client, candidate, decision).json()

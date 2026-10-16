@@ -33,7 +33,7 @@ import hashlib
 import json
 import uuid
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from shared.audit.events import AuditEvent, InMemoryAuditLog
@@ -163,9 +163,31 @@ def _judge_effectiveness(
     return "EFFECTIVE"
 
 
+def _observation_window(action: dict[str, Any]) -> dict[str, Any]:
+    """Read the server-recorded execution window; legacy status is no clock."""
+    observed = datetime.fromisoformat(_now_iso().replace("Z", "+00:00"))
+    result: dict[str, Any] = {"status": "UNAVAILABLE", "startedAt": None,
+                              "endsAt": None, "days": None, "observedAt": observed.isoformat()}
+    days = action.get("observationWindowFrozenDays")
+    if type(days) is not int or not 1 <= days <= 365:
+        return result
+    try:
+        start = datetime.fromisoformat(action["observationStartedAt"].replace("Z", "+00:00"))
+        end = datetime.fromisoformat(action["observationEndsAt"].replace("Z", "+00:00"))
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return result
+    if (start.tzinfo is None or end.tzinfo is None or observed.tzinfo is None
+            or start.utcoffset() is None or end.utcoffset() is None
+            or end - start != timedelta(days=days) or observed < start):
+        return result
+    return {"status": "MATURE" if observed >= end else "OBSERVING",
+            "startedAt": start.isoformat(), "endsAt": end.isoformat(),
+            "days": days, "observedAt": observed.isoformat()}
+
+
 def _closeout_gate(action: dict[str, Any]) -> dict[str, Any]:
     outcome = _judge_effectiveness(
-        status=action.get("status", "DRAFT"),
+        status=action.get("status", "DRAFT") if _observation_window(action)["status"] == "MATURE" else "OBSERVING",
         observed_lift=action.get("observedLift"),
         target_lift=float(action.get("targetLift") or 0),
         evidence_level=action.get("evidenceLevel"),
@@ -297,6 +319,9 @@ _SEED_ACTIONS: list[dict[str, Any]] = [
         "status": "OUTCOME_READY",
         "observationWindow": "2026-06-20 ~ 2026-07-04（14 天）",
         "observationWindowDays": 14,
+        "observationStartedAt": "2026-06-20T00:00:00+00:00",
+        "observationEndsAt": "2026-07-04T00:00:00+00:00",
+        "observationWindowFrozenDays": 14,
         "targetLift": 2.0,
         "observedLift": 2.6,
         "evidenceLevel": "L3",
@@ -322,6 +347,9 @@ _SEED_ACTIONS: list[dict[str, Any]] = [
         "status": "OUTCOME_READY",
         "observationWindow": "2026-06-18 ~ 2026-07-02（14 天）",
         "observationWindowDays": 14,
+        "observationStartedAt": "2026-06-18T00:00:00+00:00",
+        "observationEndsAt": "2026-07-02T00:00:00+00:00",
+        "observationWindowFrozenDays": 14,
         "targetLift": 3.0,
         "observedLift": -1.4,
         "evidenceLevel": "L2",
@@ -346,6 +374,9 @@ _SEED_ACTIONS: list[dict[str, Any]] = [
         "status": "OUTCOME_READY",
         "observationWindow": "2026-06-25 ~ 2026-07-09（14 天）",
         "observationWindowDays": 14,
+        "observationStartedAt": "2026-06-25T00:00:00+00:00",
+        "observationEndsAt": "2026-07-09T00:00:00+00:00",
+        "observationWindowFrozenDays": 14,
         "targetLift": 1.5,
         "observedLift": 0.6,
         "evidenceLevel": "L1",
@@ -370,6 +401,9 @@ _SEED_ACTIONS: list[dict[str, Any]] = [
         "status": "OBSERVING",
         "observationWindow": "2026-07-05 ~ 2026-07-19（觀察中）",
         "observationWindowDays": 14,
+        "observationStartedAt": "2026-07-05T00:00:00+00:00",
+        "observationEndsAt": "2026-07-19T00:00:00+00:00",
+        "observationWindowFrozenDays": 14,
         "targetLift": 2.5,
         "observedLift": None,
         "evidenceLevel": None,
@@ -590,6 +624,7 @@ class GrowthService:
         result = []
         for action in actions:
             enriched = _clone(action)
+            enriched["observation"] = _observation_window(action)
             enriched["closeoutGate"] = _closeout_gate(action)
             result.append(enriched)
         return result
@@ -597,6 +632,7 @@ class GrowthService:
     def get_action(self, action_id: str) -> dict[str, Any]:
         action = self._find_action(action_id)
         enriched = _clone(action)
+        enriched["observation"] = _observation_window(action)
         enriched["closeoutGate"] = _closeout_gate(action)
         return enriched
 
@@ -606,17 +642,7 @@ class GrowthService:
         actions = self._state["actions"]
         segments = self._state["segments"]
         active_count = sum(1 for a in actions if a.get("status") in _ACTIVE_STATUSES)
-        effective_count = sum(
-            1
-            for a in actions
-            if _judge_effectiveness(
-                a.get("status", "DRAFT"),
-                a.get("observedLift"),
-                float(a.get("targetLift") or 0),
-                a.get("evidenceLevel"),
-            )
-            == "EFFECTIVE"
-        )
+        effective_count = sum(1 for a in actions if _closeout_gate(a)["outcome"] == "EFFECTIVE")
         blocked_closeout_count = sum(
             1
             for a in actions
@@ -1168,8 +1194,20 @@ class GrowthService:
         if target_status in {"CLOSED", "INEFFECTIVE"}:
             raise GrowthPolicyError("OUTCOME_WORKFLOW_REQUIRED")
 
+        if target_status == "OUTCOME_READY" and _observation_window(action)["status"] != "MATURE":
+            raise GrowthConflict("OBSERVATION_WINDOW_NOT_MATURE")
+        now = _now_iso()
+        if target_status in {"RUNNING", "EXECUTED"}:
+            days = action.get("observationWindowDays")
+            if type(days) is not int or not 1 <= days <= 365:
+                raise GrowthPolicyError("VALID_OBSERVATION_WINDOW_REQUIRED")
+            start = datetime.fromisoformat(now.replace("Z", "+00:00"))
+            action["executedAt"] = now
+            action["observationStartedAt"] = now
+            action["observationEndsAt"] = (start + timedelta(days=days)).isoformat()
+            action["observationWindowFrozenDays"] = days
         action["status"] = target_status
-        action["updatedAt"] = _now_iso()
+        action["updatedAt"] = now
 
         audit = self._append_audit_event(
             action=f"growth.action.{target_status.lower()}",
@@ -1260,6 +1298,9 @@ class GrowthService:
                 f"outcome writeback is only valid for OUTCOME_READY or CLOSED actions; "
                 f"current status: {action['status']}"
             )
+
+        if _observation_window(action)["status"] != "MATURE":
+            raise GrowthConflict("OBSERVATION_WINDOW_NOT_MATURE")
 
         # The write boundary for this action's evidence claim. An unrecognised
         # rung is refused here rather than stored, and omitting the field leaves

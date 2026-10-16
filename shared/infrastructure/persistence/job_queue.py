@@ -40,9 +40,9 @@ _CANONICAL_INTAKE_SCORE_ELIGIBILITY = (
 )
 
 
-# Fixed runtime vocabulary, not caller input. Keep SQL arity aligned when a
-# reviewed audit delivery type is added to the shared closed tuple.
-_AUDIT_JOB_PLACEHOLDERS = ", ".join("?" for _ in AUDIT_DELIVERY_JOB_TYPES)
+# The four bound audit-type parameters below mirror the shared closed runtime
+# vocabulary. Keep literal SQL arity aligned when a reviewed type is added;
+# job-type values remain parameters rather than query text.
 
 
 class DurableJobQueue:
@@ -166,7 +166,7 @@ class DurableJobQueue:
                     "AND job_type NOT LIKE ? AND job_type NOT LIKE ? "
                     + available
                     + self._claim_eligibility
-                    + f"ORDER BY CASE WHEN job_type IN ({_AUDIT_JOB_PLACEHOLDERS}) THEN 0 ELSE 1 END, created_at, job_id LIMIT 1"
+                    + "ORDER BY CASE WHEN job_type IN (?, ?, ?, ?) THEN 0 ELSE 1 END, created_at, job_id LIMIT 1"
                     + row_lock,
                     (
                         JobStatus.QUEUED.value,
@@ -299,10 +299,10 @@ class DurableJobQueue:
                     "  WHERE (status IN (?, ?, ?) OR (status = ? AND lease_expires_at IS NOT NULL "
                     "    AND lease_expires_at < statement_timestamp())) "
                     "  AND job_type NOT LIKE ? AND job_type NOT LIKE ? "
-                    f"  AND (? = FALSE OR job_type IN ({_AUDIT_JOB_PLACEHOLDERS})) "
+                    "  AND (? = FALSE OR job_type IN (?, ?, ?, ?)) "
                     "  AND (available_at IS NULL OR available_at <= statement_timestamp()) "
                     + self._claim_eligibility
-                    + f"  ORDER BY CASE WHEN job_type IN ({_AUDIT_JOB_PLACEHOLDERS}) THEN 0 ELSE 1 END, created_at, job_id "  # nosec B608
+                    + "  ORDER BY CASE WHEN job_type IN (?, ?, ?, ?) THEN 0 ELSE 1 END, created_at, job_id "  # nosec B608
                     "  FOR UPDATE SKIP LOCKED "
                     "  LIMIT 1"
                     ") "
@@ -338,9 +338,9 @@ class DurableJobQueue:
                     "WHERE (status IN (?, ?, ?) OR (status = ? AND lease_expires_at IS NOT NULL "
                     "AND lease_expires_at < ?)) "
                     "AND job_type NOT LIKE ? AND job_type NOT LIKE ? "
-                    f"AND (? = FALSE OR job_type IN ({_AUDIT_JOB_PLACEHOLDERS})) "
+                    "AND (? = FALSE OR job_type IN (?, ?, ?, ?)) "
                     "AND (available_at IS NULL OR julianday(available_at) <= julianday(?)) "
-                    f"ORDER BY CASE WHEN job_type IN ({_AUDIT_JOB_PLACEHOLDERS}) THEN 0 ELSE 1 END, created_at, job_id LIMIT 1",
+                    "ORDER BY CASE WHEN job_type IN (?, ?, ?, ?) THEN 0 ELSE 1 END, created_at, job_id LIMIT 1",
                     (
                         JobStatus.QUEUED.value,
                         *_LEGACY_RETRYING_STATUS_VALUES,

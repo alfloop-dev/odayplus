@@ -9,6 +9,8 @@ from modules.opsboard.application.store_ops import (
     StoreOpsLiveDataUnavailable,
     StoreOpsNotFound,
     StoreOpsPolicyError,
+    _camera_metadata_only,
+    _camera_response_metadata,
 )
 from modules.opsboard.application.store_ops_scope import binding_hash
 from shared.infrastructure.persistence.audit_log import DurableAuditLog
@@ -256,3 +258,39 @@ def test_camera_http_contract_does_not_coerce_wrong_types_into_accepted_purpose(
     )
     assert response.status_code == 422
     assert client.get(path + "/evidence", headers=headers).json() == before
+
+
+@pytest.mark.parametrize("locked_reason", [None, "Existing privacy restriction"])
+def test_camera_metadata_projection_keeps_history_without_content_access(locked_reason):
+    # Pure read-projection control, not a camera provider or PostgreSQL proof.
+    camera = {
+        "id": "camera-record", "issueId": "review-issue", "kind": "camera",
+        "title": "Recorded camera incident", "sourceLabel": "Synthetic metadata owner",
+        "summary": "Legacy recorded text", "confidence": 0, "polarity": "supporting",
+        "occurredAt": "2026-10-14T10:00:00Z", "purpose": "incident review",
+        "cameraLocation": "Recorded location", "timeWindow": "Recorded interval",
+        "retentionHours": 72, "unlockedAt": "2001-01-01T00:00:00Z",
+        "mediaUrl": "fixture://not-a-media-provider", "accessToken": "synthetic-not-a-credential",
+        "content": "synthetic non-footage bytes",
+    }
+    if locked_reason is not None:
+        camera["lockedReason"] = locked_reason
+    before = deepcopy(camera)
+    projected = _camera_metadata_only(camera)
+    assert camera == before
+    assert projected["purpose"] == camera["purpose"]
+    assert projected["unlockedAt"] == camera["unlockedAt"]  # History, not an access TTL.
+    assert projected["retentionHours"] == 72 and projected["confidence"] == 0
+    assert projected["lockedReason"]
+    if locked_reason is not None:
+        assert projected["lockedReason"] == locked_reason
+    assert not {"mediaUrl", "accessToken", "content", "expiresAt"} & set(projected)
+    legacy_receipt = {"evidenceItem": camera, "evidence": [camera, {"id": "other", "kind": "payment"}],
+                      "idempotentReplay": True, "auditEvent": {"id": "recorded-audit"}}
+    original_receipt = deepcopy(legacy_receipt)
+    response = _camera_response_metadata(legacy_receipt)
+    assert legacy_receipt == original_receipt
+    assert response["evidenceItem"] == response["evidence"][0] == projected
+    assert response["evidence"][1] == legacy_receipt["evidence"][1]
+    assert response["idempotentReplay"] is True
+    assert response["auditEvent"] == legacy_receipt["auditEvent"]

@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssistedIntake, IntakeInboxPage } from "@oday-plus/openapi-client";
 import { OperatorConsole, isIntakeDetailOpen } from "../../../OperatorConsole";
+import "../../../NetworkFindAreasWorkspace";
 import {
   AssistedIntakeSection,
   authoritativeAssignmentVersion,
@@ -597,9 +598,9 @@ describe("AssistedIntakeSection production container", () => {
       if (path === `/api/v1/intakes/${record.id}/promotion-decision`) return json({ code: "NOT_FOUND" }, 404);
       return json({ code: "NOT_FOUND" }, 404);
     }));
-    // Exercise the real panel's routing and authoritative intake binding.
-    // Fresh-browser cold module loading is verified separately.
-    await import("../../../NetworkFindAreasWorkspace");
+    // The test module imports the real panel before the timed interaction.
+    // Exercise routing and authoritative intake binding; fresh-browser cold
+    // module loading is verified separately.
     render(<OperatorConsole searchParams={{ ws: "network", tab: "radar", selected: record.id, dialog: "detail", stage: "NEEDS_REVIEW" }} />);
     expect(await screen.findByTestId("intake-detail-dialog")).toBeInTheDocument();
     expect(screen.queryByTestId("operator-data-unavailable")).toBeNull();

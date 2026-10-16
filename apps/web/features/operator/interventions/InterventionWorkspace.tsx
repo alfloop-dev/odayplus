@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Button, SectionPanel, StatusBadge } from "../components";
 import shell from "../operator.module.css";
 import styles from "./interventions.module.css";
@@ -156,7 +156,7 @@ export function InterventionWorkspace({ selectedId, onSelect, onDecisionConfirme
     window.addEventListener("storage", changed);
     return () => { disposed = true; if (epoch.current === generation) epoch.current += 1; window.clearInterval(timer); window.removeEventListener("focus", observe); window.removeEventListener("popstate", changed); window.removeEventListener("operator-auth-changed", changed); window.removeEventListener("storage", changed); };
   }, [selectedId, reload]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!dialog && !preview) return;
     previousFocus.current = document.activeElement as HTMLElement | null;
     dialogRef.current?.querySelector<HTMLElement>("textarea, button")?.focus();

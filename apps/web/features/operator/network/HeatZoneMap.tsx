@@ -145,15 +145,21 @@ export function HeatZoneMap({
   );
   const zoneFeatures = useMemo(
     () =>
-      zones.map((zone) => {
-        const feature = zoneToFeature(zone);
+      zones.flatMap((zone) => {
+        const feature = zoneToFeature(zone, !productionMode && dataSource === "fixture");
+        if (feature === null) return [];
         const lens = lensScoreById?.get(zone.id);
-        return lens ? { ...feature, properties: { ...feature.properties, lensTint: lensTierHex(lens.points) } } : feature;
+        return [lens ? { ...feature, properties: { ...feature.properties, lensTint: lensTierHex(lens.points) } } : feature];
       }),
-    [lensScoreById, zones],
+    [dataSource, lensScoreById, productionMode, zones],
   );
+  const geometryZones = useMemo(() => {
+    const ids = new Set(zoneFeatures.map((feature) => feature.properties.id));
+    return zones.filter((zone) => ids.has(zone.id));
+  }, [zoneFeatures, zones]);
+  const missingGeometryCount = zones.length - geometryZones.length;
   const geometryHidden = boundaryConfig.stateFixture === "empty" || boundaryConfig.stateFixture === "no-geometry";
-  const visibleZones = useMemo(() => geometryHidden ? [] : zones, [geometryHidden, zones]);
+  const visibleZones = useMemo(() => geometryHidden ? [] : geometryZones, [geometryHidden, geometryZones]);
   const visibleZoneFeatures = useMemo(() => geometryHidden ? [] : zoneFeatures, [geometryHidden, zoneFeatures]);
   // A source refresh can replace a distant provisional zone set after the
   // map has loaded. Only a geometry change should move the viewport; lens
@@ -379,7 +385,7 @@ export function HeatZoneMap({
     if (!map) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
-    const href = nearestPickHref(point, { zones, listings, candidates, layers, map });
+    const href = nearestPickHref(point, { zones: visibleZones, listings, candidates, layers, map });
     if (href) {
       event.stopPropagation();
       window.location.assign(href);
@@ -414,6 +420,11 @@ export function HeatZoneMap({
           {runtimeError || ""}
         </span>
         <span>Production 不會渲染 local map、mock layer 或 fixture 點位。</span>
+        {missingGeometryCount > 0 ? (
+          <span data-testid="map-geometry-unavailable">
+            地圖 geometry 尚未可用；列表仍可用於審查。
+          </span>
+        ) : null}
       </section>
     );
   }
@@ -440,6 +451,11 @@ export function HeatZoneMap({
         <span>Attribution: {boundaryConfig.attribution}</span>
         {boundaryConfig.termsUrl ? <a href={boundaryConfig.termsUrl}>Terms</a> : <span>Terms: local fixture</span>}
       </div>
+      {missingGeometryCount > 0 ? (
+        <div className={styles.boundaryAlert} data-testid="map-geometry-unavailable" role="status">
+          地圖 geometry 尚未可用；列表仍可用於審查。
+        </div>
+      ) : null}
       {boundaryConfig.tileFault || boundaryConfig.geocoderFault || runtimeError ? (
         <div className={styles.boundaryAlert} data-testid="map-boundary-alert" role="status">
           {boundaryConfig.tileFault ? <span>Tile outage · correlation_id {boundaryConfig.correlationId}</span> : null}
@@ -972,7 +988,11 @@ declare global {
   }
 }
 
-function zoneToFeature(zone: HeatZone): ZoneFeature {
+function zoneToFeature(zone: HeatZone, allowFixtureGeometry: boolean): ZoneFeature | null {
+  // A canonical owner explicitly declaring no geometry is authoritative.
+  // Do not substitute a derivation from its H3 reference over that null.
+  if (zone.geometry === null) return null;
+  if (zone.geometry) return { type: "Feature", geometry: zone.geometry, properties: zone };
   if (zone.h3 && isValidCell(zone.h3)) {
     try {
       const ring = cellToBoundary(zone.h3, true);
@@ -984,9 +1004,11 @@ function zoneToFeature(zone: HeatZone): ZoneFeature {
         };
       }
     } catch {
-      // Fall through to centroid delta polygon
+      // Only an explicit fixture may fall through to illustrative geometry.
     }
   }
+
+  if (!allowFixtureGeometry) return null;
 
   const [lng, lat] = zone.centroid;
   const delta = 0.012;

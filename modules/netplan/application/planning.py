@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from functools import wraps
+from inspect import signature
 from typing import Any
 from uuid import uuid4
 
@@ -143,6 +147,36 @@ class _ApprovalSubject:
         )
 
 
+def _serialized_scenario_mutation(method):
+    """Durable owners lock before the original method's first read.
+
+    In-memory repositories keep their existing behavior. Signature binding
+    preserves keyword/positional calls and supports the prepared-candidate
+    command without trusting a caller-provided replacement scenario.
+    """
+    method_signature = signature(method)
+
+    @wraps(method)
+    def invoke(self, *args, **kwargs):
+        tracker = getattr(self, "outcome_tracker", None)
+        if tracker is not None:
+            owner = getattr(self.repository, "_store", None)
+            bound = getattr(getattr(tracker, "repository", None), "_store", None)
+            if (owner is None or bound is None or getattr(owner, "engine", None) is not getattr(bound, "engine", None)
+                    or not getattr(owner, "tenant_id", None) or owner.tenant_id != getattr(bound, "tenant_id", None)):
+                raise ProductionExecutionConfigurationError("NetPlan outcome registry requires the same tenant SQL owner")
+        arguments = method_signature.bind(self, *args, **kwargs).arguments
+        scenario_id = arguments.get("scenario_id")
+        prepared = arguments.get("prepared")
+        if prepared is not None:
+            scenario_id = prepared.scenario.scenario_id
+        scope = getattr(self.repository, "scenario_transaction", None)
+        with scope(scenario_id) if callable(scope) else nullcontext():
+            return method(self, *args, **kwargs)
+
+    return invoke
+
+
 class NetPlanService:
     def __init__(
         self,
@@ -154,6 +188,7 @@ class NetPlanService:
         runtime_mode: str | None = None,
         feature_flags: Any | None = None,
         job_queue: Any | None = None,
+        outcome_tracker: Any | None = None,
     ) -> None:
         self.production_required = production_execution_required(runtime_mode)
         self.strict_production_composition = runtime_mode is not None and self.production_required
@@ -170,6 +205,8 @@ class NetPlanService:
         self.repository = repository or InMemoryNetPlanRepository()
         self.feature_flags = feature_flags
         self.job_queue = job_queue
+        # Optional actual request-bound registry; no in-memory/default owner.
+        self.outcome_tracker = outcome_tracker
         self.production_executor = production_executor
         self.approval_verifier = approval_verifier
         # Not defaulted. An approval path that falls back to built-in rules
@@ -180,6 +217,7 @@ class NetPlanService:
         # and rejecting still work without a registry.
         self.policy_repository = policy_repository
 
+    @_serialized_scenario_mutation
     def create_scenario(
         self,
         *,
@@ -213,6 +251,7 @@ class NetPlanService:
         )
         return self.repository.save_scenario(scenario)
 
+    @_serialized_scenario_mutation
     def update_scenario(
         self,
         scenario_id: str,
@@ -280,6 +319,7 @@ class NetPlanService:
         )
         return self.repository.save_scenario(updated)
 
+    @_serialized_scenario_mutation
     def solve(
         self,
         scenario_id: str,
@@ -341,6 +381,7 @@ class NetPlanService:
         self.repository.save_scenario(transitioned)
         return solve
 
+    @_serialized_scenario_mutation
     def submit_for_approval(
         self,
         scenario_id: str,
@@ -532,6 +573,7 @@ class NetPlanService:
             selected_candidate_id=subject.candidate_id,
         )
 
+    @_serialized_scenario_mutation
     def pin_prepared_candidate(
         self,
         prepared: PreparedConstraintDisclosureAcknowledgement,
@@ -544,9 +586,12 @@ class NetPlanService:
         advance the lifecycle themselves pass the candidate through that
         transition instead and do not need this.
         """
+        current = self._require_scenario(prepared.scenario.scenario_id)
+        if current != prepared.scenario:
+            raise NetPlanApprovalError("scenario changed since disclosure was prepared")
         return self.repository.save_scenario(
             replace(
-                prepared.scenario,
+                current,
                 selected_candidate_id=prepared.selected_candidate_id,
             )
         )
@@ -566,6 +611,7 @@ class NetPlanService:
         """
         return self.repository.save_disclosure_acknowledgement(prepared.acknowledgement)
 
+    @_serialized_scenario_mutation
     def acknowledge_unmodelled_constraints(
         self,
         scenario_id: str,
@@ -608,6 +654,7 @@ class NetPlanService:
             engine=getattr(getattr(self.repository, "_store", None), "engine", None),
             queue=self.job_queue, durable_required=self.production_required)
 
+    @_serialized_scenario_mutation
     def decide(
         self,
         scenario_id: str,
@@ -730,8 +777,11 @@ class NetPlanService:
         )
         self.repository.save_approval(approval)
         self.repository.save_scenario(transitioned)
+        if self.outcome_tracker is not None:
+            self.outcome_tracker.reconcile(scenario_id, expected_scenario=transitioned)
         return approval
 
+    @_serialized_scenario_mutation
     def execute(
         self,
         scenario_id: str,
@@ -785,8 +835,11 @@ class NetPlanService:
             )
         )
         self.repository.save_scenario(transitioned)
+        if self.outcome_tracker is not None:
+            self.outcome_tracker.reconcile(scenario_id, expected_scenario=transitioned)
         return execution
 
+    @_serialized_scenario_mutation
     def record_outcome(
         self,
         scenario_id: str,
@@ -796,8 +849,23 @@ class NetPlanService:
         source_snapshot_ids: Sequence[str] = (),
         actor: str = "system",
     ) -> OutcomeRecord:
+        try:
+            finite = type(actual_gross_margin) in (int, float) and math.isfinite(actual_gross_margin)
+        except OverflowError:
+            finite = False
+        if not finite:
+            raise ValueError("actual gross margin must be finite")
         scenario = self._require_scenario(scenario_id)
         solve = self._require_solve(scenario_id)
+        execution = self.repository.get_execution(scenario_id)
+        subject = self._selected_approval_subject(scenario, solve)
+        if (execution is None or execution.scenario_id != scenario_id
+                or tuple(execution.actions) != subject.actions):
+            raise NetPlanApprovalError("recorded execution does not match the selected scenario actions")
+        # An approved alternative may have a different expected margin from the
+        # primary solve. Compare the actual against the actions really executed.
+        outcome_solve = replace(solve.result, expected_gross_margin=round(
+            sum(action.expected_gross_margin for action in execution.actions), 4))
         now = observed_at or datetime.now(UTC)
         transitioned = scenario.transition(
             NetPlanScenarioStatus.OUTCOME_OBSERVED,
@@ -805,18 +873,28 @@ class NetPlanService:
             reason="network plan outcome observed",
             occurred_at=now,
         )
-        outcome = self.repository.save_outcome(
-            build_outcome_record(
+        try:
+            candidate = build_outcome_record(
                 scenario_id=scenario_id,
-                solve_result=solve.result,
+                solve_result=outcome_solve,
                 actual_gross_margin=actual_gross_margin,
                 observed_at=now,
                 source_snapshot_ids=source_snapshot_ids,
             )
-        )
+        except (OverflowError, ZeroDivisionError) as exc:
+            raise ValueError("outcome comparisons must be finite") from exc
+        if not all(math.isfinite(value) for value in (
+            candidate.expected_gross_margin, candidate.actual_gross_margin,
+            candidate.variance, candidate.variance_pct,
+        )):
+            raise ValueError("outcome comparisons must be finite")
+        outcome = self.repository.save_outcome(candidate)
         self.repository.save_scenario(transitioned)
+        if self.outcome_tracker is not None:
+            self.outcome_tracker.reconcile(scenario_id, expected_scenario=transitioned)
         return outcome
 
+    @_serialized_scenario_mutation
     def close(
         self,
         scenario_id: str,

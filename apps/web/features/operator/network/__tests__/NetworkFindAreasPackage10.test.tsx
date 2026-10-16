@@ -7,6 +7,8 @@ import type { Candidate, OperatorHeatZone } from "../../types";
 import * as fixtures from "../../fixtures";
 import { ExpansionStepper } from "../ExpansionStepper";
 import type { ReviewItem } from "../networkReviewTypes";
+import { FindAreasPanel } from "../FindAreasPanel";
+import { buildNetworkFindAreasViewModel } from "../../networkFindAreasViewModel";
 
 // Package 10 Find Areas content parity (ODP-UI-NETWORK-FIND-AREAS-PARITY-001).
 // The map needs WebGL, so it is stubbed; its props are captured instead.
@@ -155,7 +157,21 @@ describe("Network Find Areas — Package 10 content", () => {
     expect(within(detail).getByText("下一步")).toBeInTheDocument();
 
     const actions = within(screen.getByTestId("find-areas-zone-actions")).getAllByRole("button");
-    expect(actions).toHaveLength(6);
+    // Original six actions remain; the canonical Survey entry is a seventh
+    // control. This explicit POC fixture has no connected Survey owner.
+    expect(actions).toHaveLength(7);
+    const survey = within(screen.getByTestId("find-areas-zone-actions")).getByRole("button", { name: "指派熱區任務" });
+    expect(survey).toBeDisabled();
+    expect(survey).toHaveAttribute("title", "熱區任務服務未接通");
+    expect(actions.filter((action) => action !== survey)).toHaveLength(6);
+    expect(actions.filter((action) => action !== survey).map((action) => action.textContent)).toEqual([
+      expect.stringMatching(/^查看本區物件（\d+）$/),
+      "＋ 從網址新增物件（帶入本區）",
+      "✓ 已追蹤（點擊移除）",
+      expect.stringMatching(/^查看本區候選點（\d+）$/),
+      expect.stringMatching(/^評分最佳候選點/),
+      "送出審核",
+    ]);
     expect(actions[0]).toHaveTextContent(/^查看本區物件（\d+）$/);
     expect(detail).not.toHaveTextContent(/Source Listings|Score Candidate|Submit Review|Pipeline/);
   });
@@ -391,4 +407,94 @@ describe("Expansion stepper copy", () => {
     expect(stepper).toHaveTextContent("下一步：查看本區物件並轉為候選點");
     expect(screen.queryByRole("status")).toBeNull();
   });
+});
+
+describe("Find Areas does not promote prototype map facts into production", () => {
+  beforeEach(() => { mapProps.last = null; });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  function renderPanel(fixturesAllowed: boolean, heatZones = fixtures.HEAT_ZONE_FIXTURES) {
+    // Owned engineering rows exercise the DTO boundary, not real model/data readiness.
+    const viewModel = buildNetworkFindAreasViewModel({ fixturesAllowed, heatZones, listings: [], candidates: [] });
+    render(<FindAreasPanel activeRoleId="expansion-manager" fixturesAllowed={fixturesAllowed}
+      viewModel={viewModel} selectedZone={viewModel.zones[0]} effectiveLens="demand"
+      isSelectedTracked={false} heatZones={heatZones} listings={[]} candidates={[]} canAddListing={false}
+      onSelectZone={vi.fn()} onChangeLens={vi.fn()} onToggleTracked={vi.fn()} onSourceListings={vi.fn()}
+      onAddListingFromUrl={vi.fn()} onViewCandidates={vi.fn()} onScoreCandidate={vi.fn()} onSubmitReview={vi.fn()} />);
+    return viewModel;
+  }
+
+  it("keeps ranked production rows available without inventing geometry, model, snapshot or FRESH state", async () => {
+    const viewModel = renderPanel(false);
+    await waitFor(() => expect(mapProps.last?.productionMode).toBe(true));
+    expect(mapProps.last?.dataSource).toBe("api");
+    expect(mapProps.last?.zones).toEqual([]);
+    expect(mapProps.last?.freshness).toEqual({
+      status: "MISSING", updatedAt: "", modelVersion: "", featureSnapshotTime: "", sourceSnapshotId: "",
+    });
+    expect(screen.getByTestId("find-areas-map-geometry-unavailable")).toHaveTextContent("地圖 geometry 尚未可用；列表仍可用於審查。");
+    for (const zone of viewModel.rankedZones) {
+      expect(within(screen.getByTestId("find-areas-tray")).getByRole("button", {
+        name: `${zone.label} ${zone.lensPoints} 分`,
+      })).toBeInTheDocument();
+    }
+  });
+
+  it("preserves the explicit POC map illustration and labels", async () => {
+    renderPanel(true);
+    await waitFor(() => expect(mapProps.last?.productionMode).toBe(false));
+    expect(mapProps.last?.dataSource).toBe("fixture");
+    expect((mapProps.last?.zones as Array<{ h3: string }>)[0].h3).toBe(`h3-${fixtures.HEAT_ZONE_FIXTURES[0].id}`);
+    expect(mapProps.last?.freshness).toMatchObject({ status: "FRESH", modelVersion: "network-ops-local" });
+    expect(screen.queryByTestId("find-areas-map-geometry-unavailable")).toBeNull();
+  });
+
+  it("passes recorded native metadata and explicit null geometry without promoting the timestamp to FRESH", async () => {
+    const row: OperatorHeatZone = { ...fixtures.HEAT_ZONE_FIXTURES[0], mapEvidence: {
+      h3Index: "8928308280fffff", h3Resolution: 9, geometry: null, score: 0, priorityRank: 1,
+      state: "UNTOUCHED", confidence: 0, unmetDemandScore: 0, formatFitScore: 0,
+      cannibalizationRisk: 0, rentFeasibility: 0, listingAvailability: 0,
+      modelVersion: "recorded-owner-model", featureVersion: "recorded-owner-features",
+      featureSnapshotTime: "2026-10-15T00:00:00Z", predictionOriginTime: "2026-10-15T00:00:00Z",
+      lastScoredAt: "2026-10-15T00:01:00Z", sourceSnapshotIds: ["recorded-owner-source"],
+    } };
+    renderPanel(false, [row]);
+    await waitFor(() => expect(mapProps.last?.zones).toHaveLength(1));
+    expect(mapProps.last?.zones).toEqual([expect.objectContaining({
+      id: row.id, h3: row.mapEvidence!.h3Index, geometry: null, score: 0,
+      modelVersion: "recorded-owner-model", sourceSnapshotIds: ["recorded-owner-source"], poiCount: null,
+    })]);
+    expect(mapProps.last?.freshness).toMatchObject({ status: "MISSING", modelVersion: "recorded-owner-model",
+      featureSnapshotTime: row.mapEvidence!.featureSnapshotTime, sourceSnapshotId: "recorded-owner-source" });
+  });
+
+  it("shows an unavailable recorded lens as plain text without a favorable score tier", async () => {
+    const row: OperatorHeatZone = { ...fixtures.HEAT_ZONE_FIXTURES[0], label: "Missing row", rank: null,
+      demandGap: null, competitionIndex: null, cannibalizationRisk: null, confidence: null, centroid: null };
+    renderPanel(false, [row]);
+    await waitFor(() => expect(mapProps.last?.productionMode).toBe(true));
+    const card = screen.getByRole("button", { name: "Missing row 未評估" });
+    expect(card.querySelector("[data-tier]")).toBeNull();
+    expect(screen.getByTestId("find-areas-zone-score")).toHaveTextContent("未評估");
+    expect(screen.getByTestId("find-areas-zone-score")).not.toHaveAttribute("data-tier");
+    expect(screen.getByTestId("find-areas-zone-detail")).toHaveTextContent("HeatZone 綜合 未評估");
+    expect(mapProps.last?.lensScores).toEqual([]);
+  });
+
+});
+
+
+it("hands the exact selected HeatZone to the assignment entry and preserves unavailable geometry instead of making a fake task", () => {
+  const heatZones = fixtures.HEAT_ZONE_FIXTURES;
+  const viewModel = buildNetworkFindAreasViewModel({ fixturesAllowed: false, heatZones, listings: [], candidates: [] });
+  const open = vi.fn(), selected = viewModel.zones[0];
+  render(<FindAreasPanel activeRoleId="expansion-manager" fixturesAllowed={false}
+    viewModel={viewModel} selectedZone={selected} effectiveLens="demand" isSelectedTracked={false}
+    heatZones={heatZones} listings={[]} candidates={[]} canAddListing={false}
+    onSelectZone={vi.fn()} onChangeLens={vi.fn()} onToggleTracked={vi.fn()} onSourceListings={vi.fn()}
+    onAddListingFromUrl={vi.fn()} onViewCandidates={vi.fn()} onScoreCandidate={vi.fn()} onSubmitReview={vi.fn()}
+    onOpenSurvey={open} />);
+  fireEvent.click(screen.getByRole("button", { name: "指派熱區任務" }));
+  expect(open).toHaveBeenCalledOnce(); expect(open).toHaveBeenCalledWith(selected.id);
+  expect(screen.getByTestId("find-areas-map-geometry-unavailable")).toBeVisible();
 });

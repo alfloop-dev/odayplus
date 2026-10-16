@@ -259,6 +259,8 @@ export type EvidenceItem = {
   cameraLocation?: string;
   timeWindow?: string;
   retentionHours?: number;
+  /** Historical purpose receipt time, not an access grant or expiry. */
+  purposeRecordedAt?: string;
   unlockedAt?: string;
   /** Optional source-provided payment metric; never derived from confidence. */
   paymentTrend?: {
@@ -308,17 +310,38 @@ export type HeatZoneLens = "demand" | "fit" | "competition" | "cannibalization" 
 export type OperatorHeatZone = {
   id: string;
   label: string;
-  rank: number;
-  centroid: [number, number];
-  demandGap: number;
-  competitionIndex: number;
-  cannibalizationRisk: RiskLevel;
+  rank: number | null;
+  centroid: [number, number] | null;
+  demandGap: number | null;
+  competitionIndex: number | null;
+  cannibalizationRisk: RiskLevel | null;
   rentBand: string;
   confidence: number | null;
   recommendedLens: HeatZoneLens;
   reasons: string[];
   risks: string[];
   nextStep: string;
+  /** Recorded native HeatZone result; absent on the older operator projection. */
+  mapEvidence?: {
+    h3Index: string;
+    h3Resolution: number;
+    geometry: GeoJSON.Polygon | null;
+    score: number;
+    priorityRank: number;
+    state: "UNTOUCHED" | "PARTIALLY_ABSORBED" | "SATURATED" | "UNDER_REALIZED" | "STILL_EXPANDABLE" | "SUPPRESSED_LOW_CONFIDENCE";
+    confidence: number;
+    unmetDemandScore: number;
+    formatFitScore: number;
+    cannibalizationRisk: number;
+    rentFeasibility: number;
+    listingAvailability: number;
+    modelVersion: string;
+    featureVersion: string;
+    featureSnapshotTime: string;
+    predictionOriginTime: string;
+    lastScoredAt: string;
+    sourceSnapshotIds: string[];
+  };
 };
 
 export type ListingSource = {

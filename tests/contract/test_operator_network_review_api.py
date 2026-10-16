@@ -13,9 +13,18 @@ Covers acceptance:
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
+from shared.infrastructure.persistence import build_persistence
+from shared.jobs.queue import InMemoryJobQueue
+from tests.integration._operation_flag_fixtures import (
+    SITE_GO_FLAG,
+    enable_operation_flag,
+    new_operation_flags,
+)
 
 # Site Reviewer holds sitescore APPROVE (may decide).
 REVIEWER_HEADERS = {
@@ -34,8 +43,19 @@ EXPANSION_HEADERS = {
 }
 
 
-def _client() -> TestClient:
-    return TestClient(create_app())
+def _client(*, go_enabled=False) -> TestClient:
+    # This suite covers the explicitly seeded memory API. Use a fresh owner;
+    # never enable the process-global default registry for unrelated tests.
+    bundle = build_persistence()
+    assert bundle.mode == "memory"
+    owner, _ = new_operation_flags()
+    bundle = replace(bundle, feature_flag_registry=owner, job_queue=InMemoryJobQueue(flags=owner))
+    if go_enabled:
+        enable_operation_flag(
+            owner, key=SITE_GO_FLAG, tenant_id=REVIEWER_HEADERS["x-tenant-id"],
+            queue=bundle.job_queue, audit_log=bundle.audit_log,
+        )
+    return TestClient(create_app(persistence=bundle))
 
 
 def _snapshot(client: TestClient) -> dict:
@@ -71,7 +91,7 @@ def test_review_snapshot_exposes_seeded_queue() -> None:
 
 
 def test_go_decision_syncs_five_records_and_survives_reload() -> None:
-    client = _client()
+    client = _client(go_enabled=True)
     response = client.post(
         "/api/v1/operator/network-reviews/RV-702/decide",
         headers={
@@ -226,7 +246,7 @@ def test_reason_and_override_policies_are_enforced() -> None:
 
 
 def test_idempotent_replay_creates_no_duplicate_records() -> None:
-    client = _client()
+    client = _client(go_enabled=True)
     payload = {
         "decision": "GO",
         "reason": "人流量體大且回本期可接受，核准進展店閘。",
@@ -254,7 +274,7 @@ def test_idempotency_key_reused_across_reviews_does_not_replay() -> None:
     result. The cache is scoped by review id + payload, so the same key decides
     each review on its own terms and produces distinct records."""
 
-    client = _client()
+    client = _client(go_enabled=True)
     shared = {**REVIEWER_HEADERS, "idempotency-key": "idem-shared-key"}
 
     first = client.post(
@@ -293,7 +313,7 @@ def test_idempotency_key_reused_across_reviews_does_not_replay() -> None:
 
 
 def test_second_decision_on_decided_review_conflicts() -> None:
-    client = _client()
+    client = _client(go_enabled=True)
     client.post(
         "/api/v1/operator/network-reviews/RV-702/decide",
         headers=REVIEWER_HEADERS,
@@ -350,7 +370,7 @@ def test_expansion_role_may_submit_read_but_not_decide() -> None:
 
 
 def test_decision_uses_verified_role_not_client_actor_fields() -> None:
-    client = _client()
+    client = _client(go_enabled=True)
     response = client.post(
         "/api/v1/operator/network-reviews/RV-702/decide",
         headers=REVIEWER_HEADERS,
