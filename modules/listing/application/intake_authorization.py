@@ -367,6 +367,12 @@ def authorize_intake_action(
         if not (is_staff or is_manager or is_steward):
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
+    elif action == "recheck_source_policy":
+        if (not principal.has_role(Role.DATA_OWNER)
+                or not principal.scope.permits_module("listing")
+                or not principal.scope.permits_classification(DataClassification.CONFIDENTIAL)):
+            _raise_and_audit(status_code=403, detail="ROLE_OR_SCOPE_DENIED")
+
     elif action in ("cancel", "archive"):
         if is_staff and resource is not None:
             owner = resource.get("owner")

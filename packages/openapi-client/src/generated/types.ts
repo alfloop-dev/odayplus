@@ -422,6 +422,18 @@ export type CanonicalIntakeReceipt = {
   version: number;
 };
 
+/** CanonicalIntakeSourcePolicyRecheckReceipt */
+export type CanonicalIntakeSourcePolicyRecheckReceipt = {
+  audit_event_id: string;
+  correlation_id: string;
+  intake_id: string;
+  outbox_event_id: string;
+  request_id: string;
+  requested_at: string;
+  status: "REQUESTED";
+  version: number;
+};
+
 /** CanonicalIntakeSummary */
 export type CanonicalIntakeSummary = {
   correlation_id: string;
@@ -1966,6 +1978,11 @@ export type ReleasePayload = {
   version: string;
 };
 
+/** RequestCanonicalIntakeSourcePolicyRecheck */
+export type RequestCanonicalIntakeSourcePolicyRecheck = {
+  reason: string;
+};
+
 /** RetryCheckpoint */
 export type RetryCheckpoint = "RETRIEVING" | "PARSING" | "MATCHING" | "CANDIDATE_CREATING" | "SCORE_QUEUED";
 
@@ -2505,6 +2522,7 @@ export const API_PATHS = {
   "/api/v1/canonical-intakes": ["GET", "POST"],
   "/api/v1/canonical-intakes/{intake_id}": ["GET"],
   "/api/v1/canonical-intakes/{intake_id}/cancel": ["POST"],
+  "/api/v1/canonical-intakes/{intake_id}/source-policy-rechecks": ["POST"],
   "/api/v1/external-data/freshness": ["GET"],
   "/api/v1/external-data/ingestion-runs": ["GET", "POST"],
   "/api/v1/external-data/ingestion-runs/{run_id}": ["GET"],

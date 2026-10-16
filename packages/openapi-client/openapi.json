@@ -2263,6 +2263,62 @@
         "title": "CanonicalIntakeReceipt",
         "type": "object"
       },
+      "CanonicalIntakeSourcePolicyRecheckReceipt": {
+        "properties": {
+          "audit_event_id": {
+            "format": "uuid",
+            "title": "Audit Event Id",
+            "type": "string"
+          },
+          "correlation_id": {
+            "format": "uuid",
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "outbox_event_id": {
+            "format": "uuid",
+            "title": "Outbox Event Id",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "title": "Requested At",
+            "type": "string"
+          },
+          "status": {
+            "const": "REQUESTED",
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "request_id",
+          "intake_id",
+          "status",
+          "version",
+          "requested_at",
+          "correlation_id",
+          "audit_event_id",
+          "outbox_event_id"
+        ],
+        "title": "CanonicalIntakeSourcePolicyRecheckReceipt",
+        "type": "object"
+      },
       "CanonicalIntakeSummary": {
         "properties": {
           "correlation_id": {
@@ -10763,6 +10819,22 @@
         "title": "ReleasePayload",
         "type": "object"
       },
+      "RequestCanonicalIntakeSourcePolicyRecheck": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "RequestCanonicalIntakeSourcePolicyRecheck",
+        "type": "object"
+      },
       "RetryCheckpoint": {
         "enum": [
           "RETRIEVING",
@@ -18180,6 +18252,91 @@
           }
         },
         "summary": "Cancel Authorization Wait",
+        "tags": [
+          "assisted-listing-intake",
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/canonical-intakes/{intake_id}/source-policy-rechecks": {
+      "post": {
+        "description": "Request a current-authority recheck while the AUTH_REQUIRED Intake remains waiting.",
+        "operationId": "requestCanonicalIntakeSourcePolicyRecheck",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intake_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Intake Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestCanonicalIntakeSourcePolicyRecheck"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIntakeSourcePolicyRecheckReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor or resource scope denied"
+          },
+          "404": {
+            "description": "Native Intake not found"
+          },
+          "409": {
+            "description": "Concurrent command or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid native submission"
+          },
+          "503": {
+            "description": "Canonical storage or audit unavailable"
+          }
+        },
+        "summary": "Request Source Policy Recheck",
         "tags": [
           "assisted-listing-intake",
           "assisted-listing-intake"

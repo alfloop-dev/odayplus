@@ -195,6 +195,12 @@ class NativeIntakeSourcePolicyOwner:
         view = self._producer_reads(before or (lambda: None))
         row = view._one("SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?", (tenant, _uuid(event_id)))
         event = _object(row["payload"])
+        if event.get("actor_ref") == "native-intake-source-policy-recheck":
+            from modules.listing.application.native_intake_source_policy_recheck import (
+                NativeIntakeSourcePolicyRecheckOwner,
+            )
+
+            return NativeIntakeSourcePolicyRecheckOwner(view)._source_producer(tenant, event_id, before or (lambda: None))
         if (validate_event(event) or row["event_type"] != "intake.state_changed"
                 or event.get("event_type") != row["event_type"]
                 or event.get("producer") != "listing_intake_service"
@@ -247,7 +253,8 @@ class NativeIntakeSourcePolicyOwner:
                 or evidence["normalization_rule_source_sha256"] != identity.rule_source_sha256
                 or (pending and (intake["version"] != expected_version
                     or intake["processing_state"] != "CHECKING_SOURCE_POLICY"
-                    or any(intake[key] is not None for key in ("source_policy_state", "resolved_listing_id", "completed_at"))))):
+                    or intake["source_policy_state"] != ("AUTH_REQUIRED" if producer.get("recheck") is True else None)
+                    or any(intake[key] is not None for key in ("resolved_listing_id", "completed_at"))))):
             raise NativeIntakeSourcePolicyConflict("NATIVE_SOURCE_POLICY_INTAKE_BINDING_CONFLICT")
         # Admission/execution recheck original actor and resource scope, bound
         # to the producer's audited submitted digest, before any new mutation.
@@ -337,6 +344,8 @@ class NativeIntakeSourcePolicyOwner:
                        "rule_source_sha256": NATIVE_URL_RULE_SOURCE_SHA256,
                        "policy_rule_version": POLICY_RULE_VERSION, "policy_rule_sha256": POLICY_RULE_SOURCE_SHA256,
                        "admission_receipt": receipt}
+            if producer.get("recheck") is True:
+                payload["recheck_provenance"] = producer["recheck_provenance"]
             before()
             self.engine.execute("INSERT INTO workflow.jobs (job_id,tenant_id,job_type,aggregate_type,aggregate_id,"
                 "status,checkpoint,attempt,max_attempts,fence_token,timeout_at,payload,correlation_id,idempotency_key) "
@@ -398,7 +407,10 @@ class NativeIntakeSourcePolicyOwner:
                 "JOIN intake.intakes i ON i.tenant_id=e.tenant_id AND i.intake_id=e.aggregate_id "
                 "WHERE e.tenant_id=? AND e.event_type='intake.state_changed' AND e.aggregate_type='intake' "
                 "AND i.processing_state='CHECKING_SOURCE_POLICY' AND i.deleted_at IS NULL "
-                "AND e.aggregate_version=i.version AND e.payload->>'actor_ref'='native-intake-identity' "
+                "AND e.aggregate_version=i.version "
+                "AND ((e.payload->>'actor_ref'='native-intake-identity' AND e.payload->'payload'->>'from_state'='CHECKING_IDENTITY') "
+                "OR (e.payload->>'actor_ref'='native-intake-source-policy-recheck' "
+                "AND e.payload->'payload'->>'from_state'='AWAITING_SOURCE_AUTHORIZATION')) "
                 "AND e.payload->'payload'->>'to_state'='CHECKING_SOURCE_POLICY' "
                 "AND NOT EXISTS (SELECT 1 FROM workflow.jobs j WHERE j.tenant_id=e.tenant_id AND j.job_type=? "
                 "AND j.idempotency_key=i.intake_id::text||':'||e.event_id::text) "
@@ -537,10 +549,13 @@ class NativeIntakeSourcePolicyOwner:
 
     @staticmethod
     def _provenance(payload: dict) -> dict:
-        return {**{key: payload[key] for key in ("event_id", "event_sha256", "intake_version",
+        result = {**{key: payload[key] for key in ("event_id", "event_sha256", "intake_version",
                     "delivery_generation", "input_sha256", "rule_source_sha256", "resolution_mode",
                     "source_id", "canonical_url_sha256", "policy_rule_version", "policy_rule_sha256")},
                 "policy_sha256": hashlib.sha256(_json(payload["policy"]).encode()).hexdigest()}
+        if "recheck_provenance" in payload:
+            result["recheck_provenance"] = payload["recheck_provenance"]
+        return result
 
 
 
@@ -618,7 +633,8 @@ class NativeIntakeSourcePolicyOwner:
                 or _time(business["timeout_at"]) <= now or _object(business["payload"]) != payload
                 or native_intake_source_policy_policy() != payload["policy"]
                 or actual["processing_state"] != expected_stage or actual["version"] != expected_version
-                or actual["source_policy_state"] != (None if expected_stage == "CHECKING_SOURCE_POLICY" else proof["effective_policy"])
+                or actual["source_policy_state"] != (("AUTH_REQUIRED" if "recheck_provenance" in payload else None)
+                    if expected_stage == "CHECKING_SOURCE_POLICY" else proof["effective_policy"])
                 or actual["deleted_at"] is not None or self._input_digest(actual) != payload["input_sha256"]
                 or actual["resolved_listing_id"] is not None or actual["completed_at"] is not None):
             raise NativeIntakeSourcePolicyConflict("NATIVE_SOURCE_POLICY_FINAL_NON_SOURCE_CONFLICT")
@@ -696,10 +712,11 @@ class NativeIntakeSourcePolicyOwner:
             self._ensure_source_proof(current, job, payload, intake, proof, stage="CHECKING_SOURCE_POLICY", version=version)
             if self.engine.execute("UPDATE intake.intakes SET processing_state=?,version=?,last_transition_at=?,source_policy_state=? "
                 "WHERE tenant_id=? AND intake_id=? AND processing_state='CHECKING_SOURCE_POLICY' AND version=? AND deleted_at IS NULL "
-                "AND source_policy_state IS NULL "
+                "AND ((source_policy_state IS NULL AND NOT ?::boolean) OR (source_policy_state='AUTH_REQUIRED' AND ?::boolean)) "
                 "AND (?::timestamptz IS NULL OR ?::timestamptz>clock_timestamp())",
                 (target, aggregate.version, at.isoformat(), classified.effective_policy,
-                 tenant, intake["intake_id"], version, valid_until, valid_until)).rowcount != 1:
+                 tenant, intake["intake_id"], version, producer.get("recheck") is True, producer.get("recheck") is True,
+                 valid_until, valid_until)).rowcount != 1:
                 self._cas_rejected(current, job, payload, intake, proof,
                                    expected_stage="CHECKING_SOURCE_POLICY", expected_version=version)
             sequence = self.engine.query_one("SELECT COALESCE(MAX(sequence_no),0)+1 AS next "

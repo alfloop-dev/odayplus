@@ -182,13 +182,15 @@ class ODayWorker:
         canonical_native_start_job = job.job_type == "native-intake-start"
         canonical_native_identity_job = job.job_type == "native-intake-identity"
         canonical_native_source_policy_job = job.job_type == "native-intake-source-policy"
+        canonical_native_source_policy_recheck_job = job.job_type == "native-intake-source-policy-recheck"
         native_sql_command = (
-            (canonical_native_start_job or canonical_native_identity_job or canonical_native_source_policy_job)
+            (canonical_native_start_job or canonical_native_identity_job or canonical_native_source_policy_job
+             or canonical_native_source_policy_recheck_job)
             and getattr(getattr(self.persistence, "engine", None), "dialect", None) == "postgresql"
         )
         canonical_transaction_owned_job = (
             canonical_score_job or canonical_identity_job or canonical_native_start_job
-            or canonical_native_identity_job or canonical_native_source_policy_job
+            or canonical_native_identity_job or canonical_native_source_policy_job or canonical_native_source_policy_recheck_job
         )
         score_owner = ScoreExecutionJobRepository if job.job_type == SITESCORE_EXECUTION_JOB_TYPE else IntakeScoreJobRepository
 
@@ -244,7 +246,8 @@ class ODayWorker:
                 # that row. It must never invoke the identity authenticator.
                 heartbeat=(score_heartbeat if canonical_score_job else identity_heartbeat if canonical_identity_job
                            else native_intake_heartbeat if (canonical_native_start_job or canonical_native_identity_job
-                                                          or canonical_native_source_policy_job) else None),
+                                                          or canonical_native_source_policy_job
+                                                          or canonical_native_source_policy_recheck_job) else None),
             )
             try:
                 if native_sql_command:

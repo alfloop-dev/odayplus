@@ -111,6 +111,7 @@ class DenialCode(StrEnum):
     SELF_REVIEW_DENIED = "SELF_REVIEW_DENIED"
     RISK_ACKNOWLEDGEMENT_REQUIRED = "RISK_ACKNOWLEDGEMENT_REQUIRED"
     SOURCE_POLICY_DENIED = "SOURCE_POLICY_DENIED"
+    SOURCE_POLICY_RECHECK_NOT_VERIFIED = "SOURCE_POLICY_RECHECK_NOT_VERIFIED"
     LEGAL_HOLD_CONFLICT = "LEGAL_HOLD_CONFLICT"
     RESIDENCY_DENIED = "RESIDENCY_DENIED"
     EXPORT_APPROVAL_REQUIRED = "EXPORT_APPROVAL_REQUIRED"
@@ -146,6 +147,7 @@ class TransitionContext:
     second_actor: Actor | None = None
     purpose: str | None = None
     current_time: datetime = field(default_factory=lambda: datetime.now(UTC))
+    source_policy_recheck_verified: bool = False
 
 
 # Aggregates
@@ -307,7 +309,7 @@ class IntakeStateMachine(BaseStateMachine):
         },
         # A later authorization command must re-evaluate current source policy.
         # No direct retrieval, supplied-evidence or automatic resume is granted.
-        IntakeStage.AWAITING_SOURCE_AUTHORIZATION: {IntakeStage.CANCELLED},
+        IntakeStage.AWAITING_SOURCE_AUTHORIZATION: {IntakeStage.CANCELLED, IntakeStage.CHECKING_SOURCE_POLICY},
         IntakeStage.RETRIEVING: {IntakeStage.PARSING, IntakeStage.FAILED, IntakeStage.QUARANTINED},
         IntakeStage.AWAITING_ASSISTED_ENTRY: {IntakeStage.PARSING, IntakeStage.CANCELLED},
         IntakeStage.PARSING: {IntakeStage.MATCHING, IntakeStage.NEEDS_REVIEW, IntakeStage.FAILED},
@@ -396,6 +398,13 @@ class IntakeStateMachine(BaseStateMachine):
             if source == IntakeStage.CHECKING_IDENTITY:
                 if role not in {PrincipalRole.SVC_INTAKE, PrincipalRole.EMERGENCY_ADMIN}:
                     raise DomainValidationError(DenialCode.ROLE_DENIED, "Only system or admin can evaluate policy.")
+            elif source == IntakeStage.AWAITING_SOURCE_AUTHORIZATION:
+                if role not in {PrincipalRole.SVC_INTAKE, PrincipalRole.EMERGENCY_ADMIN}:
+                    raise DomainValidationError(DenialCode.ROLE_DENIED, "Only the verified service can recheck source policy.")
+                if (context.source_policy_recheck_verified is not True or not context.causation_id
+                        or not context.idempotency_key or not context.reason.strip()):
+                    raise DomainValidationError(DenialCode.SOURCE_POLICY_RECHECK_NOT_VERIFIED,
+                                                "A current verified recheck command is required.")
             elif source == IntakeStage.QUARANTINED:
                 if role not in {PrincipalRole.DATA_STEWARD, PrincipalRole.EMERGENCY_ADMIN}:
                     raise DomainValidationError(DenialCode.ROLE_DENIED, "Only steward or admin can reopen quarantine.")

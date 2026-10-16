@@ -3,7 +3,8 @@
 import base64
 import hashlib
 import json
-from datetime import datetime
+from contextlib import contextmanager
+from datetime import datetime, timedelta
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -18,12 +19,24 @@ from modules.external_data.security.assisted_listing_retrieval import (
     contains_sensitive_submission_material,
 )
 from modules.listing.application.intake_authorization import authorize_intake_action
+from modules.listing.application.native_intake_requester_authority import (
+    NativeIntakeRequesterAuthorityUnavailable,
+)
+from modules.listing.application.native_intake_source_policy import (
+    NativeIntakeSourcePolicyConflict,
+    NativeIntakeSourcePolicyUnavailable,
+)
+from modules.listing.application.native_intake_source_policy_recheck import (
+    NativeIntakeSourcePolicyRecheckOwner,
+    NativeIntakeSourcePolicyRecheckUnavailable,
+)
 from modules.listing.application.native_intake_submission_validation import (
     validate_native_intake_url,
 )
 from modules.listing.domain.intake_states import IntakeStage
 from shared.audit.backlog import CanonicalAuditBacklog
 from shared.auth import Role
+from shared.jobs.queue import JobFenceRejectedError
 
 
 class _SubmissionValidationRoute(APIRoute):
@@ -125,6 +138,56 @@ class CanonicalIntakeCancellationReceipt(BaseModel):
     transition_id: UUID
     audit_event_id: UUID
     outbox_event_id: UUID
+
+
+class RequestCanonicalIntakeSourcePolicyRecheck(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=3, max_length=4000)
+
+    @field_validator("reason")
+    @classmethod
+    def safe_explicit_reason(cls, value):
+        if len(value.strip()) < 3 or contains_sensitive_submission_material({"reason": value}):
+            raise ValueError("An explicit recheck reason without credentials is required")
+        return value
+
+
+class CanonicalIntakeSourcePolicyRecheckReceipt(BaseModel):
+    request_id: UUID
+    intake_id: UUID
+    status: Literal["REQUESTED"]
+    version: int = Field(ge=1)
+    requested_at: AwareDatetime
+    correlation_id: UUID
+    audit_event_id: UUID
+    outbox_event_id: UUID
+
+
+@contextmanager
+def _recheck_errors():
+    try:
+        yield
+    except PermissionError:
+        raise HTTPException(403, "NATIVE_RECHECK_CURRENT_AUTHORITY_DENIED") from None
+    except (NativeIntakeRequesterAuthorityUnavailable, NativeIntakeSourcePolicyRecheckUnavailable,
+            NativeIntakeSourcePolicyUnavailable):
+        raise HTTPException(503, "NATIVE_RECHECK_AUTHORITY_OR_POLICY_UNAVAILABLE") from None
+    except (NativeIntakeSourcePolicyConflict, JobFenceRejectedError):
+        raise HTTPException(409, "NATIVE_RECHECK_CURRENT_PROOF_CONFLICT") from None
+    except Exception as exc:
+        # Canonical audit preserves the SQL cause when wrapping a failed
+        # write. A SERIALIZABLE conflict remains a conflict of this command;
+        # an actual audit outage keeps the existing 503 handling below.
+        cause, seen = exc, set()
+        while cause is not None and id(cause) not in seen and len(seen) < 8:
+            seen.add(id(cause))
+            if getattr(cause, "sqlstate", None) in {"40001", "40P01"}:
+                raise HTTPException(409, "NATIVE_RECHECK_CONCURRENT_CHANGE") from None
+            cause = cause.__cause__
+        if getattr(exc, "sqlstate", None) in {"42P01", "42703", "3F000", "57014"}:
+            raise HTTPException(503, "NATIVE_RECHECK_STORAGE_UNAVAILABLE") from None
+        raise
 
 
 class CanonicalIntakePage(BaseModel):
@@ -296,6 +359,42 @@ def create_canonical_intakes_router(store) -> APIRouter:
                             expected_version=int(if_match[3:-1]), reason=body.reason, idempotency_key=key)
                         result = CanonicalIntakeCancellationReceipt.model_validate(result).model_dump(mode="json")
                         store.replays[replay_key] = (digest, result, 200)
+                        store.flush()
+                        response.headers["Idempotency-Replayed"] = "false"
+                    response.headers["ETag"] = f'W/"{result["version"]}"'
+                    return result
+
+    @router.post("/canonical-intakes/{intake_id}/source-policy-rechecks", operation_id="requestCanonicalIntakeSourcePolicyRecheck",
+                 response_model=CanonicalIntakeSourcePolicyRecheckReceipt, status_code=202, responses=errors,
+                 description="Request a current-authority recheck while the AUTH_REQUIRED Intake remains waiting.")
+    def request_source_policy_recheck(intake_id: UUID, body: RequestCanonicalIntakeSourcePolicyRecheck,
+        request: Request, response: Response,
+        key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")],
+        if_match: Annotated[str, Header(alias="If-Match", pattern=r'^W/"[1-9][0-9]*"$')],
+    ):
+        with _http_errors(), _recheck_errors():
+            principal, repo = context(request)
+            owner = NativeIntakeSourcePolicyRecheckOwner(repo.graph)
+            tenant, actor = principal.tenant_id, principal.subject_id
+            digest = hashlib.sha256(json.dumps({"body": body.model_dump(mode="json"), "if_match": if_match},
+                sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            replay_key = f"{tenant}:{actor}:requestCanonicalIntakeSourcePolicyRecheck:{intake_id}:{key}"
+            with repo.graph.transaction(tenant):
+                store.refresh(tenant)
+                with store.transaction():
+                    deadline = owner.source._clock() + timedelta(milliseconds=750)
+                    owner.command_context(principal, str(intake_id), before=lambda: owner.source._admission_budget(deadline))
+                    prior = store.replays.get(replay_key)
+                    if prior is not None:
+                        if prior[0] != digest:
+                            raise HTTPException(409, "IDEMPOTENCY_KEY_REUSED")
+                        result = CanonicalIntakeSourcePolicyRecheckReceipt.model_validate(prior[1]).model_dump(mode="json")
+                        response.headers["Idempotency-Replayed"] = "true"
+                    else:
+                        result = owner.request(principal, str(intake_id), expected_version=int(if_match[3:-1]),
+                                               reason=body.reason, idempotency_key=key)
+                        result = CanonicalIntakeSourcePolicyRecheckReceipt.model_validate(result).model_dump(mode="json")
+                        store.replays[replay_key] = (digest, result, 202)
                         store.flush()
                         response.headers["Idempotency-Replayed"] = "false"
                     response.headers["ETag"] = f'W/"{result["version"]}"'

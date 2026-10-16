@@ -8,6 +8,10 @@ rules:
   event_type_versioning: event_type omits version suffix; event_version carries the integer version
   state_contract_labels:
     audit_action_codes:
+      - intake.source_policy_recheck_requested.v1
+      - intake.source_policy_recheck_admitted.v1
+      - intake.source_policy_recheck_completed.v1
+      - intake.source_policy_recheck_delivery_settled.v1
       - intake.identity_check_started.v1
       - intake.source_policy_started.v1
       - intake.retrieval_approved.v1
@@ -38,6 +42,18 @@ rules:
     rule: These strings are audit action codes unless an event_type with the same semantic phase is explicitly cataloged below.
 
 catalog_additions:
+  - event_type: intake.source_policy_recheck_requested
+    event_version: 1
+    producer: listing_intake_service
+    transaction_owner: workflow.outbox_events
+    aggregate_type: intake_policy_recheck
+    partition_key: tenant_id:intake_id
+    ordering_scope: one_intake
+    schema_ref: '#/payloads/IntakeSourcePolicyRecheckRequestedV1'
+    sensitive_fields: []
+    consumers: [listing_intake_service]
+    retention_days: 30
+
   - event_type: assignment.claimed
     event_version: 1
     producer: workflow_service
@@ -207,6 +223,19 @@ catalog_additions:
     retention_days: 30
 
 payloads:
+  IntakeSourcePolicyRecheckRequestedV1:
+    type: object
+    additionalProperties: false
+    required: [request_id, intake_id, expected_intake_version, requested_by, requested_at, input_sha256, root_identity_event_id]
+    properties:
+      request_id: {type: string, format: uuid}
+      intake_id: {type: string, format: uuid}
+      expected_intake_version: {type: integer, minimum: 1}
+      requested_by: {type: string, format: uuid}
+      requested_at: {type: string, format: date-time}
+      input_sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+      root_identity_event_id: {type: string, format: uuid}
+
   AssignmentStateChangedV1:
     type: object
     additionalProperties: false
