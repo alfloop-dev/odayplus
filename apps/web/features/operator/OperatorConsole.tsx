@@ -13,11 +13,6 @@ import {
 import dynamic from "next/dynamic";
 import type { Tone } from "./components";
 import type { GovernanceWorkspaceProps } from "./GovernanceWorkspace";
-import {
-  normalizeGovernanceApprovals,
-  normalizeGovernanceAuditRows,
-  normalizeGovernanceDecisionRows,
-} from "./governance/governanceEnvelope";
 import { readGovernanceViewState, serializeGovernanceViewState, type GovernanceViewState } from "./governance/governanceUrlState";
 import type { NetworkFindAreasWorkspaceProps } from "./NetworkFindAreasWorkspace";
 import type { ColdIntakeDetailProps } from "./network/intake/ColdIntakeDetail";
@@ -38,9 +33,7 @@ import type { NetworkFindAreasBindings } from "./network/networkFindAreasLoader"
 import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
 import {
   classifyLoadFailure,
-  inspectOperatorShellPayload,
   operatorFixturesAllowed,
-  payloadContainsSeedData,
   toUnavailableOperatorStatus,
   type OperatorDataAvailability,
   type OperatorLoadFailure,
@@ -417,7 +410,8 @@ export function OperatorConsole({
     return operatorSecurityHeaders(roleId);
   };
 
-  const applyOperatorEnvelope = (payload: unknown, allowFixtureFallback: boolean) => {
+  const applyOperatorEnvelope = (payload: unknown, allowFixtureFallback: boolean,
+    admission: typeof import("./operatorBootstrapPayload")) => {
     const nextEnvelope = normalizeShellEnvelope(payload, {
       allowFixtureFallback,
     });
@@ -437,7 +431,7 @@ export function OperatorConsole({
     // cleared: rows from a superseded envelope are stale governance state.
     setLiveApprovals(
       Array.isArray(record?.governanceApprovals)
-        ? normalizeGovernanceApprovals(record.governanceApprovals)
+        ? admission.normalizeGovernanceApprovals(record.governanceApprovals)
         : [],
     );
 
@@ -448,12 +442,12 @@ export function OperatorConsole({
     }
     setLiveGovernanceDecisions(
       Array.isArray(record?.governanceDecisions)
-        ? normalizeGovernanceDecisionRows(record.governanceDecisions)
+        ? admission.normalizeGovernanceDecisionRows(record.governanceDecisions)
         : [],
     );
     setLiveGovernanceAuditRows(
       Array.isArray(record?.governanceAuditRows)
-        ? normalizeGovernanceAuditRows(record.governanceAuditRows)
+        ? admission.normalizeGovernanceAuditRows(record.governanceAuditRows)
         : [],
     );
   };
@@ -782,7 +776,10 @@ export function OperatorConsole({
         }
         const payload = attempt.payload;
         if (cancelled) return;
-        const inspection = inspectOperatorShellPayload(payload);
+        const admission = await import("./operatorBootstrapPayload");
+        await pinAccount(subject);
+        if (!current()) throw accountChanged;
+        const inspection = admission.inspectOperatorShellPayload(payload);
 
         if ((!fixturesAllowed || subject !== null) && inspection.status !== "ready") {
           setShellDataStatus(inspection.status);
@@ -805,7 +802,7 @@ export function OperatorConsole({
           failWith(new Error("Operator bootstrap returned an invalid or conflicting authenticated persona"));
           return;
         }
-        applyOperatorEnvelope(payload, subject === null && fixturesAllowed);
+        applyOperatorEnvelope(payload, subject === null && fixturesAllowed, admission);
         // The server resolves the selected persona from the authenticated
         // principal; a stale/default browser preference must not impersonate
         // operations when that principal is an expansion contributor.
@@ -861,11 +858,11 @@ export function OperatorConsole({
 
         const data = await res.json();
         if (!await pinAuthenticatedRead(subject, current)) return;
+        const { normalizeTasksPayload, payloadContainsSeedData } = await import("./operatorTaskPayload");
+        if (!await pinAuthenticatedRead(subject, current)) return;
         if (!allowTaskFixtures && payloadContainsSeedData(data)) {
           throw new Error("Task center API returned seed, fixture, or mock data");
         }
-        const { normalizeTasksPayload } = await import("./operatorTaskPayload");
-        if (!await pinAuthenticatedRead(subject, current)) return;
         const tasks = normalizeTasksPayload(data, "api");
         if (!current()) return;
 
@@ -1233,7 +1230,9 @@ export function OperatorConsole({
       }
       const payload: unknown = await freshRes.json();
       if (!await pinAuthenticatedRead(subject, current) || !current()) return;
-      const inspection = inspectOperatorShellPayload(payload);
+      const admission = await import("./operatorBootstrapPayload");
+      if (!await pinAuthenticatedRead(subject, current) || !current()) return;
+      const inspection = admission.inspectOperatorShellPayload(payload);
       if ((!fixturesAllowed || subject !== null) && inspection.status !== "ready") {
         clearAuthenticatedRows(); setShellDataStatus(inspection.status);
         throw new Error(`Operator bootstrap refresh was ${inspection.status}`);
@@ -1243,7 +1242,7 @@ export function OperatorConsole({
         clearAuthenticatedRows(); setShellDataStatus("error");
         throw new Error("Operator bootstrap refresh returned an invalid current persona");
       }
-      applyOperatorEnvelope(payload, subject === null && fixturesAllowed);
+      applyOperatorEnvelope(payload, subject === null && fixturesAllowed, admission);
       setShellDataStatus(inspection.status === "ready" ? "ready" : "fixture");
     } catch (error) {
       // Rejected HTTP/JSON reads must not act on a superseded account either.

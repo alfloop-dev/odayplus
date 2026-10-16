@@ -105,3 +105,5 @@ export function normalizeTasksPayload(payload: unknown, source: TaskCenterSource
     .map((item, index) => normalizeTaskRecord(item, index, source))
     .filter((item): item is OperatorTask => Boolean(item));
 }
+
+export { payloadContainsSeedData } from "./operatorDataMode";
