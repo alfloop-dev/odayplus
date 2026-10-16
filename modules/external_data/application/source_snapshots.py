@@ -786,11 +786,9 @@ class SourceSnapshotService:
                 missing_count += 1
 
         # 2. Scan GCS bucket to detect orphans (Objects in GCS but not in SQL)
-        try:
-            gcs_keys = self.object_store.list_objects(tenant_id, bucket)
-        except Exception as exc:
-            logger.error("Failed to list objects in GCS bucket %s: %s", bucket, exc)
-            gcs_keys = []
+        # An unavailable inventory cannot establish that there are no orphans.
+        # Let the caller retain/retry the failed reconciliation attempt.
+        gcs_keys = self.object_store.list_objects(tenant_id, bucket)
 
         for key in gcs_keys:
             uri = f"gs://{bucket}/{key}"
