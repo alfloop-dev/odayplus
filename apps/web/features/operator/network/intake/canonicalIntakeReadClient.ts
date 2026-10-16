@@ -11,6 +11,7 @@ export type CanonicalIntakeReadContext = {
 export const CANONICAL_INTAKE_STAGE_LABEL: Record<CanonicalIntakeSummary["processing_state"], string> = {
   SUBMITTED: "已送出", CHECKING_IDENTITY: "識別檢查", READY: "可決策",
   CHECKING_SOURCE_POLICY: "來源政策", RETRIEVING: "擷取中", AWAITING_ASSISTED_ENTRY: "待人工補錄",
+  AWAITING_SOURCE_AUTHORIZATION: "待來源帳號授權",
   PARSING: "解析中", MATCHING: "比對中", NEEDS_REVIEW: "待人工覆核", QUARANTINED: "已隔離",
   FAILED: "處理失敗", CANCELLED: "已取消",
 };
