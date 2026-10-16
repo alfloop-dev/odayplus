@@ -134,6 +134,14 @@ def test_every_original_export_from_star_alias_identity_and_order(owners_first: 
         import importlib
         import inspect
         import json
+        def signature_contract(value):
+            try:
+                return inspect.signature(value)
+            except (TypeError, ValueError) as error:
+                # Some original exception classes have no inspectable builtin
+                # signature. Preserve that exact behavior too, not a fabricated
+                # signature or a skipped export.
+                return type(error), str(error)
         owners = json.loads({json.dumps(OWNERS)!r})
         order = {EXPORT_ORDER!r}
         if {owners_first!r}:
@@ -156,7 +164,7 @@ def test_every_original_export_from_star_alias_identity_and_order(owners_first: 
                 exec(f'from shared.infrastructure.persistence import {{name}} as alias', alias)
                 assert alias['alias'] is owner
                 if inspect.isfunction(owner) or inspect.isclass(owner):
-                    assert inspect.signature(value) == inspect.signature(owner)
+                    assert signature_contract(value) == signature_contract(owner)
         from shared.infrastructure.persistence import (
             DurableDecisionPolicyRepository, SqlDecisionPolicyRepository,
         )
