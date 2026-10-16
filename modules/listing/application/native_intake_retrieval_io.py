@@ -29,6 +29,9 @@ from modules.listing.application.native_intake_retrieval_policy import (
     native_intake_retrieval_policy,
 )
 from modules.listing.application.native_intake_retrieval_quota import NativeRetrievalReservation
+from shared.infrastructure.persistence.assisted_listing_intake import (
+    NativeIntakeSnapshotMetadataRepository,
+)
 from shared.jobs.queue import JobFenceRejectedError
 
 _OPERATIONS = frozenset({"http_hop", "gcs_bucket", "gcs_upload", "gcs_head", "gcs_download", "gcs_delete"})
@@ -38,6 +41,7 @@ MAX_INTENTS = 64
 class NativeIntakeRetrievalIO:
     def __init__(self, owner, delivery, leases, policy):
         self.owner, self.delivery, self.leases, self.policy = owner, delivery, leases, policy
+        self.snapshots = NativeIntakeSnapshotMetadataRepository(owner.graph)
         self.tenant, self.generation = owner.auth.decode(delivery)
         self.http = owner.http_transport or NativeHttpProcessTransport()
         factory = owner.snapshot_transport_factory or NativeSnapshotProcessTransport
@@ -73,9 +77,7 @@ class NativeIntakeRetrievalIO:
                 # error. Re-read current, owned SQL and prove no reference to
                 # this tenant's exact attempt object/generation before delete.
                 before()
-                reference = self.owner.engine.query_one("SELECT source_snapshot_id FROM intake.source_snapshots "
-                    "WHERE tenant_id=? AND raw_object_uri=? AND (object_generation=? OR object_generation IS NULL) LIMIT 1",
-                    (self.tenant, metadata.uri, metadata.generation))
+                reference = self.snapshots.referenced_object(self.tenant, metadata.uri, metadata.generation)
                 if reference is not None:
                     raise JobFenceRejectedError("NATIVE_RETRIEVAL_CLEANUP_OBJECT_REFERENCED")
             intents = payload["attempt_intents"]

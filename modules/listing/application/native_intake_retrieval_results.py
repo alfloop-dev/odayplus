@@ -21,6 +21,9 @@ from modules.listing.domain.intake_states import (
     TransitionContext,
 )
 from shared.domain.events import DomainEvent, validate_event
+from shared.infrastructure.persistence.assisted_listing_intake import (
+    NativeIntakeSnapshotMetadataRepository,
+)
 from shared.jobs.queue import JobDeliveryState, JobFenceRejectedError, JobStatus
 
 _BRANCHES = {
@@ -97,9 +100,8 @@ def _snapshot(owner, intake, job, payload, verified, upload, bucket, before):
         "encryption_key_ref": metadata.kms_key_version_name, "object_generation": metadata.generation,
         "residency_mode": binding["residency_mode"], "version": 1}
     before()
-    existing = owner.engine.query_one("SELECT * FROM intake.source_snapshots WHERE tenant_id=? AND intake_id=? "
-        "AND source_id=? AND content_sha256=? FOR UPDATE",
-        (intake["tenant_id"], intake["intake_id"], intake["source_id"], verified.content_sha256))
+    snapshots = NativeIntakeSnapshotMetadataRepository(owner.graph)
+    existing = snapshots.find_content(intake["tenant_id"], intake["intake_id"], intake["source_id"], verified.content_sha256)
     if existing is not None:
         # The INSTALLED key includes intake_id. Equal bytes from another
         # Intake cannot select/adopt its snapshot or storage object here.
@@ -118,10 +120,7 @@ def _snapshot(owner, intake, job, payload, verified, upload, bucket, before):
             raise JobFenceRejectedError("NATIVE_RETRIEVAL_OWN_SNAPSHOT_EVENT_UNPROVEN")
         return snapshot, prior["event_id"]
     before()
-    owner.engine.execute("INSERT INTO intake.source_snapshots (source_snapshot_id,tenant_id,intake_id,source_id,"
-        "original_url,canonical_url,raw_object_uri,content_sha256,media_type,byte_length,captured_at,observed_at,"
-        "capture_method,retention_class,encryption_key_ref,object_generation,residency_mode,version) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", tuple(snapshot[k] for k in _SNAPSHOT_FIELDS))
+    snapshots.insert(tuple(snapshot[k] for k in _SNAPSHOT_FIELDS))
     event = DomainEvent(event_type="snapshot.created", producer="retrieval_service", tenant_id=intake["tenant_id"],
         aggregate_type="source_snapshot", aggregate_id=snapshot["source_snapshot_id"], aggregate_version=snapshot["version"],
         partition_key=intake["tenant_id"] + ":" + intake["intake_id"], correlation_id=job["correlation_id"],
@@ -316,8 +315,8 @@ def committed_result(owner, delivery, tenant, generation):
                 or transition["source_snapshot_id"] != result["source_snapshot_id"]):
             raise JobFenceRejectedError("NATIVE_RETRIEVAL_TERMINAL_SNAPSHOT_BINDING_REJECTED")
         before()
-        actual = owner.graph._one("SELECT * FROM intake.source_snapshots WHERE tenant_id=? AND source_snapshot_id=? "
-            "AND intake_id=?", (tenant, result["source_snapshot_id"], job["aggregate_id"]))
+        actual = NativeIntakeSnapshotMetadataRepository(owner.graph).required_for_intake(
+            tenant, result["source_snapshot_id"], job["aggregate_id"])
         if any(actual[k] != v for k, v in snapshot.items()):
             raise JobFenceRejectedError("NATIVE_RETRIEVAL_TERMINAL_SNAPSHOT_CHANGED")
         event = _read_event(owner, tenant, result["snapshot_created_event_id"], event_type="snapshot.created",

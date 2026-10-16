@@ -1,4 +1,4 @@
-"""Ordered production migration loader for the Assisted Listing Intake schema.
+"""Assisted Listing Intake migrations and native snapshot metadata access.
 
 This module is the programmatic surface over the ordered PostgreSQL 16 migration
 under ``infra/db/migrations/assisted_listing_intake/``. That directory holds the
@@ -6,12 +6,10 @@ four approved contract DDL artifacts (baseline + three consistency/state/RLS
 patches) from ODP-SD-INTAKE-001, copied byte-for-byte so the production migration
 never drifts from the reviewed contract, plus a structural downgrade boundary.
 
-The module is intentionally driver-agnostic: it only reads SQL text and computes
-traceability checksums. Applying the SQL is the caller's responsibility (pass an
-``execute`` callable such as ``psycopg`` cursor ``.execute``). Keeping it free of
-any database driver lets it import cleanly in the minimal CI environment while the
-schema is proven at runtime against real PostgreSQL 16 by the contract and RLS
-security tests.
+Migration helpers read SQL and compute traceability checksums; applying their
+SQL is the caller's responsibility. Native snapshot metadata access borrows the
+caller's current engine and transaction. Neither surface imports a database
+driver or opens, commits or closes a connection.
 
 Contract references:
 - docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql
@@ -757,3 +755,35 @@ def manifest_checksum(steps: Iterable[MigrationStep] | None = None) -> str:
     payload = [asdict(step) for step in (steps if steps is not None else migration_steps())]
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+class NativeIntakeSnapshotMetadataRepository:
+    """Existing snapshot metadata within the caller's authorized SQL root.
+
+    This facade neither stores raw content nor owns a transaction. The native
+    owner retains its current authority, budget and fence checks around each
+    call, including the exact-generation/legacy-NULL reference guard.
+    """
+
+    def __init__(self, graph: Any) -> None:
+        self.graph = graph
+        self.engine = graph.engine
+
+    def referenced_object(self, tenant: str, uri: str, generation: int) -> dict | None:
+        return self.engine.query_one("SELECT source_snapshot_id FROM intake.source_snapshots "
+            "WHERE tenant_id=? AND raw_object_uri=? AND (object_generation=? OR object_generation IS NULL) LIMIT 1",
+            (tenant, uri, generation))
+
+    def find_content(self, tenant: str, intake: str, source: str, content_sha256: str) -> dict | None:
+        return self.engine.query_one("SELECT * FROM intake.source_snapshots WHERE tenant_id=? AND intake_id=? "
+            "AND source_id=? AND content_sha256=? FOR UPDATE", (tenant, intake, source, content_sha256))
+
+    def insert(self, values: tuple[object, ...]) -> None:
+        self.engine.execute("INSERT INTO intake.source_snapshots (source_snapshot_id,tenant_id,intake_id,source_id,"
+            "original_url,canonical_url,raw_object_uri,content_sha256,media_type,byte_length,captured_at,observed_at,"
+            "capture_method,retention_class,encryption_key_ref,object_generation,residency_mode,version) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", values)
+
+    def required_for_intake(self, tenant: str, snapshot: str, intake: str) -> dict:
+        return self.graph._one("SELECT * FROM intake.source_snapshots WHERE tenant_id=? AND source_snapshot_id=? "
+            "AND intake_id=?", (tenant, snapshot, intake))
