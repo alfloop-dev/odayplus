@@ -534,6 +534,10 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
       .toMatchObject({
         isStyleLoaded: true,
         sourceLoaded: true,
+        // A loaded MapLibre source can still contain the preceding legacy
+        // binding while the Network snapshot arrives. Keep the original 30s
+        // window and wait for the actual selected fixture's source features.
+        sourceFeatureIds: expect.arrayContaining(["HZ-01"]),
       });
 
     const finalMapState = await page.evaluate(() => {

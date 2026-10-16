@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
@@ -60,6 +61,66 @@ def _client(*, go_enabled=False) -> TestClient:
 
 def _snapshot(client: TestClient) -> dict:
     return client.get("/api/v1/operator/network-reviews", headers=REVIEWER_HEADERS).json()
+
+
+@pytest.mark.parametrize("binding", ["matched", "foreign_queue", "foreign_owner"])
+@pytest.mark.parametrize("after_reset", [False, True])
+def test_seeded_durable_review_uses_its_explicit_business_engine(tmp_path, binding, after_reset) -> None:
+    """The local SQL composition keeps the same owner/queue rule as live work."""
+    bundle = build_persistence(mode="durable", db_path=tmp_path / "local-review.sqlite")
+    other = build_persistence(mode="durable", db_path=tmp_path / "other.sqlite")
+    try:
+        assert bundle.engine is not other.engine
+        enable_operation_flag(
+            bundle.feature_flag_registry, key=SITE_GO_FLAG, tenant_id="tenant-a",
+            queue=bundle.job_queue, audit_log=bundle.audit_log,
+        )
+        enable_operation_flag(
+            other.feature_flag_registry, key=SITE_GO_FLAG, tenant_id="tenant-a",
+            queue=other.job_queue, audit_log=other.audit_log,
+        )
+        selected = replace(bundle,
+            job_queue=other.job_queue if binding == "foreign_queue" else bundle.job_queue,
+            feature_flag_registry=other.feature_flag_registry if binding == "foreign_owner" else bundle.feature_flag_registry)
+        with TestClient(create_app(persistence=selected)) as client:
+            if after_reset:
+                reset = client.post("/api/v1/operator/network-reviews/reset", headers=REVIEWER_HEADERS)
+                assert reset.status_code == 200, reset.text
+            before = _snapshot(client)
+            response = client.post("/api/v1/operator/network-reviews/RV-702/decide",
+                headers={**REVIEWER_HEADERS, "idempotency-key": "explicit-sql-review"},
+                json={"decision": "GO", "reason": "Explicit synthetic durable review decision"})
+            if binding == "matched":
+                assert response.status_code == 200, response.text
+                assert response.json()["review"]["status"] == "approved"
+                assert response.json()["candidate"]["status"] == "approved"
+                assert response.json()["approval"]["status"] == "approved"
+            else:
+                assert response.status_code == 503, response.text
+                assert response.json()["detail"]["message"] == "FEATURE_FLAG_STORE_UNAVAILABLE"
+                assert _snapshot(client) == before
+    finally:
+        other.engine.close()
+        bundle.engine.close()
+
+
+@pytest.mark.parametrize("after_reset", [False, True])
+def test_seeded_durable_review_keeps_default_disabled_flag_and_all_records(tmp_path, after_reset) -> None:
+    bundle = build_persistence(mode="durable", db_path=tmp_path / "disabled-review.sqlite")
+    try:
+        assert not bundle.feature_flag_registry.is_enabled(SITE_GO_FLAG)
+        with TestClient(create_app(persistence=bundle)) as client:
+            if after_reset:
+                reset = client.post("/api/v1/operator/network-reviews/reset", headers=REVIEWER_HEADERS)
+                assert reset.status_code == 200, reset.text
+            before = _snapshot(client)
+            response = client.post("/api/v1/operator/network-reviews/RV-702/decide",
+                headers=REVIEWER_HEADERS,
+                json={"decision": "GO", "reason": "Explicit synthetic durable review decision"})
+            assert response.status_code == 403 and "FEATURE_FLAG_DISABLED" in response.text
+            assert _snapshot(client) == before
+    finally:
+        bundle.engine.close()
 
 
 def test_review_snapshot_exposes_seeded_queue() -> None:

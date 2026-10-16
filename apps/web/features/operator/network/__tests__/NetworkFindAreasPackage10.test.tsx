@@ -157,21 +157,23 @@ describe("Network Find Areas — Package 10 content", () => {
     expect(within(detail).getByText("下一步")).toBeInTheDocument();
 
     const actions = within(screen.getByTestId("find-areas-zone-actions")).getAllByRole("button");
-    // Original six actions remain; the canonical Survey entry is a seventh
-    // control. This explicit POC fixture has no connected Survey owner.
-    expect(actions).toHaveLength(7);
-    const survey = within(screen.getByTestId("find-areas-zone-actions")).getByRole("button", { name: "指派熱區任務" });
+    // Exact Package 10 primary + URL intake + four secondary actions. Missing
+    // search/quarter-plan owners are unavailable, never substituted workflows.
+    expect(actions).toHaveLength(6);
+    const survey = within(screen.getByTestId("find-areas-zone-actions")).getByRole("button", { name: "指派找點任務" });
     expect(survey).toBeDisabled();
     expect(survey).toHaveAttribute("title", "熱區任務服務未接通");
-    expect(actions.filter((action) => action !== survey)).toHaveLength(6);
-    expect(actions.filter((action) => action !== survey).map((action) => action.textContent)).toEqual([
+    expect(actions.map((action) => action.textContent)).toEqual([
       expect.stringMatching(/^查看本區物件（\d+）$/),
       "＋ 從網址新增物件（帶入本區）",
       "✓ 已追蹤（點擊移除）",
-      expect.stringMatching(/^查看本區候選點（\d+）$/),
-      expect.stringMatching(/^評分最佳候選點/),
-      "送出審核",
+      "指派找點任務",
+      "建立物件搜尋條件",
+      "加入季度展店計畫",
     ]);
+    for (const label of ["建立物件搜尋條件", "加入季度展店計畫"]) {
+      expect(within(screen.getByTestId("find-areas-zone-actions")).getByRole("button", { name: label })).toBeDisabled();
+    }
     expect(actions[0]).toHaveTextContent(/^查看本區物件（\d+）$/);
     expect(detail).not.toHaveTextContent(/Source Listings|Score Candidate|Submit Review|Pipeline/);
   });
@@ -200,7 +202,7 @@ describe("Network Find Areas — Package 10 content", () => {
 
   it.each([
     [/^查看本區物件/, "radar"],
-    [/^查看本區候選點/, "candidates"],
+    [/^＋ 從網址新增物件/, "radar"],
   ])("routes %s to the %s tab", (name, tab) => {
     renderFindAreas();
     fireEvent.click(screen.getByRole("button", { name }));
@@ -211,12 +213,10 @@ describe("Network Find Areas — Package 10 content", () => {
   it.each([
     ["HZ-01", "CS-1002", "CS-1003"],
     ["HZ-02", "CS-1003", "CS-1002"],
-  ])("scopes 查看本區候選點 for %s to that zone's candidates", (zoneId, inZone, otherZone) => {
+  ])("scopes the canonical Candidates deep link for %s to that zone's candidates", (zoneId, inZone, otherZone) => {
+    navigation.search = `ws=network&tab=candidates&zone=${zoneId}`;
     renderFindAreas("expansion-manager", { selectedHeatZoneId: zoneId });
-    fireEvent.click(screen.getByRole("button", { name: "查看本區候選點（1）" }));
-
-    expect(lastPushedParams().get("tab")).toBe("candidates");
-    expect(lastPushedParams().get("zone")).toBe(zoneId);
+    expect(screen.getByTestId("candidate-zone-scope")).toHaveTextContent("（1）");
     const board = screen.getByTestId("network-candidate-table");
     expect(within(board).getByTestId(`candidate-row-${inZone}`)).toHaveAttribute("data-active", "true");
     expect(within(board).queryByTestId(`candidate-row-${otherZone}`)).toBeNull();
@@ -225,13 +225,12 @@ describe("Network Find Areas — Package 10 content", () => {
   it("shows an empty scoped board for a zone without candidates", () => {
     const { HEAT_ZONE_FIXTURES } = fixtures;
     const emptyZone: OperatorHeatZone = { ...HEAT_ZONE_FIXTURES[1], id: "HZ-03", label: "中山南京東路", rank: 3 };
+    navigation.search = "ws=network&tab=candidates&zone=HZ-03";
     renderFindAreas("expansion-manager", {
       heatZones: [...HEAT_ZONE_FIXTURES, emptyZone],
       selectedHeatZoneId: "HZ-03",
     });
-    fireEvent.click(screen.getByRole("button", { name: "查看本區候選點（0）" }));
-
-    expect(lastPushedParams().get("zone")).toBe("HZ-03");
+    expect(screen.getByTestId("candidate-zone-scope")).toHaveTextContent("中山南京東路（0）");
     expect(screen.queryByTestId("network-candidate-table")).toBeNull();
     expect(screen.queryByTestId(/^candidate-row-/)).toBeNull();
     expect(screen.getByTestId("candidate-empty")).toHaveTextContent("中山南京東路 尚無候選點。");
@@ -420,7 +419,7 @@ describe("Find Areas does not promote prototype map facts into production", () =
       viewModel={viewModel} selectedZone={viewModel.zones[0]} effectiveLens="demand"
       isSelectedTracked={false} heatZones={heatZones} listings={[]} candidates={[]} canAddListing={false}
       onSelectZone={vi.fn()} onChangeLens={vi.fn()} onToggleTracked={vi.fn()} onSourceListings={vi.fn()}
-      onAddListingFromUrl={vi.fn()} onViewCandidates={vi.fn()} onScoreCandidate={vi.fn()} onSubmitReview={vi.fn()} />);
+      onAddListingFromUrl={vi.fn()} />);
     return viewModel;
   }
 
@@ -492,9 +491,9 @@ it("hands the exact selected HeatZone to the assignment entry and preserves unav
     viewModel={viewModel} selectedZone={selected} effectiveLens="demand" isSelectedTracked={false}
     heatZones={heatZones} listings={[]} candidates={[]} canAddListing={false}
     onSelectZone={vi.fn()} onChangeLens={vi.fn()} onToggleTracked={vi.fn()} onSourceListings={vi.fn()}
-    onAddListingFromUrl={vi.fn()} onViewCandidates={vi.fn()} onScoreCandidate={vi.fn()} onSubmitReview={vi.fn()}
+    onAddListingFromUrl={vi.fn()}
     onOpenSurvey={open} />);
-  fireEvent.click(screen.getByRole("button", { name: "指派熱區任務" }));
+  fireEvent.click(screen.getByRole("button", { name: "指派找點任務" }));
   expect(open).toHaveBeenCalledOnce(); expect(open).toHaveBeenCalledWith(selected.id);
   expect(screen.getByTestId("find-areas-map-geometry-unavailable")).toBeVisible();
 });

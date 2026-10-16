@@ -1496,7 +1496,10 @@ def create_operator_router(
     # allowlist. Candidate/Review/Approval/Decision/Audit sync atomically.
     router.include_router(
         create_network_review_sub_router(
-            NetworkReviewService(feature_flags=feature_flags, job_queue=job_queue),
+            NetworkReviewService(
+                feature_flags=feature_flags, job_queue=job_queue,
+                business_engine=getattr(document_store, "engine", None),
+            ),
             audit_log=active_audit_log,            read_scope_snapshot_fn=local_network_read_scope_snapshot,
             require_view_permission_fn=require_operator_permission(
                 "sitescore",

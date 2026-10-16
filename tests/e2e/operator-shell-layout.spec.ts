@@ -276,26 +276,32 @@ test.describe("Operator shared header layout", () => {
         // Measure the row holding the workspace title, not the workspace box: a
         // second padding layer keeps the box in place but moves its content.
         const title = page.locator(titleSelector).first();
-        await expect(title).toBeVisible();
-        const { rowX, shellContentX, rowWidth, shellContentWidth } = await title.evaluate((element) => {
-          const shell = document.querySelector('[data-testid="operator-console"] > main') as HTMLElement;
-          const style = getComputedStyle(shell);
-          const shellBox = shell.getBoundingClientRect();
-          const row = element.parentElement!.getBoundingClientRect();
-          const left = parseFloat(style.paddingLeft);
-          return {
-            rowX: row.x,
-            rowWidth: row.width,
-            shellContentX: shellBox.x + left,
-            shellContentWidth: shellBox.width - left - parseFloat(style.paddingRight),
-          };
-        });
-        // The shell already applies the Package 10 container padding at every
-        // breakpoint; workspaces must not pad again.
-        expect(Math.round(rowX), `${workspace} title row x at ${width}px`).toBe(Math.round(shellContentX));
-        expect(Math.round(rowWidth), `${workspace} title row width at ${width}px`).toBeGreaterThanOrEqual(
-          Math.round(shellContentWidth) - 4,
-        );
+        // Bootstrap can replace the fixture workspace between the locator's
+        // visibility check and evaluation. Measure the current connected row
+        // within the existing assertion window, retaining both exact bounds.
+        await expect(async () => {
+          await expect(title).toBeVisible();
+          const { rowX, shellContentX, rowWidth, shellContentWidth } = await title.evaluate((element) => {
+            if (!element.isConnected) throw new Error("workspace title was replaced during bootstrap");
+            const shell = document.querySelector('[data-testid="operator-console"] > main') as HTMLElement;
+            const style = getComputedStyle(shell);
+            const shellBox = shell.getBoundingClientRect();
+            const row = element.parentElement!.getBoundingClientRect();
+            const left = parseFloat(style.paddingLeft);
+            return {
+              rowX: row.x,
+              rowWidth: row.width,
+              shellContentX: shellBox.x + left,
+              shellContentWidth: shellBox.width - left - parseFloat(style.paddingRight),
+            };
+          });
+          // The shell already applies the Package 10 container padding at every
+          // breakpoint; workspaces must not pad again.
+          expect(Math.round(rowX), `${workspace} title row x at ${width}px`).toBe(Math.round(shellContentX));
+          expect(Math.round(rowWidth), `${workspace} title row width at ${width}px`).toBeGreaterThanOrEqual(
+            Math.round(shellContentWidth) - 4,
+          );
+        }).toPass({ timeout: 5_000 });
       }
     }
 
@@ -443,10 +449,14 @@ test.describe("Network Find Areas Package 10 layout", () => {
     for (const height of g.lensHeights) expect(height).toBeLessThanOrEqual(34);
     expect(g.legend).toContain("HeatZone ≥ 80");
     expect(g.legend).not.toMatch(/High lens fit|Watch tradeoff|Risk pressure/);
-    // Zone detail: 22px score, seven facts, one filled primary and five outlined actions.
+    // Package 10 has one primary, URL intake and four secondary actions.
     expect(g.bigScoreFont).toBe("22px");
     expect(g.factRows).toBe(7);
+    expect(g.actions.map((action) => action.text)).toContain("＋ 從網址新增物件（帶入本區）");
     expect(g.actions).toHaveLength(6);
+    expect(g.actions.slice(3).map((action) => action.text)).toEqual([
+      "指派找點任務", "建立物件搜尋條件", "加入季度展店計畫",
+    ]);
     expect(g.actions[0].bg).toBe("rgb(46, 58, 151)");
     for (const action of g.actions.slice(1)) expect(action.bg).not.toBe("rgb(46, 58, 151)");
   });

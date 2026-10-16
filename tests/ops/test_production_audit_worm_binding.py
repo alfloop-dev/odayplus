@@ -23,7 +23,9 @@ from shared.audit.worm import (
     build_audit_worm_sink_from_env,
 )
 from tests.integration._gcs_worm_stub import (
-    GcsWormProtocolStub, SYNTHETIC_WRITER, SYNTHETIC_RECOVERY,
+    SYNTHETIC_RECOVERY,
+    SYNTHETIC_WRITER,
+    GcsWormProtocolStub,
     configure_loopback_workload_identity,
 )
 

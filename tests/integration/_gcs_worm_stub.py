@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import RLock, Thread
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
@@ -29,6 +30,8 @@ class AuditIdentityHTTPControl:
         self.generations = {SYNTHETIC_WRITER: 0, SYNTHETIC_RECOVERY: 0}
         self.denied = None
         self.malformed_expiry = False
+        # An ephemeral local protocol marker, never a committed credential.
+        self.source_token = uuid4().hex
 
     def __call__(self, url, method="GET", body=None, headers=None, timeout=None, **kwargs):
         self.calls.append((url, method, timeout))
@@ -37,14 +40,14 @@ class AuditIdentityHTTPControl:
         if parsed.hostname == "metadata.google.internal":
             assert method == "GET" and headers.get("metadata-flavor") == "Google"
             if parsed.path.endswith("/token"):
-                data = dict(access_token="synthetic-runtime-metadata-only", expires_in=3600, token_type="Bearer")
+                data = dict(access_token=self.source_token, expires_in=3600, token_type="Bearer")
             else:
                 assert parsed.path.endswith("/default/")
                 data = dict(email="owned-runtime@synthetic-project.iam.gserviceaccount.com",
                             scopes=["https://www.googleapis.com/auth/cloud-platform"], aliases=["default"])
         else:
             assert parsed.scheme == "https" and parsed.hostname == "iamcredentials.googleapis.com"
-            assert method == "POST" and headers["authorization"] == "Bearer synthetic-runtime-metadata-only"
+            assert method == "POST" and headers["authorization"] == "Bearer " + self.source_token
             target = next((principal for principal in self.generations
                            if parsed.path.endswith("/" + principal + ":generateAccessToken")), None)
             assert target is not None

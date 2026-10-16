@@ -8,11 +8,11 @@ from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from shared.infrastructure.persistence.assisted_listing_intake import apply_upgrade_to_database
-from tests.integration._gcs_worm_stub import owned_production_gcs_worm
 from tests.intake_workflow_fixture import (
     SyntheticIntakeAuditRetention,
     SyntheticIntakeWorkflowPolicy,
 )
+from tests.integration._gcs_worm_stub import owned_production_gcs_worm
 from tests.integration.test_assisted_listing_postgresql_runtime import (
     ACTOR_ID,
     REVIEWER_ID,

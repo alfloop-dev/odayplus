@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import { enableSyntheticSiteReviewFlag } from "./_syntheticSiteReviewFlag";
 import {
   acquireOperatorBackendLock,
   releaseOperatorBackendLock,
@@ -160,8 +161,9 @@ test("ODP-FIN-FE-003 command palette and task center are API-bound", async ({
   ).toBeVisible();
   await page.keyboard.press("Enter");
 
-  await expect(page).toHaveURL(/ws=govern/);
-  await expect(page).toHaveURL(/entity=API-902/);
+  // API tasks use the canonical task detail. A workspace hint in a task row
+  // must not turn into a fixture-only Operator entity or an authority grant.
+  await expect(page).toHaveURL(/\/tasks\/API-902(?:[?#]|$)/);
 });
 
 test("ODP-OC-FE-05 Governance Workspace details and evidence package export", async ({
@@ -336,6 +338,7 @@ test("ODP-OC-FE-04 Network tabs preserve fixture Candidate navigation and review
   // the golden GO review (RV-702) is pending and decidable in this smoke.
   const resetReviews = await request.post(`${API_BASE_URL}/api/v1/operator/network-reviews/reset`);
   expect(resetReviews.status()).toBe(200);
+  await enableSyntheticSiteReviewFlag(request, API_BASE_URL);
 
   // Use the canonical reviewer persona for this approving flow. Ops-lead
   // must not be silently promoted to a reviewer by the Network workspace.
@@ -364,6 +367,8 @@ test("ODP-OC-FE-04 Network tabs preserve fixture Candidate navigation and review
 
   // 物件雷達 / Listing Radar
   await page.getByTestId("network-tab-1").click();
+  await expect(page).toHaveURL((url) => url.searchParams.get("ws") === "network"
+    && url.searchParams.get("tab") === "radar");
   await expect(page.getByTestId("network-panel-listings")).toBeVisible();
   await expect(page.getByTestId("network-listing-table")).toContainText(
     "L-2024",
@@ -411,7 +416,8 @@ test("ODP-OC-FE-04 Network tabs preserve fixture Candidate navigation and review
     }
   });
   await page.getByTestId("listing-navigate-L-2024").click();
-  await expect(page).toHaveURL((url) => url.searchParams.get("candidate") === "CS-1001");
+  await expect(page).toHaveURL((url) => url.searchParams.get("tab") === "candidates"
+    && url.searchParams.get("candidate") === "CS-1001");
 
   // 候選點 / Candidates
   await expect(page.getByTestId("network-panel-candidates")).toBeVisible();
@@ -442,6 +448,8 @@ test("ODP-OC-FE-04 Network tabs preserve fixture Candidate navigation and review
   // 選址審核 / Review — ODP-OC-R4-007 productized the review to the API-backed
   // decision dialog (Candidate/Review/Approval/Decision/Audit atomic sync).
   await page.getByTestId("network-tab-5").click();
+  await expect(page).toHaveURL((url) => url.searchParams.get("tab") === "review"
+    && url.searchParams.get("candidate") === "CS-1001");
   await expect(page.getByTestId("network-panel-review")).toBeVisible();
   await expect(page.getByTestId("review-card-RV-702")).toBeVisible({
     timeout: 15_000,
@@ -449,6 +457,8 @@ test("ODP-OC-FE-04 Network tabs preserve fixture Candidate navigation and review
 
   // Reason gate: submitting without a substantive reason is blocked.
   await page.getByTestId("review-card-RV-702").click();
+  await expect(page).toHaveURL((url) => url.searchParams.get("tab") === "review"
+    && url.searchParams.get("candidate") === "CS-1001");
   await page.getByTestId("review-btn-go-RV-702").click();
   await expect(page.getByTestId("review-decision-dialog")).toBeVisible();
   await page.getByTestId("review-decision-reason").fill("Short");

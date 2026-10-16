@@ -72,9 +72,6 @@ export type FindAreasPanelProps = {
   onToggleTracked: () => void;
   onSourceListings: () => void;
   onAddListingFromUrl: () => void;
-  onViewCandidates: () => void;
-  onScoreCandidate: () => void;
-  onSubmitReview: () => void;
   onOpenSurvey?: (targetId: string) => void;
 };
 
@@ -89,13 +86,10 @@ export function FindAreasPanel({
   listings,
   onAddListingFromUrl,
   onChangeLens,
-  onScoreCandidate,
   onSelectZone,
   onSourceListings,
-  onSubmitReview,
   onOpenSurvey,
   onToggleTracked,
-  onViewCandidates,
   selectedZone,
   viewModel,
 }: FindAreasPanelProps) {
@@ -341,21 +335,14 @@ export function FindAreasPanel({
               </button>
               <button className={styles.secondaryAction} disabled={!onOpenSurvey}
                 title={onOpenSurvey ? undefined : "熱區任務服務未接通"}
-                onClick={() => onOpenSurvey?.(selectedZone.id)} type="button">指派熱區任務</button>
-              <button className={styles.secondaryAction} onClick={onViewCandidates} type="button">
-                查看本區候選點（{selectedZone.candidateCount}）
+                onClick={() => onOpenSurvey?.(selectedZone.id)} type="button">指派找點任務</button>
+              <button className={styles.secondaryAction} disabled
+                title="目前無法建立物件搜尋條件" type="button">
+                建立物件搜尋條件
               </button>
-              <button
-                className={styles.secondaryAction}
-                disabled={!selectedZone.bestCandidate}
-                onClick={onScoreCandidate}
-                title={selectedZone.bestCandidate ? undefined : "本區尚無候選點"}
-                type="button"
-              >
-                {selectedZone.bestCandidate ? `評分最佳候選點（${selectedZone.bestCandidate.id}）` : "評分最佳候選點"}
-              </button>
-              <button className={styles.secondaryAction} onClick={onSubmitReview} type="button">
-                送出審核
+              <button className={styles.secondaryAction} disabled
+                title="目前無法加入季度展店計畫" type="button">
+                加入季度展店計畫
               </button>
             </div>
           </>

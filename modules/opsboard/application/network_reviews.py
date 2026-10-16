@@ -320,6 +320,7 @@ class NetworkReviewService:
         candidate_workflow_service: Any | None = None,
         feature_flags: Any | None = None,
         job_queue: Any | None = None,
+        business_engine: Any | None = None,
     ) -> None:
         self._seed_fixtures = seed_fixtures
         self._decision_repository = decision_repository
@@ -330,6 +331,7 @@ class NetworkReviewService:
         self._candidate_workflow_service = candidate_workflow_service
         self._feature_flags = feature_flags
         self._job_queue = job_queue
+        self._business_engine = business_engine
         if initial_state is not None:
             self._reviews = _copy(initial_state.get("reviews", []))
             self._candidates = _copy(initial_state.get("candidates", {}))
@@ -341,7 +343,11 @@ class NetworkReviewService:
             )
             return
 
-        self._reviews = _seed_reviews() if seed_fixtures else []
+        self._reset_fixture_state()
+
+    def _reset_fixture_state(self) -> None:
+        """Reset local records without replacing the composed runtime owners."""
+        self._reviews = _seed_reviews() if self._seed_fixtures else []
         self._candidates: dict[str, dict[str, Any]] = {}
         self._approvals: dict[str, dict[str, Any]] = {}
         self._decisions: list[dict[str, Any]] = []
@@ -385,6 +391,11 @@ class NetworkReviewService:
         )
 
         engine = getattr(self._decision_repository, "engine", None)
+        if engine is None and not self._require_canonical:
+            # The local seeded review has no canonical decision repository,
+            # but its composition can still own durable flags and a SQL queue.
+            # Only an explicitly supplied business engine may bind that owner.
+            engine = self._business_engine
         try:
             require_operation_feature_flag("high_risk.sitescore.approve",
                 owner=self._feature_flags, engine=engine, queue=self._job_queue,
@@ -435,7 +446,7 @@ class NetworkReviewService:
             self._audit_events = []
             self._idempotency_cache = {}
             return self.snapshot()
-        self.__init__(seed_fixtures=self._seed_fixtures)
+        self._reset_fixture_state()
         return self.snapshot()
 
     def export_state(self) -> dict[str, Any]:

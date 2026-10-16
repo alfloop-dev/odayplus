@@ -2005,18 +2005,6 @@ export function NetworkFindAreasWorkspace({
     }
   }
 
-  function scoreCandidate() {
-    if (selectedZone?.bestCandidate) {
-      callbacks?.onScoreCandidate?.(selectedZone.bestCandidate, selectedZone.zone);
-    }
-  }
-
-  function submitReview() {
-    if (selectedZone) {
-      callbacks?.onSubmitReview?.(selectedZone.zone);
-    }
-  }
-
   async function reloadNetworkSnapshot() {
     const generation = navigationContext.current.generation;
     const sequence = ++networkReadSequence.current;
@@ -2721,11 +2709,6 @@ export function NetworkFindAreasWorkspace({
             onToggleTracked={toggleTracked}
             onSourceListings={sourceListings}
             onAddListingFromUrl={addListingFromUrl}
-            onViewCandidates={() =>
-              selectedZone && changeActiveTab(2, { [CANDIDATE_ZONE_PARAM]: selectedZone.id })
-            }
-            onScoreCandidate={scoreCandidate}
-            onSubmitReview={submitReview}
           />
         )}
       </NetworkShell>

@@ -10,7 +10,7 @@
  * but empty scoped snapshot is reported as empty, not as an error or fixtures.
  */
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OperatorConsole } from "../OperatorConsole";
 import { resolveNetworkCountState } from "../NetworkFindAreasWorkspace";
@@ -269,11 +269,15 @@ describe("Network Find Areas in the production Operator Console composition", ()
     expect(screen.getAllByRole("tab")).toHaveLength(6);
   });
 
-  it("hides a workspace with no readable tabs even when a stored deep link requests it", async () => {
+  it("locks a workspace with no readable tabs even when a stored deep link requests it", async () => {
     const { fetchMock } = stubProductionFetch(DENIED, true, undefined, []);
     render(<OperatorConsole searchParams={{ ws: "network" }} />);
     await waitFor(() => expect(screen.getByTestId("operator-console").querySelector('[data-data-status="ready"]')).not.toBeNull());
-    expect(within(screen.getByRole("navigation", { name: "Operator workspaces" })).queryByText("Network")).toBeNull();
+    // Package 10 retains the static navigation label in its locked state;
+    // neither the stored deep link nor clicking it grants a protected read.
+    const locked = within(screen.getByRole("navigation", { name: "Operator workspaces" })).getByRole("button", { name: /Network/ });
+    expect(locked).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(locked);
     expect(screen.queryByRole("tab", { name: /Rebalance/ })).toBeNull();
     expect(fetchMock.mock.calls.map(([url]) => String(url)).filter((url) => url.includes("/network-"))).toEqual([]);
   });

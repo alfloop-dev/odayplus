@@ -1279,7 +1279,7 @@ export function OperatorConsole({
           </div>
 
           <nav className={styles.workspaceNav} aria-label="Operator workspaces">
-            {workspaceNavItems.filter((workspace) => isWorkspaceAllowed(activeRole, workspace.id)).map((workspace) => {
+            {workspaceNavItems.map((workspace) => {
               const workspaceId = isWorkspaceId(workspace.id) ? workspace.id : DEFAULT_WORKSPACE_ID;
               const isActive = activeWorkspaceId === workspaceId;
               const isLocked = !isWorkspaceAllowed(activeRole, workspaceId);
