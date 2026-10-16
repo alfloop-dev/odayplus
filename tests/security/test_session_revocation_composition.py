@@ -253,8 +253,12 @@ def test_pg_rotation_serializes_with_account_revocation(database_url, account, r
     source = SessionService(normal).create_session(account, "local_password")
     other = SessionService(normal).create_session(account, "local_password")
     first, second = SqlSessionRepository(first_connection), SqlSessionRepository(second_connection)
-    rotate = lambda repo: SessionService(repo).rotate_session(source)
-    revoke = lambda repo: repo.revoke_all_for_account(account, "admin_manual_revoke")
+    def rotate(repo):
+        return SessionService(repo).rotate_session(source)
+
+    def revoke(repo):
+        return repo.revoke_all_for_account(account, "admin_manual_revoke")
+
     with ThreadPoolExecutor(max_workers=2) as executor:
         one = executor.submit(rotate if rotate_first else revoke, first)
         try:
