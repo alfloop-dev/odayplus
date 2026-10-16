@@ -258,9 +258,9 @@ class SourceSnapshotService:
         if row["kill_switch"] or not row["production_enabled"]:
             return "SOURCE_BLOCKED"
         mode = row.get("retrieval_mode")
-        if mode in {"ASSISTED_ENTRY_ONLY", "AUTH_REQUIRED", "SOURCE_BLOCKED", "POLICY_UNKNOWN"}:
+        if mode in {"AUTH_REQUIRED", "SOURCE_BLOCKED", "POLICY_UNKNOWN"}:
             return mode
-        if mode != "APPROVED_RETRIEVAL":
+        if mode not in {"APPROVED_RETRIEVAL", "ASSISTED_ENTRY_ONLY"}:
             return "POLICY_UNKNOWN"
         try:
             expiry = row.get("review_expires_at")
@@ -359,7 +359,14 @@ class SourceSnapshotService:
         """Evaluate policy, validate residency, upload raw/redacted data to GCS, and commit SQL metadata."""
         # 1. Enforce source policy
         policy = self.check_source_policy(tenant_id, source_id)
-        if policy != "APPROVED_RETRIEVAL":
+        # Supplied evidence is not a server retrieval grant. Native assisted
+        # policy has the same current approval requirements as retrieval.
+        assisted_capture = (
+            self.db_conn is not None and not self._is_sqlite()
+            and policy == "ASSISTED_ENTRY_ONLY"
+            and capture_method in ("MANUAL_ENTRY", "OPERATOR_UPLOAD")
+        )
+        if policy != "APPROVED_RETRIEVAL" and not assisted_capture:
             if self.intake_workflow_service and context:
                 # Quarantine the intake if it exists
                 self.intake_workflow_service.quarantine_policy(intake_id, policy, context)
