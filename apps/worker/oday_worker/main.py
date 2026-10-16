@@ -52,7 +52,8 @@ class _LeaseHeartbeat:
 
     def stop(self) -> tuple[int, BaseException | None]:
         self._stop.set()
-        self._thread.join()
+        if self._thread.ident is not None:
+            self._thread.join()
         with self._state_lock:
             try:
                 latest = self._queue.get(self._job_id)
@@ -180,8 +181,14 @@ class ODayWorker:
         canonical_identity_job = job.job_type == "identity-execution"
         canonical_native_start_job = job.job_type == "native-intake-start"
         canonical_native_identity_job = job.job_type == "native-intake-identity"
+        canonical_native_source_policy_job = job.job_type == "native-intake-source-policy"
+        native_sql_command = (
+            (canonical_native_start_job or canonical_native_identity_job or canonical_native_source_policy_job)
+            and getattr(getattr(self.persistence, "engine", None), "dialect", None) == "postgresql"
+        )
         canonical_transaction_owned_job = (
-            canonical_score_job or canonical_identity_job or canonical_native_start_job or canonical_native_identity_job
+            canonical_score_job or canonical_identity_job or canonical_native_start_job
+            or canonical_native_identity_job or canonical_native_source_policy_job
         )
         score_owner = ScoreExecutionJobRepository if job.job_type == SITESCORE_EXECUTION_JOB_TYPE else IntakeScoreJobRepository
 
@@ -203,10 +210,8 @@ class ODayWorker:
             engine = getattr(self.persistence, "engine", None)
             if getattr(engine, "dialect", None) != "postgresql":
                 return self.job_queue.heartbeat(job_id, expected_version=expected_version, fence_token=fence_token)
-            # A native SQL root owns this physical row and may enqueue audit
-            # work through the same engine lock. Do not hold that lock while
-            # waiting indefinitely for its row. Busy renewal ends this optional
-            # heartbeat; the command still must fit its actual existing lease.
+            # Bound the pre-command renewal independently. The native owner
+            # subsequently checks this physical lease in its own SQL root.
             with engine.transaction():
                 engine.query_one("SELECT set_config('lock_timeout',?,true)", ("100ms",))
                 engine.query_one("SELECT set_config('statement_timeout',?,true)", ("500ms",))
@@ -238,10 +243,20 @@ class ODayWorker:
                 # their lease before the atomic phase/result transaction locks
                 # that row. It must never invoke the identity authenticator.
                 heartbeat=(score_heartbeat if canonical_score_job else identity_heartbeat if canonical_identity_job
-                           else native_intake_heartbeat if canonical_native_start_job or canonical_native_identity_job else None),
+                           else native_intake_heartbeat if (canonical_native_start_job or canonical_native_identity_job
+                                                          or canonical_native_source_policy_job) else None),
             )
-            heartbeat.start()
             try:
+                if native_sql_command:
+                    # Renew once before the SQL command opens its SERIALIZABLE
+                    # root. A background UPDATE can invalidate the root's first
+                    # physical-row snapshot, including protective settlement.
+                    # These SQL-only phases have a <=30s acceptance deadline;
+                    # the renewed 45s lease remains independently checked by
+                    # the owner. No renewal runs concurrently with that root.
+                    native_intake_heartbeat(job.job_id, expected_version=job.version, fence_token=job.fence_token)
+                else:
+                    heartbeat.start()
                 self.execute_job(job)
                 current_version, heartbeat_failure = heartbeat.stop()
                 duration = time.monotonic() - start_time

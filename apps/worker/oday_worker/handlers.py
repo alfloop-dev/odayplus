@@ -866,6 +866,14 @@ def handle_native_intake_identity(job: JobRecord, persistence: PersistenceBundle
     run_native_intake_identity_delivery(job, persistence.canonical_intake_identity())
 
 
+def handle_native_intake_source_policy(job: JobRecord, persistence: PersistenceBundle) -> None:
+    from modules.listing.application.native_intake_source_policy import (
+        run_native_intake_source_policy_delivery,
+    )
+
+    run_native_intake_source_policy_delivery(job, persistence.canonical_intake_source_policy())
+
+
 def build_default_registry() -> JobRegistry:
     """The registry the runtime worker uses by default."""
     from apps.worker.assisted_listing_intake.worker import (
@@ -902,6 +910,7 @@ def build_default_registry() -> JobRegistry:
     registry.register("identity-execution", handle_identity_execution)
     registry.register("native-intake-start", handle_native_intake_start)
     registry.register("native-intake-identity", handle_native_intake_identity)
+    registry.register("native-intake-source-policy", handle_native_intake_source_policy)
     return registry
 
 

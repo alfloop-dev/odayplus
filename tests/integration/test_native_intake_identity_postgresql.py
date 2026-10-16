@@ -369,31 +369,33 @@ def test_terminal_receipt_cannot_adopt_changed_worker_or_fences(identity_case, f
     assert phase_snapshot(identity_case) == before
 
 
-def test_busy_generic_heartbeat_releases_its_engine_lock_before_native_audit_enqueue(identity_case, monkeypatch):
+def test_native_worker_renews_before_SQL_without_racing_native_audit_enqueue(identity_case, monkeypatch):
     start, owner = identity_case
     graph = start[0][0]
     _, _, admission = prepare(identity_case)
-    blocked = threading.Event()
+    renewals = []
     original_heartbeat, original_audit = graph.queue.heartbeat, graph.audit_sink.persist
 
     def heartbeat(*args, **kwargs):
-        try:
-            return original_heartbeat(*args, **kwargs)
-        except Exception as error:
-            if getattr(error, "sqlstate", None) == "55P03":
-                blocked.set()
-            raise
+        version = original_heartbeat(*args, **kwargs)
+        renewals.append((threading.get_ident(), graph.queue.get(admission["job_id"])))
+        return version
 
     def audit(record, scope):
         if record["action"] == "intake.resolved.v1":
-            assert blocked.wait(3), "Expected a real bounded row-lock wait, not a skipped heartbeat"
+            assert len(renewals) == 1 and renewals[0][0] == threading.get_ident()
+            physical = graph.queue.get(admission["job_id"])
+            assert physical.lease_expires_at == renewals[0][1].lease_expires_at
+            assert physical.version == renewals[0][1].version
+            time.sleep(0.15)  # Fifteen configured heartbeat intervals inside the real SQL root.
+            assert len(renewals) == 1
         return original_audit(record, scope)
 
     monkeypatch.setattr(graph.queue, "heartbeat", heartbeat)
     monkeypatch.setattr(graph.audit_sink, "persist", audit)
     defer_audit(graph)
     assert ODayWorker(persistence=start[2], heartbeat_interval_seconds=0.01).run_once() is True
-    assert blocked.is_set()
+    assert len(renewals) == 1
     assert graph.queue.get(admission["job_id"]).status == JobStatus.SUCCEEDED
     assert owner.execute(graph.queue.get(admission["job_id"]))["processing_state"] == "READY"
 
