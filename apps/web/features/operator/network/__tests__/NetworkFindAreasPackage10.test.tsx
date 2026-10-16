@@ -94,6 +94,32 @@ describe("Network Find Areas — Package 10 content", () => {
     vi.restoreAllMocks();
   });
 
+  it.each(["current-api-zone", "zone-withheld", "fixture-source", "forbidden", "native-unavailable", "invalid-availability"])(
+    "enables personal search only for the current authorized API zone: %s", async scenario => {
+      // A POC shell may contain fallback cards while its actual API withholds
+      // that zone. Neither the card nor an HTTP 200 is a write authority.
+      const zone = fixtures.HEAT_ZONE_FIXTURES[0];
+      const fetcher = vi.fn(async (input: string) => {
+        if (!String(input).includes("/network-listings")) return new Response("{}", { status: 503 });
+        return new Response(JSON.stringify({ source: scenario === "fixture-source" ? "fixture" : "api",
+          heatZones: scenario === "zone-withheld" ? [] : [zone],
+          ...(scenario === "native-unavailable" ? { heatZoneAvailability: { state: "unavailable" } } : {}),
+          ...(scenario === "invalid-availability" ? { heatZoneAvailability: { state: "available", message: {} } } : {}),
+          listingSources: [], listings: [], candidates: [], siteReviews: [] }), {
+          status: scenario === "forbidden" ? 403 : 200, headers: { "Content-Type": "application/json" },
+        });
+      });
+      vi.stubGlobal("fetch", fetcher);
+      renderFindAreas("expansion-manager", { selectedHeatZoneId: zone.id });
+      await waitFor(() => expect(fetcher.mock.calls.some(([input]) => String(input).includes("/network-listings"))).toBe(true));
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+      const button = within(screen.getByTestId("find-areas-zone-actions"))
+        .getByRole("button", { name: "建立物件搜尋條件" });
+      if (scenario === "current-api-zone") await waitFor(() => expect(button).toBeEnabled());
+      else expect(button).toBeDisabled();
+    },
+  );
+
   it("shows the one-row header with the four Chinese KPI chips", () => {
     renderFindAreas();
     const header = screen.getByTestId("network-header");

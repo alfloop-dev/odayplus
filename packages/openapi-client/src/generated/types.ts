@@ -898,6 +898,15 @@ export type HeatZoneAbsorptionOutcomePayload = {
   store_ids: string[];
 };
 
+/** HeatZoneAvailabilityReadResponse */
+export type HeatZoneAvailabilityReadResponse = {
+  code?: string | null;
+  count?: number | null;
+  message?: string | null;
+  source: "canonical-heatzone";
+  state: "available" | "unavailable";
+};
+
 /** Request to evaluate merge/split for the caller's tenant.
 
 There is nothing to send but the policy to evaluate under. Readiness
@@ -1174,6 +1183,56 @@ export type ListingImportPayload = {
   source_id?: string | null;
 };
 
+/** ListingQueryResponse */
+export type ListingQueryResponse = {
+  groundFloorOnly: boolean;
+  heatZoneId: string;
+  kind: "listing-search.v1";
+  maxAreaPing: number | null;
+  maxRentPerMonth: number | null;
+  minAreaPing: number | null;
+};
+
+/** ListingSearchCommandResponse */
+export type ListingSearchCommandResponse = {
+  auditEventIds: string[];
+  receiptId: string;
+  replayed: boolean;
+  search: PersonalListingSearchResponse;
+};
+
+/** ListingSearchDeleteInput */
+export type ListingSearchDeleteInput = {
+  expectedVersion: number;
+};
+
+/** ListingSearchInput */
+export type ListingSearchInput = {
+  expectedVersion?: number | null;
+  name: string;
+  query: Record<string, unknown>;
+};
+
+/** ListingSearchListResponse */
+export type ListingSearchListResponse = {
+  heatZoneId: string;
+  items: PersonalListingSearchResponse[];
+};
+
+/** ListingSearchMatchResponse */
+export type ListingSearchMatchResponse = {
+  intakeId: string;
+  intakeVersion: number;
+  recordedAt: string;
+};
+
+/** ListingSearchResultsResponse */
+export type ListingSearchResultsResponse = {
+  items: ListingSearchMatchResponse[];
+  search: PersonalListingSearchResponse;
+  total: number;
+};
+
 /** ManualIntakeRow */
 export type ManualIntakeRow = {
   address_raw: string;
@@ -1364,6 +1423,7 @@ export type NetworkListingMergePayload = {
 
 /** Narrow read contract preserving the existing authorized snapshot fields. */
 export type NetworkListingRadarReadResponse = {
+  heatZoneAvailability?: HeatZoneAvailabilityReadResponse | null;
   listings: NetworkListingReadResponse[];
 };
 
@@ -1491,6 +1551,22 @@ export type OpenDecisionPayload = {
   report_id: string;
   reviewer_group_id?: string | null;
   submission_summary?: string | null;
+};
+
+/** PersonalListingSearchResponse */
+export type PersonalListingSearchResponse = {
+  created_at: string;
+  deleted_at: string | null;
+  name: string;
+  owner_subject_id: string;
+  query: ListingQueryResponse;
+  resource: "intake";
+  saved_view_id: string;
+  shared_role: null;
+  tenant_id: string;
+  updated_at: string | null;
+  version: number;
+  visibility: "PRIVATE";
 };
 
 /** PlaceHoldPayload */
@@ -2587,6 +2663,9 @@ export const API_PATHS = {
   "/api/v1/operator/network-listings/listings/{listing_id}/convert": ["POST"],
   "/api/v1/operator/network-listings/listings/{listing_id}/merge": ["POST"],
   "/api/v1/operator/network-listings/reset": ["POST"],
+  "/api/v1/operator/network-listings/searches": ["GET", "POST"],
+  "/api/v1/operator/network-listings/searches/{identity}": ["DELETE", "GET", "PUT"],
+  "/api/v1/operator/network-listings/searches/{identity}/results": ["GET"],
   "/api/v1/operator/network-rebalance": ["GET"],
   "/api/v1/operator/network-rebalance/": ["GET"],
   "/api/v1/operator/network-rebalance/reset": ["POST"],

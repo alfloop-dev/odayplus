@@ -60,6 +60,7 @@ import { projectCandidateWorkflow } from "./network/networkWorkflowProjection";
 import { projectCandidateNativeWorkflow, resolveCandidateReviewTarget } from "./network/candidateNativeWorkflowProjection";
 import { hasNetworkListingsRenderShape, hasNetworkScoringRenderShape, hasCanonicalScoreSession, hasScoreExecutionContext, hasScoreExecutionReceipt, scoreExecutionCommandReceiptMatches, hasVerifiedCurrentScoreAdmission, readId, readObject } from "./network/networkReadValidation";
 import { FindAreasPanel } from "./network/FindAreasPanel";
+import type { ListingSearchDialogProps } from "./network/ListingSearchDialog";
 import { canPerform as canPerformIntake } from "./network/intake/intakePermissions";
 import type { RebalancePanelProps } from "./network/RebalancePanel";
 import { createNetPlanBuilderApi } from "./network/netplanBuilderClient";
@@ -101,6 +102,9 @@ import {
 // merge/split panel below is, so /operator and /intake do not pay for it on
 // first load. `ssr: false` matches the other deferred panels -- the panel is
 // driven entirely by client state and callbacks from this workspace.
+const ListingSearchDialog = dynamic<ListingSearchDialogProps>(
+  () => import("./network/ListingSearchDialog").then(mod => mod.ListingSearchDialog), { ssr: false },
+);
 const RebalancePanel = dynamic<RebalancePanelProps>(
   () => import("./network/RebalancePanel").then((mod) => mod.RebalancePanel),
   {
@@ -229,6 +233,7 @@ type NetworkListingDetail = Listing & {
 type NetworkListingsSnapshot = {
   source?: "api" | "fixture";
   heatZones?: OperatorHeatZone[];
+  heatZoneAvailability?: { state: "available" | "unavailable"; message?: string };
   listingSources?: ListingSource[];
   listings?: NetworkListingDetail[];
   candidates?: Candidate[];
@@ -336,7 +341,9 @@ export function inspectNetworkListingsSnapshot(
 export function resolveNetworkFindAreasLoadState(
   networkLoadState: OperatorDataAvailability,
   heatZoneCount: number,
+  nativeZoneState?: string,
 ): OperatorDataAvailability {
+  if (nativeZoneState === "unavailable") return "error";
   return networkLoadState === "ready" && heatZoneCount === 0 ? "empty" : networkLoadState;
 }
 
@@ -1773,6 +1780,9 @@ export function NetworkFindAreasWorkspace({
   }
 
   const [surveyRequest, setSurveyRequest] = useState<{ target: SurveyTarget; api: ReturnType<typeof createSurveyAssignmentApi>; tab: number } | null>(null);
+  const [listingSearchRequest, setListingSearchRequest] = useState<{
+    zoneId: string; zoneLabel: string; guard: NetworkReadSessionGuard; contextKey: string; locationVersion: number;
+  } | null>(null);
   const surveyBinding = useMemo(() => {
     const context = navigationContext.current;
     const locationVersion = navigationLocation.current.version;
@@ -2425,7 +2435,8 @@ export function NetworkFindAreasWorkspace({
     : null;
   const selectedZoneLabel = selectedZone?.label ?? heatZones.find((zone) => zone.id === effectiveSelectedId)?.label;
 
-  const findAreasLoadState = resolveNetworkFindAreasLoadState(networkLoadState, heatZones.length);
+  const findAreasLoadState = resolveNetworkFindAreasLoadState(networkLoadState, heatZones.length,
+    networkSnapshot?.heatZoneAvailability?.state);
   const activeTabGateState = resolveNetworkTabGateState({
     activeTab,
     findAreasLoadState,
@@ -2437,7 +2448,7 @@ export function NetworkFindAreasWorkspace({
   });
   const activeTabGateDetail =
     activeTab === 0
-      ? networkApiError ??
+      ? networkApiError ?? networkSnapshot?.heatZoneAvailability?.message ??
         (findAreasLoadState !== networkLoadState
           ? "HeatZone aggregates are not authorized for this read scope; scoped listings remain in Listing Radar."
           : null)
@@ -2705,6 +2716,15 @@ export function NetworkFindAreasWorkspace({
             candidates={localCandidates}
             onSelectZone={selectHeatZone}
             onOpenSurvey={fixturesAllowed ? undefined : (id) => surveyBinding.open({ kind: "HEAT_ZONE", id }, activeTab)}
+            onOpenListingSearch={networkLoadState !== "ready" || networkSnapshot?.source !== "api"
+              || networkSnapshot.heatZoneAvailability?.state === "unavailable"
+              || !selectedZone || !networkSnapshot.heatZones?.some(zone => zone.id === selectedZone.id)
+              || !canPerformIntake("submit", activeRoleId) ? undefined : () => {
+              const guard = snapshotReadGuard();
+              if (!guard || !selectedZone) return;
+              setListingSearchRequest({ zoneId: selectedZone.id, zoneLabel: selectedZone.label, guard,
+                contextKey: navigationContext.current.key, locationVersion: navigationLocation.current.version });
+            }}
             onChangeLens={changeLens}
             onToggleTracked={toggleTracked}
             onSourceListings={sourceListings}
@@ -2726,6 +2746,16 @@ export function NetworkFindAreasWorkspace({
       {surveyRequest?.api === surveyBinding.api && surveyRequest.tab === activeTab && (activeTab === 0 || activeTab === 2)
         && allowedTabIndices.includes(activeTab) ? <SurveyAssignmentDialog api={surveyRequest.api} target={surveyRequest.target}
           onClose={() => setSurveyRequest(null)} /> : null}
+      {listingSearchRequest && activeTab === 0 && allowedTabIndices.includes(0)
+        && listingSearchRequest.contextKey === navigationContext.current.key
+        && listingSearchRequest.locationVersion === navigationLocation.current.version ?
+        <ListingSearchDialog zoneId={listingSearchRequest.zoneId} zoneLabel={listingSearchRequest.zoneLabel}
+          headers={NETWORK_OPERATOR_HEADERS} guard={listingSearchRequest.guard}
+          onClose={() => setListingSearchRequest(null)} onOpenIntake={(id) => {
+            const params = new URLSearchParams(searchParams.toString());
+            params.set("heatZoneId", listingSearchRequest.zoneId); params.set("hz", listingSearchRequest.zoneId);
+            router.push(buildDurableDetailHref(id, parseUrlState(params), params), { scroll: false });
+          }} /> : null}
       {listingMergeDialog}
         {listingArchiveDialog}
     </section>

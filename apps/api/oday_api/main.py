@@ -1155,8 +1155,19 @@ else:
             from apps.api.oday_api.security.dependencies import principal_from_headers
             from modules.listing.application.intake_authorization import authorize_intake_action
             from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
+            from modules.listing.application.saved_search import LISTING_SEARCH_RECEIPT_SERVICE
             from modules.sitescore.application.score_delivery import SITESCORE_EXECUTION_JOB_TYPE
-
+            from shared.infrastructure.persistence.listing_search_delivery import (
+                JOB_TYPE as LISTING_SEARCH_JOB_TYPE,
+            )
+            if body.job_type in {LISTING_SEARCH_JOB_TYPE, LISTING_SEARCH_RECEIPT_SERVICE + ".command-receipt"}:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                    {"code": "JOB_TYPE_NOT_SUPPORTED", "message": "Listing search jobs require committed receipt/search events"})
+            if (body.idempotency_key or idempotency_key or "").startswith((
+                "listing-search-internal:", "command:v1:" + LISTING_SEARCH_RECEIPT_SERVICE + ":",
+            )):
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    {"code": "RESERVED_IDEMPOTENCY_NAMESPACE"})
             if body.job_type in {INTAKE_SITESCORE_JOB_TYPE, SITESCORE_EXECUTION_JOB_TYPE}:
                 raise HTTPException(
                     status.HTTP_400_BAD_REQUEST,
@@ -1340,7 +1351,18 @@ else:
         ) -> dict[str, Any] | None:
             from apps.api.oday_api.security.dependencies import principal_from_headers
             from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
+            from modules.listing.application.saved_search import LISTING_SEARCH_RECEIPT_SERVICE
             from modules.sitescore.application.score_delivery import SITESCORE_EXECUTION_JOB_TYPE
+            from shared.infrastructure.persistence.listing_search_delivery import (
+                JOB_TYPE as LISTING_SEARCH_JOB_TYPE,
+            )
+
+            # These private delivery records have no public job read surface.
+            # Their saved-search owner rechecks the current subject and scope.
+            if job.job_type in {LISTING_SEARCH_JOB_TYPE, LISTING_SEARCH_RECEIPT_SERVICE + ".command-receipt"}:
+                if not principal_from_headers(request.headers).authenticated:
+                    raise HTTPException(status.HTTP_401_UNAUTHORIZED, "AUTHENTICATION_REQUIRED")
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
 
             job_tenant = str(job.payload.get("tenant_id") or "").strip()
             if job.job_type == "forecast":
@@ -1589,6 +1611,12 @@ else:
             job = job_queue.get(job_id)
             if job is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
+            from modules.listing.application.saved_search import LISTING_SEARCH_RECEIPT_SERVICE
+            from shared.infrastructure.persistence.listing_search_delivery import (
+                JOB_TYPE as LISTING_SEARCH_JOB_TYPE,
+            )
+            if job.job_type in {LISTING_SEARCH_JOB_TYPE, LISTING_SEARCH_RECEIPT_SERVICE + ".command-receipt"}:
+                _authorize_job_access(job, request)
             if job.job_type in {INTAKE_SITESCORE_JOB_TYPE, SITESCORE_EXECUTION_JOB_TYPE}:
                 _authorize_job_access(job, request)
                 raise HTTPException(

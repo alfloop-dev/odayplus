@@ -1235,6 +1235,27 @@ def create_operator_router(
             principal = request.state.operator_principal
             return listing_resolver(request).snapshot(tenant_id=principal.tenant_id)
 
+        require_zone_read = require_operator_permission(
+            "heatzone", Action.VIEW, engine=authz_engine,
+            scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE,
+        )
+
+        def canonical_heat_zone_source(request: Request) -> dict[str, Any]:
+            # Check the native domain read grant before resolving its repository.
+            # An unavailable HeatZone source must not erase permitted Radar rows.
+            try:
+                principal = require_zone_read(request)
+                reader = getattr(svc.live_repository, "load_heat_zones", None)
+                if not callable(reader):
+                    return {}
+                return reader(tenant_id=principal.tenant_id)
+            except HTTPException as exc:
+                if exc.status_code == 401:
+                    raise
+                return {}
+            except Exception:
+                return {}
+
         router.include_router(
             create_network_listings_sub_router(
                 NetworkListingService(seed_fixtures=False),
@@ -1249,6 +1270,7 @@ def create_operator_router(
                 ),
                 audit_log=active_audit_log,
                 service_resolver=listing_resolver,
+                heat_zone_reader=canonical_heat_zone_source,
                 allow_reset=allow_test_reset,
             )
         )

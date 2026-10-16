@@ -854,6 +854,7 @@ def build_default_registry() -> JobRegistry:
     )
     from apps.worker.consumers.canonical_audit import handle_canonical_audit_delivery
     from apps.worker.consumers.durable_audit import handle_durable_audit_delivery
+    from apps.worker.consumers.listing_search import handle_listing_search_match
     from apps.worker.consumers.retained_evidence import handle_retained_evidence_delivery
     from apps.worker.consumers.store_ops_audit import handle_store_ops_audit_delivery
     from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
@@ -873,7 +874,12 @@ def build_default_registry() -> JobRegistry:
     )
 
     registry = JobRegistry()
+    from shared.infrastructure.persistence.listing_search_delivery import (
+        JOB_TYPE as LISTING_SEARCH_JOB_TYPE,
+    )
+
     registry.register(FORECAST_JOB_TYPE, handle_forecast)
+    registry.register(LISTING_SEARCH_JOB_TYPE, handle_listing_search_match)
     registry.register(EXTERNAL_FETCH_JOB_TYPE, handle_external_fetch)
     registry.register(INTAKE_JOB_TYPE, handle_assisted_listing_intake)
     registry.register(INTAKE_SITESCORE_JOB_TYPE, handle_intake_score)

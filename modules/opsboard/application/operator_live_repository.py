@@ -180,6 +180,19 @@ class OperatorLiveRepository:
             "completeness": "request-scoped",
         }
 
+    def load_heat_zones(self, *, tenant_id: str) -> dict[str, Any]:
+        """Read one native tenant source without loading unrelated workspaces."""
+        scope = self._require_scope(tenant_id=tenant_id, brand_ids=(), region_ids=(), store_ids=())
+        repository, _error = self._tenant_scoped_repository("heatzone_store", scope)
+        if repository is None:
+            rows, available = [], False
+        else:
+            rows, section = self._read_list("heat_zones", repository, "list_scores")
+            available = section.complete
+        return {"tenantId": scope.tenant_id, "persistenceMode": self._mode,
+                "source": "heatzone_store.list_scores", "state": "available" if available else "unavailable",
+                "rows": [_record_dict(row) for row in rows] if available else []}
+
     @staticmethod
     def _require_scope(
         *,

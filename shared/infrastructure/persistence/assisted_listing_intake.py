@@ -461,8 +461,31 @@ class DurableAssistedIntakeStore:
                     storage_key,
                     self._wrap(tenant_id, key, deepcopy(value)),
                 )
+            self._stage_listing_search_changes(tenant_id, changes)
         self.workflow_audits.update(canonical_audits)
         self._local.baseline = deepcopy(self._current_collections())
+
+    def _stage_listing_search_changes(self, tenant_id: str, changes: list) -> None:
+        from shared.infrastructure.persistence.job_queue import DurableJobQueue
+        from shared.infrastructure.persistence.listing_search_delivery import ListingSearchDelivery
+        from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
+
+        delivery = ListingSearchDelivery(
+            TenantScopedDocumentStore(self._store, tenant_id), DurableJobQueue(self._engine),
+        )
+        for name, _, _, _, value in changes:
+            if name == "saved_views":
+                delivery.stage(kind="search", value=value)
+                from modules.listing.application.saved_search import SavedListingCriteria
+                if SavedListingCriteria.from_query(value.get("query")) is not None:
+                    # Bootstrap pre-feature canonical receipts from committed
+                    # rows. These reads take no parent locks. Later receipt
+                    # commits carry their own events, so a concurrent receipt
+                    # cannot be lost between this snapshot and search commit.
+                    for receipt in self._load_collection("intakes", tenant_id).values():
+                        delivery.stage(kind="receipt", value=receipt)
+            elif name == "intakes":
+                delivery.stage(kind="receipt", value=value)
 
     # Operator network-listings repository compatibility. Keeping one state
     # owner avoids dual writes between the operator and approved v1 routers.

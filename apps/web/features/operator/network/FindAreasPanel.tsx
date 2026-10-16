@@ -73,6 +73,7 @@ export type FindAreasPanelProps = {
   onSourceListings: () => void;
   onAddListingFromUrl: () => void;
   onOpenSurvey?: (targetId: string) => void;
+  onOpenListingSearch?: () => void;
 };
 
 export function FindAreasPanel({
@@ -89,6 +90,7 @@ export function FindAreasPanel({
   onSelectZone,
   onSourceListings,
   onOpenSurvey,
+  onOpenListingSearch,
   onToggleTracked,
   selectedZone,
   viewModel,
@@ -336,8 +338,9 @@ export function FindAreasPanel({
               <button className={styles.secondaryAction} disabled={!onOpenSurvey}
                 title={onOpenSurvey ? undefined : "熱區任務服務未接通"}
                 onClick={() => onOpenSurvey?.(selectedZone.id)} type="button">指派找點任務</button>
-              <button className={styles.secondaryAction} disabled
-                title="目前無法建立物件搜尋條件" type="button">
+              <button className={styles.secondaryAction} disabled={!onOpenListingSearch}
+                onClick={onOpenListingSearch}
+                title={onOpenListingSearch ? undefined : "目前無法建立物件搜尋條件"} type="button">
                 建立物件搜尋條件
               </button>
               <button className={styles.secondaryAction} disabled

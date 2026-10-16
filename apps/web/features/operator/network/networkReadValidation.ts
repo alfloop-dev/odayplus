@@ -24,6 +24,10 @@ const nullableRecommendation = (value: unknown) => value === null || recommendat
 // in the legacy UI status unions or deriving an eligibility decision.
 export function hasNetworkListingsRenderShape(value: unknown): boolean {
   if (!readObject(value)) return false;
+  const availability = value.heatZoneAvailability;
+  if (availability !== undefined && availability !== null && (!readObject(availability)
+    || !oneOf(availability.state, ["available", "unavailable"])
+    || !optionalText(availability.message))) return false;
   return rows(value.heatZones, (zone) => text(zone.label) && nullableNumber(zone.rank)
       && (zone.centroid === null || Array.isArray(zone.centroid) && zone.centroid.length === 2 && zone.centroid.every(number))
       && nullableNumber(zone.demandGap) && nullableNumber(zone.competitionIndex)

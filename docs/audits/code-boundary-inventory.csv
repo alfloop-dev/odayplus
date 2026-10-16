@@ -135,6 +135,7 @@ apps/api/app/routes/operator_modules/evidence.py,product_system,product_required
 apps/api/app/routes/operator_modules/governance.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/api/app/routes/operator_modules/growth.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/api/app/routes/operator_modules/issues.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+apps/api/app/routes/operator_modules/listing_searches.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/api/app/routes/operator_modules/live_service.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/api/app/routes/operator_modules/netplan_builder.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/api/app/routes/operator_modules/network_listings.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -200,6 +201,7 @@ apps/worker/assisted_listing_intake/worker.py,product_system,product_required,tr
 apps/worker/consumers/assisted_listing_intake.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/worker/consumers/canonical_audit.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/worker/consumers/durable_audit.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+apps/worker/consumers/listing_search.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/worker/consumers/retained_evidence.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/worker/consumers/store_ops_audit.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/worker/oday_worker/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -598,6 +600,9 @@ modules/listing/application/intake_workflow_bootstrap.py,product_system,product_
 modules/listing/application/pipeline.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/listing/application/platform_bridge.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/listing/application/promotion.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/saved_search.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/saved_search_admission.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/saved_search_owner.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/listing/domain/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/listing/domain/identity_graph.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/listing/domain/intake_states.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -660,6 +665,7 @@ modules/opsboard/application/governance.py,product_system,product_required,true,
 modules/opsboard/application/growth.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/opsboard/application/identity_user_role_management.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/opsboard/application/netplan_builder.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/opsboard/application/network_heat_zones.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/opsboard/application/network_listings.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/opsboard/application/network_read_scope.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/opsboard/application/network_rebalance.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -939,6 +945,8 @@ shared/infrastructure/persistence/factory.py,product_system,product_required,tru
 shared/infrastructure/persistence/feature_flags.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/infrastructure/persistence/job_queue.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/infrastructure/persistence/job_receipts.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+shared/infrastructure/persistence/listing_search_delivery.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+shared/infrastructure/persistence/listing_search_matches.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/infrastructure/persistence/migrations.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/infrastructure/persistence/model_ready.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/infrastructure/persistence/netplan_outcomes.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -1240,6 +1248,7 @@ tests/integration/test_network_review_submission_atomicity.py,verification,verif
 tests/integration/test_network_review_submission_sod.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_official_real_estate_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_operator_avm_dealroom.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_operator_canonical_heat_zones_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_operator_canonical_wiring.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_operator_comments_api.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_operator_intake_job_access_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -1277,6 +1286,8 @@ tests/integration/test_production_api_composition.py,verification,verification_o
 tests/integration/test_production_model_lifecycle.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_production_model_runtime.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_real_domain_operation_feature_flags.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_saved_listing_search_job_access_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_saved_listing_search_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_scheduled_ingestion_tenant_propagation.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_scoped_cdc_adapter.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_scoring_model_binding.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -1405,6 +1416,7 @@ tests/solver/test_runtime_compat.py,verification,verification_only,false,product
 tests/support/__init__.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/support/intake_score_browser_server.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/support/intake_score_synthetic.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/support/listing_search_browser_server.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/test_scaffold.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/tooling/test_assisted_intake_design_validation_paths.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/tooling/test_ci_product_e2e_evidence.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -1448,6 +1460,7 @@ tests/unit/test_network_review_new_report_rounds.py,verification,verification_on
 tests/unit/test_network_scoring_gate_measurement_contract.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/unit/test_network_scoring_read_observation_scope.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/unit/test_network_sitescore_scalar_semantics.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/unit/test_operator_canonical_heat_zones.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/unit/test_operator_intake_projection.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/unit/test_operator_manual_listing_provenance.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/unit/test_operator_notification_current_requests.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -1458,6 +1471,7 @@ tests/unit/test_operator_today_metrics.py,verification,verification_only,false,p
 tests/unit/test_priceops_elasticity_binding.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/unit/test_pricing_bandit.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/unit/test_pricing_simulation.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/unit/test_saved_listing_search_criteria.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/unit/test_sitescore_execution_request.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/unit/test_store_ops_http_delivery_envelopes.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/unit/test_store_ops_native_summary.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
