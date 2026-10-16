@@ -61,6 +61,7 @@ def postgres_case(intake_blank_db, monkeypatch, tmp_path):
             intake.update(
                 state="NEEDS_REVIEW", source_snapshot_id=str(uuid4()), parser_run_id=str(uuid4())
             )
+            intake["version"] += 1
             intake["fields"] = [
                 dict(
                     field_path=path,

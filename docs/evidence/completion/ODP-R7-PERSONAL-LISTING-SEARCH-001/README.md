@@ -67,3 +67,18 @@ interception. Its results are engineering evidence, not human UAT, real login,
 production model admission or permission to deploy. Retain failed attempts and
 bind reported results to the exact tested source; original timeouts, retries
 and bundle limits must remain unchanged.
+
+The required `product-e2e-gate` also runs this three-width scenario as a
+supplemental PostgreSQL composition. Its dedicated `odp_score_browser_` database
+uses loopback port5438, separate from the original fixed130 Docker composition.
+The ordinary product build/budget stays in `product-node`; this browser gets a
+separate production fixture build. The normal API has legacy E2E reset seeding
+disabled, while the web remains explicitly synthetic POC. The config refuses
+server reuse and preserves original120s, workers1 and retries0. JSON, PNG, trace
+and HTML diagnostics upload separately even on failure. These three cases are
+never added to the fixed18-spec/130-case inventory or used as human UAT/GO.
+The supplemental spec lives in `tests/visual`, outside the canonical `tests/e2e`
+file inventory. Its dedicated config selects it explicitly; the default config,
+original18 file registry and every original130 assertion remain unchanged.
+Available diagnostics upload even after failure; startup/build failures may
+precede generation of JSON, PNG or trace artifacts.

@@ -1,6 +1,6 @@
 import { expect, request as playwrightRequest, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { PG_API, PG_CONTROL, PG_WEB } from "./_intakeScorePg";
+import { PG_API, PG_CONTROL, PG_WEB } from "../e2e/_intakeScorePg";
 
 // Explicit isolated PostgreSQL composition; real routers, native persistence,
 // registered matching worker and production-built UI. No route interception.

@@ -739,11 +739,20 @@ _SNAPSHOT_ADMISSION_READ = re.compile(
 )
 
 
+# The existing admission reader checks relation presence before reading rows.
+# Recognize only this catalog lookup: no arbitrary function or relation name.
+_SNAPSHOT_ADMISSION_PRESENCE = re.compile(
+    r"\s*SELECT\s+to_regclass\('intake\.source_registry'\)\s+AS\s+policy\s*,"
+    r"\s*to_regclass\('intake\.source_snapshots'\)\s+AS\s+snapshot\s*;?\s*",
+    re.IGNORECASE,
+)
+
+
 def _capability_scan_text(path: str, capability_id: str, content: str) -> str:
     """A bounded read of existing admission evidence does not add a raw store.
 
-    Recognize only literal, parameterized single-table SELECTs passed directly
-    to the persistence read API. Do not waive a path or the rest of a file:
+    Recognize only literal, parameterized single-table SELECTs and the bounded
+    relation-presence catalog lookup passed directly to the persistence read API. Do not waive a path or the rest of a file:
     writes, CTEs, SELECT INTO, multiple statements, dynamic SQL and store class
     references still reach the unchanged capability patterns. Unknown syntax
     retains the original fail-closed result.
@@ -766,8 +775,12 @@ def _capability_scan_text(path: str, capability_id: str, content: str) -> str:
                 or call.func.attr not in {"query_one", "query_all"} or not call.args):
             continue
         sql = call.args[0]
-        if (not isinstance(sql, ast.Constant) or not isinstance(sql.value, str)
-                or not _SNAPSHOT_ADMISSION_READ.fullmatch(sql.value)):
+        if not isinstance(sql, ast.Constant) or not isinstance(sql.value, str):
+            continue
+        admission_read = _SNAPSHOT_ADMISSION_READ.fullmatch(sql.value)
+        presence_read = (call.func.attr == "query_one"
+                         and _SNAPSHOT_ADMISSION_PRESENCE.fullmatch(sql.value))
+        if not (admission_read or presence_read):
             continue
         start = line_starts[sql.lineno - 1] + sql.col_offset
         end = line_starts[sql.end_lineno - 1] + sql.end_col_offset

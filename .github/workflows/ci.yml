@@ -486,6 +486,20 @@ jobs:
     if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    services:
+      listing-search-postgres:
+        image: postgis/postgis:16-3.5
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: odp_score_browser_ci
+        # The original fixed130 Docker composition retains its own DB port.
+        ports:
+          - 5438:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d odp_score_browser_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
         with:
@@ -551,6 +565,47 @@ jobs:
         with:
           name: product-e2e-supplemental-governance-visual2-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/product-e2e-supplemental/governance-visual2/
+          if-no-files-found: warn
+          retention-days: 90
+
+      # This build is explicit synthetic fixture proof. The ordinary build and
+      # its unchanged capacity budget remain owned by product-node.
+      - name: Build personal listing search supplemental fixture
+        timeout-minutes: 15
+        env:
+          ODP_API_BASE_URL: http://127.0.0.1:8116
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8116
+          ODP_DATA_BINDING_MODE: fixture
+          NEXT_PUBLIC_ODP_DATA_BINDING_MODE: fixture
+          ODP_PRODUCT_MODE: poc
+          NEXT_PUBLIC_ODP_PRODUCT_MODE: poc
+          ODP_DEPLOY_ENV: e2e
+          NEXT_PUBLIC_ODP_DEPLOY_ENV: e2e
+          ODP_E2E_MODE: "true"
+          NEXT_PUBLIC_ODP_E2E_MODE: "true"
+          ODAY_ENV: test
+        run: npm run build --workspace=@oday-plus/web
+
+      - name: Verify personal listing search with canonical API and PostgreSQL
+        timeout-minutes: 10
+        env:
+          ODP_SCORE_BROWSER_MODE: isolated-synthetic
+          ODP_SCORE_BROWSER_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5438/odp_score_browser_ci
+          ODP_SCORE_BROWSER_CONTROL_KEY: synthetic-browser-control-20261013-local-only
+          PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ runner.temp }}/product-e2e-supplemental/personal-search3/report.json
+          PLAYWRIGHT_HTML_OUTPUT_DIR: ${{ runner.temp }}/product-e2e-supplemental/personal-search3/html-report
+          PLAYWRIGHT_HTML_OPEN: never
+        run: >-
+          npx playwright test --config tests/visual/operator-personal-listing-search.config.ts
+          --output "$RUNNER_TEMP/product-e2e-supplemental/personal-search3/test-results"
+          --reporter=list,json,html
+
+      - name: Preserve supplemental personal listing search3 diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-e2e-supplemental-personal-search3-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/product-e2e-supplemental/personal-search3/
           if-no-files-found: warn
           retention-days: 90
 

@@ -388,6 +388,7 @@ def test_assisted_intake_http_state_survives_postgresql_restart(
     state = app.state.assisted_intake_store
     state.refresh(TENANT_ID)
     state.intakes[receipt["intake_id"]]["state"] = "NEEDS_REVIEW"
+    state.intakes[receipt["intake_id"]]["version"] += 1
     state.flush()
     corrected = client.post(
         f"/api/v1/intakes/{receipt['intake_id']}/corrections",
@@ -399,7 +400,7 @@ def test_assisted_intake_http_state_survives_postgresql_restart(
         },
         headers={
             **_headers(ACTOR_ID, key=f"production-correction-{uuid4()}"),
-            "If-Match": 'W/"2"',
+            "If-Match": f'W/"{state.intakes[receipt["intake_id"]]["version"]}"',
         },
     )
     assert corrected.status_code == 201, corrected.text

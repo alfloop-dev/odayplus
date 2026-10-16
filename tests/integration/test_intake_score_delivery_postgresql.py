@@ -36,6 +36,7 @@ from tests.integration.test_operator_intake_workflow_postgresql import (
 from tests.integration.test_operator_intake_workflow_postgresql import (
     bridge_database as bridge_database,
 )
+from tests.support.listing_search_integration import execute_claimed_listing_search
 
 pytestmark = pytest.mark.requires_live_env
 
@@ -205,6 +206,8 @@ def _claim(bundle, job_id):
         assert job is not None, "Canonical score delivery must actually be claimable"
         if job.job_id == job_id:
             return job
+        if execute_claimed_listing_search(bundle, job):
+            continue
         # Both registered audit owners may precede score work in this same SQL queue.
         # Claiming them here is not delivery, completion, or an external ACK.
         assert job.job_type in {CANONICAL_AUDIT_JOB_TYPE, DURABLE_AUDIT_JOB_TYPE}
@@ -491,6 +494,7 @@ def test_job_parent_scope_is_rechecked_before_read_or_replay(bridge_database, mo
                 other = second.assisted_intake_store
                 other.refresh(TENANT)
                 other.intakes[intake["id"]]["scope"]["heat_zone_id"] = "synthetic-revoked-zone"
+                other.intakes[intake["id"]]["version"] += 1
                 other.flush()
             return original_lock(collection, key)
 
