@@ -609,6 +609,39 @@ jobs:
           if-no-files-found: warn
           retention-days: 90
 
+      - name: Verify area planning drafts with password session and PostgreSQL
+        timeout-minutes: 10
+        env:
+          ODP_SCORE_BROWSER_MODE: isolated-synthetic
+          ODP_SCORE_BROWSER_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5438/odp_score_browser_quarterly_ci
+          ODP_SCORE_BROWSER_CONTROL_KEY: synthetic-quarterly-browser-control-20261016-local-only
+          PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ runner.temp }}/product-e2e-supplemental/area-planning3/report.json
+          PLAYWRIGHT_HTML_OUTPUT_DIR: ${{ runner.temp }}/product-e2e-supplemental/area-planning3/html-report
+          PLAYWRIGHT_HTML_OPEN: never
+        run: |
+          .venv/bin/python - <<'PY'
+          import os
+          import psycopg
+          from psycopg.conninfo import conninfo_to_dict
+          options = conninfo_to_dict(os.environ["ODP_SCORE_BROWSER_DATABASE_URL"])
+          assert options["host"] == "127.0.0.1" and options["dbname"] == "odp_score_browser_quarterly_ci"
+          options["dbname"] = "postgres"
+          with psycopg.connect(**options, autocommit=True) as connection:
+              connection.execute("CREATE DATABASE odp_score_browser_quarterly_ci")
+          PY
+          npx playwright test --config tests/visual/operator-area-planning-draft.config.ts \
+            --output "$RUNNER_TEMP/product-e2e-supplemental/area-planning3/test-results" \
+            --reporter=list,json,html
+
+      - name: Preserve supplemental area planning3 diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-e2e-supplemental-area-planning3-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/product-e2e-supplemental/area-planning3/
+          if-no-files-found: warn
+          retention-days: 90
+
       # A reviewed task PR must prove its current source through the complete
       # deterministic E2E runner. It must not manufacture production release
       # authority: a well-formed NO-GO Gate 0-6 registry is valid here, while

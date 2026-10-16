@@ -61,6 +61,7 @@ import { projectCandidateNativeWorkflow, resolveCandidateReviewTarget } from "./
 import { hasNetworkListingsRenderShape, hasNetworkScoringRenderShape, hasCanonicalScoreSession, hasScoreExecutionContext, hasScoreExecutionReceipt, scoreExecutionCommandReceiptMatches, hasVerifiedCurrentScoreAdmission, readId, readObject } from "./network/networkReadValidation";
 import { FindAreasPanel } from "./network/FindAreasPanel";
 import type { ListingSearchDialogProps } from "./network/ListingSearchDialog";
+import type { AreaPlanningDraftDialogProps } from "./network/AreaPlanningDraftDialog";
 import { canPerform as canPerformIntake } from "./network/intake/intakePermissions";
 import type { RebalancePanelProps } from "./network/RebalancePanel";
 import { createNetPlanBuilderApi } from "./network/netplanBuilderClient";
@@ -104,6 +105,9 @@ import {
 // driven entirely by client state and callbacks from this workspace.
 const ListingSearchDialog = dynamic<ListingSearchDialogProps>(
   () => import("./network/ListingSearchDialog").then(mod => mod.ListingSearchDialog), { ssr: false },
+);
+const AreaPlanningDraftDialog = dynamic<AreaPlanningDraftDialogProps>(
+  () => import("./network/AreaPlanningDraftDialog").then(mod => mod.AreaPlanningDraftDialog), { ssr: false },
 );
 const RebalancePanel = dynamic<RebalancePanelProps>(
   () => import("./network/RebalancePanel").then((mod) => mod.RebalancePanel),
@@ -704,6 +708,7 @@ export function NetworkFindAreasWorkspace({
   }
   const [networkNavigationGeneration, setNetworkNavigationGeneration] = useState<number | null>(null);
   const [scoringNavigationGeneration, setScoringNavigationGeneration] = useState<number | null>(null);
+  const [rebalanceNavigationGeneration, setRebalanceNavigationGeneration] = useState<number | null>(null);
   const [reviewsNavigationGeneration, setReviewsNavigationGeneration] = useState<number | null>(null);
   const [navigationError, setNavigationError] = useState<string | null>(null);
   const NETWORK_OPERATOR_HEADERS = useMemo(() => operatorSecurityHeaders(activeRoleId), [activeRoleId]);
@@ -837,12 +842,17 @@ export function NetworkFindAreasWorkspace({
     executionKey.current = null;
     executionSubjectIntent.current = null;
   }, [navigationContextKey, navigationLocationKey]);
-  const [rebalanceSnapshot, setRebalanceSnapshot] = useState<NetworkRebalanceSnapshot | null>(null);
-  const [rebalanceApiError, setRebalanceApiError] = useState<string | null>(null);
-  const [rebalanceLoadState, setRebalanceLoadState] = useState<OperatorDataAvailability>(
+  const [rebalanceSnapshotValue, setRebalanceSnapshot] = useState<NetworkRebalanceSnapshot | null>(null);
+  const rebalanceSnapshot = rebalanceNavigationGeneration === navigationContext.current.generation ? rebalanceSnapshotValue : null;
+  const [rebalanceApiErrorValue, setRebalanceApiError] = useState<string | null>(null);
+  const rebalanceApiError = rebalanceNavigationGeneration === navigationContext.current.generation ? rebalanceApiErrorValue : null;
+  const [rebalanceLoadStateValue, setRebalanceLoadState] = useState<OperatorDataAvailability>(
     fixturesAllowed ? "fixture" : "loading",
   );
-  const [rebalanceLoadFailure, setRebalanceLoadFailure] = useState<OperatorLoadFailure | null>(null);
+  const rebalanceLoadState: OperatorDataAvailability = rebalanceNavigationGeneration === navigationContext.current.generation || fixturesAllowed
+    ? rebalanceLoadStateValue : "loading";
+  const [rebalanceLoadFailureValue, setRebalanceLoadFailure] = useState<OperatorLoadFailure | null>(null);
+  const rebalanceLoadFailure = rebalanceNavigationGeneration === navigationContext.current.generation ? rebalanceLoadFailureValue : null;
   const [busyRebalanceAction, setBusyRebalanceAction] = useState<string | null>(null);
   const [reviewsSnapshotValue, setReviewsSnapshot] = useState<NetworkReviewsSnapshot | null>(null);
   const reviewsSnapshot = reviewsNavigationGeneration === navigationContext.current.generation ? reviewsSnapshotValue : null;
@@ -1111,6 +1121,8 @@ export function NetworkFindAreasWorkspace({
     }
   }, [heatZones, localSelectedId, selectedHeatZoneId]);
 
+  // Read leases include the observed URL and scope. When either changes,
+  // replace the invalidated read; a late response alone cannot restart it.
   useEffect(() => {
     if (!canReadListings) {
       setNetworkSnapshot(null);
@@ -1176,7 +1188,7 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [activeRoleId, canReadListings, effectiveLens, effectiveSelectedId, fixturesAllowed, navigationContextKey]);
+  }, [activeRoleId, canReadListings, effectiveLens, effectiveSelectedId, fixturesAllowed, navigationContextKey, navigationLocationKey]);
 
   useEffect(() => {
     if (!canReadScoring) {
@@ -1221,7 +1233,7 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [activeRoleId, canReadScoring, fixturesAllowed, navigationContextKey]);
+  }, [activeRoleId, canReadScoring, fixturesAllowed, navigationContextKey, navigationLocationKey]);
 
   useEffect(() => {
     if (!canReadRebalance) {
@@ -1232,11 +1244,13 @@ export function NetworkFindAreasWorkspace({
       return;
     }
     let cancelled = false;
+    const generation = navigationContext.current.generation;
     async function loadRebalance() {
       const read = await fetchNetworkRebalanceSnapshot(activeRoleId, snapshotReadGuard());
       if ("superseded" in read) return;
       const snapshot = read.ok ? read.snapshot : null;
-      if (!cancelled && snapshot) {
+      if (!cancelled && generation === navigationContext.current.generation && snapshot) {
+        setRebalanceNavigationGeneration(generation);
         const inspection = inspectNetworkRebalanceSnapshot(snapshot);
         setRebalanceSnapshot(
           inspection === "ready" || fixturesAllowed
@@ -1252,7 +1266,9 @@ export function NetworkFindAreasWorkspace({
               ? "fixture"
               : inspection,
         );
-      } else if (!cancelled && !read.ok) {
+      } else if (!cancelled && generation === navigationContext.current.generation && !read.ok) {
+        setRebalanceSnapshot(null);
+        setRebalanceNavigationGeneration(generation);
         setRebalanceLoadFailure(read.failure);
         setRebalanceApiError(
           fixturesAllowed
@@ -1266,7 +1282,7 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [activeRoleId, canReadRebalance, fixturesAllowed]);
+  }, [activeRoleId, canReadRebalance, fixturesAllowed, navigationContextKey, navigationLocationKey]);
 
   const applyReviewsSnapshot = useCallback((snapshot: NetworkReviewsSnapshot, generation: number, sequence: number) => {
     if (!navigationLocation.current.mounted || generation !== navigationContext.current.generation
@@ -1322,7 +1338,7 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [applyReviewsSnapshot, canReadReviews, fixturesAllowed, reviewIdentity]);
+  }, [applyReviewsSnapshot, canReadReviews, fixturesAllowed, reviewIdentity, navigationLocationKey]);
 
   // Decide using the current review identity and reload the authoritative queue.
   // Returns false so the dialog
@@ -1771,16 +1787,21 @@ export function NetworkFindAreasWorkspace({
   }
 
   async function reloadRebalanceSnapshot() {
+    const generation = navigationContext.current.generation;
     const read = await fetchNetworkRebalanceSnapshot(activeRoleId, snapshotReadGuard());
-    if ("superseded" in read) return;
+    if ("superseded" in read || generation !== navigationContext.current.generation) return;
     if (read.ok) {
       setRebalanceSnapshot(read.snapshot);
+      setRebalanceNavigationGeneration(generation);
       setRebalanceApiError(null);
     }
   }
 
   const [surveyRequest, setSurveyRequest] = useState<{ target: SurveyTarget; api: ReturnType<typeof createSurveyAssignmentApi>; tab: number } | null>(null);
   const [listingSearchRequest, setListingSearchRequest] = useState<{
+    zoneId: string; zoneLabel: string; guard: NetworkReadSessionGuard; contextKey: string; locationVersion: number;
+  } | null>(null);
+  const [areaPlanningRequest, setAreaPlanningRequest] = useState<{
     zoneId: string; zoneLabel: string; guard: NetworkReadSessionGuard; contextKey: string; locationVersion: number;
   } | null>(null);
   const surveyBinding = useMemo(() => {
@@ -2726,6 +2747,15 @@ export function NetworkFindAreasWorkspace({
                 contextKey: navigationContext.current.key, locationVersion: navigationLocation.current.version });
             }}
             onChangeLens={changeLens}
+            onOpenAreaPlanning={networkLoadState !== "ready" || networkSnapshot?.source !== "api"
+              || networkSnapshot.heatZoneAvailability?.state === "unavailable"
+              || !selectedZone || !networkSnapshot.heatZones?.some(zone => zone.id === selectedZone.id)
+              || !["expansion-manager", "expansion-staff"].includes(activeRoleId) ? undefined : () => {
+              const guard = snapshotReadGuard();
+              if (!guard || !selectedZone) return;
+              setAreaPlanningRequest({ zoneId: selectedZone.id, zoneLabel: selectedZone.label, guard,
+                contextKey: navigationContext.current.key, locationVersion: navigationLocation.current.version });
+            }}
             onToggleTracked={toggleTracked}
             onSourceListings={sourceListings}
             onAddListingFromUrl={addListingFromUrl}
@@ -2757,6 +2787,14 @@ export function NetworkFindAreasWorkspace({
             router.push(buildDurableDetailHref(id, parseUrlState(params), params), { scroll: false });
           }} /> : null}
       {listingMergeDialog}
+      {areaPlanningRequest && activeTab === 0 && allowedTabIndices.includes(0)
+        && areaPlanningRequest.contextKey === navigationContext.current.key
+        && areaPlanningRequest.locationVersion === navigationLocation.current.version ?
+        <AreaPlanningDraftDialog zoneId={areaPlanningRequest.zoneId} zoneLabel={areaPlanningRequest.zoneLabel}
+          candidates={localCandidates.filter(candidate => candidate.heatZoneId === areaPlanningRequest.zoneId)
+            .map(candidate => ({ id: candidate.id, title: candidate.title }))}
+          headers={NETWORK_OPERATOR_HEADERS} guard={areaPlanningRequest.guard}
+          onClose={() => setAreaPlanningRequest(null)} /> : null}
         {listingArchiveDialog}
     </section>
   );

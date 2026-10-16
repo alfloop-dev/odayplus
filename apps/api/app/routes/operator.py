@@ -128,6 +128,7 @@ def create_operator_router(
     sitescore_decision_repository_for_tenant: Any | None = None,
     avm_repository_for_tenant: Any | None = None,
     netplan_repository_for_tenant: Any | None = None,
+    netplan_candidate_snapshot_for_tenant: Any | None = None,
     priceops_repository_for_tenant: Any | None = None,
     priceops_store_repository: Any | None = None,
     priceops_brand_repository: Any | None = None,
@@ -226,6 +227,36 @@ def create_operator_router(
         )
 
     router = APIRouter(prefix="/operator", tags=["operator"])
+
+    from apps.api.app.routes.operator_modules.area_planning_drafts import (
+        create_area_planning_draft_sub_router,
+    )
+    from modules.opsboard.application.area_planning_draft_owner import (
+        AREA_PLANNING_DRAFT_RESOURCE,
+        AreaPlanningDraftOwner,
+    )
+
+    area_planning_zone_reader = None
+
+    def area_planning_owner_for_request(request: Request):
+        principal = request.state.operator_principal
+        if not callable(netplan_repository_for_tenant) or not callable(area_planning_zone_reader):
+            raise HTTPException(503, "AREA_PLANNING_DURABLE_OWNER_UNAVAILABLE")
+        return AreaPlanningDraftOwner(
+            principal=principal,
+            native_repository=netplan_repository_for_tenant(principal.tenant_id),
+            audit_log=active_audit_log, queue=job_queue,
+            heat_zone_reader=lambda: area_planning_zone_reader(request),
+            candidate_snapshot_reader=netplan_candidate_snapshot_for_tenant,
+            correlation_id=request.state.correlation_id,
+        )
+
+    router.include_router(create_area_planning_draft_sub_router(
+        require_view=require_operator_permission(AREA_PLANNING_DRAFT_RESOURCE, Action.VIEW, engine=authz_engine),
+        require_create=require_operator_permission(AREA_PLANNING_DRAFT_RESOURCE, Action.CREATE, engine=authz_engine),
+        require_update=require_operator_permission(AREA_PLANNING_DRAFT_RESOURCE, Action.UPDATE, engine=authz_engine),
+        owner_for_request=area_planning_owner_for_request,
+    ))
 
     # FinanceLegal is an existing AVM principal, not an Operator display persona.
     # Reuse its native type permission/session guard, then admit actual objects.
@@ -1255,6 +1286,8 @@ def create_operator_router(
                 return {}
             except Exception:
                 return {}
+
+        area_planning_zone_reader = canonical_heat_zone_source
 
         router.include_router(
             create_network_listings_sub_router(

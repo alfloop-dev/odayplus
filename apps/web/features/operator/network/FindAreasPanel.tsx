@@ -74,6 +74,7 @@ export type FindAreasPanelProps = {
   onAddListingFromUrl: () => void;
   onOpenSurvey?: (targetId: string) => void;
   onOpenListingSearch?: () => void;
+  onOpenAreaPlanning?: () => void;
 };
 
 export function FindAreasPanel({
@@ -91,6 +92,7 @@ export function FindAreasPanel({
   onSourceListings,
   onOpenSurvey,
   onOpenListingSearch,
+  onOpenAreaPlanning,
   onToggleTracked,
   selectedZone,
   viewModel,
@@ -343,8 +345,9 @@ export function FindAreasPanel({
                 title={onOpenListingSearch ? undefined : "目前無法建立物件搜尋條件"} type="button">
                 建立物件搜尋條件
               </button>
-              <button className={styles.secondaryAction} disabled
-                title="目前無法加入季度展店計畫" type="button">
+              <button className={styles.secondaryAction} disabled={!onOpenAreaPlanning}
+                onClick={onOpenAreaPlanning}
+                title={onOpenAreaPlanning ? undefined : "目前無法加入季度展店計畫"} type="button">
                 加入季度展店計畫
               </button>
             </div>

@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
 import type { ApiBinding } from "../../../../src/lib/api/binding";
@@ -175,6 +175,109 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+  });
+
+  it.each([
+    ["response", "URL"], ["JSON", "URL"],
+    ["response", "tenant context"], ["JSON", "tenant context"],
+  ] as const)("restarts all guarded background reads after %s is pending across a %s change", async (pendingStage, change) => {
+    const paths = ["network-listings", "network-scoring", "network-rebalance", "network-reviews"];
+    const counts = new Map<string, number>();
+    const pending: Array<() => void> = [];
+    let jsonReads = 0;
+    const previousTenant = sessionStorage.getItem("oday.operator.tenant");
+    const respond = (value: unknown) => new Response(JSON.stringify(value), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const path = paths.find(path => String(input).includes(path));
+      if (!path) return Promise.resolve(new Response("{}", { status: 404 }));
+      const count = (counts.get(path) ?? 0) + 1;counts.set(path, count);
+      if (count > 1) return Promise.resolve(forbiddenResponse(`corr-current-${path}`, path));
+      if (pendingStage === "response") return new Promise<Response>(resolve => {
+        pending.push(() => resolve(respond({ source: "api", supersededPayload: path })));
+      });
+      const response = respond({ source: "api" });
+      vi.spyOn(response, "json").mockImplementation(() => {
+        jsonReads += 1;
+        return new Promise(resolve => pending.push(() => resolve({ source: "api", supersededPayload: path })));
+      });
+      return Promise.resolve(response);
+    }));
+    // Only the lifecycle predicate is doubled. No cookie or principal is injected;
+    // the workspace still captures its actual URL and observed-scope generation.
+    const createAuthenticatedReadGuard = (current: () => boolean) => async () => current();
+    const props = { activeRoleId: "platform-admin" as const, selectedHeatZoneId: "live-zone", createAuthenticatedReadGuard };
+    try {
+      if (change === "tenant context") {
+        navigation.search = "ws=network&tab=compare";
+        window.history.replaceState(null, "", "/operator?ws=network&tab=compare");
+      }
+      const view = render(<NetworkFindAreasWorkspace {...props} />);
+      await waitFor(() => expect(paths.every(path => counts.get(path) === 1)).toBe(true));
+      if (pendingStage === "JSON") await waitFor(() => expect(jsonReads).toBe(4));
+      navigation.search = "ws=network&tab=compare";
+      window.history.replaceState(null, "", "/operator?ws=network&tab=compare");
+      if (change === "tenant context") {
+        // This branch already started on Compare: the URL is unchanged,
+        // so the new observed context itself must replace the old read.
+        sessionStorage.setItem("oday.operator.tenant", "observed-new-tenant");
+      }
+      view.rerender(<NetworkFindAreasWorkspace {...props} />);
+      await waitFor(() => expect(paths.every(path => counts.get(path) === 2)).toBe(true));
+      // A later refusal is authoritative; finishing the old reads must not
+      // overwrite its correlation or present the old payload as a fresh frame.
+      const correlation = await screen.findByTestId("operator-data-unavailable-correlation");
+      await waitFor(() => expect(correlation).toHaveTextContent("corr-current-network-scoring"));
+      await act(async () => { pending.forEach(resolve => resolve()); });
+      expect(correlation).toHaveTextContent("corr-current-network-scoring");
+      expect(paths.map(path => counts.get(path))).toEqual([2, 2, 2, 2]);
+      expect(screen.queryByText("supersededPayload")).toBeNull();
+    } finally {
+      if (previousTenant === null) sessionStorage.removeItem("oday.operator.tenant");
+      else sessionStorage.setItem("oday.operator.tenant", previousTenant);
+    }
+  });
+
+  it.each(["ready", "denied"] as const)("withholds the previous %s Rebalance frame while a new observed tenant context is pending", async previous => {
+    const previousTenant = sessionStorage.getItem("oday.operator.tenant");
+    sessionStorage.setItem("oday.operator.tenant", "observed-context-A");
+    let rebalanceReads = 0;
+    let resolveCurrent: (response: Response) => void = () => undefined;
+    const pending = new Promise<Response>(resolve => { resolveCurrent = resolve; });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      if (String(input).endsWith("/network-rebalance")) {
+        rebalanceReads += 1;
+        if (rebalanceReads > 1) return pending;
+        return Promise.resolve(previous === "denied" ? forbiddenResponse("corr-prior-rebalance", "operator_network")
+          : new Response(JSON.stringify({ source: "api", stores: [{ id: "prior-context-only" }] }), {
+            status: 200, headers: { "Content-Type": "application/json" },
+          }));
+      }
+      return Promise.resolve(forbiddenResponse("corr-unrelated-read", "operator_network"));
+    }));
+    const createAuthenticatedReadGuard = (current: () => boolean) => async () => current();
+    const props = { activeRoleId: "platform-admin" as const, selectedHeatZoneId: "live-zone", createAuthenticatedReadGuard };
+    try {
+      const view = render(<NetworkFindAreasWorkspace {...props} />);
+      const summary = screen.getByLabelText("展店與店網摘要");
+      const count = within(summary).getByText("重配候選", { exact: false });
+      await waitFor(() => expect(count).toHaveAttribute("data-count-state", previous === "ready" ? "known" : "unread"));
+      if (previous === "ready") expect(summary).toHaveTextContent("1 重配候選");
+      sessionStorage.setItem("oday.operator.tenant", "observed-context-B");
+      view.rerender(<NetworkFindAreasWorkspace {...props} />);
+      // This is a synchronous render assertion: stale counts are withheld before
+      // the replacement HTTP response, including while that response is pending.
+      expect(count).toHaveAttribute("data-count-state", "pending");
+      expect(summary).not.toHaveTextContent("1 重配候選");
+      await waitFor(() => expect(rebalanceReads).toBe(2));
+      await act(async () => { resolveCurrent(forbiddenResponse("corr-current-rebalance", "operator_network")); });
+      expect(count).toHaveAttribute("data-count-state", "unread");
+      expect(summary).not.toHaveTextContent("1 重配候選");
+    } finally {
+      if (previousTenant === null) sessionStorage.removeItem("oday.operator.tenant");
+      else sessionStorage.setItem("oday.operator.tenant", previousTenant);
+    }
   });
 
   it("shows only auditor+admin readable tabs and never preloads the three refused endpoints", async () => {

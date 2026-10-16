@@ -203,6 +203,48 @@ export type ApproveFlagPayload = {
   riskAcknowledged: boolean;
 };
 
+/** AreaPlanningDraftCommandResponse */
+export type AreaPlanningDraftCommandResponse = {
+  auditEventIds: string[];
+  draft: AreaPlanningDraftResponse;
+  receiptId: string;
+  replayed: boolean;
+};
+
+/** AreaPlanningDraftInput */
+export type AreaPlanningDraftInput = {
+  budget?: number | null;
+  candidateIds?: string[];
+  expectedVersion?: number | null;
+  heatZoneId: string;
+  name: string;
+  quarter?: string | null;
+};
+
+/** AreaPlanningDraftListResponse */
+export type AreaPlanningDraftListResponse = {
+  heatZoneId: string;
+  items: AreaPlanningDraftResponse[];
+};
+
+/** AreaPlanningDraftResponse */
+export type AreaPlanningDraftResponse = {
+  budget: number | null;
+  candidateIds: string[];
+  createdAt: string;
+  createdBy: string;
+  draftId: string;
+  heatZoneId: string;
+  materializedBy: string | null;
+  name: string;
+  nativeScenarioId: string | null;
+  quarter: string | null;
+  status: "DRAFT" | "MATERIALIZED";
+  tenantId: string;
+  updatedAt: string;
+  version: number;
+};
+
 /** AssignPayload */
 export type AssignPayload = {
   actor: string;
@@ -2618,6 +2660,8 @@ export const API_PATHS = {
   "/api/v1/netplan/scenarios/{scenario_id}/submit": ["POST"],
   "/api/v1/operator/approvals": ["GET"],
   "/api/v1/operator/approvals/{approval_id}/decision": ["POST"],
+  "/api/v1/operator/area-planning-drafts": ["GET", "POST"],
+  "/api/v1/operator/area-planning-drafts/{identity}": ["GET", "PUT"],
   "/api/v1/operator/avm/cases": ["GET", "POST"],
   "/api/v1/operator/avm/cases/{case_id}": ["GET"],
   "/api/v1/operator/avm/cases/{case_id}/dataroom": ["POST"],

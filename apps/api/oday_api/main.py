@@ -1156,15 +1156,22 @@ else:
             from modules.listing.application.intake_authorization import authorize_intake_action
             from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
             from modules.listing.application.saved_search import LISTING_SEARCH_RECEIPT_SERVICE
+            from modules.opsboard.application.area_planning_draft_owner import (
+                AREA_PLANNING_DRAFT_RECEIPT_SERVICE,
+            )
             from modules.sitescore.application.score_delivery import SITESCORE_EXECUTION_JOB_TYPE
             from shared.infrastructure.persistence.listing_search_delivery import (
                 JOB_TYPE as LISTING_SEARCH_JOB_TYPE,
             )
+            if body.job_type == AREA_PLANNING_DRAFT_RECEIPT_SERVICE + ".command-receipt":
+                raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                    {"code": "JOB_TYPE_NOT_SUPPORTED", "message": "Area planning commands require their authorized owner"})
             if body.job_type in {LISTING_SEARCH_JOB_TYPE, LISTING_SEARCH_RECEIPT_SERVICE + ".command-receipt"}:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST,
                     {"code": "JOB_TYPE_NOT_SUPPORTED", "message": "Listing search jobs require committed receipt/search events"})
             if (body.idempotency_key or idempotency_key or "").startswith((
                 "listing-search-internal:", "command:v1:" + LISTING_SEARCH_RECEIPT_SERVICE + ":",
+                "command:v1:" + AREA_PLANNING_DRAFT_RECEIPT_SERVICE + ":",
             )):
                 raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                     {"code": "RESERVED_IDEMPOTENCY_NAMESPACE"})
@@ -1352,6 +1359,9 @@ else:
             from apps.api.oday_api.security.dependencies import principal_from_headers
             from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
             from modules.listing.application.saved_search import LISTING_SEARCH_RECEIPT_SERVICE
+            from modules.opsboard.application.area_planning_draft_owner import (
+                AREA_PLANNING_DRAFT_RECEIPT_SERVICE,
+            )
             from modules.sitescore.application.score_delivery import SITESCORE_EXECUTION_JOB_TYPE
             from shared.infrastructure.persistence.listing_search_delivery import (
                 JOB_TYPE as LISTING_SEARCH_JOB_TYPE,
@@ -1359,7 +1369,8 @@ else:
 
             # These private delivery records have no public job read surface.
             # Their saved-search owner rechecks the current subject and scope.
-            if job.job_type in {LISTING_SEARCH_JOB_TYPE, LISTING_SEARCH_RECEIPT_SERVICE + ".command-receipt"}:
+            if job.job_type in {LISTING_SEARCH_JOB_TYPE, LISTING_SEARCH_RECEIPT_SERVICE + ".command-receipt",
+                                AREA_PLANNING_DRAFT_RECEIPT_SERVICE + ".command-receipt"}:
                 if not principal_from_headers(request.headers).authenticated:
                     raise HTTPException(status.HTTP_401_UNAUTHORIZED, "AUTHENTICATION_REQUIRED")
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
@@ -1612,10 +1623,14 @@ else:
             if job is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
             from modules.listing.application.saved_search import LISTING_SEARCH_RECEIPT_SERVICE
+            from modules.opsboard.application.area_planning_draft_owner import (
+                AREA_PLANNING_DRAFT_RECEIPT_SERVICE,
+            )
             from shared.infrastructure.persistence.listing_search_delivery import (
                 JOB_TYPE as LISTING_SEARCH_JOB_TYPE,
             )
-            if job.job_type in {LISTING_SEARCH_JOB_TYPE, LISTING_SEARCH_RECEIPT_SERVICE + ".command-receipt"}:
+            if job.job_type in {LISTING_SEARCH_JOB_TYPE, LISTING_SEARCH_RECEIPT_SERVICE + ".command-receipt",
+                                AREA_PLANNING_DRAFT_RECEIPT_SERVICE + ".command-receipt"}:
                 _authorize_job_access(job, request)
             if job.job_type in {INTAKE_SITESCORE_JOB_TYPE, SITESCORE_EXECUTION_JOB_TYPE}:
                 _authorize_job_access(job, request)
@@ -2587,6 +2602,9 @@ else:
                 sitescore_decision_repository_for_tenant=(sitescore_decision_repository_for_tenant),
                 avm_repository_for_tenant=avm_repository_for_tenant,
                 netplan_repository_for_tenant=netplan_repository_for_tenant,
+                # Exact same candidate parent reader as the original native
+                # NetPlan owner; proposal permissions confer no native grant.
+                netplan_candidate_snapshot_for_tenant=native_candidate_snapshot_for_tenant,
                 priceops_repository_for_tenant=priceops_repository_for_tenant,
                 priceops_store_repository=bundle.store_repository if require_live_data else None,
                 priceops_brand_repository=bundle.brand_repository if require_live_data else None,
