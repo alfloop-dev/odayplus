@@ -103,6 +103,30 @@ class CanonicalIntakeSummary(BaseModel):
     scope: NativeIntakeScope
 
 
+class CancelCanonicalIntakeAuthorizationWaitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=3, max_length=4000)
+
+    @field_validator("reason")
+    @classmethod
+    def explicit_safe_reason(cls, value):
+        if len(value.strip()) < 3 or contains_sensitive_submission_material({"reason": value}):
+            raise ValueError("An explicit cancellation reason without credentials is required")
+        return value
+
+
+class CanonicalIntakeCancellationReceipt(BaseModel):
+    intake_id: UUID
+    processing_state: Literal["CANCELLED"]
+    version: int = Field(ge=1)
+    cancelled_at: AwareDatetime
+    correlation_id: UUID
+    transition_id: UUID
+    audit_event_id: UUID
+    outbox_event_id: UUID
+
+
 class CanonicalIntakePage(BaseModel):
     items: list[CanonicalIntakeSummary]
     next_cursor: str | None
@@ -237,6 +261,41 @@ def create_canonical_intakes_router(store) -> APIRouter:
                             scope=scope, reason=body.reason, idempotency_key=key)
                         result = CanonicalIntakeReceipt.model_validate(result).model_dump(mode="json")
                         store.replays[replay_key] = (digest, result, 201)
+                        store.flush()
+                        response.headers["Idempotency-Replayed"] = "false"
+                    response.headers["ETag"] = f'W/"{result["version"]}"'
+                    return result
+
+    @router.post("/canonical-intakes/{intake_id}/cancel", operation_id="cancelCanonicalIntakeAuthorizationWait",
+                 response_model=CanonicalIntakeCancellationReceipt, responses=errors,
+                 description="Cancel a settled AUTH_REQUIRED authorization wait with current authority. Other stages are rejected.")
+    def cancel_authorization_wait(intake_id: UUID, body: CancelCanonicalIntakeAuthorizationWaitRequest,
+        request: Request, response: Response,
+        key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")],
+        if_match: Annotated[str, Header(alias="If-Match", pattern=r'^W/"[1-9][0-9]*"$')],
+    ):
+        with _http_errors():
+            principal, repo = context(request)
+            tenant, actor = principal.tenant_id, principal.subject_id
+            digest = hashlib.sha256(json.dumps({"body": body.model_dump(mode="json"), "if_match": if_match},
+                sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            replay_key = f"{tenant}:{actor}:cancelCanonicalIntakeAuthorizationWait:{intake_id}:{key}"
+            with repo.graph.transaction(tenant):
+                store.refresh(tenant)
+                with store.transaction():
+                    authorize(request, principal, repo.get(tenant, str(intake_id)), "cancel")
+                    repo.cancellation_context(principal, str(intake_id))
+                    prior = store.replays.get(replay_key)
+                    if prior is not None:
+                        if prior[0] != digest:
+                            raise HTTPException(409, "IDEMPOTENCY_KEY_REUSED")
+                        result = CanonicalIntakeCancellationReceipt.model_validate(prior[1]).model_dump(mode="json")
+                        response.headers["Idempotency-Replayed"] = "true"
+                    else:
+                        result = repo.cancel_authorization_wait(principal, str(intake_id),
+                            expected_version=int(if_match[3:-1]), reason=body.reason, idempotency_key=key)
+                        result = CanonicalIntakeCancellationReceipt.model_validate(result).model_dump(mode="json")
+                        store.replays[replay_key] = (digest, result, 200)
                         store.flush()
                         response.headers["Idempotency-Replayed"] = "false"
                     response.headers["ETag"] = f'W/"{result["version"]}"'

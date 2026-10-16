@@ -1495,6 +1495,22 @@
         "title": "BatchSiteContextPayload",
         "type": "object"
       },
+      "CancelCanonicalIntakeAuthorizationWaitRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "CancelCanonicalIntakeAuthorizationWaitRequest",
+        "type": "object"
+      },
       "CandidateDisposition": {
         "enum": [
           "KEEP_HISTORICAL",
@@ -2096,6 +2112,62 @@
           "job_version"
         ],
         "title": "CanonicalIdentitySummary",
+        "type": "object"
+      },
+      "CanonicalIntakeCancellationReceipt": {
+        "properties": {
+          "audit_event_id": {
+            "format": "uuid",
+            "title": "Audit Event Id",
+            "type": "string"
+          },
+          "cancelled_at": {
+            "format": "date-time",
+            "title": "Cancelled At",
+            "type": "string"
+          },
+          "correlation_id": {
+            "format": "uuid",
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "outbox_event_id": {
+            "format": "uuid",
+            "title": "Outbox Event Id",
+            "type": "string"
+          },
+          "processing_state": {
+            "const": "CANCELLED",
+            "title": "Processing State",
+            "type": "string"
+          },
+          "transition_id": {
+            "format": "uuid",
+            "title": "Transition Id",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "intake_id",
+          "processing_state",
+          "version",
+          "cancelled_at",
+          "correlation_id",
+          "transition_id",
+          "audit_event_id",
+          "outbox_event_id"
+        ],
+        "title": "CanonicalIntakeCancellationReceipt",
         "type": "object"
       },
       "CanonicalIntakePage": {
@@ -18023,6 +18095,91 @@
           }
         },
         "summary": "Get",
+        "tags": [
+          "assisted-listing-intake",
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/canonical-intakes/{intake_id}/cancel": {
+      "post": {
+        "description": "Cancel a settled AUTH_REQUIRED authorization wait with current authority. Other stages are rejected.",
+        "operationId": "cancelCanonicalIntakeAuthorizationWait",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intake_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Intake Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelCanonicalIntakeAuthorizationWaitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIntakeCancellationReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor or resource scope denied"
+          },
+          "404": {
+            "description": "Native Intake not found"
+          },
+          "409": {
+            "description": "Concurrent command or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid native submission"
+          },
+          "503": {
+            "description": "Canonical storage or audit unavailable"
+          }
+        },
+        "summary": "Cancel Authorization Wait",
         "tags": [
           "assisted-listing-intake",
           "assisted-listing-intake"

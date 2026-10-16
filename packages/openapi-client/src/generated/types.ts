@@ -290,6 +290,11 @@ export type BatchSiteContextPayload = {
   site_ids: string[];
 };
 
+/** CancelCanonicalIntakeAuthorizationWaitRequest */
+export type CancelCanonicalIntakeAuthorizationWaitRequest = {
+  reason: string;
+};
+
 /** CandidateDisposition */
 export type CandidateDisposition = "KEEP_HISTORICAL" | "REASSIGN" | "REQUIRE_REVIEW";
 
@@ -383,6 +388,18 @@ export type CanonicalIdentitySummary = {
   proposer_subject_id: string;
   reviewer_subject_id: string | null;
   status: "DRAFT" | "PENDING_REVIEW" | "APPROVED" | "REJECTED" | "EXECUTING" | "EXECUTED" | "FAILED" | "REVERSAL_PENDING" | "REVERSED" | "SUPERSEDED";
+  version: number;
+};
+
+/** CanonicalIntakeCancellationReceipt */
+export type CanonicalIntakeCancellationReceipt = {
+  audit_event_id: string;
+  cancelled_at: string;
+  correlation_id: string;
+  intake_id: string;
+  outbox_event_id: string;
+  processing_state: "CANCELLED";
+  transition_id: string;
   version: number;
 };
 
@@ -2487,6 +2504,7 @@ export const API_PATHS = {
   "/api/v1/canonical-identity-decisions/{decision_id}/job": ["GET"],
   "/api/v1/canonical-intakes": ["GET", "POST"],
   "/api/v1/canonical-intakes/{intake_id}": ["GET"],
+  "/api/v1/canonical-intakes/{intake_id}/cancel": ["POST"],
   "/api/v1/external-data/freshness": ["GET"],
   "/api/v1/external-data/ingestion-runs": ["GET", "POST"],
   "/api/v1/external-data/ingestion-runs/{run_id}": ["GET"],

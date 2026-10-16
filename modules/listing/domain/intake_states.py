@@ -307,7 +307,7 @@ class IntakeStateMachine(BaseStateMachine):
         },
         # A later authorization command must re-evaluate current source policy.
         # No direct retrieval, supplied-evidence or automatic resume is granted.
-        IntakeStage.AWAITING_SOURCE_AUTHORIZATION: set(),
+        IntakeStage.AWAITING_SOURCE_AUTHORIZATION: {IntakeStage.CANCELLED},
         IntakeStage.RETRIEVING: {IntakeStage.PARSING, IntakeStage.FAILED, IntakeStage.QUARANTINED},
         IntakeStage.AWAITING_ASSISTED_ENTRY: {IntakeStage.PARSING, IntakeStage.CANCELLED},
         IntakeStage.PARSING: {IntakeStage.MATCHING, IntakeStage.NEEDS_REVIEW, IntakeStage.FAILED},
