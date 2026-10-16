@@ -6,8 +6,11 @@ import { MockIdentityStore, PostgresIdentityStore, setIdentityStoreForTests } fr
 import { sealLegacyWebSession, sealWebSessionReference, webSessionCookieName } from "../../auth/session";
 import { MockSessionStore, PostgresSessionStore, setSessionStoreForTests } from "../../auth/sessionStore";
 
-// Separate batch018 cohort, outside original auth/Operator selectors. No skip:
-// missing owned real PG is an infrastructure failure, never a green unit pass.
+// Separate batch018 cohorts, outside original auth/Operator selectors.
+// Normal Web discovery measures the explicitly standalone representation cases.
+// The separately declared actual-PG command opts into the SQL cohort; once
+// selected, missing owned infrastructure FAILS (no skip/fallback to unit data).
+const actualPg = process.env.SOURCE_APPROVAL_CONTEXT_ACTUAL_PG === "1";
 const url = process.env.SOURCE_OWNED_PG_DSN;
 const secret = "offline-approval-context-sealing-key-at-least-32-bytes";
 const accountId = "aa7b49ef-4f4d-4b5e-9672-350cd86fc01d";
@@ -26,6 +29,9 @@ function request(value = cookie, view = "operator-approval-context") {
   return req;
 }
 
+// Explicit selection, not a missing-infrastructure skip. Ordinary Web CI is
+// NOT a receipt for this cohort. Its required owning receipt includes this flag.
+if (actualPg) describe("explicit actual-PG projection/store cohort", () => {
 beforeAll(async () => {
   if (!url || !process.env.SOURCE_OWNED_PG_CONTAINER) throw new Error("Owned real PG fixture required");
   pool = new Pool({ connectionString: url, max: 2 });
@@ -166,5 +172,38 @@ describe("authenticated approval SELF projection", () => {
 
   it.each(["", "malformed-cookie"])("refuses absent/forged session %j", async (value) => {
     expect((await GET(request(value))).status).toBe(401);
+  });
+});
+});
+
+describe("standalone projection representation (NOT actual-PG evidence)", () => {
+  beforeEach(() => {
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("ODP_WEB_SESSION_SECRET", secret);
+    setSessionStoreForTests(null);
+    setIdentityStoreForTests(null);
+  });
+  afterEach(() => {
+    setSessionStoreForTests(undefined); setIdentityStoreForTests(undefined);
+    vi.restoreAllMocks(); vi.unstubAllEnvs();
+  });
+
+  it.each(["", "malformed-cookie"])("missing/forged cookie %j does not provide context", async (value) => {
+    expect((await GET(request(value))).status).toBe(401);
+  });
+
+  it("retains decoder compatibility only for default GET, never approval context", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const legacy = await sealLegacyWebSession({ kind: "web-session", subject: "offline-display", accountId, tenantId,
+      accessToken: "offline-cookie-bearer", issuedAt: now, expiresAt: now + 3600 });
+    const original = await GET(request(legacy, ""));
+    expect(original.status).toBe(200);
+    expect(await original.json()).toEqual({ subject: "offline-display", expiresAt: now + 3600 });
+    expect(original.headers.get("cache-control")).toBe("no-store");
+    const strict = await GET(request(legacy));
+    expect(strict.status).toBe(503);
+    expect(await strict.json()).toEqual({ error: { code: "OPERATOR_CONTEXT_UNAVAILABLE", summary: expect.any(String) } });
+    expect(strict.headers.get("cache-control")).toBe("private, no-store");
+    expect(strict.headers.get("vary")).toBe("Cookie");
   });
 });
