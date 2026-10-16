@@ -9,7 +9,44 @@ Canonical reviewer: **Human/Ops**. Final admission is **PENDING**. This record
 grants no approval, merge arming, merge, promotion, deployment, recovery or
 credential/account/session effect.
 
-## Pi batch013 import boundary — current candidate, NOT acceptance
+## Pi batch017 incremental session/UI evidence — F8 still OPEN, NOT review-ready
+
+Actual Manager run `pi-20261016T073319Z-c8dd55de` verified385 claims/44 source
+context documents plus generated brief45, all canonical/materialized hashes,
+current RUNNING lease/cwd/base810 and complete original-task equality.
+The corrected original faithful fixture selection at b075 really completes
+native0/17.636557s/420, JUnit101P/no skips. Earlier97P4F and empty guard errors
+remain failures/UNKNOWN respectively, not retroactively green.
+
+New normal anchors6de/993/8d27 implement admitted F6 same-origin safe task
+navigation and F7 explicit fixture-only PriceOps simulations. Live recommendations
+stay read-only; no fabricated model/actor/approval/audit or business API. At8d27,
+new separate UI28P/native0/8.912s, independently connected PG session45P/12.358s,
+ORIGINAL full Operator UI300P/35.990s, Web typecheck15.528s and lint10.315s all
+complete0 under420. Two initial new-test fixture/readiness failures are retained.
+These are provisional-head results ONLY, not passes transferred to this docs
+successor. Deterministic unchanged checker regenerated exactly six batch015
+verification rows; no policy/rule/waiver changes. Original fixture18/55/5 static
+members/signatures/decorators/assertion ASTs and original31 credential full prefix
+remain equal. New UI cases are outside original300/2178/178 selections.
+
+All9 native stages have waits/ECHILD/accessible owned-writer closure before exact
+ownPG container removal; newly captured mount identities support ordinary own
+volume removal only after no-reference checks. Full seals/hashes verified;
+external/inaccessible/historical writer gaps stay UNKNOWN. No broad cleanup or
+unfinished native command is handed off. See [incremental evidence index](pi-batch017-incremental-evidence.json).
+
+F8 remains unimplemented: the component has persona/display scope, not an actual
+authenticated tenant identity; the existing authenticated self-session endpoint
+returns only subject/expiry. Do not substitute client storage/hero text as tenant
+authority. [Finite F8 context request](MANAGER-F8-CONTEXT-REQUEST.md) asks for an
+existing authoritative contract or exactly two additional endpoint/owning-test
+leases. Both requested paths remain unedited/unclaimed; no self-granted scope.
+ALL finalfreeze14/original17/owning/normalCI/EVERY configured packet+synthesis
+still owe. Account independence UNRESOLVED; HumanOpsPENDING/HOLD/goalfalse persist.
+No task_finalize/review submission/approval/auto-merge/merge/done/live effect.
+
+## Historical Pi batch013 import boundary — NOT current acceptance
 
 Actual run `pi-20261016T014110Z-fc0a748d` verified the running Manager lease,
 admitted810,368 source entries/36 explicit documents/ALL37 materialized and
