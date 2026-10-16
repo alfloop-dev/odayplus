@@ -30,8 +30,12 @@ remain documented. Native waits/ECHILD/owned writers precede exact fixture
 removal/hash seals; external/inaccessible/historical writer gaps stay UNKNOWN.
 See [complete batch013 scope, provisional receipts and remaining gates](pi-batch013-import-boundary.md).
 
-THIS source/docs/README freeze is a NEW identity; resolve exact HEAD/tree from
-Git. NO e8/602/aa/ancestor pass transfer. Normal pushed PR1478 CI must be inspected
+Initial46a8 normalCI38837830873 has a real orchestrator exit1: missing generated
+boundary-inventory entry for the new control, BEFORE tests. The unchanged tool
+adds exactly that one verification row within the existing inventory lease;
+no policy/configuration change. Full failure logs remain. THIS source/docs/
+README/inventory freeze is a NEW identity; resolve exact HEAD/tree from Git.
+NO46a8/e8/602/aa/ancestor pass transfer. Normal pushed PR1478 CI must be inspected
 before unneeded local StoreOps capture. Hosted browser durableSQLite is NOT the
 separate actual-PG DB lane. ALLfresh14/original17/original+newowning/normalCI and
 configured full-body/import/README/final-terminal ALLpackets+synthesis still OWE.

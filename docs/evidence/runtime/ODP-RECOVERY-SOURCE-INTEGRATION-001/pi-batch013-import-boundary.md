@@ -41,7 +41,9 @@ three admitted paths change:
 
 No queue/engine/pool/factory/business/model/auth/audit/storage implementation,
 crypto parameters/salts/full-cost dummy verification, timeout or test assertion
-was weakened. No speculative StoreOps fixture patch was made.
+was weakened. No speculative StoreOps fixture patch was made. The already-leased
+`docs/audits/code-boundary-inventory.csv` also gets exactly the generated entry
+for the new test; no boundary policy/tool/configuration change.
 
 ## Provisional owning receipts — NOT this docs successor's final proof
 
@@ -93,8 +95,17 @@ stack/old sealed rawF identity/unique cause is retroactively claimed.
 
 ## Frozen candidate and remaining gates
 
-THIS source+docs+README commit is a NEW candidate (resolve exact HEAD/tree from
-Git). The table above is provisional history, not transferred final-head proof.
+Initial normal46a8 CI38837830873 orchestrator job116770812100 actually failed1
+BEFORE tests: the boundary inventory lacked the new import-control file. Complete
+raw/safe job logs remain in scratch. The unchanged origin/dev-equal generator
+`uv run --frozen --python 3.12 python delivery_toolchain/governance/check_code_boundaries.py --write-inventory`
+completed0 and added EXACTLY one verification-only row, no policy/guard waiver.
+This genuine required metadata repair changes the candidate; the old CI failure
+is retained, never rerun or relabeled successful.
+
+THIS source+docs+README/inventory commit is a NEW candidate (resolve exact
+HEAD/tree from Git). The table above is provisional history, not transferred
+final-head proof.
 Normal task-branch push may update existing OPEN PR1478 and normal CI; it is NOT
 review submission/approval/auto-merge. Inspect that normal CI outcome before an
 unnecessary local StoreOps capture. If still needed, only the ONE explicitly
