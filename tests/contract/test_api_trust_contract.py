@@ -1223,6 +1223,9 @@ def _seed_auditor(identity_store, session_service) -> str:
     )
     identity_store.set_account_roles(account_id, [Role.AUDITOR])
     identity_store.set_account_scope(account_id, Scope(tenant_id=str(tenant_id)))
+    # These audit-outage cases require an already-rotated local principal;
+    # unknown rotation evidence must not mask their original audit contract.
+    identity_store.set_password_must_change(account_id, False)
     session = session_service.create_session(account_id=account_id, provider="local_password")
     return make_local_jwt(
         sub=str(account_id),
