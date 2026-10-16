@@ -183,6 +183,7 @@ class ODayWorker:
         canonical_native_identity_job = job.job_type == "native-intake-identity"
         canonical_native_source_policy_job = job.job_type == "native-intake-source-policy"
         canonical_native_source_policy_recheck_job = job.job_type == "native-intake-source-policy-recheck"
+        canonical_native_retrieval_job = job.job_type == "native-intake-retrieval"
         native_sql_command = (
             (canonical_native_start_job or canonical_native_identity_job or canonical_native_source_policy_job
              or canonical_native_source_policy_recheck_job)
@@ -191,6 +192,7 @@ class ODayWorker:
         canonical_transaction_owned_job = (
             canonical_score_job or canonical_identity_job or canonical_native_start_job
             or canonical_native_identity_job or canonical_native_source_policy_job or canonical_native_source_policy_recheck_job
+            or canonical_native_retrieval_job
         )
         score_owner = ScoreExecutionJobRepository if job.job_type == SITESCORE_EXECUTION_JOB_TYPE else IntakeScoreJobRepository
 
@@ -241,7 +243,7 @@ class ODayWorker:
                 queue=self.job_queue,
                 job=job,
                 interval_seconds=self.heartbeat_interval_seconds,
-                # Native Intake phases are SQL-only: physical heartbeat renews
+                # SQL-only native phases use a physical heartbeat to renew
                 # their lease before the atomic phase/result transaction locks
                 # that row. It must never invoke the identity authenticator.
                 heartbeat=(score_heartbeat if canonical_score_job else identity_heartbeat if canonical_identity_job
@@ -259,7 +261,7 @@ class ODayWorker:
                     # checks the actual 45s lease during command/settlement;
                     # no renewal runs concurrently with that root.
                     native_intake_heartbeat(job.job_id, expected_version=job.version, fence_token=job.fence_token)
-                else:
+                elif not canonical_native_retrieval_job:
                     heartbeat.start()
                 self.execute_job(job)
                 current_version, heartbeat_failure = heartbeat.stop()

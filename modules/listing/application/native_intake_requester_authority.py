@@ -65,8 +65,8 @@ class _ReadConnection:
             yield _ReadCursor(cursor, self._before)
 
 
-def current_native_recheck_principal(engine, subject_id: str, intake: dict, *,
-                                     before: Callable[[], None]) -> Principal:
+def _current_native_requester_profile(engine, subject_id: str, intake: dict, *,
+                                      before: Callable[[], None]) -> Principal:
     """Require a current active SQL account and an explicit native scope grant.
 
     There is no pool checkout, identity write, recorded-role fallback or default
@@ -103,6 +103,28 @@ def current_native_recheck_principal(engine, subject_id: str, intake: dict, *,
         raise PermissionError("NATIVE_RECHECK_REQUESTER_INACTIVE_OR_FOREIGN")
     principal = Principal(subject_id=subject_id, roles=identities.get_account_roles(account_id),
                           scope=identities.get_account_scope(account_id, require_explicit=True))
+    return principal
+
+
+def current_native_recheck_principal(engine, subject_id: str, intake: dict, *,
+                                     before: Callable[[], None]) -> Principal:
+    principal = _current_native_requester_profile(engine, subject_id, intake, before=before)
     authorize_intake_action(principal, "recheck_source_policy",
                            resource={**intake, "submitter": intake["submitter_subject_id"]})
+    return principal
+
+
+def current_native_retrieval_submitter(engine, intake: dict, *, before: Callable[[], None]) -> Principal:
+    """Resolve the immutable submitter, never a supplied/service substitute.
+
+    Submission does not require human CONFIDENTIAL clearance. The retrieval
+    service must independently prove its content/runtime capability. An
+    explicit restricted module scope must permit listing; unrestricted module
+    scope retains the existing no-op semantics.
+    """
+    principal = _current_native_requester_profile(engine, intake["submitter_subject_id"], intake, before=before)
+    authorize_intake_action(principal, "submit_url",
+                           resource={**intake, "submitter": intake["submitter_subject_id"]})
+    if not principal.scope.permits_module("listing"):
+        raise PermissionError("NATIVE_RETRIEVAL_SUBMITTER_MODULE_DENIED")
     return principal

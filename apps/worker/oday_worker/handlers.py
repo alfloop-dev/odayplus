@@ -874,6 +874,14 @@ def handle_native_intake_source_policy_recheck(job: JobRecord, persistence: Pers
     run_native_intake_source_policy_recheck_delivery(job, persistence.canonical_intake_source_policy_recheck())
 
 
+def handle_native_intake_retrieval(job: JobRecord, persistence: PersistenceBundle) -> None:
+    from modules.listing.application.native_intake_retrieval import (
+        run_native_intake_retrieval_delivery,
+    )
+
+    run_native_intake_retrieval_delivery(job, persistence.canonical_intake_retrieval())
+
+
 def handle_native_intake_source_policy(job: JobRecord, persistence: PersistenceBundle) -> None:
     from modules.listing.application.native_intake_source_policy import (
         run_native_intake_source_policy_delivery,
@@ -920,6 +928,7 @@ def build_default_registry() -> JobRegistry:
     registry.register("native-intake-identity", handle_native_intake_identity)
     registry.register("native-intake-source-policy", handle_native_intake_source_policy)
     registry.register("native-intake-source-policy-recheck", handle_native_intake_source_policy_recheck)
+    registry.register("native-intake-retrieval", handle_native_intake_retrieval)
     return registry
 
 
