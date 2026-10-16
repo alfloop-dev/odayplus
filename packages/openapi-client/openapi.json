@@ -57269,6 +57269,31 @@
         ]
       }
     },
+    "/liveness": {
+      "get": {
+        "operationId": "healthz_liveness_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Healthz Liveness Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Healthz",
+        "tags": [
+          "system"
+        ]
+      }
+    },
     "/platform/health": {
       "get": {
         "operationId": "health_platform_health_get",

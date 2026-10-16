@@ -683,6 +683,7 @@ else:
                 if require_live_data and request.url.path not in {
                     "/health",
                     "/healthz",
+                    "/liveness",
                     "/openapi.json",
                     "/platform/health",
                     "/platform/version",
@@ -768,9 +769,11 @@ else:
                 response.headers[CORRELATION_ID_HEADER] = context.correlation_id
                 return response
 
+        @api.get("/liveness", tags=["system"])
         @api.get("/healthz", tags=["system"])
         def healthz() -> dict[str, str]:
-            # Liveness: simply check that process is running
+            # Cloud Run reserves some paths ending in z. Use /liveness for
+            # deployed probes while retaining /healthz for existing callers.
             return {"status": "ok", "service": "oday-api"}
 
         @api.get("/readiness", tags=["system"])

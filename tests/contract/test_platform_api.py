@@ -127,6 +127,7 @@ def test_job_lookup_and_openapi_contract() -> None:
     # Probes stay unversioned: they are wired into deploy manifests and load
     # balancers that must not be asked to learn a version prefix.
     assert "/health" in paths
+    assert "/liveness" in paths
     assert "/healthz" in paths
     assert "/platform/health" in paths
     assert "/platform/version" in paths
