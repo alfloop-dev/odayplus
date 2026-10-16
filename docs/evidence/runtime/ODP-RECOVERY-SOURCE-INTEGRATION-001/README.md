@@ -9,7 +9,39 @@ Canonical reviewer: **Human/Ops**. Final admission is **PENDING**. This record
 grants no approval, merge arming, merge, promotion, deployment, recovery or
 credential/account/session effect.
 
-## Pi batch009 credential initialization — current candidate, NOT acceptance
+## Pi batch013 import boundary — current candidate, NOT acceptance
+
+Actual run `pi-20261016T014110Z-fc0a748d` verified the running Manager lease,
+admitted810,368 source entries/36 explicit documents/ALL37 materialized and
+canonical hashes. Only the admitted persistence initializer, original PG test's
+one nonworker-only exception import and separate security import controls change.
+The two heavy public-export groups resolve from fixed owners on use; original66
+exports/order/identities/aliases/from/star/errors and mandatory backend/schema/
+factory preflights remain. No queue/pool/engine/model/auth/storage behavior change.
+
+Provisional e8ff5a3db has native0 originalPG6/37.608s, new real fresh-process10/
+66.015s, applicable initialization55/88.346s and scopedRuff0, each under420.
+Actual original57-argv collection remains EXACT2178/order; new controls are
+separate. The whole original PG AST is equal except the one localized import;
+all six members/assertions/four concurrent independent PG spawn clients and
+Queue20/join20/Event10/cleanup5/420/1200-n0 bounds are retained. Initial two new
+signature-inspection fixture failures and a corrected overbroad static assertion
+remain documented. Native waits/ECHILD/owned writers precede exact fixture
+removal/hash seals; external/inaccessible/historical writer gaps stay UNKNOWN.
+See [complete batch013 scope, provisional receipts and remaining gates](pi-batch013-import-boundary.md).
+
+THIS source/docs/README freeze is a NEW identity; resolve exact HEAD/tree from
+Git. NO e8/602/aa/ancestor pass transfer. Normal pushed PR1478 CI must be inspected
+before unneeded local StoreOps capture. Hosted browser durableSQLite is NOT the
+separate actual-PG DB lane. ALLfresh14/original17/original+newowning/normalCI and
+configured full-body/import/README/final-terminal ALLpackets+synthesis still OWE.
+Current short-stage single Manager observation is NOT sustained1200 readiness.
+HumanOpsPENDING/account independenceUNRESOLVED/originalENTIREblocked6/failedPi/
+a129PR1459/pins/humanfiles/quarantine/bindingNULL/cleanupUNKNOWN/HOLD/goalfalse
+remain. No finalize/reviewsubmit before complete authorproof, approval/auto-merge/
+merge/done/deployment/recovery/live effects.
+
+## Historical Pi batch009 credential initialization — NOT current acceptance
 
 Actual renewed Manager run `pi-20261015T194453Z-69af02ab` verified clean aa918/
 treee628/base810, canonical364 paths/25 explicit docs/ALL26 materialized hashes,
