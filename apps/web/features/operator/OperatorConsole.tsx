@@ -86,6 +86,28 @@ const GovernanceWorkspace = dynamic<GovernanceWorkspaceProps>(
 
 const roleStorageKey = "oday.operator.role";
 const workspaceStorageKey = "oday.operator.workspace";
+// A conservative nonsecret DEMO custody tombstone, never business authority.
+const fixtureApprovalCustodyKey = "oday.operator.fixture-approval.unresolved";
+
+function isFixtureDemoEnvelope(payload: unknown): boolean {
+  const meta = getRecord(getRecord(payload)?.meta);
+  const origin = getRecord(meta?.dataOrigin);
+  const readiness = getRecord(meta?.liveReadiness);
+  return meta?.source === "operator-shell-api-envelope" && meta.dataMode === "fixture"
+    && origin?.kind === "fixture" && readiness?.required === false
+    && readiness.ready === false && readiness.complete === false;
+}
+
+function isSameOriginEnvelopeResponse(response: Response): boolean {
+  if (!response.ok || response.redirected || !response.url) return false;
+  try {
+    const url = new URL(response.url);
+    return url.origin === window.location.origin && url.pathname === "/api/v1/operator/bootstrap"
+      && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
 // The browser budget must exceed the Web BFF's own 10s upstream timeout plus
 // its session lookup and service-identity work, so a slow API surfaces as the
 // BFF's structured 504 (with correlation id) instead of a bare client abort.
@@ -449,6 +471,14 @@ export function OperatorConsole({
   const [searchValue, setSearchValue] = useState("");
   const [hasHydratedPreferences, setHasHydratedPreferences] = useState(false);
   const commandInputRef = useRef<HTMLInputElement>(null);
+  const demoContext = useRef({ epoch: 0, eligible: false });
+  const demoPending = useRef(false);
+  useEffect(() => {
+    demoContext.current = { epoch: demoContext.current.epoch + 1, eligible: false };
+    return () => {
+      demoContext.current = { epoch: demoContext.current.epoch + 1, eligible: false };
+    };
+  }, [activeRoleId, fixturesAllowed]);
 
   const [shellEnvelope, setShellEnvelope] = useState<OperatorShellEnvelope>(() =>
     normalizeShellEnvelope(undefined, { allowFixtureFallback: fixturesAllowed }),
@@ -470,7 +500,9 @@ export function OperatorConsole({
     return operatorSecurityHeaders(roleId);
   };
 
-  const applyOperatorEnvelope = (payload: unknown) => {
+  const applyOperatorEnvelope = (payload: unknown, response: Response) => {
+    demoContext.current.eligible = fixturesAllowed && isSameOriginEnvelopeResponse(response)
+      && isFixtureDemoEnvelope(payload);
     const nextEnvelope = normalizeShellEnvelope(payload, {
       allowFixtureFallback: fixturesAllowed,
     });
@@ -591,6 +623,7 @@ export function OperatorConsole({
 
     let cancelled = false;
     async function loadShellEnvelope() {
+      demoContext.current = { epoch: demoContext.current.epoch + 1, eligible: false };
       if (!fixturesAllowed) {
         setShellDataStatus("loading");
       }
@@ -614,7 +647,7 @@ export function OperatorConsole({
       const attemptBootstrap = async (finalAttempt: boolean) => {
         const signal = AbortSignal.timeout(operatorBootstrapTimeoutMs);
         try {
-          const response = await fetch("/api/v1/operator/bootstrap", { headers, signal });
+          const response = await fetch("/api/v1/operator/bootstrap", { headers, signal, redirect: "error" });
           if (!finalAttempt && operatorBootstrapRetryableStatuses.has(response.status)) {
             throw new RetryableBootstrapStatus(response.status);
           }
@@ -691,7 +724,7 @@ export function OperatorConsole({
           return;
         }
 
-        applyOperatorEnvelope(payload);
+        applyOperatorEnvelope(payload, bootstrapRes);
         setShellDataStatus(inspection.status === "ready" ? "ready" : "fixture");
       } catch (err) {
         console.error("Error loading operator shell envelope:", err);
@@ -1176,15 +1209,102 @@ export function OperatorConsole({
     }
   }
 
-  function handleApprovalDecision(_approvalId: string, _status: string, _payload: unknown) {
-    // The callback carries UI intent only. This read model has no supported
-    // durable operation acquisition/resolution owner, even with valid SELF
-    // context. Neither fixture mode nor browser state may unlock a first POST.
-    // No request/key/refresh is created here, and no historical outcome is
-    // reconciled by this refusal. Operational approval remains unavailable.
-    showToast(
+  async function handleApprovalDecision(approvalId: string, status: string, payload: unknown) {
+    const hold = () => showToast(
       "HOLD｜此檢視僅供唯讀：權威操作生命週期尚未提供，本次請求未提交。請使用既有授權的業務流程；先前請求結果仍未查證，本提示不代表已解決。",
     );
+    // SELF identity, role/display/browser flags never enable operational writes.
+    // Only the existing positively server-declared nonoperational demo can POST.
+    if (!fixturesAllowed || !demoContext.current.eligible) { hold(); return; }
+    if (demoPending.current) {
+      showToast("FIXTURE DEMONSTRATION｜既有請求待查證，不建立新請求或重試。");
+      return;
+    }
+    const epoch = demoContext.current.epoch;
+    const current = () => demoContext.current.epoch === epoch && demoContext.current.eligible;
+    demoPending.current = true;
+    try {
+      if (!navigator.locks?.request) { hold(); return; }
+      // Locks serialize current same-origin demo tabs only; they do not prove
+      // durable acquisition. A retained tombstone always blocks a new attempt.
+      await navigator.locks.request("oday.operator.fixture-approval", { ifAvailable: true }, async (lock) => {
+        if (!lock || !current()) { hold(); return; }
+        if (window.localStorage.getItem(fixtureApprovalCustodyKey) !== null) {
+          showToast("FIXTURE DEMONSTRATION UNKNOWN｜先前示範請求尚未查證，不重送；瀏覽器資料不是操作權限或歷史解決證據。");
+          return;
+        }
+        const headers = getSecurityHeaders(activeRoleId);
+        const readEnvelope = async () => {
+          const response = await fetch("/api/v1/operator/bootstrap", {
+            headers, cache: "no-store", credentials: "same-origin", redirect: "error",
+            signal: AbortSignal.timeout(operatorBootstrapTimeoutMs),
+          });
+          const fresh: unknown = await response.json();
+          if (!current() || !isSameOriginEnvelopeResponse(response) || !isFixtureDemoEnvelope(fresh)) {
+            throw new Error("No fresh consistent same-origin fixture declaration");
+          }
+          return { response, fresh };
+        };
+        // Revalidate server mode and the actual demo item immediately BEFORE
+        // creating the one logical request. Local fallback seed is insufficient.
+        let fresh: unknown;
+        try { ({ fresh } = await readEnvelope()); } catch { if (current()) hold(); return; }
+        const today = getRecord(getRecord(fresh)?.today);
+        if (!Array.isArray(today?.decisions) || !today.decisions.some((item) => getRecord(item)?.id === approvalId)
+            || !["approved", "rejected", "returned"].includes(status)) { hold(); return; }
+        const correlationId = newCorrelationId("fixture-approval");
+        const idempotencyKey = newCorrelationId("fixture-idempotency");
+        const body = JSON.stringify({
+          actorName: shellEnvelope.today.hero.name, actorRoleId: activeRoleId,
+          reason: `Decision from Operator Console for ${approvalId}`,
+          ...getRecord(payload), status,
+        });
+        // Store no SID/token, authenticated identity or business payload. This
+        // untrusted marker only restricts execution. Missing/edited storage can
+        // restart a DEMO, never authorize LIVE or prove history absent.
+        window.localStorage.setItem(fixtureApprovalCustodyKey, JSON.stringify({
+          version: 1, kind: "nonoperational-fixture-only", correlationId, idempotencyKey,
+        }));
+        let acknowledged = false;
+        try {
+          const response = await fetch(`/api/v1/operator/approvals/${encodeURIComponent(approvalId)}/decision`, {
+            method: "POST", redirect: "error", credentials: "same-origin",
+            headers: { ...headers, "Content-Type": "application/json",
+              "Idempotency-Key": idempotencyKey, "X-Correlation-Id": correlationId },
+            body, signal: AbortSignal.timeout(operatorBootstrapTimeoutMs),
+          });
+          if (!current()) return; // late reply cannot label a different context
+          if ([400, 401, 403, 404, 422].includes(response.status)) {
+            showToast(`FIXTURE DEMONSTRATION｜API 明確拒絕（HTTP ${response.status}）；非業務核准，不自動重試。`);
+            return;
+          }
+          const ack = getRecord(await response.json());
+          if (!response.ok || response.redirected || ack?.approvalId !== approvalId
+              || ack.newStatus !== status || ack.correlationId !== correlationId
+              || typeof ack.auditEventId !== "string" || !ack.auditEventId.trim()) {
+            throw new Error("Ambiguous fixture acknowledgement");
+          }
+          acknowledged = true;
+          // Only this SAME request's validated acknowledgement followed by its
+          // real fixture envelope read can complete the local demo lifecycle.
+          // Generic refresh/absence can never resolve an UNKNOWN request.
+          const refreshed = await readEnvelope();
+          if (!current()) return;
+          applyOperatorEnvelope(refreshed.fresh, refreshed.response);
+          setShellDataStatus("fixture");
+          window.localStorage.removeItem(fixtureApprovalCustodyKey);
+          showToast("FIXTURE DEMONSTRATION｜示範 API 已確認且狀態已讀回；非真實業務核准或持久稽核。示範重啟不保證歷史 exactly-once；先前未知結果未被解決。");
+        } catch {
+          if (current()) showToast(acknowledged
+            ? "FIXTURE DEMONSTRATION ACK｜示範 API 已確認，但刷新失敗；非持久業務證據，不重送。"
+            : "FIXTURE DEMONSTRATION UNKNOWN｜示範請求結果未知，不重送；非業務核准或歷史解決證據。");
+        }
+      });
+    } catch {
+      if (current()) hold(); // coordination/storage failure never unlocks writes
+    } finally {
+      demoPending.current = false;
+    }
   }
 
   return (

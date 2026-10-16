@@ -19,6 +19,7 @@ const envelope = {
 
 beforeEach(() => {
   window.sessionStorage.clear();
+  window.localStorage.clear();
   vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
 });
 afterEach(() => {
@@ -26,6 +27,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+  window.localStorage.clear();
 });
 
 describe("F6 task destination contract", () => {
@@ -134,7 +136,7 @@ async function attemptApproval() {
   expect(screen.getByText(holdText)).toBeInTheDocument();
 }
 
-describe("F8 conservative approval HOLD in every browser context", () => {
+describe("F8 conservative operational approval HOLD in every browser context", () => {
   it.each([
     ["positive durable SELF representation", selfContext, 200],
     ["missing context", null, 401],
@@ -152,7 +154,7 @@ describe("F8 conservative approval HOLD in every browser context", () => {
     expectReadOnlyTransport(fetcher);
   });
 
-  it("fixture/demo mode cannot bypass HOLD or simulate a server acknowledgement", async () => {
+  it("local fixture permission alone cannot bypass operational HOLD or simulate a server acknowledgement", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
     const fetcher = installHoldTransport();
     render(<OperatorConsole searchParams={{ ws: "today" }} />);
@@ -228,5 +230,106 @@ describe("F8 conservative approval HOLD in every browser context", () => {
     expect(screen.queryByRole("heading", { name: /Old operator/ })).not.toBeInTheDocument();
     expectReadOnlyTransport(fetcher);
     expect(screen.getByText(holdText)).toHaveTextContent("本提示不代表已解決");
+  });
+});
+
+const demoEnvelope = () => ({
+  ...decisionEnvelope(),
+  meta: { ...envelope.meta, source: "operator-shell-api-envelope", dataMode: "fixture",
+    dataOrigin: { kind: "fixture" }, liveReadiness: { required: false, ready: false, complete: false } },
+});
+function apiResponse(value: unknown, path = "/api/v1/operator/bootstrap", status = 200) {
+  const response = new Response(JSON.stringify(value), { status });
+  Object.defineProperty(response, "url", { value: new URL(path, window.location.origin).href, configurable: true });
+  return response;
+}
+function allowDemoCoordination() {
+  vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+  vi.stubGlobal("navigator", Object.assign(Object.create(navigator), {
+    locks: { request: async (_name: string, _options: unknown, callback: (lock: object) => Promise<void>) => callback({}) },
+  }));
+}
+function installDemoTransport(fault = "none") {
+  let reads = 0;
+  const fetcher = vi.fn(async (url: string, options?: RequestInit) => {
+    if (options?.method === "POST") {
+      if (fault === "loss") throw new Error("response lost after possible dispatch");
+      const body = JSON.parse(String(options.body));
+      return apiResponse({ approvalId: fault === "mismatch" ? "OTHER" : "APR-501",
+        newStatus: body.status, auditEventId: "demo-not-durable-audit",
+        correlationId: new Headers(options.headers).get("X-Correlation-Id") }, url);
+    }
+    reads += 1;
+    if (reads >= 3 && fault === "refresh") throw new Error("read refresh failed after acknowledgement");
+    const data = demoEnvelope();
+    if (reads >= 3) data.today.decisions = [];
+    return apiResponse(data);
+  });
+  vi.stubGlobal("fetch", fetcher);
+  return fetcher;
+}
+
+describe("F8 positively server-declared NONOPERATIONAL demo", () => {
+  it("performs the actual fixture POST then real envelope refresh, not local count simulation", async () => {
+    allowDemoCoordination();
+    const fetcher = installDemoTransport();
+    render(<OperatorConsole searchParams={{ ws: "today" }} />);
+    await screen.findByRole("heading", { name: /Verified operator/ });
+    fireEvent.click(await screen.findByRole("button", { name: "核准" }));
+    await screen.findByText(/示範 API 已確認且狀態已讀回/);
+    expect(screen.getByTestId("operator-decisions-empty")).toBeInTheDocument();
+    const posts = fetcher.mock.calls.filter(([, options]) => options?.method === "POST");
+    expect(posts).toHaveLength(1);
+    expect(posts[0][0]).toBe("/api/v1/operator/approvals/APR-501/decision");
+    expect(JSON.parse(String(posts[0][1]?.body))).toMatchObject({ status: "approved", actorRoleId: "ops-lead" });
+    expect(new Headers(posts[0][1]?.headers).get("Idempotency-Key")).toBeTruthy();
+    expect(fetcher.mock.calls.filter(([url]) => url === "/api/v1/operator/bootstrap")).toHaveLength(3);
+    expect(screen.getByText(/非真實業務核准或持久稽核/)).toBeInTheDocument();
+  });
+
+  it.each(["loss", "mismatch", "refresh"])("retains %s custody across click and reload, with no new request/key", async (fault) => {
+    allowDemoCoordination();
+    const fetcher = installDemoTransport(fault);
+    const first = render(<OperatorConsole searchParams={{ ws: "today" }} />);
+    await screen.findByRole("heading", { name: /Verified operator/ });
+    fireEvent.click(await screen.findByRole("button", { name: "核准" }));
+    await screen.findByText(fault === "refresh" ? /示範 API 已確認，但刷新失敗/ : /示範請求結果未知/);
+    const custody = window.localStorage.getItem("oday.operator.fixture-approval.unresolved");
+    expect(custody).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "核准" }));
+    await screen.findByText(/先前示範請求尚未查證/);
+    first.unmount();
+    render(<OperatorConsole searchParams={{ ws: "today" }} />);
+    await screen.findByRole("heading", { name: /Verified operator/ });
+    // Loss/mismatch leaves the item; refresh may later read an absent card.
+    // Neither read can clear the UNKNOWN/ACK-refresh custody record.
+    expect(window.localStorage.getItem("oday.operator.fixture-approval.unresolved")).toBe(custody);
+    expect(fetcher.mock.calls.filter(([, options]) => options?.method === "POST")).toHaveLength(1);
+    expect(screen.queryByText(/示範 API 已確認且狀態已讀回/)).not.toBeInTheDocument();
+  });
+
+  it.each(["missing", "live", "required", "foreign", "production-runtime"])("%s metadata/runtime cannot enable a demo mutation", async (fault) => {
+    allowDemoCoordination();
+    if (fault === "production-runtime") vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    const data = demoEnvelope();
+    if (fault === "missing") delete (data.meta as Partial<typeof data.meta>).dataOrigin;
+    if (fault === "live") data.meta.dataMode = "live";
+    if (fault === "required") data.meta.liveReadiness.required = true;
+    const fetcher = vi.fn(async (_url: string, _options?: RequestInit) => {
+      const response = apiResponse(data);
+      if (fault === "foreign") Object.defineProperty(response, "url", { value: "https://foreign.invalid/api/v1/operator/bootstrap" });
+      return response;
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<OperatorConsole searchParams={{ ws: "today" }} />);
+    if (fault === "production-runtime") {
+      await waitFor(() => expect(fetcher).toHaveBeenCalled());
+      expect(screen.queryByRole("button", { name: "核准" })).not.toBeInTheDocument();
+    } else {
+      await screen.findByRole("heading", { name: /Verified operator/ });
+      await attemptApproval();
+    }
+    expect(fetcher.mock.calls.every(([, options]) => !options?.method)).toBe(true);
+    expect(window.localStorage.getItem("oday.operator.fixture-approval.unresolved")).toBeNull();
   });
 });
