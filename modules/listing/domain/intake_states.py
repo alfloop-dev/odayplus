@@ -155,7 +155,7 @@ class IntakeAggregate:
     stage: IntakeStage
     version: int
     created_by: str
-    source_id: str
+    source_id: str | None  # Native SUBMITTED Intakes have not resolved a source yet.
     canonical_url: str | None = None
     policy: str | None = None
     is_cancelled: bool = False

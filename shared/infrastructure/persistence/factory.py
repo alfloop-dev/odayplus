@@ -139,6 +139,11 @@ class PersistenceBundle:
 
         return CanonicalIntakeRepository(self.canonical_identity_graph())
 
+    def canonical_intake_start(self) -> Any:
+        from modules.listing.application.native_intake_start import NativeIntakeStartOwner
+
+        return NativeIntakeStartOwner(self.canonical_identity_graph())
+
     def canonical_match_cases(self) -> Any:
         from shared.infrastructure.persistence.identity_cases_sql import (
             CanonicalMatchCaseRepository,

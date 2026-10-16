@@ -178,6 +178,8 @@ class ODayWorker:
         )
         canonical_score_job = job.job_type in {INTAKE_SITESCORE_JOB_TYPE, SITESCORE_EXECUTION_JOB_TYPE}
         canonical_identity_job = job.job_type == "identity-execution"
+        canonical_native_start_job = job.job_type == "native-intake-start"
+        canonical_transaction_owned_job = canonical_score_job or canonical_identity_job or canonical_native_start_job
         score_owner = ScoreExecutionJobRepository if job.job_type == SITESCORE_EXECUTION_JOB_TYPE else IntakeScoreJobRepository
 
         def score_heartbeat(job_id: str, *, expected_version: int, fence_token: int) -> int:
@@ -216,6 +218,9 @@ class ODayWorker:
                 queue=self.job_queue,
                 job=job,
                 interval_seconds=self.heartbeat_interval_seconds,
+                # Native start is SQL-only: generic physical heartbeat renews
+                # its lease before the atomic start/result transaction locks
+                # that row. It must never invoke the identity authenticator.
                 heartbeat=score_heartbeat if canonical_score_job else identity_heartbeat if canonical_identity_job else None,
             )
             heartbeat.start()
@@ -246,7 +251,7 @@ class ODayWorker:
                     )
                     return True
 
-                if canonical_score_job or canonical_identity_job:
+                if canonical_transaction_owned_job:
                     if (latest_job is not None
                             and latest_job.status == JobStatus.QUEUED
                             and latest_job.delivery_state == JobDeliveryState.RETRYING):
@@ -348,7 +353,7 @@ class ODayWorker:
                         error_code=type(exc).__name__,
                     )
 
-                    if canonical_score_job or canonical_identity_job:
+                    if canonical_transaction_owned_job:
                         # A storage/authorization/fence failure must not be
                         # converted into a separate delivery-only retry. The
                         # authoritative checkpoint stays recoverable.

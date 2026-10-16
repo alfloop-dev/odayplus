@@ -147,6 +147,7 @@ class CanonicalIntakeAuditSink:
                 actor_role=result.get("actor_role"),
                 result=result["result"],
                 correlation_id=result["correlation_id"],
+                causation_id=result.get("causation_id"),
                 occurred_at=at,
                 retained_until=policy.retained_until,
                 before_value=result.get("before_value"),
