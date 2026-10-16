@@ -277,10 +277,22 @@ describe("F8 positively server-declared NONOPERATIONAL demo", () => {
     "%s refuses before creating a demo request", async (fault) => {
       allowDemoCoordination();
       if (fault === "no-locks") Object.defineProperty(navigator, "locks", { value: undefined });
-      if (fault === "storage-error") vi.spyOn(Storage.prototype, "getItem").mockImplementation((key) => {
-        if (key === "oday.operator.fixture-approval.unresolved") throw new Error("storage unavailable");
-        return null;
-      });
+      if (fault === "storage-error") {
+        const storage = window.localStorage;
+        // Happy DOM's Window storage is not the global Storage prototype.
+        // Inject failure at the actual browser-owned interface, not an unused
+        // prototype (which would silently let the negative dispatch a POST).
+        vi.spyOn(window, "localStorage", "get").mockReturnValue({
+          get length() { return storage.length; },
+          clear: () => storage.clear(), key: (index) => storage.key(index),
+          removeItem: (key) => storage.removeItem(key),
+          setItem: (key, value) => storage.setItem(key, value),
+          getItem: (key) => {
+            if (key === "oday.operator.fixture-approval.unresolved") throw new Error("storage unavailable");
+            return storage.getItem(key);
+          },
+        });
+      }
       let reads = 0;
       const fetcher = vi.fn(async (_url: string, options?: RequestInit) => {
         const data = demoEnvelope();
