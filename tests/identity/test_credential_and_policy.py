@@ -457,7 +457,8 @@ class TestTimingDummyInitialization:
 
     @pytest.mark.parametrize("change", [
         {"version": 2}, {"memory_cost": 65537}, {"time_cost": 4},
-        {"parallelism": 2}, {"hash_len": 33}, {"salt_len": 17},
+        # Explicit non-active legacy backend/cache compatibility, not active p2.
+        {"version": 0, "parallelism": 2}, {"hash_len": 33}, {"salt_len": 17},
     ])
     def test_complete_policy_key_and_single_entry_bound(self, change) -> None:
         import dataclasses

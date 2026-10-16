@@ -32,6 +32,26 @@ class Readiness(StrEnum):
 DUAL_APPROVAL_MINIMUM = 2
 
 
+def _canonical_approvals(values: Any) -> frozenset[str]:
+    """Validate server-owned identifiers before counting distinct approvals.
+
+    Identity comparison is case-sensitive, as in the existing registry; only
+    surrounding whitespace is canonicalized. Strings are not collections of
+    approvers and canonical duplicates are not independent evidence.
+    """
+    if not isinstance(values, (list, tuple, set, frozenset)):
+        raise ValueError("approvals must be a collection of identities")
+    canonical: set[str] = set()
+    for value in values:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("approver must be a nonempty identity")
+        identity = value.strip()
+        if identity in canonical:
+            raise ValueError("duplicate canonical approval identity")
+        canonical.add(identity)
+    return frozenset(canonical)
+
+
 @dataclass(frozen=True)
 class FeatureFlag:
     """A single feature flag and its governance metadata."""
@@ -46,6 +66,9 @@ class FeatureFlag:
     approved_by: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
+        if type(self.enabled) is not bool or type(self.high_risk) is not bool:
+            raise ValueError("flag enabled/high_risk must be booleans")
+        object.__setattr__(self, "approved_by", _canonical_approvals(self.approved_by))
         if not self.owner:
             raise ValueError(f"feature flag {self.key!r} must declare an owner")
         # High-risk surfaces must fail safe: they can only be enabled together
@@ -88,13 +111,13 @@ class FeatureFlag:
             readiness = Readiness(readiness_val)
         except ValueError:
             readiness = Readiness.EXPERIMENTAL
-        approved_by = frozenset(d.get("approved_by", []))
+        approved_by = _canonical_approvals(d.get("approved_by", []))
         return cls(
             key=d["key"],
             owner=d["owner"],
-            enabled=bool(d.get("enabled", False)),
+            enabled=d.get("enabled", False),
             readiness=readiness,
-            high_risk=bool(d.get("high_risk", False)),
+            high_risk=d.get("high_risk", False),
             expires_on=expires_on,
             description=d.get("description", ""),
             approved_by=approved_by,
@@ -130,7 +153,7 @@ class FeatureFlagRegistry:
         """Enable a flag, enforcing dual approval for high-risk flags."""
 
         flag = self._require(key)
-        effective_approvals = flag.approved_by | approvals
+        effective_approvals = _canonical_approvals(flag.approved_by) | _canonical_approvals(approvals)
         if flag.high_risk and len(effective_approvals) < DUAL_APPROVAL_MINIMUM:
             raise PermissionError(
                 f"high-risk flag {key!r} needs >= {DUAL_APPROVAL_MINIMUM} "
@@ -148,9 +171,7 @@ class FeatureFlagRegistry:
 
     def add_approval(self, key: str, approver: str) -> FeatureFlag:
         flag = self._require(key)
-        if not approver or not approver.strip():
-            raise ValueError("approver cannot be empty")
-        new_approvals = flag.approved_by | {approver.strip()}
+        new_approvals = _canonical_approvals(flag.approved_by) | _canonical_approvals([approver])
         updated = replace(flag, approved_by=new_approvals)
         self._flags[key] = updated
         return updated

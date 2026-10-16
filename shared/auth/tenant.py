@@ -243,12 +243,18 @@ def check_tenant_isolation(
 
     principal_tenant = principal.tenant_id
     clean_principal_tenant = str(principal_tenant).strip() if principal_tenant else ""
+    # A registered waiver may relax matching of KNOWN tenants, never supply
+    # missing principal ownership. This invariant also applies to direct callers.
+    if not clean_principal_tenant:
+        return Decision.deny(
+            "Principal missing tenant scope: tenant isolation requires verified principal tenant",
+            policy_id=POLICY_ID_TENANT_ISOLATION,
+        )
 
-    if clean_principal_tenant and clean_principal_tenant == clean_resource_tenant:
+    if clean_principal_tenant == clean_resource_tenant:
         return Decision.allow("Tenant isolation verified: matching tenant")
 
-    # Cross-tenant access attempt (or principal without tenant scope):
-    # Check for formal risk acceptance / waiver
+    # Different known tenants: check for formal risk acceptance / waiver.
     reg = waiver_registry or _default_waiver_registry
     resolved_waiver: TenantAccessWaiver | None = None
     if isinstance(waiver, str):
@@ -290,12 +296,6 @@ def check_tenant_isolation(
                 f"Cross-tenant access denied: formal waiver {resolved_waiver.waiver_id} is invalid, unsigned/unauthorized, expired, or out of scope",
                 policy_id=POLICY_ID_TENANT_ISOLATION,
             )
-
-    if not clean_principal_tenant:
-        return Decision.deny(
-            "Principal missing tenant scope: tenant isolation requires verified principal tenant",
-            policy_id=POLICY_ID_TENANT_ISOLATION,
-        )
 
     # PLATFORM_ADMIN has no automatic cross-tenant bypass without a formal waiver
     return Decision.deny(

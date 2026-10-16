@@ -299,10 +299,12 @@ def _enforce_password_rotation(principal: Principal, boundary: Any) -> None:
         return
     store = getattr(boundary, "_identity_store", None)
     checker = getattr(store, "password_must_change", None)
-    if checker is None:
-        return
     try:
-        must_change = bool(checker(principal.subject_id))
+        if not callable(checker):
+            raise RuntimeError("authoritative password rotation checker unavailable")
+        must_change = checker(principal.subject_id)
+        if type(must_change) is not bool:
+            raise ValueError("authoritative password rotation state unknown")
     except Exception:
         if HTTPException is not None:
             raise HTTPException(status_code=503, detail="IDENTITY_STORE_UNAVAILABLE") from None
@@ -516,13 +518,16 @@ def _raise_forbidden(decision: Decision) -> None:
 def _raise_unauthenticated(reason: AuthFailureReason | None) -> None:
     """Reject with HTTP 401 (or the boundary's AuthenticationError in lean envs).
 
-    The stable :class:`~modules.opsboard.auth.errors.AuthFailureReason` value is
-    surfaced as the detail; it never contains token material.
+    Service credential failures share one public reason. The authentication
+    boundary retains its precise verifier/audit reason; this mapper must not
+    disclose whether a service name exists.
     """
 
     from modules.opsboard.auth.errors import AuthenticationError, AuthFailureReason
 
     reason = reason if reason is not None else AuthFailureReason.NO_CREDENTIALS
+    if reason in (AuthFailureReason.UNKNOWN_SERVICE, AuthFailureReason.BAD_SERVICE_SECRET):
+        reason = AuthFailureReason.BAD_SERVICE_SECRET
     if HTTPException is not None:
         raise HTTPException(
             status_code=401,

@@ -21,7 +21,7 @@ try:
         _password_hasher,
         low_level,
     )
-    from argon2.exceptions import VerifyMismatchError  # type: ignore[import-untyped]
+    from argon2.exceptions import HashingError, VerifyMismatchError  # type: ignore[import-untyped]
 
     _ARGON2_AVAILABLE = True
 except ImportError:  # pragma: no cover — CI may not have argon2-cffi
@@ -34,7 +34,12 @@ except ImportError:  # pragma: no cover — CI may not have argon2-cffi
 
 @dataclasses.dataclass(frozen=True)
 class Argon2Policy:
-    """集中管理的 Argon2id 參數集，帶版本號以支援升級判斷。"""
+    """Validated Argon2id policy; version 0 is explicit non-active migration.
+
+    All current/future active versions enforce the production floor. Historical
+    version 0 exists only for offline legacy construction/upgrade compatibility;
+    production composition uses CURRENT_POLICY, never request/config policy.
+    """
 
     version: int = 1
     memory_cost: int = 65536  # KiB (64 MiB)
@@ -42,6 +47,28 @@ class Argon2Policy:
     parallelism: int = 1      # Cloud Run 單請求可預測性
     hash_len: int = 32        # output bytes
     salt_len: int = 16        # minimum CSPRNG salt bytes
+
+    def __post_init__(self) -> None:
+        values = dataclasses.astuple(self)
+        if any(type(value) is not int for value in values):
+            raise ValueError("Argon2 policy parameters must be integers")
+        if self.version < 0:
+            raise ValueError("unknown Argon2 policy version")
+        if (
+            self.time_cost < 1
+            or self.parallelism < 1
+            or self.memory_cost < 8 * self.parallelism
+            or self.hash_len < 32
+            or self.salt_len < 16
+        ):
+            # Retain the backend's established invalid-hashing-parameter
+            # exception contract while rejecting it before initialization.
+            error = HashingError if _ARGON2_AVAILABLE else ValueError
+            raise error("invalid Argon2 policy parameters")
+        if self.version > 0 and (
+            self.memory_cost < 65536 or self.time_cost < 3 or self.parallelism != 1
+        ):
+            raise ValueError("active Argon2 policy below cryptographic floor")
 
     def to_params_dict(self) -> dict[str, Any]:
         return {
@@ -75,7 +102,10 @@ class CredentialService:
                 "argon2-cffi is required for CredentialService. "
                 "Install with: pip install argon2-cffi"
             )
-        self._policy = policy or CURRENT_POLICY
+        self._policy = policy if policy is not None else CURRENT_POLICY
+        if type(self._policy) is not Argon2Policy:
+            raise ValueError("credential service requires a validated Argon2 policy")
+        self._policy.__post_init__()
         self._hasher = self._build_hasher(self._policy)
         # Eager on BOTH account paths; only the non-secret initialization PHC
         # may be reused. Every service still builds/validates its own hasher and
