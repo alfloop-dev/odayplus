@@ -1235,12 +1235,16 @@ export function OperatorConsole({
         }
         const headers = getSecurityHeaders(activeRoleId);
         const readEnvelope = async () => {
+          const readCorrelationId = newCorrelationId("fixture-read");
           const response = await fetch("/api/v1/operator/bootstrap", {
-            headers, cache: "no-store", credentials: "same-origin", redirect: "error",
+            headers: { ...headers, "X-Correlation-Id": readCorrelationId },
+            cache: "no-store", credentials: "same-origin", redirect: "error",
             signal: AbortSignal.timeout(operatorBootstrapTimeoutMs),
           });
           const fresh: unknown = await response.json();
-          if (!current() || !isSameOriginEnvelopeResponse(response) || !isFixtureDemoEnvelope(fresh)) {
+          const meta = getRecord(getRecord(fresh)?.meta);
+          if (!current() || !isSameOriginEnvelopeResponse(response) || !isFixtureDemoEnvelope(fresh)
+              || meta?.correlationId !== readCorrelationId || getRecord(meta.role)?.id !== activeRoleId) {
             throw new Error("No fresh consistent same-origin fixture declaration");
           }
           return { response, fresh };

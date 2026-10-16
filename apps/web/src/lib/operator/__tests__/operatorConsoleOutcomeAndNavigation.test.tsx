@@ -235,7 +235,7 @@ describe("F8 conservative operational approval HOLD in every browser context", (
 
 const demoEnvelope = () => ({
   ...decisionEnvelope(),
-  meta: { ...envelope.meta, source: "operator-shell-api-envelope", dataMode: "fixture",
+  meta: { ...envelope.meta, correlationId: "initial-read", source: "operator-shell-api-envelope", dataMode: "fixture",
     dataOrigin: { kind: "fixture" }, liveReadiness: { required: false, ready: false, complete: false } },
 });
 function apiResponse(value: unknown, path = "/api/v1/operator/bootstrap", status = 200) {
@@ -245,9 +245,11 @@ function apiResponse(value: unknown, path = "/api/v1/operator/bootstrap", status
 }
 function allowDemoCoordination() {
   vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
-  vi.stubGlobal("navigator", Object.assign(Object.create(navigator), {
-    locks: { request: async (_name: string, _options: unknown, callback: (lock: object) => Promise<void>) => callback({}) },
-  }));
+  const scopedNavigator = Object.create(navigator);
+  Object.defineProperty(scopedNavigator, "locks", { value: {
+    request: async (_name: string, _options: unknown, callback: (lock: object) => Promise<void>) => callback({}),
+  } });
+  vi.stubGlobal("navigator", scopedNavigator);
 }
 function installDemoTransport(fault = "none") {
   let reads = 0;
@@ -262,6 +264,7 @@ function installDemoTransport(fault = "none") {
     reads += 1;
     if (reads >= 3 && fault === "refresh") throw new Error("read refresh failed after acknowledgement");
     const data = demoEnvelope();
+    data.meta.correlationId = new Headers(options?.headers).get("X-Correlation-Id") ?? "missing";
     if (reads >= 3) data.today.decisions = [];
     return apiResponse(data);
   });
