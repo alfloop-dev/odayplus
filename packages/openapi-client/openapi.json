@@ -5468,6 +5468,7 @@
           "CHECKING_SOURCE_POLICY",
           "RETRIEVING",
           "AWAITING_ASSISTED_ENTRY",
+          "AWAITING_SOURCE_AUTHORIZATION",
           "PARSING",
           "MATCHING",
           "NEEDS_REVIEW",

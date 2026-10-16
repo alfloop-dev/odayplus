@@ -1082,7 +1082,7 @@ export type IntakePromotePayload = {
 export type IntakeSort = "submitted_at_desc" | "updated_at_desc" | "due_at_asc" | "status_asc";
 
 /** IntakeStage */
-export type IntakeStage = "SUBMITTED" | "CHECKING_IDENTITY" | "READY" | "CHECKING_SOURCE_POLICY" | "RETRIEVING" | "AWAITING_ASSISTED_ENTRY" | "PARSING" | "MATCHING" | "NEEDS_REVIEW" | "QUARANTINED" | "FAILED" | "CANCELLED";
+export type IntakeStage = "SUBMITTED" | "CHECKING_IDENTITY" | "READY" | "CHECKING_SOURCE_POLICY" | "RETRIEVING" | "AWAITING_ASSISTED_ENTRY" | "AWAITING_SOURCE_AUTHORIZATION" | "PARSING" | "MATCHING" | "NEEDS_REVIEW" | "QUARANTINED" | "FAILED" | "CANCELLED";
 
 /** IntakeState */
 export type IntakeState = "SUBMITTED" | "CHECKING_IDENTITY" | "CHECKING_SOURCE_POLICY" | "AWAITING_ASSISTED_ENTRY" | "RETRIEVING" | "PARSING" | "MATCHING" | "NEEDS_REVIEW" | "READY" | "QUARANTINED" | "FAILED" | "CANCELLED";
