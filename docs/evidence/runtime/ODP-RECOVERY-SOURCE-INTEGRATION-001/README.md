@@ -9,7 +9,69 @@ Canonical reviewer: **Human/Ops**. Final admission is **PENDING**. This record
 grants no approval, merge arming, merge, promotion, deployment, recovery or
 credential/account/session effect.
 
-## Pi batch017 incremental session/UI evidence — F8 still OPEN, NOT review-ready
+## Current batch019 SOURCE mitigation — approval HOLD, NOT operational completion
+
+Actual Manager run `pi-20261016T082319Z-f21e3b3e` verified the RUNNING
+workspace lease/cwd/base810, all387 source claims,48 explicit source documents
+and all49 canonical/materialized hashes including the brief. The complete
+original blocked-six-reopen task is object-equal to the preserved baseline.
+
+Batch018 delivered the optional durable SELF projection at3b030/09f, preserving
+default GET/legacy/no-store behavior. Its explicit25-case SQL cohort plus three
+standalone representation/refusal cases and23 separate F6 cases passed51 at09f;
+ordinary standalone discovery passed3. Those provisional results are historical,
+not final-head or full migrated-schema/login/deployment acceptance. SELF context
+is a current authenticated snapshot, NOT operation acquisition or resolution.
+
+Batch019's binding Manager decision is conservative non-execution: under the
+supplied contracts there is **NO eligible first approval operation in this
+OperatorConsole, in ANY context**. The actual live read-model owner refuses
+mutation; the supplied process-local cache/response supplies no durable operation
+acquisition/resolution. A valid SELF response, persona/fixture flag, WebLock,
+storage absence/tombstone or generic refresh cannot fill that authority gap.
+The decision is materialized at:
+`support/handoffs/recovery-response-boundary-repair-20261012/source-approval-hold-batch-019-20261016/MANAGER-F8-CONSERVATIVE-SOURCE-HOLD-DISPOSITION.md`.
+
+Anchor483eb7746 removes the handler's POST, random retry identity and shared
+POST/refresh catch entirely. Every attempted callback now reports pre-submission
+readonly/HOLD and directs users to their existing authorized owning workflow,
+without inventing a destination/API. No request or resolving refresh is created;
+requested status/actor remain UI intent. Historical outcomes remain unverified:
+this refusal does NOT mean an earlier UNKNOWN was not sent, failed, revoked or
+resolved. No browser ledger, backend/status API, business workflow or compensating
+action was added. TodayWorkspace's original presentation callback is unchanged.
+
+At that exact anchor the separate real-component F6/F8 module passes36
+(23 preserved F6 +13 new F8 cases), native0/6.292379s under420. New controls cover
+positive/missing/spoofed/malformed/expired/unavailable SELF representations,
+fixture mode, repeated/different intents, reload/storage edits/prior UNKNOWN,
+actor+tenant replacement and a superseded late bootstrap. Transport doubles prove
+component non-execution, NOT actual-PG application, durable business idempotency,
+cross-browser acquisition or historical reconciliation. The real-PG runner guard
+is infrastructure only. Native waits/ECHILD/accessible owned-writer closure
+precede exact owned container/positively mapped volume removal and verified seals;
+external/inaccessible/historical writer gaps remain UNKNOWN. See
+[sealed provisional evidence and unchanged original fixture ASTs](pi-batch019-hold-evidence.json).
+Original18/55/5 fixture members/signatures/decorators/assertion ASTs, original31
+credential full15545-byte prefix and existing F6 bodies remain unchanged.
+
+**This mitigates F8's unsafe submission/outcome defect; it does NOT complete the
+operational approval feature.** All final-source/docs identity proofs still owe:
+ALL14 canonical, original17 supplemental (2178 serial-n0/1200, others420), original178
+and applicable original/new owning controls, terminal normal hosted CI, EVERY
+fresh configured supplied-text packet plus synthesis. Resolve final head/tree
+from Git; ancestor/provisional greens do not transfer to this documentation
+successor. Canonical output remains tail-only; standalone Web skips are distinct
+from explicit application-PG wrapper coverage. Full final bodies/imports/README/
+terminal/CI/context and cross-packet omissions must be supplied to the assessor.
+Underlying authenticated-account independence remains UNRESOLVED.
+
+Human/Ops finalPENDING, original complete blocked6/failedPi/a129PR1459/human
+files/pinned roots/absent-originalUNKNOWN and quarantine/bindingNULL/
+cleanupUNKNOWN/HOLD/goalfalse remain. No review submission/finalize/approval/
+auto-merge/merge/done/deployment/recovery/live effect is authorized or claimed.
+
+## Historical Pi batch017 incremental session/UI evidence — then F8 OPEN
 
 Actual Manager run `pi-20261016T073319Z-c8dd55de` verified385 claims/44 source
 context documents plus generated brief45, all canonical/materialized hashes,
