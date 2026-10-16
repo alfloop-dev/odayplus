@@ -177,10 +177,7 @@ export function hasScoreExecutionReceipt(value: unknown): value is import("./net
 
 
 /** Current sealed/server-owned session readback; persona storage is not this authority. */
-export function hasCanonicalScoreSession(value: unknown): value is { subject: string; expiresAt: number } {
-  return readObject(value) && readId(value.subject) && typeof value.expiresAt === "number"
-    && Number.isSafeInteger(value.expiresAt) && value.expiresAt > Math.floor(Date.now() / 1000);
-}
+export { hasCanonicalScoreSession } from "../operatorSessionValidation";
 
 export function hasScoreExecutionCommandReceipt(value: unknown): value is import("./networkScoringTypes").ScoreExecutionCommandReceipt {
   return readObject(value) && oneOf(value.operation, ["create", "retry"])

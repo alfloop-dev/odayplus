@@ -95,7 +95,7 @@ describe("OperatorConsole session wiring", () => {
 
     render(<OperatorConsole searchParams={{ ws: "today" }} />);
     fireEvent.click(screen.getByRole("button", { name: /營運主管/, expanded: false }));
-    fireEvent.click(screen.getByRole("button", { name: "登出" }));
+    fireEvent.click(await screen.findByRole("button", { name: "登出" }));
 
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/login"));
     expect(fetchMock.mock.calls.some(([input]) => urlOf(input) === "/auth/logout")).toBe(true);
@@ -114,7 +114,7 @@ describe("OperatorConsole session wiring", () => {
 
     render(<OperatorConsole searchParams={{ ws: "today" }} />);
     fireEvent.click(screen.getByRole("button", { name: /營運主管/, expanded: false }));
-    fireEvent.click(screen.getByRole("button", { name: "登出" }));
+    fireEvent.click(await screen.findByRole("button", { name: "登出" }));
 
     expect(await screen.findByText(/登出失敗/)).toBeInTheDocument();
     expect(assign).not.toHaveBeenCalled();

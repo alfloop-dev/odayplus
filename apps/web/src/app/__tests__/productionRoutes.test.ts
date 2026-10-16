@@ -179,10 +179,12 @@ describe("canonical production routes", () => {
       "utf8",
     );
 
+    const commandOwner = readFileSync(resolve(process.cwd(), "features/operator/OperatorShellCommandPalette.tsx"), "utf8");
     for (const href of RETIRED_HREFS) {
       expect(source).not.toContain(href);
+      expect(commandOwner).not.toContain(href);
     }
-    expect(source).toContain('href: "/operator"');
+    expect(commandOwner).toContain('href: "/operator"');
   });
 
   it("renders the durable intake route instead of redirecting away from it", () => {

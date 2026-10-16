@@ -15,6 +15,7 @@ from modules.external_data.application.market_data_facade import (
 from product_ops.deployment import cloud_run_job_entrypoint as entrypoint
 from shared.infrastructure.persistence.factory import build_persistence
 from shared.jobs.queue import InMemoryJobQueue, JobRequest, JobStatus
+from tests.integration._gcs_worm_stub import owned_production_gcs_worm
 
 
 def test_worker_retry_receipt_returns_nonzero_even_when_run_once_returns_true(
@@ -471,3 +472,15 @@ def test_worker_dead_letters_unregistered_provider_on_the_first_attempt(
     assert persisted.attempts == 1
     # The dead-letter carries the true root cause, not a masked circuit message.
     assert "provider_not_registered" in (persisted.error_message or "")
+
+
+_PRODUCTION_GCS_CALLBACKS = frozenset(['test_disabled_provider_fetch_stays_auditable_without_cutover_failure'])
+
+
+@pytest.fixture(autouse=True)
+def _owned_gcs_for_original_production_callbacks(request, monkeypatch):
+    if request.node.originalname not in _PRODUCTION_GCS_CALLBACKS:
+        yield
+        return
+    with owned_production_gcs_worm(monkeypatch):
+        yield

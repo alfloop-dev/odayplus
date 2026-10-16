@@ -82,9 +82,28 @@ vi.mock("../GovernanceWorkspace", () => {
     return <section data-testid="deferred-governance" />;
   } };
 });
+vi.mock("../operatorTaskPayload", async (importOriginal) => {
+  trace.loaded.push("task-decoder");
+  return importOriginal<typeof import("../operatorTaskPayload")>();
+});
 vi.mock("../network/networkFindAreasLoader", () => {
   trace.loaded.push("network-bindings");
   return { loadNetworkFindAreasBindings: vi.fn() };
+});
+
+vi.mock("../TodayWorkspace", () => {
+  trace.loaded.push("today");
+  return { TodayWorkspace: (props: ComponentProps<typeof import("../TodayWorkspace").TodayWorkspace>) => {
+    trace.rendered.push("today");
+    return <section data-testid="deferred-today" data-source={props.envelope.meta.source}
+      data-count={props.envelope.today.kpis[0]?.value}>
+      <button onClick={() => props.onTargetSelect({ workspace: "govern", tab: "audit" }, "Controlled target")}>Open controlled Today target</button>
+    </section>;
+  } };
+});
+vi.mock("@oday-plus/openapi-client", () => {
+  trace.loaded.push("openapi-client");
+  return { createOdpApiClient: vi.fn(() => ({})) };
 });
 
 const originalLocation = window.location.href;
@@ -143,12 +162,12 @@ describe("Console conditional owner import boundary", () => {
     render(<OperatorConsole shellView={shellView} searchParams={{ ws: "growth", view: "approvals" }} />);
     await waitFor(() => expect(control.paths).toContain("/api/v1/operator/bootstrap"));
     expect(trace.rendered).toEqual([]);
-    expect(trace.loaded.filter((name) => ["store", "growth", "dialog", "network", "network-bindings", "governance", "notification-popover"].includes(name))).toEqual([]);
+    expect(trace.loaded.filter((name) => ["store", "growth", "dialog", "network", "network-bindings", "governance", "notification-popover", "today", "openapi-client"].includes(name))).toEqual([]);
     await act(async () => { control.release(json(envelope())); });
     const child = await screen.findByTestId("deferred-" + (shellView === "tasks" ? "tasks" : "notification-page"));
     expect(child.getAttribute("data-scope")).toContain("controlled-current-subject");
     expect(trace.rendered.every((name) => name === (shellView === "tasks" ? "tasks" : "notification-page"))).toBe(true);
-    expect(trace.loaded.filter((name) => ["store", "growth", "dialog", "network", "network-bindings", "governance", "notification-popover"].includes(name))).toEqual([]);
+    expect(trace.loaded.filter((name) => ["store", "growth", "dialog", "network", "network-bindings", "governance", "notification-popover", "today", "openapi-client"].includes(name))).toEqual([]);
     if (shellView === "tasks") {
       expect(child).toHaveAttribute("data-role", "ops-lead"); expect(child).toHaveAttribute("data-fixtures", "false");
     } else expect(child).toHaveAttribute("data-subject", "controlled-current-subject");
@@ -202,5 +221,122 @@ describe("Console conditional owner import boundary", () => {
     expect(growth).toHaveAttribute("data-base", "/operator");
     expect(growth).toHaveAttribute("data-selected", "controlled-growth-id");
     expect(trace.rendered.every((name) => name === "growth")).toBe(true);
+  });
+
+  it("renders Today only on its admitted branch and preserves its original target callback", async () => {
+    const control = controlledBootstrap();
+    render(<OperatorConsole searchParams={{ ws: "today" }} />);
+    expect(screen.queryByTestId("deferred-today")).toBeNull();
+    await act(async () => { control.release(json(envelope())); });
+    const today = await screen.findByTestId("deferred-today");
+    expect(today).toHaveAttribute("data-source", "operator-shell-production");
+    expect(today).toHaveAttribute("data-count", "0");
+    expect(trace.loaded).not.toContain("openapi-client");
+    fireEvent.click(screen.getByRole("button", { name: "Open controlled Today target" }));
+    await waitFor(() => expect(trace.rendered).toContain("governance"));
+    expect(screen.queryByTestId("deferred-today")).toBeNull();
+    expect(window.location.search).toContain("ws=govern");
+    expect(window.location.search).toContain("tab=audit");
+  });
+});
+
+vi.mock("../fixtures", () => {
+  trace.loaded.push("all-domain-fixtures");
+  throw new Error("Unrelated fixture barrel loaded by the shell entry");
+});
+vi.mock("../network/networkReadValidation", () => {
+  trace.loaded.push("all-network-validators");
+  throw new Error("Unrelated Network validators loaded by the shell entry");
+});
+
+describe("Console original closed header owners", () => {
+  it("keeps the first shell header usable without unrelated fixture or Network owners", async () => {
+    const control = controlledBootstrap();
+    render(<OperatorConsole shellView="tasks" />);
+    expect(screen.getByTestId("operator-topbar-inner")).toBeVisible();
+    expect(trace.loaded).not.toContain("task-decoder");
+    expect(screen.getByRole("button", { name: "Open command palette" })).toBeVisible();
+    expect(screen.queryByTestId("operator-command-palette")).toBeNull();
+    expect(screen.queryByTestId("operator-task-center")).toBeNull();
+    expect(document.querySelector('[data-screen-label="Role Switch Menu"]')).toBeNull();
+    await act(async () => { control.release(json(envelope())); });
+    expect(await screen.findByTestId("deferred-tasks")).toHaveAttribute("data-role", "ops-lead");
+    expect(trace.loaded).not.toContain("all-domain-fixtures");
+    expect(trace.loaded).not.toContain("all-network-validators");
+  });
+  it("does not focus or render a deferred command owner after its original Escape closes it", async () => {
+    const control = controlledBootstrap();
+    render(<OperatorConsole shellView="tasks" />);
+    await act(async () => { control.release(json(envelope())); });
+    await screen.findByTestId("deferred-tasks");
+    fireEvent.click(screen.getByRole("button", { name: "Open command palette" }));
+    fireEvent.keyDown(window, { key: "Escape" });
+    const search = screen.getByRole("textbox", { name: "Global search" });
+    search.focus();
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.queryByRole("dialog", { name: "Command palette" })).toBeNull();
+    expect(search).toHaveFocus();
+  });
+  it("loads the real command owner with focus, original allowed-tab filtering and exact issue navigation", async () => {
+    const control = controlledBootstrap();
+    render(<OperatorConsole searchParams={{ ws: "today" }} />);
+    await act(async () => { control.release(json(envelope())); });
+    await screen.findByTestId("deferred-today");
+    fireEvent.click(screen.getByRole("button", { name: "Open command palette" }));
+    const query = await screen.findByRole("combobox", { name: "Command palette search Global search" });
+    expect(query).toHaveFocus();
+    fireEvent.change(query, { target: { value: "composition" } });
+    expect(screen.getByText("No matching command")).toBeVisible();
+    fireEvent.change(query, { target: { value: issue.id } });
+    expect(await screen.findByRole("option", { name: /Controlled issue/ })).toBeVisible();
+    fireEvent.keyDown(query, { key: "Enter" });
+    expect(await screen.findByTestId("deferred-store")).toHaveAttribute("data-issue", issue.id);
+    expect(screen.queryByRole("dialog", { name: "Command palette" })).toBeNull();
+    expect(window.location.search).toContain("ws=store");
+    expect(window.location.search).toContain("entity=" + issue.id);
+    expect(trace.loaded).not.toContain("all-network-validators");
+    expect(trace.loaded).not.toContain("all-domain-fixtures");
+  });
+  it("keeps the original task popover on its true task read and current shell persona", async () => {
+    const control = controlledBootstrap();
+    const priorFetch = vi.mocked(fetch).getMockImplementation()!;
+    const taskHeaders: string[] = [];
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const route = new URL(String(input), window.location.origin).pathname;
+      if (route === "/api/v1/operator/shell/tasks") {
+        taskHeaders.push(new Headers(init?.headers).get("X-Operator-Role") ?? "");
+        return json({ items: [{ id: "controlled-task-read", title: "Controlled current task",
+          summary: "Owned task response control", owner: "Controlled owner", status: "todo",
+          priority: "P1", dueLabel: "Today", workspace: "store" }] });
+      }
+      return priorFetch(input, init);
+    });
+    render(<OperatorConsole shellView="tasks" />);
+    await act(async () => { control.release(json(envelope())); });
+    await screen.findByTestId("deferred-tasks");
+    expect(screen.queryByTestId("operator-task-center")).toBeNull();
+    fireEvent.click(screen.getByTestId("operator-task-center-button"));
+    expect(await screen.findByText("Controlled current task")).toBeVisible();
+    expect(screen.getByTestId("operator-task-center")).toBeVisible();
+    expect(taskHeaders).toEqual(["ops-lead"]);
+    expect(trace.loaded).toContain("task-decoder");
+    expect(trace.loaded).not.toContain("all-domain-fixtures");
+    expect(trace.loaded).not.toContain("all-network-validators");
+  });
+  it("renders the original role menu only after opening and only with the server-returned persona", async () => {
+    const control = controlledBootstrap();
+    render(<OperatorConsole shellView="tasks" />);
+    await act(async () => { control.release(json(envelope())); });
+    await screen.findByTestId("deferred-tasks");
+    expect(document.querySelector('[data-screen-label="Role Switch Menu"]')).toBeNull();
+    fireEvent.click(screen.getByTitle("Controlled operator"));
+    expect(await screen.findByText("使用者與角色")).toBeVisible();
+    const menu = document.querySelector('[data-screen-label="Role Switch Menu"]')!;
+    expect(menu.querySelectorAll("button")).toHaveLength(2);
+    expect(menu.textContent).toContain("Controlled operator");
+    expect(menu.textContent).not.toContain("行銷經理");
+    expect(screen.getByTestId("operator-admin-link")).toHaveAttribute("href", "/operator?view=admin");
+    expect(trace.loaded).not.toContain("all-domain-fixtures");
+    expect(trace.loaded).not.toContain("all-network-validators");
   });
 });

@@ -1,4 +1,5 @@
 import { defineConfig } from "@playwright/test";
+import path from "node:path";
 import base from "../../playwright.config";
 
 // Keep the two reviewed synthetic long-record cases outside the fixed 130-case
@@ -9,6 +10,9 @@ export default defineConfig({
   testDir: ".",
   testMatch: "operator-governance-long-records.spec.ts",
   fullyParallel: false,
+  webServer: Array.isArray(base.webServer)
+    ? base.webServer.map((server) => ({ ...server, cwd: path.resolve(__dirname, "../..") }))
+    : base.webServer,
   use: { ...base.use, screenshot: "only-on-failure", trace: "retain-on-failure" },
   workers: 1,
   retries: 0,

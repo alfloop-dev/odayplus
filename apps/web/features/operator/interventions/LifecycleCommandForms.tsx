@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Button } from "../components";
 import shell from "../operator.module.css";
 import styles from "./interventions.module.css";
@@ -78,12 +78,12 @@ export function LifecycleCommandForms({ row, lease, acquire, release, locked, on
     })).finally(() => { if (!disposed && generation === capabilityEpoch.current && owns()) setLoading(false); });
     return () => { disposed = true; capabilityEpoch.current += 1; };
   }, [lease.key, row.version, row.review_context?.snapshot_sha256, capabilityRevision]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!dialog) return;
     modal.current?.querySelector<HTMLElement>("input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])")?.focus();
     return () => { if (owns() && previousFocus.current?.isConnected) previousFocus.current.focus(); previousFocus.current = null; };
   }, [dialog]);
-  useEffect(() => { if (dialog) modal.current?.querySelector<HTMLElement>("input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])")?.focus(); }, [review]);
+  useLayoutEffect(() => { if (dialog) modal.current?.querySelector<HTMLElement>("input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])")?.focus(); }, [review]);
   useEffect(() => () => { capabilityEpoch.current += 1; }, []);
   async function open(command: LifecycleCommand) {
     if (working.current || !owns()) return;

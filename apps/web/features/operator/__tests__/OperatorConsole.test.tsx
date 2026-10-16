@@ -176,7 +176,7 @@ describe("OperatorConsole production data gate", () => {
     render(<OperatorConsole searchParams={{ ws: workspace }} />);
     expect(await screen.findByTestId(`granted-${workspace}-workspace`)).toBeInTheDocument();
     fireEvent.click(screen.getByTitle("Live Operations"));
-    fireEvent.click(screen.getByRole("button", { name: new RegExp(`Verified ${roleId} Production tenant`) }));
+    fireEvent.click(await screen.findByRole("button", { name: new RegExp(`Verified ${roleId} Production tenant`) }));
     await waitFor(() => expect(screen.getByTitle(`Verified ${roleId}`)).toBeInTheDocument());
     expect(await screen.findByTestId(`granted-${workspace}-workspace`)).toBeInTheDocument();
     expect(window.sessionStorage.getItem("oday.operator.workspace")).toBe(workspace);

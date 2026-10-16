@@ -24,6 +24,7 @@ from tests.intake_workflow_fixture import (
     SyntheticIntakeAuditRetention,
     SyntheticIntakeWorkflowPolicy,
 )
+from tests.integration._gcs_worm_stub import owned_production_gcs_worm
 
 pytestmark = pytest.mark.requires_live_env
 
@@ -574,3 +575,15 @@ def test_partial_database_flush_rolls_back_workflow_and_retry_is_fresh(intake_bl
             assert len(store.workflow_audits) == 3 and len(store.workflow_outbox) == 2
     finally:
         app.state.persistence_bundle.engine.close()
+
+
+_PRODUCTION_GCS_CALLBACKS = frozenset(['test_postgresql_batch_worker_result_survives_restart_in_live_operator_partition', 'test_production_api_boots_with_postgresql_and_fails_on_missing_intake_schema', 'test_assisted_intake_http_state_survives_postgresql_restart', 'test_initial_workflow_and_evidence_survive_postgresql_restart', 'test_partial_database_flush_rolls_back_workflow_and_retry_is_fresh'])
+
+
+@pytest.fixture(autouse=True)
+def _owned_gcs_for_original_production_callbacks(request, monkeypatch):
+    if request.node.originalname not in _PRODUCTION_GCS_CALLBACKS:
+        yield
+        return
+    with owned_production_gcs_worm(monkeypatch):
+        yield

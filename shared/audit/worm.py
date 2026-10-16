@@ -407,6 +407,26 @@ class GcsWormEvidenceSink:
         )
 
 
+def is_gcs_worm_sink_uri(value: str) -> bool:
+    """Validate an address without claiming bucket/IAM/retention readiness."""
+    if (not value.startswith("gs://") or "?" in value or "#" in value
+            or any(ord(char) < 32 or ord(char) == 127 for char in value)):
+        return False
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        return (
+            parsed.scheme == "gs"
+            and bool(parsed.netloc)
+            and parsed.netloc == parsed.hostname
+            and not any(char.isspace() for char in parsed.netloc)
+            and not any(char in parsed.netloc for char in "@:\\")
+            and not parsed.query
+            and not parsed.fragment
+        )
+    except ValueError:
+        return False
+
+
 def build_audit_worm_sink_from_env(
     *,
     default_root: str | Path = ".odp_data/audit-worm",
@@ -419,6 +439,15 @@ def build_audit_worm_sink_from_env(
     """
 
     sink_uri = os.environ.get("ODP_AUDIT_WORM_SINK_URI", "").strip()
+    # Use the actual deployment target; dev/staging also use live data flags.
+    deployment_mode = next(
+        (os.environ[name].strip().lower()
+         for name in ("ODP_DEPLOY_ENV", "ODAY_ENV", "ODP_ENV", "APP_ENV", "ENVIRONMENT")
+         if os.environ.get(name, "").strip()),
+        "development",
+    )
+    if deployment_mode in {"prod", "production"} and not is_gcs_worm_sink_uri(sink_uri):
+        raise AuditWormSinkError("Production audit WORM requires a configured GCS sink URI")
     if sink_uri.startswith("gs://"):
         return GcsWormEvidenceSink(sink_uri)
     if sink_uri.startswith("file://"):
@@ -466,4 +495,5 @@ __all__ = [
     "LocalAppendOnlyWormSink",
     "audit_event_object_name",
     "build_audit_worm_sink_from_env",
+    "is_gcs_worm_sink_uri",
 ]

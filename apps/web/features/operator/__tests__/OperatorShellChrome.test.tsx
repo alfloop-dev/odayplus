@@ -102,7 +102,7 @@ describe("Operator shared header chrome", () => {
     render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
     await waitFor(() => expect(screen.getByTitle("展店專員")).toBeInTheDocument());
     fireEvent.click(screen.getByTitle("展店專員"));
-    fireEvent.click(screen.getByRole("button", { name: /展店專員 Own intake work/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /展店專員 Own intake work/ }));
     expect(window.sessionStorage.getItem("oday.operator.role")).toBe("expansion-staff");
   });
 

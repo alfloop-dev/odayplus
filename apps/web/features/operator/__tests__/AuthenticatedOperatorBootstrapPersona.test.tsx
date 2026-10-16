@@ -163,7 +163,7 @@ describe("authenticated bootstrap persona ownership", () => {
   it("an explicitly selected unsupported role remains a 403 and clears old account rows", async () => {
     const { fetch } = mount(); await screen.findByText("Account A current row");
     fireEvent.click(screen.getByRole("button", { name: /展店經理/ }));
-    fireEvent.click(screen.getByRole("button", { name: /^營運主管/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^營運主管/ }));
     await waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-failure-kind", "forbidden"));
     expect(bootstrapCalls(fetch).some(([, init]) => new Headers(init?.headers).get("X-Operator-Role") === "ops-lead")).toBe(true);
     expect(screen.queryByText("Account A current row")).not.toBeInTheDocument();
@@ -334,6 +334,7 @@ describe("authenticated bootstrap persona ownership", () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false"); vi.stubEnv("NEXT_PUBLIC_ODP_PRODUCT_MODE", "poc");
     mount(); await screen.findByText("Account A current row");
     fireEvent.click(screen.getByTestId("operator-notification-button"));
+    await waitFor(() => expect(document.querySelector('[data-screen-label="Notifications"]')).not.toBeNull());
     const panel = document.querySelector('[data-screen-label="Notifications"]');
     expect(panel).not.toBeNull(); expect(panel?.querySelectorAll("article")).toHaveLength(0);
     expect(screen.getByTestId("operator-notification-button")).toHaveTextContent("通知0");
@@ -344,14 +345,14 @@ describe("authenticated bootstrap persona ownership", () => {
     mount({ decision: true, issues: true, refresh: json(envelope("expansion-manager", "Refreshed empty A")) });
     await screen.findByText("Account A current row");
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
-    fireEvent.change(screen.getByLabelText("Command palette search Global search"), { target: { value: "UNIT-ISSUE" } });
+    fireEvent.change(await screen.findByLabelText("Command palette search Global search"), { target: { value: "UNIT-ISSUE" } });
     expect(await screen.findByText("Prior API issue marker")).toBeVisible();
     fireEvent.keyDown(window, { key: "Escape" });
     await invokeConfirmedNetworkRefreshControl();
     await screen.findByText("Refreshed empty A current row");
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
-    expect(screen.getByTestId("operator-command-palette")).toBeVisible();
-    fireEvent.change(screen.getByLabelText("Command palette search Global search"), { target: { value: "UNIT-ISSUE" } });
+    expect(await screen.findByTestId("operator-command-palette")).toBeVisible();
+    fireEvent.change(await screen.findByLabelText("Command palette search Global search"), { target: { value: "UNIT-ISSUE" } });
     expect(screen.queryByText("Prior API issue marker")).not.toBeInTheDocument();
   });
   it("explicit no-auth POC still retains visibly labelled fixture compatibility", async () => {
@@ -362,10 +363,11 @@ describe("authenticated bootstrap persona ownership", () => {
     expect(document.querySelector('[data-data-status="fixture"]')).toBeVisible();
     expect(document.querySelector('[data-data-status="ready"]')).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("operator-notification-button"));
+    await waitFor(() => expect(document.querySelector('[data-screen-label="Notifications"]')).not.toBeNull());
     expect(document.querySelector('[data-screen-label="Notifications"]')?.querySelectorAll("article").length).toBeGreaterThan(0);
     expect(screen.queryByText("Production API 資料")).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("operator-task-center-button"));
-    expect(await within(screen.getByTestId("operator-task-center")).findByText("FIXTURE", { exact: true })).toBeVisible();
+    expect(await within(await screen.findByTestId("operator-task-center")).findByText("FIXTURE", { exact: true })).toBeVisible();
     expect(screen.getByLabelText("Task center summary")).not.toHaveTextContent(/0\s*Visible/);
   });
 
@@ -375,7 +377,7 @@ describe("authenticated bootstrap persona ownership", () => {
     await screen.findByText("Account A current row"); fireEvent.click(screen.getByTestId("operator-task-center-button"));
     await screen.findByTestId("operator-task-center-unavailable");
     expect(screen.getByLabelText("Task center summary")).toHaveTextContent(/0\s*Visible/);
-    expect(within(screen.getByTestId("operator-task-center")).queryByText("FIXTURE", { exact: true })).not.toBeInTheDocument();
+    expect(within(await screen.findByTestId("operator-task-center")).queryByText("FIXTURE", { exact: true })).not.toBeInTheDocument();
   });
 
   it("authenticated POC Task API 403 with valid session never uses fixture task rows", async () => {
@@ -384,7 +386,7 @@ describe("authenticated bootstrap persona ownership", () => {
     await screen.findByText("Account A current row"); fireEvent.click(screen.getByTestId("operator-task-center-button"));
     await screen.findByTestId("operator-task-center-unavailable");
     expect(screen.getByLabelText("Task center summary")).toHaveTextContent(/0\s*Visible/);
-    expect(within(screen.getByTestId("operator-task-center")).queryByText("FIXTURE", { exact: true })).not.toBeInTheDocument();
+    expect(within(await screen.findByTestId("operator-task-center")).queryByText("FIXTURE", { exact: true })).not.toBeInTheDocument();
   });
   it("authenticated POC seed Task payload cannot be normalized into API tasks", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false"); vi.stubEnv("NEXT_PUBLIC_ODP_PRODUCT_MODE", "poc");
@@ -413,7 +415,7 @@ describe("independent null-to-real session controls", () => {
   state.setAccount(B, "expansion-manager"); state.setSession({ subject: B, expiresAt: Math.floor(Date.now()/1000)+3600 });
   fireEvent.click(screen.getByTestId("operator-task-center-button"));
   await waitFor(() => expect(state.fetch.mock.calls.filter(([url]) => String(url) === "/auth/session").length).toBeGreaterThan(before));
-  expect(within(screen.getByTestId("operator-task-center")).queryByText("FIXTURE", { exact: true })).not.toBeInTheDocument();
+  expect(within(await screen.findByTestId("operator-task-center")).queryByText("FIXTURE", { exact: true })).not.toBeInTheDocument();
  });
 });
 
@@ -441,7 +443,7 @@ describe("owned reads from explicit no-session POC", () => {
     mount({ role: "ops-lead", sessionStatus: 404, session: { detail: "Legacy isolated endpoint absent" }, firstBootstrap: json(fixture), tasks: () => json({ items: [] }) });
     await screen.findByText("Legacy missing session endpoint current row");
     fireEvent.click(screen.getByTestId("operator-task-center-button"));
-    expect(await within(screen.getByTestId("operator-task-center")).findByText("FIXTURE", { exact: true })).toBeVisible();
+    expect(await within(await screen.findByTestId("operator-task-center")).findByText("FIXTURE", { exact: true })).toBeVisible();
     expect(document.querySelector('[data-data-status="fixture"]')).toBeVisible();
     expect(document.querySelector('[data-data-status="ready"]')).not.toBeInTheDocument();
   });

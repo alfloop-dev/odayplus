@@ -1022,6 +1022,7 @@ class LearningHubService:
                 saga,
                 state=ReleaseSagaState.RECEIPT_RECORDED,
                 decision=decision,
+                command={**command, "decision": decision},
             )
             self._save_saga(saga, state=ReleaseSagaState.COMPLETED)
             return decision
@@ -1292,7 +1293,10 @@ class LearningHubService:
         outcome = "compensation_failed" if compensation_errors else "compensated"
         compensation_event = AuditEvent(
             event_type="learninghub.model_release_compensation.v1",
-            actor=str(saga.command.get("requested_by", "release-recovery")),
+            actor=str(saga.command.get(
+                "recovery_requested_by",
+                saga.command.get("requested_by", "release-recovery"),
+            )),
             action="compensate_release",
             resource=f"model/{saga.model_name}:{saga.command.get('version')}",
             outcome=outcome,
@@ -1405,7 +1409,7 @@ class LearningHubService:
         requested_by: str,
     ) -> ModelReleaseSaga:
         command = dict(saga.command)
-        command["requested_by"] = requested_by
+        command["recovery_requested_by"] = requested_by
         return self._save_saga(
             saga,
             command=command,

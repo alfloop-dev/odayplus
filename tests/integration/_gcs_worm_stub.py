@@ -4,9 +4,15 @@ import json
 import socket
 import urllib.parse
 import urllib.request
+from collections.abc import Iterator
+from contextlib import contextmanager
 from copy import deepcopy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import RLock, Thread
+
+import pytest
+
+from shared.audit.worm import GcsWormEvidenceSink
 
 
 class GcsWormProtocolStub:
@@ -120,3 +126,33 @@ class GcsWormProtocolStub:
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=5)
+
+
+@contextmanager
+def owned_production_gcs_worm(monkeypatch: pytest.MonkeyPatch) -> Iterator[GcsWormProtocolStub]:
+    protocol = GcsWormProtocolStub()
+    original_init = GcsWormEvidenceSink.__init__
+    sink_uri = "gs://synthetic-bucket/production-engineering-fixture"
+    sinks: list[GcsWormEvidenceSink] = []
+    try:
+        with monkeypatch.context() as binding:
+            binding.setenv("ODP_AUDIT_WORM_SINK_URI", sink_uri)
+            binding.setenv("ODP_AUDIT_WORM_GCS_TOKEN", protocol.writer_token)
+            binding.setenv("ODP_AUDIT_WORM_GCS_RECOVERY_TOKEN", protocol.recovery_token)
+
+            def bind_actual_sink(sink: GcsWormEvidenceSink, configured_uri: str, *,
+                                 token: str | None = None, recovery_token: str | None = None,
+                                 timeout_seconds: float = 10.0) -> None:
+                original_init(sink, configured_uri, token=token, recovery_token=recovery_token,
+                              timeout_seconds=timeout_seconds)
+                assert configured_uri == sink_uri
+                protocol.bind(sink, binding)
+                sinks.append(sink)
+
+            binding.setattr(GcsWormEvidenceSink, "__init__", bind_actual_sink)
+            yield protocol
+            assert sinks, "explicit production callback did not build its GCS sink"
+            assert protocol.writer_token != protocol.recovery_token
+    finally:
+        protocol.close()
+        assert not protocol.thread.is_alive(), "owned GCS protocol thread did not stop"
