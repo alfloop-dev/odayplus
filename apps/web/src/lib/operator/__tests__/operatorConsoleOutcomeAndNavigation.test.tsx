@@ -54,7 +54,7 @@ describe("F6 task destination contract", () => {
           : envelope,
       ), { status: 200 })));
       render(<OperatorConsole searchParams={{ ws: "today" }} />);
-      await screen.findByText("Verified operator");
+      await screen.findByRole("heading", { name: /Verified operator/ });
       fireEvent.click(screen.getByTestId("operator-task-center-button"));
       fireEvent.click(await screen.findByRole("button", { name: /Unclassified task/ }));
       expect(screen.getByText(/任務連結無效或不屬於本站/)).toBeInTheDocument();
@@ -71,7 +71,7 @@ describe("F6 task destination contract", () => {
           : envelope,
       ), { status: 200 })));
       render(<OperatorConsole searchParams={{ ws: "today" }} />);
-      await screen.findByText("Verified operator");
+      await screen.findByRole("heading", { name: /Verified operator/ });
       fireEvent.click(screen.getByTestId("operator-task-center-button"));
       fireEvent.click(await screen.findByRole("button", { name: /Unclassified task/ }));
       if (href.startsWith("/operator")) {
