@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from shared.infrastructure.persistence.assisted_listing_intake import apply_upgrade_to_database
+from tests.integration._gcs_worm_stub import owned_production_gcs_worm
 from tests.intake_workflow_fixture import (
     SyntheticIntakeAuditRetention,
     SyntheticIntakeWorkflowPolicy,
@@ -40,41 +41,42 @@ def postgres_case(intake_blank_db, monkeypatch, tmp_path):
     apply_upgrade_to_database(url)
     _install_canonical_runtime(url)
     _configure_production(monkeypatch, tmp_path, url)
-    app = _app()
-    with TestClient(app, raise_server_exceptions=False) as client:
-        response = client.post(
-            "/api/v1/intakes/url",
-            json={
-                "original_url": "https://example.invalid/pg-correction",
-                "scope": {"tenant_id": TENANT_ID},
-            },
-            headers=_headers(ACTOR_ID, key=f"synthetic-submit-{uuid4()}"),
-        )
-        assert response.status_code == 202, response.text
-        iid = response.json()["intake_id"]
-        store = app.state.assisted_intake_store
-        store.refresh(TENANT_ID)
-        # Isolate correction storage; no claim that the parser produced this row.
-        intake = store.intakes[iid]
-        intake.update(
-            state="NEEDS_REVIEW", source_snapshot_id=str(uuid4()), parser_run_id=str(uuid4())
-        )
-        intake["fields"] = [
-            dict(
-                field_path=path,
-                classification="INTERNAL",
-                masked=False,
-                parsed=10,
-                normalized=11,
-                corrected=None,
-                effective=11,
-                confidence=0.91,
+    with owned_production_gcs_worm(monkeypatch):
+        app = _app()
+        with TestClient(app, raise_server_exceptions=False) as client:
+            response = client.post(
+                "/api/v1/intakes/url",
+                json={
+                    "original_url": "https://example.invalid/pg-correction",
+                    "scope": {"tenant_id": TENANT_ID},
+                },
+                headers=_headers(ACTOR_ID, key=f"synthetic-submit-{uuid4()}"),
             )
-            for path in ("floor", "rent_amount")
-        ]
-        store.flush()
-        yield app, client, iid
-    app.state.persistence_bundle.engine.close()
+            assert response.status_code == 202, response.text
+            iid = response.json()["intake_id"]
+            store = app.state.assisted_intake_store
+            store.refresh(TENANT_ID)
+            # Isolate correction storage; no claim that the parser produced this row.
+            intake = store.intakes[iid]
+            intake.update(
+                state="NEEDS_REVIEW", source_snapshot_id=str(uuid4()), parser_run_id=str(uuid4())
+            )
+            intake["fields"] = [
+                dict(
+                    field_path=path,
+                    classification="INTERNAL",
+                    masked=False,
+                    parsed=10,
+                    normalized=11,
+                    corrected=None,
+                    effective=11,
+                    confidence=0.91,
+                )
+                for path in ("floor", "rent_amount")
+            ]
+            store.flush()
+            yield app, client, iid
+        app.state.persistence_bundle.engine.close()
 
 
 def _app():

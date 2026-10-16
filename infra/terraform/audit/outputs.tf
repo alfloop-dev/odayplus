@@ -17,3 +17,8 @@ output "retention_manager_service_account" {
   value       = google_service_account.retention_manager.email
   description = "Separated service account for governed retention operations."
 }
+
+output "recovery_reader_service_account" {
+  value       = google_service_account.recovery_reader.email
+  description = "Separated recovery identity with only storage.objects.get on the audit bucket."
+}

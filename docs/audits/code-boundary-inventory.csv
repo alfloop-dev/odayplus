@@ -885,6 +885,7 @@ shared/audit/canonical_postgresql.py,product_system,product_required,true,,engin
 shared/audit/durable_delivery.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/audit/errors.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/audit/events.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+shared/audit/gcs_identity.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/audit/integrity.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/audit/persistence.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/audit/platform_flag_delivery.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.

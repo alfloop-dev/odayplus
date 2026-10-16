@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+from shared.audit.gcs_identity import AuditWorkloadIdentityError, ImpersonatedAuditCredentials
 from shared.audit.integrity import canonical_json, sha256_hex
 
 
@@ -209,6 +210,8 @@ class GcsWormEvidenceSink:
         *,
         token: str | None = None,
         recovery_token: str | None = None,
+        writer_service_account: str | None = None,
+        recovery_service_account: str | None = None,
         timeout_seconds: float = 10.0,
     ) -> None:
         if not sink_uri.startswith("gs://"):
@@ -223,11 +226,30 @@ class GcsWormEvidenceSink:
         self._token = token
         self._recovery_token = recovery_token
         self._timeout_seconds = timeout_seconds
+        self._workload_identity = None
+        if writer_service_account is not None or recovery_service_account is not None:
+            if token is not None or recovery_token is not None:
+                raise ValueError("Explicit tokens cannot be mixed with workload identity")
+            self._workload_identity = ImpersonatedAuditCredentials(
+                writer_service_account or "", recovery_service_account or "",
+                timeout_seconds=timeout_seconds,
+            )
         self._opener = urllib.request.build_opener(_NoGcsRedirect())
 
     @property
     def sink_id(self) -> str:
         return self._sink_id
+
+    def _access_token(self, purpose: str) -> str:
+        if self._workload_identity is not None:
+            try:
+                return self._workload_identity.token(purpose)
+            except AuditWorkloadIdentityError as exc:
+                raise AuditWormSinkError("Audit workload identity token is unavailable") from exc
+        if purpose == "write":
+            return self._token or _configured_gcs_token()
+        return (self._recovery_token if self._recovery_token is not None
+                else os.environ.get("ODP_AUDIT_WORM_GCS_RECOVERY_TOKEN", "").strip())
 
     def write_audit_event(self, event: Any) -> AuditWormReceipt:
         return self._write(
@@ -247,7 +269,9 @@ class GcsWormEvidenceSink:
 
     def lookup_retained_evidence(self, record: Any) -> AuditWormReceipt | None:
         """Read only with the existing explicit recovery credential, never writer."""
-        if not (self._recovery_token or os.environ.get("ODP_AUDIT_WORM_GCS_RECOVERY_TOKEN", "").strip()):
+        if self._workload_identity is None and not (
+            self._recovery_token or os.environ.get("ODP_AUDIT_WORM_GCS_RECOVERY_TOKEN", "").strip()
+        ):
             return None
         checksum = sha256_hex(record.to_dict())
         name = _object_name(record_type="retained-evidence", record_id=record.export_id,
@@ -268,7 +292,7 @@ class GcsWormEvidenceSink:
         sequence: int | None,
         payload: dict[str, Any],
     ) -> AuditWormReceipt:
-        token = self._token or _configured_gcs_token()
+        token = self._access_token("write")
         if not token:
             raise AuditWormSinkError(
                 "GCS WORM sink requires ODP_AUDIT_WORM_GCS_TOKEN or GOOGLE_OAUTH_ACCESS_TOKEN"
@@ -347,11 +371,7 @@ class GcsWormEvidenceSink:
         max_response_bytes: int,
         missing_ok: bool = False,
     ) -> AuditWormReceipt | None:
-        token = (
-            self._recovery_token
-            if self._recovery_token is not None
-            else os.environ.get("ODP_AUDIT_WORM_GCS_RECOVERY_TOKEN", "").strip()
-        )
+        token = self._access_token("recover")
         if not token:
             raise AuditWormSinkError(
                 "Existing GCS WORM object requires an explicitly configured recovery credential"
@@ -449,7 +469,17 @@ def build_audit_worm_sink_from_env(
     if deployment_mode in {"prod", "production"} and not is_gcs_worm_sink_uri(sink_uri):
         raise AuditWormSinkError("Production audit WORM requires a configured GCS sink URI")
     if sink_uri.startswith("gs://"):
-        return GcsWormEvidenceSink(sink_uri)
+        writer = os.environ.get("ODP_AUDIT_WORM_WRITER_SERVICE_ACCOUNT", "").strip()
+        recovery = os.environ.get("ODP_AUDIT_WORM_RECOVERY_SERVICE_ACCOUNT", "").strip()
+        if deployment_mode in {"prod", "production"} and not (writer and recovery):
+            raise AuditWormSinkError("Production audit WORM requires separate workload identity writer and recovery service accounts")
+        try:
+            return GcsWormEvidenceSink(
+                sink_uri, writer_service_account=writer or None,
+                recovery_service_account=recovery or None,
+            )
+        except ValueError as exc:
+            raise AuditWormSinkError("Audit WORM workload identity service accounts are invalid") from exc
     if sink_uri.startswith("file://"):
         return LocalAppendOnlyWormSink(Path(sink_uri[7:]), sink_id=sink_uri.rstrip("/"))
     if sink_uri:
