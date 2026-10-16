@@ -1990,18 +1990,18 @@ export function NetworkFindAreasWorkspace({
   function sourceListings() {
     if (selectedZone) {
       callbacks?.onSourceListings?.(selectedZone.zone);
-      changeActiveTab(1);
+      changeActiveTab(1, { heatZoneId: selectedZone.id, page: "1" });
     }
   }
 
   /**
    * Opens the canonical add-from-URL dialog on Listing Radar (dialog=add), so
    * the intake keeps its single dialog and permission checks. The radar is
-   * already scoped to the selected HeatZone, which the dialog pre-fills.
+   * explicitly scoped to this HeatZone even after the inbox was set to all areas.
    */
   function addListingFromUrl() {
     if (selectedZone) {
-      changeActiveTab(1, { dialog: "add" });
+      changeActiveTab(1, { dialog: "add", heatZoneId: selectedZone.id, page: "1" });
     }
   }
 

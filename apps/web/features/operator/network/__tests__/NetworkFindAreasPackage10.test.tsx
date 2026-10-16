@@ -195,6 +195,24 @@ describe("Network Find Areas — Package 10 content", () => {
     expect(params.get("dialog")).toBe("add");
   });
 
+  it.each([
+    ["HZ-01", ""], ["HZ-01", "HZ-OLD"], ["HZ-02", ""], ["HZ-02", "HZ-OLD"],
+  ])("hands %s to both explicit area actions after prior filter '%s'", (zoneId, previousFilter) => {
+    navigation.search = new URLSearchParams({ ws: "network", tab: "find", heatZoneId: previousFilter, page: "8", search: "保留條件" }).toString() + "&extra=a&extra=b";
+    for (const name of [/^查看本區物件/, /^＋ 從網址新增物件/]) {
+      const view = renderFindAreas("expansion-manager", { selectedHeatZoneId: zoneId });
+      fireEvent.click(screen.getByRole("button", { name }));
+      const params = lastPushedParams();
+      expect(params.get("heatZoneId")).toBe(zoneId);
+      expect(params.get("page")).toBe("1");
+      expect(params.get("tab")).toBe("radar");
+      expect(params.get("search")).toBe("保留條件");
+      expect(params.getAll("extra")).toEqual(["a", "b"]);
+      if (String(name).includes("網址")) expect(params.get("dialog")).toBe("add");
+      view.unmount();
+    }
+  });
+
   it("disables add-from-URL for a role without the intake submit grant", () => {
     renderFindAreas("ops-lead");
     expect(screen.getByRole("button", { name: "＋ 從網址新增物件（帶入本區）" })).toBeDisabled();

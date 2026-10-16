@@ -104,6 +104,30 @@ describe("ListingInboxIntakeView", () => {
 
   afterEach(cleanup);
 
+  it.each(["clear", "reset"])("shows the inherited area and lets %s select all areas durably", async (action) => {
+    window.history.replaceState(null, "", "/operator?ws=network&selected=IN-101&extra=a&extra=b");
+    const onQueryChange = vi.fn();
+    const props = { activeRoleId: "expansion-manager" as const, busy: false, loadState: "ready" as const,
+      selectedHeatZoneId: "HZ-01", onAddSubmit: mockOnAddSubmit, onOpenDetail: mockOnOpenDetail,
+      onQueryChange, records: mockRecords, pageData: { items: mockRecords, total: 37, page: 1, pageSize: 10,
+        counts: { needsReview: 20, awaitingEntry: 0, processing: 7, blocked: 0, ready: 10 }, evidenceState: "complete" as const } };
+    const view = render(<ListingInboxIntakeView {...props} />);
+    const filter = screen.getByTestId("intake-filter-heat-zone");
+    expect(filter).toHaveValue("HZ-01");
+    await waitFor(() => expect(onQueryChange).toHaveBeenLastCalledWith(expect.objectContaining({ selectedHeatZoneId: "HZ-01" })));
+    if (action === "clear") fireEvent.change(filter, { target: { value: "" } });
+    else fireEvent.click(screen.getByTestId("intake-filter-reset"));
+    expect(filter).toHaveValue("");
+    await waitFor(() => expect(onQueryChange).toHaveBeenLastCalledWith(expect.objectContaining({ selectedHeatZoneId: undefined, page: 1 })));
+    expect(screen.getByTestId("intake-tab-all")).toHaveTextContent("全部物件 (37)");
+    expect(new URLSearchParams(window.location.search).get("heatZoneId")).toBe("");
+    expect(new URLSearchParams(window.location.search).getAll("extra")).toEqual(["a", "b"]);
+    view.unmount();
+    render(<ListingInboxIntakeView {...props} />);
+    expect(screen.getByTestId("intake-filter-heat-zone")).toHaveValue("");
+    await waitFor(() => expect(onQueryChange).toHaveBeenLastCalledWith(expect.objectContaining({ selectedHeatZoneId: undefined })));
+  });
+
   it("renders header, saved view tabs, and data table rows", () => {
     render(
       <ListingInboxIntakeView
