@@ -9,14 +9,37 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.routing import APIRoute
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from apps.api.app.routes.canonical_match_cases import _http_errors
 from apps.api.oday_api.security.dependencies import principal_from_headers
+from modules.external_data.security.assisted_listing_retrieval import (
+    contains_sensitive_submission_material,
+    validate_submitted_listing_url,
+)
 from modules.listing.application.intake_authorization import authorize_intake_action
 from modules.listing.domain.intake_states import IntakeStage
 from shared.audit.backlog import CanonicalAuditBacklog
 from shared.auth import Role
+
+
+class _SubmissionValidationRoute(APIRoute):
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+
+        async def validated(request: Request) -> Response:
+            try:
+                return await handler(request)
+            except RequestValidationError:
+                if request.method != "POST":
+                    raise
+                # Validation inputs can include URL credentials, unknown fields
+                # or malformed JSON. Never reflect that raw submission.
+                raise HTTPException(422, "INVALID_CANONICAL_INTAKE_SUBMISSION") from None
+
+        return validated
 
 
 class NativeIntakeScope(BaseModel):
@@ -45,6 +68,8 @@ class SubmitCanonicalIntakeRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_submission(self):
+        if contains_sensitive_submission_material(self.model_dump()):
+            raise ValueError("A native Intake must not contain credentials")
         if self.intake_method == "MANUAL":
             if self.original_url is not None:
                 raise ValueError("A manual Intake must not claim a URL submission")
@@ -53,6 +78,13 @@ class SubmitCanonicalIntakeRequest(BaseModel):
             if (url.scheme not in {"https", "http"} or not url.hostname or url.username or url.password
                     or any(char.isspace() for char in self.original_url or "")):
                 raise ValueError("A URL Intake requires an HTTP(S) URL without credentials")
+            validate_submitted_listing_url(self.original_url)
+            if url.fragment:
+                # Inspect the whole fragment and a hash router's query suffix:
+                # a credential key can also precede the first question mark.
+                # Accepted original URL evidence remains unchanged.
+                for fragment_query in (url.fragment, url.fragment.split("?", 1)[-1]):
+                    validate_submitted_listing_url(url._replace(query=fragment_query, fragment="").geturl())
         return self
 
 
@@ -96,7 +128,7 @@ class _IntakeCursor(BaseModel):
 
 
 def create_canonical_intakes_router(store) -> APIRouter:
-    router = APIRouter(tags=["assisted-listing-intake"])
+    router = APIRouter(tags=["assisted-listing-intake"], route_class=_SubmissionValidationRoute)
 
     def context(request):
         principal = principal_from_headers(request.headers)
