@@ -8,14 +8,17 @@ policy and the separate signing key are required inputs, never fixture defaults.
 from __future__ import annotations
 
 import hashlib
-import hmac
 import json
-import math
-import os
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4, uuid5
 
+from modules.listing.application.native_intake_job_runtime import (
+    decode_native_intake_attempt,
+    load_native_intake_policy,
+    set_native_intake_sql_budget,
+    sign_native_intake_attempt,
+)
 from modules.listing.domain.intake_states import (
     Actor,
     IntakeAggregate,
@@ -70,29 +73,8 @@ def _time(value: Any) -> datetime:
 
 
 def native_intake_start_policy() -> dict:
-    try:
-        policy = json.loads(os.environ.get(POLICY_ENV, ""))
-        if not isinstance(policy, dict) or set(policy) != {
-            "policy_id", "version", "tenant_ids", "max_attempts", "deadline_seconds", "backoff_seconds",
-        }:
-            raise ValueError
-        if (not isinstance(policy["policy_id"], str) or not policy["policy_id"].strip()
-                or type(policy["version"]) is not int or policy["version"] < 1
-                or type(policy["max_attempts"]) is not int or policy["max_attempts"] < 1
-                or type(policy["deadline_seconds"]) is not int
-                or not 1 <= policy["deadline_seconds"] <= MAX_COMMAND_SECONDS
-                or not isinstance(policy["tenant_ids"], list) or not policy["tenant_ids"]
-                or not isinstance(policy["backoff_seconds"], list)
-                or len(policy["backoff_seconds"]) != policy["max_attempts"] - 1
-                or any(type(v) not in {int, float} or not math.isfinite(v) or v <= 0
-                       for v in policy["backoff_seconds"])):
-            raise ValueError
-        tenants = [_uuid(value) for value in policy["tenant_ids"]]
-        if len(set(tenants)) != len(tenants):
-            raise ValueError
-        return policy
-    except (ValueError, TypeError, KeyError, OverflowError) as exc:
-        raise NativeIntakeStartUnavailable("NATIVE_START_POLICY_UNAVAILABLE") from exc
+    return load_native_intake_policy(env_name=POLICY_ENV, max_seconds=MAX_COMMAND_SECONDS,
+        unavailable=NativeIntakeStartUnavailable, error_code="NATIVE_START_POLICY_UNAVAILABLE")
 
 
 class NativeIntakeStartAuthenticator:
@@ -100,32 +82,13 @@ class NativeIntakeStartAuthenticator:
 
     @staticmethod
     def sign(job_id: str, tenant: str, generation: int) -> str:
-        _uuid(job_id)
-        _uuid(tenant)
-        if type(generation) is not int or generation < 1:
-            raise ValueError("An explicit positive delivery generation is required")
-        key = os.environ.get(SIGNING_KEY_ENV, "").encode()
-        if len(key) < 32:
-            raise NativeIntakeStartUnavailable("NATIVE_START_SIGNING_KEY_UNAVAILABLE")
-        content = f"{NATIVE_INTAKE_START_JOB_TYPE}:{job_id}:{tenant}:{generation}"
-        return f"{generation}." + hmac.new(key, content.encode(), hashlib.sha256).hexdigest()
+        return sign_native_intake_attempt(NATIVE_INTAKE_START_JOB_TYPE, SIGNING_KEY_ENV,
+            job_id, tenant, generation, unavailable=NativeIntakeStartUnavailable,
+            error_code="NATIVE_START_SIGNING_KEY_UNAVAILABLE")
 
     def decode(self, delivery) -> tuple[str, int]:
-        try:
-            payload = delivery.payload
-            if (delivery.job_type != NATIVE_INTAKE_START_JOB_TYPE or not isinstance(payload, dict)
-                    or set(payload) != {"job_id", "tenant_id", "attempt_token"}
-                    or payload["job_id"] != delivery.job_id):
-                raise ValueError
-            job_id, tenant = _uuid(payload["job_id"]), _uuid(payload["tenant_id"])
-            token = payload["attempt_token"]
-            prefix = token.split(".", 1)[0]
-            generation = int(prefix)
-            if prefix != str(generation) or not hmac.compare_digest(token, self.sign(job_id, tenant, generation)):
-                raise ValueError
-            return tenant, generation
-        except (ValueError, TypeError, AttributeError, KeyError) as exc:
-            raise JobFenceRejectedError("NATIVE_START_TOKEN_REJECTED") from exc
+        return decode_native_intake_attempt(delivery, job_type=NATIVE_INTAKE_START_JOB_TYPE,
+            sign=self.sign, error_code="NATIVE_START_TOKEN_REJECTED")
 
 
 class NativeIntakeStartOwner:
@@ -293,13 +256,8 @@ class NativeIntakeStartOwner:
     def _budget(self, timeout: Any, lease: Any) -> None:
         # Recompute at each lock/write boundary. The final conditional writes
         # below independently reject a deadline/lease that elapsed meanwhile.
-        remaining = min(_time(timeout), _time(lease)) - self._clock()
-        milliseconds = math.floor(remaining.total_seconds() * 1000) - 1
-        if milliseconds < 1:
-            raise JobFenceRejectedError("NATIVE_START_DEADLINE_OR_LEASE_EXPIRED")
-        value = str(milliseconds) + "ms"
-        self.engine.query_one("SELECT set_config('statement_timeout',?,true)", (value,))
-        self.engine.query_one("SELECT set_config('lock_timeout',?,true)", (value,))
+        set_native_intake_sql_budget(self.engine, _time(timeout), _time(lease), self._clock(),
+                                     error_code="NATIVE_START_DEADLINE_OR_LEASE_EXPIRED")
 
     def _locked(self, delivery, tenant: str, generation: int, *, settlement: bool = False) -> tuple[Any, dict, dict]:
         # Deliberately retain the existing identity coordinator's small

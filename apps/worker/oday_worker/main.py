@@ -179,7 +179,10 @@ class ODayWorker:
         canonical_score_job = job.job_type in {INTAKE_SITESCORE_JOB_TYPE, SITESCORE_EXECUTION_JOB_TYPE}
         canonical_identity_job = job.job_type == "identity-execution"
         canonical_native_start_job = job.job_type == "native-intake-start"
-        canonical_transaction_owned_job = canonical_score_job or canonical_identity_job or canonical_native_start_job
+        canonical_native_identity_job = job.job_type == "native-intake-identity"
+        canonical_transaction_owned_job = (
+            canonical_score_job or canonical_identity_job or canonical_native_start_job or canonical_native_identity_job
+        )
         score_owner = ScoreExecutionJobRepository if job.job_type == SITESCORE_EXECUTION_JOB_TYPE else IntakeScoreJobRepository
 
         def score_heartbeat(job_id: str, *, expected_version: int, fence_token: int) -> int:
@@ -195,6 +198,19 @@ class ODayWorker:
 
             return IdentityJobAdmission(self.persistence.canonical_identity_graph()).heartbeat(
                 job_id, expected_version=expected_version, fence_token=fence_token)
+
+        def native_intake_heartbeat(job_id: str, *, expected_version: int, fence_token: int) -> int:
+            engine = getattr(self.persistence, "engine", None)
+            if getattr(engine, "dialect", None) != "postgresql":
+                return self.job_queue.heartbeat(job_id, expected_version=expected_version, fence_token=fence_token)
+            # A native SQL root owns this physical row and may enqueue audit
+            # work through the same engine lock. Do not hold that lock while
+            # waiting indefinitely for its row. Busy renewal ends this optional
+            # heartbeat; the command still must fit its actual existing lease.
+            with engine.transaction():
+                engine.query_one("SELECT set_config('lock_timeout',?,true)", ("100ms",))
+                engine.query_one("SELECT set_config('statement_timeout',?,true)", ("500ms",))
+                return self.job_queue.heartbeat(job_id, expected_version=expected_version, fence_token=fence_token)
 
         context = TraceContext(
             correlation_id=job.correlation_id,
@@ -218,10 +234,11 @@ class ODayWorker:
                 queue=self.job_queue,
                 job=job,
                 interval_seconds=self.heartbeat_interval_seconds,
-                # Native start is SQL-only: generic physical heartbeat renews
-                # its lease before the atomic start/result transaction locks
+                # Native Intake phases are SQL-only: physical heartbeat renews
+                # their lease before the atomic phase/result transaction locks
                 # that row. It must never invoke the identity authenticator.
-                heartbeat=score_heartbeat if canonical_score_job else identity_heartbeat if canonical_identity_job else None,
+                heartbeat=(score_heartbeat if canonical_score_job else identity_heartbeat if canonical_identity_job
+                           else native_intake_heartbeat if canonical_native_start_job or canonical_native_identity_job else None),
             )
             heartbeat.start()
             try:
