@@ -29,7 +29,6 @@ from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.factory import build_persistence
 from shared.infrastructure.persistence.job_queue import DurableJobQueue, JobFenceRejectedError
 from shared.infrastructure.persistence.postgresql import PostgresEngine
-from shared.infrastructure.persistence.repositories import TenantScopeRequiredError
 from shared.jobs.queue import JobRequest, JobStatus
 
 pytestmark = pytest.mark.skipif(
@@ -298,6 +297,11 @@ def test_postgresql_address_store_and_transaction_contracts_are_tenant_scoped(
     intake_blank_db: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Only this nonworker test consumes domain repositories. Importing its
+    # exception during spawn would initialize unrelated ML/application modules
+    # before the independent queue client's original bounded claim window.
+    from shared.infrastructure.persistence.repositories import TenantScopeRequiredError
+
     _provision_canonical_schema(intake_blank_db)
     database_url = intake_blank_db.url()
     apply_upgrade_to_database(database_url)
