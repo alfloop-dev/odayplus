@@ -9,7 +9,85 @@ Canonical reviewer: **Human/Ops**. Final admission is **PENDING**. This record
 grants no approval, merge arming, merge, promotion, deployment, recovery or
 credential/account/session effect.
 
-## Current batch019 SOURCE mitigation — approval HOLD, NOT operational completion
+## Current batch020 SOURCE compatibility repair — operational HOLD remains
+
+Manager run `pi-20261016T090658Z-1dd7ab0a` verified actual RUNNING workspace
+lease/base810,389 claims/51 explicit documents and ALL52 canonical/materialized
+hashes. The complete original failed task remains object-equal to the preserved
+baseline. Read current Git identities, not historical greens, for acceptance.
+
+Batch020 explicitly corrects batch019's overbroad ANY-context restriction ONLY
+for the EXISTING nonoperational fixture API integration. Operational/live,
+unknown, unavailable or contradictory contexts still have NO eligible approval
+POST, even with a valid durable SELF identity. This does NOT deliver operational
+approval availability, durable business idempotency or historical reconciliation.
+
+- `69156baee`: authentication outcome carries server-selected credential-protocol
+  provenance after existing bearer precedence. Secret-service failures share the
+  same public401; signed-JWT undeclared-principal failures retain their original
+ 401/UNKNOWN_SERVICE. Precise verifier/audit reasons and original wiring assertions
+  remain. Only named accepted/rotated test accounts gain explicit synthetic real
+  credential evidence; pending invitations stay credentialless. Only the waiver
+  positive gains an independently declared known DIFFERENT principal tenant.
+- `ce71325e2`: all45 session controls remain mandatory in both supplied-DSN and
+  no-DSN modes. The latter owns the declared pgserver distribution's REAL bundled
+  foreground PostgreSQL process, not extension stubs/memory/skip. Initialization
+  and shutdown are bounded inside the original420 command; native PID/start and
+  package/binary/data/socket ownership are recorded. Clean native shutdown/reap
+  precedes exact data removal; interrupted initialization/uncertain stop retains
+  data rather than deleting beneath unknown writers. No workflow/conftest change.
+- `591dec696`/`0db0e863f` and the subsequent finite fixture correction: only a
+  runtime-permitted local fixture environment PLUS a positively server-declared
+  same-origin API fixture envelope may enter the nonoperational demo branch.
+  Before POST it re-reads with no-store/redirect refusal, validates exact metadata,
+  echoed fresh-read correlation, role and actual pending item. Missing/stale/
+  contradictory/foreign declarations refuse. Local fallback seed alone is not
+  enough. Original route/method/body/headers and real API refresh remain; no
+  local count decrement, fabricated acknowledgement or server audit evidence.
+
+The demo retains one logical request while pending/ambiguous, coordinates current
+same-origin demo tabs with WebLocks, and keeps a bounded nonsecret conservative
+browser tombstone across reload. Storage/coordination failure refuses. A received
+matching approval/status/correlation/audit-reference acknowledgement survives a
+subsequent refresh failure as demo ACK; lost/malformed/mismatched replies remain
+UNKNOWN. Generic refresh/absent cards never clear UNKNOWN. Only that SAME known
+acknowledgement followed by its real fixture envelope read completes local demo
+custody. All labels explicitly disclaim real actor, durable audit and business
+approval. Browser records are UNTRUSTED restrictions, never permission: deleted
+or edited storage can restart a NONOPERATIONAL DEMO, not prove history absent or
+provide operational exactly-once. Demo restart/retention limitations remain; no
+new business/status/acquisition API or live first-operation path was invented.
+
+[Incremental original native receipts and assertion-AST provenance](pi-batch020-incremental-evidence.json)
+are historical/provisional at their EXACT heads:
+- `69156baee`: focused old/new auth and positive fixtures83P, native0/54.534s/420.
+- `ce71325e2`: supplied real-PG45P/5.935s and no-DSN real-PG45P/5.801s, both0/420.
+  No-DSN actually used pgserver0.1.4/PostgreSQL16.2, owned native wait0 and absent
+  closed data directory. This is real session-schema PG, not PostGIS/full app
+  migration or hosted-CI proof. Original assertions/functions/order retained.
+- `591dec696`: component36P/9F due to new synthetic navigator getter setup.
+- `0db0e863f`: typecheck0/9.933s; component44P/1F because the new refresh-fault
+  double rejected ALL later reads including reload. That failure is retained;
+  the faithful one-shot fault correction preserves its original assertion/wait.
+
+Every archived stage has actual waits/ECHILD/accessible-owned-writer closure and
+verified seals before exact owned PG container/positively mapped volume removal.
+External/inaccessible/historical writer exclusion remains UNKNOWN. Original31
+credential15545-byte prefix, all original Python fixture assertion ASTs, original
+JWT-wiring/browser-today/PG6 bodies and all prior failed evidence remain intact.
+No ancestor/provisional green transfers to a new source/docs identity.
+
+**NOT review-ready.** At the eventual final source/docs freeze ALLfresh14 canonical,
+original17 (2178 serial-n0/1200, others420), original178, applicable original/new
+owning controls, terminal normal hosted CI and EVERY fixed configured supplied-text
+packet PLUS synthesis remain required. Latest focused controls do not substitute
+for these gates. Original rejected assessments/uninspected packets/no synthesis
+and underlying account independence UNRESOLVED remain explicit. Human/Ops final
+PENDING; original blocked6/failedPi/a129PR1459/pins/human files/absent-original
+UNKNOWN and quarantine/bindingNULL/cleanupUNKNOWN/HOLD/goalfalse remain. No
+finalize/review submission, approval, auto-merge, merge/done or live effect.
+
+## Historical batch019 SOURCE mitigation — superseded only for fixture demo
 
 Actual Manager run `pi-20261016T082319Z-f21e3b3e` verified the RUNNING
 workspace lease/cwd/base810, all387 source claims,48 explicit source documents

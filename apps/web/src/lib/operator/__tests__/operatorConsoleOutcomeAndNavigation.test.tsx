@@ -246,7 +246,7 @@ function apiResponse(value: unknown, path = "/api/v1/operator/bootstrap", status
 function allowDemoCoordination() {
   vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
   const scopedNavigator = Object.create(navigator);
-  Object.defineProperty(scopedNavigator, "locks", { value: {
+  Object.defineProperty(scopedNavigator, "locks", { configurable: true, value: {
     request: async (_name: string, _options: unknown, callback: (lock: object) => Promise<void>) => callback({}),
   } });
   vi.stubGlobal("navigator", scopedNavigator);
@@ -262,7 +262,7 @@ function installDemoTransport(fault = "none") {
         correlationId: new Headers(options.headers).get("X-Correlation-Id") }, url);
     }
     reads += 1;
-    if (reads >= 3 && fault === "refresh") throw new Error("read refresh failed after acknowledgement");
+    if (reads === 3 && fault === "refresh") throw new Error("read refresh failed after acknowledgement");
     const data = demoEnvelope();
     data.meta.correlationId = new Headers(options?.headers).get("X-Correlation-Id") ?? "missing";
     if (reads >= 3) data.today.decisions = [];
@@ -273,6 +273,35 @@ function installDemoTransport(fault = "none") {
 }
 
 describe("F8 positively server-declared NONOPERATIONAL demo", () => {
+  it.each(["stale-correlation", "changed-role", "changed-mode", "changed-readiness", "no-locks", "storage-error"])(
+    "%s refuses before creating a demo request", async (fault) => {
+      allowDemoCoordination();
+      if (fault === "no-locks") Object.defineProperty(navigator, "locks", { value: undefined });
+      if (fault === "storage-error") vi.spyOn(Storage.prototype, "getItem").mockImplementation((key) => {
+        if (key === "oday.operator.fixture-approval.unresolved") throw new Error("storage unavailable");
+        return null;
+      });
+      let reads = 0;
+      const fetcher = vi.fn(async (_url: string, options?: RequestInit) => {
+        const data = demoEnvelope();
+        data.meta.correlationId = new Headers(options?.headers).get("X-Correlation-Id") ?? "missing";
+        if (++reads > 1) {
+          if (fault === "stale-correlation") data.meta.correlationId = "stale-other-read";
+          if (fault === "changed-role") data.meta.role = { ...data.meta.role, id: "other-role" };
+          if (fault === "changed-mode") data.meta.dataMode = "live";
+          if (fault === "changed-readiness") data.meta.liveReadiness.required = true;
+        }
+        return apiResponse(data);
+      });
+      vi.stubGlobal("fetch", fetcher);
+      render(<OperatorConsole searchParams={{ ws: "today" }} />);
+      await screen.findByRole("heading", { name: /Verified operator/ });
+      fireEvent.click(await screen.findByRole("button", { name: "核准" }));
+      await screen.findByText(holdText);
+      expect(fetcher.mock.calls.filter(([, options]) => options?.method === "POST")).toHaveLength(0);
+    },
+  );
+
   it("performs the actual fixture POST then real envelope refresh, not local count simulation", async () => {
     allowDemoCoordination();
     const fetcher = installDemoTransport();
