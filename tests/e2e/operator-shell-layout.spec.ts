@@ -24,8 +24,13 @@ type HeaderGeometry = {
   viewport: number;
 };
 
-async function measureHeader(page: Page): Promise<HeaderGeometry> {
-  return page.evaluate(() => {
+// This function is self-contained because Playwright serializes it into
+// the browser. The controlled CSS comparison temporarily swaps child Nodes
+// and restores the same Nodes before yielding to React's next task.
+function measureHeaderInDocument(compareWithGate: boolean): {
+  current: HeaderGeometry; gated?: HeaderGeometry;
+} {
+  const measure = (): HeaderGeometry => {
     const header = document.querySelector<HTMLElement>('[data-screen-label="Top Navigation"]');
     const inner = document.querySelector<HTMLElement>('[data-testid="operator-topbar-inner"]');
     const badge = document.querySelector<HTMLElement>('[data-testid="operator-environment-badge"]');
@@ -53,7 +58,25 @@ async function measureHeader(page: Page): Promise<HeaderGeometry> {
       offscreenControls,
       viewport,
     };
-  });
+  };
+  const current = measure();
+  if (!compareWithGate) return { current };
+  const main = document.querySelector('[data-testid="operator-console"] > main');
+  if (!main) throw new Error("operator workspace not rendered");
+  const originalChildren = Array.from(main.childNodes);
+  const gate = document.createElement("section");
+  gate.dataset.testid = "operator-data-unavailable";
+  gate.dataset.status = "error";
+  try {
+    main.replaceChildren(gate);
+    return { current, gated: measure() };
+  } finally {
+    main.replaceChildren(...originalChildren);
+  }
+}
+
+async function measureHeader(page: Page): Promise<HeaderGeometry> {
+  return (await page.evaluate(measureHeaderInDocument, false)).current;
 }
 
 async function openWorkspace(page: Page, workspace: string) {
@@ -357,16 +380,17 @@ test.describe("Operator shared header layout", () => {
   test("header does not change when workspace content is replaced by a data gate", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await openWorkspace(page, "today");
-    const withContent = await measureHeader(page);
-
-    // Same controlled experiment as the audit: remove the Today content node.
-    await page.evaluate(() => {
-      const main = document.querySelector('[data-testid="operator-console"] > main');
-      if (main) main.innerHTML = '<section data-testid="operator-data-unavailable" data-status="error"></section>';
-    });
-    const withoutContent = await measureHeader(page);
+    // Isolate the audit's CSS question in one browser JavaScript turn.
+    // Preserve the original Node objects and restore them in finally before
+    // React can commit another bootstrap render. This controlled comparison
+    // does not claim a real API failure or authenticated data-gate transition.
+    const { current: withContent, gated: withoutContent } = await page.evaluate(
+      measureHeaderInDocument, true,
+    );
 
     expect(withoutContent).toEqual(withContent);
+    await expect(page.getByTestId("operator-topbar-inner")).toBeVisible();
+    await expect(page.locator('[data-testid="operator-console"] > main')).not.toBeEmpty();
   });
 });
 
