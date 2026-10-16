@@ -115,6 +115,9 @@ class AuthOutcome:
     correlation_id: str
     reason: AuthFailureReason | None = None
     audit_event: AuditEvent | None = field(default=None, repr=False)
+    # Boundary-selected protocol, not token_type (signed service JWTs also
+    # have token_type="service"). Bearer credentials retain precedence.
+    credential_protocol: str = "none"
 
     def raise_for_status(self) -> Principal:
         """Return the principal, or raise :class:`AuthenticationError` on denial."""
@@ -714,6 +717,10 @@ class AuthenticationBoundary:
             correlation_id=correlation_id,
             reason=reason,
             audit_event=event,
+            credential_protocol=(
+                "bearer" if credentials.bearer_token is not None else
+                "service_secret" if credentials.service_id is not None else "none"
+            ),
         )
 
 

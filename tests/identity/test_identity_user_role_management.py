@@ -13,6 +13,7 @@ are inserted directly as *test inputs* standing in for accepted invitations.
 
 from __future__ import annotations
 
+import json
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -42,6 +43,7 @@ from modules.opsboard.auth import (
 )
 from shared.auth import Action, AuthorizationEngine
 from shared.identity.bootstrap import bootstrap_first_admin, request_from_env
+from shared.identity.credential_service import CredentialService
 
 IDENTITY_MIGRATION = Path("infra/db/migrations/000011_identity_schema.sql")
 LOCAL_KEY = SigningKey(kid="admin-it", algorithm="HS256", secret=b"admin-it-local-signing-key-32-bytes!!")
@@ -170,6 +172,20 @@ def _invited_account(stack: Any, username: str, role: str, tenant: str = TENANT)
         "INSERT INTO identity.account_roles (account_id, role, granted_by) VALUES (%s, %s, 'test') "
         "RETURNING account_id",
         (account_id, role),
+    )
+    # This helper represents an ACTIVE, accepted invitation, not a pending
+    # invitation. Supply real current-policy credential/rotation evidence;
+    # signing in must never turn a missing credential into "already rotated".
+    credentials = CredentialService()
+    phc = credentials.hash_password(f"Accepted-Fixture-{uuid4()}")
+    params = credentials.extract_params_from_phc(phc)
+    params["policy_version"] = credentials.policy.version
+    _q(
+        stack,
+        "INSERT INTO identity.password_credentials "
+        "(account_id, phc_hash, params, must_change, last_rotated_at) "
+        "VALUES (%s, %s, %s::jsonb, false, now()) RETURNING account_id",
+        (account_id, phc, json.dumps(params)),
     )
     return account_id
 

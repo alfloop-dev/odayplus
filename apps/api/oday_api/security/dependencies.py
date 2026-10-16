@@ -270,7 +270,9 @@ def principal_from_headers(
         if outcome.authenticated:
             _enforce_password_rotation(outcome.principal, boundary)
             return outcome.principal
-        _raise_unauthenticated(outcome.reason)
+        _raise_unauthenticated(
+            outcome.reason, credential_protocol=outcome.credential_protocol,
+        )
 
     if is_production:
         from modules.opsboard.auth.errors import AuthFailureReason
@@ -515,18 +517,22 @@ def _raise_forbidden(decision: Decision) -> None:
     raise AuthorizationError(decision)
 
 
-def _raise_unauthenticated(reason: AuthFailureReason | None) -> None:
+def _raise_unauthenticated(
+    reason: AuthFailureReason | None, *, credential_protocol: str | None = None,
+) -> None:
     """Reject with HTTP 401 (or the boundary's AuthenticationError in lean envs).
 
-    Service credential failures share one public reason. The authentication
-    boundary retains its precise verifier/audit reason; this mapper must not
-    disclose whether a service name exists.
+    Secret-service credential failures share one public reason. The boundary
+    selects the protocol after credential precedence; signed-JWT principal-map
+    refusals retain their existing public contract. Internal audit is unchanged.
     """
 
     from modules.opsboard.auth.errors import AuthenticationError, AuthFailureReason
 
     reason = reason if reason is not None else AuthFailureReason.NO_CREDENTIALS
-    if reason in (AuthFailureReason.UNKNOWN_SERVICE, AuthFailureReason.BAD_SERVICE_SECRET):
+    if credential_protocol == "service_secret" and reason in (
+        AuthFailureReason.UNKNOWN_SERVICE, AuthFailureReason.BAD_SERVICE_SECRET,
+    ):
         reason = AuthFailureReason.BAD_SERVICE_SECRET
     if HTTPException is not None:
         raise HTTPException(
