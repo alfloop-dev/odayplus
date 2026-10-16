@@ -522,7 +522,7 @@ describe("GrowthWorkspace API loading", () => {
     expect(routerPush).not.toHaveBeenCalled();
     settle(new Response("Synthetic unavailable", { status: 503 }));
     await screen.findByTestId("growth-draft-api-error");
-    expect(screen.getByTestId("growth-builder-step-5")).toHaveFocus();
+    await waitFor(() => expect(screen.getByTestId("growth-builder-step-5")).toHaveFocus());
     expect(screen.getByTestId("growth-builder-prev")).toBeEnabled();
     expect(routerPush).not.toHaveBeenCalled();
   });

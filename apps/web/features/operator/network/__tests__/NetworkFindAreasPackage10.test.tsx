@@ -64,6 +64,13 @@ function renderFindAreas(
   return render(findAreasElement(activeRoleId, zones));
 }
 
+function mockCurrentAreaRead() {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => String(input).includes("/network-listings")
+    ? new Response(JSON.stringify({ source: "api", heatZones: fixtures.HEAT_ZONE_FIXTURES,
+      listingSources: [], listings: [], candidates: [], siteReviews: [] }),
+    { status: 200, headers: { "Content-Type": "application/json" } }) : new Response("{}", { status: 503 })));
+}
+
 function lastPushedParams() {
   return new URL(String(navigation.push.mock.calls.at(-1)?.[0]), "http://local").searchParams;
 }
@@ -117,8 +124,41 @@ describe("Network Find Areas — Package 10 content", () => {
         .getByRole("button", { name: "建立物件搜尋條件" });
       if (scenario === "current-api-zone") await waitFor(() => expect(button).toBeEnabled());
       else expect(button).toBeDisabled();
+      const intake = within(screen.getByTestId("find-areas-zone-actions"))
+        .getByRole("button", { name: "＋ 從網址新增物件（帶入本區）" });
+      if (scenario === "current-api-zone") expect(intake).toBeEnabled();
+      else { expect(intake).toBeDisabled(); fireEvent.click(intake); expect(navigation.push).not.toHaveBeenCalled(); }
     },
   );
+
+  it("area URL intake waits for the same current read as its zone options before carrying the visible area", async () => {
+    const nativeZone = { ...fixtures.HEAT_ZONE_FIXTURES[0], id: "native-current-zone", label: "先抵達的原生區域" };
+    const aggregateZone = { ...fixtures.HEAT_ZONE_FIXTURES[1], id: "current-aggregate-zone", label: "目前讀取確認的區域" };
+    let finish!: (response: Response) => void;
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => String(input).includes("/network-listings")
+      ? new Promise<Response>(resolve => { finish = resolve; }) : new Response("{}", { status: 503 }));
+    vi.stubGlobal("fetch", fetcher);
+    render(<NetworkFindAreasWorkspace activeRoleId="expansion-manager"
+      liveHeatZones={{ fetchedAt: "2026-10-16T00:00:00Z", items: [nativeZone], source: "api", state: "ready" }} />);
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    expect(screen.getByTestId("find-areas-zone-detail")).toHaveTextContent(nativeZone.label);
+    const button = screen.getByRole("button", { name: "＋ 從網址新增物件（帶入本區）" });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(navigation.push).not.toHaveBeenCalled();
+    await act(async () => finish(new Response(JSON.stringify({ source: "api", heatZones: [aggregateZone],
+      selectedHeatZoneId: aggregateZone.id, listingSources: [], listings: [], candidates: [], siteReviews: [] }),
+    { status: 200, headers: { "Content-Type": "application/json" } })));
+    await waitFor(() => expect(button).toBeEnabled());
+    expect(screen.getByTestId("find-areas-zone-detail")).toHaveTextContent(aggregateZone.label);
+    fireEvent.click(button);
+    const params = lastPushedParams();
+    expect(params.get("heatZoneId")).toBe(aggregateZone.id);
+    expect(params.get("heatZoneId")).not.toBe(nativeZone.id);
+    expect(params.get("tab")).toBe("radar");
+    expect(params.get("dialog")).toBe("add");
+    expect(fetcher.mock.calls.every(([input]) => String(input).includes("/api/v1/"))).toBe(true);
+  });
 
   it("shows the one-row header with the four Chinese KPI chips", () => {
     renderFindAreas();
@@ -212,9 +252,12 @@ describe("Network Find Areas — Package 10 content", () => {
     expect(screen.getByRole("button", { name: "加入追蹤" })).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("opens the canonical add-from-URL dialog on Listing Radar for roles that may submit", () => {
+  it("opens the canonical add-from-URL dialog on Listing Radar for roles that may submit", async () => {
+    mockCurrentAreaRead();
     renderFindAreas("expansion-manager");
-    fireEvent.click(screen.getByRole("button", { name: "＋ 從網址新增物件（帶入本區）" }));
+    const action = screen.getByRole("button", { name: "＋ 從網址新增物件（帶入本區）" });
+    await waitFor(() => expect(action).toBeEnabled());
+    fireEvent.click(action);
     const href = String(navigation.push.mock.calls.at(-1)?.[0]);
     const params = new URL(href, "http://local").searchParams;
     expect(params.get("tab")).toBe("radar");
@@ -223,11 +266,14 @@ describe("Network Find Areas — Package 10 content", () => {
 
   it.each([
     ["HZ-01", ""], ["HZ-01", "HZ-OLD"], ["HZ-02", ""], ["HZ-02", "HZ-OLD"],
-  ])("hands %s to both explicit area actions after prior filter '%s'", (zoneId, previousFilter) => {
+  ])("hands %s to both explicit area actions after prior filter '%s'", async (zoneId, previousFilter) => {
+    mockCurrentAreaRead();
     navigation.search = new URLSearchParams({ ws: "network", tab: "find", heatZoneId: previousFilter, page: "8", search: "保留條件" }).toString() + "&extra=a&extra=b";
     for (const name of [/^查看本區物件/, /^＋ 從網址新增物件/]) {
       const view = renderFindAreas("expansion-manager", { selectedHeatZoneId: zoneId });
-      fireEvent.click(screen.getByRole("button", { name }));
+      const action = screen.getByRole("button", { name });
+      await waitFor(() => expect(action).toBeEnabled());
+      fireEvent.click(action);
       const params = lastPushedParams();
       expect(params.get("heatZoneId")).toBe(zoneId);
       expect(params.get("page")).toBe("1");
@@ -247,9 +293,12 @@ describe("Network Find Areas — Package 10 content", () => {
   it.each([
     [/^查看本區物件/, "radar"],
     [/^＋ 從網址新增物件/, "radar"],
-  ])("routes %s to the %s tab", (name, tab) => {
+  ])("routes %s to the %s tab", async (name, tab) => {
+    mockCurrentAreaRead();
     renderFindAreas();
-    fireEvent.click(screen.getByRole("button", { name }));
+    const action = screen.getByRole("button", { name });
+    await waitFor(() => expect(action).toBeEnabled());
+    fireEvent.click(action);
     expect(new URL(String(navigation.push.mock.calls.at(-1)?.[0]), "http://local").searchParams.get("tab")).toBe(tab);
   });
 

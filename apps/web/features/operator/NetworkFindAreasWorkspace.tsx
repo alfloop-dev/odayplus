@@ -1959,6 +1959,15 @@ export function NetworkFindAreasWorkspace({
   );
 
   const selectedZone = viewModel.selectedZone;
+  // Carry an area only when the intake options and the visible selection are
+  // verified by the same current read. An earlier native map binding can have
+  // different IDs while the scoped aggregate is still arriving.
+  const canAddListingFromSelectedZone = Boolean(
+    canPerformIntake("submit", activeRoleId) && selectedZone
+    && networkLoadState === "ready" && networkSnapshot?.source === "api"
+    && networkSnapshot.heatZoneAvailability?.state !== "unavailable"
+    && networkSnapshot.heatZones?.some(zone => zone.id === selectedZone.id),
+  );
   const isSelectedTracked = selectedZone ? trackedSet.has(selectedZone.id) : false;
   // One effective review source feeds the header chip, the tab badge and the
   // Review panel. Fallback rows exist only in fixture mode, where the panel
@@ -2031,7 +2040,7 @@ export function NetworkFindAreasWorkspace({
    * explicitly scoped to this HeatZone even after the inbox was set to all areas.
    */
   function addListingFromUrl() {
-    if (selectedZone) {
+    if (canAddListingFromSelectedZone && selectedZone) {
       changeActiveTab(1, { dialog: "add", heatZoneId: selectedZone.id, page: "1" });
     }
   }
@@ -2726,7 +2735,7 @@ export function NetworkFindAreasWorkspace({
         ) : (
           <FindAreasPanel
             activeRoleId={activeRoleId}
-            canAddListing={canPerformIntake("submit", activeRoleId)}
+            canAddListing={canAddListingFromSelectedZone}
             fixturesAllowed={fixturesAllowed}
             viewModel={viewModel}
             selectedZone={selectedZone}
