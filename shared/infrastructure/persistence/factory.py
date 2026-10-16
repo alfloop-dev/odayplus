@@ -100,7 +100,20 @@ class PersistenceBundle:
     feature_flag_registry: Any = None
     adlift_campaign_repository: Any = None
     survey_assignment_repository: Any = None
+    diagnostic_evidence_repository: Any = None
 
+
+    def diagnostic_evidence_reader(self) -> Any:
+        """Actual current-principal reader; memory has no formal diagnostic owner."""
+        from modules.forecastops.application.root_cause_evidence import (
+            ScopedDiagnosticEvidenceReader,
+        )
+
+        return ScopedDiagnosticEvidenceReader(
+            engine=self.engine, forecasts=self.forecastops_repository,
+            issues=self.store_ops_repository, stores=self.store_repository,
+            evidence=self.diagnostic_evidence_repository, audit=self.audit_log,
+        )
 
     @property
     def is_durable(self) -> bool:
@@ -412,6 +425,9 @@ def _durable_bundle(
 
     engine = SqliteEngine(db_path)
     store = SqliteDocumentStore(engine)
+    from modules.forecastops.infrastructure.root_cause_repository import (
+        DurableDiagnosticEvidenceRepository,
+    )
     from shared.infrastructure.persistence.feature_flags import DurableFeatureFlagRegistry
     durable_flags = DurableFeatureFlagRegistry(store)
     durable_flags.initialize_defaults()
@@ -446,6 +462,7 @@ def _durable_bundle(
         feature_flag_registry=durable_flags,
         avm_repository=DurableAVMRepository(store),
         forecastops_repository=DurableForecastOpsRepository(store),
+        diagnostic_evidence_repository=DurableDiagnosticEvidenceRepository(store),
         forecastops_policy_repository=_default_decision_policy_repository(),
         netplan_repository=DurableNetPlanRepository(store),
         learninghub_repository=DurableLearningHubRepository(store),
@@ -547,6 +564,9 @@ def _postgres_bundle(
 
     engine = PostgresEngine(database_url)
     store = PostgresDocumentStore(engine)
+    from modules.forecastops.infrastructure.root_cause_repository import (
+        DurableDiagnosticEvidenceRepository,
+    )
     try:
         validate_required_tables(engine)
         assisted_intake_store = DurableAssistedIntakeStore(store)
@@ -614,6 +634,7 @@ def _postgres_bundle(
         feature_flag_registry=pg_flags,
         avm_repository=DurableAVMRepository(store),
         forecastops_repository=DurableForecastOpsRepository(store),
+        diagnostic_evidence_repository=DurableDiagnosticEvidenceRepository(store),
         forecastops_policy_repository=SqlDecisionPolicyRepository(engine),
         netplan_repository=DurableNetPlanRepository(store),
         learninghub_repository=DurableLearningHubRepository(store),

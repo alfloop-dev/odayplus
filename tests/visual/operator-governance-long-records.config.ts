@@ -9,6 +9,7 @@ export default defineConfig({
   testDir: ".",
   testMatch: "operator-governance-long-records.spec.ts",
   fullyParallel: false,
+  use: { ...base.use, screenshot: "only-on-failure", trace: "retain-on-failure" },
   workers: 1,
   retries: 0,
   timeout: 120_000,

@@ -2379,6 +2379,10 @@ else:
         mount_versioned(
             api,
             create_learninghub_router(
+                canonical_forecast_repository=forecast_repository,
+                canonical_store_repository=bundle.store_repository,
+                canonical_policy_repository=forecast_policy_repository,
+                canonical_monitoring_boundary=native_boundary,
                 repository=learning_repo,
                 feature_flags=feature_flags, job_queue=job_queue,
                 artifact_store=model_artifacts,

@@ -142,6 +142,9 @@ class ModelReleaseDecision:
     idempotency_key: str | None = None
     scope: str = "global"
     backtest_receipt_id: str | None = None
+    # Server-recorded after the real alias/governance execution succeeded.
+    # Legacy decisions have no execution anchor and remain unbound to a window.
+    executed_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -170,6 +173,7 @@ class ModelReleaseDecision:
             "idempotency_key": self.idempotency_key,
             "scope": self.scope,
             "backtest_receipt_id": self.backtest_receipt_id,
+            **({"executed_at": self.executed_at.isoformat()} if self.executed_at is not None else {}),
         }
 
 
@@ -1005,6 +1009,14 @@ class LearningHubService:
                 audit_event_id=audit_event.event_id,
             )
             decision = command["decision"]
+            recorded = self.repository.get_release_decision(decision.release_id)
+            if recorded is not None and (
+                not isinstance(recorded, ModelReleaseDecision)
+                or replace(recorded, executed_at=None) != decision
+            ):
+                raise LearningHubConflictError("release receipt differs from the executed command")
+            anchor = getattr(recorded, "executed_at", None) or datetime.now(UTC)
+            decision = replace(decision, executed_at=anchor)
             self.repository.save_release_decision(decision)
             saga = self._save_saga(
                 saga,

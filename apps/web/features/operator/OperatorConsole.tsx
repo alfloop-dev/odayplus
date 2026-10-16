@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
@@ -20,20 +21,17 @@ import {
   TabBar,
   type Tone,
 } from "./components";
-import { DesignStoreOpsWorkspace } from "./DesignAlignedWorkspaces";
 import type { GovernanceWorkspaceProps } from "./GovernanceWorkspace";
 import {
   normalizeGovernanceApprovals,
   normalizeGovernanceAuditRows,
   normalizeGovernanceDecisionRows,
 } from "./governance/governanceEnvelope";
-import { GrowthWorkspace } from "./GrowthWorkspace";
 import { readGovernanceViewState, serializeGovernanceViewState, type GovernanceViewState } from "./governance/governanceUrlState";
 import type { NetworkFindAreasWorkspaceProps } from "./NetworkFindAreasWorkspace";
 import type { ColdIntakeDetailProps } from "./network/intake/ColdIntakeDetail";
 import type { InterventionWorkspaceProps } from "./interventions/InterventionWorkspace";
 import { NETWORK_TAB_IDS, parseNetworkTabIndex } from "./network/networkUrlState";
-import { StoreOpsWorkflowDialogs } from "./StoreOpsWorkflowDialogs";
 import { ISSUE_FIXTURES } from "./fixtures";
 import {
   DEFAULT_OPERATOR_ROLE_ID,
@@ -46,14 +44,8 @@ import {
   type OperatorRoleId,
   type WorkspaceId,
 } from "./navigation";
-import {
-  loadNetworkFindAreasBindings,
-  type NetworkFindAreasBindings,
-} from "./network/networkFindAreasLoader";
+import type { NetworkFindAreasBindings } from "./network/networkFindAreasLoader";
 import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
-import { ShellNotificationCenter } from "./ShellNotificationCenter";
-import { ShellTaskCenter } from "./ShellTaskCenter";
-import { ShellNotificationPage } from "./ShellNotificationPage";
 import {
   classifyLoadFailure,
   inspectOperatorShellPayload,
@@ -81,6 +73,39 @@ import {
   classifyAccessDenial,
   signOutOperator,
 } from "./operatorSession";
+
+// Business owners load only when their original admitted branch is rendered.
+// Full-page Task/Notification routes share this session shell without loading
+// dormant Store Ops, Growth/PriceOps, or workflow dialog implementations.
+const DesignStoreOpsWorkspace = dynamic<ComponentProps<typeof import("./DesignAlignedWorkspaces").DesignStoreOpsWorkspace>>(
+  () => import("./DesignAlignedWorkspaces").then((mod) => mod.DesignStoreOpsWorkspace),
+  { ssr: false, loading: () => <div aria-live="polite" role="status">門市營運工作區載入中…</div> },
+);
+
+const GrowthWorkspace = dynamic<ComponentProps<typeof import("./GrowthWorkspace").GrowthWorkspace>>(
+  () => import("./GrowthWorkspace").then((mod) => mod.GrowthWorkspace),
+  { ssr: false, loading: () => <div aria-live="polite" role="status">營收成長工作區載入中…</div> },
+);
+
+const StoreOpsWorkflowDialogs = dynamic<ComponentProps<typeof import("./StoreOpsWorkflowDialogs").StoreOpsWorkflowDialogs>>(
+  () => import("./StoreOpsWorkflowDialogs").then((mod) => mod.StoreOpsWorkflowDialogs),
+  { ssr: false, loading: () => <div aria-live="polite" role="status">營運工作流程載入中…</div> },
+);
+
+const ShellNotificationCenter = dynamic<ComponentProps<typeof import("./ShellNotificationCenter").ShellNotificationCenter>>(
+  () => import("./ShellNotificationCenter").then((mod) => mod.ShellNotificationCenter),
+  { ssr: false, loading: () => <div aria-live="polite" role="status">通知載入中…</div> },
+);
+
+const ShellTaskCenter = dynamic<ComponentProps<typeof import("./ShellTaskCenter").ShellTaskCenter>>(
+  () => import("./ShellTaskCenter").then((mod) => mod.ShellTaskCenter),
+  { ssr: false, loading: () => <div aria-live="polite" role="status">任務中心載入中…</div> },
+);
+
+const ShellNotificationPage = dynamic<ComponentProps<typeof import("./ShellNotificationPage").ShellNotificationPage>>(
+  () => import("./ShellNotificationPage").then((mod) => mod.ShellNotificationPage),
+  { ssr: false, loading: () => <div aria-live="polite" role="status">通知中心載入中…</div> },
+);
 
 // Governance (including its admin controllers) is dormant on Today/Network.
 // Load it only when selected, without changing its server-verified authority
@@ -1011,7 +1036,11 @@ export function OperatorConsole({
         return response;
       },
     });
-    loadNetworkFindAreasBindings(client)
+    import("./network/networkFindAreasLoader")
+      .then(({ loadNetworkFindAreasBindings }) => {
+        if (!current()) throw superseded();
+        return loadNetworkFindAreasBindings(client);
+      })
       .then(async (bindings) => {
         if (await pinAuthenticatedRead(subject, current) && current()) setLiveNetworkBindings(bindings);
       })
@@ -1944,6 +1973,13 @@ export function OperatorConsole({
         ) : activeWorkspaceId === "govern" ? (
           // GovernanceWorkspace renders its own Package 10 page header.
           <GovernanceWorkspace
+            canonicalMonitoringScopeKey={JSON.stringify([bootstrapSequence.current, bootstrapAccount.current, bootstrapPersona.current, activeRoleId])}
+            createCanonicalMonitoringReadGuard={(readCurrent) => {
+              const sequence = bootstrapSequence.current, subject = bootstrapAccount.current, persona = bootstrapPersona.current;
+              const current = () => readCurrent() && sequence === bootstrapSequence.current
+                && subject === bootstrapAccount.current && persona === bootstrapPersona.current;
+              return () => pinAuthenticatedRead(subject, current);
+            }}
             onDecisionConfirmed={async () => {
               try { await refreshOperatorEnvelope(); }
               catch { showToast("核決已保存；Today 資料尚未重新核對，請重新整理。"); }
@@ -1970,11 +2006,13 @@ export function OperatorConsole({
         )}
       </main>
 
+      {activeStoreOpsDialog ? (
       <StoreOpsWorkflowDialogs
         activeDialog={activeStoreOpsDialog}
         issue={selectedStoreOpsIssue}
         onClose={() => setActiveStoreOpsDialog(null)}
       />
+      ) : null}
 
       {isCommandPaletteOpen ? (
         <div

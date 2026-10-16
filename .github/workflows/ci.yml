@@ -513,12 +513,46 @@ jobs:
       # 18-spec/130-test deterministic product receipt inventory. Fail this required
       # lane on visual regressions without changing release authority or counts.
       - name: Verify Store Ops Package 10 geometry and accessibility
-        run: npx playwright test --config tests/visual/operator-store-ops-parity.config.ts
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ runner.temp }}/product-e2e-supplemental/geometry45/report.json
+          PLAYWRIGHT_HTML_OUTPUT_DIR: ${{ runner.temp }}/product-e2e-supplemental/geometry45/html-report
+          PLAYWRIGHT_HTML_OPEN: never
+        run: >-
+          npx playwright test --config tests/visual/operator-store-ops-parity.config.ts
+          --output "$RUNNER_TEMP/product-e2e-supplemental/geometry45/test-results"
+          --reporter=list,json,html
+
+      # Separate supplemental diagnostics; never inputs to the fixed130 collector.
+      # Retain first-attempt failure PNG/trace/context even when this gate fails.
+      - name: Preserve supplemental geometry45 Playwright diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-e2e-supplemental-geometry45-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/product-e2e-supplemental/geometry45/
+          if-no-files-found: warn
+          retention-days: 90
 
       # Preserve the two reviewed narrow-viewport engineering controls without
       # adding them to the exact 18-spec/130-case product receipt inventory.
       - name: Verify Governance long-record geometry at 390 and 1024
-        run: npx playwright test --config tests/visual/operator-governance-long-records.config.ts
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ runner.temp }}/product-e2e-supplemental/governance-visual2/report.json
+          PLAYWRIGHT_HTML_OUTPUT_DIR: ${{ runner.temp }}/product-e2e-supplemental/governance-visual2/html-report
+          PLAYWRIGHT_HTML_OPEN: never
+        run: >-
+          npx playwright test --config tests/visual/operator-governance-long-records.config.ts
+          --output "$RUNNER_TEMP/product-e2e-supplemental/governance-visual2/test-results"
+          --reporter=list,json,html
+
+      - name: Preserve supplemental Governance visual2 Playwright diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-e2e-supplemental-governance-visual2-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/product-e2e-supplemental/governance-visual2/
+          if-no-files-found: warn
+          retention-days: 90
 
       # A reviewed task PR must prove its current source through the complete
       # deterministic E2E runner. It must not manufacture production release

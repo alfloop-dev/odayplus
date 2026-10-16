@@ -415,7 +415,7 @@ def test_default_adc_resolver_uses_real_google_credentials_refresh_api_with_mock
     from google.oauth2.credentials import Credentials
 
     credentials = Credentials(token=None, refresh_token="owned-fixture-refresh", token_uri="https://oauth2.googleapis.com/token",
-        client_id="owned-fixture-client", client_secret="owned-fixture-secret")
+        client_id="owned-fixture-client", client_secret=uuid4().hex)
     scopes_seen, calls = [], []
     def resolve(*, scopes):
         scopes_seen.append(scopes)

@@ -85,7 +85,11 @@ const dialogs = [
 ] as const;
 
 async function openStore(page: Page, withPaymentTrend = true) {
+  // Package 10 geometry deliberately uses the archived synthetic fixture lane.
+  // The original visual config inherits the explicit fixture/e2e/poc web env;
+  // a production runtime must continue to reject this labelled source.
   const state = {
+    source: "fixture-store-ops-parity",
     stores: STORE_FIXTURES,
     issues: structuredClone(ISSUE_FIXTURES) as StoreOpsIssue[],
     evidence: withPaymentTrend ? EVIDENCE_FIXTURES : EVIDENCE_FIXTURES.map(({ paymentTrend: _trend, ...item }) => item),

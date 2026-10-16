@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CanonicalMonitoringPanel } from "./CanonicalMonitoringPanel";
+import type { CanonicalMonitoringGuardFactory } from "./canonicalMonitoringClient";
 import { OperatorDataUnavailableGate } from "../OperatorDataUnavailableGate";
 import { operatorFixturesAllowed, toUnavailableOperatorStatus, type OperatorDataAvailability } from "../operatorDataMode";
 import styles from "../governance.module.css";
@@ -24,12 +26,16 @@ export type ModelReleaseControllerProps = {
   roleId?: string;
   actor?: string;
   onOpenAudit?: (auditEventId: string) => void;
+  canonicalMonitoringScopeKey?: string;
+  createCanonicalMonitoringReadGuard?: CanonicalMonitoringGuardFactory;
 };
 
 export function ModelReleaseController({
   roleId = "ops-lead",
   actor = "ModelOps Engine",
   onOpenAudit,
+  canonicalMonitoringScopeKey,
+  createCanonicalMonitoringReadGuard,
 }: ModelReleaseControllerProps) {
   const fixturesAllowed = operatorFixturesAllowed();
   const loadGeneration = useRef(0);
@@ -977,6 +983,11 @@ export function ModelReleaseController({
             <button className={styles.secondaryButton} onClick={() => setActiveDrawer(null)}>關閉</button>
           </div>
 
+          {!fixturesAllowed && createCanonicalMonitoringReadGuard ? (
+            <CanonicalMonitoringPanel key={`${canonicalMonitoringScopeKey ?? "unbound"}:${roleId}:${monitorReleaseId}`}
+              releaseId={monitorReleaseId} roleId={roleId} scopeKey={canonicalMonitoringScopeKey}
+              createAuthenticatedReadGuard={createCanonicalMonitoringReadGuard} />
+          ) : <>
           {!fixturesAllowed ? (
             <div>
               <p role="status">發布監控政策未提供，無法評估。驗證門檻不等同發布監控政策。</p>
@@ -1011,6 +1022,7 @@ export function ModelReleaseController({
               <p><strong>Audit Event:</strong> {monitorResult.audit_event_id}</p>
             </div>
           ) : null}
+          </>}
         </div>
       ) : null}
     </div>

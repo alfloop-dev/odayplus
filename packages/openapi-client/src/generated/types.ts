@@ -388,6 +388,14 @@ export type CanonicalEvidenceExportPayload = {
   to_time: string;
 };
 
+/** CanonicalForecastMonitoringPayload */
+export type CanonicalForecastMonitoringPayload = {
+  current_ids: string[];
+  horizon_days: number;
+  reference_ids: string[];
+  store_id: string;
+};
+
 /** ChangeFieldAssignment */
 export type ChangeFieldAssignment = {
   assignedTo?: string | null;
@@ -2494,6 +2502,7 @@ export const API_PATHS = {
   "/api/v1/learninghub/oss-capabilities": ["GET"],
   "/api/v1/learninghub/releases": ["GET", "POST"],
   "/api/v1/learninghub/releases/{release_id}/monitor": ["POST"],
+  "/api/v1/learninghub/releases/{release_id}/monitoring": ["GET", "POST"],
   "/api/v1/listings/addresses/{address_id}": ["GET"],
   "/api/v1/listings/addresses/{address_id}/corrections": ["GET", "POST"],
   "/api/v1/listings/addresses/{address_id}/corrections/{correction_id}/rollback": ["POST"],

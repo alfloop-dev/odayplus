@@ -310,9 +310,17 @@ test("camera evidence remains locked until permitted purpose is submitted", asyn
 
   await page.goto("/operator");
   await page.getByRole("button", { name: /門市營運|Store Ops/ }).click();
-  await expect(page.getByText("影像鎖定 • 需授權")).toBeVisible();
+  // This unlabelled mocked API is a canonical response, even in E2E/POC.
+  // Wait for its stable unavailable tile rather than the initial demo flash.
+  const detail = page.locator('[aria-label="ISS-1024 detail"]');
+  const cameraTile = detail.locator("article").filter({ has: page.getByText("Camera 影像", { exact: true }) });
+  await expect(cameraTile.getByText("影像內容不可用", { exact: true })).toBeVisible();
+  await expect(cameraTile.getByText("影像內容不可用；調閱目的紀錄不代表存取授權。", { exact: true })).toBeVisible();
+  await expect(cameraTile.getByText(baseEvidence[0].title, { exact: true })).toHaveCount(0);
+  await expect(cameraTile.getByText(baseEvidence[0].summary, { exact: true })).toHaveCount(0);
+  await expect(cameraTile.locator("video, audio, iframe, img, source")).toHaveCount(0);
 
-  await page.getByText("點擊填寫調閱目的").click();
+  await cameraTile.getByRole("button", { name: "填寫調閱目的", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "調閱 Camera 片段" });
   await dialog
     .getByRole("textbox", { name: /調閱目的/ })
@@ -333,7 +341,21 @@ test("camera evidence remains locked until permitted purpose is submitted", asyn
     "/api/v1/operator/store-ops/issues/ISS-1024/camera-purpose",
   );
 
-  await expect(page.getByText("影像已解鎖")).toBeVisible();
+  await expect(dialog).toHaveCount(0);
+  await expect(cameraTile.getByText("調閱目的已記錄", { exact: true })).toBeVisible();
+  await expect(cameraTile.getByText("影像內容不可用；調閱目的紀錄不代表存取授權。", { exact: true })).toBeVisible();
+  await expect(cameraTile.getByRole("button", { name: "更新調閱目的", exact: true })).toBeVisible();
+  await expect(page.getByText("影像已解鎖", { exact: true })).toHaveCount(0);
+  await expect(cameraTile.getByText(nativeCameraPurpose.evidenceItem.title, { exact: true })).toHaveCount(0);
+  await expect(cameraTile.getByText(nativeCameraPurpose.evidenceItem.summary, { exact: true })).toHaveCount(0);
+  await expect(cameraTile.getByText(memoryWorkflowSamples["camera-purpose"].evidenceItem!.title as string, { exact: true })).toHaveCount(0);
+  await expect(cameraTile.getByText(memoryWorkflowSamples["camera-purpose"].evidenceItem!.summary as string, { exact: true })).toHaveCount(0);
+  await expect(cameraTile.locator("video, audio, iframe, img, source")).toHaveCount(0);
+  const purposeWrites = api.writeRequests.flatMap((url, index) =>
+    url.pathname.endsWith("/issues/ISS-1024/camera-purpose") ? [index] : []);
+  expect(purposeWrites).toHaveLength(1);
+  expect(api.writeHeaders[purposeWrites[0]]["idempotency-key"]).toBeTruthy();
+  expect(api.writeHeaders[purposeWrites[0]]["x-correlation-id"]).toBeTruthy();
   expect(
     api.writeRequests.some(
       (url) =>

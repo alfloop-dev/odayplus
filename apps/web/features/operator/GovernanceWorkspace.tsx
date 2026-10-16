@@ -1,5 +1,7 @@
 "use client";
 
+import type { CanonicalMonitoringGuardFactory } from "./governance/canonicalMonitoringClient";
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./governance.module.css";
 import type {
@@ -59,6 +61,8 @@ export type GovernanceWorkspaceProps = {
   role?: GovernanceRole;
   /** Operator role id used for the X-Operator-Role snapshot header. */
   roleId?: string;
+  canonicalMonitoringScopeKey?: string;
+  createCanonicalMonitoringReadGuard?: CanonicalMonitoringGuardFactory;
   /**
    * Caller-side ceiling on decision controls. It can only narrow: decision
    * controls also need the snapshot's server-verified `actionAuthority`
@@ -400,6 +404,8 @@ export function GovernanceWorkspace({
   auditRows: auditRowsProp,
   role = "營運主管",
   roleId,
+  canonicalMonitoringScopeKey,
+  createCanonicalMonitoringReadGuard,
   canDecide: callerAllowsDecision = true,
   canComment = true,
   callbacks,
@@ -1733,7 +1739,9 @@ export function GovernanceWorkspace({
 
       {activeTab === "learningHub" ? (
         <section aria-label="Learning Hub model release controller">
-          <ModelReleaseController roleId={roleId} actor="ModelOps Owner" />
+          <ModelReleaseController key={canonicalMonitoringScopeKey} roleId={roleId} actor="ModelOps Owner"
+                    canonicalMonitoringScopeKey={canonicalMonitoringScopeKey}
+                    createCanonicalMonitoringReadGuard={createCanonicalMonitoringReadGuard} />
         </section>
       ) : null}
 

@@ -489,12 +489,15 @@ modules/forecastops/__init__.py,product_system,product_required,true,,engineerin
 modules/forecastops/application/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/forecastops/application/forecasting.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/forecastops/application/production_model.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/forecastops/application/root_cause_evidence.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/forecastops/domain/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/forecastops/domain/feedback.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/forecastops/domain/forecasting.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/forecastops/domain/root_cause.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/forecastops/infrastructure/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/forecastops/infrastructure/forecast_engines.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/forecastops/infrastructure/repositories.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/forecastops/infrastructure/root_cause_repository.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/forecastops/model_contract.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/forecastops/runtime.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/forecastops/tests/test_forecast_quality_scores.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -549,6 +552,8 @@ modules/intervention/workers/__init__.py,product_system,product_required,true,,e
 modules/intervention/workers/observation_worker.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/learninghub/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/learninghub/application/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/learninghub/application/canonical_monitoring.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/learninghub/application/forecast_monitoring_source.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/learninghub/application/monitor.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/learninghub/application/release.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/learninghub/domain/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -1172,8 +1177,10 @@ tests/integration/test_flow_002_expansion_persistence.py,verification,verificati
 tests/integration/test_forecastops_alert_policy.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_forecastops_alert_precision.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_forecastops_alerts.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_forecastops_diagnostic_evidence_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_forecastops_feedback.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_forecastops_postgresql_sequence.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_forecastops_root_cause_evidence.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_forecastops_tenant_runtime_contract.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_forecastops_train_runtime_contract.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_franchisee_supervisor_notification_http.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -1193,7 +1200,9 @@ tests/integration/test_intake_score_queue_schedule_postgresql.py,verification,ve
 tests/integration/test_intake_score_schedule_mirror_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_intervention_workflow.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_lean_signal_runtime.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_learninghub_canonical_monitoring.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_learninghub_dataset_snapshot_api.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_learninghub_forecast_monitoring_source.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_learninghub_model_list_api.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_learninghub_operations_acceptance.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_learninghub_postgresql_release.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.

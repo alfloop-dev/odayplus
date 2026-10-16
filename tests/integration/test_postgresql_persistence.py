@@ -180,8 +180,10 @@ def test_postgresql_document_audit_and_job_contracts() -> None:
             engine.close()
 
 
-def test_postgresql_claim_is_atomic_across_worker_processes() -> None:
-    database_url = os.environ["INTAKE_TEST_DATABASE_URL"]
+def test_postgresql_claim_is_atomic_across_worker_processes(
+    intake_blank_db: Any,
+) -> None:
+    database_url = intake_blank_db.url()
     engine = PostgresEngine(database_url, validate_schema=False)
     queue = DurableJobQueue(engine)
     job_type = f"postgres.claim.{uuid4()}"
@@ -206,6 +208,7 @@ def test_postgresql_claim_is_atomic_across_worker_processes() -> None:
         for index in range(4)
     ]
     try:
+        assert engine.query("SELECT job_id FROM durable_jobs") == [{"job_id": job.job_id}]
         for process in processes:
             process.start()
         start_event.set()
