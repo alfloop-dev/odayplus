@@ -303,6 +303,26 @@ function getTaskStatusLabel(status: string): string {
     .join(" ");
 }
 
+/** Navigation validation only; this never grants access to the destination. */
+export function safeOperatorTaskHref(value: string, origin: string): string | null {
+  const href = value.trim();
+  // Backslashes/control characters can be normalized into a different authority
+  // by the browser. Protocol-relative destinations are not application routes.
+  if (!href || /[\\\\\u0000-\u0020\u007f]/.test(href) || href.startsWith("//")) return null;
+  try {
+    const base = new URL(origin);
+    const target = new URL(href, base);
+    if (
+      !["http:", "https:"].includes(target.protocol)
+      || target.origin !== base.origin
+      || target.username || target.password
+    ) return null;
+    return target.href;
+  } catch {
+    return null;
+  }
+}
+
 function normalizeTaskRecord(value: unknown, index: number, source: TaskCenterSource): OperatorTask | null {
   const record = getRecord(value);
   if (!record) return null;
@@ -318,9 +338,12 @@ function normalizeTaskRecord(value: unknown, index: number, source: TaskCenterSo
   const dueLabel =
     getNestedText(record, ["dueLabel", "due_label", "sla", "due", "due_at", "dueAt", "deadline"]) || "No SLA";
   const workspace = inferWorkspace(record);
-  const href =
+  const rawHref =
     getNestedText(record, ["href", "url"]) ||
     (workspace ? `/operator?ws=${workspace}` : "/operator");
+  const href = typeof window === "undefined"
+    ? ""
+    : safeOperatorTaskHref(rawHref, window.location.origin) ?? "";
   const tone = getTaskTone(rawStatus, priority);
 
   return {
@@ -1091,8 +1114,13 @@ export function OperatorConsole({
       return;
     }
 
+    const destination = safeOperatorTaskHref(task.href, window.location.origin);
+    if (!destination) {
+      showToast("任務連結無效或不屬於本站，未開啟");
+      return;
+    }
     try {
-      const href = new URL(task.href, window.location.origin);
+      const href = new URL(destination);
       const ws = href.searchParams.get("ws");
       if (href.pathname === "/operator" && ws && isWorkspaceId(ws)) {
         handleTargetSelect(
@@ -1106,10 +1134,11 @@ export function OperatorConsole({
         return;
       }
     } catch {
-      // Fall through to normal navigation for non-URL task hrefs.
+      showToast("任務連結無效，未開啟");
+      return;
     }
 
-    window.location.assign(task.href);
+    window.location.assign(destination);
   }
 
   function handleCommandKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
