@@ -116,7 +116,7 @@ def test_expand_migration_preserves_registry_rows_and_rejects_unknown_kind(intak
     with db.connect() as conn:
         assert (
             conn.execute("SELECT version_num FROM public.oday_plus_alembic_version").fetchone()[0]
-            == "0024"
+            == "0027"
         )
         assert (
             conn.execute(
