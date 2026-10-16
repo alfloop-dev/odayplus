@@ -17,16 +17,29 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from apps.api.app.routes.operator_modules.live_service import resolve_service
 from modules.opsboard.application.user_role_management import (
     UserNotFound,
+    UserRoleAuthorizationRefused,
     UserRoleManagementService,
     UserRolePolicyError,
 )
 from shared.auth import Principal
+from shared.identity.dev_smoke_recovery import (
+    PRESERVED_ACCOUNT_ID as RECOVERY_ACTOR_ID,
+)
+from shared.identity.dev_smoke_recovery import (
+    TENANT_ID as RECOVERY_TENANT_ID,
+)
+from shared.identity.dev_smoke_recovery import (
+    RecoveryBindingJournal,
+    RecoveryRefused,
+    RecoveryReservation,
+)
 from shared.identity.invitation_service import InvitationRefused, InvitationService
 
 # ---------------------------------------------------------------------------
@@ -113,6 +126,129 @@ class InvitationRevokedReceipt(BaseModel):
     audit_event_id: str
 
 
+class RecoveryNoStoreRoute(APIRoute):
+    def get_route_handler(self) -> Any:
+        handler = super().get_route_handler()
+
+        async def no_store(request: Request) -> Any:
+            try:
+                response = await handler(request)
+            except HTTPException as exc:
+                # Auth dependencies may reject before the handler. No detailed
+                # principal/request/validation data is returned from this surface.
+                response = JSONResponse({"error": {"code": "RECOVERY_AUTHORIZATION_REFUSED"}},
+                                        status_code=exc.status_code)
+            except Exception:
+                response = JSONResponse({"error": {"code": "RECOVERY_UNAVAILABLE"}}, status_code=503)
+            response.headers["cache-control"] = "no-store"
+            return response
+
+        return no_store
+
+
+class RecoveryReservationPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    execution_id: str = Field(min_length=36, max_length=36)
+    plan_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    event_id: str = Field(min_length=36, max_length=36)
+    stage: Literal["reserved"]
+    authorization_id: Literal["HUMAN-ODP-DEV-SMOKE-RECOVERY-20261011-001"]
+    execution_authorized: Literal[False]
+    credential_binding_verified: Literal[False]
+    secret_values_redacted: Literal[True]
+
+    def reservation(self) -> RecoveryReservation:
+        return RecoveryReservation(self.execution_id, self.plan_digest, self.event_id, self.stage)
+
+
+class RecoveryReservePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    action: Literal["reserve"]
+    plan: dict[str, str]
+
+
+class RecoveryIssuePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    action: Literal["issue"]
+    reservation: RecoveryReservationPayload
+    lifetime_seconds: int = Field(default=600, ge=1, le=600)
+
+
+class RecoveryConsumePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    action: Literal["consume"]
+    reservation: RecoveryReservationPayload
+    capability_id: str = Field(min_length=36, max_length=36)
+    token: str = Field(min_length=43, max_length=43, repr=False)
+    password: str = Field(min_length=12, max_length=1024, repr=False)
+
+
+class RecoveryQuarantinePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    action: Literal["quarantine"]
+    reservation: RecoveryReservationPayload
+
+
+class RecoveryBindingIntentPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    action: Literal["binding-intent"]
+    reservation: RecoveryReservationPayload
+
+
+class RecoveryBindingAckPayload(BaseModel):
+    """Original-admin declaration, NOT server authentication of a GitHub reply."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    action: Literal["binding-acknowledged"]
+    reservation: RecoveryReservationPayload
+    intent_event_id: str = Field(min_length=36, max_length=36)
+    put_status: int = Field(ge=201, le=201, description="Trusted foreground must observe actual201; no reconstruction.")
+
+
+def _recovery_schema(model: type[BaseModel]) -> dict[str, Any]:
+    # openapi_extra is inserted at the path, not in components. Inline local
+    # Pydantic definitions so nested reservations have no dangling root refs.
+    schema = model.model_json_schema()
+    definitions = schema.pop("$defs", {})
+
+    def expand(value: Any) -> Any:
+        if isinstance(value, dict):
+            if "$ref" in value:
+                return expand(definitions[value["$ref"].removeprefix("#/$defs/")])
+            return {key: expand(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [expand(item) for item in value]
+        return value
+
+    return expand(schema)
+
+
+async def _recovery_body(request: Request) -> dict[str, Any]:
+    if request.query_params:
+        raise HTTPException(422, detail={"code": "RECOVERY_INPUT_INVALID"})
+    if request.headers.get("content-type", "").split(";", 1)[0].strip() != "application/json":
+        raise HTTPException(415, detail={"code": "RECOVERY_JSON_REQUIRED"})
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > 8192:
+            raise HTTPException(413, detail={"code": "RECOVERY_BODY_TOO_LARGE"})
+        body.extend(chunk)
+    try:
+        def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError
+                result[key] = value
+            return result
+        parsed = json.loads(body, object_pairs_hook=unique)
+        if type(parsed) is not dict:
+            raise ValueError
+        return parsed
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        raise HTTPException(422, detail={"code": "RECOVERY_INPUT_INVALID"}) from None
+
+
 async def _invitation_body(request: Request, *, limit: int = 4096) -> dict[str, Any]:
     # Do not let FastAPI's default validation handler echo input. Even an
     # unexpected field or malformed request could contain a password/token.
@@ -187,7 +323,10 @@ def create_user_role_sub_router(
         if not getattr(svc, "requires_tenant", False):
             return {}
         raw = getattr(req.state, "operator_system_roles", None) or ""
-        return {"actor_roles": frozenset(r for r in str(raw).split(",") if r)}
+        result: dict[str, Any] = {"actor_roles": frozenset(r for r in str(raw).split(",") if r)}
+        if getattr(svc, "requires_verified_actor", False):
+            result["verified_principal"] = getattr(req.state, "operator_principal", None)
+        return result
 
     @router.get("", dependencies=read_deps)
     def list_users(
@@ -421,6 +560,115 @@ def create_user_role_sub_router(
             return JSONResponse({"error": {"code": "PROVISIONING_JOURNAL_UNAVAILABLE"}}, status_code=503,
                                 headers={"cache-control": "no-store"})
 
+    def recovery_context(request: Request) -> tuple[RecoveryBindingJournal, Principal]:
+        # Permission dependency runs before DTO parsing. Claims alone never
+        # suffice: the domain revalidates the persisted original session on each
+        # operation. No factory without a guard or durable identity can recover.
+        principal = getattr(request.state, "operator_principal", None)
+        if (not require_manage_permission_fn or not isinstance(principal, Principal)
+                or not principal.authenticated or principal.subject_id != RECOVERY_ACTOR_ID
+                or principal.tenant_id != RECOVERY_TENANT_ID):
+            raise RecoveryRefused("RECOVERY_ORIGINAL_ADMIN_REQUIRED")
+        invitations, _ = invitation_context(request)
+        return RecoveryBindingJournal(
+            engine=invitations._engine, audit_log=invitations._audit,
+            environment=os.environ.get("ODP_DEPLOY_ENV", ""),
+            release_profile=os.environ.get("ODP_RELEASE_PROFILE", ""),
+            release_sha=os.environ.get("ODAY_RELEASE_SHA", ""),
+            manifest_digest=os.environ.get("ODP_RELEASE_MANIFEST_DIGEST", ""),
+        ), principal
+
+    def recovery_error(code: str, http_status: int) -> JSONResponse:
+        return JSONResponse({"error": {"code": code}}, status_code=http_status,
+                            headers={"cache-control": "no-store"})
+
+    recovery_router = APIRouter(route_class=RecoveryNoStoreRoute)
+
+    @recovery_router.get("/dev-smoke-recovery", dependencies=manage_deps,
+                operation_id="inspectDevSmokeRecovery")
+    def inspect_dev_smoke_recovery(request: Request) -> JSONResponse:
+        try:
+            recovery, principal = recovery_context(request)
+            if request.query_params:
+                return recovery_error("RECOVERY_INPUT_INVALID", 422)
+            root = recovery.inspect(principal)
+            binding = recovery.binding_inspect(principal)
+            return JSONResponse({"reservation": root.to_receipt() if root else None,
+                                 "binding": binding,
+                                 "execution_authorized": False, "secret_values_redacted": True},
+                                headers={"cache-control": "no-store"})
+        except (InvitationRefused, HTTPException):
+            return recovery_error("RECOVERY_ORIGINAL_ADMIN_REQUIRED", 403)
+        except RecoveryRefused as exc:
+            return recovery_error(exc.code, 403 if exc.code == "RECOVERY_ORIGINAL_ADMIN_REQUIRED" else 409)
+        except Exception:
+            return recovery_error("RECOVERY_UNAVAILABLE", 503)
+
+    @recovery_router.post("/dev-smoke-recovery", dependencies=manage_deps,
+                 operation_id="writeDevSmokeRecovery",
+                 openapi_extra={"requestBody": {"required": True, "content": {
+                     "application/json": {"schema": {"oneOf": [
+                         _recovery_schema(model) for model in (
+                             RecoveryReservePayload, RecoveryIssuePayload,
+                             RecoveryConsumePayload, RecoveryQuarantinePayload,
+                             RecoveryBindingIntentPayload, RecoveryBindingAckPayload,
+                         )
+                     ]}}
+                 }}})
+    async def write_dev_smoke_recovery(request: Request) -> JSONResponse:
+        try:
+            recovery, principal = recovery_context(request)
+            parsed = await _recovery_body(request)
+            models = {"reserve": RecoveryReservePayload, "issue": RecoveryIssuePayload,
+                      "consume": RecoveryConsumePayload, "quarantine": RecoveryQuarantinePayload,
+                      "binding-intent": RecoveryBindingIntentPayload,
+                      "binding-acknowledged": RecoveryBindingAckPayload}
+            try:
+                model = models.get(parsed.get("action"))
+                if model is None:
+                    raise ValueError
+                payload = model.model_validate(parsed)
+            except (ValidationError, ValueError, TypeError):
+                return recovery_error("RECOVERY_INPUT_INVALID", 422)
+            # Do NOT wrap in an outer transaction: consume's durable abuse budget
+            # must survive a refused rotation, and receipts require real commit.
+            if isinstance(payload, RecoveryReservePayload):
+                root = await run_in_threadpool(recovery.reserve, principal, payload.plan)
+                result = {"reservation": root.to_receipt()}
+            elif isinstance(payload, RecoveryIssuePayload):
+                cap = await run_in_threadpool(recovery.issue, principal, payload.reservation.reservation(),
+                                             lifetime_seconds=payload.lifetime_seconds)
+                result = {**cap.to_receipt(), "token": cap.token}
+            elif isinstance(payload, RecoveryConsumePayload):
+                result = await run_in_threadpool(recovery.consume, principal, payload.reservation.reservation(),
+                    capability_id=payload.capability_id, token=payload.token, password=payload.password)
+            elif isinstance(payload, RecoveryBindingIntentPayload):
+                result = {"binding": await run_in_threadpool(
+                    recovery.binding_intent, principal, payload.reservation.reservation())}
+            elif isinstance(payload, RecoveryBindingAckPayload):
+                # Integer201 is the original admin's declaration only. The
+                # trusted foreground owns actual single-attempt response
+                # classification; this server cannot authenticate GitHub from it.
+                result = {"binding": await run_in_threadpool(
+                    recovery.binding_acknowledge, principal, payload.reservation.reservation(),
+                    intent_event_id=payload.intent_event_id, put_status=payload.put_status)}
+            else:
+                root = await run_in_threadpool(recovery.quarantine, principal, payload.reservation.reservation())
+                result = {"reservation": root.to_receipt()}
+            return JSONResponse(result, headers={"cache-control": "no-store"})
+        except RecoveryRefused as exc:
+            return recovery_error(exc.code, 429 if exc.code == "RECOVERY_RATE_LIMITED" else
+                                  403 if exc.code == "RECOVERY_ORIGINAL_ADMIN_REQUIRED" else 409)
+        except InvitationRefused:
+            return recovery_error("RECOVERY_ORIGINAL_ADMIN_REQUIRED", 403)
+        except HTTPException as exc:
+            code = exc.detail.get("code", "RECOVERY_INPUT_INVALID") if isinstance(exc.detail, dict) else "RECOVERY_INPUT_INVALID"
+            return recovery_error(code, exc.status_code)
+        except Exception:
+            return recovery_error("RECOVERY_UNAVAILABLE", 503)
+
+    router.include_router(recovery_router)
+
     @router.get("/{subject_id}", dependencies=read_deps)
     def get_user(subject_id: str, request: Request) -> dict[str, Any]:
         svc = get_svc(request)
@@ -470,6 +718,8 @@ def create_user_role_sub_router(
                 "message": f"User '{body.subjectId}' role and scope saved successfully.",
                 "correlation_id": getattr(request.state, "correlation_id", None),
             }
+        except UserRoleAuthorizationRefused as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except UserRolePolicyError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
@@ -503,6 +753,8 @@ def create_user_role_sub_router(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
             ) from exc
+        except UserRoleAuthorizationRefused as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except UserRolePolicyError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)

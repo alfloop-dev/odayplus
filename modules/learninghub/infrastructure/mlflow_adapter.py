@@ -6,8 +6,10 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Lock
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote, urlparse
 
@@ -67,6 +69,55 @@ _MLFLOW_TO_STAGE = {
 }
 
 
+_EMPTY_SCHEMA_LOCK = Lock()
+
+
+@lru_cache(maxsize=1)
+def _empty_mlflow_database_image(mlflow_version: str) -> bytes:
+    """Snapshot only an unused, fully migrated schema for this MLflow version.
+
+    Never snapshot an application store: models, runs, aliases and governance
+    projections must not enter this cache. Only immutable bytes survive; neither
+    a mutable database nor a client/engine is shared with any adapter.
+    """
+    from mlflow.store.db import utils
+
+    with TemporaryDirectory(prefix="oday-plus-mlflow-schema-") as directory:
+        database = Path(directory) / "schema.db"
+        engine = utils.create_sqlalchemy_engine_with_retry(f"sqlite:///{database}")
+        try:
+            # Run the real initial schema and every upstream Alembic migration.
+            # Do not create/stamp a hand-written approximation of the schema.
+            utils._initialize_tables(engine)
+            utils._verify_schema(engine)
+        finally:
+            engine.dispose()
+        return database.read_bytes()
+
+
+def _seed_ephemeral_mlflow_database(database: Path) -> None:
+    from mlflow import __version__
+
+    # Serialize cold initialization: Alembic has process-global migration state.
+    with _EMPTY_SCHEMA_LOCK:
+        image = _empty_mlflow_database_image(__version__)
+    # A private new file, never the template database or another adapter's file.
+    with database.open("xb") as stream:
+        stream.write(image)
+    # The caller still constructs a normal MlflowClient, including upstream table
+    # and schema-version verification on THIS copy. This is not a cached verdict.
+
+
+def _reset_empty_schema_cache_after_fork() -> None:
+    global _EMPTY_SCHEMA_LOCK
+    _EMPTY_SCHEMA_LOCK = Lock()
+    _empty_mlflow_database_image.cache_clear()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_empty_schema_cache_after_fork)
+
+
 class MlflowAliasSynchronizationError(RuntimeError):
     """Raised when the remote and durable alias projections cannot be kept aligned."""
 
@@ -108,6 +159,7 @@ class MlflowRegistryAdapter:
                 elif isinstance(self.repository, InMemoryLearningHubRepository):
                     self._local_tracking_dir = TemporaryDirectory(prefix="oday-plus-mlflow-")
                     database = Path(self._local_tracking_dir.name) / "mlflow.db"
+                    _seed_ephemeral_mlflow_database(database)
                 else:
                     raise RuntimeError(
                         "MLFLOW_TRACKING_URI is required when the Learning Hub "

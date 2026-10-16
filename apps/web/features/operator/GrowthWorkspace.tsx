@@ -346,6 +346,7 @@ export function GrowthWorkspace({
           />
         ) : activeTab === "priceops" ? (
           <RecommendationSection
+            demonstration={fixturesAllowed && growthLoadState === "fixture" && vm.dataSource === "fixture"}
             recommendations={vm.recommendations}
             segments={vm.segments}
             href={href}
@@ -478,12 +479,14 @@ function SegmentSection({
   );
 }
 
-/** PriceOps tab — pricing recommendation table and interactive simulation workbench. */
+/** Live recommendations are read-only; local simulations are explicit demonstrations. */
 function RecommendationSection({
+  demonstration,
   recommendations,
   segments,
   href,
 }: {
+  demonstration: boolean;
   recommendations: PriceOpsRecommendation[];
   segments: GrowthSegment[];
   href: (o: Record<string, string | undefined>) => string;
@@ -522,7 +525,8 @@ function RecommendationSection({
       const num = parseNumPrice(selectedRec.candidatePrice);
       setCandidatePriceInput(num > 0 ? String(num) : selectedRec.candidatePrice);
     }
-  }, [selectedRecId]);
+    setWritebackRecord(null);
+  }, [selectedRecId, demonstration]);
 
   const candidatePriceNum = parseNumPrice(candidatePriceInput);
   const currentPriceNum = selectedRec ? parseNumPrice(selectedRec.currentPrice) : 0;
@@ -530,10 +534,10 @@ function RecommendationSection({
   const isHardBlocked = selectedRec?.constraintStatus === "HARD_CONSTRAINT_FAILED" || isInvalidPrice;
 
   const handleWriteback = () => {
-    if (isHardBlocked) return;
+    if (!demonstration || isHardBlocked) return;
     setWritebackRecord({
-      decisionId: `pricing-decision-${Math.random().toString(36).substring(2, 9)}`,
-      actor: "pricing-officer",
+      decisionId: `demo-${Math.random().toString(36).substring(2, 9)}`,
+      actor: "示範操作者（非已驗證身分）",
       writtenBackAt: new Date().toISOString(),
       decision: decisionType,
     });
@@ -597,7 +601,7 @@ function RecommendationSection({
                       onClick={() => setSelectedRecId(rec.id)}
                       style={{ padding: "3px 8px", fontSize: "11px" }}
                     >
-                      {isSelected ? "模擬中" : "情境模擬"}
+                      {demonstration ? (isSelected ? "模擬中" : "情境模擬") : "檢視建議"}
                     </button>
                     {blocked ? (
                       <span
@@ -624,8 +628,16 @@ function RecommendationSection({
         </table>
       </div>
 
-      {/* Interactive Pricing Simulation & Decision Writeback Workbench */}
-      {selectedRec && (
+      {!demonstration && (
+        <div role="status" data-testid="priceops-writeback-unavailable">
+          正式建議僅供唯讀檢視。情境模型與決策回寫未執行；沒有伺服器核准或持久稽核收據。
+          <button type="button" data-testid="priceops-writeback-btn" disabled>
+            寫回決策不可用
+          </button>
+        </div>
+      )}
+      {/* Never expose computed demo bands or local receipts as live evidence. */}
+      {demonstration && selectedRec && (
         <div
           data-testid="priceops-scenario-workbench"
           style={{
@@ -641,7 +653,7 @@ function RecommendationSection({
               PriceOps 定價情境模擬 workbench — {selectedRec.store ?? segmentName(selectedRec.segmentId)} ({selectedRec.id})
             </h4>
             <span style={{ fontSize: "11px", color: "#666", background: "#f0f2f5", padding: "2px 8px", borderRadius: "4px" }}>
-              Policy: brand-pricing-policy-v1 | Solver: priceops-exhaustive-ladder-v1
+              DEMONSTRATION / 示範：Policy brand-pricing-policy-v1 | Solver priceops-exhaustive-ladder-v1（非模型執行證據）
             </span>
           </div>
 
@@ -761,7 +773,7 @@ function RecommendationSection({
             }}
           >
             <h5 style={{ margin: "0 0 8px", fontSize: "12px", fontWeight: 700, color: "#333" }}>
-              決策回寫 (Idempotent Decision Writeback)
+              示範決策（僅本機展示，非伺服器回寫）
             </h5>
             <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap", marginBottom: "8px" }}>
               <select
@@ -805,7 +817,7 @@ function RecommendationSection({
                   color: "#137333",
                 }}
               >
-                ✓ 決策成功寫回與審計: ID <strong>{writebackRecord.decisionId}</strong> | 操作者: <strong>{writebackRecord.actor}</strong> | 決策: <strong>{writebackRecord.decision}</strong> | 時間: <strong>{new Date(writebackRecord.writtenBackAt).toLocaleTimeString()}</strong>
+                DEMONSTRATION / 示範結果，未回寫伺服器、未建立持久稽核：本機 ID <strong>{writebackRecord.decisionId}</strong> | <strong>{writebackRecord.actor}</strong> | 示範決策: <strong>{writebackRecord.decision}</strong> | 本機時間: <strong>{new Date(writebackRecord.writtenBackAt).toLocaleTimeString()}</strong>
               </div>
             )}
           </div>

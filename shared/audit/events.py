@@ -73,6 +73,8 @@ class InMemoryAuditLog:
         self._worm_sink = worm_sink
 
     def record(self, event: AuditEvent) -> AuditEvent:
+        from shared.observability.correlation import validate_audit_correlation
+        validate_audit_correlation(event.event_type, event.correlation_id)
         previous_hash = (
             self._events[-1].event_hash if self._events else CHAIN_GENESIS_HASH
         )
@@ -118,8 +120,10 @@ class InMemoryAuditLog:
         payload is deterministic for a given ordered event stream.
         """
 
+        from shared.audit.restore import reject_unproven_ledger_replay
+        values = reject_unproven_ledger_replay(events)
         replayed: list[AuditEvent] = []
-        for event in sorted(events, key=_audit_event_replay_key):
+        for event in sorted(values, key=_audit_event_replay_key):
             replayed.append(self.record(event))
         return replayed
 

@@ -887,8 +887,15 @@ def test_facade_platform_admin_allowed_cross_tenant_with_waiver(
     facade, platform_admin_principal
 ):
     """PLATFORM_ADMIN with a formal, time-bounded waiver is permitted and audited."""
+    from dataclasses import replace
     from datetime import UTC, datetime, timedelta
 
+    # Positive waiver fixture: known DIFFERENT owning tenant. The waiver never
+    # supplies missing ownership; the shared tenantless fixture stays unchanged.
+    platform_admin_principal = replace(
+        platform_admin_principal,
+        scope=replace(platform_admin_principal.scope, tenant_id="tenant-admin-owning"),
+    )
     waiver = TenantAccessWaiver(
         waiver_id="WAIVER-ADMIN-TEST",
         principal_id="admin-platform-1",

@@ -1,0 +1,102 @@
+{
+  "kind": "author-diagnostic-not-canonical-not-review",
+  "task_id": "ODP-RECOVERY-SOURCE-INTEGRATION-001",
+  "run_id": "pi-20261015T122146Z-d2046e81",
+  "measured_head": "ffb269ba9a1e8ba5d3a3caa05c3091a018430c58",
+  "measured_tree": "8817663e5509ca1ea4fd87dd136177d479efd98d",
+  "admitted_base": "19562ad2a8773099db26366446b3488b446e630c",
+  "merge_parents": [
+    "1ac806841ffce14014df81a89970bb59a4474342",
+    "19562ad2a8773099db26366446b3488b446e630c"
+  ],
+  "terminal": {
+    "at": "2026-10-15T12:26:17.496847+00:00",
+    "head": "ffb269ba9a1e8ba5d3a3caa05c3091a018430c58",
+    "tree": "8817663e5509ca1ea4fd87dd136177d479efd98d",
+    "argv": [
+      "uv",
+      "run",
+      "--frozen",
+      "--python",
+      "3.12",
+      "pytest",
+      "tests/integration/test_store_ops_state_materializer.py",
+      "-q",
+      "-n",
+      "0"
+    ],
+    "cap_seconds": 420,
+    "duration_seconds": 22.09407269116491,
+    "exit_code": 1,
+    "interrupted": false,
+    "kernel_child_closure": {
+      "kernel_waitpid_echild": true
+    },
+    "descendant_exit_unknown": false,
+    "writer_scan": {
+      "same_uid_writers": [],
+      "same_uid_permission_denied": [
+        1085478,
+        1085479,
+        1085599,
+        1085724
+      ],
+      "other_uids_not_inspected": true
+    },
+    "external_writer_exclusion_unproven": true,
+    "raw_sha256": "628b177ad613a74260746b40764eeecc173d55d526ee47317f9945ae8d36e766",
+    "manager_activity_recognized": false,
+    "not_canonical_or_review": true
+  },
+  "artifacts": [
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T122146Z-d2046e81/base-composition/coordinator-terminal.json",
+      "sha256": "d1b70190c7b2c01576a19f70a3d6cff7b4172f2b9d33172b73b30c93ed3377be"
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T122146Z-d2046e81/base-composition/custody.jsonl",
+      "sha256": "4be586c8b266eb59d88652746ff2ce218a16a71eb7d82b8352743e351fb23446"
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T122146Z-d2046e81/base-composition/invocation.json",
+      "sha256": "ec4d877a4eba7a9a3fe40e2b558682e922f9e7bd2b6fea9d0f59e29277fbb584"
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T122146Z-d2046e81/base-composition/pg-guard.json",
+      "sha256": "0a804a5472ad818b0209a4eb3d22d88d8e2abb6c5d4ee10397abad51a6c13e0d"
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T122146Z-d2046e81/base-composition/preflight.json",
+      "sha256": "834a6bcd3638f56bdfaec5b9a8bb12465261bc6e3c467e8d303563bf6192a2b0"
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T122146Z-d2046e81/base-composition/raw.log",
+      "sha256": "628b177ad613a74260746b40764eeecc173d55d526ee47317f9945ae8d36e766"
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T122146Z-d2046e81/base-composition/terminal.json",
+      "sha256": "422f098f4d2b317fa6f6352b888cd898707fd9b2768d498622f8f634be683416"
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T122146Z-d2046e81/base-composition-seal.json",
+      "sha256": "df710718b6087dd7b214875aed1673dc141af8f1f79e0a7cad75832078f2e8e0"
+    }
+  ],
+  "selection": {
+    "collected": 20,
+    "passed": 18,
+    "failed": 2,
+    "failure_nodes": [
+      "test_tenants_never_see_or_overwrite_each_others_state",
+      "test_production_never_reads_or_writes_an_unscoped_document"
+    ]
+  },
+  "infrastructure_limit": "Owning module uses SQLite engine reporting PostgreSQL dialect; separately provisioned real PG is not proof this module exercises PG",
+  "not_transferable_to_documentation_successor": true,
+  "additional_lease_requested": [
+    "tests/integration/test_store_ops_state_materializer.py"
+  ],
+  "original_task_unchanged": true,
+  "human_ops_disposition": "PENDING",
+  "operational_hold": true
+}

@@ -223,7 +223,7 @@ def validate_stage_metadata(
             errors.append(f"{label}.{key} must be a non-empty string")
 
     stage = value.get("stage")
-    if stage not in STAGE_CONTRACT:
+    if not isinstance(stage, str) or stage not in STAGE_CONTRACT:
         errors.append(f"{label}.stage must be one of {list(STAGES)}, got: {stage!r}")
         return
     expected_environment, expected_target = STAGE_CONTRACT[stage]
@@ -303,20 +303,26 @@ def validate_release(
     if not is_nonempty_str(release.get("decision_note")):
         errors.append("release.decision_note must be a non-empty string")
 
-    if decision == "go":
-        signoff = release.get("human_signoff")
-        if not isinstance(signoff, dict):
-            errors.append("release.decision 'go' requires a release.human_signoff object")
-        else:
-            for key in REQUIRED_SIGNOFF_KEYS:
-                if key not in signoff:
-                    errors.append(f"release.human_signoff missing required field: {key}")
-            if not is_nonempty_str(signoff.get("approver")):
-                errors.append("release.human_signoff.approver must be a non-empty string")
-            if not is_valid_date(signoff.get("date")):
-                errors.append("release.human_signoff.date must be an ISO date")
+    validate_go_signoff(release, errors)
 
     return candidate_sha
+
+
+def validate_go_signoff(release: dict[str, Any], errors: list[str]) -> None:
+    """Shared canonical GO predicate; shape validation is NOT human approval."""
+    if release.get("decision") != "go":
+        return
+    signoff = release.get("human_signoff")
+    if not isinstance(signoff, dict):
+        errors.append("release.decision 'go' requires a release.human_signoff object")
+    else:
+        for key in REQUIRED_SIGNOFF_KEYS:
+            if key not in signoff:
+                errors.append(f"release.human_signoff missing required field: {key}")
+        if not is_nonempty_str(signoff.get("approver")):
+            errors.append("release.human_signoff.approver must be a non-empty string")
+        if not is_valid_date(signoff.get("date")):
+            errors.append("release.human_signoff.date must be an ISO date")
 
 
 def validate_migration(migration: Any, errors: list[str]) -> None:

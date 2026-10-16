@@ -1,0 +1,113 @@
+{
+  "task_id": "ODP-RECOVERY-SOURCE-INTEGRATION-001",
+  "run_id": "pi-20261015T151317Z-14a3807c",
+  "kind": "incremental-F2-author-diagnostics-NOT-final-proof",
+  "scratch_root": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T151317Z-14a3807c",
+  "admitted_base": "19562ad2a8773099db26366446b3488b446e630c",
+  "scope_entries": 361,
+  "source_documents": 17,
+  "request_sha256": "79f4d6c05c4437185e5ec48eaf1fcfcace046fca14b0419b9fcf4924476dbb27",
+  "contract_sha256": "7abbed1317e750197cf7e5a348bd0bf81ab68f45f71715cb24b38195e3fe62d7",
+  "original_base_test_functions_AST_unchanged": 129,
+  "new_owning_test_functions": [
+    "test_release_preflight_blocks_all_mutating_probes",
+    "test_other_preflight_failures_do_not_enter_worker"
+  ],
+  "original_dev_admin_test_module_unchanged": true,
+  "commands": {
+    "base_and_dev_admin": "uv run --frozen --python 3.12 pytest tests/e2e/test_live_e2e_gate.py tests/e2e/test_live_e2e_gate_dev_admin.py -q -n 0",
+    "native_recovery": "uv run --frozen --python 3.12 pytest tests/security/test_dev_smoke_recovery_gate.py -q -n 0",
+    "ruff": "uv run --frozen --python 3.12 ruff check delivery_toolchain/e2e/check_live_e2e_gate.py tests/e2e/test_live_e2e_gate.py",
+    "diff": "git diff --check 13c5fb2af8839670c699d9e93b5730efe8bbee63 b1f85cb209441d6c75cfbd3a3d176976e9ad6954"
+  },
+  "receipt_path_convention": "<scratch_root>/<label>/terminal.json, raw.log, custody.jsonl, coordinator-terminal.json; <scratch_root>/<label>-seal.json",
+  "all_caps_seconds": 420,
+  "measurements": [
+    {
+      "label": "f2-owning-01",
+      "command": "base_and_dev_admin",
+      "head": "2dad9845f996049667cfa84399ec547ed69e2c2e",
+      "exit_code": 1,
+      "duration_seconds": 39.906153065152466,
+      "reason": "First F2 anchor; two original read-only diagnostic assertions failed, not removed or weakened",
+      "raw_sha256": "6c4cefc8d9afdc1dbc81b73ca5f88d04efba8a1e6e869e57b7ffc10b6621f3ec",
+      "terminal_sha256": "ac4fcc6bf00fb3d612d55476d7794b710b7d0a451af88126245930e75eb5f4b1",
+      "seal_sha256": "8baa9318de9431a8bae3b70f255b59342294743c5d37d594de7876b9f4f78a03"
+    },
+    {
+      "label": "f2-owning-02",
+      "command": "base_and_dev_admin",
+      "head": "a14c1a6245a5dfc7847044b798783833bf62b039",
+      "exit_code": 1,
+      "duration_seconds": 34.43718656105921,
+      "reason": "New source retains read-only diagnostics; one NEW assertion incorrectly disallowed the no-dispatch diagnostic report",
+      "raw_sha256": "ca68cff83fff3e70aab35fcefb1425ff58c99ff0b0c001ae13cdf82dc951bf73",
+      "terminal_sha256": "6a794612cc58d555ec9d197aaa56b0bcf5a613bd8084227ec33adc4448c80e07",
+      "seal_sha256": "6ab95dab7cd3189456022c3520d7c1f818787bd6de7f2f530c9e279bf75bca8f"
+    },
+    {
+      "label": "f2-owning-03",
+      "command": "base_and_dev_admin",
+      "head": "b1f85cb209441d6c75cfbd3a3d176976e9ad6954",
+      "tree": "81421fb5f71f22a0a536d1f9c1b62c3a9814f6f1",
+      "exit_code": 0,
+      "duration_seconds": 33.969889075960964,
+      "reason": "New source explicitly permits only retained dispatched=false diagnostic, all mutation/driver assertions unchanged",
+      "raw_sha256": "827abf3deb7714117d1bcbb1dff50f986d802d18b8a98281564ebf2050564a3f",
+      "terminal_sha256": "b9338773c56fba6bb0a3f553d3dcc7cebc7354268ee356feab4fdedb40bb2dbc",
+      "seal_sha256": "90fcbc507c3a6f20d3510743ffc6c2a51d6ae1ecc57c1bb01d57b0cdc4856078"
+    },
+    {
+      "label": "f2-native-recovery-01",
+      "command": "native_recovery",
+      "head": "b1f85cb209441d6c75cfbd3a3d176976e9ad6954",
+      "exit_code": 0,
+      "duration_seconds": 19.12887082574889,
+      "raw_sha256": "b3b7c8f606c6b1790eb5b6906f00fc1fd7a2e4703c28ff39502058bdf72f2f6d",
+      "terminal_sha256": "bb70a9994273b25a0a853eabbc0bd5247d8526aee1f7f58189ce8342ef01c4f1",
+      "seal_sha256": "825143fff7e05971935071a922bf20ddbaa79e1c7cc4ccebd6f7040e80ebd30e"
+    },
+    {
+      "label": "f2-ruff-01",
+      "command": "ruff",
+      "head": "b1f85cb209441d6c75cfbd3a3d176976e9ad6954",
+      "exit_code": 0,
+      "duration_seconds": 0.32360095297917724,
+      "raw_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+      "terminal_sha256": "a6f771addcc3b8ab10cad9109c3be9f6a6fc67b7055e43af0a3bf5ccbd58403c",
+      "seal_sha256": "a902b4e493c1774f8e2b75fcacf6498935f10d94b9ba28aa57642fb41f1247d3"
+    },
+    {
+      "label": "f2-diff-01",
+      "command": "diff",
+      "head": "b1f85cb209441d6c75cfbd3a3d176976e9ad6954",
+      "exit_code": 0,
+      "duration_seconds": 0.19308039592579007,
+      "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "terminal_sha256": "61c8a10c6e2e74149276b3b11d49aa534954fbc7e81575360f94e0781bdeb8f2",
+      "seal_sha256": "4a57d2519c3875e6f1f161cb225ae288ef9eae98a44554ebd050031ffe941a95"
+    }
+  ],
+  "custody": {
+    "native_root_and_adopted_waits_and_kernel_ECHILD": true,
+    "owned_descendants_and_accessible_writers_closed_before_fixture_removal": true,
+    "exact_owned_PG_PostGIS_container_removed_each_attempt": true,
+    "temporary_evidence_archived_hash_verified_then_removed_after_closure": true,
+    "external_nonowned_inaccessible_fd_visibility": "UNKNOWN",
+    "short_commands_prove_sustained_long_command_manager_recognition": false,
+    "offline_Web_doubles_are_actual_PG_application_proof": false
+  },
+  "remaining": [
+    "F1 default tenant-bound versus explicit authoritative global/abstract contract and registered-waiver obligations/auditing",
+    "F3 distinct observed rotation/login session custody and all-exit bounded once-only exact-session cleanup",
+    "Final source/document freeze then ALL fresh14/unchanged17/owning/terminal normalCI/configured sequential full-composition assessment"
+  ],
+  "documentation_successor_is_a_new_unmeasured_head": true,
+  "canonical_or_supplemental_receipt_transfer": false,
+  "original_13c_rejected_packet1_and_16_uninspected_packets_preserved": true,
+  "Human_Ops_final": "PENDING",
+  "source_only": true,
+  "goal_achieved": false,
+  "review_ready": false,
+  "live_effects_authorized": false
+}

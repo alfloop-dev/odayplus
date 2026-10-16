@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -45,6 +48,10 @@ def test_migration_plan_indexes_revision_hashes_and_rollback() -> None:
         "0020",
         "0021",
         "0022",
+        "0023",
+        "0024",
+        "0025",
+        "0026",
     ]
     assert len(plan.manifest_sha256) == 64
     assert all(len(step.sha256) == 64 for step in plan.steps)
@@ -275,6 +282,125 @@ def test_invitation_acceptance_budget_migration_is_reachable_from_alembic_head()
         if asset.role == "sql"
     } == {"infra/db/migrations/000028_identity_invitation_acceptance_budget.sql"}
     assert len(budget_step.sha256) == 64
+
+
+@pytest.mark.parametrize("revision,parent,name,sql_names", [
+    ("0023", "0022", "dev_smoke_recovery_capability", ("000029_dev_smoke_recovery_capability.sql",)),
+    ("0024", "0023", "dev_smoke_session_fence", ("000030_dev_smoke_session_fence.sql",)),
+    ("0025", "0024", "audit_worm_outbox", (
+        "000008_postgresql_runtime_persistence.sql", "000032_audit_worm_outbox.sql",
+    )),
+    ("0026", "0025", "legacy_oidc_session_migrations", ("000033_legacy_oidc_session_migrations.sql",)),
+])
+def test_recovery_migration_chain_assets_and_preserving_downgrade(
+    monkeypatch: pytest.MonkeyPatch, revision: str, parent: str, name: str, sql_names: tuple[str, ...],
+) -> None:
+    """Security fences/intent must be shipped/hashed, never erased by rollback."""
+    root = Path(__file__).resolve().parents[2]
+    plan = build_migration_plan(environment="dev")
+    step = next(step for step in plan.steps if step.revision == revision)
+    assert step.path == f"infra/db/migrations/versions/{revision}_{name}.py"
+    sql_assets = [asset for asset in step.assets if asset.role == "sql"]
+    assert [asset.path for asset in sql_assets] == [f"infra/db/migrations/{name}" for name in sql_names]
+    for asset in sql_assets:
+        assert asset.sha256 == hashlib.sha256((root / asset.path).read_bytes()).hexdigest()
+    assert len(step.sha256) == 64
+
+    spec = importlib.util.spec_from_file_location(f"offline_recovery_revision_{revision}", root / step.path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.revision == revision and module.down_revision == parent
+    statements: list[str] = []
+    monkeypatch.setattr(module.op, "execute", lambda statement: statements.append(str(statement)))
+    module.downgrade()  # Mocked SQL only: no database/credential effects.
+    assert statements == ["SELECT 1"]
+
+
+@pytest.mark.parametrize("existing_audit", [False, True])
+def test_audit_outbox_revision_installs_prerequisite_without_backfill(
+    intake_blank_db, existing_audit: bool,
+) -> None:
+    """Isolate the real 0024->0025 upgrade, without runtime bootstrap masking it.
+
+    Stamping a blank throwaway DB isolates this revision, not the complete
+    production migration chain (which existing integration tests still exercise).
+    """
+    from alembic import command
+    from alembic.config import Config
+    from psycopg.errors import ForeignKeyViolation
+
+    config = Config("infra/db/migrations/alembic.ini")
+    config.set_main_option(
+        "sqlalchemy.url", intake_blank_db.url(driver="psycopg").replace("%", "%%")
+    )
+    command.stamp(config, "0024")
+    root = Path(__file__).resolve().parents[2]
+    runtime_sql = (root / "infra/db/migrations/000008_postgresql_runtime_persistence.sql").read_text()
+    if existing_audit:
+        with intake_blank_db.connect(autocommit=False) as connection:
+            connection.execute(runtime_sql)
+            connection.execute(
+                "INSERT INTO odp_runtime.durable_audit_events"
+                "(event_id,event_type,actor,action,resource,outcome,correlation_id,occurred_at,event_hash)"
+                " VALUES ('legacy-event','legacy.v1','fixture','act','res','ok','corr',now(),'legacy-hash')"
+            )
+
+    command.upgrade(config, "0025")
+    command.upgrade(config, "0025")  # Re-entering the migration job is harmless.
+    with intake_blank_db.connect() as connection:
+        assert connection.execute(
+            "SELECT version_num FROM public.oday_plus_alembic_version"
+        ).fetchone()[0] == "0025"
+        assert connection.execute(
+            "SELECT count(*) FROM odp_runtime.durable_audit_worm_outbox"
+        ).fetchone()[0] == 0
+        if existing_audit:
+            assert connection.execute(
+                "SELECT event_hash FROM odp_runtime.durable_audit_events WHERE event_id='legacy-event'"
+            ).fetchone()[0] == "legacy-hash"
+        with pytest.raises(ForeignKeyViolation):
+            connection.execute(
+                "INSERT INTO odp_runtime.durable_audit_worm_outbox(event_id,sink_id,event_hash)"
+                " VALUES ('missing-event','fixture-sink','fixture-hash')"
+            )
+
+    # The deployment/runtime prerequisite is still idempotent after Alembic.
+    with intake_blank_db.connect(autocommit=False) as connection:
+        connection.execute(runtime_sql)
+        assert connection.execute(
+            "SELECT count(*) FROM odp_runtime.durable_audit_worm_outbox"
+        ).fetchone()[0] == 0
+
+
+def test_audit_outbox_revision_rejects_incompatible_target_atomically(intake_blank_db) -> None:
+    from alembic import command
+    from alembic.config import Config
+    from psycopg.errors import InvalidForeignKey
+
+    config = Config("infra/db/migrations/alembic.ini")
+    config.set_main_option(
+        "sqlalchemy.url", intake_blank_db.url(driver="psycopg").replace("%", "%%")
+    )
+    command.stamp(config, "0024")
+    with intake_blank_db.connect() as connection:
+        connection.execute("CREATE SCHEMA odp_runtime")
+        # Enough for the authoritative runtime indices, but deliberately NOT a
+        # valid FK target. The migration must refuse rather than repair history.
+        connection.execute(
+            "CREATE TABLE odp_runtime.durable_audit_events"
+            " (event_id TEXT, correlation_id TEXT, sequence BIGINT)"
+        )
+    with pytest.raises(InvalidForeignKey, match="no unique constraint"):
+        command.upgrade(config, "0025")
+    with intake_blank_db.connect() as connection:
+        assert connection.execute(
+            "SELECT version_num FROM public.oday_plus_alembic_version"
+        ).fetchone()[0] == "0024"
+        for relation in ("schema_migrations", "durable_jobs", "durable_audit_worm_outbox"):
+            assert connection.execute(
+                "SELECT to_regclass(%s)", (f"odp_runtime.{relation}",)
+            ).fetchone()[0] is None
 
 
 def test_migration_plan_uses_explicit_alembic_sql_references() -> None:

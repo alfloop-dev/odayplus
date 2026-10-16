@@ -38,6 +38,7 @@ _SCHEMA_FILES = (
     "000022_durable_manual_corrections.sql",
     "000024_avm_quality_score_nullable_sqlite.sql",
     "000026_canonical_measurement_nullable_sqlite.sql",
+    "000031_audit_worm_outbox_sqlite.sql",
 )
 
 
@@ -60,6 +61,7 @@ class SqliteEngine:
         # writes stop committing per statement so the whole block can be rolled
         # back; see `transaction`.
         self._tx_depth = 0
+        self._commit_callbacks: list = []
         self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -113,6 +115,16 @@ class SqliteEngine:
             self._conn.commit()
             self._conn.execute("PRAGMA foreign_keys=ON")
 
+    @property
+    def in_transaction(self) -> bool:
+        return self._tx_depth > 0
+
+    def after_commit(self, callback) -> None:
+        if not self.in_transaction:
+            raise RuntimeError("post-commit callback requires transaction")
+        if callback not in self._commit_callbacks:
+            self._commit_callbacks.append(callback)
+
     @contextmanager
     def transaction(self) -> Iterator[SqliteEngine]:
         """Run a block as one unit: all of its writes commit, or none do.
@@ -128,13 +140,17 @@ class SqliteEngine:
         serialize-every-statement design, and nesting is safe: only the
         outermost block commits or rolls back.
         """
+        callbacks = []
         with self._lock:
+            if self._tx_depth == 0:
+                self._commit_callbacks = []
             self._tx_depth += 1
             try:
                 yield self
             except BaseException:
                 self._tx_depth -= 1
                 if self._tx_depth == 0:
+                    self._commit_callbacks = []
                     self._conn.rollback()
                 raise
             else:
@@ -143,8 +159,17 @@ class SqliteEngine:
                     try:
                         self._conn.commit()
                     except BaseException:
+                        self._commit_callbacks = []
                         self._conn.rollback()
                         raise
+                    callbacks, self._commit_callbacks = self._commit_callbacks, []
+        for callback in callbacks:
+            try:
+                callback()
+            except Exception:
+                # SQL is committed. Publication failure cannot undo it; the
+                # durable outbox retains pending/unknown intent for adjudication.
+                pass
 
     def _maybe_commit(self) -> None:
         if self._tx_depth == 0:

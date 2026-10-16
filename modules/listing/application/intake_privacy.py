@@ -544,6 +544,7 @@ class IntakePrivacyService:
             correlation_id=correlation_id or "unknown",
             metadata={
                 "export_id": export_id,
+                "tenant_id": manifest.tenant_id,
                 "watermark": watermark,
                 "checksum": content_sha256,
                 "download_evidence_id": download_evidence_id,

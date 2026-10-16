@@ -211,7 +211,10 @@ class AdminWeb(base.FakeHttp):
         super().__init__(routes)
         self.is_fresh = is_fresh
         self.revoke_on_logout = revoke_on_logout
-        self.logged_out = False
+        self.logged_out = False  # Compatibility diagnostic, never revocation authority.
+        self.revoked_sessions: set[str] = set()
+        self.issued_sessions = {SESSION_VALUE, FRESH_SESSION_VALUE, "sealed-form-session-reference",
+                                "sealed-rotation-session-reference"}
         self.password_rotated = not is_fresh
         self.headers_seen: list[tuple[str, dict[str, str]]] = []
 
@@ -221,10 +224,11 @@ class AdminWeb(base.FakeHttp):
         assert kwargs.get("authenticated") is False, "web requests never inject app identity"
         assert "authorization" not in headers and "x-tenant-id" not in headers
         cookie = headers.get("cookie", "")
-        has_session = f"{SESSION_COOKIE}={SESSION_VALUE}" in cookie
-        has_fresh_session = f"{SESSION_COOKIE}={FRESH_SESSION_VALUE}" in cookie
+        session_value = cookie.removeprefix(f"{SESSION_COOKIE}=")
+        has_fresh_session = session_value == FRESH_SESSION_VALUE
+        has_session = session_value in self.issued_sessions and not has_fresh_session
 
-        if self.revoke_on_logout and (has_session or has_fresh_session) and self.logged_out:
+        if self.revoke_on_logout and session_value in self.revoked_sessions:
             return base.response(401, {"error": {"code": "WEB_SESSION_REQUIRED"}})
 
         # POST /login
@@ -240,7 +244,7 @@ class AdminWeb(base.FakeHttp):
                 if body.get("username") == USERNAME and body.get("password") == PASSWORD and self.password_rotated:
                     self.logged_out = False
                     return base.response(303, location=f"{base.WEB_URL}/operator?view=admin",
-                                         cookies={SESSION_COOKIE: SESSION_VALUE})
+                                         cookies={SESSION_COOKIE: "sealed-form-session-reference"})
                 return base.response(303, location=f"{base.WEB_URL}/login?error=AUTH_INVALID_CREDENTIALS&returnTo=%2Foperator%3Fview%3Dadmin")
             if "anon POST /login" in self.routes:
                 route = self.routes["anon POST /login"]
@@ -252,6 +256,10 @@ class AdminWeb(base.FakeHttp):
             p = body.get("password")
             if u == USERNAME and p == PASSWORD and self.password_rotated:
                 self.logged_out = False
+                # Retain the value ACTUALLY issued now, not only constants that
+                # were selected when this synthetic server was constructed.
+                # Shared-owner tests select an opaque SID after construction.
+                self.issued_sessions.add(SESSION_VALUE)
                 return base.response(
                     200,
                     {"ok": True, "subject": USERNAME, "returnTo": "/operator?view=admin"},
@@ -259,6 +267,7 @@ class AdminWeb(base.FakeHttp):
                 )
             if u == USERNAME and p == INITIAL_PASSWORD and not self.password_rotated:
                 self.logged_out = False
+                self.issued_sessions.add(FRESH_SESSION_VALUE)
                 return base.response(
                     200,
                     {"ok": True, "subject": USERNAME, "returnTo": "/operator?view=admin"},
@@ -282,13 +291,15 @@ class AdminWeb(base.FakeHttp):
             new_p = body.get("newPassword")
             if (curr == INITIAL_PASSWORD or (curr == PASSWORD and not self.password_rotated)) and new_p == PASSWORD:
                 self.password_rotated = True
-                return base.response(200, {"ok": True})
+                return base.response(200, {"ok": True},
+                                     cookies={SESSION_COOKIE: "sealed-rotation-session-reference"})
             return base.response(400, {"error": {"code": "INVALID_PASSWORD"}})
 
         # POST /auth/logout
         if method == "POST" and path == "/auth/logout":
             assert headers.get("origin") == base.WEB_URL, "logout must carry Web origin"
             self.logged_out = True
+            self.revoked_sessions.add(session_value)
             if "POST /auth/logout [session]" in self.routes:
                 route = self.routes["POST /auth/logout [session]"]
                 if callable(route):
@@ -1838,3 +1849,106 @@ def test_gate_matches_bundle_account_and_requires_real_invitation(mismatch: str)
     elif mismatch != "none":
         assert blockers(report)["admin:credential_bundle_durable_acknowledgement"] == "audit"
     assert PASSWORD not in json.dumps(report)
+
+
+@pytest.mark.parametrize("failure", ["none", "missing_ack", "quarantined", "204", "wrong_rotation", "schema1",
+    "projection-control", "projection-quarantine", "projection-duplicate", "projection-redaction"])
+def test_full_gate_recovery_bundle_keeps_invitation_and_all_auth_checks(monkeypatch: Any, failure: str) -> None:
+    from delivery_toolchain.release.provision_dev_smoke import read_dev_credential_bundle
+    from tests.security.test_dev_smoke_recovery import recovery_consumer_inputs
+    raw, events, user = recovery_consumer_inputs()
+    bundle = read_dev_credential_bundle(json.dumps(raw), environment="dev", release_profile="dev-admin")
+    # Offline actual evaluator, no network/effects or fabricated live consumer proof.
+    monkeypatch.setattr(sys.modules[__name__], "USERNAME", bundle.username)
+    monkeypatch.setattr(sys.modules[__name__], "PASSWORD", bundle.password)
+    monkeypatch.setattr(sys.modules[__name__], "ADMIN_ACCOUNT_ID", bundle.account_id)
+    monkeypatch.setattr(sys.modules[__name__], "ADMIN_TENANT_ID", bundle.tenant_id)
+    cfg = dev_admin_config(dev_admin_bundle_account_id=bundle.account_id,
+                           dev_admin_bundle_tenant_id=bundle.tenant_id,
+                           dev_admin_bundle_execution_id=bundle.execution_id,
+                           dev_admin_bundle_schema_version=1 if failure == "schema1" else 2,
+                           dev_admin_bundle_recovery_lineage=None if failure == "schema1" else bundle.recovery_lineage)
+    if failure == "missing_ack":
+        events.pop()
+    elif failure == "quarantined":
+        events.append({**deepcopy(events[4]), "event_id": "8101c9e1-249f-4bb5-9d28-7a1a8d0d1277",
+                       "metadata": {**events[4]["metadata"], "stage": "recovery-required"}})
+    elif failure == "204":
+        events[-1]["metadata"]["put_status"] = 204
+    elif failure == "wrong_rotation":
+        events[-1]["metadata"]["rotation_event_id"] = events[5]["event_id"]
+    audit_response = base.response(200, {"events": events})
+    if failure.startswith("projection"):
+        # Unmocked production service + mounted route + canonical evaluator;
+        # only audit storage/HTTP are synthetic, NOT a live authority receipt.
+        from datetime import datetime
+        from types import SimpleNamespace
+        from uuid import uuid4
+
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from apps.api.app.routes.operator_modules.users_roles import create_user_role_sub_router
+        from delivery_toolchain.release.provision_dev_smoke import credential_bundle_acknowledged
+        from modules.opsboard.application.identity_user_role_management import (
+            IdentityUserRoleManagementService,
+        )
+
+        if failure != "projection-control":
+            extra = deepcopy(events[4])
+            extra["event_id"] = str(uuid4())
+            if failure in {"projection-quarantine", "projection-duplicate"}:
+                extra["metadata"]["token"] = "private-injected-marker"
+                if failure == "projection-quarantine":
+                    extra["metadata"]["stage"] = "recovery-required"
+            else:
+                extra["metadata"]["secret_values_redacted"] = False
+            events.append(extra)
+        assert credential_bundle_acknowledged(bundle, events, target_account=user) is (failure == "projection-control")
+        rows = [SimpleNamespace(**{**e, "occurred_at": datetime.fromisoformat(e["timestamp"])}) for e in events]
+        service = IdentityUserRoleManagementService(engine=SimpleNamespace(dialect="postgresql"),
+            audit_log=SimpleNamespace(list_events=lambda *, tenant_id=None, correlation_id=None: [
+                row for row in rows
+                if (correlation_id is None or row.correlation_id == correlation_id)
+                and (tenant_id is None or isinstance(row.metadata, dict)
+                     and row.metadata.get("tenant_id") == tenant_id)]))
+        app = FastAPI()
+        app.include_router(create_user_role_sub_router(service), prefix="/api/v1/operator")
+        with TestClient(app) as client:
+            projected = client.get("/api/v1/operator/users/audit-trail", headers={"x-tenant-id": bundle.tenant_id})
+        assert projected.status_code == (200 if failure == "projection-control" else 403)
+        assert "private-injected-marker" not in projected.text
+        audit_response = base.response(projected.status_code, projected.json())
+    checks, report, web = run_dev_admin(cfg=cfg, web=AdminWeb(web_routes(**{
+        "GET /api/v1/operator/users [session]": base.response(200, {"users": [user], "count": 1}),
+        "GET /api/v1/operator/users/audit-trail [session]": audit_response,
+        "GET /api/v1/auth/principal [session]": base.response(200, {
+            "account_id": bundle.account_id, "tenant_id": bundle.tenant_id, "roles": ["platform_admin"]}),
+    })))
+    assert report["ok"] is (failure in {"none", "projection-control"}), report["blockers"]
+    if failure in {"none", "projection-control"}:
+        names = {c.name for c in checks if c.ok}
+        assert {"admin:credential_bundle_durable_acknowledgement", "admin:invitation_audited",
+                "admin:invitation_principal_bound", "admin:business_shell_denied", "session:wrong_role_denied",
+                "session:cross_tenant_denied", "session:logout", "session:revoked_session_refused"} <= names
+        assert report["release_profile"]["full_product_acceptance_claimed"] is False
+    else:
+        assert blockers(report)["admin:credential_bundle_durable_acknowledgement"] == "audit"
+    assert bundle.password not in json.dumps(report)
+    assert not any("/dev-smoke-recovery" in path for path, _ in web.headers_seen)
+
+
+@pytest.mark.parametrize("change", [
+    {"dev_admin_bundle_account_id": ""}, {"dev_admin_bundle_tenant_id": ""},
+    {"dev_admin_bundle_execution_id": ""}, {"dev_admin_bundle_schema_version": True},
+    {"dev_admin_bundle_schema_version": 3}, {"dev_admin_bundle_recovery_lineage": None},
+])
+def test_recovery_gate_config_cannot_drop_ids_to_skip_ack(change: Any) -> None:
+    from shared.identity.dev_smoke_recovery import recovery_bundle_lineage
+    from tests.security.test_dev_smoke_recovery import recovery_consumer_inputs
+    raw, _, _ = recovery_consumer_inputs()
+    config = {"dev_admin_bundle_account_id": raw["account_id"], "dev_admin_bundle_tenant_id": raw["tenant_id"],
+              "dev_admin_bundle_execution_id": raw["execution_id"], "dev_admin_bundle_schema_version": 2,
+              "dev_admin_bundle_recovery_lineage": recovery_bundle_lineage(raw["recovery_lineage"])}
+    checks = gate.validate_config(dev_admin_config(**{**config, **change}))
+    assert any(c.name == "config:credential_bundle_lineage" and not c.ok for c in checks)

@@ -572,6 +572,8 @@ class Intervention:
     adjustment: AdjustmentRecord | None = None
     version: int = 1
     history: tuple[InterventionTransition, ...] = ()
+    # Empty is legacy/offline UNKNOWN, never inferred or backfilled by HTTP reads.
+    tenant_id: str = ""
 
     @property
     def is_terminal(self) -> bool:
@@ -603,6 +605,8 @@ class Intervention:
             at=datetime.now(UTC),
             correlation_id=correlation_id,
         )
+        if "tenant_id" in updates and updates["tenant_id"] != self.tenant_id:
+            raise InterventionError("intervention tenant is immutable")
         new_version = updates.pop("version", self.version + 1)
         return replace(
             self,
@@ -615,6 +619,7 @@ class Intervention:
     def to_dict(self) -> dict[str, Any]:
         return {
             "intervention_id": self.intervention_id,
+            "tenant_id": self.tenant_id,
             "store_id": self.store_id,
             "kind": self.kind.value,
             "status": self.status.value,
@@ -665,6 +670,7 @@ def new_intervention(
     predecessor_id: str | None = None,
     replacement_id: str | None = None,
     adjustment: AdjustmentRecord | None = None,
+    tenant_id: str = "",
 ) -> Intervention:
     """Create a CANDIDATE intervention.
 
@@ -677,6 +683,7 @@ def new_intervention(
         raise InterventionError("expected_outcome (outcome definition) is required")
     return Intervention(
         intervention_id=intervention_id or str(uuid4()),
+        tenant_id=tenant_id,
         store_id=store_id,
         kind=kind,
         status=InterventionStatus.CANDIDATE,
@@ -714,7 +721,7 @@ def detect_conflicts(
     for other in others:
         if other.intervention_id == candidate.intervention_id:
             continue
-        if other.store_id != candidate.store_id:
+        if other.store_id != candidate.store_id or other.tenant_id != candidate.tenant_id:
             continue
         if other.status not in ACTIVE_CONFLICT_STATUSES:
             continue

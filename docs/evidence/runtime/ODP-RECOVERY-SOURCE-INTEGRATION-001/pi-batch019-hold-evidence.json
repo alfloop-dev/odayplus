@@ -1,0 +1,142 @@
+{
+  "run": "pi-20261016T082319Z-f21e3b3e",
+  "source_head": "483eb77460b9f97725281db8d001fd69aaf6923c",
+  "source_tree": "c21ce4b44b71250240fd4af157db2eebc01463ab",
+  "base": "81072d0ae396c772b39e53db0761a7522524e8fd",
+  "scope_entries": 387,
+  "explicit_source_documents": 48,
+  "verified_materialized_hashes_including_brief": 49,
+  "terminal": {
+    "at": "2026-10-16T08:27:24.914943+00:00",
+    "head": "483eb77460b9f97725281db8d001fd69aaf6923c",
+    "tree": "c21ce4b44b71250240fd4af157db2eebc01463ab",
+    "argv": [
+      "pnpm",
+      "--dir",
+      "apps/web",
+      "test",
+      "src/lib/operator/__tests__/operatorConsoleOutcomeAndNavigation.test.tsx"
+    ],
+    "cap_seconds": 420,
+    "duration_seconds": 6.292379250749946,
+    "exit_code": 0,
+    "interrupted": false,
+    "kernel_child_closure": {
+      "kernel_waitpid_echild": true
+    },
+    "descendant_exit_unknown": false,
+    "writer_scan": {
+      "same_uid_writers": [],
+      "same_uid_permission_denied": [
+        2194258,
+        2194259,
+        2194368,
+        2195905
+      ],
+      "other_uids_not_inspected": true
+    },
+    "external_writer_exclusion_unproven": true,
+    "raw_sha256": "427b366c8f98fe02455c4744e89c7b7adff861c953ab4fc71b5af4f22951b372",
+    "manager_activity_recognized": false,
+    "distinct_manager_observations": 0,
+    "not_canonical_or_review": true
+  },
+  "coordinator": {
+    "at": "2026-10-16T08:27:25.545946+00:00",
+    "head": "483eb77460b9f97725281db8d001fd69aaf6923c",
+    "owned_closed": true,
+    "owned_container": "2dc2bb4f4e9b870fdbbade030bd2d12feb95e179a48a900fff67afb190bdabbf",
+    "owned_container_removed": true,
+    "total_seconds": 12.654980078805238
+  },
+  "stage_seal": {
+    "at": "2026-10-16T08:27:25.553830+00:00",
+    "head": "483eb77460b9f97725281db8d001fd69aaf6923c",
+    "original": "/tmp/pantheon-worker-worktrees/pantheon/odp-recovery-source-integration-001/docs/evidence/runtime/ODP-RECOVERY-SOURCE-INTEGRATION-001/foreground-verification-pi-20261016T082319Z-f21e3b3e-batch019-hold-owning",
+    "archive": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261016T082319Z-f21e3b3e/batch019-hold-owning",
+    "sha256": {
+      "invocation.json": "c213ebb52d89e5b5475f8e27754a2c969cbbf75524cbb65d314b9b9a70c37f37",
+      "terminal.json": "266f920a2d659b0307df76807dbe69a39300bd9300aa93728aca2686a981f4ca",
+      "raw.log": "427b366c8f98fe02455c4744e89c7b7adff861c953ab4fc71b5af4f22951b372",
+      "owned-volume-cleanup.json": "6752552b993e5e4a2510fe56c0a763d48af39449883aee3a723953df3cf6147b",
+      "pg-guard.json": "efe985dd0721886bf950d8b8a75a06cc69b46d18362f08b3ed68f08f79156bf6",
+      "coordinator-terminal.json": "416e7c807f7334a313426abc0c623c1c015830d4407d6c4ac9528ba79b992ecc",
+      "custody.jsonl": "411131e8770a99c2e5ddd52baa8eb19195053a4f516a78c99f717bb8be7b0fec",
+      "owned-fixture-identity.json": "0cdb80ebe9f761bf9af19ffd3a9374e3abb9b0504d92facba81873fbc898a804",
+      "preflight.json": "9095008b8ec674613955a57ba8ce42a8c1be9379acc9127fd53369fc7844d5f5"
+    },
+    "owned_closed": true
+  },
+  "owned_volume_cleanup": {
+    "at": "2026-10-16T08:27:25.538311+00:00",
+    "container": "2dc2bb4f4e9b870fdbbade030bd2d12feb95e179a48a900fff67afb190bdabbf",
+    "owned_closed": true,
+    "volumes": [
+      {
+        "mount": {
+          "Type": "volume",
+          "Name": "d1229b61fe2e4c4fada45c45836bb6440dc06fcef3c1b145598517d6cb1a127f",
+          "Source": "/var/lib/docker/volumes/d1229b61fe2e4c4fada45c45836bb6440dc06fcef3c1b145598517d6cb1a127f/_data",
+          "Destination": "/var/lib/postgresql/data",
+          "Driver": "local",
+          "Mode": "",
+          "RW": true,
+          "Propagation": ""
+        },
+        "inspect": {
+          "CreatedAt": "2026-10-16T08:27:13Z",
+          "Driver": "local",
+          "Labels": {
+            "com.docker.volume.anonymous": ""
+          },
+          "Mountpoint": "/var/lib/docker/volumes/d1229b61fe2e4c4fada45c45836bb6440dc06fcef3c1b145598517d6cb1a127f/_data",
+          "Name": "d1229b61fe2e4c4fada45c45836bb6440dc06fcef3c1b145598517d6cb1a127f",
+          "Options": null,
+          "Scope": "local"
+        },
+        "container_references": "",
+        "exit_code": 0,
+        "stdout": "d1229b61fe2e4c4fada45c45836bb6440dc06fcef3c1b145598517d6cb1a127f\n",
+        "stderr": ""
+      }
+    ],
+    "disk_usage": {
+      "total": 206900281344,
+      "used": 206202613760,
+      "free": 680890368
+    }
+  },
+  "actual_component_result": {
+    "files": 1,
+    "passed": 36,
+    "failed": 0,
+    "original_F6_cases": 23,
+    "new_F8_cases": 13
+  },
+  "original_fixture_AST_comparison": [
+    {
+      "path": "tests/identity/test_session_lifecycle.py",
+      "original_test_functions": 18,
+      "signature_decorator_assertion_AST_order_equal": true
+    },
+    {
+      "path": "tests/contract/test_api_trust_contract.py",
+      "original_test_functions": 55,
+      "signature_decorator_assertion_AST_order_equal": true
+    },
+    {
+      "path": "tests/e2e/test_password_first_security_e2e.py",
+      "original_test_functions": 5,
+      "signature_decorator_assertion_AST_order_equal": true
+    }
+  ],
+  "original_credential_prefix_bytes_unchanged": 15545,
+  "original_F6_bodies_unchanged": true,
+  "limitations": [
+    "Component transport doubles are not SELF or actual-PG application acceptance; outer real-PG guard is only infrastructure.",
+    "No first approval operation is supported in any context; conservative HOLD mitigates unsafe submission/outcome only.",
+    "No historical UNKNOWN is reconciled, cleared, or relabelled as not sent.",
+    "Current provisional proof does not transfer to the final documentation successor. All final 14/17/owning/CI/configured packets+synthesis remain owed.",
+    "External/inaccessible/historical escaped-writer exclusion and authenticated author/assessor account independence remain UNKNOWN/UNRESOLVED."
+  ]
+}

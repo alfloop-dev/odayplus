@@ -7,6 +7,8 @@ from fastapi.testclient import TestClient
 from apps.api.oday_api.main import create_app
 from shared.api.versioning import API_V1_PREFIX, alias_paths, versioned_paths
 
+AUDIT_HEADERS = {"x-subject-id": "version-auditor", "x-roles": "auditor", "x-tenant-id": "tenant-a"}
+
 # Probes are infrastructure, not product contract: they are wired into deploy
 # manifests and load balancers, so they stay unversioned by design.
 UNVERSIONED_BY_DESIGN = {
@@ -55,11 +57,13 @@ def test_versioned_and_alias_paths_return_identical_bodies() -> None:
     asserts the two mounts stay the same handler.
     """
     client = TestClient(create_app())
-    versioned = client.get("/api/v1/audit/events", headers={"x-correlation-id": "corr-ver-1"})
-    alias = client.get("/audit/events", headers={"x-correlation-id": "corr-ver-1"})
+    versioned = client.get("/api/v1/audit/events", headers={**AUDIT_HEADERS, "x-correlation-id": "corr-ver-1"})
+    alias = client.get("/audit/events", headers={**AUDIT_HEADERS, "x-correlation-id": "corr-ver-1"})
 
     assert versioned.status_code == alias.status_code == 200
     assert versioned.json() == alias.json()
+    assert client.get("/api/v1/audit/events").status_code == 401
+    assert client.get("/audit/events").status_code == 401
 
 
 def test_alias_responses_advertise_deprecation_and_successor() -> None:

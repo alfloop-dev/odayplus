@@ -10,11 +10,18 @@ Contract: ODP-WEB-PASSWORD-FIRST-AUTH-CONTRACT-001 §6.1
 from __future__ import annotations
 
 import dataclasses
+import os
+import threading
 from typing import Any
 
 try:
-    from argon2 import PasswordHasher, Type  # type: ignore[import-untyped]
-    from argon2.exceptions import VerifyMismatchError  # type: ignore[import-untyped]
+    from argon2 import (  # type: ignore[import-untyped]
+        PasswordHasher,
+        Type,
+        _password_hasher,
+        low_level,
+    )
+    from argon2.exceptions import HashingError, VerifyMismatchError  # type: ignore[import-untyped]
 
     _ARGON2_AVAILABLE = True
 except ImportError:  # pragma: no cover — CI may not have argon2-cffi
@@ -27,7 +34,12 @@ except ImportError:  # pragma: no cover — CI may not have argon2-cffi
 
 @dataclasses.dataclass(frozen=True)
 class Argon2Policy:
-    """集中管理的 Argon2id 參數集，帶版本號以支援升級判斷。"""
+    """Validated Argon2id policy; version 0 is explicit non-active migration.
+
+    All current/future active versions enforce the production floor. Historical
+    version 0 exists only for offline legacy construction/upgrade compatibility;
+    production composition uses CURRENT_POLICY, never request/config policy.
+    """
 
     version: int = 1
     memory_cost: int = 65536  # KiB (64 MiB)
@@ -35,6 +47,28 @@ class Argon2Policy:
     parallelism: int = 1      # Cloud Run 單請求可預測性
     hash_len: int = 32        # output bytes
     salt_len: int = 16        # minimum CSPRNG salt bytes
+
+    def __post_init__(self) -> None:
+        values = dataclasses.astuple(self)
+        if any(type(value) is not int for value in values):
+            raise ValueError("Argon2 policy parameters must be integers")
+        if self.version < 0:
+            raise ValueError("unknown Argon2 policy version")
+        if (
+            self.time_cost < 1
+            or self.parallelism < 1
+            or self.memory_cost < 8 * self.parallelism
+            or self.hash_len < 32
+            or self.salt_len < 16
+        ):
+            # Retain the backend's established invalid-hashing-parameter
+            # exception contract while rejecting it before initialization.
+            error = HashingError if _ARGON2_AVAILABLE else ValueError
+            raise error("invalid Argon2 policy parameters")
+        if self.version > 0 and (
+            self.memory_cost < 65536 or self.time_cost < 3 or self.parallelism != 1
+        ):
+            raise ValueError("active Argon2 policy below cryptographic floor")
 
     def to_params_dict(self) -> dict[str, Any]:
         return {
@@ -68,10 +102,15 @@ class CredentialService:
                 "argon2-cffi is required for CredentialService. "
                 "Install with: pip install argon2-cffi"
             )
-        self._policy = policy or CURRENT_POLICY
+        self._policy = policy if policy is not None else CURRENT_POLICY
+        if type(self._policy) is not Argon2Policy:
+            raise ValueError("credential service requires a validated Argon2 policy")
+        self._policy.__post_init__()
         self._hasher = self._build_hasher(self._policy)
-        # 預先計算 dummy hash，用於帳號不存在時的等價成本驗證（§6.3）
-        self._dummy_hash = self._hasher.hash("dummy-password-for-timing-safety")
+        # Eager on BOTH account paths; only the non-secret initialization PHC
+        # may be reused. Every service still builds/validates its own hasher and
+        # every dummy_verify below still performs the real full-cost operation.
+        self._dummy_hash = _timing_dummy(self)
 
     @property
     def policy(self) -> Argon2Policy:
@@ -167,3 +206,74 @@ class CredentialService:
             elif key == "p":
                 params["parallelism"] = int(val)
         return params
+
+
+# A single process-local immutable initialization artifact, never a credential,
+# hasher/client, password, verification result or authorization/session cache.
+# Unknown/custom backends/builders deliberately retain eager fresh hashing.
+_DUMMY_PASSWORD = "dummy-password-for-timing-safety"
+_dummy_lock = threading.Lock()
+_dummy_artifact: tuple[Argon2Policy, str] | None = None
+_stock_builder = CredentialService._build_hasher
+
+
+def _backend_signature() -> tuple[Any, ...]:
+    return (
+        PasswordHasher, PasswordHasher.__init__, PasswordHasher.hash,
+        PasswordHasher.verify, PasswordHasher.check_needs_rehash,
+        _password_hasher.hash_secret, _password_hasher.verify_secret,
+        _password_hasher.extract_parameters, _password_hasher.validate_params_for_platform,
+        low_level.hash_secret, low_level.verify_secret, low_level.ffi, low_level.lib,
+        low_level.ARGON2_VERSION, Type, os.urandom,
+    )
+
+
+_stock_backend = _backend_signature() if _ARGON2_AVAILABLE else None
+
+
+def _reset_timing_dummy() -> None:
+    # A fork may inherit a lock held by a vanished thread. Never acquire it in
+    # the child, and never reuse the parent's initialization artifact there.
+    global _dummy_lock, _dummy_artifact
+    _dummy_lock = threading.Lock()
+    _dummy_artifact = None
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_timing_dummy)
+
+
+def _timing_dummy(service: CredentialService) -> str:
+    global _dummy_artifact
+    hasher, policy = service._hasher, service.policy
+    with _dummy_lock:
+        compatible = (
+            type(service) is CredentialService
+            and type(policy) is Argon2Policy
+            and all(type(value) is int for value in dataclasses.astuple(policy))
+            and service._build_hasher is _stock_builder
+            and _backend_signature() == _stock_backend
+            and type(hasher) is PasswordHasher
+        )
+        if not compatible:
+            # Changed/failed/test backends cannot consume or populate stock
+            # state. Invalidate even if their fresh initialization later fails.
+            _dummy_artifact = None
+            return hasher.hash(_DUMMY_PASSWORD)
+        if _dummy_artifact is not None and _dummy_artifact[0] == policy:
+            phc = _dummy_artifact[1]
+            try:
+                if hasher.check_needs_rehash(phc):
+                    raise RuntimeError("Incompatible Argon2 timing initialization")
+            except Exception:
+                _dummy_artifact = None
+                raise
+            return phc
+        # Evict BEFORE initialization: a failure cannot publish a partial value
+        # or leave a prior policy's artifact usable. At most one PHC is retained.
+        _dummy_artifact = None
+        phc = hasher.hash(_DUMMY_PASSWORD)
+        if hasher.check_needs_rehash(phc):
+            raise RuntimeError("Incompatible Argon2 timing initialization")
+        _dummy_artifact = (policy, phc)
+        return phc

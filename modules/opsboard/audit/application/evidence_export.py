@@ -19,6 +19,7 @@ from shared.audit import AuditEvent, InMemoryAuditLog
 from shared.audit.integrity import sha256_hex
 from shared.audit.persistence import EvidenceBundleStore, resolve_retention_policy
 from shared.audit.policy import mask_email, mask_phone, mask_text
+from shared.audit.tenant_read import validated_tenant_events
 
 
 class AuditEvidenceExportError(ValueError):
@@ -48,19 +49,23 @@ class AuditEvidenceExportService:
         *,
         decision_cards: Sequence[DecisionCard],
         generated_at: datetime | None = None,
+        verified_tenant_id: str | None = None,
     ) -> AuditEvidenceBundle:
+        # HTTP callers must supply server-verified scope separately from the
+        # export request. None preserves the explicit offline service surface;
+        # client export_scope/correlation/decision-card text is never authority.
+        if verified_tenant_id is not None and not verified_tenant_id.strip():
+            raise AuditEvidenceExportError("verified tenant is required")
         normalized_generated_at = generated_at or datetime.now(UTC)
         try:
             self._validate_request(request, as_of=normalized_generated_at)
             if not decision_cards:
-                raise AuditEvidenceExportError(
-                    "export requires at least one decision card"
-                )
+                raise AuditEvidenceExportError("export requires at least one decision card")
         except AuditEvidenceExportError as exc:
             # A rejected sensitive export must leave an audit trail (the denial
             # itself is auditable, not just successful exports).
             if request.sensitive:
-                self._record_denial(request, reason=str(exc))
+                self._record_denial(request, reason=str(exc), verified_tenant_id=verified_tenant_id)
             raise
 
         exported_cards = tuple(
@@ -72,6 +77,7 @@ class AuditEvidenceExportService:
                 correlation_ids=request.correlation_ids,
                 from_time=request.from_time,
                 to_time=request.to_time,
+                verified_tenant_id=verified_tenant_id,
             )
         )
         matrix = build_subsidy_matrix(exported_cards)
@@ -96,16 +102,13 @@ class AuditEvidenceExportService:
                 "requested_by": request.requested_by,
                 "identity_boundary": identity_boundary,
                 "purpose_scope": request.purpose_scope,
-                "expires_at": request.expires_at.isoformat()
-                if request.expires_at
-                else None,
+                "expires_at": request.expires_at.isoformat() if request.expires_at else None,
             }
         )
         event_hashes = [
             str(event["integrity"]["event_hash"])
             for event in events
-            if isinstance(event.get("integrity"), dict)
-            and event["integrity"].get("event_hash")
+            if isinstance(event.get("integrity"), dict) and event["integrity"].get("event_hash")
         ]
         export_event = self.audit_log.record(
             AuditEvent(
@@ -116,6 +119,7 @@ class AuditEvidenceExportService:
                 outcome="ready" if not missing else "incomplete",
                 correlation_id=request.correlation_ids[0],
                 metadata={
+                    **({"tenant_id": verified_tenant_id} if verified_tenant_id is not None else {}),
                     "export_id": export_id,
                     "purpose": request.purpose,
                     "decision_count": len(decision_cards),
@@ -129,9 +133,7 @@ class AuditEvidenceExportService:
                     "sensitive": request.sensitive,
                     "export_scope": request.export_scope,
                     "purpose_scope": request.purpose_scope,
-                    "expires_at": request.expires_at.isoformat()
-                    if request.expires_at
-                    else None,
+                    "expires_at": request.expires_at.isoformat() if request.expires_at else None,
                     "authorized_by": request.authorized_by,
                     "authorization_id": request.authorization_id,
                     "masking_profile": request.masking_profile,
@@ -189,22 +191,38 @@ class AuditEvidenceExportService:
         correlation_ids: Sequence[str],
         from_time: datetime,
         to_time: datetime,
+        verified_tenant_id: str | None = None,
     ) -> Iterable[AuditEvent]:
         seen: set[str] = set()
+        # Validate fixed owning-ledger history before any client selector.
+        tenant_events = (
+            validated_tenant_events(self.audit_log, verified_tenant_id)
+            if verified_tenant_id is not None
+            else None
+        )
         for correlation_id in correlation_ids:
-            for event in self.audit_log.list_events(correlation_id=correlation_id):
+            selected = (
+                (event for event in tenant_events if event.correlation_id == correlation_id)
+                if tenant_events is not None
+                else self.audit_log.list_events(correlation_id=correlation_id)
+            )
+            for event in selected:
                 if event.event_id in seen:
                     continue
                 if from_time <= event.occurred_at <= to_time:
                     seen.add(event.event_id)
                     yield event
 
-    def _record_denial(self, request: EvidenceExportRequest, *, reason: str) -> None:
+    def _record_denial(
+        self,
+        request: EvidenceExportRequest,
+        *,
+        reason: str,
+        verified_tenant_id: str | None = None,
+    ) -> None:
         """Audit a denied sensitive export request (durable when the log is)."""
 
-        correlation_id = (
-            request.correlation_ids[0] if request.correlation_ids else "unknown"
-        )
+        correlation_id = request.correlation_ids[0] if request.correlation_ids else "unknown"
         self.audit_log.record(
             AuditEvent(
                 event_type="audit.evidence_export.v1",
@@ -214,23 +232,20 @@ class AuditEvidenceExportService:
                 outcome="denied",
                 correlation_id=correlation_id,
                 metadata={
+                    **({"tenant_id": verified_tenant_id} if verified_tenant_id is not None else {}),
                     "reason": reason,
                     "sensitive": True,
                     "data_classification": request.data_classification,
                     "export_scope": request.export_scope,
                     "purpose_scope": request.purpose_scope,
-                    "expires_at": request.expires_at.isoformat()
-                    if request.expires_at
-                    else None,
+                    "expires_at": request.expires_at.isoformat() if request.expires_at else None,
                     "authorized_by": request.authorized_by,
                     "authorization_id": request.authorization_id,
                 },
             )
         )
 
-    def _validate_request(
-        self, request: EvidenceExportRequest, *, as_of: datetime
-    ) -> None:
+    def _validate_request(self, request: EvidenceExportRequest, *, as_of: datetime) -> None:
         if not request.program_id.strip():
             raise AuditEvidenceExportError("program_id is required")
         if not request.requested_by.strip():
@@ -296,9 +311,7 @@ def decision_card_from_mapping(payload: dict[str, Any]) -> DecisionCard:
         model_refs=tuple(str(item) for item in payload.get("model_refs", ())),
         policy_refs=tuple(str(item) for item in payload.get("policy_refs", ())),
         audit_event_ids=tuple(str(item) for item in payload.get("audit_event_ids", ())),
-        subsidy_requirements=tuple(
-            str(item) for item in payload.get("subsidy_requirements", ())
-        ),
+        subsidy_requirements=tuple(str(item) for item in payload.get("subsidy_requirements", ())),
         controls=tuple(str(item) for item in payload.get("controls", ())),
         prediction_ref=_optional_str(payload.get("prediction_ref")),
         recommendation_ref=_optional_str(payload.get("recommendation_ref")),

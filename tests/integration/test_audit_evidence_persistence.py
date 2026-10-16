@@ -895,10 +895,12 @@ def test_api_persists_and_serves_retained_evidence(db_path) -> None:
                 outcome="approved",
                 correlation_id="corr-api-evidence-1",
                 occurred_at=NOW,
+                metadata={"tenant_id": "t1"},
             )
         )
         app = create_app(persistence=bundle_persistence)
-        client = TestClient(app, headers=AUDIT_HEADERS)
+        scoped_auditor = {**AUDIT_HEADERS, "x-tenant-id": "t1"}
+        client = TestClient(app, headers=scoped_auditor)
 
         response = client.post(
             "/audit/evidence/export",

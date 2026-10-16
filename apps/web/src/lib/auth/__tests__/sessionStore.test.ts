@@ -159,6 +159,6 @@ describe("authoritative server-side web sessions", () => {
         environment: { NODE_ENV: "production" },
         sessionStore: null,
       }),
-    ).resolves.toBeNull();
+    ).rejects.toThrow("WEB_AUTH_UNAVAILABLE");
   });
 });

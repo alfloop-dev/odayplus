@@ -155,6 +155,7 @@ class InterventionWorkflow:
         action_spec: dict[str, Any] | None = None,
         correlation_id: str = "",
         intervention_id: str | None = None,
+        tenant_id: str = "",
     ) -> Intervention:
         resolved_kind = InterventionKind(kind)
         intervention = new_intervention(
@@ -169,6 +170,7 @@ class InterventionWorkflow:
             action_spec=action_spec,
             policy_version=self.policy_version,
             intervention_id=intervention_id,
+            tenant_id=tenant_id,
         )
         self.repository.save(intervention)
         self._audit(
@@ -873,6 +875,7 @@ class InterventionWorkflow:
             planned_end=start + duration,
             created_by=actor,
             correlation_id=correlation_id,
+            tenant_id=original.tenant_id,
         )
 
     # -- adjust / replacement ---------------------------------------------
@@ -967,6 +970,7 @@ class InterventionWorkflow:
             action_spec=merged_action_spec,
             policy_version=self.policy_version,
             intervention_id=replacement_id,
+            tenant_id=original.tenant_id,
             predecessor_id=original.intervention_id,
             adjustment=adjustment_record,
         )
@@ -1226,6 +1230,7 @@ class InterventionWorkflow:
         }
         if extra:
             metadata.update(extra)
+        metadata["tenant_id"] = intervention.tenant_id
         return self.audit_log.record(
             AuditEvent(
                 event_type="intervention.lifecycle.v1",

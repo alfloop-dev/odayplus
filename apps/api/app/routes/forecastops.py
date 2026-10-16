@@ -639,6 +639,7 @@ else:
                     metadata={
                         "store_id": body.store_id,
                         "as_of": body.as_of.isoformat() if body.as_of else None,
+                        "tenant_id": tenant_id(request),
                         "updated_count": result["updated_count"],
                         "precision": result["metrics"].get("precision"),
                         "true_positives": result["metrics"].get("true_positive_count"),
@@ -681,6 +682,7 @@ else:
                     outcome="acknowledged",
                     correlation_id=request.state.correlation_id,
                     metadata={
+                        "tenant_id": tenant_id(request),
                         "alert_level": alert.alert_level.value,
                         "store_id": alert.store_id,
                         "note": body.note,
@@ -734,6 +736,7 @@ else:
                     correlation_id=request.state.correlation_id,
                     metadata={
                         "store_id": handoff.store_id,
+                        "tenant_id": tenant_id(request),
                         "intervention_type": handoff.intervention_type,
                         "intervention_id": body.intervention_id,
                     },
@@ -853,6 +856,7 @@ else:
                     outcome="accepted" if feedback.status != FeedbackStatus.PENDING_APPROVAL else "pending_approval",
                     correlation_id=request.state.correlation_id,
                     metadata={
+                        "tenant_id": active_tenant_id,
                         "feedback_type": feedback.feedback_type.value,
                         "store_id": feedback.store_id,
                         "status": feedback.status.value,
@@ -955,6 +959,7 @@ else:
                     outcome="approved",
                     correlation_id=request.state.correlation_id,
                     metadata={
+                        "tenant_id": active_tenant_id,
                         "feedback_type": approved_feedback.feedback_type.value,
                         "store_id": approved_feedback.store_id,
                         "note": body.note,
@@ -1013,6 +1018,7 @@ else:
                     outcome="rejected",
                     correlation_id=request.state.correlation_id,
                     metadata={
+                        "tenant_id": active_tenant_id,
                         "feedback_type": rejected_feedback.feedback_type.value,
                         "store_id": rejected_feedback.store_id,
                         "rejection_reason": body.reason,

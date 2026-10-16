@@ -331,15 +331,38 @@ def test_production_avm_reloads_and_executes_real_oss_artifacts(
     # Exercise the real bootstrap and environment fallback with the same
     # registered artifact; no fake runtime may bypass registry schema checks.
     import json
+    import secrets
+    import time
     from dataclasses import replace
 
     from fastapi.testclient import TestClient
 
     import modules.avm.application.production as production_module
     from apps.api.oday_api import main as app_module
+    from modules.opsboard.auth import SigningKey, encode_compact_jwt
     from shared.infrastructure.persistence import build_persistence
-    from tests.integration._authz import AVM_HEADERS
+    from tests.integration._authz import AVM_HEADERS as DEV_AVM_HEADERS
 
+    # Ephemeral supported service JWTs through config_from_env/default_boundary;
+    # real production/PG/artifact paths below remain unchanged.
+    issuer = "https://avm-artifacts.offline.invalid"
+    secret = secrets.token_urlsafe(48)
+    signing_key = SigningKey(kid="avm-artifacts", algorithm="HS256", secret=secret.encode())
+    monkeypatch.setenv("ODP_AUTH_MODE", "local")
+    monkeypatch.setenv("ODP_AUTH_SERVICE_ISSUER", issuer)
+    monkeypatch.setenv("ODP_AUTH_SERVICE_AUDIENCES", "oday-api")
+    monkeypatch.setenv("ODP_AUTH_HS256_KEYS", "avm-artifacts:" + secret)
+    monkeypatch.setenv("ODP_AUTH_PRINCIPAL_MAP", json.dumps({
+        "fixture-finance": {"roles": ["finance_legal"], "scope": {"tenant_id": "rollback-tenant"}},
+        "operator-rollback-tenant": {"roles": ["operations_manager", "site_reviewer", "expansion_user"], "scope": {"tenant_id": "rollback-tenant"}},
+    }))
+
+    def signed(subject: str) -> dict[str, str]:
+        now = time.time()
+        token = encode_compact_jwt({"iss": issuer, "sub": subject, "aud": "oday-api", "iat": now, "exp": now + 300}, signing_key)
+        return {"authorization": "Bearer " + token}
+
+    avm_headers = signed("fixture-finance")
     monkeypatch.delenv("ODP_AVM_ARTIFACT_SCHEMA_VERSION", raising=False)
     if artifact_schema == "valuation-view-v2":
         monkeypatch.setenv("ODP_AVM_ARTIFACT_SCHEMA_VERSION", artifact_schema)
@@ -379,7 +402,9 @@ def test_production_avm_reloads_and_executes_real_oss_artifacts(
         "depreciation_effective_date": "2026-07-01",
     }
     case = AVMService(repository=repository).create_case(original_cost_input, created_by="fixture-finance", correlation_id="bootstrap-case")
-    client = TestClient(app, headers=AVM_HEADERS)
+    client = TestClient(app, headers=avm_headers)
+    forged = TestClient(app).post(f"/avm/cases/{case.case_id}/value", headers=DEV_AVM_HEADERS, json={"actor": "fixture-worker"})
+    assert forged.status_code == 401, forged.text
     response = client.post(f"/avm/cases/{case.case_id}/value", json={"actor": "fixture-worker"})
     assert response.status_code == 200, response.text
     assert response.json()["feature_version"] == artifact_schema
@@ -426,14 +451,14 @@ def test_production_avm_reloads_and_executes_real_oss_artifacts(
         with TestClient(deployed_app) as deployed_client:
             requested = deployed_client.post(
                 f"/api/v1/operator/network-rebalance/stores/{store_id}/avm/request",
-                headers=_headers(tenant_id, idempotency_key=f"request-{receipt_mode}"),
+                headers={**_headers(tenant_id, idempotency_key=f"request-{receipt_mode}"), **signed("operator-rollback-tenant")},
                 json={"actorRoleId": "operationsManager"},
             )
             assert requested.status_code == 200, requested.text
-            api_response = deployed_client.post(f"/avm/cases/{api_case.case_id}/value", headers=AVM_HEADERS, json={"actor": "fixture-worker"})
+            api_response = deployed_client.post(f"/avm/cases/{api_case.case_id}/value", headers=avm_headers, json={"actor": "fixture-worker"})
             operator_response = deployed_client.post(
                 f"/api/v1/operator/network-rebalance/stores/{store_id}/avm/complete",
-                headers=_headers(tenant_id, idempotency_key=f"complete-{receipt_mode}"),
+                headers={**_headers(tenant_id, idempotency_key=f"complete-{receipt_mode}"), **signed("operator-rollback-tenant")},
                 json={"actorRoleId": "operationsManager"},
             )
             if receipt_mode == "valid":

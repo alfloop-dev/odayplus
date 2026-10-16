@@ -39,11 +39,13 @@ from typing import Any
 from uuid import UUID
 
 from shared.audit import AuditEvent
-from shared.auth import DataClassification, Role
+from shared.auth import DataClassification, Principal, Role
+from shared.identity.admin_authority import AdminAuthorityRefused, checked_admin_authority
 
 from .user_role_management import (
     ROLE_LABELS,
     UserNotFound,
+    UserRoleAuthorizationRefused,
     UserRolePolicyError,
 )
 
@@ -70,19 +72,17 @@ def _uuid_or_none(value: str | None) -> str | None:
         return None
 
 
-def _json_list(value: Any) -> list[str]:
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except ValueError:
-            return []
-    return [str(v) for v in value] if isinstance(value, list) else []
+def _validated_scope_axis(value: Any) -> list[str]:
+    if not isinstance(value, list) or any(not isinstance(item, str) or not item.strip() for item in value):
+        raise UserRolePolicyError("Invalid persisted/requested scope; explicit valid replacement required")
+    return sorted(set(value))
 
 
 class IdentityUserRoleManagementService:
     """Identity-backed implementation of the Operator user administration API."""
 
     requires_tenant = True
+    requires_verified_actor = True
 
     def __init__(self, *, engine: Any, audit_log: Any) -> None:
         if str(getattr(engine, "dialect", "")).lower() != "postgresql":
@@ -109,8 +109,14 @@ class IdentityUserRoleManagementService:
         sql = (
             "SELECT a.account_id::text AS account_id, a.tenant_id::text AS tenant_id, "
             "a.username, a.email, a.display_name, a.status, a.updated_at, a.created_by, "
-            "a.disabled_reason, s.brand_ids, s.region_ids, s.store_ids, s.assigned_area_ids, "
-            "s.heat_zone_ids, s.modules, s.clearance "
+            "a.disabled_reason, s.account_id AS scope_account_id, s.brand_ids, s.region_ids, s.store_ids, s.assigned_area_ids, "
+            "s.heat_zone_ids, s.modules, s.clearance, "
+            "jsonb_typeof(s.brand_ids) AS brand_ids_json_type, "
+            "jsonb_typeof(s.region_ids) AS region_ids_json_type, "
+            "jsonb_typeof(s.store_ids) AS store_ids_json_type, "
+            "jsonb_typeof(s.assigned_area_ids) AS assigned_area_ids_json_type, "
+            "jsonb_typeof(s.heat_zone_ids) AS heat_zone_ids_json_type, "
+            "jsonb_typeof(s.modules) AS modules_json_type "
             "FROM identity.accounts a "
             "LEFT JOIN identity.account_scopes s ON s.account_id = a.account_id "
             "WHERE a.tenant_id = ?"
@@ -137,9 +143,18 @@ class IdentityUserRoleManagementService:
     def _to_record(row: dict[str, Any], roles: list[str]) -> dict[str, Any]:
         updated = row.get("updated_at")
         scope: dict[str, Any] = {"tenant_id": row["tenant_id"]}
+        missing_scope = row.get("scope_account_id") is None
         for axis in _SCOPE_AXES:
-            scope[axis] = _json_list(row.get(axis))
-        scope["clearance"] = row.get("clearance") or DataClassification.CONFIDENTIAL.name
+            # Engine normalization serializes native arrays; native JSON strings
+            # pass through unchanged. SQL type provenance must govern decoding.
+            raw = row.get(axis)
+            if missing_scope:
+                scope[axis] = []
+            elif row.get(f"{axis}_json_type") == "array" and isinstance(raw, str):
+                scope[axis] = json.loads(raw)
+            else:
+                scope[axis] = raw
+        scope["clearance"] = DataClassification.CONFIDENTIAL.name if missing_scope else row.get("clearance")
         return {
             "subject_id": row["account_id"],
             "username": row["username"],
@@ -190,20 +205,71 @@ class IdentityUserRoleManagementService:
             for role in Role
         ]
 
+    def _fixed_recovery_audit(self, tenant: str) -> dict[str, AuditEvent]:
+        from shared.audit.tenant_read import fixed_ledger_events
+
+        try:
+            return fixed_ledger_events(self._audit_log, tenant)
+        except (ValueError, TypeError):
+            raise UserRolePolicyError("RECOVERY_AUDIT_LINEAGE_INVALID") from None
+
     def get_audit_trail(
         self, *, subject_id: str | None = None, tenant_id: str | None = None
     ) -> list[dict[str, Any]]:
         tenant = self._require_tenant(tenant_id)
+        from shared.audit.tenant_read import validated_tenant_events
+
+        try:
+            selected = validated_tenant_events(self._audit_log, tenant)
+        except (ValueError, TypeError):
+            raise UserRolePolicyError("RECOVERY_AUDIT_LINEAGE_INVALID") from None
         events: list[dict[str, Any]] = []
-        for event in self._audit_log.list_events(tenant_id=tenant):
+        for event in selected:
             # Identifier-only dev provisioning journals are projected through
             # this same authenticated, tenant-filtered administration read. The
             # consumer must refuse uncertain roots, not infer ACK from a secret.
             if (not event.event_type.startswith(IDENTITY_EVENT_PREFIX)
-                    and event.event_type not in {"release.dev_smoke.reservation", "release.dev_smoke.binding"}):
+                    and event.event_type not in {"release.dev_smoke.reservation", "release.dev_smoke.binding",
+                                                 "identity.dev_smoke.recovery", "identity.dev_smoke.recovery_capability",
+                                                 "release.dev_smoke.recovery_binding"}):
                 continue
+            is_recovery = event.event_type in {
+                "release.dev_smoke.reservation", "release.dev_smoke.binding",
+                "identity.dev_smoke.recovery", "identity.dev_smoke.recovery_capability",
+                "release.dev_smoke.recovery_binding",
+            }
+            if is_recovery and type(event.metadata) is not dict:
+                raise UserRolePolicyError("RECOVERY_AUDIT_LINEAGE_INVALID")
             meta = dict(event.metadata or {})
-            if subject_id and subject_id not in {meta.get("subject_id"), meta.get("account_id")}:
+            if is_recovery:
+                # Refuse the whole read BEFORE subject filtering. Dropping a
+                # corrupt quarantine/duplicate could leave a valid ACK history
+                # and turn uncertainty into success. Never echo unsafe metadata.
+                from shared.identity.dev_smoke_journal import (
+                    TENANT_ID as CREATION_TENANT_ID,
+                )
+                from shared.identity.dev_smoke_journal import (
+                    DevSmokeBindingJournal,
+                    ProvisioningJournal,
+                )
+                from shared.identity.dev_smoke_recovery import (
+                    RECOVERY_BINDING_KEYS,
+                    RECOVERY_BINDING_TYPE,
+                    TENANT_ID,
+                    RecoveryCapabilityService,
+                    RecoveryJournal,
+                )
+                allowed = {ProvisioningJournal._TYPE: ProvisioningJournal._KEYS,
+                           DevSmokeBindingJournal._TYPE: DevSmokeBindingJournal._KEYS,
+                           RecoveryJournal._TYPE: RecoveryJournal._KEYS,
+                           RecoveryCapabilityService._CAP_TYPE: RecoveryCapabilityService._CAP_KEYS,
+                           RECOVERY_BINDING_TYPE: RECOVERY_BINDING_KEYS}[event.event_type]
+                pinned_tenant = (CREATION_TENANT_ID if event.event_type in
+                                 {ProvisioningJournal._TYPE, DevSmokeBindingJournal._TYPE} else TENANT_ID)
+                if (set(meta) != allowed or meta.get("secret_values_redacted") is not True
+                        or meta.get("tenant_id") != pinned_tenant or tenant != pinned_tenant):
+                    raise UserRolePolicyError("RECOVERY_AUDIT_LINEAGE_INVALID")
+            if subject_id and subject_id not in {meta.get("subject_id"), meta.get("account_id"), meta.get("target_account_id")}:
                 continue
             events.append(
                 {
@@ -227,6 +293,21 @@ class IdentityUserRoleManagementService:
         # Serialises concurrent administration of one tenant across instances so
         # the last-admin check cannot be raced.
         self._engine.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (f"identity-admin:{tenant}",))
+
+    def _checked_actor(self, principal: Principal | None, tenant: str) -> tuple[str, str]:
+        # Called AFTER the blocking tenant lock, inside the mutation transaction.
+        # Browser actor names, header roles and a pre-lock principal snapshot are
+        # never sufficient authority for an identity mutation.
+        try:
+            return checked_admin_authority(self._engine, principal, tenant=tenant)
+        except AdminAuthorityRefused:
+            raise UserRoleAuthorizationRefused("IDENTITY_ADMIN_AUTHORITY_REFUSED") from None
+
+    def _final_actor_time(self, deadline: str) -> None:
+        # Held rows prevent concurrent demotion/revocation, NOT natural expiry
+        # during later target/audit waits. Own self-demotion/disable stays valid.
+        if self._engine.query_one("SELECT 1 AS active WHERE clock_timestamp() < CAST(? AS timestamptz)", (deadline,)) is None:
+            raise UserRoleAuthorizationRefused("IDENTITY_ADMIN_AUTHORITY_REFUSED")
 
     def _other_active_admins(self, tenant: str, account_id: str) -> int:
         row = self._engine.query_one(
@@ -327,6 +408,7 @@ class IdentityUserRoleManagementService:
         reason: str = "",
         correlation_id: str | None = None,
         tenant_id: str | None = None,
+        verified_principal: Principal | None = None,
     ) -> dict[str, Any]:
         """Replace an existing account's roles/scope (and optionally status)."""
 
@@ -361,6 +443,7 @@ class IdentityUserRoleManagementService:
         now = datetime.now(UTC)
         with self._engine.lock:
             self._lock_tenant(tenant)
+            actor, actor_deadline = self._checked_actor(verified_principal, tenant)
             try:
                 before = self._find(tenant, subject_id)
             except UserNotFound as exc:
@@ -383,16 +466,19 @@ class IdentityUserRoleManagementService:
             if requested is not None and "clearance" in requested and requested.get("clearance") is not None:
                 clearance = str(requested.get("clearance")).upper()
             else:
-                clearance = str(before.get("scope", {}).get("clearance") or DataClassification.CONFIDENTIAL.name).upper()
+                raw_clearance = before.get("scope", {}).get("clearance")
+                if not isinstance(raw_clearance, str) or raw_clearance.upper() not in DataClassification.__members__:
+                    raise UserRolePolicyError("Invalid persisted clearance; explicit valid replacement required")
+                clearance = raw_clearance.upper()
 
             # Merge omitted axes from authoritative before-state transactionally
             before_scope = before.get("scope") or {}
             axes: dict[str, list[str]] = {}
             for axis in _SCOPE_AXES:
                 if requested is not None and axis in requested and requested[axis] is not None:
-                    axes[axis] = sorted({str(v) for v in requested[axis]})
+                    axes[axis] = _validated_scope_axis(requested[axis])
                 else:
-                    axes[axis] = sorted({str(v) for v in (before_scope.get(axis) or [])})
+                    axes[axis] = _validated_scope_axis(before_scope.get(axis))
 
             self._engine.execute("DELETE FROM identity.account_roles WHERE account_id = ?", (account_id,))
             for role in new_roles:
@@ -446,6 +532,7 @@ class IdentityUserRoleManagementService:
                     "actor_role": actor_role,
                 },
             )
+            self._final_actor_time(actor_deadline)
         return after
 
     def set_user_status(
@@ -458,6 +545,7 @@ class IdentityUserRoleManagementService:
         reason: str = "",
         correlation_id: str | None = None,
         tenant_id: str | None = None,
+        verified_principal: Principal | None = None,
     ) -> dict[str, Any]:
         """Disable (revoking every session) or re-enable an account."""
 
@@ -468,6 +556,7 @@ class IdentityUserRoleManagementService:
         now = datetime.now(UTC)
         with self._engine.lock:
             self._lock_tenant(tenant)
+            actor, actor_deadline = self._checked_actor(verified_principal, tenant)
             before = self._find(tenant, subject_id)
             revoked = self._apply_status(
                 before,
@@ -493,6 +582,7 @@ class IdentityUserRoleManagementService:
                     "reason": reason,
                 },
             )
+            self._final_actor_time(actor_deadline)
         return after
 
 

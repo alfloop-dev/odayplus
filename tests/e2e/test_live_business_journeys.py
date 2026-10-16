@@ -2356,6 +2356,8 @@ def test_self_principal_uses_identity_store_roles_not_token_or_browser_claims(
             status="active",
         )
     )
+    # This synthetic positive represents an already-rotated local account.
+    bundle.identity_store.set_password_must_change(account, False)
     bundle.identity_store.set_account_roles(account, [Role.OPERATIONS_MANAGER])
     bundle.identity_store.set_account_scope(account, Scope(tenant_id=TENANT))
     session = bundle.session_service.create_session(account_id=account, provider="local_password")

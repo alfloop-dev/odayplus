@@ -347,6 +347,8 @@ def test_the_build_refuses_an_unknown_profile() -> None:
 
 
 def _registry(manifest_digest: str, *, stage: str, environment: str, target: str) -> dict:
+    # Complete synthetic admission data; never an operational approval/receipt.
+    fixture_ref = str(Path(__file__).resolve())
     return {
         "schema_version": "2.0.0",
         "release": {
@@ -358,17 +360,38 @@ def _registry(manifest_digest: str, *, stage: str, environment: str, target: str
             "environment": environment,
             "admission_target": target,
             "decision": "go",
+            "human_signoff": {
+                "approver": "fixture-human-not-operational-approval",
+                "date": "2026-10-03",
+            },
         },
         "gates": [
             {
                 "id": f"gate-{index}",
+                "index": index,
+                "name": f"offline gate {index}",
+                "scope": "offline-test",
+                "owner": "fixture-author",
+                "reviewer": "fixture-reviewer",
+                "status_date": "2026-10-03",
+                "required_checks": ["offline-control"],
+                "blockers": [],
+                "evidence": [{
+                    "kind": "test", "ref": fixture_ref,
+                    "description": "synthetic fixture, not operational evidence",
+                }],
                 "status": "passed",
                 "release_sha": SHA,
                 "stage": stage,
                 "environment": environment,
                 "admission_target": target,
                 "receipts": [
-                    {"receipt_id": f"receipt-{index}", "release_sha": SHA, "result": "pass"}
+                    {
+                        "receipt_id": f"receipt-{index}", "release_sha": SHA, "result": "pass",
+                        "recorded_by": "fixture-reviewer",
+                        "recorded_at": "2026-10-03T12:00:00+00:00",
+                        "artifact": fixture_ref,
+                    }
                 ],
             }
             for index in range(7)

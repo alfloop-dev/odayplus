@@ -29,7 +29,12 @@ from .abac import AbacPolicy, AccessRequest, Decision, evaluate_abac
 
 if TYPE_CHECKING:
     from shared.audit.policy import AuditRecorder
-from .feature_flags import FeatureFlagRegistry, default_registry
+from .feature_flags import (
+    DUAL_APPROVAL_MINIMUM,
+    FeatureFlagRegistry,
+    _canonical_approvals,
+    default_registry,
+)
 from .identity import RiskLevel
 from .rbac import Action, rbac_allows
 
@@ -86,9 +91,14 @@ class AuthorizationEngine:
             return abac
 
         if is_high_risk(request.action):
-            return self._check_high_risk(request, on=on)
+            high_risk = self._check_high_risk(request, on=on)
+            if not high_risk.allowed:
+                return high_risk
+            return Decision.allow(
+                high_risk.reason, obligations=abac.obligations | high_risk.obligations
+            )
 
-        return Decision.allow("authorized")
+        return Decision.allow("authorized", obligations=abac.obligations)
 
     def _check_high_risk(self, request: AccessRequest, *, on: date) -> Decision:
         """High-risk policy hook: feature flag + separation of duties."""
@@ -97,7 +107,14 @@ class AuthorizationEngine:
         flag = self._flags.get(key)
         # An unregistered high-risk action fails closed: it must be governed by
         # an explicit flag before it can be authorized.
-        if flag is None or not flag.is_active(on):
+        try:
+            approvals_valid = (
+                flag is not None
+                and len(_canonical_approvals(flag.approved_by)) >= DUAL_APPROVAL_MINIMUM
+            )
+        except ValueError:
+            approvals_valid = False
+        if flag is None or flag.high_risk is not True or not approvals_valid or not flag.is_active(on):
             return Decision.deny(
                 f"high-risk action gated by disabled/absent flag {key!r}",
                 policy_id="high_risk.feature_flag",
@@ -124,8 +141,10 @@ class AuthorizationEngine:
     def _record(self, request: AccessRequest, decision: Decision) -> None:
         from shared.audit.policy import build_security_event, requires_audit
 
-        should_audit = not decision.allowed or requires_audit(
-            request.action, request.resource.data_classification
+        should_audit = (
+            not decision.allowed
+            or "audit" in decision.obligations
+            or requires_audit(request.action, request.resource.data_classification)
         )
         if not should_audit:
             return

@@ -389,6 +389,8 @@ class GateConfig:
     dev_admin_bundle_account_id: str = ""
     dev_admin_bundle_tenant_id: str = ""
     dev_admin_bundle_execution_id: str = ""
+    dev_admin_bundle_schema_version: int = 1
+    dev_admin_bundle_recovery_lineage: Any = None
     dev_admin_denied_role: str = ""
     bootstrap_admin_username: str = ""
     bootstrap_admin_password: str = ""
@@ -458,6 +460,15 @@ class HttpResponse:
     # name -> value of every ``Set-Cookie`` on the response. An empty value is
     # a deletion. Cookies are only ever sent back explicitly by the caller.
     cookies: dict[str, str] = field(default_factory=dict)
+    # Every raw ``Set-Cookie`` as (name, value) in received order, captured
+    # BEFORE ``cookies`` above collapses duplicate names (last wins). A field
+    # without ``=`` or with an empty name is kept as ("", "") so malformed
+    # multiplicity stays visible. ``None`` means the response was constructed
+    # in-process, not parsed from raw headers. Memory-only; never in repr.
+    set_cookie_pairs: tuple[tuple[str, str], ...] | None = field(default=None, repr=False, compare=False)
+    # Transport could not fully inspect headers. No captured cookie is NOT
+    # evidence that a submitted request issued no authority. Memory only.
+    custody_uncertain: bool = field(default=False, repr=False, compare=False)
 
     @property
     def failed(self) -> bool:
@@ -601,17 +612,36 @@ class UrllibHttpClient:
             if follow_redirects
             else urllib.request.build_opener(_NoRedirect)
         )
+        received: HttpResponse | None = None
         try:
-            with opener.open(request, timeout=self._timeout) as response:
-                return _to_response(response.status, response.headers, response.read())
+            try:
+                stream = opener.open(request, timeout=self._timeout)
+            except urllib.error.HTTPError as exc:
+                # HTTPError is also a response with headers/body. Read it via
+                # the SAME custody path; exceptions in an except block would
+                # otherwise bypass the partial-response failure handler.
+                stream = exc
+            with stream as response:
+                # Capture raw multiplicity and safely known cookies BEFORE
+                # body I/O. A timeout/truncated body may follow a committed
+                # login: retain custody solely for bounded owned cleanup.
+                received = _to_response(response.status, response.headers, b"")
+                received = _to_response(response.status, response.headers, response.read())
+            return received
         except _CrossOriginRedirectRefused:
             return HttpResponse(
                 status=0, error=f"refused cross-origin redirect for {safe_path}"
             )
-        except urllib.error.HTTPError as exc:
-            return _to_response(exc.code, exc.headers, exc.read())
-        except (OSError, urllib.error.URLError, TimeoutError) as exc:
-            return HttpResponse(status=0, error=f"{type(exc).__name__} for {safe_path}")
+        except Exception as exc:
+            # Includes incomplete HTTP bodies and the caller's absolute timer.
+            # No payload/exception message is exposed and status=0 is NEVER an
+            # acknowledgement, even if headers carried a successful status.
+            return HttpResponse(
+                status=0, error=f"{type(exc).__name__} for {safe_path}",
+                cookies=received.cookies if received is not None else {},
+                set_cookie_pairs=received.set_cookie_pairs if received is not None else None,
+                custody_uncertain=received is None,
+            )
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -661,22 +691,33 @@ def _to_response(status: int, headers: Any, raw: bytes) -> HttpResponse:
             decoded = None
         if isinstance(decoded, dict):
             payload = decoded
+    pairs = _set_cookie_pairs(headers)
+    defective = bool(getattr(headers, "defects", ()))
+    # A returned partial header view is no more proof of custody than a parser
+    # exception. Preserve extracted values, but never acknowledge this response.
     return HttpResponse(
-        status=status, payload=payload, location=location, cookies=_set_cookies(headers)
+        status=0 if defective else status, payload={} if defective else payload,
+        location="" if defective else location,
+        error="HTTP response header inspection refused" if defective else "",
+        cookies={name: value for name, value in pairs if name}, set_cookie_pairs=pairs,
+        custody_uncertain=defective,
     )
 
 
-def _set_cookies(headers: Any) -> dict[str, str]:
+def _set_cookie_pairs(headers: Any) -> tuple[tuple[str, str], ...]:
     try:
         values = headers.get_all("set-cookie") or []
     except AttributeError:  # pragma: no cover - non-standard header container
         values = []
-    cookies: dict[str, str] = {}
+    pairs: list[tuple[str, str]] = []
     for value in values:
         name, sep, rest = str(value).split(";", 1)[0].partition("=")
-        if sep and name.strip():
-            cookies[name.strip()] = rest.strip()
-    return cookies
+        pairs.append((name.strip(), rest.strip()) if sep and name.strip() else ("", ""))
+    return tuple(pairs)
+
+
+def _set_cookies(headers: Any) -> dict[str, str]:
+    return {name: value for name, value in _set_cookie_pairs(headers) if name}
 
 
 class CloudRunWorkerDriver:
@@ -836,6 +877,26 @@ def _operator_source(payload: Mapping[str, Any]) -> str:
 
 def validate_config(config: GateConfig) -> list[CheckResult]:
     checks: list[CheckResult] = []
+    bundle_ids = (config.dev_admin_bundle_account_id, config.dev_admin_bundle_tenant_id,
+                  config.dev_admin_bundle_execution_id)
+    if any(bundle_ids) or config.dev_admin_bundle_schema_version != 1 or config.dev_admin_bundle_recovery_lineage is not None:
+        from shared.identity.dev_smoke_recovery import (
+            RecoveryBundleLineage,
+            recovery_bundle_lineage,
+        )
+        coherent = False
+        try:
+            coherent = (config.dev_admin and config.expected_deployment == "dev"
+                        and all(_canonical_uuid(v) is not None for v in bundle_ids)
+                        and type(config.dev_admin_bundle_schema_version) is int
+                        and ((config.dev_admin_bundle_schema_version == 1 and config.dev_admin_bundle_recovery_lineage is None)
+                             or (config.dev_admin_bundle_schema_version == 2
+                                 and type(config.dev_admin_bundle_recovery_lineage) is RecoveryBundleLineage
+                                 and recovery_bundle_lineage(vars(config.dev_admin_bundle_recovery_lineage))
+                                     == config.dev_admin_bundle_recovery_lineage)))
+        except Exception:
+            pass
+        _check(checks, coherent, "config:credential_bundle_lineage", "strict matched bundle expectations", "config")
     try:
         _normalize_origin(config.api_url, allow_http=config.allow_http)
         _check(checks, True, "config:api_url", "configured deployed API origin", "config")
@@ -1732,6 +1793,248 @@ def _payload_mentions(response: HttpResponse, code: str) -> bool:
     return code in json.dumps(response.payload, sort_keys=True)
 
 
+class _SessionCustodyStopped(Exception):
+    """Stop standalone probes after ambiguous issuance or cleanup; no retry."""
+
+
+class _CallerOwnedSessionCleanup:
+    """Nominal in-process custody contract, declared ONLY by trusted owner code.
+
+    The native consumer already fences issuance and owns its cleanup reserve.
+    Do not add a second finally-owner around it. This is not a request/header,
+    response flag, duck-typed attribute, or proof that cleanup has completed.
+    Recovery separately supplies its quarantine-before-cleanup barrier.
+    """
+
+
+class _OwnedGateSessions:
+    """Memory-only specific-cookie custody, never the native recovery owner.
+
+    Native recovery supplies its own barrier: quarantine MUST precede delegated
+    cleanup. No cookie value or exception text is included in reports.
+    """
+
+    _cookie_name = "__Host-oday_web_session"
+    _max_sessions = 4
+
+    def __init__(self, web: HttpClient, config: GateConfig) -> None:
+        self.web = web
+        self.origin = _web_origin(config.web_url)
+        self.username = config.dev_admin_username or config.bootstrap_admin_username
+        self.login_passwords = {config.dev_admin_password or config.bootstrap_admin_password,
+                                config.dev_admin_initial_password} - {""}
+        self.rotation_password = config.dev_admin_password or config.bootstrap_admin_password
+        self.sessions: dict[str, dict[str, bool]] = {}
+        self.unknown = False
+        self.cleaning = False
+
+    def _observe(self, result: HttpResponse, *, issuance: bool) -> None:
+        pairs = result.set_cookie_pairs
+        if pairs is None:
+            pairs = tuple(result.cookies.items())
+        if result.custody_uncertain or (issuance and result.failed):
+            self.unknown = True
+        if len(pairs) > 1 or any(not name for name, _ in pairs):
+            self.unknown = True
+        if {name: value for name, value in pairs if name} != result.cookies:
+            self.unknown = True
+            # Contradictory raw/collapsed evidence is UNKNOWN. Retain both
+            # safely known values, never pick a last-wins cookie for more work.
+            pairs = (*pairs, *(item for item in result.cookies.items() if item not in pairs))
+        for name, value in pairs:
+            if not value:
+                continue
+            if (name != self._cookie_name or type(value) is not str
+                    or len(value) > 8192
+                    or any(ord(c) < 33 or ord(c) >= 127 or c in ';,="\\' for c in value)):
+                self.unknown = True
+                continue
+            if value in self.sessions:
+                if self.sessions[value]["attempted"] or self.sessions[value]["rotation_acknowledged"]:
+                    # Reissuing an already-released opaque value is ambiguous,
+                    # not permission for a second logout of the same cookie.
+                    self.unknown = True
+            elif len(self.sessions) < self._max_sessions:
+                self.sessions[value] = {"attempted": False, "acknowledged": False,
+                                        "rotation_acknowledged": False,
+                                        "session_denied": False, "api_denied": False,
+                                        "session_denied_attempted": False, "api_denied_attempted": False}
+            else:
+                self.unknown = True
+            if not issuance:
+                self.unknown = True
+
+    def _issuance_valid(
+        self, path: str, headers: Mapping[str, str], result: HttpResponse, *, expected_login: bool,
+    ) -> bool:
+        cookies = {name: value for name, value in result.cookies.items() if value}
+        single = set(cookies) == {self._cookie_name}
+        if result.failed or result.custody_uncertain:
+            return False
+        if path == "/auth/password":
+            return result.status == 200 and result.payload.get("ok") is True and single
+        if headers.get("content-type") != "application/x-www-form-urlencoded":
+            return (
+                expected_login and result.status == 200 and single and result.payload.get("ok") is True
+                and result.payload.get("subject") == self.username
+            ) or (result.status == 401 and not cookies and _payload_mentions(result, "AUTH_INVALID_CREDENTIALS"))
+        destination = urllib.parse.urlsplit(result.location)
+        if result.status != 303 or _origin(result.location) != _origin(self.origin) or destination.fragment:
+            return False
+        return (
+            expected_login and single and destination.path == "/operator" and destination.query == "view=admin"
+        ) or (
+            not cookies and destination.path == "/login"
+            and urllib.parse.parse_qs(destination.query, keep_blank_values=True)
+            == {"error": ["AUTH_INVALID_CREDENTIALS"], "returnTo": ["/operator?view=admin"]}
+        )
+
+    def request(self, method: str, path: str, **kwargs: Any) -> HttpResponse:
+        headers = kwargs.get("headers") or {}
+        raw_cookie = headers.get("cookie", "")
+        value = raw_cookie.removeprefix(self._cookie_name + "=")
+        owned = self.sessions.get(value) if raw_cookie == self._cookie_name + "=" + value else None
+        if raw_cookie and owned is None:
+            self.unknown = True
+            raise _SessionCustodyStopped
+        if (self.unknown and not self.cleaning
+                and not (method == "GET" and owned is not None and owned["attempted"]
+                         and path in {"/auth/session", "/api/v1/operator/users"})):
+            raise _SessionCustodyStopped
+        logout = method == "POST" and path == "/auth/logout"
+        issuance = method == "POST" and path in {"/login", "/auth/password"}
+        if logout:
+            if owned is None or owned["attempted"]:
+                self.unknown = True
+                raise _SessionCustodyStopped
+            owned["attempted"] = True  # Before transport, even if the reply is lost.
+        if method == "GET" and owned is not None and (owned["attempted"] or owned["rotation_acknowledged"]):
+            key = {"/auth/session": "session_denied", "/api/v1/operator/users": "api_denied"}.get(path)
+            if key:
+                if owned[key + "_attempted"]:
+                    self.unknown = True
+                    raise _SessionCustodyStopped
+                owned[key + "_attempted"] = True
+        observed_before = set(self.sessions)
+        try:
+            result = self.web.request(method, path, **kwargs)
+        except Exception:
+            self.unknown = True
+            raise _SessionCustodyStopped from None
+        self._observe(result, issuance=issuance)
+        if issuance:
+            try:
+                body = kwargs.get("body") or {}
+                expected_login = (body.get("username") == self.username
+                                  and body.get("password") in self.login_passwords)
+                valid_issuance = self._issuance_valid(path, headers, result, expected_login=expected_login)
+            except (TypeError, ValueError):
+                valid_issuance = False
+            if path == "/auth/password":
+                replacement = result.cookies.get(self._cookie_name)
+                valid_rotation_request = valid_issuance and (
+                    owned is not None and not owned["attempted"] and not owned["rotation_acknowledged"]
+                    and headers.get("origin") == self.origin
+                    and body.get("currentPassword") in self.login_passwords
+                    and body.get("newPassword") == self.rotation_password
+                    and body.get("currentPassword") != body.get("newPassword")
+                    and replacement not in observed_before
+                )
+                valid_issuance = valid_issuance and valid_rotation_request
+                if valid_issuance and not self.unknown and result.payload == {
+                    "ok": True, "summary": "Password changed successfully.",
+                }:
+                    # Existing Web contract: create distinct B, durably revoke
+                    # prior sessions (including the consumed A), THEN send this
+                    # complete acknowledgement. Retain ONLY this specific A as
+                    # witnessed; never infer release of other observed cookies.
+                    # An abbreviated/partial reply is not this witness. A later
+                    # logout401 is not a witness either (AEAD failure also401s).
+                    owned["rotation_acknowledged"] = True
+            if not valid_issuance:
+                self.unknown = True
+        if logout and owned is not None:
+            owned["acknowledged"] = (
+                not result.failed and not result.custody_uncertain and result.status == 200
+                and result.payload.get("ok") is True
+                and result.cookies.get(self._cookie_name, "missing") == ""
+            )
+            if not owned["acknowledged"]:
+                self.unknown = True
+        if method == "GET" and owned is not None and (owned["attempted"] or owned["rotation_acknowledged"]):
+            if path == "/auth/session":
+                owned["session_denied"] = not result.failed and result.status == 401
+                if not owned["session_denied"]:
+                    self.unknown = True
+            elif path == "/api/v1/operator/users":
+                owned["api_denied"] = not result.failed and result.status in DENIED_STATUSES
+                if not owned["api_denied"]:
+                    self.unknown = True
+        # Let the owning journey retain the exact failed observation/check;
+        # stop BEFORE its next request, rather than hiding that diagnostic.
+        return result
+
+    def finish(self, checks: list[CheckResult], report: dict[str, Any], correlation_id: str) -> None:
+        # <=4 distinct cookies, <=3 cleanup calls each, no login/rotation/retry
+        # or compensation. Calls retain the configured transport timeout. This
+        # outer deadline is NOT an extension of any native work/cleanup budget.
+        self.cleaning = True
+        deadline = time.monotonic() + 540.0
+        visited: set[str] = set()
+        for _ in range(self._max_sessions):
+            value = next((v for v in self.sessions if v not in visited), None)
+            if value is None:
+                break
+            visited.add(value)
+            state = self.sessions[value]
+            headers = {"accept": "application/json", "origin": self.origin,
+                       "x-correlation-id": correlation_id,
+                       "cookie": self._cookie_name + "=" + value}
+            try:
+                if time.monotonic() >= deadline:
+                    self.unknown = True
+                    break
+                if not state["attempted"] and not state["rotation_acknowledged"]:
+                    self.request("POST", "/auth/logout", authenticated=False,
+                                 headers=headers, follow_redirects=False)
+                # A full rotation acknowledgement releases its consumed cookie
+                # under the existing route contract, NOT via a fabricated logout.
+                # BOTH specific-cookie denied reads remain mandatory below.
+                # A lost/invalid logout is not retried. Continue only other
+                # specifically owned cookies, retaining UNKNOWN.
+                if not (state["acknowledged"] or state["rotation_acknowledged"]):
+                    self.unknown = True
+                    continue
+                for key, path in (("session_denied", "/auth/session"),
+                                  ("api_denied", "/api/v1/operator/users")):
+                    if not state[key + "_attempted"]:
+                        if time.monotonic() >= deadline:
+                            self.unknown = True
+                            break
+                        self.request("GET", path, authenticated=False, headers=headers)
+            except _SessionCustodyStopped:
+                self.unknown = True
+        def verified(state: Mapping[str, bool]) -> bool:
+            return (
+                (state["acknowledged"] or state["rotation_acknowledged"])
+                and state["session_denied"] and state["api_denied"]
+                and state["session_denied_attempted"] and state["api_denied_attempted"]
+            )
+
+        complete = not self.unknown and all(verified(s) for s in self.sessions.values())
+        report["dev_admin"]["session_cleanup"] = {
+            "outcome": "completed" if complete else "unknown",
+            "retained_observed_sessions": len(self.sessions),
+            "logout_attempts": sum(s["attempted"] for s in self.sessions.values()),
+            "verified_sessions": sum(verified(s) for s in self.sessions.values()),
+            "rotation_release_witnesses": sum(s["rotation_acknowledged"] for s in self.sessions.values()),
+            "specific_owned_sessions_only": True,
+        }
+        _check(checks, complete, "session:owned_cleanup",
+               "specific observed sessions released" if complete else "session custody/cleanup UNKNOWN",
+               "session")
+
+
 def _check_dev_admin_session(
     *,
     web: HttpClient | None,
@@ -1739,6 +2042,41 @@ def _check_dev_admin_session(
     correlation_id: str,
     checks: list[CheckResult],
     report: dict[str, Any],
+    session_cleanup_barrier: Callable[[Sequence[CheckResult]], None] | None = None,
+) -> None:
+    if (web is None or session_cleanup_barrier is not None
+            or isinstance(web, _CallerOwnedSessionCleanup)):
+        # NEVER finally-logout around an existing native custody owner, including
+        # when it or transport raises. Recovery quarantines FIRST; the consumer
+        # explicitly spends its own bounded cleanup reserve after evaluation.
+        _check_dev_admin_session_journey(
+            web=web, config=config, correlation_id=correlation_id, checks=checks,
+            report=report, session_cleanup_barrier=session_cleanup_barrier,
+        )
+        return
+    custody = _OwnedGateSessions(web, config)
+    try:
+        _check_dev_admin_session_journey(
+            web=custody, config=config, correlation_id=correlation_id,
+            checks=checks, report=report,
+        )
+    except _SessionCustodyStopped:
+        _check(checks, False, "session:custody", "session transport/issuance/cleanup UNKNOWN", "session")
+        if not any(c.name == "session:password_login" for c in checks):
+            _check(checks, False, "session:password_login",
+                   "password login not completed; stopped before further requests after custody uncertainty", "session")
+    finally:
+        custody.finish(checks, report, correlation_id)
+
+
+def _check_dev_admin_session_journey(
+    *,
+    web: HttpClient | None,
+    config: GateConfig,
+    correlation_id: str,
+    checks: list[CheckResult],
+    report: dict[str, Any],
+    session_cleanup_barrier: Callable[[Sequence[CheckResult]], None] | None = None,
 ) -> None:
     """Drive the real password sign-in and administration journey through the deployed Web.
 
@@ -1868,7 +2206,10 @@ def _check_dev_admin_session(
         users_probe = web.request(
             "GET", "/api/v1/operator/users", authenticated=False, headers=session_headers(cookies)
         )
-        if not users_probe.failed and users_probe.status == 403 and _payload_mentions(users_probe, "PASSWORD_CHANGE_REQUIRED"):
+        if users_probe.failed:
+            _check(checks, False, "session:users_probe", "Authenticated preliminary read failed; stop before more login work", "session")
+            return
+        if users_probe.status == 403 and _payload_mentions(users_probe, "PASSWORD_CHANGE_REQUIRED"):
             _check(
                 checks,
                 False,
@@ -2119,10 +2460,11 @@ def _check_dev_admin_session(
         )
         acknowledged = credential_bundle_acknowledged(DevCredentialBundle(
             username, "", config.dev_admin_bundle_account_id, config.dev_admin_bundle_tenant_id,
-            config.dev_admin_bundle_execution_id,
-        ), events)
+            config.dev_admin_bundle_execution_id, config.dev_admin_bundle_schema_version,
+            config.dev_admin_bundle_recovery_lineage,
+        ), events, target_account=own_record)
         _check(checks, acknowledged, "admin:credential_bundle_durable_acknowledgement",
-               f"reservedIntentAcknowledgementWithoutQuarantine={acknowledged}", "audit")
+               f"strictVersionedLineageAcknowledged={acknowledged}", "audit")
         if not acknowledged:
             return
     bootstrap_events = [
@@ -2370,6 +2712,10 @@ def _check_dev_admin_session(
     )
     operations.append("admin_page")
 
+    # Trusted recovery may STOP on existing failures before releasing its own
+    # sessions. This adds a fail-stop boundary; it cannot waive/replace checks.
+    if session_cleanup_barrier is not None:
+        session_cleanup_barrier(tuple(checks))
     # 11. Logout and revocation.
     logout = web.request(
         "POST",
@@ -2482,6 +2828,8 @@ def _check_dev_admin_session(
             _failure_detail(form_page, expected="200 (not a /login redirect)"), "session",
         )
     finally:
+        if session_cleanup_barrier is not None:
+            session_cleanup_barrier(tuple(checks))
         form_logout = web.request(
             "POST", "/auth/logout", authenticated=False,
             headers=session_headers(form_cookies, origin=origin), follow_redirects=False,
@@ -2729,18 +3077,14 @@ def _await_terminal_status(
     return status_value, last_detail
 
 
-def _check_worker_and_audit(
+def _check_worker_preflight(
     *,
-    http: HttpClient,
     config: GateConfig,
-    worker_driver: WorkerDriver,
-    correlation_id: str,
     checks: list[CheckResult],
     report: dict[str, Any],
     provider: Mapping[str, Any],
-    monotonic: Callable[[], float],
-    sleep: Callable[[float], None],
-) -> None:
+) -> bool:
+    """Read-only dispatch prerequisites, also reported when execution is held."""
     runtime_provider_mode = str(provider.get("mode") or "").strip().lower()
     configured_provider_mode = config.external_provider_mode.strip().lower()
     if runtime_provider_mode != configured_provider_mode:
@@ -2756,7 +3100,7 @@ def _check_worker_and_audit(
             "worker",
         )
         report["worker"] = {"skipped": False, "dispatched": False}
-        return
+        return False
 
     providers_disabled = _disabled_provider_runtime_confirmed(config, provider)
     if not config.required_provider_ids and not providers_disabled:
@@ -2768,8 +3112,27 @@ def _check_worker_and_audit(
             "worker",
         )
         report["worker"] = {"skipped": False, "dispatched": False}
-        return
+        return False
+    return True
 
+
+def _check_worker_and_audit(
+    *,
+    http: HttpClient,
+    config: GateConfig,
+    worker_driver: WorkerDriver,
+    correlation_id: str,
+    checks: list[CheckResult],
+    report: dict[str, Any],
+    provider: Mapping[str, Any],
+    monotonic: Callable[[], float],
+    sleep: Callable[[float], None],
+) -> None:
+    if not _check_worker_preflight(
+        config=config, checks=checks, report=report, provider=provider
+    ):
+        return
+    providers_disabled = _disabled_provider_runtime_confirmed(config, provider)
     idempotency_key = f"live-e2e-{config.expected_sha[:12]}-{correlation_id}"
     body = _enqueue_body(config, idempotency_key)
     headers = {"idempotency-key": idempotency_key}
@@ -2997,6 +3360,7 @@ def evaluate_gate(
     sleep: Callable[[float], None] = time.sleep,
     business_journey_receipt: Mapping[str, Any] | None = None,
     business_journey_receipt_note: str = "",
+    session_cleanup_barrier: Callable[[Sequence[CheckResult]], None] | None = None,
 ) -> tuple[list[CheckResult], dict[str, Any]]:
     redact = _redactor(
         config.bearer_token,
@@ -3061,6 +3425,11 @@ def evaluate_gate(
                 f"no usable web origin for {config.web_url or '<missing>'}",
                 "config",
             )
+            if config.dev_admin:
+                _check(
+                    checks, False, "session:web_client",
+                    f"no usable web origin for {config.web_url or '<missing>'}", "config",
+                )
         else:
             _check_web_login(http=web_http, checks=checks)
         models_response = http.request("GET", "/api/v1/learninghub/models")
@@ -3078,30 +3447,40 @@ def evaluate_gate(
         # scheduled path, and the ingestion runs it persists are exactly what
         # ``_check_source_data`` reads back. Reading the history first meant the
         # gate asserted evidence that only a manual POST could ever have created.
-        _check_worker_and_audit(
-            http=http,
-            config=config,
-            worker_driver=worker_driver,
-            correlation_id=correlation_id,
-            checks=checks,
-            report=report,
-            provider=runtime_provider,
-            monotonic=monotonic,
-            sleep=sleep,
+        _check_worker_preflight(
+            config=config, checks=checks, report=report, provider=runtime_provider
         )
+        # These probes POST jobs and invoke the worker. A final blocked report
+        # cannot undo those effects: all read-only prerequisites, including the
+        # serving release binding, must positively pass BEFORE entering them.
+        if all(check.ok for check in checks):
+            _check_worker_and_audit(
+                http=http,
+                config=config,
+                worker_driver=worker_driver,
+                correlation_id=correlation_id,
+                checks=checks,
+                report=report,
+                provider=runtime_provider,
+                monotonic=monotonic,
+                sleep=sleep,
+            )
         _check_source_data(
             http.request("GET", "/api/v1/external-data/ingestion-runs?limit=100"),
             config=config,
             provider=runtime_provider,
             checks=checks,
         )
-        if config.dev_admin:
+        # Login, password rotation and session probes are mutations too. Keep
+        # read-only diagnostics above, but never enter this journey on HOLD.
+        if config.dev_admin and all(check.ok for check in checks):
             _check_dev_admin_session(
                 web=web_http,
                 config=config,
                 correlation_id=f"{correlation_id}-session",
                 checks=checks,
                 report=report,
+                session_cleanup_barrier=session_cleanup_barrier,
             )
 
     blockers = [
@@ -3389,6 +3768,8 @@ def main(argv: list[str] | None = None) -> int:
         dev_admin_bundle_account_id=bundle.account_id if bundle else "",
         dev_admin_bundle_tenant_id=bundle.tenant_id if bundle else "",
         dev_admin_bundle_execution_id=bundle.execution_id if bundle else "",
+        dev_admin_bundle_schema_version=bundle.schema_version if bundle else 1,
+        dev_admin_bundle_recovery_lineage=bundle.recovery_lineage if bundle else None,
         dev_admin_denied_role=os.environ.get(DEV_ADMIN_DENIED_ROLE_ENV, "").strip() or "cs-lead",
         bootstrap_admin_username="" if bundle else os.environ.get(BOOTSTRAP_ADMIN_USERNAME_ENV, "").strip(),
         bootstrap_admin_password="" if bundle else os.environ.get(BOOTSTRAP_ADMIN_PASSWORD_ENV, ""),

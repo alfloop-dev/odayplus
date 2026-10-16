@@ -1,0 +1,723 @@
+"""Actual dependency/JWT/mounted API composition, synthetic offline authority."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+import pytest
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
+
+from apps.api.oday_api.main import create_app
+from apps.api.oday_api.runtime_mode import live_data_required
+from apps.api.oday_api.security import dependencies as deps
+from modules.opsboard.auth import (
+    AuthBoundaryConfig,
+    AuthenticationBoundary,
+    AuthFailureReason,
+    Credentials,
+    JwksResolver,
+)
+from shared.audit import AuditEvent, InMemoryAuditLog
+from tests.security.test_opsboard_jwks_auth import _jwk, _token
+
+MODE_KEYS = (
+    "ODP_DEPLOY_ENV",
+    "ODAY_ENV",
+    "ODP_ENV",
+    "APP_ENV",
+    "ENVIRONMENT",
+    "ODP_PRODUCT_MODE",
+    "NODE_ENV",
+    "ODP_REQUIRE_LIVE_DATA",
+)
+TENANT = "10000000-0000-4000-8000-000000000001"
+OTHER = "20000000-0000-4000-8000-000000000002"
+
+
+@pytest.mark.parametrize("field_key", ["contactPhone", "brokerEmail", "privateNotes"])
+def test_masked_intake_preserves_only_server_defined_field_identity(field_key: str) -> None:
+    from copy import deepcopy
+
+    from modules.listing.application.intake_authorization import mask_intake
+
+    principal = deps.principal_from_headers(
+        {"x-subject-id": "synthetic-viewer", "x-roles": "expansion_user", "x-tenant-id": TENANT}
+    )
+    marker = "PRIVATE-FIELD-CONTENT"
+    field = {
+        "key": {"nested": marker}, "label": marker,
+        "sourceValue": marker, "normalizedValue": marker, "correctedValue": marker,
+        "correctionReason": marker, "unsupported": {"nested": marker},
+    }
+    source = {"parsedFields": {field_key: field}}
+    before = deepcopy(source)
+    masked = mask_intake(principal, source)["parsedFields"][field_key]
+    # The real evidence panel groups by field.key.toLowerCase(). Masking must
+    # supply a safe schema identity, never copy untrusted metadata or values.
+    assert masked == {
+        "key": field_key, "label": field_key,
+        "sourceValue": None, "normalizedValue": None, "correctedValue": None,
+        "masked": True, "mask_reason_code": "FIELD_MASKED",
+    }
+    assert source == before
+
+
+@pytest.fixture(autouse=True)
+def isolation(monkeypatch: Any) -> Any:
+    import os
+
+    for key in tuple(os.environ):
+        if key in MODE_KEYS or key.startswith("ODP_AUTH_"):
+            monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("NODE_ENV", "test")
+    deps.reset_bound_persistence()
+    yield
+    deps.reset_bound_persistence()
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("ODP_DEPLOY_ENV", "production"),
+        ("ODAY_ENV", "staging"),
+        ("ODP_ENV", "prod"),
+        ("APP_ENV", "stage"),
+        ("ENVIRONMENT", "live"),
+        ("NODE_ENV", "production"),
+        ("ODP_REQUIRE_LIVE_DATA", "true"),
+        ("ODP_PRODUCT_MODE", "STAGING"),
+    ],
+)
+def test_all_authoritative_live_modes_refuse_spoofed_header_admin(
+    key: str, value: str, monkeypatch: Any
+) -> None:
+    monkeypatch.setenv(key, value)
+    assert live_data_required()
+    # Auth inputs absent; actual default boundary has no credentials configured.
+    assert deps.default_boundary() is None
+    with pytest.raises(HTTPException) as caught:
+        deps.principal_from_headers(
+            {"x-subject-id": "forged", "x-roles": "platform_admin", "x-tenant-id": TENANT}
+        )
+    assert caught.value.status_code == 401
+
+
+@pytest.mark.parametrize("refresh", ["outage", "empty", "malformed"])
+def test_expired_jwks_cannot_authenticate_using_retained_signing_authority(refresh: str) -> None:
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    ticks = [0.0]
+    replies: list[Any] = [
+        {"keys": [_jwk(key, "offline-key")]},
+        {"keys": []} if refresh == "empty" else {},
+    ]
+    calls = [0]
+
+    def fetch(_: str) -> dict[str, Any]:
+        calls[0] += 1
+        if calls[0] > 1 and refresh == "outage":
+            raise ValueError("PRIVATE-PROVIDER-ERROR")
+        return replies[min(calls[0] - 1, 1)]
+
+    resolver = JwksResolver(
+        "https://offline.invalid/jwks", cache_ttl_seconds=30, fetch=fetch, clock=lambda: ticks[0]
+    )
+    boundary = AuthenticationBoundary(
+        AuthBoundaryConfig(
+            issuer="https://idp.example.test",
+            audiences=frozenset({"oday-api"}),
+            jwks_uri="https://offline.invalid/jwks",
+            principal_mappings={
+                "operator-real-1": {"roles": ["auditor"], "scope": {"tenant_id": TENANT}}
+            },
+        ),
+        key_resolver=resolver,
+    )
+    credentials = Credentials(bearer_token=_token(key, "offline-key"))
+    assert boundary.authenticate(credentials).authenticated
+    ticks[0] = 30.0  # exact expiry, no timing sleep
+    outcome = boundary.authenticate(credentials)
+    assert not outcome.authenticated
+    assert outcome.reason is AuthFailureReason.UNKNOWN_KEY
+    assert calls[0] == 2
+    ticks[0] = 3000.0
+    assert not boundary.authenticate(credentials).authenticated
+
+
+def test_jwks_outage_retains_only_unexpired_cache_and_healthy_refresh_recovers() -> None:
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    ticks = [0.0]
+    healthy = [True]
+
+    def fetch(_: str) -> dict[str, Any]:
+        if not healthy[0]:
+            raise ValueError("OFFLINE-UNAVAILABLE")
+        return {"keys": [_jwk(key, "known")]}
+
+    resolver = JwksResolver(
+        "https://offline.invalid/jwks", cache_ttl_seconds=30, fetch=fetch, clock=lambda: ticks[0]
+    )
+    first = resolver.resolve("known")
+    assert first is not None
+    healthy[0] = False
+    ticks[0] = 29.0
+    assert resolver.resolve("missing") is None  # actual failed refresh, not unused fixture response
+    assert resolver.resolve("known") is first
+    ticks[0] = 30.0
+    assert resolver.resolve("known") is None
+    healthy[0] = True
+    assert resolver.resolve("known") is None  # Failed attempt cannot be retried inside cooldown.
+    ticks[0] = 31.0
+    assert resolver.resolve("known") is not None
+
+
+@pytest.fixture
+def audit_client() -> Any:
+    audit = InMemoryAuditLog()
+    for tenant, marker in [(TENANT, "own-event"), (OTHER, "OTHER-TENANT-PRIVATE-MARKER")]:
+        audit.record(
+            AuditEvent(
+                event_type="test.offline",
+                actor="fixture",
+                action="VIEW",
+                resource="audit",
+                outcome="success",
+                correlation_id="same-caller-selector",
+                metadata={"tenant_id": tenant, "marker": marker},
+                occurred_at=datetime.now(UTC) - timedelta(seconds=1),
+            )
+        )
+    client = TestClient(create_app(audit_log=audit))
+    yield client, audit
+    client.close()
+
+
+@pytest.mark.parametrize("path", ["/audit/events", "/api/v1/audit/events"])
+@pytest.mark.parametrize(
+    "headers", [{}, {"x-subject-id": "fixture", "x-roles": "platform_admin", "x-tenant-id": TENANT}]
+)
+def test_generic_audit_both_aliases_require_audit_read_authority(
+    audit_client: Any, path: str, headers: dict[str, str]
+) -> None:
+    response = audit_client[0].get(path, headers=headers)
+    assert response.status_code in (401, 403)
+    assert "OTHER-TENANT-PRIVATE-MARKER" not in response.text
+
+
+@pytest.mark.parametrize("path", ["/audit/events", "/api/v1/audit/events"])
+@pytest.mark.parametrize("selector", [None, "same-caller-selector"])
+def test_generic_audit_authorized_read_never_selects_foreign_tenant(
+    audit_client: Any, path: str, selector: str | None
+) -> None:
+    response = audit_client[0].get(
+        path,
+        headers={"x-subject-id": "fixture", "x-roles": "auditor", "x-tenant-id": TENANT},
+        params={"correlation_id": selector} if selector else None,
+    )
+    assert response.status_code == 200, response.text
+    assert len(response.json()["events"]) == 1
+    assert "OTHER-TENANT-PRIVATE-MARKER" not in response.text
+
+
+@pytest.mark.parametrize("path", ["/audit/events", "/api/v1/audit/events"])
+def test_generic_correlation_filter_cannot_hide_malformed_fixed_history(
+    audit_client: Any, path: str
+) -> None:
+    from shared.identity.dev_smoke_journal import TENANT_ID as PINNED_TENANT
+    from shared.identity.dev_smoke_journal import ProvisioningJournal
+
+    client, audit = audit_client
+    audit.record(
+        AuditEvent(
+            event_type=ProvisioningJournal._TYPE,
+            actor="fixture",
+            action="offline",
+            resource="offline",
+            outcome="success",
+            correlation_id=ProvisioningJournal._CORRELATION,
+            metadata={"tenant_id": OTHER, "PRIVATE-EXTENSION": "DO-NOT-ECHO"},
+        )
+    )
+    response = client.get(
+        path,
+        headers={"x-subject-id": "fixture", "x-roles": "auditor", "x-tenant-id": PINNED_TENANT},
+        params={"correlation_id": "unrelated-caller-selector"},
+    )
+    assert response.status_code == 403
+    assert "DO-NOT-ECHO" not in response.text
+
+
+@pytest.mark.parametrize("prefix", ["", "/api/v1"])
+def test_future_domain_audit_uses_verified_tenant_and_keeps_history_hidden(
+    monkeypatch: Any, prefix: str
+) -> None:
+    """Mounted JWT producers, not a read-filter waiver or historical rewrite."""
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    from modules.forecastops import default_forecast_alert_policy
+    from shared.governance import InMemoryDecisionPolicyRepository
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    boundary = AuthenticationBoundary(
+        AuthBoundaryConfig(
+            issuer="https://idp.example.test",
+            audiences=frozenset({"oday-api"}),
+            jwks_uri="https://offline.invalid/jwks",
+            principal_mappings={
+                "operator-real-1": {
+                    "roles": [
+                        "operations_manager",
+                        "regional_supervisor",
+                        "expansion_user",
+                        "auditor",
+                    ],
+                    "scope": {"tenant_id": TENANT},
+                },
+                "foreign-auditor": {"roles": ["auditor"], "scope": {"tenant_id": OTHER}},
+            },
+        ),
+        key_resolver=JwksResolver(
+            "https://offline.invalid/jwks", fetch=lambda _: {"keys": [_jwk(key, "offline-key")]}
+        ),
+    )
+    monkeypatch.setattr(deps, "default_boundary", lambda: boundary)
+    correlation = "same-domain-producer-selector"
+    headers = {
+        "authorization": "Bearer " + _token(key, "offline-key"),
+        "x-correlation-id": correlation,
+    }
+    foreign = {"authorization": "Bearer " + _token(key, "offline-key", sub="foreign-auditor")}
+    audit = InMemoryAuditLog()
+    historical = audit.record(
+        AuditEvent(
+            event_type="offline.tenantless-history",
+            actor="fixture",
+            action="offline",
+            resource="offline",
+            outcome="retained",
+            correlation_id=correlation,
+            metadata={"marker": "TENANTLESS-HISTORY-MUST-STAY-HIDDEN"},
+        )
+    )
+    frozen = historical.to_dict()
+    policies = InMemoryDecisionPolicyRepository([default_forecast_alert_policy(TENANT)])
+    with TestClient(create_app(audit_log=audit, forecastops_policy_repository=policies)) as client:
+        forecast = client.post(
+            prefix + "/forecastops/forecast-jobs",
+            headers=headers,
+            json={
+                "prediction_origin_time": "2026-06-27T09:00:00+00:00",
+                "inputs": [
+                    {
+                        "store_id": "offline-store",
+                        "observations": [
+                            {
+                                "business_date": "2026-06-25",
+                                "actual_revenue": 120000,
+                                "site_score_baseline_p50": 120000,
+                            },
+                            {
+                                "business_date": "2026-06-26",
+                                "actual_revenue": 90000,
+                                "site_score_baseline_p50": 120000,
+                            },
+                        ],
+                    }
+                ],
+            },
+        )
+        assert forecast.status_code == 202, forecast.text
+        body = forecast.json()
+        alert_id = body["alerts"][0]["alert_id"]
+        handoff_id = body["handoffs"][0]["handoff_id"]
+        ack = client.post(
+            prefix + f"/forecastops/alerts/{alert_id}/acknowledge",
+            headers=headers,
+            json={"actor": "offline-operator", "note": "offline-triage"},
+        )
+        assert ack.status_code == 200, ack.text
+        handoff = client.post(
+            prefix + f"/forecastops/intervention-handoffs/{handoff_id}/execute",
+            headers=headers,
+            json={"actor": "offline-operator", "intervention_id": "offline-intervention"},
+        )
+        assert handoff.status_code == 200, handoff.text
+        feedback = client.post(
+            prefix + "/forecastops/feedbacks",
+            headers=headers,
+            json={
+                "store_id": "offline-store",
+                "feedback_type": "context_annotation",
+                "reason": "offline-context",
+                "actor": "offline-operator",
+                "target_date_start": "2026-06-25",
+                "target_date_end": "2026-06-26",
+                "metadata": {"tenant_id": OTHER},
+            },
+        )
+        assert feedback.status_code == 201, feedback.text
+        scored = client.post(
+            prefix + "/heatzones/score-jobs",
+            headers=headers,
+            json={
+                "features": [
+                    {
+                        "h3_index": "h3r9_0200_0200",
+                        "poi_count": 15,
+                        "competitor_count": 1,
+                        "active_listing_count": 4,
+                        "median_listing_rent": 50000,
+                        "average_confidence": 0.9,
+                        "source_snapshot_ids": ["offline-source"],
+                        "tenant_id": OTHER,
+                    }
+                ],
+                "idempotency_key": "offline-heatzone-replay",
+            },
+        )
+        assert scored.status_code == 202, scored.text
+        replay = client.post(
+            prefix + "/heatzones/score-jobs",
+            headers=headers,
+            json={"features": [], "idempotency_key": "offline-heatzone-replay"},
+        )
+        assert replay.status_code == 202 and replay.json()["created"] is False, replay.text
+        expected_ids = {
+            r.json()["audit_event_id"] for r in (ack, handoff, feedback, scored, replay)
+        }
+        own = client.get(
+            prefix + "/audit/events", headers=headers, params={"correlation_id": correlation}
+        )
+        assert own.status_code == 200, own.text
+        own_events = {event["event_id"]: event for event in own.json()["events"]}
+        assert expected_ids <= own_events.keys()
+        assert all(
+            own_events[event_id]["metadata"]["tenant_id"] == TENANT for event_id in expected_ids
+        )
+        for denied_headers in ({}, foreign):
+            denied = client.get(
+                prefix + "/audit/events",
+                headers=denied_headers,
+                params={"correlation_id": correlation},
+            )
+            if denied_headers:
+                assert denied.status_code == 200, denied.text
+                assert not (expected_ids & {event["event_id"] for event in denied.json()["events"]})
+            else:
+                assert denied.status_code in (401, 403)
+            assert "offline-triage" not in denied.text
+        assert "TENANTLESS-HISTORY-MUST-STAY-HIDDEN" not in own.text
+        assert historical.to_dict() == frozen
+
+
+@pytest.mark.parametrize("prefix", ["", "/api/v1"])
+def test_http_evidence_export_uses_verified_tenant_not_body_or_correlation(
+    monkeypatch: Any,
+    prefix: str,
+) -> None:
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    boundary = AuthenticationBoundary(
+        AuthBoundaryConfig(
+            issuer="https://idp.example.test",
+            audiences=frozenset({"oday-api"}),
+            jwks_uri="https://offline.invalid/jwks",
+            principal_mappings={
+                "operator-real-1": {"roles": ["auditor"], "scope": {"tenant_id": TENANT}},
+                "foreign": {"roles": ["auditor"], "scope": {"tenant_id": OTHER}},
+                "tenantless": {"roles": ["auditor"], "scope": {}},
+            },
+        ),
+        key_resolver=JwksResolver(
+            "https://offline.invalid/jwks",
+            fetch=lambda _: {"keys": [_jwk(key, "offline-key")]},
+        ),
+    )
+    monkeypatch.setattr(deps, "default_boundary", lambda: boundary)
+    headers = {"authorization": "Bearer " + _token(key, "offline-key")}
+    audit = InMemoryAuditLog()
+    now = datetime.now(UTC)
+    frozen = []
+    for tenant, marker in (
+        (TENANT, "own-export-source"),
+        (OTHER, "FOREIGN-EXPORT-SECRET"),
+        (None, "TENANTLESS-EXPORT-SECRET"),
+    ):
+        event = audit.record(
+            AuditEvent(
+                event_type="offline.export-source",
+                actor="fixture",
+                action="offline",
+                resource="offline",
+                outcome="retained",
+                correlation_id="shared-export-selector",
+                occurred_at=now,
+                metadata={"tenant_id": tenant, "marker": marker},
+            )
+        )
+        frozen.append((event, event.to_dict()))
+    body = {
+        "program_id": "offline-program",
+        "purpose": "offline-export",
+        "requested_by": "offline-auditor",
+        "from_time": (now - timedelta(hours=1)).isoformat(),
+        "to_time": (now + timedelta(hours=1)).isoformat(),
+        "correlation_ids": ["shared-export-selector"],
+        "export_scope": "tenant=" + OTHER,
+        "tenant_id": OTHER,
+        "decision_cards": [
+            {
+                "decision_id": "offline-decision",
+                "decision_type": "offline",
+                "module": "audit",
+                "title": "offline",
+                "subject_ref": "offline",
+                "outcome": "offline",
+                "owner": "offline",
+                "decided_at": now.isoformat(),
+                "rationale": "offline",
+                "input_snapshot_id": "offline",
+            }
+        ],
+    }
+    with TestClient(create_app(audit_log=audit)) as client:
+        result = client.post(prefix + "/audit/evidence/export", headers=headers, json=body)
+        assert result.status_code == 201, result.text
+        exported = result.json()
+        assert [e["event_id"] for e in exported["audit_events"]] == [frozen[0][0].event_id]
+        assert "FOREIGN-EXPORT-SECRET" not in result.text
+        assert "TENANTLESS-EXPORT-SECRET" not in result.text
+        export_event = next(
+            e for e in audit.list_events() if e.event_id == exported["audit_event_id"]
+        )
+        assert export_event.metadata["tenant_id"] == TENANT
+        for denied_headers in (
+            {},
+            {**headers, "x-tenant-id": OTHER},
+            {
+                "authorization": "Bearer " + _token(key, "offline-key", sub="tenantless"),
+            },
+        ):
+            before = len(
+                [e for e in audit.list_events() if e.event_type == "audit.evidence_export.v1"]
+            )
+            denied = client.post(
+                prefix + "/audit/evidence/export", headers=denied_headers, json=body
+            )
+            assert denied.status_code in (401, 403), denied.text
+            assert (
+                len([e for e in audit.list_events() if e.event_type == "audit.evidence_export.v1"])
+                == before
+            )
+        sensitive_denied = client.post(
+            prefix + "/audit/evidence/export", headers=headers, json={**body, "sensitive": True}
+        )
+        assert sensitive_denied.status_code == 422
+        denial = [e for e in audit.list_events() if e.event_type == "audit.evidence_export.v1"][-1]
+        assert denial.outcome == "denied" and denial.metadata["tenant_id"] == TENANT
+        foreign = client.post(
+            prefix + "/audit/evidence/export",
+            headers={
+                "authorization": "Bearer " + _token(key, "offline-key", sub="foreign"),
+            },
+            json=body,
+        )
+        assert foreign.status_code == 201, foreign.text
+        assert "own-export-source" not in foreign.text
+        assert frozen[0][0].event_id not in foreign.text
+        for original, snapshot in frozen:
+            assert original.to_dict() == snapshot
+
+
+@pytest.mark.parametrize("prefix", ["", "/api/v1"])
+def test_sitescore_future_decisions_keep_owning_tenant_through_transitions(
+    monkeypatch: Any,
+    prefix: str,
+) -> None:
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    boundary = AuthenticationBoundary(
+        AuthBoundaryConfig(
+            issuer="https://idp.example.test",
+            audiences=frozenset({"oday-api"}),
+            jwks_uri="https://offline.invalid/jwks",
+            principal_mappings={
+                "operator-real-1": {
+                    "roles": ["expansion_user", "site_reviewer", "auditor"],
+                    "scope": {"tenant_id": TENANT},
+                },
+                "foreign": {"roles": ["site_reviewer", "auditor"], "scope": {"tenant_id": OTHER}},
+            },
+        ),
+        key_resolver=JwksResolver(
+            "https://offline.invalid/jwks",
+            fetch=lambda _: {"keys": [_jwk(key, "offline-key")]},
+        ),
+    )
+    monkeypatch.setattr(deps, "default_boundary", lambda: boundary)
+    headers = {
+        "authorization": "Bearer " + _token(key, "offline-key"),
+        "x-correlation-id": "offline-sitescore-decisions",
+    }
+    foreign = {"authorization": "Bearer " + _token(key, "offline-key", sub="foreign")}
+    audit = InMemoryAuditLog()
+    with TestClient(create_app(audit_log=audit)) as client:
+        scored = client.post(
+            prefix + "/sitescore/score-jobs",
+            headers=headers,
+            json={
+                "prediction_origin_time": "2026-06-28T02:00:00Z",
+                "features": [
+                    {
+                        "candidate_site_id": "offline-candidate",
+                        "feature_snapshot_time": "2026-06-28T01:00:00Z",
+                        "heat_zone_id": "offline-zone",
+                        "heat_zone_score": 91,
+                        "monthly_rent": 45000,
+                        "area_ping": 25.5,
+                        "frontage_m": 8,
+                        "competitor_count": 2,
+                        "own_store_count_nearby": 1,
+                        "comparable_monthly_revenue_p50": 480000,
+                        "buildout_capex": 2500000,
+                        "gross_margin_ratio": 0.6,
+                        "data_quality_score": 0.95,
+                    }
+                ],
+            },
+        )
+        assert scored.status_code == 202, scored.text
+        opened = client.post(
+            prefix + "/sitescore/decisions",
+            headers=headers,
+            json={
+                "report_id": scored.json()["reports"][0]["report_id"],
+                "created_by": "offline",
+                "tenant_id": OTHER,
+            },
+        )
+        assert opened.status_code == 201, opened.text
+        decision_path = prefix + "/sitescore/decisions/" + opened.json()["decision_id"]
+        before = client.get(decision_path, headers=headers)
+        assert before.status_code == 200, before.text
+        assert before.json()["tenant_id"] == TENANT
+        path = decision_path + "/decision"
+        for denied_headers in ({}, foreign):
+            hidden = client.get(decision_path, headers=denied_headers)
+            assert hidden.status_code in (401, 403, 404), hidden.text
+            assert opened.json()["decision_id"] not in hidden.text
+            denied = client.post(
+                path,
+                headers=denied_headers,
+                json={
+                    "action": "APPROVE",
+                    "actor": "offline",
+                    "reason": "offline",
+                },
+            )
+            assert denied.status_code in (401, 403, 404), denied.text
+        assert client.get(decision_path, headers=headers).json() == before.json()
+        denied_reason = client.post(
+            path, headers=headers, json={"action": "APPROVE", "actor": "offline"}
+        )
+        assert denied_reason.status_code == 422, denied_reason.text
+        approved = client.post(
+            path,
+            headers=headers,
+            json={
+                "action": "APPROVE",
+                "actor": "offline",
+                "reason": "offline-owning-decision",
+            },
+        )
+        assert approved.status_code == 200, approved.text
+        own = client.get(
+            prefix + "/audit/events",
+            headers=headers,
+            params={"correlation_id": "offline-sitescore-decisions"},
+        )
+        assert own.status_code == 200, own.text
+        events = [e for e in own.json()["events"] if e["event_type"] == "sitescore.decision.v1"]
+        assert {e["action"] for e in events} == {"create", "submit", "approve"}
+        assert all(e["metadata"]["tenant_id"] == TENANT for e in events)
+        other = client.get(prefix + "/audit/events", headers=foreign)
+        assert other.status_code == 200, other.text
+        assert not (
+            {e["event_id"] for e in events} & {e["event_id"] for e in other.json()["events"]}
+        )
+
+
+def test_product_seed_uses_supported_authorized_queue_and_real_fixture_inputs(
+    monkeypatch: Any, tmp_path: Any
+) -> None:
+    """Exercise the actual seed HTTP helper against durable mounted routes.
+
+    This local transport control is not a substitute for the complete Docker
+    E2E inventory or a scheduler-execution receipt.
+    """
+    import io
+    from urllib.error import HTTPError
+    from urllib.parse import urlsplit
+
+    from delivery_toolchain.e2e import seed_product_e2e_data as seed
+    from shared.infrastructure.persistence.factory import _durable_bundle
+
+    bundle = _durable_bundle(str(tmp_path / "offline-seed.sqlite3"))
+    with TestClient(create_app(persistence=bundle)) as client:
+
+        def local_http(request: Any, timeout: float) -> Any:
+            path = urlsplit(request.full_url).path
+            response = client.request(
+                request.get_method(),
+                path,
+                headers=dict(request.header_items()),
+                content=request.data,
+            )
+            if response.status_code >= 400:
+                raise HTTPError(request.full_url, response.status_code, response.text, {}, None)
+            return io.BytesIO(response.content)
+
+        monkeypatch.setattr(seed, "urlopen", local_http)
+        first = seed.seed_supported_queue_job("http://offline.invalid", case_id="offline-case")
+        replay = seed.seed_supported_queue_job("http://offline.invalid", case_id="offline-case")
+        assert first["job_id"] == replay["job_id"] and replay["created"] is False
+        record = seed.get_json("http://offline.invalid/jobs/" + first["job_id"])
+        assert record["job_type"] == "forecast"
+        assert record["payload"]["tenant_id"] == seed.TENANT_ID
+        series = bundle.forecastops_repository.get_series(
+            seed.TENANT_ID, record["payload"]["store_id"]
+        )
+        assert series is not None and len(series.observations) == 2
+        own = seed.get_json("http://offline.invalid/audit/events")
+        assert any(event["event_id"] == first["audit_event_id"] for event in own["events"])
+        with pytest.raises(HTTPError) as denied:
+            seed.post_json(
+                "http://offline.invalid/jobs",
+                {
+                    "job_type": "product-e2e.scheduler.heartbeat",
+                    "payload": {"tenant_id": seed.TENANT_ID},
+                },
+            )
+        assert denied.value.code == 403
+        anonymous = client.get("/jobs/" + first["job_id"])
+        assert anonymous.status_code in (401, 403)
+        foreign = client.get(
+            "/jobs/" + first["job_id"],
+            headers={
+                "x-subject-id": "foreign-fixture",
+                "x-roles": "operations_manager",
+                "x-tenant-id": "foreign-tenant",
+            },
+        )
+        # Durable tenant partition lookup hides the record before authorization.
+        assert foreign.status_code == 404
+        assert "payload" not in foreign.json()
+        assert seed.TENANT_ID not in foreign.text
+    bundle.engine.close()

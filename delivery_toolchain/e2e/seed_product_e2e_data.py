@@ -120,14 +120,7 @@ def main() -> int:
             ],
         },
     )
-    queued_job = post_json(
-        f"{api_url}/jobs",
-        {
-            "job_type": "product-e2e.scheduler.heartbeat",
-            "payload": {"source": "seed_product_e2e_data", "case_id": avm_case["case_id"]},
-            "idempotency_key": "product-e2e-scheduler-job-001",
-        },
-    )
+    queued_job = seed_supported_queue_job(api_url, case_id=avm_case["case_id"])
 
     now = datetime.now(UTC)
     evidence_export = post_json(
@@ -186,7 +179,10 @@ def main() -> int:
         "cutover_mode": resolve_cutover_mode(),
         "avm_case_id": avm_case["case_id"],
         "heatzone_job_id": heatzone_job["job_id"],
+        # Keep the historical summary key for consumers; this is supported
+        # forecast queue evidence, NOT scheduler execution/heartbeat proof.
         "scheduler_job_id": queued_job["job_id"],
+        "queued_job_type": "forecast",
         "evidence_export_id": evidence_export["export_id"],
         "correlation_id": CORRELATION_ID,
     }
@@ -196,6 +192,34 @@ def main() -> int:
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
+
+
+def seed_supported_queue_job(api_url: str, *, case_id: str) -> dict[str, Any]:
+    """Seed a tenant-authorized supported job, never a forbidden generic type.
+
+    Persist its real fixture timeseries first so a normal forecast worker also
+    has valid owning input. This does not assert that the worker executed it.
+    """
+    store_id = "e2e-store-taipei-001"
+    series = post_json(f"{api_url}/forecastops/timeseries", {
+        "observations": [
+            {"store_id": store_id, "business_date": "2026-06-26", "actual_revenue": 90000,
+             "site_score_baseline_p50": 100000, "source_snapshot_ids": ["product-e2e-pos-20260626"]},
+            {"store_id": store_id, "business_date": "2026-06-27", "actual_revenue": 95000,
+             "site_score_baseline_p50": 100000, "source_snapshot_ids": ["product-e2e-pos-20260627"]},
+        ],
+    })
+    if series.get("count") != 1:
+        raise RuntimeError("supported queue seed did not persist its fixture timeseries")
+    return post_json(f"{api_url}/jobs", {
+        "job_type": "forecast",
+        "payload": {
+            "tenant_id": TENANT_ID, "store_id": store_id,
+            "prediction_origin_time": "2026-06-28T00:00:00Z",
+            "source": "seed_product_e2e_data", "case_id": case_id,
+        },
+        "idempotency_key": "product-e2e-scheduler-job-001",
+    })
 
 
 def resolve_cutover_mode(env: dict[str, str] | None = None) -> str:

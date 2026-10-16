@@ -14,8 +14,10 @@ The SD-09 §5 rule is:
       AND data classification permits visibility
 
 This module implements the non-RBAC clauses as a deny-by-default chain of
-policies. Each policy inspects an :class:`AccessRequest` and either returns a
-denying :class:`Decision` (veto) or ``None`` to abstain. The orchestration in
+policies. Each policy inspects an :class:`AccessRequest` and returns a denying
+:class:`Decision` (veto), an allow with obligations, or ``None`` to abstain.
+Mandatory tenant enforcement is independent of the configurable policy list.
+The orchestration in
 :mod:`shared.auth.engine` combines RBAC and ABAC and wires the audit hook.
 """
 
@@ -23,15 +25,32 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 from .identity import DataClassification, Principal, RiskLevel, Role
 from .rbac import Action
 
 
+class ResourceTarget(Enum):
+    """Trusted server descriptor intent, never a request/attributes flag.
+
+    ABSTRACT_CAPABILITY checks only type-level permissions and constraints. It
+    grants no object/list/business execution authority or global-record access.
+    Callers must not deserialize this declaration from untrusted input.
+    """
+
+    TENANT_BOUND = "tenant_bound"
+    ABSTRACT_CAPABILITY = "abstract_capability"
+
+
 @dataclass(frozen=True)
 class ResourceDescriptor:
-    """The object an action targets, with its ABAC-relevant attributes."""
+    """Server-owned target evidence; ordinary targets are always tenant-bound.
+
+    Missing tenant/id never implies an abstract capability. Explicit abstract
+    declarations cannot carry object identity or tenant/owner evidence.
+    """
 
     type: str
     resource_id: str | None = None
@@ -45,6 +64,7 @@ class ResourceDescriptor:
     workflow_state: str | None = None
     risk_level: RiskLevel = RiskLevel.LOW
     attributes: Mapping[str, Any] = field(default_factory=dict)
+    target: ResourceTarget = ResourceTarget.TENANT_BOUND
 
 
 @dataclass(frozen=True)
@@ -83,11 +103,12 @@ class Decision:
         return cls(allowed=False, reason=reason, policy_id=policy_id)
 
 
-# A policy returns a denying Decision to veto, or None to abstain.
+# A policy may veto, abstain, or add obligations. An allow never ends the chain.
 AbacPolicy = Callable[[AccessRequest], Decision | None]
 
 
 # --- default policies (SD-09 §5 clauses) -----------------------------------
+
 
 def require_authenticated(request: AccessRequest) -> Decision | None:
     if not request.principal.authenticated:
@@ -107,6 +128,56 @@ def operator_viewer_tenant_isolation(request: AccessRequest) -> Decision | None:
             policy_id="operator.tenant_isolation",
         )
     return None
+
+
+def target_tenant_isolation(request: AccessRequest) -> Decision:
+    """Mandatory owning boundary, including when callers supply custom policies.
+
+    Reuse the registered-waiver guard without its deny-only ABAC adapter, which
+    discards successful waiver obligations. Validate typed evidence first: the
+    guard's string coercion is not authority for malformed/missing ownership.
+    """
+    from .tenant import TenantAccessWaiver, check_tenant_isolation, default_waiver_registry
+
+    resource = request.resource
+    if resource.target is ResourceTarget.ABSTRACT_CAPABILITY:
+        if any(
+            value is not None
+            for value in (resource.tenant_id, resource.resource_id, resource.owner_subject_id)
+        ):
+            return Decision.deny(
+                "abstract capability cannot carry tenant or object ownership",
+                policy_id="tenant_isolation",
+            )
+        return Decision.allow("explicit abstract capability")
+    if resource.target is not ResourceTarget.TENANT_BOUND:
+        return Decision.deny("invalid resource target declaration", policy_id="tenant_isolation")
+    for value in (request.principal.tenant_id, resource.tenant_id):
+        if not isinstance(value, str) or not value.strip() or value != value.strip():
+            return Decision.deny(
+                "tenant-bound target requires valid principal and owning resource tenant",
+                policy_id="tenant_isolation",
+            )
+    waiver = request.environment.attributes.get("tenant_waiver") or resource.attributes.get(
+        "tenant_waiver"
+    )
+    if isinstance(waiver, TenantAccessWaiver) and (
+        not isinstance(waiver.waiver_id, str)
+        or default_waiver_registry().get(waiver.waiver_id) is not waiver
+    ):
+        return Decision.deny(
+            "waiver object is not the registered record", policy_id="tenant_isolation"
+        )
+    decision = check_tenant_isolation(
+        request.principal,
+        resource.tenant_id,
+        resource_type=resource.type,
+        resource_id=resource.resource_id,
+        waiver=waiver,
+    )
+    if not decision.allowed:
+        return decision
+    return Decision.allow(decision.reason, obligations=decision.obligations | frozenset({"audit"}))
 
 
 def scope_containment(request: AccessRequest) -> Decision | None:
@@ -148,9 +219,7 @@ def franchisee_isolation(request: AccessRequest) -> Decision | None:
         return None
     store_id = request.resource.store_id
     if store_id is not None and store_id not in principal.scope.store_ids:
-        return Decision.deny(
-            "franchisee restricted to own store", policy_id="franchisee_isolation"
-        )
+        return Decision.deny("franchisee restricted to own store", policy_id="franchisee_isolation")
     return None
 
 
@@ -168,10 +237,23 @@ DEFAULT_POLICIES: tuple[AbacPolicy, ...] = (
 def evaluate_abac(
     request: AccessRequest, policies: Sequence[AbacPolicy] = DEFAULT_POLICIES
 ) -> Decision:
-    """Run the policy chain; first deny wins, otherwise allow."""
+    """Mandatory tenant boundary, then deny-first policies; accumulate obligations.
 
-    for policy in policies:
-        decision = policy(request)
+    Empty/custom chains and early policy allows cannot waive tenant enforcement
+    or OPERATOR_VIEWER's stricter evidence requirement.
+    """
+    for mandatory in (require_authenticated, operator_viewer_tenant_isolation):
+        decision = mandatory(request)
         if decision is not None and not decision.allowed:
             return decision
-    return Decision.allow("abac policies passed")
+    tenant = target_tenant_isolation(request)
+    if not tenant.allowed:
+        return tenant
+    obligations = set(tenant.obligations)
+    for policy in policies:
+        decision = policy(request)
+        if decision is not None:
+            if not decision.allowed:
+                return decision
+            obligations.update(decision.obligations)
+    return Decision.allow("abac policies passed", obligations=frozenset(obligations))

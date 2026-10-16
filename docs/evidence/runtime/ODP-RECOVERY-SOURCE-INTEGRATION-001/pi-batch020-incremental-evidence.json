@@ -1,0 +1,263 @@
+{
+  "kind": "SOURCE_ONLY incremental historical receipts; no head transfer or final acceptance",
+  "run": "pi-20261016T090658Z-1dd7ab0a",
+  "base": "81072d0ae396c772b39e53db0761a7522524e8fd",
+  "receipts": [
+    {
+      "head": "69156baee00e09d127b33534b0d7ffb58864753c",
+      "tree": "af11b2872938b5a16fd0c57831aeb673a0532176",
+      "argv": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "pytest",
+        "tests/security/test_api_auth_wiring.py",
+        "tests/security/test_service_identity_public_refusal.py",
+        "tests/identity/test_identity_user_role_management.py",
+        "tests/e2e/test_live_business_journeys.py::test_self_principal_uses_identity_store_roles_not_token_or_browser_claims",
+        "tests/integration/test_market_data_facade.py",
+        "-q",
+        "-n",
+        "0",
+        "--junitxml=/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261016T090658Z-1dd7ab0a/auth-fixtures.xml"
+      ],
+      "cap_seconds": 420,
+      "duration_seconds": 54.534254488069564,
+      "exit_code": 0,
+      "raw_sha256": "47de142916284f5f386ade37c7a54a2a2c1de8f2b2c16791d31a96880ee9e62e",
+      "descendant_exit_unknown": false,
+      "external_writer_exclusion_unproven": true,
+      "label": "batch020-auth-fixtures",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261016T090658Z-1dd7ab0a/batch020-auth-fixtures/terminal.json",
+      "seal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261016T090658Z-1dd7ab0a/batch020-auth-fixtures-seal.json",
+      "seal_sha256": "d476ac015eb3ee7ad17388961e6f9c56bb5e3ab4c4b65c8e0bc8c10c283c5abc"
+    },
+    {
+      "head": "ce71325e2dbab665c6a0b0bcf7802ca0f3319f86",
+      "tree": "95c86e766191d7276cebe53b59f6ea0812d5104e",
+      "argv": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "pytest",
+        "tests/security/test_session_revocation_composition.py",
+        "-q",
+        "-n",
+        "0",
+        "--junitxml=/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261016T090658Z-1dd7ab0a/session-no-dsn.xml"
+      ],
+      "cap_seconds": 420,
+      "duration_seconds": 5.801213791128248,
+      "exit_code": 0,
+      "raw_sha256": "b2c6720453f06d35157bf6fc9703ffce184bf1d11bc189b38e5a9b17338d728b",
+      "descendant_exit_unknown": false,
+      "external_writer_exclusion_unproven": true,
+      "label": "batch020-session-no-dsn",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261016T090658Z-1dd7ab0a/batch020-session-no-dsn/terminal.json",
+      "seal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261016T090658Z-1dd7ab0a/batch020-session-no-dsn-seal.json",
+      "seal_sha256": "4c57d4726d6dd0f42ab18b920cf2b672244ccf7537047310cb88091b0fb260cc"
+    },
+    {
+      "head": "ce71325e2dbab665c6a0b0bcf7802ca0f3319f86",
+      "tree": "95c86e766191d7276cebe53b59f6ea0812d5104e",
+      "argv": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "pytest",
+        "tests/security/test_session_revocation_composition.py",
+        "-q",
+        "-n",
+        "0",
+        "--junitxml=/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261016T090658Z-1dd7ab0a/session-supplied-dsn.xml"
+      ],
+      "cap_seconds": 420,
+      "duration_seconds": 5.934546967037022,
+      "exit_code": 0,
+      "raw_sha256": "b2c6720453f06d35157bf6fc9703ffce184bf1d11bc189b38e5a9b17338d728b",
+      "descendant_exit_unknown": false,
+      "external_writer_exclusion_unproven": true,
+      "label": "batch020-session-supplied-dsn",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261016T090658Z-1dd7ab0a/batch020-session-supplied-dsn/terminal.json",
+      "seal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261016T090658Z-1dd7ab0a/batch020-session-supplied-dsn-seal.json",
+      "seal_sha256": "17b5142adbb7264c82f3cf2bcd0dbf2275c906a0ca391011ba63be500a6999aa"
+    },
+    {
+      "head": "591dec69629ba20a8ab9791066699bfd0d96afb6",
+      "tree": "91a228564f0b5f11b1dd29ae04f15b6341373eb7",
+      "argv": [
+        "pnpm",
+        "--dir",
+        "apps/web",
+        "test",
+        "src/lib/operator/__tests__/operatorConsoleOutcomeAndNavigation.test.tsx"
+      ],
+      "cap_seconds": 420,
+      "duration_seconds": 8.397654118016362,
+      "exit_code": 1,
+      "raw_sha256": "cc28dfa6a4f2b2ff59b7eafc95ba1ce8c6d5996c79aabd8bdd475d11d2b6bf62",
+      "descendant_exit_unknown": false,
+      "external_writer_exclusion_unproven": true,
+      "label": "batch020-demo-hold-owning",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261016T090658Z-1dd7ab0a/batch020-demo-hold-owning/terminal.json",
+      "seal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261016T090658Z-1dd7ab0a/batch020-demo-hold-owning-seal.json",
+      "seal_sha256": "60b2db38ef7006253c9098e3ff95c4c6eaec118c773ba9aa38532efda860d6cc"
+    },
+    {
+      "head": "0db0e863fc9817d16610558adfc76df45f7a1428",
+      "tree": "70569c8c777b3da5881c2331b6b5cdb560c5ea6d",
+      "argv": [
+        "pnpm",
+        "--dir",
+        "apps/web",
+        "typecheck"
+      ],
+      "cap_seconds": 420,
+      "duration_seconds": 9.933229313232005,
+      "exit_code": 0,
+      "raw_sha256": "2d1c9a89582bd5e3f586cdbe8692c546f0772e6a42013886503973d5bd543a9b",
+      "descendant_exit_unknown": false,
+      "external_writer_exclusion_unproven": true,
+      "label": "batch020-typecheck",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261016T090658Z-1dd7ab0a/batch020-typecheck/terminal.json",
+      "seal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261016T090658Z-1dd7ab0a/batch020-typecheck-seal.json",
+      "seal_sha256": "cd4027120aa36f787bfd5e47249423b9d8cba39f8472fe93de8f9e4fa596f764"
+    },
+    {
+      "head": "0db0e863fc9817d16610558adfc76df45f7a1428",
+      "tree": "70569c8c777b3da5881c2331b6b5cdb560c5ea6d",
+      "argv": [
+        "pnpm",
+        "--dir",
+        "apps/web",
+        "test",
+        "src/lib/operator/__tests__/operatorConsoleOutcomeAndNavigation.test.tsx"
+      ],
+      "cap_seconds": 420,
+      "duration_seconds": 7.077571141067892,
+      "exit_code": 1,
+      "raw_sha256": "3a09333acf6feb19f50dbbfecf3e28429f164f9fb507870bd8ca50059fc51e73",
+      "descendant_exit_unknown": false,
+      "external_writer_exclusion_unproven": true,
+      "label": "batch020-demo-after-owning-fixture-correction",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261016T090658Z-1dd7ab0a/batch020-demo-after-owning-fixture-correction/terminal.json",
+      "seal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261016T090658Z-1dd7ab0a/batch020-demo-after-owning-fixture-correction-seal.json",
+      "seal_sha256": "a200d385ccc8a9bcb9ece94e73b4f1f32f85204ce2379d2594cfac10b0babbb2"
+    }
+  ],
+  "original_fixtures": [
+    {
+      "path": "tests/e2e/test_live_business_journeys.py",
+      "original_test_function_count": 100,
+      "members_signatures_decorators_assert_AST_equal": true,
+      "not_parameterized_case_count": true
+    },
+    {
+      "path": "tests/integration/test_market_data_facade.py",
+      "original_test_function_count": 31,
+      "members_signatures_decorators_assert_AST_equal": true,
+      "not_parameterized_case_count": true
+    },
+    {
+      "path": "tests/identity/test_identity_user_role_management.py",
+      "original_test_function_count": 15,
+      "members_signatures_decorators_assert_AST_equal": true,
+      "not_parameterized_case_count": true
+    },
+    {
+      "path": "tests/security/test_session_revocation_composition.py",
+      "original_test_function_count": 14,
+      "members_signatures_decorators_assert_AST_equal": true,
+      "not_parameterized_case_count": true
+    }
+  ],
+  "untouched_controls": [
+    {
+      "path": "tests/security/test_api_auth_wiring.py",
+      "unchanged_from_c2fb": true
+    },
+    {
+      "path": "tests/e2e/operator-shell-today.spec.ts",
+      "unchanged_from_c2fb": true
+    },
+    {
+      "path": "tests/integration/test_postgresql_persistence.py",
+      "unchanged_from_c2fb": true
+    }
+  ],
+  "original_credential_prefix_bytes": 15545,
+  "original_credential_prefix_exact": true,
+  "junit": [
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261016T090658Z-1dd7ab0a/session-no-dsn.xml",
+      "sha256": "35421d8d3b8a41487a541329239fa53f3daa7b0c298bc43b102fda0a85a43409",
+      "cases": 45,
+      "properties": [
+        {
+          "name": "session_pg_source",
+          "value": "owned-pgserver-binary"
+        },
+        {
+          "name": "session_pg_package_version",
+          "value": "0.1.4"
+        },
+        {
+          "name": "session_pg_binary",
+          "value": "/tmp/pantheon-worker-worktrees/pantheon/odp-recovery-source-integration-001/.venv/lib/python3.12/site-packages/pgserver/pginstall/bin/postgres"
+        },
+        {
+          "name": "session_pg_owned_directory",
+          "value": "/tmp/session-real-pg-t826w632"
+        },
+        {
+          "name": "session_pg_owned_pid",
+          "value": "2462341"
+        },
+        {
+          "name": "session_pg_kernel_start_ticks",
+          "value": "335090284"
+        },
+        {
+          "name": "session_pg_version",
+          "value": "PostgreSQL 16.2 on x86_64-pc-linux-gnu, compiled by gcc (GCC) 10.2.1 20210130 (Red Hat 10.2.1-11), 64-bit"
+        },
+        {
+          "name": "session_pg_owned_wait_exit",
+          "value": "0"
+        }
+      ]
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261016T090658Z-1dd7ab0a/session-supplied-dsn.xml",
+      "sha256": "2396558442dbfe42ea273c8e143d4c7551a9cc1cf6ba4517657bde00dd1b4bcd",
+      "cases": 45,
+      "properties": [
+        {
+          "name": "session_pg_source",
+          "value": "supplied-isolated-dsn"
+        },
+        {
+          "name": "session_pg_version",
+          "value": "PostgreSQL 16.9 (Debian 16.9-1.pgdg110+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 10.2.1-6) 10.2.1 20210110, 64-bit"
+        }
+      ]
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261016T090658Z-1dd7ab0a/auth-fixtures.xml",
+      "sha256": "373a86fd4ea6fbb2d361441263794d533f7494432c8296f22570bca6c0a299ea",
+      "cases": 83,
+      "properties": []
+    }
+  ],
+  "failures_preserved": [
+    "591dec demo-owning 36P9F synthetic navigator getter fixture",
+    "0db0 demo-owning 44P1F: refresh mock rejected ALL subsequent reads, including reload"
+  ],
+  "remaining": "ALL fresh final-head14/17/owning/terminalCI/every fixed configured packet+synthesis; account independence unresolved; HumanOpsPENDING/HOLD/goalfalse"
+}

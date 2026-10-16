@@ -1,0 +1,571 @@
+{
+  "kind": "author-diagnostic-not-canonical",
+  "run_id": "pi-20261015T050836Z-858dccaf",
+  "source_head": "2bb63a309cde18b520b3b93f19d9b95e3fc5f975",
+  "source_tree": "43be8e70b998942a50bd53aa012ce98a633234ec",
+  "admitted_dev": "c0c8c8226acaab3cbe8bb76e79f01e5e6694abb3",
+  "leased_scope_readback": {
+    "owner": "Pi",
+    "reviewer": "Human/Ops",
+    "files_count": 328,
+    "source_docs_count": 7
+  },
+  "requested_extra_paths": [
+    "apps/api/app/routes/sitescore.py",
+    "modules/listing/application/intake_privacy.py",
+    "apps/api/app/routes/avm.py",
+    "apps/api/app/routes/priceops.py",
+    "apps/api/app/routes/interventions.py",
+    "modules/intervention/application/workflow.py",
+    "modules/intervention/domain/lifecycle.py",
+    "modules/intervention/infrastructure/repositories.py",
+    "shared/infrastructure/persistence/repositories.py",
+    "tests/contract/test_api_error_envelope.py",
+    "tests/contract/test_api_versioning.py",
+    "tests/contract/test_api_idempotency_and_pagination.py",
+    "tests/contract/test_platform_api.py",
+    "tests/integration/test_adlift_incrementality.py",
+    "tests/integration/test_avm_valuation.py",
+    "tests/integration/test_gap_ml_003_elasticity_binding.py",
+    "tests/integration/test_intervention_workflow.py",
+    "tests/integration/test_production_api_composition.py",
+    "modules/avm/tests/test_avm_production_execution.py",
+    "tests/integration/test_scoring_model_binding.py",
+    "tests/integration/test_sitescore_decision.py",
+    "tests/reliability/test_job_delivery_state_clear.py",
+    "tests/integration/test_audit_evidence_export.py",
+    "tests/integration/test_audit_evidence_persistence.py",
+    "infra/docker/docker-compose.e2e.yml"
+  ],
+  "requested_extra_paths_absent": true,
+  "inventories": [
+    {
+      "name": "original553-product-unit32",
+      "source": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/product-lint-unit-failure-bodies.txt",
+        "sha256": "1a4ecd43db5150b4aaed01ac413c39d31710c9da366d37a1da5f40c81e9c27a1",
+        "bytes": 576936
+      },
+      "failure_count": 32,
+      "failures": [
+        "FAILED tests/contract/test_api_error_envelope.py::test_envelope_carries_every_required_field - assert 401 == 404",
+        "FAILED tests/contract/test_api_error_envelope.py::test_legacy_string_detail_is_preserved_verbatim - AssertionError: assert {'code': 'AUTHENTICATION_REQUIRED'} == 'job not found'",
+        "FAILED tests/contract/test_api_idempotency_and_pagination.py::test_transition_replay_returns_the_first_result_and_does_not_double_apply - KeyError: 'events'",
+        "FAILED tests/identity/test_sql_session_store.py::test_sql_identity_store_returns_pooled_connections[identity_store.get_account_scope] - ValueError: identity scope unavailable",
+        "FAILED tests/integration/test_adlift_incrementality.py::test_adlift_api_runs_incrementality_and_is_idempotent - KeyError: 'events'",
+        "FAILED tests/integration/test_assisted_listing_evidence_export.py::test_evidence_export_manifest_verification_and_download - assert None is not None",
+        "FAILED tests/contract/test_api_versioning.py::test_versioned_and_alias_paths_return_identical_bodies - assert 401 == 200",
+        "FAILED tests/integration/test_avm_valuation.py::test_avm_api_runs_e2e_valuation_dataroom_export_and_audit - KeyError: 'events'",
+        "FAILED tests/integration/test_avm_valuation.py::test_avm_durable_loop_survives_restart - KeyError: 'events'",
+        "FAILED tests/integration/test_durable_repository_wiring.py::test_durable_forecastops_acknowledge_and_handoff_api_survive_restart - AssertionError: assert 'forecastops.alert.acknowledged.v1' in {'forecastops.forecasted.v1', 'security.authorization'}",
+        "FAILED tests/integration/test_durable_repository_wiring.py::test_api_jobs_and_audit_persist_across_restart - assert 0 == 1",
+        "FAILED tests/integration/test_flow_002_expansion_persistence.py::test_expansion_flow_persists_across_restart - AssertionError: assert {'heatzone.sc...re.scored.v1'} <= {'security.au...re.scored.v1'}",
+        "FAILED tests/integration/test_forecastops_alerts.py::test_api_acknowledge_alert_and_execute_handoff_with_audit - AssertionError: assert 'forecastops.alert.acknowledged.v1' in {'forecastops.forecasted.v1', 'security.authorization'}",
+        "FAILED tests/contract/test_platform_api.py::test_job_enqueue_is_idempotent_and_audited - assert 401 == 202",
+        "FAILED tests/contract/test_platform_api.py::test_job_lookup_and_openapi_contract - KeyError: 'job'",
+        "FAILED tests/integration/test_gap_ml_003_elasticity_binding.py::test_plan_estimates_elasticity_from_observations - KeyError: 'events'",
+        "FAILED tests/integration/test_intervention_workflow.py::test_api_drives_full_lifecycle_with_conflict_and_label - KeyError: 'events'",
+        "FAILED tests/integration/test_intervention_workflow.py::test_api_close_case_with_follow_up_and_audit - KeyError: 'events'",
+        "FAILED tests/integration/test_postgresql_persistence.py::test_the_migration_job_provisions_every_relation_the_bundle_requires - psycopg.errors.UndefinedTable: relation \"odp_runtime.durable_audit_events\" does not exist",
+        "FAILED tests/integration/test_postgresql_persistence.py::test_factory_builds_production_bundle_against_canonical_core_schema - psycopg.errors.UndefinedTable: relation \"odp_runtime.durable_audit_events\" does not exist",
+        "FAILED tests/integration/test_postgresql_persistence.py::test_postgresql_address_store_and_transaction_contracts_are_tenant_scoped - psycopg.errors.UndefinedTable: relation \"odp_runtime.durable_audit_events\" does not exist",
+        "FAILED tests/integration/test_postgresql_persistence.py::test_postgresql_manual_correction_readback_and_rollback - psycopg.errors.UndefinedTable: relation \"odp_runtime.durable_audit_events\" does not exist",
+        "FAILED tests/integration/test_production_api_composition.py::test_production_routes_gate_only_the_dependency_they_use - AssertionError: {\"detail\":\"no_credentials\",\"error\":{\"code\":\"unauthorized\",\"message\":\"no_credentials\",\"next_action\":\"Authenticate and retry with a valid identity.\",\"occurred_at\":\"2026-10-15T01:19:23.609Z\",\"details\":[],\"correlation_id\":\"591c93e5-11af-4627-a204-d75046afce94\"}}",
+        "FAILED tests/integration/test_scoring_model_binding.py::test_heatzone_score_job_binds_model_and_fails_closed - KeyError: 'events'",
+        "FAILED tests/integration/test_sitescore_decision.py::test_sitescore_api_scores_reports_and_runs_decision_loop - KeyError: 'events'",
+        "FAILED tests/ops/test_heatzone_composition_migration.py::test_migration_revisions_have_one_head - AssertionError: 0025_audit_worm_outbox.py declares no revision",
+        "FAILED tests/release/test_release_profile.py::test_admission_admits_dev_admin_into_dev_and_records_the_profile - AssertionError: [\"release.decision 'go' requires a release.human_signoff object\", 'gate-0.index must be 0, got: None', 'gate-0 missing...e-0 missing required field: name', 'gate-0 missing required field: scope', 'gate-0 missing required field: owner', ...]",
+        "FAILED tests/release/test_release_profile.py::test_admission_records_full_for_an_unnarrowed_manifest - AssertionError: [\"release.decision 'go' requires a release.human_signoff object\", 'gate-0.index must be 0, got: None', 'gate-0 missing...e-0 missing required field: name', 'gate-0 missing required field: scope', 'gate-0 missing required field: owner', ...]",
+        "FAILED tests/reliability/test_job_delivery_state_clear.py::test_job_read_api_serializes_cleared_and_retained_delivery_state - KeyError: 'status'",
+        "FAILED tests/security/test_supply_chain_security_gate.py::test_secrets_scan_passes - AssertionError: Secret scanning failed with output:",
+        "FAILED modules/avm/tests/test_avm_production_execution.py::test_production_avm_reloads_and_executes_real_oss_artifacts[valuation-view-v1] - AssertionError: {\"detail\":\"no_credentials\",\"error\":{\"code\":\"unauthorized\",\"message\":\"no_credentials\",\"next_action\":\"Authenticate and retry with a valid identity.\",\"occurred_at\":\"2026-10-15T01:31:22.404Z\",\"details\":[],\"correlation_id\":\"f56fc2da-407d-4863-a369-567f47749032\"}}",
+        "FAILED modules/avm/tests/test_avm_production_execution.py::test_production_avm_reloads_and_executes_real_oss_artifacts[valuation-view-v2] - AssertionError: {\"detail\":\"no_credentials\",\"error\":{\"code\":\"unauthorized\",\"message\":\"no_credentials\",\"next_action\":\"Authenticate and retry with a valid identity.\",\"occurred_at\":\"2026-10-15T01:31:25.747Z\",\"details\":[],\"correlation_id\":\"6e1b6ad0-6479-4d39-b8e2-6d92c21f874b\"}}"
+      ],
+      "coverage": "failure inventory; original32 complete failure bodies read; orchestrator inventory read, not all repeated full tracebacks"
+    },
+    {
+      "name": "original553-orchestrator66",
+      "source": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/orchestrator-failure-bodies.txt",
+        "sha256": "2cf9a1b1f5e050b6d0fa77a9401af601d708a7bcf7642f8e29450929d08e23e9",
+        "bytes": 498770
+      },
+      "failure_count": 66,
+      "failures": [
+        "FAILED .orchestrator/test_release_lease.py::test_an_issued_lease_verifies_against_the_public_key - delivery_toolchain.release.release_lease.LeaseIssuanceError: release lease issuance blocked:",
+        "FAILED .orchestrator/test_release_lease.py::test_the_release_binding_is_derived_from_committed_truth - delivery_toolchain.release.release_lease.LeaseIssuanceError: release lease issuance blocked:",
+        "FAILED .orchestrator/test_release_lease.py::test_every_lease_is_unique - delivery_toolchain.release.release_lease.LeaseIssuanceError: release lease issuance blocked:",
+        "FAILED .orchestrator/test_release_lease.py::test_staging_needs_the_dev_verified_stage - delivery_toolchain.release.release_lease.LeaseIssuanceError: release lease issuance blocked:",
+        "FAILED .orchestrator/test_release_lease.py::test_production_is_refused_until_staging_is_verified - delivery_toolchain.release.release_lease.LeaseIssuanceError: release lease issuance blocked:",
+        "FAILED .orchestrator/test_release_lease.py::test_cli_issue_writes_a_lease_and_records_it - AssertionError: assert 1 == 0",
+        "FAILED .orchestrator/test_release_lease.py::test_cli_revoke_then_show_reports_the_state_without_the_credential - AssertionError: assert 1 == 0",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_issues_cas_receipt_then_dispatches_existing_runtime_release - assert 0 == 1",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_precondition_or_secret_failure_records_secret_free_block_and_never_dispatches[<lambda>-True-Secret Manager signing key is unavailable] - assert False",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_dispatch_failure_is_terminal_for_the_issued_nonce - AssertionError: assert 'blocked' == 'dispatch_unknown'",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_dispatch_ref_ancestry_real_git_evidence_only_passes - assert 0 == 1",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_release_terminal_receipt_survives_commit_reload[False-legacy-False] - assert 0 == 1",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_release_terminal_receipt_survives_commit_reload[False-current-False] - assert 0 == 1",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_release_terminal_receipt_survives_commit_reload[False-current-True] - assert 0 == 1",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_release_terminal_receipt_survives_commit_reload[True-legacy-False] - assert 0 == 1",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_release_terminal_receipt_survives_commit_reload[True-current-False] - assert 0 == 1",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_release_terminal_receipt_survives_commit_reload[True-current-True] - assert 0 == 1",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_two_release_requests_preserve_history_and_nonce_audit - AssertionError: assert [] == ['ODP-RELEASE...E-DEPLOY-002']",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_terminal_publication_preserves_external_issuance_after_refresh[receipt-False-legacy] - AssertionError: assert 'blocked' == 'issued'",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_terminal_publication_preserves_external_issuance_after_refresh[receipt-False-current] - AssertionError: assert 'blocked' == 'issued'",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_terminal_publication_preserves_external_issuance_after_refresh[receipt-True-legacy] - AssertionError: assert 'blocked' == 'issued'",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_terminal_publication_preserves_external_issuance_after_refresh[receipt-True-current] - AssertionError: assert 'blocked' == 'issued'",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_terminal_publication_preserves_external_issuance_after_refresh[replacement_request-False-legacy] - AssertionError: assert 'blocked' == 'issued'",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_terminal_publication_preserves_external_issuance_after_refresh[replacement_request-False-current] - AssertionError: assert 'blocked' == 'issued'",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_terminal_publication_preserves_external_issuance_after_refresh[replacement_request-True-legacy] - AssertionError: assert 'blocked' == 'issued'",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_terminal_publication_preserves_external_issuance_after_refresh[replacement_request-True-current] - AssertionError: assert 'blocked' == 'issued'",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_terminal_publication_preserves_external_issuance_after_refresh[request_only-False-legacy] - AssertionError: assert 'blocked' == 'issued'",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_terminal_publication_preserves_external_issuance_after_refresh[request_only-False-current] - AssertionError: assert 'blocked' == 'issued'",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_terminal_publication_preserves_external_issuance_after_refresh[request_only-True-legacy] - AssertionError: assert 'blocked' == 'issued'",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_terminal_publication_preserves_external_issuance_after_refresh[request_only-True-current] - AssertionError: assert 'blocked' == 'issued'",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_terminal_publication_preserves_external_issuance_after_refresh[removed_task-False-legacy] - AssertionError: assert 'blocked' == 'issued'",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_terminal_publication_preserves_external_issuance_after_refresh[removed_task-False-current] - AssertionError: assert 'blocked' == 'issued'",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_terminal_publication_preserves_external_issuance_after_refresh[removed_task-True-legacy] - AssertionError: assert 'blocked' == 'issued'",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_terminal_publication_preserves_external_issuance_after_refresh[removed_task-True-current] - AssertionError: assert 'blocked' == 'issued'",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_terminal_publication_preserves_external_issuance_after_refresh[history_only-False-legacy] - AssertionError: assert 'blocked' == 'issued'",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_terminal_publication_preserves_external_issuance_after_refresh[history_only-False-current] - AssertionError: assert 'blocked' == 'issued'",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_terminal_publication_preserves_external_issuance_after_refresh[history_only-True-legacy] - AssertionError: assert 'blocked' == 'issued'",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_terminal_publication_preserves_external_issuance_after_refresh[history_only-True-current] - AssertionError: assert 'blocked' == 'issued'",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_stale_cas_issuing_recovery_reconciles_gcs_lease_and_dispatches - assert 0 == 1",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_issuing_with_consumed_or_revoked_gcs_lease_terminates_blocked_without_loading_key - delivery_toolchain.release.release_lease.LeaseStateError: lease time invalid at durable transition: lease expired at 2026-09-04T12:05:00+00:00; current time is 2026-10-15T01:00:18.046489+00:00",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_revision_checking_writer_preserves_newer_status_on_bounded_retry - assert 0 == 1",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_second_cas_rejection_during_recovery_does_not_dispatch - AssertionError: assert 'revoked' == 'issued'",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_eligibility_revoked_during_storage_revokes_lease_and_blocks - assert False",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_cas_retry_revalidates_revoked_approval_and_preserves_newer_state - assert 0 == 1",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_no_duplicate_sign_or_dispatch_on_recovery - assert 0 == 1",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_no_secret_or_bearer_material_in_logs_or_status - assert 0 == 1",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_revision_checking_writer_recovers_after_two_issued_cas_rejections - assert 0 == 1",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_release_inputs_are_reloaded_after_cas_and_sync_callbacks[no_go-cas] - assert 0 == 1",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_release_inputs_are_reloaded_after_cas_and_sync_callbacks[no_go-post_sync] - assert 0 == 1",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_release_inputs_are_reloaded_after_cas_and_sync_callbacks[manifest-cas] - assert 0 == 1",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_release_inputs_are_reloaded_after_cas_and_sync_callbacks[manifest-post_sync] - assert 0 == 1",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_release_inputs_are_reloaded_after_cas_and_sync_callbacks[build_binding-cas] - assert 0 == 1",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_release_inputs_are_reloaded_after_cas_and_sync_callbacks[build_binding-post_sync] - assert 0 == 1",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_request_expiry_during_final_ref_validation_blocks_without_dispatch - assert 1 >= 2",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_request_expiry_during_commit_sync_blocks_dispatch - AssertionError: assert 'blocked' == 'expired_before_dispatch'",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_fresh_issuance_succeeds_when_historical_prior_approval_lease_is_expired - assert 0 == 1",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_fresh_issuance_succeeds_when_historical_legacy_lease_lacking_binding_metadata_is_expired - assert 0 == 1",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_issuing_recovery_succeeds_with_expired_historical_record_alongside_current_recoverable_lease - assert 0 == 1",
+        "FAILED .orchestrator/test_release_lease_integration.py::test_fresh_issuance_blocks_when_unrelated_lease_is_genuinely_active - assert False",
+        "FAILED .orchestrator/test_release_lease_issuer.py::test_an_issued_lease_verifies_against_the_public_key - delivery_toolchain.release.release_lease.LeaseIssuanceError: release lease issuance blocked:",
+        "FAILED .orchestrator/test_release_lease_issuer.py::test_the_release_binding_is_derived_from_committed_truth - delivery_toolchain.release.release_lease.LeaseIssuanceError: release lease issuance blocked:",
+        "FAILED .orchestrator/test_release_lease_issuer.py::test_every_lease_is_unique - delivery_toolchain.release.release_lease.LeaseIssuanceError: release lease issuance blocked:",
+        "FAILED .orchestrator/test_release_lease_issuer.py::test_staging_needs_the_dev_verified_stage - delivery_toolchain.release.release_lease.LeaseIssuanceError: release lease issuance blocked:",
+        "FAILED .orchestrator/test_release_lease_issuer.py::test_production_is_refused_until_staging_is_verified - delivery_toolchain.release.release_lease.LeaseIssuanceError: release lease issuance blocked:",
+        "FAILED .orchestrator/test_release_lease_issuer.py::test_cli_issue_writes_a_lease_and_records_it - AssertionError: assert 1 == 0",
+        "FAILED .orchestrator/test_release_lease_issuer.py::test_cli_revoke_then_show_reports_the_state_without_the_credential - AssertionError: assert 1 == 0"
+      ],
+      "coverage": "failure inventory; original32 complete failure bodies read; orchestrator inventory read, not all repeated full tracebacks"
+    },
+    {
+      "name": "b2c-product-unit25",
+      "source": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/b2c-unit.safe.log",
+        "sha256": "042e487a81a2de3277cffd61c0a8c6f8649c397418696a54a9e41d1298e8f106",
+        "bytes": 553158
+      },
+      "failure_count": 25,
+      "failures": [
+        "FAILED tests/contract/test_api_error_envelope.py::test_envelope_carries_every_required_field - assert 401 == 404",
+        "FAILED tests/contract/test_api_error_envelope.py::test_legacy_string_detail_is_preserved_verbatim - AssertionError: assert {'code': 'AUTHENTICATION_REQUIRED'} == 'job not found'",
+        "FAILED tests/identity/test_sql_session_store.py::test_sql_identity_store_returns_pooled_connections[identity_store.get_account_scope] - ValueError: identity scope unavailable",
+        "FAILED tests/integration/test_adlift_incrementality.py::test_adlift_api_runs_incrementality_and_is_idempotent - KeyError: 'events'",
+        "FAILED tests/contract/test_api_idempotency_and_pagination.py::test_transition_replay_returns_the_first_result_and_does_not_double_apply - KeyError: 'events'",
+        "FAILED tests/integration/test_assisted_listing_evidence_export.py::test_evidence_export_manifest_verification_and_download - assert None is not None",
+        "FAILED tests/contract/test_api_versioning.py::test_versioned_and_alias_paths_return_identical_bodies - assert 401 == 200",
+        "FAILED tests/integration/test_avm_valuation.py::test_avm_api_runs_e2e_valuation_dataroom_export_and_audit - KeyError: 'events'",
+        "FAILED tests/integration/test_avm_valuation.py::test_avm_durable_loop_survives_restart - KeyError: 'events'",
+        "FAILED tests/integration/test_durable_repository_wiring.py::test_durable_forecastops_acknowledge_and_handoff_api_survive_restart - AssertionError: assert 'forecastops.alert.acknowledged.v1' in {'forecastops.forecasted.v1', 'security.authorization'}",
+        "FAILED tests/integration/test_flow_002_expansion_persistence.py::test_expansion_flow_persists_across_restart - AssertionError: assert {'heatzone.sc...re.scored.v1'} <= {'security.au...re.scored.v1'}",
+        "FAILED tests/integration/test_forecastops_alerts.py::test_api_acknowledge_alert_and_execute_handoff_with_audit - AssertionError: assert 'forecastops.alert.acknowledged.v1' in {'forecastops.forecasted.v1', 'security.authorization'}",
+        "FAILED tests/integration/test_gap_ml_003_elasticity_binding.py::test_plan_estimates_elasticity_from_observations - KeyError: 'events'",
+        "FAILED tests/contract/test_platform_api.py::test_job_enqueue_is_idempotent_and_audited - assert 401 == 202",
+        "FAILED tests/contract/test_platform_api.py::test_job_lookup_and_openapi_contract - KeyError: 'job'",
+        "FAILED tests/integration/test_intervention_workflow.py::test_api_drives_full_lifecycle_with_conflict_and_label - KeyError: 'events'",
+        "FAILED tests/integration/test_intervention_workflow.py::test_api_close_case_with_follow_up_and_audit - KeyError: 'events'",
+        "FAILED tests/integration/test_production_api_composition.py::test_production_routes_gate_only_the_dependency_they_use - AssertionError: {\"detail\":\"no_credentials\",\"error\":{\"code\":\"unauthorized\",\"message\":\"no_credentials\",\"next_action\":\"Authenticate and retry with a valid identity.\",\"occurred_at\":\"2026-10-15T04:55:12.460Z\",\"details\":[],\"correlation_id\":\"9c14af0e-60f0-483b-9535-f7cb473a9b3b\"}}",
+        "FAILED tests/integration/test_scoring_model_binding.py::test_heatzone_score_job_binds_model_and_fails_closed - KeyError: 'events'",
+        "FAILED tests/integration/test_sitescore_decision.py::test_sitescore_api_scores_reports_and_runs_decision_loop - KeyError: 'events'",
+        "FAILED tests/release/test_release_profile.py::test_admission_admits_dev_admin_into_dev_and_records_the_profile - AssertionError: [\"release.decision 'go' requires a release.human_signoff object\", 'gate-0.index must be 0, got: None', 'gate-0 missing...e-0 missing required field: name', 'gate-0 missing required field: scope', 'gate-0 missing required field: owner', ...]",
+        "FAILED tests/release/test_release_profile.py::test_admission_records_full_for_an_unnarrowed_manifest - AssertionError: [\"release.decision 'go' requires a release.human_signoff object\", 'gate-0.index must be 0, got: None', 'gate-0 missing...e-0 missing required field: name', 'gate-0 missing required field: scope', 'gate-0 missing required field: owner', ...]",
+        "FAILED tests/reliability/test_job_delivery_state_clear.py::test_job_read_api_serializes_cleared_and_retained_delivery_state - KeyError: 'status'",
+        "FAILED modules/avm/tests/test_avm_production_execution.py::test_production_avm_reloads_and_executes_real_oss_artifacts[valuation-view-v1] - AssertionError: {\"detail\":\"no_credentials\",\"error\":{\"code\":\"unauthorized\",\"message\":\"no_credentials\",\"next_action\":\"Authenticate and retry with a valid identity.\",\"occurred_at\":\"2026-10-15T05:04:06.556Z\",\"details\":[],\"correlation_id\":\"71a14532-9c9d-43db-a2c9-7ff94f3e3173\"}}",
+        "FAILED modules/avm/tests/test_avm_production_execution.py::test_production_avm_reloads_and_executes_real_oss_artifacts[valuation-view-v2] - AssertionError: {\"detail\":\"no_credentials\",\"error\":{\"code\":\"unauthorized\",\"message\":\"no_credentials\",\"next_action\":\"Authenticate and retry with a valid identity.\",\"occurred_at\":\"2026-10-15T05:04:08.949Z\",\"details\":[],\"correlation_id\":\"77cd70ae-17aa-4ae3-8929-002a1324dc30\"}}"
+      ],
+      "coverage": "failure inventory; original32 complete failure bodies read; orchestrator inventory read, not all repeated full tracebacks"
+    }
+  ],
+  "author_measurements": [
+    {
+      "terminal": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/batch002-actual-postgis/terminal.json",
+        "sha256": "deeb7f2849993f6c8796b897e03843fbcc90b286dd5d028817ce59d7b5869b38",
+        "bytes": 907
+      },
+      "raw_log": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/batch002-actual-postgis/raw.log",
+        "sha256": "d93daf80486e4753cadbe2a0dea11c2e409143d57b1b8ff336377dad1cb2f4dc",
+        "bytes": 1034
+      },
+      "receipt": {
+        "kind": "author-diagnostic-not-canonical",
+        "head": "2bb63a309cde18b520b3b93f19d9b95e3fc5f975",
+        "tree": "43be8e70b998942a50bd53aa012ce98a633234ec",
+        "command": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "python",
+          "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/run_docker_pg.py",
+          "tests/integration/test_assisted_listing_postgresql_runtime.py",
+          "-q"
+        ],
+        "cap_seconds": 420,
+        "started_at": "2026-10-15T05:14:04.712540+00:00",
+        "duration_seconds": 43.959,
+        "exit_code": 0,
+        "interrupted": false,
+        "head_after": "2bb63a309cde18b520b3b93f19d9b95e3fc5f975",
+        "dirty_before": "",
+        "dirty_after": "",
+        "removed_environment_names": [
+          "CLAUDE_CODE_MESSAGING_TOKEN",
+          "VSCODE_CLI_REQUIRE_TOKEN"
+        ],
+        "node_env": "test",
+        "raw_log_sha256": "d93daf80486e4753cadbe2a0dea11c2e409143d57b1b8ff336377dad1cb2f4dc"
+      }
+    },
+    {
+      "terminal": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/batch002-audit-owning/terminal.json",
+        "sha256": "08fbf6cb9deb669942765c929730ef108a9b467ce2ce5f594b422d32146db70a",
+        "bytes": 906
+      },
+      "raw_log": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/batch002-audit-owning/raw.log",
+        "sha256": "181cb613e356db2d9b0ca67f62d8207bd3e36e5560c36ffb89d09f9ff0870a11",
+        "bytes": 19123
+      },
+      "receipt": {
+        "kind": "author-diagnostic-not-canonical",
+        "head": "2bb63a309cde18b520b3b93f19d9b95e3fc5f975",
+        "tree": "43be8e70b998942a50bd53aa012ce98a633234ec",
+        "command": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "pytest",
+          "tests/integration/test_audit_evidence_export.py",
+          "tests/integration/test_audit_evidence_persistence.py",
+          "tests/integration/test_flow_002_expansion_persistence.py",
+          "-q"
+        ],
+        "cap_seconds": 420,
+        "started_at": "2026-10-15T05:15:58.700765+00:00",
+        "duration_seconds": 58.299,
+        "exit_code": 1,
+        "interrupted": false,
+        "head_after": "2bb63a309cde18b520b3b93f19d9b95e3fc5f975",
+        "dirty_before": "",
+        "dirty_after": "",
+        "removed_environment_names": [
+          "CLAUDE_CODE_MESSAGING_TOKEN",
+          "VSCODE_CLI_REQUIRE_TOKEN"
+        ],
+        "node_env": "test",
+        "raw_log_sha256": "181cb613e356db2d9b0ca67f62d8207bd3e36e5560c36ffb89d09f9ff0870a11"
+      }
+    },
+    {
+      "terminal": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/batch002-boundaries/terminal.json",
+        "sha256": "3501ccbd171448e2987dbf2e91a1a1580303ce58ff1eefb2abf7685d0fae2a8a",
+        "bytes": 779
+      },
+      "raw_log": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/batch002-boundaries/raw.log",
+        "sha256": "eb0ae805dc18817f00a3e391583c44cb64fe5dc5fa58829e974507df4cf56d2d",
+        "bytes": 227
+      },
+      "receipt": {
+        "kind": "author-diagnostic-not-canonical",
+        "head": "2bb63a309cde18b520b3b93f19d9b95e3fc5f975",
+        "tree": "43be8e70b998942a50bd53aa012ce98a633234ec",
+        "command": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "python",
+          "delivery_toolchain/governance/check_code_boundaries.py"
+        ],
+        "cap_seconds": 420,
+        "started_at": "2026-10-15T05:18:49.076706+00:00",
+        "duration_seconds": 13.375,
+        "exit_code": 0,
+        "interrupted": false,
+        "head_after": "2bb63a309cde18b520b3b93f19d9b95e3fc5f975",
+        "dirty_before": "",
+        "dirty_after": "",
+        "removed_environment_names": [
+          "CLAUDE_CODE_MESSAGING_TOKEN",
+          "VSCODE_CLI_REQUIRE_TOKEN"
+        ],
+        "node_env": "test",
+        "raw_log_sha256": "eb0ae805dc18817f00a3e391583c44cb64fe5dc5fa58829e974507df4cf56d2d"
+      }
+    },
+    {
+      "terminal": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/batch002-diff/terminal.json",
+        "sha256": "422e49a24948d8569b4fe2566662905136f4ede35e2f6e390759bba23cfd7e85",
+        "bytes": 675
+      },
+      "raw_log": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/batch002-diff/raw.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "receipt": {
+        "kind": "author-diagnostic-not-canonical",
+        "head": "2bb63a309cde18b520b3b93f19d9b95e3fc5f975",
+        "tree": "43be8e70b998942a50bd53aa012ce98a633234ec",
+        "command": [
+          "git",
+          "diff",
+          "--check"
+        ],
+        "cap_seconds": 420,
+        "started_at": "2026-10-15T05:19:31.433626+00:00",
+        "duration_seconds": 0.034,
+        "exit_code": 0,
+        "interrupted": false,
+        "head_after": "2bb63a309cde18b520b3b93f19d9b95e3fc5f975",
+        "dirty_before": "",
+        "dirty_after": "",
+        "removed_environment_names": [
+          "CLAUDE_CODE_MESSAGING_TOKEN",
+          "VSCODE_CLI_REQUIRE_TOKEN"
+        ],
+        "node_env": "test",
+        "raw_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "terminal": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/batch002-owning-initial/terminal.json",
+        "sha256": "382f4be87c6671dbad079cf358168704977edeb92d3c77a145a518d6df4d1f8a",
+        "bytes": 1397
+      },
+      "raw_log": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/batch002-owning-initial/raw.log",
+        "sha256": "30ce10e993b82d81433409108cfbd36e315d1d698b177dfe1e2eaf7a70c01139",
+        "bytes": 21252
+      },
+      "receipt": {
+        "kind": "author-diagnostic-not-canonical",
+        "head": "886c5a67d3bef0f0a8b36b52555872c106b33c1c",
+        "tree": "c0705539876193ae13b8a8506313ff98e1c431f2",
+        "command": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "pytest",
+          "tests/security/test_auth_composition_extension.py",
+          "tests/integration/test_flow_002_expansion_persistence.py",
+          "tests/integration/test_assisted_listing_evidence_export.py",
+          "-q"
+        ],
+        "cap_seconds": 420,
+        "started_at": "2026-10-15T05:11:24.338532+00:00",
+        "duration_seconds": 128.695,
+        "exit_code": 1,
+        "interrupted": false,
+        "head_after": "886c5a67d3bef0f0a8b36b52555872c106b33c1c",
+        "dirty_before": "M apps/api/app/routes/audit.py\n M modules/opsboard/audit/application/evidence_export.py\n M shared/workflow/sitescore.py\n M tests/integration/test_assisted_listing_postgresql_runtime.py\n M tests/security/test_auth_composition_extension.py",
+        "dirty_after": "M apps/api/app/routes/audit.py\n M modules/opsboard/audit/application/evidence_export.py\n M shared/workflow/sitescore.py\n M tests/integration/test_assisted_listing_postgresql_runtime.py\n M tests/security/test_auth_composition_extension.py",
+        "removed_environment_names": [
+          "CLAUDE_CODE_MESSAGING_TOKEN",
+          "VSCODE_CLI_REQUIRE_TOKEN"
+        ],
+        "node_env": "test",
+        "raw_log_sha256": "30ce10e993b82d81433409108cfbd36e315d1d698b177dfe1e2eaf7a70c01139"
+      }
+    },
+    {
+      "terminal": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/batch002-source-lint/terminal.json",
+        "sha256": "9a93aac7259470c2bab7a74a548910babcdacba6da644ffb395b9cd2f9ce4c93",
+        "bytes": 986
+      },
+      "raw_log": {
+        "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/batch002-source-lint/raw.log",
+        "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+        "bytes": 19
+      },
+      "receipt": {
+        "kind": "author-diagnostic-not-canonical",
+        "head": "2bb63a309cde18b520b3b93f19d9b95e3fc5f975",
+        "tree": "43be8e70b998942a50bd53aa012ce98a633234ec",
+        "command": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "ruff",
+          "check",
+          "apps/api/app/routes/audit.py",
+          "modules/opsboard/audit/application/evidence_export.py",
+          "shared/workflow/sitescore.py",
+          "tests/security/test_auth_composition_extension.py",
+          "tests/integration/test_assisted_listing_postgresql_runtime.py"
+        ],
+        "cap_seconds": 420,
+        "started_at": "2026-10-15T05:18:17.844884+00:00",
+        "duration_seconds": 0.167,
+        "exit_code": 0,
+        "interrupted": false,
+        "head_after": "2bb63a309cde18b520b3b93f19d9b95e3fc5f975",
+        "dirty_before": "",
+        "dirty_after": "",
+        "removed_environment_names": [
+          "CLAUDE_CODE_MESSAGING_TOKEN",
+          "VSCODE_CLI_REQUIRE_TOKEN"
+        ],
+        "node_env": "test",
+        "raw_log_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+      }
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-integration-553ac43b7-followthrough/ci-failures/product-lint-unit.raw.log",
+      "sha256": "b30b8a20e425e366e76c399be8ca35e45f795f60d6e8856f630074b27c320917",
+      "bytes": 761389
+    },
+    {
+      "path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-integration-553ac43b7-followthrough/ci-failures/product-lint-unit.safe.log",
+      "sha256": "15f1f089220f16568512de0d9beda280546e6726aad7e4239916f456e9e8754b",
+      "bytes": 761323
+    },
+    {
+      "path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-integration-553ac43b7-followthrough/ci-failures/orchestrator.raw.log",
+      "sha256": "ba2bd8638313fb93c3462aa7ecfa37d555fed5c7b3984d90aac24d1cf67d1694",
+      "bytes": 772018
+    },
+    {
+      "path": "/home/lupin/odayplus/support/handoffs/recovery-response-boundary-repair-20261012/source-integration-553ac43b7-followthrough/ci-failures/orchestrator.safe.log",
+      "sha256": "24a18b9eba6a4664c74196ff41b1d73850abaf009bf551f2ea919daabb4b8620",
+      "bytes": 771897
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/b2c-unit.raw.log",
+      "sha256": "45be5b5be18494c0a2eaf63d8c6f16f5cc12f36ec9082cd3e1a18ac602d8de43",
+      "bytes": 724705
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/b2c-unit.safe.log",
+      "sha256": "042e487a81a2de3277cffd61c0a8c6f8649c397418696a54a9e41d1298e8f106",
+      "bytes": 553158
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/886-e2e.raw.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/886-db.raw.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/886-e2e-download2.raw.log",
+      "sha256": "d1e413c66447e49d4740a8145885338ed1d1700f267662bcc99e33e34dd75b49",
+      "bytes": 616789
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/886-db-download2.raw.log",
+      "sha256": "3ac7ac84faea5a55b24196bd9f0e4942500a19101a9864ad078034d361f5d8f8",
+      "bytes": 363634
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/886-e2e.safe.log",
+      "sha256": "940cab0b495ad05c1e4d3554f8ca755f7b1c8d9004bbee0ad634216f2491bc0f",
+      "bytes": 616745
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/886-db.safe.log",
+      "sha256": "aeca62f854c799a3e68f41f243b88145f4de4bca4fd65936075327e20b587047",
+      "bytes": 363568
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/886-artifacts.json",
+      "sha256": "8435d45a758071198d92699d56cb6d5c6015e012010d56dce64d2942c0c59db8",
+      "bytes": 763
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/ci886.json",
+      "sha256": "87d279303bf08c274163ef7b0f3d85acb710e612261220ef392c4882c602842b",
+      "bytes": 18971
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/b2c-jobs-final-read.jsonl",
+      "sha256": "f6db25612a6c5bf042974c8dc11f5009b9adbd51faa37a96b5207f86124d5c18",
+      "bytes": 994
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/886-jobs-progress.jsonl",
+      "sha256": "5d6ee4a937af07eebed090440c3789712a36a6ffbdab7a16743dc041470cca74",
+      "bytes": 794
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/pr1478-progress.json",
+      "sha256": "ba9680b02362341a95533b30550eeb8a9d1ebd4c52eb8cc5fc84abf212177301",
+      "bytes": 3317
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/pr1459-preserved.json",
+      "sha256": "f0136f98ff65adb397d2d18a39c16d4db310f52ed43e666d6ca10e1754067fcc",
+      "bytes": 131
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/original-task-integrity.json",
+      "sha256": "729b2d00c9b4310d9f7f43658935438380f5726f617af605c3b0b0a5a2fc5954",
+      "bytes": 41107
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/run_selection.py",
+      "sha256": "cc1420931f4cabb9c0c7374b4c26cb9799a859fde4f93136bcac50058e8823ed",
+      "bytes": 2045
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T050836Z-858dccaf/run_docker_pg.py",
+      "sha256": "4c0ea53a2fdccbe478416de1e35b0b049cf361e2d214b6be45fe37cfbf074d3d",
+      "bytes": 2441
+    }
+  ],
+  "known_failures": [
+    "initial owning composition1: two new SiteScore foreign approvals200, separate privacy missing future tenant audit; assertions retained",
+    "exact2bb owning audit composition1: four HTTP export fixture tenant refusals + one retained export fixture tenant refusal; expansion persistence passes",
+    "initial gh raw download attempts refused ANSI output; distinct download2 logs retain actual unescaped bytes, inert views strip CSI sequences",
+    "initial integrity assertion compared record to preceding wrapped object; corrected comparison against wrapper.record proves entire record equal, no state changes",
+    "canonical check exit1 all14 missing; stderr exists in original terminal tool transcript (first stdout-only log is empty), not represented as canonical evidence"
+  ],
+  "final_disposition": "PENDING Human/Ops; not review-ready, no final14/17/CI/independent-assessment proof",
+  "no_evidence_transfer": true,
+  "no_auto_merge": true,
+  "operational_hold": true
+}

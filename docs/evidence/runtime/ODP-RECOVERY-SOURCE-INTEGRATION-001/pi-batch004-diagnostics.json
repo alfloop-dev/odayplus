@@ -1,0 +1,174 @@
+{
+  "kind": "incremental-author-diagnostics-NOT-canonical-final-head-or-review-acceptance",
+  "task_id": "ODP-RECOVERY-SOURCE-INTEGRATION-001",
+  "run_id": "pi-20261015T062622Z-389a6bb6",
+  "source_anchor": "7a3604d8578a01873d2e9575417b32d443c57da2",
+  "scratch_root": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T062622Z-389a6bb6",
+  "measurements": [
+    {
+      "label": "batch004-pg-first",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "55f1e0787405104bdc6c884c8f0e37101e051a5c",
+      "tree": "43a285a6a87bca42dcddcfed6af7e1bedd7ab21e",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "python",
+        "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T062622Z-389a6bb6/run_docker_pg.py",
+        "tests/integration/test_official_real_estate_postgresql.py",
+        "-q",
+        "--junitxml=/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T062622Z-389a6bb6/batch004-pg-first.xml"
+      ],
+      "cap_seconds": 420,
+      "started_at": "2026-10-15T06:29:11.137765+00:00",
+      "duration_seconds": 106.265,
+      "exit_code": 1,
+      "interrupted": false,
+      "head_after": "55f1e0787405104bdc6c884c8f0e37101e051a5c",
+      "dirty_before": "M tests/integration/test_official_real_estate_postgresql.py",
+      "dirty_after": "M tests/integration/test_official_real_estate_postgresql.py",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "41bdad0aa17c0c442e23e439fee3edcda27bd0d0b9e0760854df0f21aee02962"
+    },
+    {
+      "label": "batch004-pg-workflow-snapshot",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "55f1e0787405104bdc6c884c8f0e37101e051a5c",
+      "tree": "43a285a6a87bca42dcddcfed6af7e1bedd7ab21e",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "python",
+        "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T062622Z-389a6bb6/run_docker_pg.py",
+        "tests/integration/test_official_real_estate_postgresql.py",
+        "-q",
+        "--junitxml=/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T062622Z-389a6bb6/batch004-pg-workflow-snapshot.xml"
+      ],
+      "cap_seconds": 420,
+      "started_at": "2026-10-15T06:31:32.542348+00:00",
+      "duration_seconds": 87.226,
+      "exit_code": 0,
+      "interrupted": false,
+      "head_after": "55f1e0787405104bdc6c884c8f0e37101e051a5c",
+      "dirty_before": "M tests/integration/test_official_real_estate_postgresql.py",
+      "dirty_after": "M tests/integration/test_official_real_estate_postgresql.py",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "2e5b4e2269fc5969c47bbdf45b95cc6eaad2c4c284b6d98e59dac837ae7d15db"
+    },
+    {
+      "label": "batch004-anchor-pg",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "7a3604d8578a01873d2e9575417b32d443c57da2",
+      "tree": "5a2d67f681230670da203c08676ea59d9690f6b5",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "python",
+        "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T062622Z-389a6bb6/run_docker_pg.py",
+        "tests/integration/test_official_real_estate_postgresql.py",
+        "-q",
+        "--junitxml=/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T062622Z-389a6bb6/batch004-anchor-pg.xml"
+      ],
+      "cap_seconds": 420,
+      "started_at": "2026-10-15T06:34:04.937004+00:00",
+      "duration_seconds": 78.221,
+      "exit_code": 0,
+      "interrupted": false,
+      "head_after": "7a3604d8578a01873d2e9575417b32d443c57da2",
+      "dirty_before": "",
+      "dirty_after": "",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "910921f6d89519e17d1d60f338c9a5b194f0bb9da8a9bd3abb779b045f5e21de"
+    }
+  ],
+  "archives": {
+    "allocation-before.json": {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T062622Z-389a6bb6/allocation-before.json",
+      "sha256": "c3c1b37b5ba346681e38cfae80262265d8e8fe1802b4c69c64efce976a28962a"
+    },
+    "original-task-before.json": {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T062622Z-389a6bb6/original-task-before.json",
+      "sha256": "58366956b78c401e0a0721784688efa119ca31965f479ba85286663b135e0f02"
+    },
+    "protected-original-after.json": {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T062622Z-389a6bb6/protected-original-after.json",
+      "sha256": "85f34e823d5fcaf43c211fb8f240417249e2d47c8d6d920a37f7c13265a2bc34"
+    },
+    "pr1478-initial.json": {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T062622Z-389a6bb6/pr1478-initial.json",
+      "sha256": "e5b2f0db7c7dbbfe0ae89a89870128365d1129d02dd12be30f1842e3611f1e35"
+    },
+    "pr1478-mid.json": {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T062622Z-389a6bb6/pr1478-mid.json",
+      "sha256": "0b4f6a9eab0afaac44214f76d0b031bb3c0ad8ebdeaf88d2ef58ffe940a63369"
+    },
+    "55-ci-readback.json": {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T062622Z-389a6bb6/55-ci-readback.json",
+      "sha256": "e665dfdf9bfbad074ade1aef8f4d40bc50de51fb7a06f276e1afc862eceafa94"
+    },
+    "934-ci-readback.json": {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T062622Z-389a6bb6/934-ci-readback.json",
+      "sha256": "80f06e620fd26c203db8971e5ee57c16b821fdd930a1074e7ac918be748fe9d5"
+    },
+    "e838-ci-readback.json": {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T062622Z-389a6bb6/e838-ci-readback.json",
+      "sha256": "3251b7d5347ef6462d7b1e2615664949d1acf006a47f59c333907d9e3ee5ddb7"
+    },
+    "55-e2e-download3.raw.log": {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T062622Z-389a6bb6/55-e2e-download3.raw.log",
+      "sha256": "5b98d5c357afe0d72e4bbebdf0b6e24b219c7f6db88d9414bb27d4ca9c7d82c5"
+    },
+    "55-e2e-download3.safe.log": {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T062622Z-389a6bb6/55-e2e-download3.safe.log",
+      "sha256": "ec2fc56fca17067f3b8fb9f3d9b12ee86e83717b63b5b687702d92a53c46c16a"
+    },
+    "55-db-download2.raw.log": {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T062622Z-389a6bb6/55-db-download2.raw.log",
+      "sha256": "3c13ead05c5c08b121c9c69caf27bb6963b49addb18a532d308a9ee4f337ddcd"
+    },
+    "55-db-download2.safe.log": {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T062622Z-389a6bb6/55-db-download2.safe.log",
+      "sha256": "2d36778ece438b8c8dbdacd3fccd650caa41a7fab1452920d3795673627f5c73"
+    },
+    "run_docker_pg.py": {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T062622Z-389a6bb6/run_docker_pg.py",
+      "sha256": "4c0ea53a2fdccbe478416de1e35b0b049cf361e2d214b6be45fe37cfbf074d3d"
+    },
+    "run_selection.py": {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T062622Z-389a6bb6/run_selection.py",
+      "sha256": "cc1420931f4cabb9c0c7374b4c26cb9799a859fde4f93136bcac50058e8823ed"
+    }
+  },
+  "protected_original": {
+    "complete_original_record_equal": true,
+    "record_sha256": "e7e785f38d977f6c4df80f34141171f292046eb989ebf228924e2d0cddfb0abe"
+  },
+  "readback_limitations": [
+    "Old-head CI results do not transfer.",
+    "55f1/934 product-unit and overall workflows still running at archived readback.",
+    "Codex2 account independence and whole-composition review are NOT established.",
+    "Initial gh run-view failed because overall workflow running; API downloads then refused escapes. Tool events retain refusals; later distinct raw archives were rendered inert."
+  ],
+  "final_gates": "Fresh documentation-head canonical14/all17/new owning controls/terminal hosted CI/configured Codex2 assessment and Human/Ops decision remain pending."
+}

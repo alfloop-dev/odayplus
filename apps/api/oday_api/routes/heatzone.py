@@ -394,6 +394,7 @@ else:
                 else model_binding
             )
             metadata: dict[str, Any] = {
+                "tenant_id": tid,
                 "idempotency_key": effective_idempotency_key,
                 "feature_count": len(body.features),
                 "created": created,
@@ -493,6 +494,7 @@ else:
                     outcome="abstained" if evaluation.abstained else "proposed",
                     correlation_id=request.state.correlation_id,
                     metadata={
+                        "tenant_id": tid,
                         "abstained": evaluation.abstained,
                         "abstain_reasons": list(evaluation.abstain_reasons),
                         "proposal_count": len(evaluation.proposals),
@@ -570,6 +572,7 @@ else:
                     outcome="approved",
                     correlation_id=request.state.correlation_id,
                     metadata={
+                        "tenant_id": tid,
                         "proposal_id": proposal_id,
                         "zone_id": updated_prop.zone_id,
                         "created_count": len(created_records),
@@ -617,6 +620,7 @@ else:
                     outcome="rejected",
                     correlation_id=request.state.correlation_id,
                     metadata={
+                        "tenant_id": tid,
                         "proposal_id": proposal_id,
                         "rejected_by": rejected_by,
                         "reason": body.reason,
@@ -790,6 +794,7 @@ else:
                     outcome="success",
                     correlation_id=request.state.correlation_id,
                     metadata={
+                        "tenant_id": tid,
                         "zone_id": zone_id,
                         "override_reason": body.override_reason,
                         "decided_by": decided_by,
@@ -837,6 +842,7 @@ else:
                     outcome="success",
                     correlation_id=request.state.correlation_id,
                     metadata={
+                        "tenant_id": tid,
                         "zone_id": zone_id,
                         "reverted_by": reverted_by,
                         "revert_reason": body.revert_reason,
@@ -1286,6 +1292,7 @@ else:
                     outcome="recorded",
                     correlation_id=request.state.correlation_id,
                     metadata={
+                        "tenant_id": tid,
                         "cell_id": recorded.cell_id,
                         "period_start": recorded.period_start.isoformat(),
                         "period_end": recorded.period_end.isoformat(),

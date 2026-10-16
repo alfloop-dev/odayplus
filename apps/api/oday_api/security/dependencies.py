@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from collections.abc import Iterable, Mapping
 from datetime import date
 from typing import TYPE_CHECKING, Any
@@ -56,6 +55,7 @@ from shared.auth import (
     default_registry,
     rbac_allows,
 )
+from shared.observability.correlation import request_correlation_id
 
 try:  # pragma: no cover - exercised only when FastAPI is installed
     from fastapi import HTTPException, Request
@@ -250,14 +250,17 @@ def principal_from_headers(
     credential yields an authenticated principal; any authentication failure
     raises HTTP 401.
 
-    When ODP_PRODUCT_MODE == "production", browser-supplied spoofable headers
-    are NEVER trusted under any circumstances (Contract §4.2, T16).
+    All authoritative production/staging/require-live controls use the same
+    runtime resolver as application composition; spoofable headers are NEVER
+    trusted in any such mode (Contract §4.2, T16).
 
     When no boundary is configured in non-production mode, the legacy
     header-trust stub is used so local dev and unit tests are unaffected.
     """
 
-    is_production = os.environ.get("ODP_PRODUCT_MODE") == "production"
+    from apps.api.oday_api.runtime_mode import live_data_required
+
+    is_production = live_data_required()
 
     boundary = boundary if boundary is not None else default_boundary()
     if boundary is not None:
@@ -267,7 +270,9 @@ def principal_from_headers(
         if outcome.authenticated:
             _enforce_password_rotation(outcome.principal, boundary)
             return outcome.principal
-        _raise_unauthenticated(outcome.reason)
+        _raise_unauthenticated(
+            outcome.reason, credential_protocol=outcome.credential_protocol,
+        )
 
     if is_production:
         from modules.opsboard.auth.errors import AuthFailureReason
@@ -296,17 +301,23 @@ def _enforce_password_rotation(principal: Principal, boundary: Any) -> None:
         return
     store = getattr(boundary, "_identity_store", None)
     checker = getattr(store, "password_must_change", None)
-    if checker is None:
-        return
     try:
-        must_change = bool(checker(principal.subject_id))
+        if not callable(checker):
+            raise RuntimeError("authoritative password rotation checker unavailable")
+        must_change = checker(principal.subject_id)
+        if type(must_change) is not bool:
+            raise ValueError("authoritative password rotation state unknown")
     except Exception:
         if HTTPException is not None:
             raise HTTPException(status_code=503, detail="IDENTITY_STORE_UNAVAILABLE") from None
         raise
     if must_change:
         if HTTPException is not None:
-            raise HTTPException(status_code=403, detail=PASSWORD_CHANGE_REQUIRED)
+            refusal = HTTPException(status_code=403, detail=PASSWORD_CHANGE_REQUIRED)
+            # Private exception context preserves the already verified actor
+            # for request-aware denial recording, without re-authentication.
+            refusal._verified_principal = principal
+            raise refusal
         raise AuthorizationError(
             Decision.deny("password change required", policy_id="identity.password_rotation")
         )
@@ -506,16 +517,23 @@ def _raise_forbidden(decision: Decision) -> None:
     raise AuthorizationError(decision)
 
 
-def _raise_unauthenticated(reason: AuthFailureReason | None) -> None:
+def _raise_unauthenticated(
+    reason: AuthFailureReason | None, *, credential_protocol: str | None = None,
+) -> None:
     """Reject with HTTP 401 (or the boundary's AuthenticationError in lean envs).
 
-    The stable :class:`~modules.opsboard.auth.errors.AuthFailureReason` value is
-    surfaced as the detail; it never contains token material.
+    Secret-service credential failures share one public reason. The boundary
+    selects the protocol after credential precedence; signed-JWT principal-map
+    refusals retain their existing public contract. Internal audit is unchanged.
     """
 
     from modules.opsboard.auth.errors import AuthenticationError, AuthFailureReason
 
     reason = reason if reason is not None else AuthFailureReason.NO_CREDENTIALS
+    if credential_protocol == "service_secret" and reason in (
+        AuthFailureReason.UNKNOWN_SERVICE, AuthFailureReason.BAD_SERVICE_SECRET,
+    ):
+        reason = AuthFailureReason.BAD_SERVICE_SECRET
     if HTTPException is not None:
         raise HTTPException(
             status_code=401,
@@ -763,7 +781,7 @@ def _select_operator_role(
 
 
 def _correlation_id_from_request(request: Request) -> str:  # type: ignore[name-defined]
-    return (
+    return request_correlation_id(
         getattr(request.state, "correlation_id", None)
         or request.headers.get("x-correlation-id")
         or "unknown"

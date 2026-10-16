@@ -51,7 +51,12 @@ from shared.infrastructure.persistence.repositories import (
     _INTERVENTION_UPSERT_SQL,
     DurableInterventionRepository,
 )
-from tests.integration._authz import INTERVENTION_HEADERS, auth_headers
+from tests.integration._authz import INTERVENTION_HEADERS as BASE_INTERVENTION_HEADERS
+from tests.integration._authz import auth_headers
+
+TEST_TENANT = "00000000-0000-0000-0000-000000000001"
+INTERVENTION_HEADERS = {**BASE_INTERVENTION_HEADERS, "x-tenant-id": TEST_TENANT}
+AUDIT_HEADERS = {**auth_headers(Role.AUDITOR, subject="intervention-auditor"), "x-tenant-id": TEST_TENANT}
 
 START = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
 END = datetime(2026, 6, 15, 9, 0, tzinfo=UTC)
@@ -105,6 +110,7 @@ def _open_case(
         planned_start=START,
         planned_end=END,
         created_by="supervisor-a",
+        tenant_id=TEST_TENANT,
         action_spec=action_spec,
     )
 
@@ -750,7 +756,8 @@ def test_api_drives_full_lifecycle_with_conflict_and_label() -> None:
     assert label.status_code == 200
     assert label.json()["exclude_from_baseline"] is True
 
-    audit = client.get("/audit/events", params={"correlation_id": "corr-iv-1"})
+    audit = client.get("/audit/events", headers=AUDIT_HEADERS, params={"correlation_id": "corr-iv-1"})
+    assert audit.status_code == 200, audit.text
     actions = {e["action"] for e in audit.json()["events"]}
     assert {"create", "approve", "execute", "evaluate_effect"} <= actions
 
@@ -873,7 +880,8 @@ def test_api_close_case_with_follow_up_and_audit() -> None:
     assert follow_up.json()["status"] == "CANDIDATE"
     assert follow_up.json()["trigger_ref"] == f"follow-up:{iid}"
 
-    audit = client.get("/audit/events", params={"correlation_id": "corr-iv-close"})
+    audit = client.get("/audit/events", headers=AUDIT_HEADERS, params={"correlation_id": "corr-iv-close"})
+    assert audit.status_code == 200, audit.text
     actions = {e["action"] for e in audit.json()["events"]}
     assert "close" in actions
 
@@ -2440,11 +2448,14 @@ def test_concurrent_adjust_stale_update_conflict_only_one_succeeds(tmp_path: pyt
         barrier.wait()
         c = TestClient(
             app,
-            headers=auth_headers(
-                Role.OPERATIONS_MANAGER,
-                Role.REGIONAL_SUPERVISOR,
-                subject=f"worker-{worker_id}",
-            ),
+            headers={
+                **auth_headers(
+                    Role.OPERATIONS_MANAGER,
+                    Role.REGIONAL_SUPERVISOR,
+                    subject=f"worker-{worker_id}",
+                ),
+                "x-tenant-id": TEST_TENANT,
+            },
         )
         response = c.post(
             f"/interventions/{iid}/adjust",
@@ -3062,3 +3073,81 @@ def test_adjust_date_overflow_year_9999_returns_422_without_writes():
     assert response.status_code == 422, response.text
     assert workflow.get(case.intervention_id).to_dict() == before
     assert [event for event in app.state.audit_log.list_events() if event.event_type == "intervention.lifecycle.v1"] == audit_before
+
+
+@pytest.mark.parametrize("prefix", ["", "/api/v1"])
+def test_http_intervention_ownership_precedes_commands_and_legacy_stays_unknown(prefix: str) -> None:
+    app = create_app()
+    workflow = app.state.intervention_workflow
+    legacy = workflow.open_case(
+        store_id="legacy-store", kind="PRICE_CHANGE", trigger_ref="offline",
+        expected_outcome="unknown historical owner", planned_start=START,
+        planned_end=END, created_by="offline",
+    )
+    own = TestClient(app, headers=INTERVENTION_HEADERS)
+    foreign = TestClient(app, headers={**INTERVENTION_HEADERS, "x-tenant-id": "other-tenant"})
+    tenantless = TestClient(app, headers=BASE_INTERVENTION_HEADERS)
+    anonymous = TestClient(app)
+    created = own.post(prefix + "/interventions", headers={"Idempotency-Key": "own-create"}, json={
+        "store_id": "owned-store", "kind": "PRICE_CHANGE", "expected_outcome": "own",
+        "planned_start": START.isoformat(), "planned_end": END.isoformat(),
+        "created_by": "operator", "tenant_id": "other-tenant",
+    })
+    assert created.status_code == 201, created.text
+    iid = created.json()["intervention_id"]
+    path = prefix + "/interventions/" + iid
+    assert created.json()["tenant_id"] == TEST_TENANT
+    before = workflow.get(iid).to_dict()
+    events_before = [e.to_dict() for e in workflow.audit_log.list_events() if e.event_type == "intervention.lifecycle.v1"]
+    for denied in (foreign, tenantless, anonymous):
+        assert denied.get(path).status_code in (401, 403, 404)
+        assert denied.get(path + "/label").status_code in (401, 403, 404)
+        rejected = denied.post(path + "/eligibility", headers={"Idempotency-Key": "same-command"}, json={"eligible": True, "actor": "other"})
+        assert rejected.status_code in (401, 403, 404), rejected.text
+    assert workflow.get(iid).to_dict() == before
+    assert [e.to_dict() for e in workflow.audit_log.list_events() if e.event_type == "intervention.lifecycle.v1"] == events_before
+    listing = foreign.get(prefix + "/interventions")
+    assert listing.status_code == 200, listing.text
+    assert listing.json()["items"] == []
+    assert own.get(prefix + "/interventions/" + legacy.intervention_id).status_code == 404
+    assert workflow.get(legacy.intervention_id).tenant_id == ""
+    allowed = own.post(path + "/eligibility", headers={"Idempotency-Key": "same-command"}, json={"eligible": True, "actor": "own"})
+    assert allowed.status_code == 200, allowed.text
+    assert allowed.json()["tenant_id"] == TEST_TENANT
+    events = [e for e in workflow.audit_log.list_events() if e.resource == "intervention/" + iid]
+    assert {e.metadata["tenant_id"] for e in events} == {TEST_TENANT}
+
+
+@pytest.mark.parametrize("durable", [False, True])
+def test_intervention_tenant_is_immutable_and_survives_lineage_restart(tmp_path, durable: bool) -> None:
+    from dataclasses import replace
+
+    engine = SqliteEngine(tmp_path / "tenant-lineage.db") if durable else None
+    try:
+        if engine is not None:
+            _seed_store(engine, "store-001")
+            repo = DurableInterventionRepository(SqliteDocumentStore(engine))
+        else:
+            repo = InMemoryInterventionRepository()
+        workflow = InterventionWorkflow(repository=repo)
+        case = _open_case(workflow)
+        with pytest.raises(InterventionError, match="tenant is immutable"):
+            repo.save(replace(case, tenant_id="other"))
+        with pytest.raises(InterventionError, match="tenant is immutable"):
+            case.with_transition(to_status=case.status, actor="other", action="retag", reason="invalid", tenant_id="other")
+        _drive_to_approved(workflow, case.intervention_id)
+        adjusted = workflow.adjust_case(case.intervention_id, actor="own", reason="keep ownership")
+        assert adjusted.original.tenant_id == adjusted.replacement.tenant_id == TEST_TENANT
+        _drive_to_completed(workflow, adjusted.replacement.intervention_id)
+        closed = workflow.close_case(adjusted.replacement.intervention_id, actor="own", disposition="ITERATE", reason="keep ownership", follow_up=True)
+        follow = workflow.get(closed.close.follow_up_intervention_id)
+        assert follow.tenant_id == TEST_TENANT
+        if durable:
+            engine.close()
+            engine = SqliteEngine(tmp_path / "tenant-lineage.db")
+            restored = DurableInterventionRepository(SqliteDocumentStore(engine))
+            for record in (adjusted.original, closed, follow):
+                assert restored.get(record.intervention_id).tenant_id == TEST_TENANT
+    finally:
+        if engine is not None:
+            engine.close()

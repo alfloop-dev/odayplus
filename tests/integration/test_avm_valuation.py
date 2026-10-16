@@ -25,6 +25,7 @@ from modules.avm import (
 )
 from modules.avm.application import AVMService
 from shared.api.idempotency import request_fingerprint
+from shared.auth import Role
 from shared.infrastructure.persistence import build_persistence
 from shared.infrastructure.persistence.assisted_listing_intake import (
     apply_upgrade_to_database,
@@ -33,7 +34,11 @@ from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.engine import SqliteEngine
 from shared.infrastructure.persistence.repositories import DurableAVMRepository
 from shared.jobs.queue import JobRequest, JobStatus
-from tests.integration._authz import AVM_HEADERS
+from tests.integration._authz import AVM_HEADERS as BASE_AVM_HEADERS
+from tests.integration._authz import auth_headers
+
+AVM_HEADERS = {**BASE_AVM_HEADERS, "x-tenant-id": "__local__"}
+AUDIT_HEADERS = {**auth_headers(Role.AUDITOR, subject="avm-auditor"), "x-tenant-id": "__local__"}
 
 
 def _provision_canonical_schema(database: Any) -> None:
@@ -421,7 +426,8 @@ def test_avm_api_runs_e2e_valuation_dataroom_export_and_audit() -> None:
     assert exported.status_code == 200
     assert exported.json()["export_audit"][0]["reason"] == "finance diligence package"
 
-    audit = client.get("/audit/events", params={"correlation_id": "corr-avm-1"})
+    audit = client.get("/audit/events", headers=AUDIT_HEADERS, params={"correlation_id": "corr-avm-1"})
+    assert audit.status_code == 200, audit.text
     event_types = {event["event_type"] for event in audit.json()["events"]}
     assert {
         "avm.case_created.v1",
@@ -526,7 +532,8 @@ def test_avm_durable_loop_survives_restart(tmp_path) -> None:
         assert dataroom.json()["completeness"] == 1.0
         assert dataroom.json()["export_audit"][0]["reason"] == "durable export audit"
 
-        audit = client.get("/audit/events", params={"correlation_id": correlation_id})
+        audit = client.get("/audit/events", headers=AUDIT_HEADERS, params={"correlation_id": correlation_id})
+        assert audit.status_code == 200, audit.text
         event_types = {event["event_type"] for event in audit.json()["events"]}
         assert {
             "avm.valued.v1",

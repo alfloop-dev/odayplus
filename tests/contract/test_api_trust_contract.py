@@ -457,6 +457,7 @@ def test_t20_rbac_allow_and_deny_audit_logging(
     identity_store.save_account(account)
     identity_store.set_account_roles(account_id, [Role.AUDITOR])
     identity_store.set_account_scope(account_id, Scope(tenant_id=str(tenant_id)))
+    identity_store.set_password_must_change(account_id, False)
 
     # Session is required for local tokens when session_service is wired
     session = session_service.create_session(
@@ -546,6 +547,7 @@ def test_t21_high_risk_session_revocation_propagation(
     identity_store.save_account(account)
     identity_store.set_account_roles(account_id, [Role.OPERATIONS_MANAGER])
     identity_store.set_account_scope(account_id, Scope(tenant_id=str(tenant_id)))
+    identity_store.set_password_must_change(account_id, False)
 
     # Create active session
     session = session_service.create_session(
@@ -1048,6 +1050,7 @@ def test_regression_bound_persistence_backs_the_default_boundary(monkeypatch):
         )
     )
     bundle.identity_store.set_account_roles(account_id, [Role.AUDITOR])
+    bundle.identity_store.set_password_must_change(account_id, False)
     session = bundle.session_service.create_session(
         account_id=account_id, provider="local_password"
     )
@@ -1220,6 +1223,9 @@ def _seed_auditor(identity_store, session_service) -> str:
     )
     identity_store.set_account_roles(account_id, [Role.AUDITOR])
     identity_store.set_account_scope(account_id, Scope(tenant_id=str(tenant_id)))
+    # These audit-outage cases require an already-rotated local principal;
+    # unknown rotation evidence must not mask their original audit contract.
+    identity_store.set_password_must_change(account_id, False)
     session = session_service.create_session(account_id=account_id, provider="local_password")
     return make_local_jwt(
         sub=str(account_id),

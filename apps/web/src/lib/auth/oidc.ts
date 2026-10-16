@@ -37,6 +37,7 @@ type IdTokenClaims = {
   azp?: string;
   exp?: number;
   iat?: number;
+  nbf?: number;
   nonce?: string;
 };
 
@@ -311,14 +312,20 @@ async function verifyIdToken(
       : [];
   if (
     claims.iss !== options.metadata.issuer ||
+    !audiences.every((audience) => typeof audience === "string") ||
     !audiences.includes(options.clientId) ||
     (audiences.length > 1 && claims.azp !== options.clientId) ||
-    !claims.sub ||
-    !claims.exp ||
+    typeof claims.sub !== "string" || !claims.sub ||
+    typeof claims.exp !== "number" ||
+    !Number.isFinite(claims.exp) ||
     claims.exp <= options.nowSeconds ||
-    !claims.iat ||
+    typeof claims.iat !== "number" ||
+    !Number.isFinite(claims.iat) ||
     claims.iat > options.nowSeconds + 60 ||
-    !claims.nonce ||
+    (Object.prototype.hasOwnProperty.call(claims, "nbf") &&
+      (typeof claims.nbf !== "number" || !Number.isFinite(claims.nbf) ||
+        claims.nbf > options.nowSeconds + 60)) ||
+    typeof claims.nonce !== "string" || !claims.nonce ||
     !constantTimeEqual(claims.nonce, options.expectedNonce)
   ) {
     throw new Error("OIDC id_token claims are invalid");

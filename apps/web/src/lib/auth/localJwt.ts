@@ -44,6 +44,8 @@ export async function mintLocalJwt(options: {
   nowSeconds?: number;
   signingSecret?: string;
   environment?: Record<string, string | undefined>;
+  /** Server-only binding to the original authenticated OIDC token. */
+  oidcTokenDigest?: string;
 }): Promise<string> {
   const environment = options.environment ?? process.env;
   const now = options.nowSeconds ?? Math.floor(Date.now() / 1000);
@@ -71,6 +73,7 @@ export async function mintLocalJwt(options: {
     tenant_id: options.tenantId || "default",
     iat: now,
     exp: now + ttl,
+    ...(options.oidcTokenDigest ? { purpose: "oidc-web-session.v1", oidc_token_digest: options.oidcTokenDigest } : {}),
   };
 
   const headerB64 = base64UrlEncode(encoder.encode(JSON.stringify(header)));

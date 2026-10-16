@@ -1,0 +1,2304 @@
+{
+  "kind": "author-diagnostic-index-not-canonical-receipts",
+  "task_id": "ODP-RECOVERY-SOURCE-INTEGRATION-001",
+  "run_id": "pi-20261015T052543Z-a1757def",
+  "generated_at": "2026-10-15T06:20:22.131368+00:00",
+  "recorded_at_head": "934a8b2f85b82bc7583e78458d54d03fd1064a9d",
+  "source_anchors": [
+    "6591e5a4510f2c7be9864c64a67519010e89f493",
+    "ec602fcb1551eca79bb2e242bc13c990daa40c6f",
+    "0f5f2526aad07f0c4ca408bcd50e05363896d763",
+    "9c6db6ef6da94acab85c61c5f9886e53913e8d08",
+    "e838d987f0688ea8f24678f714ebb6da4820f55d",
+    "934a8b2f85b82bc7583e78458d54d03fd1064a9d"
+  ],
+  "receipts": [
+    {
+      "selection_label": "batch003-934-boundaries",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-934-boundaries/terminal.json",
+      "terminal_sha256": "f4e8322e9f26a9182fb0b4b3138e6a16022288089814a5d59505c04c12862d98",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "934a8b2f85b82bc7583e78458d54d03fd1064a9d",
+      "tree": "9ffb3b1b7f1d9c89aed107ee23bb80e2ee79df69",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "python",
+        "delivery_toolchain/governance/check_code_boundaries.py"
+      ],
+      "cap_seconds": 60,
+      "started_at": "2026-10-15T06:18:37.933137+00:00",
+      "duration_seconds": 11.212,
+      "exit_code": 0,
+      "interrupted": false,
+      "head_after": "934a8b2f85b82bc7583e78458d54d03fd1064a9d",
+      "dirty_before": "",
+      "dirty_after": "",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "eb0ae805dc18817f00a3e391583c44cb64fe5dc5fa58829e974507df4cf56d2d"
+    },
+    {
+      "selection_label": "batch003-934-masked-regression",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-934-masked-regression/terminal.json",
+      "terminal_sha256": "a5e12a85746183e1a52be8f16b4d2031cb3f063bb7fed460f60597016c3bc6a4",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "934a8b2f85b82bc7583e78458d54d03fd1064a9d",
+      "tree": "9ffb3b1b7f1d9c89aed107ee23bb80e2ee79df69",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "pytest",
+        "tests/security/test_auth_composition_extension.py",
+        "-q",
+        "-k",
+        "masked_intake_preserves_only"
+      ],
+      "cap_seconds": 120,
+      "started_at": "2026-10-15T06:18:37.901505+00:00",
+      "duration_seconds": 13.777,
+      "exit_code": 0,
+      "interrupted": false,
+      "head_after": "934a8b2f85b82bc7583e78458d54d03fd1064a9d",
+      "dirty_before": "",
+      "dirty_after": "",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "55ddf03e4a276b2c3bbd3c9e0ae158c1ae551ca187bc41d485320a6fab896541"
+    },
+    {
+      "selection_label": "batch003-anchored-avm-pg",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-anchored-avm-pg/terminal.json",
+      "terminal_sha256": "5549ff5c70f23a007c70b5bcd2c30e38ebcedfbe3e9fa49be42930f15f2d7b6a",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "tree": "9cdf11a72d08fa8044b4b53a6bba203f3dff1319",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "python",
+        "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/run_docker_pg.py",
+        "tests/integration/test_avm_valuation.py",
+        "modules/avm/tests/test_avm_production_execution.py",
+        "-q",
+        "-n",
+        "2"
+      ],
+      "cap_seconds": 420,
+      "started_at": "2026-10-15T05:55:21.110936+00:00",
+      "duration_seconds": 240.61,
+      "exit_code": 0,
+      "interrupted": false,
+      "head_after": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "dirty_before": "",
+      "dirty_after": "",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "8a1bdad39974f2b8fc3989d66b98f5f332a010bf892c35bb7fc6838a5c3ec869"
+    },
+    {
+      "selection_label": "batch003-anchored-boundaries",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-anchored-boundaries/terminal.json",
+      "terminal_sha256": "64dabd96d9b2acb2eca12bdb3fbb1df9716408d1760ce8e1a898fded0dd350a7",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "tree": "9cdf11a72d08fa8044b4b53a6bba203f3dff1319",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "python",
+        "delivery_toolchain/governance/check_code_boundaries.py"
+      ],
+      "cap_seconds": 420,
+      "started_at": "2026-10-15T05:54:16.704371+00:00",
+      "duration_seconds": 11.777,
+      "exit_code": 0,
+      "interrupted": false,
+      "head_after": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "dirty_before": "",
+      "dirty_after": "",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "eb0ae805dc18817f00a3e391583c44cb64fe5dc5fa58829e974507df4cf56d2d"
+    },
+    {
+      "selection_label": "batch003-anchored-fixture-composition",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-anchored-fixture-composition/terminal.json",
+      "terminal_sha256": "1c0773e8f529ac9c1a76d5192cfd4ee39d85edc39ec409ff4a400b1fb77f9eaa",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "tree": "9cdf11a72d08fa8044b4b53a6bba203f3dff1319",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "pytest",
+        "tests/integration/test_audit_evidence_export.py",
+        "tests/integration/test_audit_evidence_persistence.py",
+        "tests/integration/test_gap_ml_003_elasticity_binding.py",
+        "tests/integration/test_sitescore_decision.py",
+        "tests/integration/test_adlift_incrementality.py",
+        "tests/integration/test_scoring_model_binding.py",
+        "tests/contract/test_api_error_envelope.py",
+        "tests/contract/test_api_versioning.py",
+        "tests/contract/test_api_idempotency_and_pagination.py",
+        "tests/contract/test_platform_api.py",
+        "tests/reliability/test_job_delivery_state_clear.py",
+        "tests/integration/test_production_api_composition.py",
+        "-q",
+        "-n",
+        "2"
+      ],
+      "cap_seconds": 420,
+      "started_at": "2026-10-15T05:55:21.173014+00:00",
+      "duration_seconds": 374.061,
+      "exit_code": 0,
+      "interrupted": false,
+      "head_after": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "dirty_before": "",
+      "dirty_after": "",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "77ddb9d42c036525861291a23eec853c7453691c982c23d49a359ea31a86291f"
+    },
+    {
+      "selection_label": "batch003-anchored-intervention",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-anchored-intervention/terminal.json",
+      "terminal_sha256": "5adb87080a610926581ada357cd3b7e561772a68138c82da4db0518c9b7c8c20",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "tree": "9cdf11a72d08fa8044b4b53a6bba203f3dff1319",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "pytest",
+        "tests/integration/test_intervention_workflow.py",
+        "tests/security/test_auth_composition_extension.py",
+        "-q",
+        "-n",
+        "2"
+      ],
+      "cap_seconds": 420,
+      "started_at": "2026-10-15T05:55:21.123933+00:00",
+      "duration_seconds": 255.696,
+      "exit_code": 0,
+      "interrupted": false,
+      "head_after": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "dirty_before": "",
+      "dirty_after": "",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "1da6c2c359a46774cda2995459edce5c597532e682469d44391b81a98388d260"
+    },
+    {
+      "selection_label": "batch003-anchored-lint",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-anchored-lint/terminal.json",
+      "terminal_sha256": "66b8e4930f5e1b7452707315f34ab29f49f8c179fceb7049e07c8349fb560f3b",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "tree": "9cdf11a72d08fa8044b4b53a6bba203f3dff1319",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "ruff",
+        "check",
+        "apps/api/app/routes/avm.py",
+        "apps/api/app/routes/interventions.py",
+        "apps/api/app/routes/priceops.py",
+        "apps/api/app/routes/sitescore.py",
+        "modules/avm/tests/test_avm_production_execution.py",
+        "modules/intervention/application/workflow.py",
+        "modules/intervention/domain/lifecycle.py",
+        "modules/intervention/infrastructure/repositories.py",
+        "modules/listing/application/intake_privacy.py",
+        "shared/infrastructure/persistence/repositories.py",
+        "tests/contract/test_api_error_envelope.py",
+        "tests/contract/test_api_idempotency_and_pagination.py",
+        "tests/contract/test_api_versioning.py",
+        "tests/contract/test_platform_api.py",
+        "tests/integration/test_adlift_incrementality.py",
+        "tests/integration/test_audit_evidence_export.py",
+        "tests/integration/test_audit_evidence_persistence.py",
+        "tests/integration/test_avm_valuation.py",
+        "tests/integration/test_gap_ml_003_elasticity_binding.py",
+        "tests/integration/test_intervention_workflow.py",
+        "tests/integration/test_production_api_composition.py",
+        "tests/integration/test_scoring_model_binding.py",
+        "tests/integration/test_sitescore_decision.py",
+        "tests/reliability/test_job_delivery_state_clear.py",
+        "tests/security/test_auth_composition_extension.py"
+      ],
+      "cap_seconds": 420,
+      "started_at": "2026-10-15T05:54:16.725240+00:00",
+      "duration_seconds": 0.171,
+      "exit_code": 0,
+      "interrupted": false,
+      "head_after": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "dirty_before": "",
+      "dirty_after": "",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+    },
+    {
+      "selection_label": "batch003-anchored-openapi",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-anchored-openapi/terminal.json",
+      "terminal_sha256": "3457f2338f0f8eeba0764f983347e43bcb9352da26ef0c351e60e8b2333e0be1",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "tree": "9cdf11a72d08fa8044b4b53a6bba203f3dff1319",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "python",
+        "delivery_toolchain/openapi/check_drift.py",
+        "--base-ref",
+        "origin/dev"
+      ],
+      "cap_seconds": 420,
+      "started_at": "2026-10-15T05:54:16.718629+00:00",
+      "duration_seconds": 20.816,
+      "exit_code": 0,
+      "interrupted": false,
+      "head_after": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "dirty_before": "",
+      "dirty_after": "",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "f4b09a2bb0c031d6064bf937f3f351b175f9fd2e68df8893145e4a94956fc2b2"
+    },
+    {
+      "selection_label": "batch003-audit-fixtures",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-audit-fixtures/terminal.json",
+      "terminal_sha256": "bb1682ca3b194ef81ca079f9f770199f91b94675491d24e99cee3498f27b3a85",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "ec602fcb1551eca79bb2e242bc13c990daa40c6f",
+      "tree": "7afc777a2f6e2f8f8e07b33a0f048b7df2b9707c",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "pytest",
+        "tests/integration/test_audit_evidence_export.py",
+        "tests/integration/test_audit_evidence_persistence.py::test_api_persists_and_serves_retained_evidence",
+        "tests/integration/test_gap_ml_003_elasticity_binding.py::test_plan_estimates_elasticity_from_observations",
+        "tests/integration/test_sitescore_decision.py::test_sitescore_api_scores_reports_and_runs_decision_loop",
+        "tests/integration/test_adlift_incrementality.py",
+        "tests/integration/test_scoring_model_binding.py",
+        "tests/contract/test_api_error_envelope.py",
+        "tests/contract/test_api_versioning.py",
+        "tests/contract/test_api_idempotency_and_pagination.py::test_transition_replay_returns_the_first_result_and_does_not_double_apply",
+        "-q",
+        "-n",
+        "2"
+      ],
+      "cap_seconds": 420,
+      "started_at": "2026-10-15T05:37:58.327306+00:00",
+      "duration_seconds": 141.24,
+      "exit_code": 0,
+      "interrupted": false,
+      "head_after": "ec602fcb1551eca79bb2e242bc13c990daa40c6f",
+      "dirty_before": "M apps/api/app/routes/avm.py\n M apps/api/app/routes/priceops.py\n M modules/listing/application/intake_privacy.py\n M tests/contract/test_api_error_envelope.py\n M tests/contract/test_api_idempotency_and_pagination.py\n M tests/contract/test_api_versioning.py\n M tests/integration/test_adlift_incrementality.py\n M tests/integration/test_audit_evidence_export.py\n M tests/integration/test_audit_evidence_persistence.py\n M tests/integration/test_avm_valuation.py\n M tests/integration/test_gap_ml_003_elasticity_binding.py\n M tests/integration/test_scoring_model_binding.py\n M tests/integration/test_sitescore_decision.py",
+      "dirty_after": "M apps/api/app/routes/avm.py\n M apps/api/app/routes/priceops.py\n M modules/listing/application/intake_privacy.py\n M tests/contract/test_api_error_envelope.py\n M tests/contract/test_api_idempotency_and_pagination.py\n M tests/contract/test_api_versioning.py\n M tests/integration/test_adlift_incrementality.py\n M tests/integration/test_audit_evidence_export.py\n M tests/integration/test_audit_evidence_persistence.py\n M tests/integration/test_avm_valuation.py\n M tests/integration/test_gap_ml_003_elasticity_binding.py\n M tests/integration/test_scoring_model_binding.py\n M tests/integration/test_sitescore_decision.py",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "8dfd9f07f0cc76aa1a859cb2bb36d2081fbff6c539467f023bd9145bb8cfab59"
+    },
+    {
+      "selection_label": "batch003-avm-real-pg-artifacts",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-avm-real-pg-artifacts/terminal.json",
+      "terminal_sha256": "11df8d260a5b01bc9bcaee034c5525d365f317b54c811931ba5028c52f9f78af",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "0f5f2526aad07f0c4ca408bcd50e05363896d763",
+      "tree": "1a0348b12b9aece241c18bb2e318e2bab73ab703",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "python",
+        "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/run_docker_pg.py",
+        "modules/avm/tests/test_avm_production_execution.py::test_production_avm_reloads_and_executes_real_oss_artifacts",
+        "-q"
+      ],
+      "cap_seconds": 420,
+      "started_at": "2026-10-15T05:44:31.528820+00:00",
+      "duration_seconds": 75.546,
+      "exit_code": 0,
+      "interrupted": false,
+      "head_after": "0f5f2526aad07f0c4ca408bcd50e05363896d763",
+      "dirty_before": "M modules/avm/tests/test_avm_production_execution.py\n M tests/contract/test_platform_api.py\n M tests/integration/test_production_api_composition.py\n M tests/reliability/test_job_delivery_state_clear.py",
+      "dirty_after": "M modules/avm/tests/test_avm_production_execution.py\n M tests/contract/test_platform_api.py\n M tests/integration/test_production_api_composition.py\n M tests/reliability/test_job_delivery_state_clear.py",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "c3704ed6aa6c2efc86db0141ee9409ed62fd92ae3cc7889d684237481a43fb92"
+    },
+    {
+      "selection_label": "batch003-browser-error-detail",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-browser-error-detail/terminal.json",
+      "terminal_sha256": "a960ae46660b9e1470066853932b4a2e33705e0a214456c2aab390eb217e47f0",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "tree": "9cdf11a72d08fa8044b4b53a6bba203f3dff1319",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "python",
+        "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/probe_possible_browser.py"
+      ],
+      "cap_seconds": 100,
+      "started_at": "2026-10-15T06:12:41.758479+00:00",
+      "duration_seconds": 34.656,
+      "exit_code": 1,
+      "interrupted": false,
+      "head_after": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "dirty_before": "",
+      "dirty_after": "",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "4b3a6104ed0b5c26458651dbbf1120f6ad2eeba461c181b4edd8321509eb0fe2"
+    },
+    {
+      "selection_label": "batch003-browser-image-build",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-browser-image-build/terminal.json",
+      "terminal_sha256": "186114f6ca5b9de7c5cc515e3c0f28c51e5547799db9ed4f5e5e78d0d61901b2",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "tree": "9cdf11a72d08fa8044b4b53a6bba203f3dff1319",
+      "command": [
+        "docker",
+        "build",
+        "--network=none",
+        "-t",
+        "odayplus/web:source-intake-e838",
+        "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/browser-web-context"
+      ],
+      "cap_seconds": 120,
+      "started_at": "2026-10-15T06:11:09.647494+00:00",
+      "duration_seconds": 12.064,
+      "exit_code": 0,
+      "interrupted": false,
+      "head_after": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "dirty_before": "",
+      "dirty_after": "",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "22602266a3b22f59571854c47453598549c86badce8280db69bc887068b2ddb8"
+    },
+    {
+      "selection_label": "batch003-current-origin-response",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-current-origin-response/terminal.json",
+      "terminal_sha256": "0ded1ba8b24a4080b8f5522a829a62fac1a84c1b3bd24c0e6e6b9e50884dc6f8",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "9c6db6ef6da94acab85c61c5f9886e53913e8d08",
+      "tree": "517d48202f4f73c22fe56f464e672105da0bc455",
+      "command": [
+        "python3",
+        "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/probe_e2e_origin.py"
+      ],
+      "cap_seconds": 420,
+      "started_at": "2026-10-15T05:53:11.760031+00:00",
+      "duration_seconds": 4.189,
+      "exit_code": 0,
+      "interrupted": false,
+      "head_after": "9c6db6ef6da94acab85c61c5f9886e53913e8d08",
+      "dirty_before": "",
+      "dirty_after": "",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "fc171557a2a625431667c6219836cb75d7f03a2a40ade27211bc0ade5f2e7086"
+    },
+    {
+      "selection_label": "batch003-docker-equivalent-web-build",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-docker-equivalent-web-build/terminal.json",
+      "terminal_sha256": "d42b27d917ee0b1b3ab5120b86a95c872abdbb1f7fd31213fe623339fc7b28f9",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "tree": "9cdf11a72d08fa8044b4b53a6bba203f3dff1319",
+      "command": [
+        "env",
+        "NODE_ENV=production",
+        "ODP_API_BASE_URL=http://127.0.0.1:18289",
+        "ODP_DATA_BINDING_MODE=fixture",
+        "ODP_PRODUCT_MODE=poc",
+        "ODP_DEPLOY_ENV=e2e",
+        "ODP_E2E_MODE=true",
+        "NEXT_PUBLIC_ODP_DATA_BINDING_MODE=fixture",
+        "NEXT_PUBLIC_ODP_PRODUCT_MODE=poc",
+        "NEXT_PUBLIC_ODP_DEPLOY_ENV=e2e",
+        "NEXT_PUBLIC_ODP_E2E_MODE=true",
+        "pnpm",
+        "--dir",
+        "apps/web",
+        "build"
+      ],
+      "cap_seconds": 420,
+      "started_at": "2026-10-15T06:08:47.905549+00:00",
+      "duration_seconds": 127.776,
+      "exit_code": 0,
+      "interrupted": false,
+      "head_after": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "dirty_before": "",
+      "dirty_after": "",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "9835171b93c3a986f1d8c2642d29d925d9c911a3249aa89b5fd7564f7afca246"
+    },
+    {
+      "selection_label": "batch003-e2e-origin-diagnostic",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-e2e-origin-diagnostic/terminal.json",
+      "terminal_sha256": "f325a9fe26aa1281edcd58dbfbbb34efda48bd34e4d17428a36c9facb3d9ebf6",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "9c6db6ef6da94acab85c61c5f9886e53913e8d08",
+      "tree": "517d48202f4f73c22fe56f464e672105da0bc455",
+      "command": [
+        "python3",
+        "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/probe_e2e_origin.py"
+      ],
+      "cap_seconds": 420,
+      "started_at": "2026-10-15T05:50:15.718791+00:00",
+      "duration_seconds": 3.631,
+      "exit_code": 1,
+      "interrupted": false,
+      "head_after": "9c6db6ef6da94acab85c61c5f9886e53913e8d08",
+      "dirty_before": "",
+      "dirty_after": "",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "441bbb46ddad7e352e9aeb93c43ea17056628256f2d550a366e4ec7ab30c482a"
+    },
+    {
+      "selection_label": "batch003-e2e-standalone-build",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-e2e-standalone-build/terminal.json",
+      "terminal_sha256": "8e13e97aced0b479cfdd29165450856401256f6a07332b2afe2e4a419f4f19db",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "9c6db6ef6da94acab85c61c5f9886e53913e8d08",
+      "tree": "517d48202f4f73c22fe56f464e672105da0bc455",
+      "command": [
+        "env",
+        "NODE_ENV=production",
+        "ODP_API_BASE_URL=http://127.0.0.1:1",
+        "ODP_DATA_BINDING_MODE=fixture",
+        "ODP_PRODUCT_MODE=poc",
+        "ODP_DEPLOY_ENV=e2e",
+        "ODP_E2E_MODE=true",
+        "pnpm",
+        "--dir",
+        "apps/web",
+        "build"
+      ],
+      "cap_seconds": 420,
+      "started_at": "2026-10-15T05:51:02.384343+00:00",
+      "duration_seconds": 96.512,
+      "exit_code": 0,
+      "interrupted": false,
+      "head_after": "9c6db6ef6da94acab85c61c5f9886e53913e8d08",
+      "dirty_before": "",
+      "dirty_after": "",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "203904c09168323c20ad08e5e2dd499ea2824e5a523730313e9bd443bbe6cf27"
+    },
+    {
+      "selection_label": "batch003-fixture-lint",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-fixture-lint/terminal.json",
+      "terminal_sha256": "c73d4519624e7e257b10b907311de175db7a7a0b0c120748371586f3c0942f77",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "0f5f2526aad07f0c4ca408bcd50e05363896d763",
+      "tree": "1a0348b12b9aece241c18bb2e318e2bab73ab703",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "ruff",
+        "check",
+        "modules/avm/tests/test_avm_production_execution.py",
+        "tests/contract/test_platform_api.py",
+        "tests/integration/test_production_api_composition.py",
+        "tests/reliability/test_job_delivery_state_clear.py",
+        "tests/integration/test_avm_valuation.py",
+        "tests/integration/test_sitescore_decision.py",
+        "tests/integration/test_scoring_model_binding.py"
+      ],
+      "cap_seconds": 420,
+      "started_at": "2026-10-15T05:49:07.067490+00:00",
+      "duration_seconds": 0.115,
+      "exit_code": 1,
+      "interrupted": false,
+      "head_after": "0f5f2526aad07f0c4ca408bcd50e05363896d763",
+      "dirty_before": "M modules/avm/tests/test_avm_production_execution.py\n M tests/contract/test_platform_api.py\n M tests/integration/test_production_api_composition.py\n M tests/reliability/test_job_delivery_state_clear.py",
+      "dirty_after": "M modules/avm/tests/test_avm_production_execution.py\n M tests/contract/test_platform_api.py\n M tests/integration/test_production_api_composition.py\n M tests/reliability/test_job_delivery_state_clear.py",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "03861c4aec2e5cf92e70028d0651b9a1171f803d76c240dda05fc00b1b480021"
+    },
+    {
+      "selection_label": "batch003-intervention-initial",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-intervention-initial/terminal.json",
+      "terminal_sha256": "c19bf90016d65ca06d57539a52077cf2aecd261b8b488206009652e9e9eb1617",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "6591e5a4510f2c7be9864c64a67519010e89f493",
+      "tree": "4860267d57d6e118b80569165f57c23691814101",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "pytest",
+        "tests/integration/test_intervention_workflow.py",
+        "-q"
+      ],
+      "cap_seconds": 420,
+      "started_at": "2026-10-15T05:28:45.447167+00:00",
+      "duration_seconds": 191.767,
+      "exit_code": 1,
+      "interrupted": false,
+      "head_after": "6591e5a4510f2c7be9864c64a67519010e89f493",
+      "dirty_before": "M apps/api/app/routes/interventions.py\n M modules/intervention/application/workflow.py\n M modules/intervention/domain/lifecycle.py\n M modules/intervention/infrastructure/repositories.py\n M shared/infrastructure/persistence/repositories.py\n M tests/integration/test_intervention_workflow.py",
+      "dirty_after": "M apps/api/app/routes/interventions.py\n M modules/intervention/application/workflow.py\n M modules/intervention/domain/lifecycle.py\n M modules/intervention/infrastructure/repositories.py\n M shared/infrastructure/persistence/repositories.py\n M tests/integration/test_intervention_workflow.py",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "781322627302453fb090d444cef967f20da9cd90573ec646c4262abfbc4bf516"
+    },
+    {
+      "selection_label": "batch003-intervention-updated",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-intervention-updated/terminal.json",
+      "terminal_sha256": "ea394a0e95f5fb76ca8426034e3826823a961f72852b7bbc3de9d7cdb941d48f",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "6591e5a4510f2c7be9864c64a67519010e89f493",
+      "tree": "4860267d57d6e118b80569165f57c23691814101",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "pytest",
+        "tests/integration/test_intervention_workflow.py",
+        "-q"
+      ],
+      "cap_seconds": 420,
+      "started_at": "2026-10-15T05:32:44.254620+00:00",
+      "duration_seconds": 176.379,
+      "exit_code": 0,
+      "interrupted": false,
+      "head_after": "6591e5a4510f2c7be9864c64a67519010e89f493",
+      "dirty_before": "M apps/api/app/routes/interventions.py\n M modules/intervention/application/workflow.py\n M modules/intervention/domain/lifecycle.py\n M modules/intervention/infrastructure/repositories.py\n M shared/infrastructure/persistence/repositories.py\n M tests/integration/test_intervention_workflow.py",
+      "dirty_after": "M apps/api/app/routes/interventions.py\n M modules/intervention/application/workflow.py\n M modules/intervention/domain/lifecycle.py\n M modules/intervention/infrastructure/repositories.py\n M shared/infrastructure/persistence/repositories.py\n M tests/integration/test_intervention_workflow.py",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "8134e8376d7081e547fb809ff4bd4e6abddf06f50ca729f143713befcfa0266e"
+    },
+    {
+      "selection_label": "batch003-mask-lint",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-mask-lint/terminal.json",
+      "terminal_sha256": "f444a61c0c301ce2a69aa2b3862690dccc0afcc8336ef14b45f7db1ea7999923",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "tree": "9cdf11a72d08fa8044b4b53a6bba203f3dff1319",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "ruff",
+        "check",
+        "modules/listing/application/intake_authorization.py",
+        "tests/security/test_auth_composition_extension.py"
+      ],
+      "cap_seconds": 60,
+      "started_at": "2026-10-15T06:17:01.491839+00:00",
+      "duration_seconds": 0.167,
+      "exit_code": 0,
+      "interrupted": false,
+      "head_after": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "dirty_before": "M modules/listing/application/intake_authorization.py\n M tests/security/test_auth_composition_extension.py",
+      "dirty_after": "M modules/listing/application/intake_authorization.py\n M tests/security/test_auth_composition_extension.py",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+    },
+    {
+      "selection_label": "batch003-masked-identity-after",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-masked-identity-after/terminal.json",
+      "terminal_sha256": "45cf617106aa499f9bd3b95250dc5915ec0a6314c74648e183a162038f481c6b",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "tree": "9cdf11a72d08fa8044b4b53a6bba203f3dff1319",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "pytest",
+        "tests/security/test_auth_composition_extension.py",
+        "tests/security/test_dev_smoke_review_composition.py",
+        "tests/security/test_assisted_listing_intake_authorization_matrix.py",
+        "tests/security/test_assisted_listing_intake_security.py",
+        "-q",
+        "-n",
+        "2"
+      ],
+      "cap_seconds": 180,
+      "started_at": "2026-10-15T06:14:35.976450+00:00",
+      "duration_seconds": 133.927,
+      "exit_code": 0,
+      "interrupted": false,
+      "head_after": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "dirty_before": "M modules/listing/application/intake_authorization.py\n M tests/security/test_auth_composition_extension.py",
+      "dirty_after": "M modules/listing/application/intake_authorization.py\n M tests/security/test_auth_composition_extension.py",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "af1eb2dc831fb39a4ea3551d22ea86b2c07ed1c12e2c437723527246c72681eb"
+    },
+    {
+      "selection_label": "batch003-masked-identity-before",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-masked-identity-before/terminal.json",
+      "terminal_sha256": "703140dbdb119bb8bc77836175e41e90213441fed1e916aef69da5241f97257f",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "tree": "9cdf11a72d08fa8044b4b53a6bba203f3dff1319",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "pytest",
+        "tests/security/test_auth_composition_extension.py",
+        "-q",
+        "-k",
+        "masked_intake_preserves_only"
+      ],
+      "cap_seconds": 120,
+      "started_at": "2026-10-15T06:14:11.134926+00:00",
+      "duration_seconds": 15.603,
+      "exit_code": 1,
+      "interrupted": false,
+      "head_after": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "dirty_before": "M tests/security/test_auth_composition_extension.py",
+      "dirty_after": "M tests/security/test_auth_composition_extension.py",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "3374027a2014904a0d6568f88ea481e66489498b6d783a7d96a01e13fe5e00c9"
+    },
+    {
+      "selection_label": "batch003-origin-image-build",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-origin-image-build/terminal.json",
+      "terminal_sha256": "58f397a6ab92fc042e67f7e2805a65347058a4c6dc9e8f088f08d764352b7044",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "9c6db6ef6da94acab85c61c5f9886e53913e8d08",
+      "tree": "517d48202f4f73c22fe56f464e672105da0bc455",
+      "command": [
+        "docker",
+        "build",
+        "--pull=false",
+        "-f",
+        "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/WebDiagnostic.Dockerfile",
+        "-t",
+        "odayplus/web:source-origin-9c6db6ef6",
+        "apps/web/.next"
+      ],
+      "cap_seconds": 420,
+      "started_at": "2026-10-15T05:52:51.534075+00:00",
+      "duration_seconds": 13.728,
+      "exit_code": 0,
+      "interrupted": false,
+      "head_after": "9c6db6ef6da94acab85c61c5f9886e53913e8d08",
+      "dirty_before": "",
+      "dirty_after": "",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "f5b775d960fc4c02a820c2f2c10fdacc2ded5905cbebbd4c1f0183553eb26f4d"
+    },
+    {
+      "selection_label": "batch003-owning-audit",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-owning-audit/terminal.json",
+      "terminal_sha256": "3c5d3e80159671887f9e683fe673dff4c52e1cef297d79755f742e046302415e",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "ec602fcb1551eca79bb2e242bc13c990daa40c6f",
+      "tree": "7afc777a2f6e2f8f8e07b33a0f048b7df2b9707c",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "pytest",
+        "tests/security/test_auth_composition_extension.py",
+        "tests/integration/test_avm_valuation.py::test_avm_api_runs_e2e_valuation_dataroom_export_and_audit",
+        "tests/integration/test_avm_valuation.py::test_avm_durable_loop_survives_restart",
+        "-q",
+        "-n",
+        "2"
+      ],
+      "cap_seconds": 420,
+      "started_at": "2026-10-15T05:40:27.479130+00:00",
+      "duration_seconds": 111.099,
+      "exit_code": 0,
+      "interrupted": false,
+      "head_after": "ec602fcb1551eca79bb2e242bc13c990daa40c6f",
+      "dirty_before": "M apps/api/app/routes/avm.py\n M apps/api/app/routes/priceops.py\n M modules/listing/application/intake_privacy.py\n M tests/contract/test_api_error_envelope.py\n M tests/contract/test_api_idempotency_and_pagination.py\n M tests/contract/test_api_versioning.py\n M tests/integration/test_adlift_incrementality.py\n M tests/integration/test_audit_evidence_export.py\n M tests/integration/test_audit_evidence_persistence.py\n M tests/integration/test_avm_valuation.py\n M tests/integration/test_gap_ml_003_elasticity_binding.py\n M tests/integration/test_scoring_model_binding.py\n M tests/integration/test_sitescore_decision.py",
+      "dirty_after": "M apps/api/app/routes/avm.py\n M apps/api/app/routes/priceops.py\n M modules/listing/application/intake_privacy.py\n M tests/contract/test_api_error_envelope.py\n M tests/contract/test_api_idempotency_and_pagination.py\n M tests/contract/test_api_versioning.py\n M tests/integration/test_adlift_incrementality.py\n M tests/integration/test_audit_evidence_export.py\n M tests/integration/test_audit_evidence_persistence.py\n M tests/integration/test_avm_valuation.py\n M tests/integration/test_gap_ml_003_elasticity_binding.py\n M tests/integration/test_scoring_model_binding.py\n M tests/integration/test_sitescore_decision.py",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "6af4154fb8c8e5e72d010a302b31cb5ffa3e5c0e19c3fc80526fa77ffe1306cb"
+    },
+    {
+      "selection_label": "batch003-possible-browser-fixed",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-possible-browser-fixed/terminal.json",
+      "terminal_sha256": "f64702161cc95b5aed7898a903af9893d10402f3ba4479edc1310095be821cf8",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "tree": "9cdf11a72d08fa8044b4b53a6bba203f3dff1319",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "python",
+        "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/probe_possible_browser.py"
+      ],
+      "cap_seconds": 180,
+      "started_at": "2026-10-15T06:17:01.486545+00:00",
+      "duration_seconds": 25.409,
+      "exit_code": 0,
+      "interrupted": false,
+      "head_after": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "dirty_before": "M modules/listing/application/intake_authorization.py\n M tests/security/test_auth_composition_extension.py",
+      "dirty_after": "M modules/listing/application/intake_authorization.py\n M tests/security/test_auth_composition_extension.py",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "9745af5e2d8b474e55ede69ff3422c2fbb6cd374406cdaad03d2e83fed864ee1"
+    },
+    {
+      "selection_label": "batch003-possible-browser-supported-build",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-possible-browser-supported-build/terminal.json",
+      "terminal_sha256": "89dfeaf2d4374bee7f9a7289e944632b21b3607fba48a478603157232d48c699",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "tree": "9cdf11a72d08fa8044b4b53a6bba203f3dff1319",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "python",
+        "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/probe_possible_browser.py"
+      ],
+      "cap_seconds": 180,
+      "started_at": "2026-10-15T06:11:30.181663+00:00",
+      "duration_seconds": 39.206,
+      "exit_code": 1,
+      "interrupted": false,
+      "head_after": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "dirty_before": "",
+      "dirty_after": "",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "be7bfa5efe10be6f54ed189c41888bd8d047403aa33c51388a2645d08c92ac16"
+    },
+    {
+      "selection_label": "batch003-possible-intake-api",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-possible-intake-api/terminal.json",
+      "terminal_sha256": "47b1b004b349b90ab6ff2cb761f64b9ce6f6af7f274bba35981a98f2088d6d0c",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "tree": "9cdf11a72d08fa8044b4b53a6bba203f3dff1319",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "python",
+        "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/probe_possible_intake.py"
+      ],
+      "cap_seconds": 120,
+      "started_at": "2026-10-15T06:04:57.193714+00:00",
+      "duration_seconds": 15.427,
+      "exit_code": 0,
+      "interrupted": false,
+      "head_after": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "dirty_before": "",
+      "dirty_after": "",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "61c83ee2bf795bf9b292c1db87c611a91a96c6e1e7b6f67ffc2c46c80c0c5d9c"
+    },
+    {
+      "selection_label": "batch003-possible-intake-browser",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-possible-intake-browser/terminal.json",
+      "terminal_sha256": "8058ddb2dfbcc888576803fde3a3613579547a05136346cab225829960fbf31b",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "tree": "9cdf11a72d08fa8044b4b53a6bba203f3dff1319",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "python",
+        "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/probe_possible_browser.py"
+      ],
+      "cap_seconds": 180,
+      "started_at": "2026-10-15T06:05:54.673082+00:00",
+      "duration_seconds": 139.651,
+      "exit_code": 1,
+      "interrupted": false,
+      "head_after": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+      "dirty_before": "",
+      "dirty_after": "",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "5b74418d907f3066c99dc59a66a2d7b7ded28c3be2b8d327f488d62197442f29"
+    },
+    {
+      "selection_label": "batch003-sitescore",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-sitescore/terminal.json",
+      "terminal_sha256": "1623e7466fa951981c2d242fe4d02f7cf733d2af5833a2c7445950161169ec17",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "74e5e6adaa3e89bd605f2519e838020a36499d85",
+      "tree": "cd5bd51733719c4522b39839dbe5850a70143284",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "pytest",
+        "tests/security/test_auth_composition_extension.py",
+        "-k",
+        "sitescore",
+        "-q"
+      ],
+      "cap_seconds": 420,
+      "started_at": "2026-10-15T05:26:49.218258+00:00",
+      "duration_seconds": 25.17,
+      "exit_code": 0,
+      "interrupted": false,
+      "head_after": "74e5e6adaa3e89bd605f2519e838020a36499d85",
+      "dirty_before": "M apps/api/app/routes/sitescore.py\n M tests/security/test_auth_composition_extension.py",
+      "dirty_after": "M apps/api/app/routes/sitescore.py\n M tests/security/test_auth_composition_extension.py",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "706e6024bb8b6f1c5ac8f07fbc1564832f16f0837cf4e996ce3786a8243bc361"
+    },
+    {
+      "selection_label": "batch003-source-lint",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-source-lint/terminal.json",
+      "terminal_sha256": "039c69308b5ce19b8f38ed5c14f92634b65810f638af113e6d09be8fb904e178",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "ec602fcb1551eca79bb2e242bc13c990daa40c6f",
+      "tree": "7afc777a2f6e2f8f8e07b33a0f048b7df2b9707c",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "ruff",
+        "check",
+        "apps/api/app/routes/sitescore.py",
+        "apps/api/app/routes/interventions.py",
+        "apps/api/app/routes/avm.py",
+        "apps/api/app/routes/priceops.py",
+        "modules/intervention/application/workflow.py",
+        "modules/intervention/domain/lifecycle.py",
+        "modules/intervention/infrastructure/repositories.py",
+        "shared/infrastructure/persistence/repositories.py",
+        "modules/listing/application/intake_privacy.py",
+        "tests/security/test_auth_composition_extension.py",
+        "tests/integration/test_intervention_workflow.py",
+        "tests/integration/test_audit_evidence_export.py",
+        "tests/integration/test_audit_evidence_persistence.py",
+        "tests/integration/test_gap_ml_003_elasticity_binding.py",
+        "tests/integration/test_sitescore_decision.py",
+        "tests/integration/test_adlift_incrementality.py",
+        "tests/integration/test_scoring_model_binding.py",
+        "tests/integration/test_avm_valuation.py",
+        "tests/contract/test_api_error_envelope.py",
+        "tests/contract/test_api_versioning.py",
+        "tests/contract/test_api_idempotency_and_pagination.py"
+      ],
+      "cap_seconds": 420,
+      "started_at": "2026-10-15T05:42:25.008056+00:00",
+      "duration_seconds": 0.527,
+      "exit_code": 1,
+      "interrupted": false,
+      "head_after": "ec602fcb1551eca79bb2e242bc13c990daa40c6f",
+      "dirty_before": "M apps/api/app/routes/avm.py\n M apps/api/app/routes/priceops.py\n M modules/listing/application/intake_privacy.py\n M tests/contract/test_api_error_envelope.py\n M tests/contract/test_api_idempotency_and_pagination.py\n M tests/contract/test_api_versioning.py\n M tests/integration/test_adlift_incrementality.py\n M tests/integration/test_audit_evidence_export.py\n M tests/integration/test_audit_evidence_persistence.py\n M tests/integration/test_avm_valuation.py\n M tests/integration/test_gap_ml_003_elasticity_binding.py\n M tests/integration/test_scoring_model_binding.py\n M tests/integration/test_sitescore_decision.py",
+      "dirty_after": "M apps/api/app/routes/avm.py\n M apps/api/app/routes/priceops.py\n M modules/listing/application/intake_privacy.py\n M tests/contract/test_api_error_envelope.py\n M tests/contract/test_api_idempotency_and_pagination.py\n M tests/contract/test_api_versioning.py\n M tests/integration/test_adlift_incrementality.py\n M tests/integration/test_audit_evidence_export.py\n M tests/integration/test_audit_evidence_persistence.py\n M tests/integration/test_avm_valuation.py\n M tests/integration/test_gap_ml_003_elasticity_binding.py\n M tests/integration/test_scoring_model_binding.py\n M tests/integration/test_sitescore_decision.py",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "4ca941692b592c1e3bea679654f556b4267dba9327adf97c115eb7dccc322218"
+    },
+    {
+      "selection_label": "batch003-supported-job-fixtures",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-supported-job-fixtures/terminal.json",
+      "terminal_sha256": "34f0c92a03a4728b4c4ad19af025feb2c40b1e29c0cec17cb1780cb5e9bdbbe6",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "0f5f2526aad07f0c4ca408bcd50e05363896d763",
+      "tree": "1a0348b12b9aece241c18bb2e318e2bab73ab703",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "pytest",
+        "tests/contract/test_platform_api.py",
+        "tests/reliability/test_job_delivery_state_clear.py",
+        "tests/integration/test_production_api_composition.py",
+        "-q",
+        "-n",
+        "2"
+      ],
+      "cap_seconds": 420,
+      "started_at": "2026-10-15T05:44:31.510675+00:00",
+      "duration_seconds": 65.316,
+      "exit_code": 1,
+      "interrupted": false,
+      "head_after": "0f5f2526aad07f0c4ca408bcd50e05363896d763",
+      "dirty_before": "M modules/avm/tests/test_avm_production_execution.py\n M tests/contract/test_platform_api.py\n M tests/integration/test_production_api_composition.py\n M tests/reliability/test_job_delivery_state_clear.py",
+      "dirty_after": "M modules/avm/tests/test_avm_production_execution.py\n M tests/contract/test_platform_api.py\n M tests/integration/test_production_api_composition.py\n M tests/reliability/test_job_delivery_state_clear.py",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "662d24729173eafff38347377fc8848d891985a614ad2f8c3b60631c09fab472"
+    },
+    {
+      "selection_label": "batch003-supported-job-scoped",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-supported-job-scoped/terminal.json",
+      "terminal_sha256": "568cdea689ed7bd60277c2a361d3817b4cc7230b8885f2a79fcc36a07118cadf",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "0f5f2526aad07f0c4ca408bcd50e05363896d763",
+      "tree": "1a0348b12b9aece241c18bb2e318e2bab73ab703",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "pytest",
+        "tests/contract/test_platform_api.py",
+        "tests/reliability/test_job_delivery_state_clear.py",
+        "tests/integration/test_production_api_composition.py",
+        "-q",
+        "-n",
+        "2"
+      ],
+      "cap_seconds": 420,
+      "started_at": "2026-10-15T05:48:05.659068+00:00",
+      "duration_seconds": 55.9,
+      "exit_code": 0,
+      "interrupted": false,
+      "head_after": "0f5f2526aad07f0c4ca408bcd50e05363896d763",
+      "dirty_before": "M modules/avm/tests/test_avm_production_execution.py\n M tests/contract/test_platform_api.py\n M tests/integration/test_production_api_composition.py\n M tests/reliability/test_job_delivery_state_clear.py",
+      "dirty_after": "M modules/avm/tests/test_avm_production_execution.py\n M tests/contract/test_platform_api.py\n M tests/integration/test_production_api_composition.py\n M tests/reliability/test_job_delivery_state_clear.py",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "654830b42a080797ce015b1995ab57e0be0b0ad8444583be6d043fe901ec32db"
+    },
+    {
+      "selection_label": "batch003-supported-job-updated",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-supported-job-updated/terminal.json",
+      "terminal_sha256": "d67af9c0ad6454f865846841fea3941da912951ba407c86154e0a3ed3214a54c",
+      "kind": "author-diagnostic-not-canonical",
+      "head": "0f5f2526aad07f0c4ca408bcd50e05363896d763",
+      "tree": "1a0348b12b9aece241c18bb2e318e2bab73ab703",
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "pytest",
+        "tests/contract/test_platform_api.py",
+        "tests/reliability/test_job_delivery_state_clear.py",
+        "tests/integration/test_production_api_composition.py",
+        "-q",
+        "-n",
+        "2"
+      ],
+      "cap_seconds": 420,
+      "started_at": "2026-10-15T05:46:26.991494+00:00",
+      "duration_seconds": 77.124,
+      "exit_code": 1,
+      "interrupted": false,
+      "head_after": "0f5f2526aad07f0c4ca408bcd50e05363896d763",
+      "dirty_before": "M modules/avm/tests/test_avm_production_execution.py\n M tests/contract/test_platform_api.py\n M tests/integration/test_production_api_composition.py\n M tests/reliability/test_job_delivery_state_clear.py",
+      "dirty_after": "M modules/avm/tests/test_avm_production_execution.py\n M tests/contract/test_platform_api.py\n M tests/integration/test_production_api_composition.py\n M tests/reliability/test_job_delivery_state_clear.py",
+      "removed_environment_names": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "VSCODE_CLI_REQUIRE_TOKEN"
+      ],
+      "node_env": "test",
+      "raw_log_sha256": "005628c6dc11b93cd7687d1c5534f2488ff8eb6e424faf353735d275f1377977"
+    }
+  ],
+  "raw_files": [
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/e838-db-download3.raw.log",
+      "sha256": "a6305449df4fb1a7f055b3b67265c99a665ab9d75980d959b693e4b8de48d3b0",
+      "bytes": 232105
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/e838-db.safe.log",
+      "sha256": "3f7996b24260fffe3e3605c94e5bcd966a546fcc3a0c18dd486bd4c583f4ab72",
+      "bytes": 232061
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/e838-e2e-download3.raw.log",
+      "sha256": "eeb06fefecbcd826b1fe4d27d73bb1362dee29d7fe826198189aca86c347ae1a",
+      "bytes": 594989
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/e838-e2e.safe.log",
+      "sha256": "a684a9de74928f9bdc2d0603ea6a520ddf6a2412952903940a713d5b61cca761",
+      "bytes": 594945
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/e838-ci-readback3.json",
+      "sha256": "9e66e766385d693f864a460dbd6762841fd2ca16bc4e055dd44db3ab43d184f8",
+      "bytes": 18971
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/e838-artifacts.json",
+      "sha256": "08d6711853eaf6db551dad92a92484f97390a6f5d5d7648d85d05649a827d471",
+      "bytes": 763
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/pr1478-934-readback.json",
+      "sha256": "9b2e1784a323a1bd006671ac5d3d8511b5184d5fc440522e60e5ddc10407d897",
+      "bytes": 3297
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/batch003-original-task-integrity.json",
+      "sha256": "844594061e1ff90c76a8c977d3fec5b9a578339ba215f792baf76453ff687354",
+      "bytes": 40935
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/possible-browser-api-e838.log",
+      "sha256": "9b98ba0e1b3b445d5ade9e802c3a795551c09fa2ab1566a7f604405c47038107",
+      "bytes": 10145
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/possible-browser-api-errors.log",
+      "sha256": "9764dd14a809ff38422f59a6ae1c0940901feec85f1cb1720e2df1ce72eacbfa",
+      "bytes": 7424
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/possible-browser-api-fixed.log",
+      "sha256": "14a361b7bb5391c76beb8fe5a55a987d93e29a4ac894af7d55a3293d035b48f6",
+      "bytes": 9913
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/possible-browser-web-e838.log",
+      "sha256": "815b1cde5843d3ee6e92ba7085607f41f7d14b3f7a6c55af4edf9356f6b869ae",
+      "bytes": 145
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/possible-browser-web-errors.log",
+      "sha256": "7d910137767da870a349e76595d7cda909110a7eaa020ee946a97070cede50b4",
+      "bytes": 145
+    },
+    {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T052543Z-a1757def/possible-browser-web-fixed.log",
+      "sha256": "e01cb7332af02d7b1b4338827b2e5ca080c3173dd6332e37eaa7bfd694b2334f",
+      "bytes": 145
+    }
+  ],
+  "ci_e838_readback": {
+    "conclusion": "",
+    "headSha": "e838d987f0688ea8f24678f714ebb6da4820f55d",
+    "jobs": [
+      {
+        "completedAt": "2026-10-15T05:54:18Z",
+        "conclusion": "success",
+        "databaseId": 116271278979,
+        "name": "change-scope",
+        "startedAt": "2026-10-15T05:54:07Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-15T05:54:09Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-15T05:54:08Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:16Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-10-15T05:54:09Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:16Z",
+            "conclusion": "success",
+            "name": "Classify change scope",
+            "number": 3,
+            "startedAt": "2026-10-15T05:54:16Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:16Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 6,
+            "startedAt": "2026-10-15T05:54:16Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:16Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 7,
+            "startedAt": "2026-10-15T05:54:16Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/alfloop-dev/odayplus/actions/runs/38689309039/job/116271278979"
+      },
+      {
+        "completedAt": "2026-10-15T05:59:31Z",
+        "conclusion": "success",
+        "databaseId": 116271279438,
+        "name": "orchestrator",
+        "startedAt": "2026-10-15T05:54:07Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-15T05:54:09Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-15T05:54:08Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:13Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-10-15T05:54:09Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:15Z",
+            "conclusion": "success",
+            "name": "Install uv",
+            "number": 3,
+            "startedAt": "2026-10-15T05:54:13Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:15Z",
+            "conclusion": "success",
+            "name": "Set up Python",
+            "number": 4,
+            "startedAt": "2026-10-15T05:54:15Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:20Z",
+            "conclusion": "success",
+            "name": "Set up Node",
+            "number": 5,
+            "startedAt": "2026-10-15T05:54:15Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:21Z",
+            "conclusion": "success",
+            "name": "Set up Terraform",
+            "number": 6,
+            "startedAt": "2026-10-15T05:54:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:27Z",
+            "conclusion": "success",
+            "name": "Install dependencies",
+            "number": 7,
+            "startedAt": "2026-10-15T05:54:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:27Z",
+            "conclusion": "success",
+            "name": "Prepare local config",
+            "number": 8,
+            "startedAt": "2026-10-15T05:54:27Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:33Z",
+            "conclusion": "success",
+            "name": "Enforce product and development code boundaries",
+            "number": 9,
+            "startedAt": "2026-10-15T05:54:27Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:36Z",
+            "conclusion": "success",
+            "name": "Refuse bounded scores that default to perfect",
+            "number": 10,
+            "startedAt": "2026-10-15T05:54:33Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:36Z",
+            "conclusion": "success",
+            "name": "Check set-valued requirements against their member lists",
+            "number": 11,
+            "startedAt": "2026-10-15T05:54:36Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:38Z",
+            "conclusion": "success",
+            "name": "Check governed vocabularies for drift and new forks",
+            "number": 12,
+            "startedAt": "2026-10-15T05:54:36Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:38Z",
+            "conclusion": "success",
+            "name": "Lint orchestrator and infrastructure code",
+            "number": 13,
+            "startedAt": "2026-10-15T05:54:38Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:39Z",
+            "conclusion": "success",
+            "name": "Check config wiring",
+            "number": 14,
+            "startedAt": "2026-10-15T05:54:38Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:59:28Z",
+            "conclusion": "success",
+            "name": "Test orchestrator and infrastructure code",
+            "number": 15,
+            "startedAt": "2026-10-15T05:54:39Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:59:28Z",
+            "conclusion": "success",
+            "name": "Post Set up Node",
+            "number": 28,
+            "startedAt": "2026-10-15T05:59:28Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:59:28Z",
+            "conclusion": "success",
+            "name": "Post Install uv",
+            "number": 29,
+            "startedAt": "2026-10-15T05:59:28Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:59:28Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 30,
+            "startedAt": "2026-10-15T05:59:28Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:59:28Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 31,
+            "startedAt": "2026-10-15T05:59:28Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/alfloop-dev/odayplus/actions/runs/38689309039/job/116271279438"
+      },
+      {
+        "completedAt": "2026-10-15T05:55:39Z",
+        "conclusion": "failure",
+        "databaseId": 116271342543,
+        "name": "product-db",
+        "startedAt": "2026-10-15T05:54:20Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-15T05:54:21Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-15T05:54:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:48Z",
+            "conclusion": "success",
+            "name": "Initialize containers",
+            "number": 2,
+            "startedAt": "2026-10-15T05:54:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:54Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 3,
+            "startedAt": "2026-10-15T05:54:48Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:56Z",
+            "conclusion": "success",
+            "name": "Install uv",
+            "number": 4,
+            "startedAt": "2026-10-15T05:54:54Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:57Z",
+            "conclusion": "success",
+            "name": "Set up Python",
+            "number": 5,
+            "startedAt": "2026-10-15T05:54:56Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:55:02Z",
+            "conclusion": "success",
+            "name": "Install dependencies",
+            "number": 6,
+            "startedAt": "2026-10-15T05:54:57Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:55:02Z",
+            "conclusion": "success",
+            "name": "Prepare local config",
+            "number": 7,
+            "startedAt": "2026-10-15T05:55:02Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:55:35Z",
+            "conclusion": "failure",
+            "name": "Test official real-estate outcomes on PostgreSQL 16",
+            "number": 8,
+            "startedAt": "2026-10-15T05:55:02Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:55:35Z",
+            "conclusion": "skipped",
+            "name": "Test database contracts, migrations and schema gates",
+            "number": 9,
+            "startedAt": "2026-10-15T05:55:35Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:55:35Z",
+            "conclusion": "skipped",
+            "name": "Post Install uv",
+            "number": 16,
+            "startedAt": "2026-10-15T05:55:35Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:55:35Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 17,
+            "startedAt": "2026-10-15T05:55:35Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:55:37Z",
+            "conclusion": "success",
+            "name": "Stop containers",
+            "number": 18,
+            "startedAt": "2026-10-15T05:55:35Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:55:37Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 19,
+            "startedAt": "2026-10-15T05:55:37Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/alfloop-dev/odayplus/actions/runs/38689309039/job/116271342543"
+      },
+      {
+        "completedAt": "0001-01-01T00:00:00Z",
+        "conclusion": "",
+        "databaseId": 116271342547,
+        "name": "product-lint-unit",
+        "startedAt": "2026-10-15T05:54:20Z",
+        "status": "in_progress",
+        "steps": [
+          {
+            "completedAt": "2026-10-15T05:54:21Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-15T05:54:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:43Z",
+            "conclusion": "success",
+            "name": "Initialize containers",
+            "number": 2,
+            "startedAt": "2026-10-15T05:54:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:49Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 3,
+            "startedAt": "2026-10-15T05:54:43Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:51Z",
+            "conclusion": "success",
+            "name": "Install uv",
+            "number": 4,
+            "startedAt": "2026-10-15T05:54:49Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:52Z",
+            "conclusion": "success",
+            "name": "Set up Python",
+            "number": 5,
+            "startedAt": "2026-10-15T05:54:51Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:56Z",
+            "conclusion": "success",
+            "name": "Set up Node",
+            "number": 6,
+            "startedAt": "2026-10-15T05:54:52Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:55:25Z",
+            "conclusion": "success",
+            "name": "Install dependencies",
+            "number": 7,
+            "startedAt": "2026-10-15T05:54:56Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:55:25Z",
+            "conclusion": "success",
+            "name": "Prepare local config",
+            "number": 8,
+            "startedAt": "2026-10-15T05:55:25Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:55:26Z",
+            "conclusion": "success",
+            "name": "Lint product code",
+            "number": 9,
+            "startedAt": "2026-10-15T05:55:25Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Test product code",
+            "number": 10,
+            "startedAt": "2026-10-15T05:55:26Z",
+            "status": "in_progress"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Post Set up Node",
+            "number": 17,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Post Install uv",
+            "number": 18,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Post Run actions/checkout@v4",
+            "number": 19,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          },
+          {
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "name": "Stop containers",
+            "number": 20,
+            "startedAt": "0001-01-01T00:00:00Z",
+            "status": "pending"
+          }
+        ],
+        "url": "https://github.com/alfloop-dev/odayplus/actions/runs/38689309039/job/116271342547"
+      },
+      {
+        "completedAt": "2026-10-15T05:56:59Z",
+        "conclusion": "success",
+        "databaseId": 116271342602,
+        "name": "product-node",
+        "startedAt": "2026-10-15T05:54:20Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-15T05:54:22Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-15T05:54:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:26Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-10-15T05:54:22Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:30Z",
+            "conclusion": "success",
+            "name": "Set up Node",
+            "number": 3,
+            "startedAt": "2026-10-15T05:54:26Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:56:55Z",
+            "conclusion": "success",
+            "name": "Run Node workspace checks",
+            "number": 4,
+            "startedAt": "2026-10-15T05:54:30Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:56:55Z",
+            "conclusion": "success",
+            "name": "Post Set up Node",
+            "number": 7,
+            "startedAt": "2026-10-15T05:56:55Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:56:55Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 8,
+            "startedAt": "2026-10-15T05:56:55Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:56:55Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 9,
+            "startedAt": "2026-10-15T05:56:55Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/alfloop-dev/odayplus/actions/runs/38689309039/job/116271342602"
+      },
+      {
+        "completedAt": "2026-10-15T05:55:34Z",
+        "conclusion": "success",
+        "databaseId": 116271342678,
+        "name": "performance-gate",
+        "startedAt": "2026-10-15T05:54:20Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-15T05:54:22Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-15T05:54:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:26Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-10-15T05:54:22Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:28Z",
+            "conclusion": "success",
+            "name": "Install uv",
+            "number": 3,
+            "startedAt": "2026-10-15T05:54:26Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:29Z",
+            "conclusion": "success",
+            "name": "Set up Python",
+            "number": 4,
+            "startedAt": "2026-10-15T05:54:28Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:33Z",
+            "conclusion": "success",
+            "name": "Install dependencies",
+            "number": 5,
+            "startedAt": "2026-10-15T05:54:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:33Z",
+            "conclusion": "success",
+            "name": "Prepare local config",
+            "number": 6,
+            "startedAt": "2026-10-15T05:54:33Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:55:30Z",
+            "conclusion": "success",
+            "name": "Enforce load and soak P95 budget",
+            "number": 7,
+            "startedAt": "2026-10-15T05:54:33Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:55:31Z",
+            "conclusion": "success",
+            "name": "Upload performance reports",
+            "number": 8,
+            "startedAt": "2026-10-15T05:55:30Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:55:31Z",
+            "conclusion": "success",
+            "name": "Post Install uv",
+            "number": 15,
+            "startedAt": "2026-10-15T05:55:31Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:55:32Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 16,
+            "startedAt": "2026-10-15T05:55:31Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:55:32Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 17,
+            "startedAt": "2026-10-15T05:55:32Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/alfloop-dev/odayplus/actions/runs/38689309039/job/116271342678"
+      },
+      {
+        "completedAt": "2026-10-15T06:00:01Z",
+        "conclusion": "failure",
+        "databaseId": 116271342691,
+        "name": "product-e2e-gate",
+        "startedAt": "2026-10-15T05:54:20Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-15T05:54:22Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-15T05:54:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:27Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-10-15T05:54:22Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:29Z",
+            "conclusion": "success",
+            "name": "Install uv",
+            "number": 3,
+            "startedAt": "2026-10-15T05:54:27Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:30Z",
+            "conclusion": "success",
+            "name": "Set up Python",
+            "number": 4,
+            "startedAt": "2026-10-15T05:54:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:34Z",
+            "conclusion": "success",
+            "name": "Set up Node",
+            "number": 5,
+            "startedAt": "2026-10-15T05:54:30Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:55:14Z",
+            "conclusion": "success",
+            "name": "Install product E2E dependencies",
+            "number": 6,
+            "startedAt": "2026-10-15T05:54:34Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:55:50Z",
+            "conclusion": "success",
+            "name": "Verify Store Ops Package 10 geometry and accessibility",
+            "number": 7,
+            "startedAt": "2026-10-15T05:55:14Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:59:58Z",
+            "conclusion": "failure",
+            "name": "Run product E2E dev merge gate",
+            "number": 8,
+            "startedAt": "2026-10-15T05:55:50Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:59:58Z",
+            "conclusion": "skipped",
+            "name": "Post Set up Node",
+            "number": 14,
+            "startedAt": "2026-10-15T05:59:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:59:58Z",
+            "conclusion": "skipped",
+            "name": "Post Install uv",
+            "number": 15,
+            "startedAt": "2026-10-15T05:59:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:59:58Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 16,
+            "startedAt": "2026-10-15T05:59:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:59:58Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 17,
+            "startedAt": "2026-10-15T05:59:58Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/alfloop-dev/odayplus/actions/runs/38689309039/job/116271342691"
+      },
+      {
+        "completedAt": "2026-10-15T05:59:40Z",
+        "conclusion": "success",
+        "databaseId": 116271342692,
+        "name": "product-security",
+        "startedAt": "2026-10-15T05:54:20Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-15T05:54:22Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-15T05:54:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:27Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-10-15T05:54:22Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:29Z",
+            "conclusion": "success",
+            "name": "Install uv",
+            "number": 3,
+            "startedAt": "2026-10-15T05:54:27Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:30Z",
+            "conclusion": "success",
+            "name": "Set up Python",
+            "number": 4,
+            "startedAt": "2026-10-15T05:54:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:39Z",
+            "conclusion": "success",
+            "name": "Set up Node",
+            "number": 5,
+            "startedAt": "2026-10-15T05:54:30Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:55:02Z",
+            "conclusion": "success",
+            "name": "Install dependencies",
+            "number": 6,
+            "startedAt": "2026-10-15T05:54:39Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:55:02Z",
+            "conclusion": "success",
+            "name": "Prepare local config",
+            "number": 7,
+            "startedAt": "2026-10-15T05:55:02Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:59:35Z",
+            "conclusion": "success",
+            "name": "Run security checks",
+            "number": 8,
+            "startedAt": "2026-10-15T05:55:02Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:59:36Z",
+            "conclusion": "success",
+            "name": "Post Set up Node",
+            "number": 14,
+            "startedAt": "2026-10-15T05:59:35Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:59:36Z",
+            "conclusion": "success",
+            "name": "Post Install uv",
+            "number": 15,
+            "startedAt": "2026-10-15T05:59:36Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:59:36Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 16,
+            "startedAt": "2026-10-15T05:59:36Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:59:36Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 17,
+            "startedAt": "2026-10-15T05:59:36Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/alfloop-dev/odayplus/actions/runs/38689309039/job/116271342692"
+      },
+      {
+        "completedAt": "2026-10-15T05:54:55Z",
+        "conclusion": "success",
+        "databaseId": 116271342693,
+        "name": "product-api-contract",
+        "startedAt": "2026-10-15T05:54:20Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-15T05:54:22Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-15T05:54:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:28Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-10-15T05:54:22Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:30Z",
+            "conclusion": "success",
+            "name": "Install uv",
+            "number": 3,
+            "startedAt": "2026-10-15T05:54:28Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:31Z",
+            "conclusion": "success",
+            "name": "Set up Python",
+            "number": 4,
+            "startedAt": "2026-10-15T05:54:30Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:40Z",
+            "conclusion": "success",
+            "name": "Install dependencies",
+            "number": 5,
+            "startedAt": "2026-10-15T05:54:31Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:41Z",
+            "conclusion": "success",
+            "name": "Prepare local config",
+            "number": 6,
+            "startedAt": "2026-10-15T05:54:40Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:52Z",
+            "conclusion": "success",
+            "name": "Check API contract drift",
+            "number": 7,
+            "startedAt": "2026-10-15T05:54:41Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:53Z",
+            "conclusion": "success",
+            "name": "Post Install uv",
+            "number": 13,
+            "startedAt": "2026-10-15T05:54:52Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:53Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 14,
+            "startedAt": "2026-10-15T05:54:53Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T05:54:53Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 15,
+            "startedAt": "2026-10-15T05:54:53Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/alfloop-dev/odayplus/actions/runs/38689309039/job/116271342693"
+      }
+    ],
+    "status": "in_progress",
+    "url": "https://github.com/alfloop-dev/odayplus/actions/runs/38689309039"
+  },
+  "pr1478_934_readback": {
+    "autoMergeRequest": null,
+    "headRefOid": "934a8b2f85b82bc7583e78458d54d03fd1064a9d",
+    "state": "OPEN",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-15T06:18:09Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/38691575647/job/116278440978",
+        "name": "change-scope",
+        "startedAt": "2026-10-15T06:17:56Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-15T06:18:07Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/38691575634/job/116278440614",
+        "name": "boundary",
+        "startedAt": "2026-10-15T06:17:55Z",
+        "status": "COMPLETED",
+        "workflowName": "EMGI consumer repository boundary"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-15T06:18:09Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/38691575796/job/116278441249",
+        "name": "classify",
+        "startedAt": "2026-10-15T06:17:56Z",
+        "status": "COMPLETED",
+        "workflowName": "Tooling scope review gate"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "0001-01-01T00:00:00Z",
+        "conclusion": "",
+        "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/38691575647/job/116278440660",
+        "name": "orchestrator",
+        "startedAt": "2026-10-15T06:17:55Z",
+        "status": "IN_PROGRESS",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "0001-01-01T00:00:00Z",
+        "conclusion": "",
+        "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/38691575647/job/116278519703",
+        "name": "product-lint-unit",
+        "startedAt": "2026-10-15T06:18:12Z",
+        "status": "IN_PROGRESS",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "0001-01-01T00:00:00Z",
+        "conclusion": "",
+        "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/38691575647/job/116278519766",
+        "name": "product-db",
+        "startedAt": "2026-10-15T06:18:11Z",
+        "status": "IN_PROGRESS",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "0001-01-01T00:00:00Z",
+        "conclusion": "",
+        "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/38691575647/job/116278519799",
+        "name": "product-api-contract",
+        "startedAt": "2026-10-15T06:18:11Z",
+        "status": "IN_PROGRESS",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "0001-01-01T00:00:00Z",
+        "conclusion": "",
+        "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/38691575647/job/116278519714",
+        "name": "product-security",
+        "startedAt": "2026-10-15T06:18:12Z",
+        "status": "IN_PROGRESS",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "0001-01-01T00:00:00Z",
+        "conclusion": "",
+        "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/38691575647/job/116278519734",
+        "name": "product-node",
+        "startedAt": "2026-10-15T06:18:11Z",
+        "status": "IN_PROGRESS",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "0001-01-01T00:00:00Z",
+        "conclusion": "",
+        "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/38691575647/job/116278519784",
+        "name": "performance-gate",
+        "startedAt": "2026-10-15T06:18:12Z",
+        "status": "IN_PROGRESS",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "0001-01-01T00:00:00Z",
+        "conclusion": "",
+        "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/38691575647/job/116278519744",
+        "name": "product-e2e-gate",
+        "startedAt": "2026-10-15T06:18:11Z",
+        "status": "IN_PROGRESS",
+        "workflowName": "CI"
+      }
+    ],
+    "url": "https://github.com/alfloop-dev/odayplus/pull/1478"
+  },
+  "original_task_integrity": {
+    "full_record_equal": true,
+    "record_sha256": "efaad957044549361067c25f0453369bf5107bc27137cebbe9c37fd117b39132"
+  },
+  "limitations": [
+    "Earlier source diagnostics record dirty working state and predate their anchors. No evidence transfer to source/documentation successors.",
+    "Full129 E2E, final14 canonical and all17 supplemental commands, terminal normal hosted successor CI and independent Codex2 assessment remain owed.",
+    "Initial browser diagnostic lacked Dockerfile public E2E build flags. Actual supported rebuild then reproduced successful intake200 followed by masked-field key.toLowerCase UI error. Corrected API projection passes the unchanged canonical3 browser flow only.",
+    "Raw provider/test logs remain under this task scratch; this index is not canonical receipt storage, independent review or acceptance.",
+    "Manager authorization is requested for exactly one still-unedited PostgreSQL fixture path. No global test auth helper change or live authority."
+  ]
+}

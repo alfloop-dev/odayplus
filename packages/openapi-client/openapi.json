@@ -43189,6 +43189,637 @@
         ]
       }
     },
+    "/api/v1/operator/users/dev-smoke-recovery": {
+      "get": {
+        "operationId": "inspectDevSmokeRecovery",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Inspect Dev Smoke Recovery",
+        "tags": [
+          "operator",
+          "operator-users-roles"
+        ]
+      },
+      "post": {
+        "operationId": "writeDevSmokeRecovery",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "action": {
+                        "const": "reserve",
+                        "title": "Action",
+                        "type": "string"
+                      },
+                      "plan": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "title": "Plan",
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "plan"
+                    ],
+                    "title": "RecoveryReservePayload",
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "action": {
+                        "const": "issue",
+                        "title": "Action",
+                        "type": "string"
+                      },
+                      "lifetime_seconds": {
+                        "default": 600,
+                        "maximum": 600.0,
+                        "minimum": 1.0,
+                        "title": "Lifetime Seconds",
+                        "type": "integer"
+                      },
+                      "reservation": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "authorization_id": {
+                            "const": "HUMAN-ODP-DEV-SMOKE-RECOVERY-20261011-001",
+                            "title": "Authorization Id",
+                            "type": "string"
+                          },
+                          "credential_binding_verified": {
+                            "const": false,
+                            "title": "Credential Binding Verified",
+                            "type": "boolean"
+                          },
+                          "event_id": {
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "title": "Event Id",
+                            "type": "string"
+                          },
+                          "execution_authorized": {
+                            "const": false,
+                            "title": "Execution Authorized",
+                            "type": "boolean"
+                          },
+                          "execution_id": {
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "title": "Execution Id",
+                            "type": "string"
+                          },
+                          "plan_digest": {
+                            "pattern": "^sha256:[0-9a-f]{64}$",
+                            "title": "Plan Digest",
+                            "type": "string"
+                          },
+                          "secret_values_redacted": {
+                            "const": true,
+                            "title": "Secret Values Redacted",
+                            "type": "boolean"
+                          },
+                          "stage": {
+                            "const": "reserved",
+                            "title": "Stage",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "execution_id",
+                          "plan_digest",
+                          "event_id",
+                          "stage",
+                          "authorization_id",
+                          "execution_authorized",
+                          "credential_binding_verified",
+                          "secret_values_redacted"
+                        ],
+                        "title": "RecoveryReservationPayload",
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "reservation"
+                    ],
+                    "title": "RecoveryIssuePayload",
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "action": {
+                        "const": "consume",
+                        "title": "Action",
+                        "type": "string"
+                      },
+                      "capability_id": {
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "title": "Capability Id",
+                        "type": "string"
+                      },
+                      "password": {
+                        "maxLength": 1024,
+                        "minLength": 12,
+                        "title": "Password",
+                        "type": "string"
+                      },
+                      "reservation": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "authorization_id": {
+                            "const": "HUMAN-ODP-DEV-SMOKE-RECOVERY-20261011-001",
+                            "title": "Authorization Id",
+                            "type": "string"
+                          },
+                          "credential_binding_verified": {
+                            "const": false,
+                            "title": "Credential Binding Verified",
+                            "type": "boolean"
+                          },
+                          "event_id": {
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "title": "Event Id",
+                            "type": "string"
+                          },
+                          "execution_authorized": {
+                            "const": false,
+                            "title": "Execution Authorized",
+                            "type": "boolean"
+                          },
+                          "execution_id": {
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "title": "Execution Id",
+                            "type": "string"
+                          },
+                          "plan_digest": {
+                            "pattern": "^sha256:[0-9a-f]{64}$",
+                            "title": "Plan Digest",
+                            "type": "string"
+                          },
+                          "secret_values_redacted": {
+                            "const": true,
+                            "title": "Secret Values Redacted",
+                            "type": "boolean"
+                          },
+                          "stage": {
+                            "const": "reserved",
+                            "title": "Stage",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "execution_id",
+                          "plan_digest",
+                          "event_id",
+                          "stage",
+                          "authorization_id",
+                          "execution_authorized",
+                          "credential_binding_verified",
+                          "secret_values_redacted"
+                        ],
+                        "title": "RecoveryReservationPayload",
+                        "type": "object"
+                      },
+                      "token": {
+                        "maxLength": 43,
+                        "minLength": 43,
+                        "title": "Token",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "reservation",
+                      "capability_id",
+                      "token",
+                      "password"
+                    ],
+                    "title": "RecoveryConsumePayload",
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "action": {
+                        "const": "quarantine",
+                        "title": "Action",
+                        "type": "string"
+                      },
+                      "reservation": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "authorization_id": {
+                            "const": "HUMAN-ODP-DEV-SMOKE-RECOVERY-20261011-001",
+                            "title": "Authorization Id",
+                            "type": "string"
+                          },
+                          "credential_binding_verified": {
+                            "const": false,
+                            "title": "Credential Binding Verified",
+                            "type": "boolean"
+                          },
+                          "event_id": {
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "title": "Event Id",
+                            "type": "string"
+                          },
+                          "execution_authorized": {
+                            "const": false,
+                            "title": "Execution Authorized",
+                            "type": "boolean"
+                          },
+                          "execution_id": {
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "title": "Execution Id",
+                            "type": "string"
+                          },
+                          "plan_digest": {
+                            "pattern": "^sha256:[0-9a-f]{64}$",
+                            "title": "Plan Digest",
+                            "type": "string"
+                          },
+                          "secret_values_redacted": {
+                            "const": true,
+                            "title": "Secret Values Redacted",
+                            "type": "boolean"
+                          },
+                          "stage": {
+                            "const": "reserved",
+                            "title": "Stage",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "execution_id",
+                          "plan_digest",
+                          "event_id",
+                          "stage",
+                          "authorization_id",
+                          "execution_authorized",
+                          "credential_binding_verified",
+                          "secret_values_redacted"
+                        ],
+                        "title": "RecoveryReservationPayload",
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "reservation"
+                    ],
+                    "title": "RecoveryQuarantinePayload",
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "action": {
+                        "const": "binding-intent",
+                        "title": "Action",
+                        "type": "string"
+                      },
+                      "reservation": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "authorization_id": {
+                            "const": "HUMAN-ODP-DEV-SMOKE-RECOVERY-20261011-001",
+                            "title": "Authorization Id",
+                            "type": "string"
+                          },
+                          "credential_binding_verified": {
+                            "const": false,
+                            "title": "Credential Binding Verified",
+                            "type": "boolean"
+                          },
+                          "event_id": {
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "title": "Event Id",
+                            "type": "string"
+                          },
+                          "execution_authorized": {
+                            "const": false,
+                            "title": "Execution Authorized",
+                            "type": "boolean"
+                          },
+                          "execution_id": {
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "title": "Execution Id",
+                            "type": "string"
+                          },
+                          "plan_digest": {
+                            "pattern": "^sha256:[0-9a-f]{64}$",
+                            "title": "Plan Digest",
+                            "type": "string"
+                          },
+                          "secret_values_redacted": {
+                            "const": true,
+                            "title": "Secret Values Redacted",
+                            "type": "boolean"
+                          },
+                          "stage": {
+                            "const": "reserved",
+                            "title": "Stage",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "execution_id",
+                          "plan_digest",
+                          "event_id",
+                          "stage",
+                          "authorization_id",
+                          "execution_authorized",
+                          "credential_binding_verified",
+                          "secret_values_redacted"
+                        ],
+                        "title": "RecoveryReservationPayload",
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "reservation"
+                    ],
+                    "title": "RecoveryBindingIntentPayload",
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "description": "Original-admin declaration, NOT server authentication of a GitHub reply.",
+                    "properties": {
+                      "action": {
+                        "const": "binding-acknowledged",
+                        "title": "Action",
+                        "type": "string"
+                      },
+                      "intent_event_id": {
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "title": "Intent Event Id",
+                        "type": "string"
+                      },
+                      "put_status": {
+                        "description": "Trusted foreground must observe actual201; no reconstruction.",
+                        "maximum": 201.0,
+                        "minimum": 201.0,
+                        "title": "Put Status",
+                        "type": "integer"
+                      },
+                      "reservation": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "authorization_id": {
+                            "const": "HUMAN-ODP-DEV-SMOKE-RECOVERY-20261011-001",
+                            "title": "Authorization Id",
+                            "type": "string"
+                          },
+                          "credential_binding_verified": {
+                            "const": false,
+                            "title": "Credential Binding Verified",
+                            "type": "boolean"
+                          },
+                          "event_id": {
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "title": "Event Id",
+                            "type": "string"
+                          },
+                          "execution_authorized": {
+                            "const": false,
+                            "title": "Execution Authorized",
+                            "type": "boolean"
+                          },
+                          "execution_id": {
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "title": "Execution Id",
+                            "type": "string"
+                          },
+                          "plan_digest": {
+                            "pattern": "^sha256:[0-9a-f]{64}$",
+                            "title": "Plan Digest",
+                            "type": "string"
+                          },
+                          "secret_values_redacted": {
+                            "const": true,
+                            "title": "Secret Values Redacted",
+                            "type": "boolean"
+                          },
+                          "stage": {
+                            "const": "reserved",
+                            "title": "Stage",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "execution_id",
+                          "plan_digest",
+                          "event_id",
+                          "stage",
+                          "authorization_id",
+                          "execution_authorized",
+                          "credential_binding_verified",
+                          "secret_values_redacted"
+                        ],
+                        "title": "RecoveryReservationPayload",
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "reservation",
+                      "intent_event_id",
+                      "put_status"
+                    ],
+                    "title": "RecoveryBindingAckPayload",
+                    "type": "object"
+                  }
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Write Dev Smoke Recovery",
+        "tags": [
+          "operator",
+          "operator-users-roles"
+        ]
+      }
+    },
     "/api/v1/operator/users/invitations": {
       "post": {
         "operationId": "issueIdentityInvitation",

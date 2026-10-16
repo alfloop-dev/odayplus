@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from mlflow.tracking import MlflowClient
+from sqlalchemy import MetaData, create_engine, func, select
 
 from models.shared_ml.registry import ModelAlias, ModelStage, ModelVersion
+from modules.learninghub.infrastructure import mlflow_adapter as adapter_module
 from modules.learninghub.infrastructure.mlflow_adapter import MlflowRegistryAdapter
 from modules.learninghub.infrastructure.repositories import InMemoryLearningHubRepository
 
@@ -213,3 +217,164 @@ def test_default_in_memory_adapters_use_isolated_real_mlflow_stores(
         model_name=second_model.model_name,
         alias=ModelAlias.CHALLENGER,
     )
+
+
+@pytest.fixture
+def empty_schema_cache(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    cached_image = adapter_module._empty_mlflow_database_image
+    cached_image.cache_clear()
+    yield
+    cached_image.cache_clear()
+
+
+def test_ephemeral_schema_image_contains_no_application_records(empty_schema_cache) -> None:
+    import mlflow
+    from mlflow.store.db import utils
+
+    image = adapter_module._empty_mlflow_database_image(mlflow.__version__)
+    with sqlite3.connect(":memory:") as database:
+        database.deserialize(image)
+        assert database.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        assert database.execute("SELECT version_num FROM alembic_version").fetchall() == [
+            (utils._get_latest_schema_revision(),)
+        ]
+        tables = database.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+        assert {"experiments", "runs", "registered_models", "model_versions"} <= {
+            name for (name,) in tables
+        }
+        # Upstream migration 1b5f0d9ad7c1 creates this schema-default row;
+        # it is not an application's workspace/authority projection.
+        assert database.execute(
+            "SELECT name, description, default_artifact_root FROM workspaces"
+        ).fetchall() == [("default", "Default workspace for legacy resources", None)]
+    # Use the SQL compiler's identifier quoting, never interpolate table names.
+    engine = create_engine("sqlite://")
+    try:
+        with engine.connect() as connection:
+            connection.connection.driver_connection.deserialize(image)
+            metadata = MetaData()
+            metadata.reflect(bind=connection)
+            for name, table in metadata.tables.items():
+                if name not in {"alembic_version", "workspaces"}:
+                    assert connection.scalar(select(func.count()).select_from(table)) == 0, name
+    finally:
+        engine.dispose()
+
+
+def test_concurrent_default_stores_reuse_only_empty_schema_bytes(
+    tmp_path: Path, empty_schema_cache
+) -> None:
+    def create(index: int) -> MlflowRegistryAdapter:
+        adapter = MlflowRegistryAdapter(InMemoryLearningHubRepository())
+        assert isinstance(adapter.client, MlflowClient)
+        assert not adapter.client.search_model_versions()
+        model = _model_version(tmp_path / str(index), version=f"v{index}")
+        adapter.register_model_version(model)
+        return adapter
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        adapters = list(executor.map(create, range(3)))
+    assert len({adapter.tracking_uri for adapter in adapters}) == 3
+    assert len({id(adapter.client) for adapter in adapters}) == 3
+    assert adapter_module._empty_mlflow_database_image.cache_info().misses == 1
+    assert adapter_module._empty_mlflow_database_image.cache_info().hits == 2
+    run_ids = set()
+    artifact_uris = set()
+    for index, adapter in enumerate(adapters):
+        versions = adapter.client.search_model_versions()
+        assert len(versions) == 1
+        stored = versions[0]
+        assert stored.tags["oday.model_version.domain_version"] == f"v{index}"
+        assert adapter.get_by_alias(
+            model_name=stored.name, alias=ModelAlias.CHALLENGER
+        ).version == f"v{index}"
+        run = adapter.client.get_run(stored.run_id)
+        run_ids.add(run.info.run_id)
+        artifact_uris.add(run.info.artifact_uri)
+        adapter.client.set_tag(stored.run_id, "isolated", str(index))
+        adapter.client.set_registered_model_tag(stored.name, "isolated", str(index))
+        adapter.clear_alias(model_name=stored.name, alias=ModelAlias.CHALLENGER)
+    assert len(run_ids) == len(artifact_uris) == 3
+    for index, adapter in enumerate(adapters):
+        stored = adapter.client.search_model_versions()[0]
+        assert adapter.client.get_run(stored.run_id).data.tags["isolated"] == str(index)
+        assert adapter.client.get_registered_model(stored.name).tags["isolated"] == str(index)
+
+    # A late app must not inherit any previous runs/models/tags/aliases.
+    fresh = MlflowRegistryAdapter(InMemoryLearningHubRepository())
+    assert not fresh.client.search_model_versions()
+    assert fresh.client.get_experiment_by_name("oday-plus-learninghub") is None
+
+
+def test_each_seeded_store_still_checks_actual_schema_version(
+    monkeypatch: pytest.MonkeyPatch, empty_schema_cache
+) -> None:
+    import mlflow
+    from mlflow.exceptions import MlflowException
+
+    image = adapter_module._empty_mlflow_database_image(mlflow.__version__)
+    with sqlite3.connect(":memory:") as database:
+        database.deserialize(image)
+        database.execute("UPDATE alembic_version SET version_num = 'invalid-schema-version'")
+        database.commit()
+        stale = database.serialize()
+    monkeypatch.setattr(adapter_module, "_empty_mlflow_database_image", lambda _: stale)
+    with pytest.raises(MlflowException, match="out-of-date database schema"):
+        MlflowRegistryAdapter(InMemoryLearningHubRepository())
+
+
+def test_failed_schema_initialization_is_not_cached(
+    monkeypatch: pytest.MonkeyPatch, empty_schema_cache
+) -> None:
+    from mlflow.store.db import utils
+
+    calls = []
+
+    def fail(engine):
+        calls.append(engine)
+        raise RuntimeError("synthetic migration failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(utils, "_initialize_tables", fail)
+        for _ in range(2):
+            with pytest.raises(RuntimeError, match="synthetic migration failure"):
+                MlflowRegistryAdapter(InMemoryLearningHubRepository())
+        assert len(calls) == 2
+        assert adapter_module._empty_mlflow_database_image.cache_info().currsize == 0
+    recovered = MlflowRegistryAdapter(InMemoryLearningHubRepository())
+    assert isinstance(recovered.client, MlflowClient)
+    assert not recovered.client.search_model_versions()
+
+
+def test_schema_image_is_keyed_by_installed_mlflow_version(empty_schema_cache) -> None:
+    first = adapter_module._empty_mlflow_database_image("version-a")
+    second = adapter_module._empty_mlflow_database_image("version-b")
+    assert isinstance(first, bytes) and isinstance(second, bytes)
+    assert adapter_module._empty_mlflow_database_image.cache_info().misses == 2
+
+
+def test_explicit_and_durable_stores_do_not_use_ephemeral_seed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+
+    def refuse_seed(database):
+        pytest.fail("explicit/durable store must use normal authoritative initialization")
+
+    monkeypatch.setattr(adapter_module, "_seed_ephemeral_mlflow_database", refuse_seed)
+    explicit = _adapter(f"sqlite:///{tmp_path / 'explicit.db'}")
+    assert isinstance(explicit.client, MlflowClient)
+
+    class DurableRepository(InMemoryLearningHubRepository):
+        storage_path = tmp_path / "durable.db"
+
+    durable = MlflowRegistryAdapter(DurableRepository())
+    assert durable.tracking_uri == f"sqlite:///{tmp_path / 'durable.mlflow.sqlite3'}"
+    assert isinstance(durable.client, MlflowClient)
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", f"sqlite:///{tmp_path / 'environment.db'}")
+    environment = MlflowRegistryAdapter(InMemoryLearningHubRepository())
+    assert isinstance(environment.client, MlflowClient)
+    assert environment.tracking_uri.endswith("environment.db")

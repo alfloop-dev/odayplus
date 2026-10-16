@@ -13,6 +13,7 @@ are inserted directly as *test inputs* standing in for accepted invitations.
 
 from __future__ import annotations
 
+import json
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -42,6 +43,7 @@ from modules.opsboard.auth import (
 )
 from shared.auth import Action, AuthorizationEngine
 from shared.identity.bootstrap import bootstrap_first_admin, request_from_env
+from shared.identity.credential_service import CredentialService
 
 IDENTITY_MIGRATION = Path("infra/db/migrations/000011_identity_schema.sql")
 LOCAL_KEY = SigningKey(kid="admin-it", algorithm="HS256", secret=b"admin-it-local-signing-key-32-bytes!!")
@@ -170,6 +172,20 @@ def _invited_account(stack: Any, username: str, role: str, tenant: str = TENANT)
         "INSERT INTO identity.account_roles (account_id, role, granted_by) VALUES (%s, %s, 'test') "
         "RETURNING account_id",
         (account_id, role),
+    )
+    # This helper represents an ACTIVE, accepted invitation, not a pending
+    # invitation. Supply real current-policy credential/rotation evidence;
+    # signing in must never turn a missing credential into "already rotated".
+    credentials = CredentialService()
+    phc = credentials.hash_password(f"Accepted-Fixture-{uuid4()}")
+    params = credentials.extract_params_from_phc(phc)
+    params["policy_version"] = credentials.policy.version
+    _q(
+        stack,
+        "INSERT INTO identity.password_credentials "
+        "(account_id, phc_hash, params, must_change, last_rotated_at) "
+        "VALUES (%s, %s, %s::jsonb, false, now()) RETURNING account_id",
+        (account_id, phc, json.dumps(params)),
     )
     return account_id
 
@@ -504,10 +520,13 @@ def test_disable_revokes_sessions_and_reenable_requires_admin(stack: Any) -> Non
     assert stack.client.get("/api/v1/operator/users", headers=_sign_in(stack, member_id)).status_code == 200
     assert _audit_types(stack)[-2:] == ["identity.account.disabled", "identity.account.enabled"]
 
-    stack.service.set_user_status(subject_id=member_id, status="disabled", tenant_id=TENANT)
+    from modules.opsboard.auth import Credentials
+    principal = stack.boundary.authenticate(Credentials.from_headers(admin)).principal
+    stack.service.set_user_status(subject_id=member_id, status="disabled", tenant_id=TENANT, verified_principal=principal)
     with pytest.raises(UserRolePolicyError, match="requires platform_admin"):
         stack.service.set_user_status(
-            subject_id=member_id, status="active", tenant_id=TENANT, actor_roles=frozenset({"auditor"})
+            subject_id=member_id, status="active", tenant_id=TENANT, actor_roles=frozenset({"auditor"}),
+            verified_principal=principal,
         )
 
 
@@ -537,11 +556,15 @@ def test_audit_failure_rolls_back_the_privilege_change(stack: Any) -> None:
         def record(self, event: Any) -> Any:
             raise RuntimeError("audit sink unavailable")
 
+    from modules.opsboard.auth import Credentials
+    _rotate_password(stack, admin_id)
+    principal = stack.boundary.authenticate(Credentials.from_headers(_sign_in(stack, admin_id))).principal
     broken = IdentityUserRoleManagementService(engine=stack.engine, audit_log=BrokenAudit())
     with pytest.raises(RuntimeError):
-        broken.save_user(subject_id=member_id, roles=["platform_admin"], tenant_id=TENANT, actor_name=admin_id)
+        broken.save_user(subject_id=member_id, roles=["platform_admin"], tenant_id=TENANT, actor_name=admin_id,
+                         verified_principal=principal)
     with pytest.raises(RuntimeError):
-        broken.set_user_status(subject_id=member_id, status="disabled", tenant_id=TENANT)
+        broken.set_user_status(subject_id=member_id, status="disabled", tenant_id=TENANT, verified_principal=principal)
 
     assert _q(stack, "SELECT role FROM identity.account_roles WHERE account_id = %s", (member_id,)) == [
         ("operations_manager",)

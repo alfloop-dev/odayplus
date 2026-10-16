@@ -11,6 +11,30 @@ describe("local identity authentication", () => {
     vi.unstubAllEnvs();
   });
 
+  it("carries the revision returned by its own successful CAS rehash", async () => {
+    const store = new MockIdentityStore([{ accountId: "offline", tenantId: "tenant-1", username: "offline",
+      email: "offline@example.invalid", status: "active", password: "Old-offline-password-729!" }]);
+    vi.spyOn(store, "verifyPassword").mockResolvedValue({ valid: true, newHash: "offline-rehash" });
+    const update = vi.spyOn(store, "updatePasswordHash");
+    await expect(authenticateLocalCredentials("offline", "Old-offline-password-729!", { identityStore: store }))
+      .resolves.toMatchObject({ ok: true, verifiedCredentialRevision: "2" });
+    expect(update).toHaveBeenCalledExactlyOnceWith("offline", "offline-rehash", "1");
+  });
+
+  it("never overwrites a rotation or relabels old verification with the new revision", async () => {
+    const store = new MockIdentityStore([{ accountId: "offline", tenantId: "tenant-1", username: "offline",
+      email: "offline@example.invalid", status: "active", password: "Old-offline-password-729!" }]);
+    vi.spyOn(store, "verifyPassword").mockImplementation(async () => {
+      await store.changePassword("offline", "rotated-offline-password");
+      return { valid: true, newHash: "stale-offline-rehash" };
+    });
+    await expect(authenticateLocalCredentials("offline", "Old-offline-password-729!", { identityStore: store }))
+      .resolves.toMatchObject({ ok: true, verifiedCredentialRevision: "1" });
+    await expect(store.getPasswordCredential("offline")).resolves.toMatchObject({
+      phcHash: "rotated-offline-password", credentialRevision: "2",
+    });
+  });
+
   it("does not reveal a locked account until its password is correct", async () => {
     const store = new MockIdentityStore([
       {

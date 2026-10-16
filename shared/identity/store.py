@@ -127,7 +127,10 @@ class IdentityStore(Protocol):
         ...
 
     def password_must_change(self, account_id: UUID | str) -> bool:
-        """密碼憑證是否仍標記 must_change（Contract §7.2：bootstrap 後首登必須改密碼）。"""
+        """Return an authoritative boolean; missing/invalid state MUST raise.
+
+        Unknown credential evidence is never equivalent to a rotated password.
+        """
         ...
 
     def set_account_roles(self, account_id: UUID | str, roles: Iterable[Role | str]) -> None:
@@ -158,17 +161,20 @@ class InMemoryIdentityStore:
         self._scopes: dict[UUID, Scope] = {}
         # (issuer, subject) -> account_id
         self._federated_links: dict[tuple[str, str], UUID] = {}
-        self._must_change: set[UUID] = set()
+        # Explicit dev/test credential-state interface, not an account-exists
+        # exemption. Absence means UNKNOWN until the fixture supplies evidence.
+        self._must_change: dict[UUID, bool] = {}
 
     def set_password_must_change(self, account_id: UUID | str, must_change: bool) -> None:
-        aid = _parse_uuid(account_id)
-        if must_change:
-            self._must_change.add(aid)
-        else:
-            self._must_change.discard(aid)
+        if type(must_change) is not bool:
+            raise ValueError("invalid password rotation state")
+        self._must_change[_parse_uuid(account_id)] = must_change
 
     def password_must_change(self, account_id: UUID | str) -> bool:
-        return _parse_uuid(account_id) in self._must_change
+        aid = _parse_uuid(account_id)
+        if aid not in self._must_change:
+            raise ValueError("password rotation state unavailable")
+        return self._must_change[aid]
 
     def save_account(self, account: Account) -> None:
         self._accounts[account.account_id] = account
@@ -357,7 +363,7 @@ class SqlIdentityStore:
         aid = _parse_uuid(account_id)
         with open_connection(self._conn_factory) as conn:
             if conn is None:
-                return Scope()
+                raise ValueError("identity scope unavailable")
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -383,21 +389,24 @@ class SqlIdentityStore:
                         tid = account_row["tenant_id"] if isinstance(account_row, dict) else account_row[0]
                         tenant_id = str(tid)
                     else:
-                        tenant_id = None
+                        raise ValueError("identity scope unavailable")
                     return Scope(tenant_id=tenant_id, clearance=DataClassification.CONFIDENTIAL)
 
                 def _parse_list(val: Any) -> frozenset[str]:
-                    if isinstance(val, list):
-                        return frozenset(str(x) for x in val if x)
-                    return frozenset()
+                    if not isinstance(val, list) or any(not isinstance(x, str) or not x.strip() for x in val):
+                        raise ValueError("invalid persisted identity scope")
+                    return frozenset(val)
 
                 def _col(name: str, idx: int) -> Any:
                     return row[name] if isinstance(row, dict) else row[idx]
 
+                raw_clearance = _col("clearance", 6)
+                if not isinstance(raw_clearance, str):
+                    raise ValueError("invalid persisted identity clearance")
                 try:
-                    clearance = DataClassification[str(_col("clearance", 6)).upper()]
-                except (KeyError, AttributeError):
-                    clearance = DataClassification.CONFIDENTIAL
+                    clearance = DataClassification[raw_clearance.upper()]
+                except KeyError as exc:
+                    raise ValueError("invalid persisted identity clearance") from exc
 
                 raw_tenant = _col("tenant_id", 7)
                 return Scope(
@@ -423,10 +432,16 @@ class SqlIdentityStore:
                     (str(aid),),
                 )
                 row = cur.fetchone()
-                if not row:
-                    return False
+                if row is None:
+                    raise ValueError("password credential unavailable")
                 value = row["must_change"] if isinstance(row, dict) else row[0]
-                return bool(value)
+                if type(value) is bool:
+                    return value
+                # The supported SQLite adapter represents SQL booleans as 0/1.
+                # Never coerce null, strings, arbitrary objects or other numbers.
+                if type(value) is int and value in (0, 1):
+                    return value == 1
+                raise ValueError("invalid persisted password rotation state")
 
     def save_account(self, account: Account) -> None:
         with open_connection(self._conn_factory) as conn:

@@ -1,0 +1,670 @@
+{
+  "kind": "author-diagnostic-index-NOT-canonical-receipts",
+  "task_id": "ODP-RECOVERY-SOURCE-INTEGRATION-001",
+  "worker_run_id": "pi-20261015T044152Z-8b7b4813",
+  "not_review_or_final_head_acceptance": true,
+  "selections": [
+    {
+      "selection": "actual-pg-production-chain",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/actual-pg-production-chain/terminal.json",
+      "terminal_sha256": "07e83f384cc30655d28ee13b573b13344e202247935115ee70099e4b26752f75",
+      "raw_log_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/actual-pg-production-chain/raw.log",
+      "terminal": {
+        "kind": "author-diagnostic-not-canonical",
+        "head": "a7c1b9c005a63ed82c8c0a37aac3926b359c76c9",
+        "tree": "708d741c66e86be1829f0e670c8eb76978b26824",
+        "command": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "python",
+          "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/run_local_pg.py",
+          "tests/integration/test_postgresql_persistence.py",
+          "-q",
+          "-rs"
+        ],
+        "cap_seconds": 420,
+        "started_at": "2026-10-15T04:56:35.261707+00:00",
+        "duration_seconds": 32.15,
+        "exit_code": 1,
+        "interrupted": false,
+        "head_after": "a7c1b9c005a63ed82c8c0a37aac3926b359c76c9",
+        "dirty_before": "",
+        "dirty_after": "",
+        "removed_environment_names": [
+          "CLAUDE_CODE_MESSAGING_TOKEN",
+          "VSCODE_CLI_REQUIRE_TOKEN"
+        ],
+        "node_env": "test",
+        "raw_log_sha256": "b5f927907d758463aa642b7a22abb146cb49387cd912b457ddc55a346921f47d"
+      }
+    },
+    {
+      "selection": "actual-postgis-production-chain",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/actual-postgis-production-chain/terminal.json",
+      "terminal_sha256": "d630d0f6d4862268c327538c78b6f73471357d22249c0cabd0e5373fa0c59bb0",
+      "raw_log_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/actual-postgis-production-chain/raw.log",
+      "terminal": {
+        "kind": "author-diagnostic-not-canonical",
+        "head": "a7c1b9c005a63ed82c8c0a37aac3926b359c76c9",
+        "tree": "708d741c66e86be1829f0e670c8eb76978b26824",
+        "command": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "python",
+          "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/run_docker_pg.py",
+          "tests/integration/test_postgresql_persistence.py",
+          "-q",
+          "-rs"
+        ],
+        "cap_seconds": 420,
+        "started_at": "2026-10-15T04:58:20.764079+00:00",
+        "duration_seconds": 50.181,
+        "exit_code": 0,
+        "interrupted": false,
+        "head_after": "a7c1b9c005a63ed82c8c0a37aac3926b359c76c9",
+        "dirty_before": "",
+        "dirty_after": "",
+        "removed_environment_names": [
+          "CLAUDE_CODE_MESSAGING_TOKEN",
+          "VSCODE_CLI_REQUIRE_TOKEN"
+        ],
+        "node_env": "test",
+        "raw_log_sha256": "5ba692ea7b1be1544375b408c32bfbf8ab8a216abea9a8cb70d8b5bd8a31ccf3"
+      }
+    },
+    {
+      "selection": "domain-producer-after",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/domain-producer-after/terminal.json",
+      "terminal_sha256": "627fefa57a1d5644230ea3da115b7e20e2aeb754c61287e8e2d0a0f12091afdd",
+      "raw_log_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/domain-producer-after/raw.log",
+      "terminal": {
+        "kind": "author-diagnostic-not-canonical",
+        "head": "0f7b9c2f8c10fdfba22eebb3512d65c251686e5d",
+        "tree": "7c5077a5f60cd17277f7f28f7b92d223d79303e8",
+        "command": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "pytest",
+          "tests/security/test_auth_composition_extension.py",
+          "-q"
+        ],
+        "cap_seconds": 420,
+        "started_at": "2026-10-15T04:48:14.414038+00:00",
+        "duration_seconds": 80.731,
+        "exit_code": 0,
+        "interrupted": false,
+        "head_after": "0f7b9c2f8c10fdfba22eebb3512d65c251686e5d",
+        "dirty_before": "",
+        "dirty_after": "",
+        "removed_environment_names": [
+          "CLAUDE_CODE_MESSAGING_TOKEN",
+          "VSCODE_CLI_REQUIRE_TOKEN"
+        ],
+        "node_env": "test",
+        "raw_log_sha256": "850766601761da986443d2ed60c49a3af5057f4f754e65c6a1d3d13806ef4a0d"
+      }
+    },
+    {
+      "selection": "fixture-after",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/fixture-after/terminal.json",
+      "terminal_sha256": "680e61e491a726d5de420767caaf579b767e9dea411e0bb3814a3e2af60a1ca6",
+      "raw_log_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/fixture-after/raw.log",
+      "terminal": {
+        "kind": "author-diagnostic-not-canonical",
+        "head": "7fbd5154f9c4d274d92f9769d319eb3ad7c02781",
+        "tree": "43648e02aa5fec7c4744c10b2718eb25f86304ea",
+        "command": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "pytest",
+          ".orchestrator/test_release_lease_integration.py",
+          ".orchestrator/test_release_lease_issuer.py",
+          "tests/release/test_release_profile.py",
+          "tests/identity/test_sql_session_store.py",
+          "-q"
+        ],
+        "cap_seconds": 420,
+        "started_at": "2026-10-15T04:45:11.256308+00:00",
+        "duration_seconds": 25.2,
+        "exit_code": 0,
+        "interrupted": false,
+        "head_after": "7fbd5154f9c4d274d92f9769d319eb3ad7c02781",
+        "dirty_before": "",
+        "dirty_after": "",
+        "removed_environment_names": [
+          "CLAUDE_CODE_MESSAGING_TOKEN",
+          "VSCODE_CLI_REQUIRE_TOKEN"
+        ],
+        "node_env": "test",
+        "raw_log_sha256": "2ad4e56da9fbff3e67bce33d3260c6a6e1883352c6b24c1c86e06aca960a073c"
+      }
+    },
+    {
+      "selection": "fixture-before",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/fixture-before/terminal.json",
+      "terminal_sha256": "0d2f9231257448b4dcaa0ae3b47cab3ad0e33ec83c17a8c10c841728855bc624",
+      "raw_log_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/fixture-before/raw.log",
+      "terminal": {
+        "kind": "author-diagnostic-not-canonical",
+        "head": "b2c7514063dc9ba1647b0eb03f4ac5dacfe1bcb7",
+        "tree": "83d998f38193b3ad3d048f2898abec9c5a8b0050",
+        "command": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "pytest",
+          ".orchestrator/test_release_lease_integration.py",
+          ".orchestrator/test_release_lease_issuer.py",
+          "tests/release/test_release_profile.py",
+          "tests/identity/test_sql_session_store.py",
+          "-q"
+        ],
+        "cap_seconds": 420,
+        "started_at": "2026-10-15T04:43:18.201984+00:00",
+        "duration_seconds": 37.009,
+        "exit_code": 1,
+        "interrupted": false,
+        "head_after": "b2c7514063dc9ba1647b0eb03f4ac5dacfe1bcb7",
+        "dirty_before": "",
+        "dirty_after": "",
+        "removed_environment_names": [
+          "CLAUDE_CODE_MESSAGING_TOKEN",
+          "VSCODE_CLI_REQUIRE_TOKEN"
+        ],
+        "node_env": "test",
+        "raw_log_sha256": "ef568d10f9c1b86e0b70c1590e1364686e12dcdca43ffb36cd303879be72f732"
+      }
+    },
+    {
+      "selection": "owning-pg-domain-composition",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/owning-pg-domain-composition/terminal.json",
+      "terminal_sha256": "79744c6e5ce13dfd2a421994b5facaf5fe13aa368ea7d2622dd0c6ad71ff9a8c",
+      "raw_log_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/owning-pg-domain-composition/raw.log",
+      "terminal": {
+        "kind": "author-diagnostic-not-canonical",
+        "head": "a7c1b9c005a63ed82c8c0a37aac3926b359c76c9",
+        "tree": "708d741c66e86be1829f0e670c8eb76978b26824",
+        "command": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "pytest",
+          "tests/integration/test_postgresql_persistence.py",
+          "tests/integration/test_forecastops_alerts.py",
+          "tests/integration/test_durable_repository_wiring.py",
+          "tests/integration/test_flow_002_expansion_persistence.py",
+          "-q"
+        ],
+        "cap_seconds": 420,
+        "started_at": "2026-10-15T04:54:41.892581+00:00",
+        "duration_seconds": 70.838,
+        "exit_code": 1,
+        "interrupted": false,
+        "head_after": "a7c1b9c005a63ed82c8c0a37aac3926b359c76c9",
+        "dirty_before": "",
+        "dirty_after": "",
+        "removed_environment_names": [
+          "CLAUDE_CODE_MESSAGING_TOKEN",
+          "VSCODE_CLI_REQUIRE_TOKEN"
+        ],
+        "node_env": "test",
+        "raw_log_sha256": "dd1a3b872bbf05f5e75cb84716a403c97481fec24dcdaa879efd81233668650c"
+      }
+    },
+    {
+      "selection": "perf-before",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/perf-before/terminal.json",
+      "terminal_sha256": "95122d5645bd9546077ef9a101837c1679df97fb11e32e441076f055d99071eb",
+      "raw_log_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/perf-before/raw.log",
+      "terminal": {
+        "kind": "author-diagnostic-not-canonical",
+        "head": "7fbd5154f9c4d274d92f9769d319eb3ad7c02781",
+        "tree": "43648e02aa5fec7c4744c10b2718eb25f86304ea",
+        "command": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "pytest",
+          "tests/performance/test_load_and_soak.py",
+          "-q",
+          "-m",
+          "performance"
+        ],
+        "cap_seconds": 420,
+        "started_at": "2026-10-15T04:45:57.194549+00:00",
+        "duration_seconds": 24.575,
+        "exit_code": 1,
+        "interrupted": false,
+        "head_after": "7fbd5154f9c4d274d92f9769d319eb3ad7c02781",
+        "dirty_before": "",
+        "dirty_after": "",
+        "removed_environment_names": [
+          "CLAUDE_CODE_MESSAGING_TOKEN",
+          "VSCODE_CLI_REQUIRE_TOKEN"
+        ],
+        "node_env": "test",
+        "raw_log_sha256": "6ebba9775970f60d104779dee9f62b36410e7d9a8d99694f89eee5e5d737165c"
+      }
+    },
+    {
+      "selection": "performance-ratified-attempt-1",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/performance-ratified-attempt-1/terminal.json",
+      "terminal_sha256": "6c70d7617fc848081c6621c61b7ff09ddc5a4fbd13911f6575abbbf89bdc7181",
+      "raw_log_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/performance-ratified-attempt-1/raw.log",
+      "terminal": {
+        "kind": "author-diagnostic-not-canonical",
+        "head": "a7c1b9c005a63ed82c8c0a37aac3926b359c76c9",
+        "tree": "708d741c66e86be1829f0e670c8eb76978b26824",
+        "command": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "pytest",
+          "tests/performance/test_load_and_soak.py",
+          "-q",
+          "-m",
+          "performance"
+        ],
+        "cap_seconds": 420,
+        "started_at": "2026-10-15T04:52:16.432892+00:00",
+        "duration_seconds": 42.613,
+        "exit_code": 0,
+        "interrupted": false,
+        "head_after": "a7c1b9c005a63ed82c8c0a37aac3926b359c76c9",
+        "dirty_before": "",
+        "dirty_after": "",
+        "removed_environment_names": [
+          "CLAUDE_CODE_MESSAGING_TOKEN",
+          "VSCODE_CLI_REQUIRE_TOKEN"
+        ],
+        "node_env": "test",
+        "raw_log_sha256": "33e077b0173350c7f88d688d198fada87871857b1f57cc7b648fd111d8c8b837"
+      },
+      "report_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/performance-ratified-attempt-1/report.json",
+      "report_sha256": "a25f5e97e5710c0eabb92f6ba54d7a57d1d2eb13e8cdcffe59bd4c65db605fce",
+      "report": {
+        "timestamp": 1792039973.3018363,
+        "concurrency_levels": [
+          10,
+          20,
+          50
+        ],
+        "total_volume": 150,
+        "success_count": 150,
+        "failure_count": 0,
+        "errors": [],
+        "total_duration_seconds": 9.98396283807233,
+        "throughput_req_per_sec": 15.02409438344439,
+        "latency_p50_seconds": 1.2589220879599452,
+        "latency_p95_seconds": 2.274833098053932,
+        "latency_p99_seconds": 2.3938228241167963,
+        "budget_p95_seconds_target": 3.0,
+        "passed": true
+      }
+    },
+    {
+      "selection": "performance-ratified-attempt-2",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/performance-ratified-attempt-2/terminal.json",
+      "terminal_sha256": "5b121a3d38b98aba898666f5de3e06551d4c753a7b14ee55f9b64ec215556679",
+      "raw_log_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/performance-ratified-attempt-2/raw.log",
+      "terminal": {
+        "kind": "author-diagnostic-not-canonical",
+        "head": "a7c1b9c005a63ed82c8c0a37aac3926b359c76c9",
+        "tree": "708d741c66e86be1829f0e670c8eb76978b26824",
+        "command": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "pytest",
+          "tests/performance/test_load_and_soak.py",
+          "-q",
+          "-m",
+          "performance"
+        ],
+        "cap_seconds": 420,
+        "started_at": "2026-10-15T04:53:03.861236+00:00",
+        "duration_seconds": 29.087,
+        "exit_code": 0,
+        "interrupted": false,
+        "head_after": "a7c1b9c005a63ed82c8c0a37aac3926b359c76c9",
+        "dirty_before": "",
+        "dirty_after": "",
+        "removed_environment_names": [
+          "CLAUDE_CODE_MESSAGING_TOKEN",
+          "VSCODE_CLI_REQUIRE_TOKEN"
+        ],
+        "node_env": "test",
+        "raw_log_sha256": "33e077b0173350c7f88d688d198fada87871857b1f57cc7b648fd111d8c8b837"
+      },
+      "report_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/performance-ratified-attempt-2/report.json",
+      "report_sha256": "0d2ea7c5744838850e46224364abdb73e9f5c23c1d83db97aa2455465c3f6293",
+      "report": {
+        "timestamp": 1792040007.3816438,
+        "concurrency_levels": [
+          10,
+          20,
+          50
+        ],
+        "total_volume": 150,
+        "success_count": 150,
+        "failure_count": 0,
+        "errors": [],
+        "total_duration_seconds": 6.082882492803037,
+        "throughput_req_per_sec": 24.659361770915766,
+        "latency_p50_seconds": 0.6809290940873325,
+        "latency_p95_seconds": 1.7778884349390864,
+        "latency_p99_seconds": 1.9324685451574624,
+        "budget_p95_seconds_target": 3.0,
+        "passed": true
+      }
+    },
+    {
+      "selection": "performance-ratified-attempt-3",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/performance-ratified-attempt-3/terminal.json",
+      "terminal_sha256": "4d8f56f22cd563d4a1fd699b7f7262a28d9894574ebed93c37392b04c354e952",
+      "raw_log_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/performance-ratified-attempt-3/raw.log",
+      "terminal": {
+        "kind": "author-diagnostic-not-canonical",
+        "head": "a7c1b9c005a63ed82c8c0a37aac3926b359c76c9",
+        "tree": "708d741c66e86be1829f0e670c8eb76978b26824",
+        "command": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "pytest",
+          "tests/performance/test_load_and_soak.py",
+          "-q",
+          "-m",
+          "performance"
+        ],
+        "cap_seconds": 420,
+        "started_at": "2026-10-15T04:53:36.544800+00:00",
+        "duration_seconds": 32.647,
+        "exit_code": 0,
+        "interrupted": false,
+        "head_after": "a7c1b9c005a63ed82c8c0a37aac3926b359c76c9",
+        "dirty_before": "",
+        "dirty_after": "",
+        "removed_environment_names": [
+          "CLAUDE_CODE_MESSAGING_TOKEN",
+          "VSCODE_CLI_REQUIRE_TOKEN"
+        ],
+        "node_env": "test",
+        "raw_log_sha256": "33e077b0173350c7f88d688d198fada87871857b1f57cc7b648fd111d8c8b837"
+      },
+      "report_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/performance-ratified-attempt-3/report.json",
+      "report_sha256": "a76b57b2ff9c2f07610cf8b9f1cec6d0d930cc5f7a8e1d8726b0d02d5ab6941d",
+      "report": {
+        "timestamp": 1792040043.6224782,
+        "concurrency_levels": [
+          10,
+          20,
+          50
+        ],
+        "total_volume": 150,
+        "success_count": 150,
+        "failure_count": 0,
+        "errors": [],
+        "total_duration_seconds": 7.3628777037374675,
+        "throughput_req_per_sec": 20.37246930284589,
+        "latency_p50_seconds": 0.8892777399159968,
+        "latency_p95_seconds": 2.0345889790914953,
+        "latency_p99_seconds": 2.28728049993515,
+        "budget_p95_seconds_target": 3.0,
+        "passed": true
+      }
+    },
+    {
+      "selection": "scoped-fixture-security-composition",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/scoped-fixture-security-composition/terminal.json",
+      "terminal_sha256": "42e55dd790145148a3a0156f69569b7bc498f0becb6796ec0fe43dafd7832225",
+      "raw_log_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/scoped-fixture-security-composition/raw.log",
+      "terminal": {
+        "kind": "author-diagnostic-not-canonical",
+        "head": "a7c1b9c005a63ed82c8c0a37aac3926b359c76c9",
+        "tree": "708d741c66e86be1829f0e670c8eb76978b26824",
+        "command": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "pytest",
+          ".orchestrator/test_release_lease.py",
+          ".orchestrator/test_release_lease_integration.py",
+          "tests/release/test_release_profile.py",
+          "tests/identity/test_sql_session_store.py",
+          "tests/security/test_auth_composition_extension.py",
+          "-q"
+        ],
+        "cap_seconds": 420,
+        "started_at": "2026-10-15T05:00:29.810740+00:00",
+        "duration_seconds": 97.206,
+        "exit_code": 0,
+        "interrupted": false,
+        "head_after": "a7c1b9c005a63ed82c8c0a37aac3926b359c76c9",
+        "dirty_before": "",
+        "dirty_after": "",
+        "removed_environment_names": [
+          "CLAUDE_CODE_MESSAGING_TOKEN",
+          "VSCODE_CLI_REQUIRE_TOKEN"
+        ],
+        "node_env": "test",
+        "raw_log_sha256": "9ef0e9341de3a40e67b80f7e414fa420830450641154a56fb9be7b7356f48c7f"
+      }
+    },
+    {
+      "selection": "seed-after",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/seed-after/terminal.json",
+      "terminal_sha256": "9da3a4bb9fbb6c5f9a1db68ac8db8180548941b3941c9ae253d3d30a7ab2d7f3",
+      "raw_log_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/seed-after/raw.log",
+      "terminal": {
+        "kind": "author-diagnostic-not-canonical",
+        "head": "73c2407ba02d16b4c66483caa97f73ddaf3b13fd",
+        "tree": "af5d736d2b622bc195c4f490a66e09110f3a9259",
+        "command": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "pytest",
+          "tests/security/test_auth_composition_extension.py::test_product_seed_uses_supported_authorized_queue_and_real_fixture_inputs",
+          "-q"
+        ],
+        "cap_seconds": 420,
+        "started_at": "2026-10-15T04:50:55.935556+00:00",
+        "duration_seconds": 22.849,
+        "exit_code": 1,
+        "interrupted": false,
+        "head_after": "73c2407ba02d16b4c66483caa97f73ddaf3b13fd",
+        "dirty_before": "",
+        "dirty_after": "",
+        "removed_environment_names": [
+          "CLAUDE_CODE_MESSAGING_TOKEN",
+          "VSCODE_CLI_REQUIRE_TOKEN"
+        ],
+        "node_env": "test",
+        "raw_log_sha256": "6543b5da51bdcfa880af53e55dd239fe54147b71b9547db1d93536a94ed3fb55"
+      }
+    },
+    {
+      "selection": "seed-durable-refusal-after",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/seed-durable-refusal-after/terminal.json",
+      "terminal_sha256": "120ec6a0aa1830cdfadb780bac017cb1e2b19a3a0e712643e4a7ea35e2992e8f",
+      "raw_log_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/seed-durable-refusal-after/raw.log",
+      "terminal": {
+        "kind": "author-diagnostic-not-canonical",
+        "head": "a7c1b9c005a63ed82c8c0a37aac3926b359c76c9",
+        "tree": "708d741c66e86be1829f0e670c8eb76978b26824",
+        "command": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "pytest",
+          "tests/security/test_auth_composition_extension.py::test_product_seed_uses_supported_authorized_queue_and_real_fixture_inputs",
+          "-q"
+        ],
+        "cap_seconds": 420,
+        "started_at": "2026-10-15T04:51:41.120906+00:00",
+        "duration_seconds": 23.85,
+        "exit_code": 0,
+        "interrupted": false,
+        "head_after": "a7c1b9c005a63ed82c8c0a37aac3926b359c76c9",
+        "dirty_before": "",
+        "dirty_after": "",
+        "removed_environment_names": [
+          "CLAUDE_CODE_MESSAGING_TOKEN",
+          "VSCODE_CLI_REQUIRE_TOKEN"
+        ],
+        "node_env": "test",
+        "raw_log_sha256": "33e077b0173350c7f88d688d198fada87871857b1f57cc7b648fd111d8c8b837"
+      }
+    },
+    {
+      "selection": "source-boundaries",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/source-boundaries/terminal.json",
+      "terminal_sha256": "4f28e74b7c9d1af9617fc491db23b23c11a9fd077af4ad2c85b8321cd7a3a0d0",
+      "raw_log_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/source-boundaries/raw.log",
+      "terminal": {
+        "kind": "author-diagnostic-not-canonical",
+        "head": "a7c1b9c005a63ed82c8c0a37aac3926b359c76c9",
+        "tree": "708d741c66e86be1829f0e670c8eb76978b26824",
+        "command": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "python",
+          "delivery_toolchain/governance/check_code_boundaries.py"
+        ],
+        "cap_seconds": 420,
+        "started_at": "2026-10-15T04:59:16.190961+00:00",
+        "duration_seconds": 13.894,
+        "exit_code": 0,
+        "interrupted": false,
+        "head_after": "a7c1b9c005a63ed82c8c0a37aac3926b359c76c9",
+        "dirty_before": "",
+        "dirty_after": "",
+        "removed_environment_names": [
+          "CLAUDE_CODE_MESSAGING_TOKEN",
+          "VSCODE_CLI_REQUIRE_TOKEN"
+        ],
+        "node_env": "test",
+        "raw_log_sha256": "eb0ae805dc18817f00a3e391583c44cb64fe5dc5fa58829e974507df4cf56d2d"
+      }
+    },
+    {
+      "selection": "source-lint",
+      "terminal_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/source-lint/terminal.json",
+      "terminal_sha256": "8da674514d6d26365ec3424542fc3332ce77273852f98b9327cf4788f734c425",
+      "raw_log_path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/source-lint/raw.log",
+      "terminal": {
+        "kind": "author-diagnostic-not-canonical",
+        "head": "a7c1b9c005a63ed82c8c0a37aac3926b359c76c9",
+        "tree": "708d741c66e86be1829f0e670c8eb76978b26824",
+        "command": [
+          "uv",
+          "run",
+          "--frozen",
+          "--python",
+          "3.12",
+          "ruff",
+          "check",
+          ".orchestrator/test_release_lease_integration.py",
+          ".orchestrator/test_release_lease_issuer.py",
+          "tests/release/test_release_profile.py",
+          "tests/identity/test_sql_session_store.py",
+          "tests/security/test_auth_composition_extension.py",
+          "tests/performance/test_load_and_soak.py",
+          "apps/api/app/routes/forecastops.py",
+          "apps/api/oday_api/routes/heatzone.py",
+          "delivery_toolchain/e2e/seed_product_e2e_data.py"
+        ],
+        "cap_seconds": 420,
+        "started_at": "2026-10-15T04:54:17.565827+00:00",
+        "duration_seconds": 0.115,
+        "exit_code": 0,
+        "interrupted": false,
+        "head_after": "a7c1b9c005a63ed82c8c0a37aac3926b359c76c9",
+        "dirty_before": "",
+        "dirty_after": "",
+        "removed_environment_names": [
+          "CLAUDE_CODE_MESSAGING_TOKEN",
+          "VSCODE_CLI_REQUIRE_TOKEN"
+        ],
+        "node_env": "test",
+        "raw_log_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+      }
+    }
+  ],
+  "additional_artifacts": {
+    "run_selection.py": {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/run_selection.py",
+      "sha256": "cc1420931f4cabb9c0c7374b4c26cb9799a859fde4f93136bcac50058e8823ed"
+    },
+    "run_local_pg.py": {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/run_local_pg.py",
+      "sha256": "5294cb2d4aad3f2237cd9519bc99c3d09d902e2d66cc96de28e22fb7e141d412"
+    },
+    "run_docker_pg.py": {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/run_docker_pg.py",
+      "sha256": "4c0ea53a2fdccbe478416de1e35b0b049cf361e2d214b6be45fe37cfbf074d3d"
+    },
+    "original-task-readback.json": {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/original-task-readback.json",
+      "sha256": "b05bb51907b2a9692ec9c051a8b5ebcf09e61dcf7791940716487bbfea11c622"
+    },
+    "pr1459-preserved.json": {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/pr1459-preserved.json",
+      "sha256": "f0136f98ff65adb397d2d18a39c16d4db310f52ed43e666d6ca10e1754067fcc"
+    },
+    "pr1478-before-push.json": {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/pr1478-before-push.json",
+      "sha256": "48540cc831d1b3d223847dcdfc84e3ae084aa1b17feb6da433909731f0a88b57"
+    },
+    "b2c-product-db-download2.raw.log": {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/b2c-product-db-download2.raw.log",
+      "sha256": "ec1b5ff90bb6aea8897047e636b585383018797d46340b2e61e08c2e5b3977aa"
+    },
+    "b2c-orchestrator-download2.raw.log": {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/b2c-orchestrator-download2.raw.log",
+      "sha256": "5ddb26dfd2cbdb702e8353101897e5618bc91f4633635e39991a059c55c7e994"
+    },
+    "b2c-product-db.safe.log": {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/b2c-product-db.safe.log",
+      "sha256": "5e056ff4455940b54af9ce2bbd4c3703ce9e789d8f089c6d93531338c50e35e5"
+    },
+    "b2c-orchestrator.safe.log": {
+      "path": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T044152Z-8b7b4813/b2c-orchestrator.safe.log",
+      "sha256": "fae37ea62c9f26748e7f6b59ff81dd7de4cd9585caef67a10806a380dfe172dc"
+    }
+  }
+}

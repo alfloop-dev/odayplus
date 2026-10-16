@@ -321,7 +321,7 @@ else:
                     "priceops.plan_created.v1",
                     "create",
                     f"priceops/plans/{plan.plan_id}",
-                    {"created": True, "elasticity_bindings": bindings},
+                    {"tenant_id": plan.tenant_id, "created": True, "elasticity_bindings": bindings},
                 )
                 payload = plan.to_dict()
                 payload["created"] = True
@@ -983,6 +983,14 @@ else:
         resource: str,
         metadata: dict[str, Any],
     ) -> AuditEvent:
+        principal = getattr(request.state, "operator_principal", None)
+        verified_tenant = getattr(getattr(principal, "scope", None), "tenant_id", None)
+        audit_metadata = dict(metadata)
+        owning_tenant = audit_metadata.pop("tenant_id", None)
+        # Only future events with verified, matching ownership are tenant-visible.
+        # A body tenant, local fallback or historical record is not authority.
+        if verified_tenant and (owning_tenant is None or owning_tenant == verified_tenant):
+            audit_metadata["tenant_id"] = str(verified_tenant)
         return audit_log.record(
             AuditEvent(
                 event_type=event_type,
@@ -991,7 +999,7 @@ else:
                 resource=resource,
                 outcome="accepted",
                 correlation_id=request.state.correlation_id,
-                metadata=metadata,
+                metadata=audit_metadata,
             )
         )
 
@@ -1115,7 +1123,7 @@ else:
                 event_type,
                 audit_action,
                 f"priceops/plans/{plan_id}",
-                {"plan_id": plan_id},
+                {"plan_id": plan_id, "tenant_id": tenant_id},
             )
             payload = result.to_dict()
             payload["audit_event_id"] = audit_event.event_id

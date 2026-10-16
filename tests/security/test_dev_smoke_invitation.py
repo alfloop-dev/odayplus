@@ -473,7 +473,14 @@ def test_general_actual_acceptance_web_login_password_rotation_and_api_boundary(
 
     s = invitations
     with s.db.connect(autocommit=True) as conn:
-        conn.execute(Path("infra/db/migrations/000012_identity_session_server_secrets.sql").read_text(encoding="utf-8"))
+        # Exercise the CURRENT production Web stores against the same composed
+        # expand-only schema, not a pre-revision fixture. No guard is disabled.
+        for migration in (
+            "000012_identity_session_server_secrets.sql",
+            "000029_dev_smoke_recovery_capability.sql",
+            "000030_dev_smoke_session_fence.sql",
+        ):
+            conn.execute(Path("infra/db/migrations", migration).read_text(encoding="utf-8"))
     # Resolve the actual Web key id, retaining the existing API auth boundary.
     s.boundary = AuthenticationBoundary(AuthBoundaryConfig(
         local_issuer=LOCAL_ISSUER,

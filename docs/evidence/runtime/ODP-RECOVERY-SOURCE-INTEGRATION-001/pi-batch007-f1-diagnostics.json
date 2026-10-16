@@ -1,0 +1,274 @@
+{
+  "task_id": "ODP-RECOVERY-SOURCE-INTEGRATION-001",
+  "run_id": "pi-20261015T154802Z-6ffcf9c7",
+  "kind": "incremental-F1-author-diagnostics-NOT-final-proof",
+  "scratch_root": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T154802Z-6ffcf9c7",
+  "admitted_base": "19562ad2a8773099db26366446b3488b446e630c",
+  "scope_entries": 361,
+  "source_documents": 18,
+  "renewal_evidence": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261015T154802Z-6ffcf9c7/renewal-verified.json",
+  "renewal_sha256": "1f04338269e489a8e56eeb820724cc5bd4c9fcd2419866090c221d37f00ee8f4",
+  "clarification_sha256": "b9fa16515b8e1d7c279e0eb11bc4d5ceb47c25361e555aeeeba9c26e9597801b",
+  "source_anchors": [
+    "d2cb274a2d64924c6ad0f65bdc60baa53e430e60",
+    "be58c8388b23623864e6692f589ae0ec48226845",
+    "999083b56b7a1656af22bd6318152f7cf6ce99ea"
+  ],
+  "fixture_input_inspection": {
+    "base": "1cc969809f16ef9daf4f1de90cf2281af37ae680",
+    "original_test_functions": 14,
+    "all_original_function_ASTs_equal_after_removing_only_explicit_synthetic_tenant_inputs": true,
+    "all_original_assertion_ASTs_equal": true,
+    "original_resource_inputs": 15,
+    "fixture_input_changes": [
+      {
+        "constructor": "principal",
+        "input": "principal(Role.REGIONAL_SUPERVISOR, tenant_id='rbac-fixture-tenant', region_ids=frozenset({'north'}))",
+        "line": 3
+      },
+      {
+        "constructor": "ResourceDescriptor",
+        "input": "ResourceDescriptor(type='forecastops', tenant_id='rbac-fixture-tenant', region_id='south')",
+        "line": 4
+      },
+      {
+        "constructor": "principal",
+        "input": "principal(Role.OPERATIONS_MANAGER, tenant_id='rbac-fixture-tenant', brand_ids=frozenset({'brand-a'}))",
+        "line": 3
+      },
+      {
+        "constructor": "ResourceDescriptor",
+        "input": "ResourceDescriptor(type='forecastops', tenant_id='rbac-fixture-tenant', brand_id='brand-a')",
+        "line": 4
+      },
+      {
+        "constructor": "ResourceDescriptor",
+        "input": "ResourceDescriptor(type='forecastops', tenant_id='rbac-fixture-tenant', brand_id='brand-b')",
+        "line": 5
+      },
+      {
+        "constructor": "ResourceDescriptor",
+        "input": "ResourceDescriptor(type='forecastops', tenant_id='rbac-fixture-tenant', brand_id=None)",
+        "line": 6
+      },
+      {
+        "constructor": "principal",
+        "input": "principal(Role.OPERATIONS_MANAGER, tenant_id='rbac-fixture-tenant', modules=frozenset({'forecastops'}))",
+        "line": 3
+      },
+      {
+        "constructor": "ResourceDescriptor",
+        "input": "ResourceDescriptor(type='forecastops', tenant_id='rbac-fixture-tenant', module='forecastops')",
+        "line": 4
+      },
+      {
+        "constructor": "ResourceDescriptor",
+        "input": "ResourceDescriptor(type='forecastops', tenant_id='rbac-fixture-tenant', module='netplan')",
+        "line": 5
+      },
+      {
+        "constructor": "ResourceDescriptor",
+        "input": "ResourceDescriptor(type='forecastops', tenant_id='rbac-fixture-tenant', module=None)",
+        "line": 6
+      },
+      {
+        "constructor": "principal",
+        "input": "principal(Role.FRANCHISEE, tenant_id='rbac-fixture-tenant', store_ids=frozenset({'store-1'}))",
+        "line": 3
+      },
+      {
+        "constructor": "ResourceDescriptor",
+        "input": "ResourceDescriptor(type='forecastops', tenant_id='rbac-fixture-tenant', store_id='store-1')",
+        "line": 4
+      },
+      {
+        "constructor": "ResourceDescriptor",
+        "input": "ResourceDescriptor(type='forecastops', tenant_id='rbac-fixture-tenant', store_id='store-2')",
+        "line": 5
+      },
+      {
+        "constructor": "Scope",
+        "input": "Scope(tenant_id='rbac-fixture-tenant', clearance=DataClassification.CONFIDENTIAL)",
+        "line": 3
+      },
+      {
+        "constructor": "ResourceDescriptor",
+        "input": "ResourceDescriptor(type='audit', tenant_id='rbac-fixture-tenant', data_classification=DataClassification.RESTRICTED)",
+        "line": 4
+      },
+      {
+        "constructor": "ResourceDescriptor",
+        "input": "ResourceDescriptor(type='priceops', tenant_id='rbac-fixture-tenant')",
+        "line": 3
+      },
+      {
+        "constructor": "principal",
+        "input": "principal(Role.MARKETING_MANAGER, tenant_id='rbac-fixture-tenant')",
+        "line": 3
+      },
+      {
+        "constructor": "ResourceDescriptor",
+        "input": "ResourceDescriptor(type='netplan', tenant_id='rbac-fixture-tenant')",
+        "line": 4
+      },
+      {
+        "constructor": "principal",
+        "input": "principal(Role.PRICING_MANAGER, tenant_id='rbac-fixture-tenant')",
+        "line": 3
+      },
+      {
+        "constructor": "ResourceDescriptor",
+        "input": "ResourceDescriptor(type='priceops', tenant_id='rbac-fixture-tenant')",
+        "line": 4
+      },
+      {
+        "constructor": "principal",
+        "input": "principal(Role.PRICING_MANAGER, tenant_id='rbac-fixture-tenant')",
+        "line": 6
+      },
+      {
+        "constructor": "ResourceDescriptor",
+        "input": "ResourceDescriptor(type='priceops', tenant_id='rbac-fixture-tenant')",
+        "line": 7
+      },
+      {
+        "constructor": "Scope",
+        "input": "Scope(tenant_id='rbac-fixture-tenant')",
+        "line": 6
+      },
+      {
+        "constructor": "ResourceDescriptor",
+        "input": "ResourceDescriptor(type='sitescore', tenant_id='rbac-fixture-tenant', attributes={'proposed_by': 'rev-1'})",
+        "line": 7
+      }
+    ],
+    "before_sha256": "52685776e4f9e5c70f727898270983b9eb3b093eef2137b8c7e502eebcf1e21a",
+    "after_sha256": "fd3e9b8aa143f81a0d965deb363d9074c5ef399582d26af17e566fa37b1fabb5"
+  },
+  "measurements": [
+    {
+      "label": "f1-owning-01",
+      "head": "d2cb274a2d64924c6ad0f65bdc60baa53e430e60",
+      "tree": "76dac4fc4bb4b289eee42a29cb468f2eb017f534",
+      "argv": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "pytest",
+        "tests/security/test_rbac_abac.py",
+        "-q",
+        "-n",
+        "0"
+      ],
+      "cap_seconds": 420,
+      "duration_seconds": 11.546156444121152,
+      "exit_code": 1,
+      "interrupted": false,
+      "raw_sha256": "96f62bb774d25326397882284a0417ec5032e250183684aba6f4cc22e8f47b2f",
+      "terminal_sha256": "04468d176963c99358e55f0269d1c9701e85661f74f1e600407f11babbd3345f",
+      "seal_sha256": "f5c131e4ef99da34ca5549da383e2b31a74607b2dfa1bd928b4bced71ff91c20"
+    },
+    {
+      "label": "f1-owning-cross-layer-02",
+      "head": "be58c8388b23623864e6692f589ae0ec48226845",
+      "tree": "13a4b732f221afe47679800f5b899b99613ef4bf",
+      "argv": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "pytest",
+        "tests/security/test_rbac_abac.py",
+        "tests/security/test_tenant_isolation_guard.py",
+        "tests/integration/test_auth_boundary_authz.py",
+        "-q",
+        "-n",
+        "0"
+      ],
+      "cap_seconds": 420,
+      "duration_seconds": 15.443739316426218,
+      "exit_code": 0,
+      "interrupted": false,
+      "raw_sha256": "bcaf32ccf9c0c6ac37fe4c9e8ce86f4ab7c07f1740903baef91d00a0e408a409",
+      "terminal_sha256": "3802b571a877da070a386fb3b9435d3f23c72eef81cd1d5f93e09215d613d147",
+      "seal_sha256": "a6604724d3f695136496cec20a3a0986c05f876acd8ca20813a462b727586914"
+    },
+    {
+      "label": "f1-owning-cross-layer-03",
+      "head": "999083b56b7a1656af22bd6318152f7cf6ce99ea",
+      "tree": "34d9fdcff39264a240ba2cc9f800a8a68f784ee2",
+      "argv": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "pytest",
+        "tests/security/test_rbac_abac.py",
+        "tests/security/test_tenant_isolation_guard.py",
+        "tests/integration/test_auth_boundary_authz.py",
+        "-q",
+        "-n",
+        "0"
+      ],
+      "cap_seconds": 420,
+      "duration_seconds": 7.909861415158957,
+      "exit_code": 0,
+      "interrupted": false,
+      "raw_sha256": "9fcce73e834531098154ea2022611027a5c3349e89417dad5925d5d12fc4979e",
+      "terminal_sha256": "e733e4eb73b089edfe033225dd339da5bb5d20d607e01b034f070dd086156420",
+      "seal_sha256": "e4e0f90e8194d341dee182f9410afcc45cf62c83a853985d14a5ec07b99ce0e1"
+    },
+    {
+      "label": "f1-ruff-01",
+      "head": "999083b56b7a1656af22bd6318152f7cf6ce99ea",
+      "tree": "34d9fdcff39264a240ba2cc9f800a8a68f784ee2",
+      "argv": [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        "3.12",
+        "ruff",
+        "check",
+        "shared/auth/abac.py",
+        "shared/auth/engine.py",
+        "tests/security/test_rbac_abac.py"
+      ],
+      "cap_seconds": 420,
+      "duration_seconds": 0.17377919098362327,
+      "exit_code": 0,
+      "interrupted": false,
+      "raw_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+      "terminal_sha256": "e05285b6cee1ef724f8ca20b4323259294b9c8f55ddb3564f0f5d4ad00989b17",
+      "seal_sha256": "1b0ef952ddf916ee0ed7daadb6352623023a2d8a90ee95fb19ce3a0a716e026c"
+    }
+  ],
+  "receipt_paths": "<scratch_root>/<label>/{terminal.json,raw.log,custody.jsonl,coordinator-terminal.json}; <scratch_root>/<label>-seal.json",
+  "first_attempt": "exit1: seven NEW fixture controls used non-granted audit/forecastops targets for platform_admin/operator_viewer. Corrected only those NEW inputs to existing user/operator_console grants. All original assertions retained.",
+  "custody": {
+    "actual_native_waits_and_kernel_ECHILD": true,
+    "owned_descendants_and_accessible_writers_closed_before_fixture_removal": true,
+    "exact_owned_PG_PostGIS_removed": true,
+    "temporary_evidence_archived_hash_verified_before_removal": true,
+    "external_nonowned_inaccessible_fd_visibility": "UNKNOWN",
+    "direct_primitive_tests_are_actual_PG_application_proof": false,
+    "short_commands_prove_sustained_long_manager_observation": false
+  },
+  "original_complete_task_equal_before_after_and_previous_run": true,
+  "unmodified_authority_paths": [
+    "shared/auth/tenant.py",
+    "shared/auth/identity.py",
+    "shared/auth/rbac.py",
+    "shared/audit/policy.py"
+  ],
+  "remaining": [
+    "F3 distinct observed rotation/login cookie custody, ALL-exit once-only specific bounded cleanup; uncertainty UNKNOWN; native quarantine-before-cleanup/delegation preserved",
+    "Final source/docs freeze, ALL fresh14 canonical/unchanged17 supplemental/applicable owning/normal terminalCI/full configured sequential assessment at one immutable identity",
+    "No whole-composition acceptance or underlying authenticated-account independence established; rejected13c packet1/uninspected16 retained",
+    "Human/Ops final PENDING; no task_finalize/review submission until complete author work; no approval/merge/done/live effects"
+  ]
+}

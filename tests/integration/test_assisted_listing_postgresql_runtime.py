@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 import re
+import secrets
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import quote
@@ -10,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
+from modules.opsboard.auth import SigningKey, encode_compact_jwt
 from shared.infrastructure.persistence.assisted_listing_intake import (
     ALL_TABLES,
     AssistedIntakePersistenceConflict,
@@ -27,6 +31,12 @@ TENANT_ID = "00000000-0000-0000-0000-000000000001"
 ACTOR_ID = "00000000-0000-0000-0000-000000000101"
 REVIEWER_ID = "00000000-0000-0000-0000-000000000102"
 OWNER_ID = "00000000-0000-0000-0000-000000000105"
+FOREIGN_ID = "00000000-0000-0000-0000-000000000201"
+FOREIGN_TENANT = "00000000-0000-0000-0000-000000000002"
+# Ephemeral synthetic service issuer: never production credentials or header trust.
+_AUTH_ISSUER = "https://assisted-pg.offline.invalid"
+_AUTH_SECRET = secrets.token_urlsafe(48)
+_AUTH_KEY = SigningKey(kid="assisted-pg", algorithm="HS256", secret=_AUTH_SECRET.encode())
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -39,13 +49,8 @@ def _database_url(database) -> str:
     port = str(params.get("port") or "5432")
     dbname = quote(database.dbname, safe="")
     if host.startswith("/"):
-        return (
-            f"postgresql://{credentials}@/{dbname}"
-            f"?host={quote(host, safe='')}&port={port}"
-        )
-    return (
-        f"postgresql://{credentials}@{host}:{port}/{dbname}"
-    )
+        return f"postgresql://{credentials}@/{dbname}?host={quote(host, safe='')}&port={port}"
+    return f"postgresql://{credentials}@{host}:{port}/{dbname}"
 
 
 # The relations this helper stands in for. `PostgresEngine` refuses to boot
@@ -125,7 +130,13 @@ def _live_provider_validation() -> SimpleNamespace:
 
 
 def _headers(subject_id: str, *, key: str | None = None) -> dict[str, str]:
+    now = datetime.now(UTC).timestamp()
+    token = encode_compact_jwt(
+        {"iss": _AUTH_ISSUER, "sub": subject_id, "aud": "oday-api", "iat": now, "exp": now + 300},
+        _AUTH_KEY,
+    )
     headers = {
+        "authorization": "Bearer " + token,
         "x-subject-id": subject_id,
         "x-tenant-id": TENANT_ID,
         "x-roles": "site_reviewer,data_owner,expansion_user",
@@ -141,6 +152,27 @@ def _configure_production(
     tmp_path,
     database_url: str,
 ) -> None:
+    # Exercise actual default_boundary/config_from_env, no dependency override.
+    import os
+
+    for name in tuple(os.environ):
+        if name.startswith("ODP_AUTH_"):
+            monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ODP_AUTH_MODE", "local")
+    monkeypatch.setenv("ODP_AUTH_SERVICE_ISSUER", _AUTH_ISSUER)
+    monkeypatch.setenv("ODP_AUTH_SERVICE_AUDIENCES", "oday-api")
+    monkeypatch.setenv("ODP_AUTH_HS256_KEYS", "assisted-pg:" + _AUTH_SECRET)
+    roles = ["site_reviewer", "data_owner", "expansion_user"]
+    monkeypatch.setenv(
+        "ODP_AUTH_PRINCIPAL_MAP",
+        json.dumps(
+            {
+                ACTOR_ID: {"roles": roles, "scope": {"tenant_id": TENANT_ID}},
+                REVIEWER_ID: {"roles": roles, "scope": {"tenant_id": TENANT_ID}},
+                FOREIGN_ID: {"roles": roles, "scope": {"tenant_id": FOREIGN_TENANT}},
+            }
+        ),
+    )
     monkeypatch.setenv("ODP_DEPLOY_ENV", "production")
     monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
     monkeypatch.setenv("ODP_PERSISTENCE", "postgresql")
@@ -192,8 +224,7 @@ def test_full_stack_composes_after_canonical_migration_and_is_idempotent(
 ) -> None:
     database_url = _database_url(intake_blank_db)
     canonical_sql = (
-        REPO_ROOT
-        / "infra/db/migrations/000001_baseline_canonical_schema.sql"
+        REPO_ROOT / "infra/db/migrations/000001_baseline_canonical_schema.sql"
     ).read_text(encoding="utf-8")
     with intake_blank_db.connect() as connection:
         connection.execute(canonical_sql)
@@ -292,6 +323,17 @@ def test_assisted_intake_http_state_survives_postgresql_restart(
     )
     client = TestClient(app)
     submit_key = f"production-submit-{uuid4()}"
+    forged = _headers(ACTOR_ID)
+    forged.pop("authorization")
+    denied = client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": "https://example.com/listings/production-1",
+            "scope": {"tenant_id": TENANT_ID},
+        },
+        headers=forged,
+    )
+    assert denied.status_code == 401, denied.text
     submitted = client.post(
         "/api/v1/intakes/url",
         json={
@@ -344,6 +386,12 @@ def test_assisted_intake_http_state_survives_postgresql_restart(
     )
     restarted_client = TestClient(restarted)
     try:
+        foreign = restarted_client.get(
+            f"/api/v1/intakes/{receipt['intake_id']}",
+            headers={**_headers(FOREIGN_ID), "x-tenant-id": FOREIGN_TENANT},
+        )
+        assert foreign.status_code in (403, 404), foreign.text
+        assert receipt["intake_id"] not in foreign.text
         detail = restarted_client.get(
             f"/api/v1/intakes/{receipt['intake_id']}",
             headers=_headers(ACTOR_ID),
@@ -366,10 +414,7 @@ def test_assisted_intake_http_state_survives_postgresql_restart(
         assert decision.json()["status"] == "PENDING_REVIEW"
 
         reviewed = restarted_client.post(
-            (
-                "/api/v1/identity-decisions/"
-                f"{correction['correction_id']}/actions/review"
-            ),
+            (f"/api/v1/identity-decisions/{correction['correction_id']}/actions/review"),
             json={
                 "decision": "APPROVE",
                 "reason": "Independent reviewer confirms durable correction",

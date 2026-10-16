@@ -101,10 +101,15 @@ def build_registry(
             "environment": environment,
             "admission_target": admission_target,
             "decision": "go",
+            "human_signoff": {"approver": "fixture-human-not-operational-approval", "date": "2026-08-24"},
         },
         "gates": [
             {
-                "id": f"gate-{index}",
+                "id": f"gate-{index}", "index": index,
+                "name": f"offline gate {index}", "scope": "offline-test",
+                "owner": "fixture-author", "reviewer": "fixture-reviewer",
+                "status_date": "2026-08-24", "required_checks": ["offline-control"], "blockers": [],
+                "evidence": [{"kind": "test", "ref": str(Path(__file__).resolve()), "description": "synthetic fixture, not operational evidence"}],
                 "status": "passed",
                 "release_sha": candidate_sha,
                 "stage": stage,
@@ -113,6 +118,8 @@ def build_registry(
                 "receipts": [
                     {
                         "receipt_id": f"receipt-{index}",
+                        "recorded_by": "fixture-reviewer", "recorded_at": "2026-08-24T12:00:00+00:00",
+                        "artifact": str(Path(__file__).resolve()),
                         "release_sha": candidate_sha,
                         "result": "pass",
                     }
@@ -492,7 +499,7 @@ def test_missing_receipt_is_blocked() -> None:
 
 def test_a_not_applicable_gate_needs_no_receipt() -> None:
     registry = build_registry()
-    registry["gates"][0].update({"status": "not-applicable", "receipts": []})
+    registry["gates"][0].update({"status": "not-applicable", "receipts": [], "justification": "offline fixture has no applicability"})
     assert registry_admission_errors(registry, **kwargs()) == []
 
 

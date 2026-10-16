@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 from datetime import UTC, datetime, timedelta
+from threading import RLock
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -88,6 +89,13 @@ class SessionRepository(Protocol):
         """儲存新 session 或更新既有 session。"""
         ...
 
+    def rotate(
+        self, expected: Session, replacement_id: UUID, *, reason: str,
+        now: datetime, idle_timeout: timedelta,
+    ) -> Session:
+        """Revalidate, revoke and insert atomically, serialized with account revocation."""
+        ...
+
     def find_by_id(self, session_id: UUID) -> Session | None:
         """以 session_id 查找 session。"""
         ...
@@ -121,26 +129,101 @@ class SessionRepository(Protocol):
         ...
 
 
+class SessionStorageUnavailable(RuntimeError):
+    """No durable mutation acknowledgement is available; issuance/cleanup is unknown."""
+
+
+class SessionRotationRefused(ValueError):
+    """The persisted source no longer authorizes a replacement."""
+
+
+def _session_identity(session: Session) -> tuple[object, ...]:
+    return (
+        session.session_id, session.account_id, session.provider, session.created_at,
+        session.absolute_expires_at, session.rotated_from,
+    )
+
+
+def _rotation_replacement(
+    persisted: Session | None, expected: Session, replacement_id: UUID, *,
+    reason: str, now: datetime, idle_timeout: timedelta,
+) -> Session:
+    # Sample AFTER acquiring the repository locks: waiting cannot extend expiry.
+    ts = max(now, datetime.now(UTC))
+    if (
+        persisted is None or _session_identity(persisted) != _session_identity(expected)
+        or persisted.revoked_at is not None or expected.revoked_at is not None
+        or persisted.provider not in {"local_password", "oidc"}
+        or ts >= persisted.idle_expires_at or ts >= persisted.absolute_expires_at
+        or replacement_id == persisted.session_id or not reason
+    ):
+        raise SessionRotationRefused("session rotation source invalid or expired")
+    return Session(
+        session_id=replacement_id, account_id=persisted.account_id,
+        provider=persisted.provider, created_at=ts, last_seen_at=ts,
+        idle_expires_at=min(ts + idle_timeout, persisted.absolute_expires_at),
+        absolute_expires_at=persisted.absolute_expires_at,
+        rotated_from=persisted.session_id,
+    )
+
+
 class InMemorySessionRepository:
-    """記憶體 Session 持久化實作（供測試與開發使用）。"""
+    """Development repository with detached reads and atomic, monotonic mutations."""
 
     def __init__(self) -> None:
         self._sessions: dict[UUID, Session] = {}
+        self._lock = RLock()
 
     def save(self, session: Session) -> None:
-        self._sessions[session.session_id] = session
+        with self._lock:
+            old = self._sessions.get(session.session_id)
+            if old is not None:
+                if _session_identity(old) != _session_identity(session):
+                    raise ValueError("session identity is immutable")
+                session = dataclasses.replace(
+                    session,
+                    last_seen_at=max(old.last_seen_at, session.last_seen_at),
+                    idle_expires_at=min(
+                        max(old.idle_expires_at, session.idle_expires_at),
+                        old.absolute_expires_at,
+                    ),
+                    revoked_at=old.revoked_at if old.revoked_at is not None else session.revoked_at,
+                    revoked_reason=(old.revoked_reason if old.revoked_at is not None
+                                    else session.revoked_reason),
+                )
+            self._sessions[session.session_id] = dataclasses.replace(session)
+
+    def rotate(
+        self, expected: Session, replacement_id: UUID, *, reason: str,
+        now: datetime, idle_timeout: timedelta,
+    ) -> Session:
+        with self._lock:
+            replacement = _rotation_replacement(
+                self._sessions.get(expected.session_id), expected, replacement_id,
+                reason=reason, now=now, idle_timeout=idle_timeout,
+            )
+            if replacement_id in self._sessions:
+                raise SessionRotationRefused("replacement session already exists")
+            self.revoke(expected.session_id, reason, replacement.created_at)
+            self.save(replacement)
+            return replacement
 
     def find_by_id(self, session_id: UUID) -> Session | None:
-        return self._sessions.get(session_id)
+        with self._lock:
+            session = self._sessions.get(session_id)
+            return dataclasses.replace(session) if session is not None else None
 
     def find_active_by_account(self, account_id: UUID) -> list[Session]:
-        return [s for s in self._sessions.values() if s.account_id == account_id and s.is_active]
+        with self._lock:
+            return [dataclasses.replace(s) for s in self._sessions.values()
+                    if s.account_id == account_id and s.is_active]
 
     def revoke(self, session_id: UUID, reason: str, revoked_at: datetime | None = None) -> None:
-        session = self._sessions.get(session_id)
-        if session is not None:
-            session.revoked_at = revoked_at or datetime.now(UTC)
-            session.revoked_reason = reason
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is not None and session.revoked_at is None:
+                session.revoked_at = revoked_at or datetime.now(UTC)
+                session.revoked_reason = reason
 
     def revoke_all_for_account(
         self,
@@ -151,23 +234,27 @@ class InMemorySessionRepository:
         revoked_at: datetime | None = None,
     ) -> int:
         ts = revoked_at or datetime.now(UTC)
-        count = 0
-        for s in self._sessions.values():
-            if s.account_id == account_id and s.revoked_at is None:
-                if except_session_id and s.session_id == except_session_id:
-                    continue
-                s.revoked_at = ts
-                s.revoked_reason = reason
-                count += 1
-        return count
+        with self._lock:
+            count = 0
+            for s in self._sessions.values():
+                if s.account_id == account_id and s.revoked_at is None:
+                    if except_session_id and s.session_id == except_session_id:
+                        continue
+                    s.revoked_at = ts
+                    s.revoked_reason = reason
+                    count += 1
+            return count
 
     def update_last_seen(
         self, session_id: UUID, last_seen_at: datetime, idle_expires_at: datetime
     ) -> None:
-        session = self._sessions.get(session_id)
-        if session is not None:
-            session.last_seen_at = last_seen_at
-            session.idle_expires_at = idle_expires_at
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is not None and session.revoked_at is None:
+                session.last_seen_at = max(session.last_seen_at, last_seen_at)
+                session.idle_expires_at = min(
+                    max(session.idle_expires_at, idle_expires_at), session.absolute_expires_at,
+                )
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -258,22 +345,13 @@ class SessionService:
         """
         ts = now or datetime.now(UTC)
 
-        # 撤銷舊 session
-        self._repo.revoke(current_session.session_id, reason, ts)
-
-        # 建立新 session，保留原始 absolute_expires_at
-        new_session = Session(
-            session_id=uuid4(),
-            account_id=current_session.account_id,
-            provider=current_session.provider,
-            created_at=ts,
-            last_seen_at=ts,
-            idle_expires_at=ts + self._config.idle_timeout,
-            absolute_expires_at=current_session.absolute_expires_at,
-            rotated_from=current_session.session_id,
+        rotate = getattr(self._repo, "rotate", None)
+        if not callable(rotate):
+            raise SessionStorageUnavailable("repository does not support atomic rotation")
+        return rotate(
+            current_session, uuid4(), reason=reason, now=ts,
+            idle_timeout=self._config.idle_timeout,
         )
-        self._repo.save(new_session)
-        return new_session
 
     # ── 檢查是否需要輪替 ──────────────────────────────────────────────────
 

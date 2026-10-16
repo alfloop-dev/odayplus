@@ -12,76 +12,19 @@ apps/web/src/lib/auth/__tests__/。見 ODP-WEB-LOGIN-THROTTLE-REMEDIATION-001。
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
 from shared.identity.session_service import (
+    InMemorySessionRepository,
     RevocationReason,
-    Session,
     SessionConfig,
     SessionService,
 )
 
-# ============================================================================
-# In-Memory Repository 實作（測試用）
-# ============================================================================
-
-class InMemorySessionRepository:
-    """測試用的 in-memory session repository。"""
-
-    def __init__(self) -> None:
-        self._store: dict[UUID, Session] = {}
-
-    def save(self, session: Session) -> None:
-        self._store[session.session_id] = session
-
-    def find_by_id(self, session_id: UUID) -> Session | None:
-        return self._store.get(session_id)
-
-    def find_active_by_account(self, account_id: UUID) -> list[Session]:
-        return [
-            s for s in self._store.values()
-            if s.account_id == account_id and s.is_active
-        ]
-
-    def revoke(
-        self, session_id: UUID, reason: str, revoked_at: datetime | None = None
-    ) -> None:
-        session = self._store.get(session_id)
-        if session:
-            session.revoked_at = revoked_at or datetime.now(UTC)
-            session.revoked_reason = reason
-
-    def revoke_all_for_account(
-        self,
-        account_id: UUID,
-        reason: str,
-        *,
-        except_session_id: UUID | None = None,
-        revoked_at: datetime | None = None,
-    ) -> int:
-        ts = revoked_at or datetime.now(UTC)
-        count = 0
-        for session in self._store.values():
-            if (
-                session.account_id == account_id
-                and session.revoked_at is None
-                and session.session_id != except_session_id
-            ):
-                session.revoked_at = ts
-                session.revoked_reason = reason
-                count += 1
-        return count
-
-    def update_last_seen(
-        self, session_id: UUID, last_seen_at: datetime, idle_expires_at: datetime
-    ) -> None:
-        session = self._store.get(session_id)
-        if session:
-            session.last_seen_at = last_seen_at
-            session.idle_expires_at = idle_expires_at
-
+# Use the supported repository, including its atomic rotation contract, rather
+# than a module-local partial implementation of the persistence interface.
 
 # ============================================================================
 # T06: session 建立 / 輪替 / 撤銷
