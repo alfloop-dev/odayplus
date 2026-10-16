@@ -4,7 +4,13 @@ from datetime import date
 import pytest
 
 from shared.auth import (
-    AccessRequest, Action, AuthorizationEngine, Principal, ResourceDescriptor, Role, Scope,
+    AccessRequest,
+    Action,
+    AuthorizationEngine,
+    Principal,
+    ResourceDescriptor,
+    Role,
+    Scope,
 )
 from shared.auth.feature_flags import FeatureFlag, FeatureFlagRegistry
 

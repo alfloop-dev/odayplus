@@ -1,0 +1,85 @@
+{
+  "kind": "partial-batch015-owning-not-final-proof",
+  "run": "pi-20261016T064821Z-8e8fb3ae",
+  "head": "9806e4fa58e803addda88c0a8a679bc190435f61",
+  "terminal": {
+    "at": "2026-10-16T06:55:58.586190+00:00",
+    "head": "9806e4fa58e803addda88c0a8a679bc190435f61",
+    "tree": "ef173b4d60093d615fbea97760d08f8f5e81f2e9",
+    "argv": [
+      "uv",
+      "run",
+      "--frozen",
+      "--python",
+      "3.12",
+      "pytest",
+      "tests/security/test_local_password_rotation_state.py",
+      "tests/security/test_tenant_waiver_principal_evidence.py",
+      "tests/security/test_high_risk_flag_evidence.py",
+      "tests/security/test_credential_active_policy_contract.py",
+      "tests/security/test_service_identity_public_refusal.py",
+      "tests/identity/test_credential_and_policy.py",
+      "-q",
+      "-n",
+      "0",
+      "--junitxml=/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261016T064821Z-8e8fb3ae/auth-evidence-owning.xml"
+    ],
+    "cap_seconds": 420,
+    "duration_seconds": 42.15708057908341,
+    "exit_code": 0,
+    "interrupted": false,
+    "kernel_child_closure": {
+      "kernel_waitpid_echild": true
+    },
+    "descendant_exit_unknown": false,
+    "writer_scan": {
+      "same_uid_writers": [],
+      "same_uid_permission_denied": [
+        2194258,
+        2194259,
+        2194368,
+        2195905
+      ],
+      "other_uids_not_inspected": true
+    },
+    "external_writer_exclusion_unproven": true,
+    "raw_sha256": "136fc6fafe389eda1599059b61472c980187d48feab726baf1d1094aff6e0613",
+    "manager_activity_recognized": false,
+    "distinct_manager_observations": 0,
+    "not_canonical_or_review": true
+  },
+  "case_groups": {
+    "tests.security.test_local_password_rotation_state": 32,
+    "tests.security.test_tenant_waiver_principal_evidence": 15,
+    "tests.security.test_high_risk_flag_evidence": 31,
+    "tests.security.test_credential_active_policy_contract": 22,
+    "tests.security.test_service_identity_public_refusal": 3,
+    "tests.identity.test_credential_and_policy": 50
+  },
+  "testcases": 153,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "evidence": {
+    "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261016T064821Z-8e8fb3ae/auth-evidence-owning.xml": {
+      "sha256": "dd87187ec53902d87ea023f45ebd0dbbd4d7d0f873107fbf920ea5f6aedc99a0",
+      "bytes": 24067
+    },
+    "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261016T064821Z-8e8fb3ae/auth-evidence-owning/raw.log": {
+      "sha256": "136fc6fafe389eda1599059b61472c980187d48feab726baf1d1094aff6e0613",
+      "bytes": 781
+    },
+    "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261016T064821Z-8e8fb3ae/auth-evidence-owning-seal.json": {
+      "sha256": "5a06ed0513f44d8dc68963f921bc98afc4417688695dbafb33b1b8a45c57e249",
+      "bytes": 1124
+    },
+    "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261016T064821Z-8e8fb3ae/preflight.json": {
+      "sha256": "dd789c95e8c9537fddf5319a747de8a1fc97c760d06bc38323629a6425eaf90c",
+      "bytes": 116887
+    },
+    "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261016T064821Z-8e8fb3ae/unleased-fixture-contract-static.json": {
+      "sha256": "15bc040273691d97249f35638d5fa6b2d530a3adc791ecfcfc6107dc965f5a02",
+      "bytes": 9092
+    }
+  }
+}
