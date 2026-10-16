@@ -1,16 +1,21 @@
 """F1/F9: real repository monotonicity, atomic rotation and honest storage failure.
 
 Separate owning controls; not additions to the original 2178/178 selections.
-PostgreSQL is mandatory (the owning runner supplies an isolated database).
+PostgreSQL is mandatory: supplied isolated DSN or an owned bundled real server.
 """
 from __future__ import annotations
 
 import dataclasses
 import os
+import shutil
+import signal
+import subprocess
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from importlib.metadata import version
 from pathlib import Path
 from queue import Queue
 from threading import Event
@@ -30,14 +35,91 @@ from shared.identity.session_store import SqlSessionRepository
 
 
 @pytest.fixture(scope="module")
-def database_url():
+def database_url(record_testsuite_property):
     url = os.environ.get("INTAKE_TEST_DATABASE_URL")
-    assert url, "actual isolated PostgreSQL is required; no skip/substitute"
-    with psycopg.connect(url) as conn:
-        assert "PostgreSQL" in conn.execute("SELECT version()").fetchone()[0]
-        conn.execute((Path(__file__).resolve().parents[2] /
-                      "infra/db/migrations/000011_identity_schema.sql").read_text())
-    return url
+    server = None
+    owned = None
+    log = None
+    initialized = False
+    try:
+        if not url:
+            # Use only the declared pgserver distribution's actual binaries.
+            # Its get_server constructor has an unbounded readiness loop and a
+            # daemon/PID-file cleanup fallback. Own a foreground Popen instead:
+            # no shared server discovery, stale PID signalling or extension stubs.
+            import pgserver
+
+            binary = Path(pgserver.__file__).resolve().parent / "pginstall/bin"
+            owned = Path(tempfile.mkdtemp(prefix="session-real-pg-"))
+            data, sockets = owned / "data", owned / "sockets"
+            sockets.mkdir(mode=0o700)
+            record_testsuite_property("session_pg_source", "owned-pgserver-binary")
+            record_testsuite_property("session_pg_package_version", version("pgserver"))
+            record_testsuite_property("session_pg_binary", str(binary / "postgres"))
+            record_testsuite_property("session_pg_owned_directory", str(owned))
+            log = (owned / "server.log").open("w+")
+            subprocess.run(
+                [str(binary / "initdb"), "-D", str(data), "-A", "trust",
+                 "-U", "postgres", "--encoding=UTF8", "--no-locale"],
+                check=True, stdout=log, stderr=subprocess.STDOUT, timeout=45,
+            )
+            initialized = True
+            server = subprocess.Popen(
+                [str(binary / "postgres"), "-D", str(data), "-h", "", "-k", str(sockets)],
+                stdout=log, stderr=subprocess.STDOUT,
+            )
+            record_testsuite_property("session_pg_owned_pid", server.pid)
+            record_testsuite_property(
+                "session_pg_kernel_start_ticks",
+                Path(f"/proc/{server.pid}/stat").read_text().rsplit(")", 1)[1].split()[19],
+            )
+            url = f"postgresql://postgres@/postgres?host={sockets}"
+            deadline = time.monotonic() + 45
+            while True:
+                assert server.poll() is None, "owned PostgreSQL exited before readiness"
+                try:
+                    with psycopg.connect(url, connect_timeout=2):
+                        break
+                except psycopg.OperationalError:
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError("mandatory owned real PostgreSQL unavailable") from None
+                    time.sleep(.05)
+        else:
+            record_testsuite_property("session_pg_source", "supplied-isolated-dsn")
+        with psycopg.connect(url, connect_timeout=2) as conn:
+            server_version = conn.execute("SELECT version()").fetchone()[0]
+            assert "PostgreSQL" in server_version
+            record_testsuite_property("session_pg_version", server_version)
+            conn.execute((Path(__file__).resolve().parents[2] /
+                          "infra/db/migrations/000011_identity_schema.sql").read_text())
+        # The original persisted-expiry controls also open independent clients
+        # using this variable. Bind ONLY this module's owned fixture lifetime.
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setenv("INTAKE_TEST_DATABASE_URL", url)
+            yield url
+    finally:
+        stopped = server is None and initialized
+        if server is not None:
+            if server.poll() is None:
+                server.send_signal(signal.SIGINT)  # fast shutdown of this Popen only
+            try:
+                code = server.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                code = server.wait(timeout=5)
+            stopped = code == 0
+            record_testsuite_property("session_pg_owned_wait_exit", code)
+        if log is not None:
+            log.flush()
+            log.seek(0)
+            print(log.read())
+            log.close()
+        # Forced/uncertain closure or interrupted initialization retains data
+        # for the owning coordinator, never deleting files beneath unknown writers.
+        if owned is not None and stopped:
+            shutil.rmtree(owned)
+        if server is not None:
+            assert stopped, "owned server did not shut down cleanly; data retained"
 
 
 @pytest.fixture
