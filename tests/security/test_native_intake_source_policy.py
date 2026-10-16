@@ -23,7 +23,11 @@ from modules.listing.application.native_intake_start import NativeIntakeStartAut
 from shared.infrastructure.persistence.factory import build_persistence
 from shared.jobs.queue import JobFenceRejectedError, JobRecord, JobRequest, JobStatus
 from shared.jobs.registry import JobRegistry
-from tests.security.test_native_intake_start import policy
+from tests.security.test_native_intake_start import policy as upstream_policy
+
+
+def policy(tenant):
+    return {**upstream_policy(tenant), "deadline_seconds": 15}
 
 
 @pytest.mark.parametrize("patch", [
@@ -120,3 +124,27 @@ def test_default_worker_cannot_turn_an_unresolved_source_policy_return_into_phys
     assert ODayWorker(persistence=bundle, registry=registry, heartbeat_interval_seconds=0.01).run_once() is True
     current = bundle.job_queue.get(job.job_id)
     assert current.status == JobStatus.RUNNING and current.delivery_state is None and current.payload == {}
+
+
+@pytest.mark.parametrize("seconds", [16, 30])
+def test_policy_over_documented_hard_limit_cannot_start_tenant_SQL(monkeypatch, record_property, seconds):
+    tenant, job_id = str(uuid4()), str(uuid4())
+    monkeypatch.setenv(POLICY_ENV, json.dumps({**policy(tenant), "deadline_seconds": seconds}))
+    monkeypatch.setenv(SIGNING_KEY_ENV, "synthetic-source-policy-timeout-boundary-key-" * 2)
+    touched = []
+
+    def forbidden(*_args, **_kwargs):
+        touched.append(True)
+        record_property("tenant_transaction_attempted", True)
+        raise AssertionError("Over-budget policy reached the tenant SQL boundary")
+
+    owner = NativeIntakeSourcePolicyOwner(SimpleNamespace(
+        engine=SimpleNamespace(dialect="postgresql", query_one=forbidden),
+        queue=SimpleNamespace(), transaction=forbidden))
+    delivery = JobRecord(NATIVE_INTAKE_SOURCE_POLICY_JOB_TYPE,
+        {"job_id": job_id, "tenant_id": tenant, "attempt_token": owner.auth.sign(job_id, tenant, 1)},
+        "synthetic-source-policy-timeout-boundary", job_id=job_id)
+    record_property("configured_deadline_seconds", seconds)
+    with pytest.raises(NativeIntakeSourcePolicyUnavailable):
+        owner.execute(delivery)
+    assert touched == []

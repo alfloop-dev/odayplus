@@ -49,10 +49,13 @@ from shared.jobs.queue import JobDeliveryState, JobFenceRejectedError, JobReques
 NATIVE_INTAKE_SOURCE_POLICY_JOB_TYPE = "native-intake-source-policy"
 POLICY_ENV = "ODP_NATIVE_INTAKE_SOURCE_POLICY_POLICY_JSON"
 SIGNING_KEY_ENV = "ODP_NATIVE_INTAKE_SOURCE_POLICY_SIGNING_KEY"
-# Both durable claim/heartbeat currently grant 45 seconds. Leave five seconds
-# of minimum headroom; execution uses 30s and the current lease, not this
-# assumption, to bound its SQL waits and final acceptance.
-MAX_COMMAND_SECONDS = 30
+# Conservatively use the reliability contract's 15s policy-stage limit for
+# the whole admitted job, including retries. The actual physical lease still
+# bounds every command and protective settlement independently.
+# With the contract's 5/30/120s backoff, this total budget permits at most
+# two attempts, not all three. Reconciling that contract row remains OPEN
+# for the named SLO owner; this conservative cap does not approve rollout.
+MAX_COMMAND_SECONDS = 15
 ADMISSION_BUDGET_MILLISECONDS = 750
 
 

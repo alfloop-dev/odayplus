@@ -251,9 +251,10 @@ class ODayWorker:
                     # Renew once before the SQL command opens its SERIALIZABLE
                     # root. A background UPDATE can invalidate the root's first
                     # physical-row snapshot, including protective settlement.
-                    # These SQL-only phases have a <=30s acceptance deadline;
-                    # the renewed 45s lease remains independently checked by
-                    # the owner. No renewal runs concurrently with that root.
+                    # Current caps are 40s for native start, 30s for identity,
+                    # and 15s for policy evaluation. Each owner independently
+                    # checks the actual 45s lease during command/settlement;
+                    # no renewal runs concurrently with that root.
                     native_intake_heartbeat(job.job_id, expected_version=job.version, fence_token=job.fence_token)
                 else:
                     heartbeat.start()

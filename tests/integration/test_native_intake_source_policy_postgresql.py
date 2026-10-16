@@ -17,6 +17,7 @@ from modules.listing.application.native_intake_source_policy import (
     NativeIntakeSourcePolicyConflict,
     NativeIntakeSourcePolicyOwner,
     NativeSourcePolicyReevaluationRequired,
+    native_intake_source_policy_policy,
     run_native_intake_source_policy_delivery,
 )
 from modules.listing.application.native_intake_url_identity import NATIVE_URL_RULE_VERSION
@@ -43,7 +44,7 @@ from tests.integration.test_native_intake_identity_postgresql import (
 from tests.integration.test_native_intake_identity_postgresql import (
     start_case as start_case,
 )
-from tests.security.test_native_intake_start import policy
+from tests.security.test_native_intake_source_policy import policy
 
 pytestmark = pytest.mark.requires_live_env
 
@@ -807,6 +808,8 @@ def test_real_source_update_before_row_acceptance_is_serialized_then_rechecked(s
     identity, owner = source_policy_case
     start, _ = identity
     graph, ids, _, db = start[0]
+    configured = native_intake_source_policy_policy()
+    monkeypatch.setenv(POLICY_ENV, json.dumps({**configured, "backoff_seconds": [0.2]}))
     submission, _, receipt = prepare(source_policy_case)
     delivery = claim(source_policy_case, receipt)
     original, entered, worker_pids = graph.engine.query, threading.Event(), []
@@ -847,6 +850,25 @@ def test_real_source_update_before_row_acceptance_is_serialized_then_rechecked(s
     record_property("actual_source_conflict_sqlstate", error.sqlstate)
     assert native_row(start, submission["intake_id"])["processing_state"] == "CHECKING_SOURCE_POLICY"
     assert owner.settle_failure(delivery, error) is None
+    with graph.transaction(ids["tenant"]):
+        retry = graph.engine.query_one(
+            "SELECT j.status AS business_status,j.attempt,j.max_attempts,j.next_attempt_at,j.timeout_at,"
+            "d.status AS delivery_status,d.delivery_state,d.available_at,clock_timestamp() AS db_now,"
+            "d.available_at>clock_timestamp() AS not_yet_due FROM workflow.jobs j "
+            "JOIN durable_jobs d ON d.job_id=j.job_id::text WHERE j.tenant_id=? AND j.job_id=?",
+            (ids["tenant"], receipt["job_id"]))
+    assert retry["business_status"] == "RETRYING" and retry["attempt"] == 1 < retry["max_attempts"]
+    assert retry["delivery_status"] == JobStatus.QUEUED.value and retry["delivery_state"] == JobDeliveryState.RETRYING.value
+    record_property("actual_retry_schedule_before_claim", json.dumps(retry, default=str))
+    with graph.transaction(ids["tenant"]):
+        graph.engine.query_one(
+            "SELECT pg_sleep(GREATEST(0.0,EXTRACT(EPOCH FROM (available_at-clock_timestamp())))) "
+            "FROM durable_jobs WHERE job_id=?", (receipt["job_id"],))
+        ready = graph.engine.query_one(
+            "SELECT available_at,clock_timestamp() AS db_now,available_at<=clock_timestamp() AS due "
+            "FROM durable_jobs WHERE job_id=?", (receipt["job_id"],))
+    record_property("actual_retry_schedule_after_wait", json.dumps(ready, default=str))
+    assert ready["due"] is True
     committed = owner.execute(claim(source_policy_case, receipt))
     assert committed["processing_state"] == "QUARANTINED"
     assert committed["policy_decision"]["source_version"] == 4 and committed["policy_decision"]["source_snapshot"]["kill_switch"] is True
@@ -988,3 +1010,37 @@ def test_new_upstream_driver_consumes_a_real_induced_serialization_retry(source_
     assert any(r["job_type"] == "native-intake-start" and r["last_error"]["error_class"] == "SerializationFailure" for r in retries)
     record_property("actual_upstream_serialization_backend_pids", ",".join(str(p) for p in pids))
     assert source_owner.execute(claim(source_policy_case, receipt))["processing_state"] == "RETRIEVING"
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+def test_legacy_30_second_jobs_are_readable_only_as_history_under_current_policy(source_policy_case, monkeypatch, terminal):
+    from modules.listing.application import native_intake_source_policy as module
+
+    identity, owner = source_policy_case
+    start, _ = identity
+    graph, ids, _, db = start[0]
+    configured = native_intake_source_policy_policy()
+    # Construct a genuine SQL receipt under the previously accepted 30s
+    # policy. The implementation differs only in this configuration cap.
+    with monkeypatch.context() as legacy:
+        legacy.setattr(module, "MAX_COMMAND_SECONDS", 30)
+        legacy.setenv(POLICY_ENV, json.dumps({**configured, "deadline_seconds": 30}))
+        submission, _, receipt = prepare(source_policy_case)
+        delivery = claim(source_policy_case, receipt)
+        result = owner.execute(delivery) if terminal else None
+    before = native_row(start, submission["intake_id"])
+    if terminal:
+        snapshot = phase_snapshot(identity)
+        assert owner.execute(graph.queue.get(receipt["job_id"])) == result
+        assert phase_snapshot(identity) == snapshot
+    else:
+        assert run_native_intake_source_policy_delivery(delivery, owner) is None
+        assert graph.queue.get(receipt["job_id"]).status == JobStatus.FAILED
+        with db.connect() as connection:
+            failed = connection.execute("SELECT status,result,last_error FROM workflow.jobs WHERE job_id=%s",
+                                        (receipt["job_id"],)).fetchone()
+            assert failed[:2] == ("FAILED", None)
+            assert failed[2]["code"] == "NATIVE_SOURCE_POLICY_ATTEMPT_NOT_ADMITTED"
+            assert connection.execute("SELECT count(*) FROM intake.intake_stage_transitions WHERE job_id=%s",
+                                      (receipt["job_id"],)).fetchone() == (0,)
+    assert native_row(start, submission["intake_id"]) == before
