@@ -133,6 +133,8 @@ class AuthStack:
             status="active",
         )
         self.identity.save_account(account)
+        # These downstream authorization fixtures represent already-rotated users.
+        self.identity.set_password_must_change(account.account_id, False)
         self.identity.set_account_roles(account.account_id, roles or [Role.OPERATIONS_MANAGER])
         self.identity.set_account_scope(
             account.account_id, Scope(tenant_id=str(account.tenant_id))
