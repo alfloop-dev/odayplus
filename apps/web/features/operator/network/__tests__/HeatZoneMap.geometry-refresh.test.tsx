@@ -20,16 +20,24 @@ vi.mock("maplibre-gl", () => ({
     isEmpty() { return this.points.length === 0; }
   },
   Map: class {
-    listeners = new Map<string, () => void>();
+    listeners = new Map<string, Set<() => void>>();
     sources = new Map<string, { data: unknown; setData: ReturnType<typeof vi.fn> }>();
     loaded = false;
     fitBounds = vi.fn(); resize = vi.fn(); triggerRepaint = vi.fn(); remove = vi.fn();
     setPaintProperty = vi.fn();
     constructor() { maps.instances.push(this); }
-    on(name: string, callback: () => void) { this.listeners.set(name, callback); }
-    once(name: string, callback: () => void) { this.listeners.set(name, callback); }
-    off() {}
-    emit(name: string) { if (name === "load") this.loaded = true; this.listeners.get(name)?.(); }
+    on(name: string, callback: () => void) {
+      if (!this.listeners.has(name)) this.listeners.set(name, new Set());
+      this.listeners.get(name)!.add(callback);
+    }
+    once(name: string, callback: () => void) {
+      const wrapped = () => { this.off(name, wrapped); callback(); }; this.on(name, wrapped);
+    }
+    off(name: string, callback: () => void) { this.listeners.get(name)?.delete(callback); }
+    emit(name: string) {
+      if (name === "load") this.loaded = true;
+      for (const callback of [...this.listeners.get(name) ?? []]) callback();
+    }
     addSource(name: string, source: { data: unknown }) { this.sources.set(name, { data: source.data, setData: vi.fn() }); }
     addLayer() {}
     getLayer() { return this.loaded; }
@@ -77,6 +85,42 @@ describe("map viewport follows a real geometry replacement", () => {
     view.rerender(<HeatZoneMap {...props} zones={[...replacement]} selectedZoneId="HZ-02"
       lensScores={[{ id: "HZ-01", label: "new lens", points: 60 }]} />);
     expect(map.fitBounds).not.toHaveBeenCalled();
+  });
+
+  it.each(["styledata", "idle"])("applies the latest snapshot after a loading style becomes ready on %s", event => {
+    const initial = [zone("earlier-zone", [0, 0])];
+    const replacement = [zone("HZ-01", [121.5668, 25.033]), zone("HZ-02", [121.4575, 25.01])];
+    const props = { listings: [], candidates: [], freshness, productionMode: false };
+    const view = render(<HeatZoneMap {...props} zones={initial} selectedZoneId="earlier-zone" />);
+    const map = maps.instances[0];act(() => map.emit("load"));
+    const source = map.getSource("odp-local-heatzones");source.setData.mockClear();map.fitBounds.mockClear();
+    map.loaded = false;
+    view.rerender(<HeatZoneMap {...props} zones={replacement} selectedZoneId="HZ-01" />);
+    // Another render while loading must replace the pending closure, including
+    // its selected outline and lens; the preceding render must never apply.
+    view.rerender(<HeatZoneMap {...props} zones={replacement} selectedZoneId="HZ-02"
+      lensScores={[{ id: "HZ-02", label: "latest lens", points: 90 }]} />);
+    expect(source.setData).not.toHaveBeenCalled();
+    map.loaded = true;act(() => map.emit(event));
+    expect(source.setData).toHaveBeenCalledTimes(1);
+    expect(source.setData.mock.lastCall[0].features.map((feature: any) => feature.properties.id)).toEqual(["HZ-01", "HZ-02"]);
+    expect(source.setData.mock.lastCall[0].features.find((feature: any) => feature.properties.id === "HZ-02").properties.lensTint).toBeTruthy();
+    expect(map.setPaintProperty.mock.lastCall[2][1]).toEqual(["==", ["get", "id"], "HZ-02"]);
+    expect(map.fitBounds).toHaveBeenCalledTimes(1);
+    act(() => { map.emit("styledata"); map.emit("idle"); });
+    expect(source.setData).toHaveBeenCalledTimes(1);
+    view.unmount();act(() => map.emit(event));expect(source.setData).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the latest props when source creation follows several pre-load renders", () => {
+    const props = { listings: [], candidates: [], freshness, productionMode: false };
+    const view = render(<HeatZoneMap {...props} zones={[zone("provisional", [0, 0])]} selectedZoneId="provisional" />);
+    const map = maps.instances[0];
+    view.rerender(<HeatZoneMap {...props} zones={[zone("HZ-01", [121.5, 25])]} selectedZoneId="HZ-01" />);
+    view.rerender(<HeatZoneMap {...props} zones={[zone("HZ-02", [121.6, 25])]} selectedZoneId="HZ-02" />);
+    act(() => map.emit("load"));
+    expect(map.getSource("odp-local-heatzones").data.features.map((feature: any) => feature.properties.id)).toEqual(["HZ-02"]);
+    expect(map.getSource("odp-local-heatzones").setData.mock.lastCall[0].features.map((feature: any) => feature.properties.id)).toEqual(["HZ-02"]);
   });
 
   it.each(["", "h3-synthetic-zone"])("keeps production zones with unavailable geometry off every polygon, label and pick target (%s)", (h3) => {

@@ -335,32 +335,52 @@ export function HeatZoneMap({
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map?.isStyleLoaded()) return;
+    if (!map) return;
+    let applied = false;
+    const synchronize = () => {
+      // Source/style loading may overlap an API snapshot or lens change. Keep
+      // this render pending until the actual map can consume it; every newer
+      // render removes these listeners before installing its own current data.
+      if (applied || mapRef.current !== map || !map.isStyleLoaded()) return;
 
-    const source = map.getSource("odp-local-heatzones") as maplibregl.GeoJSONSource | undefined;
-    source?.setData({
-      type: "FeatureCollection",
-      features: visibleZoneFeatures,
-    });
-    if (source && fittedGeometry.current !== geometryKey) {
-      fitToZones(map, visibleZones);
-      fittedGeometry.current = geometryKey;
-    }
-    if (map.getLayer("odp-local-heatzone-line")) {
-      map.setPaintProperty("odp-local-heatzone-line", "line-color", [
-        "case",
-        ["==", ["get", "id"], selectedZoneId],
-        "#172554",
-        "#ffffff",
-      ]);
-      map.setPaintProperty("odp-local-heatzone-line", "line-width", [
-        "case",
-        ["==", ["get", "id"], selectedZoneId],
-        4,
-        1.5,
-      ]);
-    }
-  }, [geometryKey, selectedZoneId, visibleZoneFeatures, visibleZones]);
+      const source = map.getSource("odp-local-heatzones") as maplibregl.GeoJSONSource | undefined;
+      if (!source) return;
+      // setData/paint can synchronously emit style events. Apply this render
+      // once so a later idle does not start another data-loading cycle.
+      applied = true;
+      source.setData({
+        type: "FeatureCollection",
+        features: visibleZoneFeatures,
+      });
+      if (source && fittedGeometry.current !== geometryKey) {
+        fitToZones(map, visibleZones);
+        fittedGeometry.current = geometryKey;
+      }
+      if (map.getLayer("odp-local-heatzone-line")) {
+        map.setPaintProperty("odp-local-heatzone-line", "line-color", [
+          "case",
+          ["==", ["get", "id"], selectedZoneId],
+          "#172554",
+          "#ffffff",
+        ]);
+        map.setPaintProperty("odp-local-heatzone-line", "line-width", [
+          "case",
+          ["==", ["get", "id"], selectedZoneId],
+          4,
+          1.5,
+        ]);
+      }
+    };
+    map.on("load", synchronize);
+    map.on("styledata", synchronize);
+    map.on("idle", synchronize);
+    synchronize();
+    return () => {
+      map.off("load", synchronize);
+      map.off("styledata", synchronize);
+      map.off("idle", synchronize);
+    };
+  }, [boundaryConfig, productionMapReady, productionMode, geometryKey, selectedZoneId, visibleZoneFeatures, visibleZones]);
 
   useEffect(() => {
     setLayers(layerQuery ? parseLayerState(layerQuery) : readLayerStateFromUrl());
