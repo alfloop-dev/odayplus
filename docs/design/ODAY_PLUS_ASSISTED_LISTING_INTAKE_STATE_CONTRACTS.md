@@ -36,6 +36,7 @@ stateDiagram-v2
     CHECKING_IDENTITY --> CHECKING_SOURCE_POLICY
     CHECKING_SOURCE_POLICY --> RETRIEVING: approved retrieval
     CHECKING_SOURCE_POLICY --> AWAITING_ASSISTED_ENTRY: permitted fallback
+    CHECKING_SOURCE_POLICY --> AWAITING_SOURCE_AUTHORIZATION: account access pending
     CHECKING_SOURCE_POLICY --> QUARANTINED: blocked or unknown
     RETRIEVING --> PARSING: snapshot committed
     RETRIEVING --> FAILED: retry exhausted
@@ -68,6 +69,7 @@ stateDiagram-v2
 | `CHECKING_IDENTITY` | `CHECKING_SOURCE_POLICY` | Orchestrator / `source_policy.evaluate` | No exact identity | Intake version | Source host and policy version; `intake.source_policy_started.v1` | `FAILED` on transient platform error | Reopenable |
 | `CHECKING_SOURCE_POLICY` | `RETRIEVING` | Policy service / `source.retrieve` | Policy=`APPROVED_RETRIEVAL`, approval unexpired, kill switch off | Policy decision ID + version | Policy decision; `intake.retrieval_approved.v1` | `QUARANTINED` if policy changes | Reopenable |
 | `CHECKING_SOURCE_POLICY` | `AWAITING_ASSISTED_ENTRY` | Policy service / `intake.assisted_entry` | Policy permits fallback; no raw credentials requested | Policy decision ID | Policy result; `intake.assisted_entry_required.v1` | `QUARANTINED` if fallback prohibited | Reopenable |
+| `CHECKING_SOURCE_POLICY` | `AWAITING_SOURCE_AUTHORIZATION` | Policy service / `intake.await_source_authorization` | Current valid source policy is `AUTH_REQUIRED`; no separate current manual-entry approval | Policy decision ID + job fences | Source policy snapshot; `intake.source_authorization_required.v1`; existing `intake.state_changed` | Existing blocked/unknown policy routes to `QUARANTINED` | Waiting; no automatic resume |
 | `CHECKING_SOURCE_POLICY` | `QUARANTINED` | Policy service / `intake.quarantine` | `SOURCE_BLOCKED`, `POLICY_UNKNOWN`, expired license, prohibited source | Policy decision ID | Quarantine reason; `intake.quarantined.v1` | Fail closed | Reopenable by steward/policy |
 | `RETRIEVING` | `PARSING` | Retrieval worker / `snapshot.create` | GCS object written, checksum verified, metadata committed | Job fence + snapshot natural key | Snapshot ID/checksum; `snapshot.created.v1`, `intake.parsing_started.v1` | Stay `RETRIEVING` and retry before budget | Reopenable |
 | `RETRIEVING` | `FAILED` | Retrieval worker / `job.fail` | Retryable attempts/time budget exhausted | Job attempt token | Error code/checkpoint; `intake.processing_failed.v1` | None | Reopenable by replay authority |
@@ -85,6 +87,14 @@ stateDiagram-v2
 | `QUARANTINED` | `NEEDS_REVIEW` | Data steward / `intake.reopen` | Data defect correctable; evidence preserved | If-Match | Reopen reason; `intake.reopened.v1` | Remain quarantined | Reopenable |
 | `FAILED` | `RETRIEVING` or `PARSING` | Data steward/operator / `job.replay` | Retry checkpoint exists, source policy still permits, retry budget authorized | Replay key + job fence | Replay receipt; `job.replay_requested.v1` | Remain failed | Reopenable |
 | `SUBMITTED`,`AWAITING_ASSISTED_ENTRY`,`NEEDS_REVIEW` | `CANCELLED` | Submitter/manager / `intake.cancel` | No executed identity/promotion decision | If-Match + idempotency | Cancel reason; `intake.cancelled.v1` | `409 CANNOT_CANCEL` | Terminal |
+
+### 2.1 AUTH_REQUIRED routing decision (2026-10-16)
+
+Product selected: permit manual entry only when the source has a separate explicit approval; otherwise wait for account authorization. Generic legal/license approval does not authorize manual entry. `AUTH_REQUIRED` remains the recorded source policy even when manual entry is permitted.
+
+A current manual-entry approval requires all three source-registry fields: nonblank `assisted_entry_approval_ref`, canonical nonzero human `assisted_entry_approved_by`, and aware future `assisted_entry_review_expires_at`. The effective permission expires at the earlier of the ordinary source review and this separate review. Missing, malformed, expired or revoked approval permits only waiting. Existing kill switch, disabled source, ambiguous host or invalid ordinary source approval retains its existing quarantine result. No row is backfilled with approval.
+
+`AWAITING_SOURCE_AUTHORIZATION` commits with the Intake version, transition, canonical audit, state-change outbox and both completed policy jobs. Completing the policy evaluation does not complete the Intake. This state grants no retrieval or supplied-evidence permission and collects no password, token or cookie. Replaying a completed evaluation returns only its original historical receipt. A source-registry update alone cannot resume the Intake. A new current-authority re-evaluation command, its API and operator presentation are follow-up work; no resume endpoint or live source activation is supplied by this change.
 
 ## 3. Listing lifecycle
 

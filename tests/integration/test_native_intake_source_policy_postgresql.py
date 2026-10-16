@@ -4,6 +4,7 @@ import json
 import sys
 from contextlib import contextmanager
 from dataclasses import replace
+from pathlib import Path
 from types import MethodType
 from uuid import NAMESPACE_DNS, uuid4, uuid5
 
@@ -16,6 +17,7 @@ from modules.listing.application.native_intake_source_policy import (
     SIGNING_KEY_ENV,
     NativeIntakeSourcePolicyConflict,
     NativeIntakeSourcePolicyOwner,
+    NativeIntakeSourcePolicyUnavailable,
     NativeSourcePolicyReevaluationRequired,
     native_intake_source_policy_policy,
     run_native_intake_source_policy_delivery,
@@ -56,6 +58,10 @@ def source_policy_case(identity_case, monkeypatch, record_property):
     monkeypatch.setenv(POLICY_ENV, json.dumps({**policy(ids["tenant"]), "policy_id": "synthetic-native-source-policy"}))
     monkeypatch.setenv(SIGNING_KEY_ENV, "synthetic-source-policy-separate-key-" * 2)
     start[2].canonical_intake_source_policy = MethodType(PersistenceBundle.canonical_intake_source_policy, start[2])
+    # Apply the additive AUTH routing migration; immutable baseline stays intact.
+    with start[0][3].connect() as conn:
+        conn.execute((Path(__file__).resolve().parents[2] /
+            "infra/db/migrations/000034_native_intake_auth_wait.sql").read_text())
     owner = NativeIntakeSourcePolicyOwner(graph)
     owner.record_upstream_retry = record_property
     return identity_case, owner
@@ -212,22 +218,124 @@ def test_sentinel_owner_is_not_current_human_approval(source_policy_case, mode):
 
 
 @pytest.mark.parametrize("condition", ["plain", "kill", "missing_approval"])
-def test_AUTH_contract_gap_fails_visibly_without_inventing_fallback_or_quarantine(source_policy_case, condition):
+def test_AUTH_selected_destination_is_durable_without_source_use(source_policy_case, condition):
     identity, owner = source_policy_case
     start, _ = identity
     graph, ids, _, db = start[0]
     submission, _, receipt = prepare(source_policy_case)
     sql_patch(source_policy_case, "retrieval_mode='AUTH_REQUIRED'" +
               (",kill_switch=true" if condition == "kill" else ",legal_approval_ref=NULL" if condition == "missing_approval" else ""))
-    before = native_row(start, submission["intake_id"])
-    assert run_native_intake_source_policy_delivery(claim(source_policy_case, receipt), owner) is None
-    assert native_row(start, submission["intake_id"]) == before
-    assert graph.queue.get(receipt["job_id"]).status == JobStatus.FAILED
+    before_graph = graph_rows(identity)
+    result = run_native_intake_source_policy_delivery(claim(source_policy_case, receipt), owner)
+    target = "AWAITING_SOURCE_AUTHORIZATION" if condition == "plain" else "QUARANTINED"
+    assert result["processing_state"] == target
+    row = native_row(start, submission["intake_id"])
+    assert row["processing_state"] == target and row["version"] == 4
+    assert graph.queue.get(receipt["job_id"]).status == JobStatus.SUCCEEDED
+    assert graph_rows(identity) == before_graph
+    assert owner.execute(graph.queue.get(receipt["job_id"])) == result
     with db.connect() as conn:
-        row = conn.execute("SELECT status,result,last_error FROM workflow.jobs WHERE job_id=%s", (receipt["job_id"],)).fetchone()
-        assert row[:2] == ("FAILED", None) and row[2]["code"] == "NATIVE_SOURCE_POLICY_AUTH_REQUIRED_CONTRACT_OPEN"
-        assert conn.execute("SELECT count(*) FROM intake.intake_stage_transitions WHERE job_id=%s", (receipt["job_id"],)).fetchone() == (0,)
+        assert conn.execute("SELECT count(*) FROM intake.intake_stage_transitions WHERE job_id=%s", (receipt["job_id"],)).fetchone() == (1,)
+        assert conn.execute("SELECT count(*) FROM intake.source_snapshots WHERE intake_id=%s", (submission["intake_id"],)).fetchone() == (0,)
+        assert conn.execute("SELECT status FROM workflow.jobs WHERE job_id=%s", (receipt["job_id"],)).fetchone() == ("SUCCEEDED",)
+        event = conn.execute("SELECT payload FROM workflow.outbox_events WHERE event_id=%s", (result["outbox_event_id"],)).fetchone()[0]
+        assert validate_event(event) == [] and event["payload"]["to_state"] == target
+        action = "intake.source_authorization_required.v1" if condition == "plain" else "intake.quarantined.v1"
+        assert conn.execute("SELECT action FROM audit.audit_events WHERE audit_event_id=%s", (result["audit_event_id"],)).fetchone() == (action,)
     assert list(owner.admit_partition(ids["tenant"], limit=5)) == []
+    assert graph.audit_sink.writer.verify_chain(ids["tenant"]).ok
+
+
+@pytest.mark.parametrize("approval", ["current", "absent", "blank", "expired", "missing_approver", "system_approver"])
+def test_AUTH_default_worker_requires_distinct_current_manual_approval(source_policy_case, approval):
+    identity, owner = source_policy_case
+    start, _ = identity
+    graph, ids, _, db = start[0]
+    submission, _, receipt = prepare(source_policy_case)
+    sql_patch(source_policy_case, "retrieval_mode='AUTH_REQUIRED',assisted_entry_approval_ref=%s,"
+        "assisted_entry_approved_by=%s,assisted_entry_review_expires_at=clock_timestamp()+interval '1 hour'",
+        ("synthetic-manual-approval", ids["actor"]))
+    patch = {"absent": "assisted_entry_approval_ref=NULL", "blank": "assisted_entry_approval_ref=' '",
+             "expired": "assisted_entry_review_expires_at=clock_timestamp()-interval '1 second'",
+             "missing_approver": "assisted_entry_approved_by=NULL",
+             "system_approver": "assisted_entry_approved_by='" + str(uuid5(NAMESPACE_DNS, "system")) + "'"}
+    if approval != "current":
+        sql_patch(source_policy_case, patch[approval])
+    before_graph = graph_rows(identity)
+    defer_audit(graph)
+    assert ODayWorker(persistence=start[2], heartbeat_interval_seconds=0.01).run_once() is True
+    delivery = graph.queue.get(receipt["job_id"])
+    assert delivery.status == JobStatus.SUCCEEDED
+    result = owner.execute(delivery)
+    target = "AWAITING_ASSISTED_ENTRY" if approval == "current" else "AWAITING_SOURCE_AUTHORIZATION"
+    assert result["processing_state"] == target
+    assert result["policy_decision"]["effective_policy"] == "AUTH_REQUIRED"
+    assert native_row(start, submission["intake_id"])["source_policy_state"] == "AUTH_REQUIRED"
+    assert graph_rows(identity) == before_graph
+    assert graph.audit_sink.writer.verify_chain(ids["tenant"]).ok
+    # A later source update is not a resume or a replacement for its receipt.
+    sql_patch(source_policy_case, "retrieval_mode='APPROVED_RETRIEVAL',version=version+1")
+    before = phase_snapshot(identity)
+    assert owner.execute(delivery) == result and phase_snapshot(identity) == before
+    assert list(owner.admit_partition(ids["tenant"], limit=5)) == []
+    with db.connect() as conn:
+        assert conn.execute("SELECT count(*) FROM intake.source_snapshots WHERE intake_id=%s", (submission["intake_id"],)).fetchone() == (0,)
+
+
+@pytest.mark.parametrize("cas", ["intake", "business"])
+def test_separate_manual_approval_expiry_at_actual_final_CAS_rolls_back_then_waits(source_policy_case, monkeypatch, cas):
+    identity, owner = source_policy_case
+    start, _ = identity
+    graph, ids, _, db = start[0]
+    monkeypatch.setenv(POLICY_ENV, json.dumps({**policy(ids["tenant"]), "max_attempts": 3, "backoff_seconds": [0.001, 0.001]}))
+    submission, _, receipt = prepare(source_policy_case)
+    sql_patch(source_policy_case, "retrieval_mode='AUTH_REQUIRED',assisted_entry_approval_ref='synthetic-manual-approval',"
+        "assisted_entry_approved_by=%s,assisted_entry_review_expires_at=clock_timestamp()+interval '2 seconds'", (ids["actor"],))
+    delivery = claim(source_policy_case, receipt)
+    original, observed = graph.engine.execute, []
+
+    def expire(sql, params=()):
+        matches = (sql.startswith("UPDATE intake.intakes SET processing_state=") if cas == "intake"
+                   else sql.startswith("UPDATE workflow.jobs SET status='SUCCEEDED'"))
+        if matches and not observed:
+            observed.append(graph.engine.query_one("SELECT pg_backend_pid() AS pid"))
+            graph.engine.query_one("SELECT pg_sleep(GREATEST(0.0,EXTRACT(EPOCH FROM "
+                "((SELECT assisted_entry_review_expires_at FROM intake.source_registry "
+                "WHERE source_id='synthetic-feed')-clock_timestamp())))+0.02)")
+        return original(sql, params)
+
+    monkeypatch.setattr(graph.engine, "execute", expire)
+    before = phase_snapshot(identity)
+    with pytest.raises(NativeSourcePolicyReevaluationRequired) as error:
+        owner.execute(delivery)
+    assert observed and phase_snapshot(identity) == before
+    assert owner.settle_failure(delivery, error.value) is None
+    with graph.transaction(ids["tenant"]):
+        graph.engine.query_one("SELECT pg_sleep(GREATEST(0.0,EXTRACT(EPOCH FROM (available_at-clock_timestamp())))) "
+                               "FROM durable_jobs WHERE job_id=?", (receipt["job_id"],))
+    result = owner.execute(claim(source_policy_case, receipt))
+    assert result["processing_state"] == "AWAITING_SOURCE_AUTHORIZATION"
+    assert result["policy_decision"]["accepted_attempt"] == 2
+    assert native_row(start, submission["intake_id"])["version"] == 4
+    with db.connect() as conn:
+        assert conn.execute("SELECT count(*),min(to_state) FROM intake.intake_stage_transitions WHERE job_id=%s",
+                            (receipt["job_id"],)).fetchone() == (1, "AWAITING_SOURCE_AUTHORIZATION")
+
+
+@pytest.mark.parametrize("missing", ["manual_approval_columns", "waiting_state"])
+def test_unmigrated_AUTH_schema_cannot_admit_any_new_work(source_policy_case, missing):
+    identity, owner = source_policy_case
+    graph, ids, _, db = identity[0][0]
+    _, producer, _ = prepare(source_policy_case, admit=False)
+    with db.connect() as conn:
+        if missing == "manual_approval_columns":
+            conn.execute("ALTER TABLE intake.source_registry DROP COLUMN assisted_entry_approved_by")
+        else:
+            conn.execute("ALTER TABLE intake.intakes DROP CONSTRAINT intakes_processing_state_check")
+    before = phase_snapshot(identity)
+    with pytest.raises(NativeIntakeSourcePolicyUnavailable, match="^NATIVE_SOURCE_POLICY_CURRENT_SCHEMA_REQUIRED$"):
+        owner.admit_event(ids["tenant"], producer["outbox_event_id"])
+    assert phase_snapshot(identity) == before
 
 
 @pytest.mark.parametrize("change", ["worker", "fence", "payload", "policy", "version", "scope", "url", "canonical", "cancel", "expired_lease", "foreign_root"])

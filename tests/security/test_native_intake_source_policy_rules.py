@@ -102,11 +102,13 @@ def test_assisted_capture_has_no_network_budget_requirement_and_AN_reuse_stays_d
 
 @pytest.mark.parametrize("patch", [{}, {"kill_switch": True}, {"production_enabled": False},
                                   {"legal_approval_ref": None}, {"allowed_hosts": []}])
-def test_AUTH_destination_remains_explicitly_unsupported_without_invented_quarantine(patch):
+def test_AUTH_destination_uses_explicit_product_rule_and_preserves_source_blocks(patch):
     row = {**source(), "retrieval_mode": "AUTH_REQUIRED", **patch}
     before = dict(row)
-    with pytest.raises(rules.NativeSourcePolicyRuleUnavailable, match="^NATIVE_SOURCE_POLICY_AUTH_REQUIRED_CONTRACT_OPEN$"):
-        evaluate(row)
+    result = evaluate(row)
+    expected = "QUARANTINED" if patch else "AWAITING_SOURCE_AUTHORIZATION"
+    assert result.target_state == expected
+    assert result.target_state != "RETRIEVING"
     assert row == before
 
 
@@ -168,3 +170,62 @@ def test_decision_snapshot_is_immutable_and_binds_exact_relevant_policy_inputs()
     assert json.loads(result.source_snapshot_json)["legal_approval_ref"] == "synthetic-legal"
     assert result.source_snapshot_sha256 != evaluate(row).source_snapshot_sha256
     assert rules.POLICY_RULE_SOURCE_SHA256 == hashlib.sha256(Path(rules.__file__).read_bytes()).hexdigest()
+
+
+def auth_source():
+    return {**source(), "retrieval_mode": "AUTH_REQUIRED",
+            "assisted_entry_approval_ref": "synthetic-separate-manual-approval",
+            "assisted_entry_approved_by": str(uuid4()),
+            "assisted_entry_review_expires_at": NOW + timedelta(minutes=5)}
+
+
+@pytest.mark.parametrize("patch", [
+    {"assisted_entry_approval_ref": None}, {"assisted_entry_approval_ref": " "},
+    {"assisted_entry_approval_ref": True}, {"assisted_entry_approved_by": None},
+    {"assisted_entry_approved_by": "invalid"},
+    {"assisted_entry_approved_by": "00000000-0000-0000-0000-000000000000"},
+    {"assisted_entry_approved_by": str(uuid5(NAMESPACE_DNS, "system"))},
+    {"assisted_entry_review_expires_at": None},
+    {"assisted_entry_review_expires_at": NOW},
+    {"assisted_entry_review_expires_at": NOW - timedelta(microseconds=1)},
+    {"assisted_entry_review_expires_at": NOW.replace(tzinfo=None)},
+    {"assisted_entry_review_expires_at": "invalid"},
+])
+def test_AUTH_missing_or_invalid_separate_approval_waits_without_retrieval(patch):
+    row = {**auth_source(), **patch}
+    result = evaluate(row)
+    assert (result.target_state, result.effective_policy, result.reason_code,
+            result.permission, result.audit_action) == (
+        "AWAITING_SOURCE_AUTHORIZATION", "AUTH_REQUIRED", "SOURCE_ACCOUNT_AUTHORIZATION_REQUIRED",
+        "intake.await_source_authorization", "intake.source_authorization_required.v1")
+    assert result.valid_until == row["review_expires_at"]
+    assert NativeIntakeIdentityOwner._source_reusable(row, NOW) is False
+
+
+@pytest.mark.parametrize("manual_minutes", [5, 120])
+def test_AUTH_separately_approved_manual_entry_expires_at_earlier_review(manual_minutes):
+    row = {**auth_source(), "assisted_entry_review_expires_at": NOW + timedelta(minutes=manual_minutes)}
+    result = evaluate(row)
+    assert (result.target_state, result.effective_policy, result.reason_code) == (
+        "AWAITING_ASSISTED_ENTRY", "AUTH_REQUIRED", "ASSISTED_ENTRY_SEPARATELY_APPROVED")
+    assert result.permission == "intake.assisted_entry" and result.audit_action == "intake.assisted_entry_required.v1"
+    assert result.valid_until == min(row["review_expires_at"], row["assisted_entry_review_expires_at"])
+    assert NativeIntakeIdentityOwner._source_reusable(row, NOW) is False
+
+
+@pytest.mark.parametrize("patch", [{"kill_switch": True}, {"production_enabled": False},
+                                  {"license_approval_ref": None}, {"allowed_hosts": ["another.example"]}])
+def test_separate_manual_approval_cannot_override_source_block_or_unverified_association(patch):
+    result = evaluate({**auth_source(), **patch})
+    assert result.target_state == "QUARANTINED" and result.valid_until is None
+
+
+def test_manual_approval_change_without_version_bump_changes_exact_proof_digest():
+    row = auth_source()
+    before = evaluate(row)
+    for field, replacement in (("assisted_entry_approval_ref", "different-ref"),
+                               ("assisted_entry_approved_by", str(uuid4())),
+                               ("assisted_entry_review_expires_at", NOW + timedelta(minutes=1))):
+        changed = evaluate({**row, field: replacement})
+        assert changed.source_snapshot_sha256 != before.source_snapshot_sha256
+    assert evaluate({**row, "assisted_entry_approval_ref": None}).target_state == "AWAITING_SOURCE_AUTHORIZATION"

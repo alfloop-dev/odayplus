@@ -12,6 +12,7 @@ rules:
       - intake.source_policy_started.v1
       - intake.retrieval_approved.v1
       - intake.assisted_entry_required.v1
+      - intake.source_authorization_required.v1
       - intake.quarantined.v1
       - intake.parsing_started.v1
       - intake.processing_failed.v1

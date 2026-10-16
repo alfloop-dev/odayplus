@@ -1,6 +1,6 @@
 """Evaluate current native source policy from a proven identity-stage result.
 
-Three declared exits commit with their audit, state event and both jobs.
+Four declared exits commit with their audit, state event and both jobs.
 A decision receipt is historical evidence, not a later retrieval capability.
 """
 
@@ -185,6 +185,7 @@ class NativeIntakeSourcePolicyOwner:
             return {
                 "RETRIEVING": ("source.retrieve", "intake.retrieval_approved.v1"),
                 "AWAITING_ASSISTED_ENTRY": ("intake.assisted_entry", "intake.assisted_entry_required.v1"),
+                "AWAITING_SOURCE_AUTHORIZATION": ("intake.await_source_authorization", "intake.source_authorization_required.v1"),
                 "QUARANTINED": ("intake.quarantine", "intake.quarantined.v1"),
             }[target]
         except KeyError as error:
@@ -272,6 +273,15 @@ class NativeIntakeSourcePolicyOwner:
             "WHERE n.nspname='intake' AND c.relname IN "
             "('ux_intakes_exact_url_active','ix_intakes_canonical_url_history')")
         if {row["relname"]: row["indisunique"] for row in indexes} != {"ix_intakes_canonical_url_history": False}:
+            raise NativeIntakeSourcePolicyUnavailable("NATIVE_SOURCE_POLICY_CURRENT_SCHEMA_REQUIRED")
+        columns = self.engine.query("SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema='intake' AND table_name='source_registry' AND column_name IN "
+            "('assisted_entry_approval_ref','assisted_entry_approved_by','assisted_entry_review_expires_at')")
+        state_check = self.engine.query_one("SELECT pg_get_constraintdef(oid) AS definition "
+            "FROM pg_catalog.pg_constraint WHERE conrelid='intake.intakes'::regclass "
+            "AND conname='intakes_processing_state_check' AND contype='c' AND convalidated")
+        if (len(columns) != 3 or state_check is None
+                or "'AWAITING_SOURCE_AUTHORIZATION'" not in state_check["definition"]):
             raise NativeIntakeSourcePolicyUnavailable("NATIVE_SOURCE_POLICY_CURRENT_SCHEMA_REQUIRED")
 
 
@@ -448,7 +458,7 @@ class NativeIntakeSourcePolicyOwner:
             return None
         payload, result = _object(job["payload"]), _object(job["result"])
         target = result.get("processing_state")
-        if target not in {"RETRIEVING", "AWAITING_ASSISTED_ENTRY", "QUARANTINED"}:
+        if target not in {"RETRIEVING", "AWAITING_ASSISTED_ENTRY", "AWAITING_SOURCE_AUTHORIZATION", "QUARANTINED"}:
             raise JobFenceRejectedError("NATIVE_SOURCE_POLICY_TERMINAL_STATE_CONFLICT")
         permission, action = self._branch(target)
         proof = _object(result.get("policy_decision"))
@@ -553,7 +563,8 @@ class NativeIntakeSourcePolicyOwner:
             and proof["source_snapshot"].get("version") == proof["source_version"]
             and hashlib.sha256(_json(proof["source_snapshot"]).encode()).hexdigest() == proof["source_snapshot_sha256"]
             and (target != "RETRIEVING" or proof["effective_policy"] == "APPROVED_RETRIEVAL")
-            and (target != "AWAITING_ASSISTED_ENTRY" or proof["effective_policy"] == "ASSISTED_ENTRY_ONLY")
+            and (target != "AWAITING_ASSISTED_ENTRY" or proof["effective_policy"] in {"ASSISTED_ENTRY_ONLY", "AUTH_REQUIRED"})
+            and (target != "AWAITING_SOURCE_AUTHORIZATION" or proof["effective_policy"] == "AUTH_REQUIRED")
             and (target != "QUARANTINED" or proof["effective_policy"] in {"SOURCE_BLOCKED", "POLICY_UNKNOWN"}))
 
 
@@ -776,7 +787,7 @@ class NativeIntakeSourcePolicyOwner:
             # unsupported/contradictory outcomes. Never echo exception text
             # unless it is exactly one of these static non-sensitive codes.
             safe_reasons = {"NATIVE_SOURCE_POLICY_" + suffix for suffix in (
-                "AUTH_REQUIRED_CONTRACT_OPEN", "SNAPSHOT_UNAVAILABLE", "DB_CLOCK_UNAVAILABLE",
+                "SNAPSHOT_UNAVAILABLE", "DB_CLOCK_UNAVAILABLE",
                 "INPUT_CHANGED", "INTAKE_BINDING_CONFLICT", "ATTEMPT_NOT_ADMITTED", "ORIGINAL_INPUT_CONFLICT",
                 "FINAL_NON_SOURCE_CONFLICT", "FINAL_CAS_REJECTED",
             )}

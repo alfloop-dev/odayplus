@@ -19,12 +19,14 @@ from modules.listing.application.native_intake_url_identity import (
     normalize_native_intake_url,
 )
 
-POLICY_RULE_VERSION = "native-source-policy-v1"
+POLICY_RULE_VERSION = "native-source-policy-v2"
 SOURCE_POLICY_FIELDS = (
     "source_id", "allowed_hosts", "canonicalization_rule_version", "retrieval_mode",
     "legal_approval_ref", "license_approval_ref", "policy_owner_subject_id",
     "review_expires_at", "requests_per_minute", "concurrent_requests",
     "kill_switch", "production_enabled", "version",
+    "assisted_entry_approval_ref", "assisted_entry_approved_by",
+    "assisted_entry_review_expires_at",
 )
 
 
@@ -106,25 +108,22 @@ def _approval_current(source: dict, now: datetime) -> datetime | None:
 
 def evaluate_native_source_policy(source: dict, *, source_host: str, expected_source_id: str,
                                   host_match_count: int, now: datetime) -> NativeSourcePolicyClassification:
-    """Use current DB time and explicit approval; never infer an AUTH fallback.
+    """An AUTH source needs a separate current approval for assisted entry.
 
-    AUTH_REQUIRED's native destination is an OPEN contract question. It takes
-    the explicit unsupported path even with a kill switch, rather than imposing
-    quarantine's independent-unlock requirement without a product decision.
+    Otherwise it waits for account authorization without granting retrieval.
+    Existing source blocks, association and approval checks still take priority.
     """
     try:
         now = _aware_time(now)
     except (ValueError, TypeError, AttributeError) as error:
         raise NativeSourcePolicyRuleUnavailable("NATIVE_SOURCE_POLICY_DB_CLOCK_UNAVAILABLE") from error
-    if source.get("retrieval_mode") == "AUTH_REQUIRED":
-        raise NativeSourcePolicyRuleUnavailable("NATIVE_SOURCE_POLICY_AUTH_REQUIRED_CONTRACT_OPEN")
-
     snapshot = source_policy_snapshot_json(source)
 
     def decision(target, policy, reason, *, expiry=None):
         permission, action = {
             "RETRIEVING": ("source.retrieve", "intake.retrieval_approved.v1"),
             "AWAITING_ASSISTED_ENTRY": ("intake.assisted_entry", "intake.assisted_entry_required.v1"),
+            "AWAITING_SOURCE_AUTHORIZATION": ("intake.await_source_authorization", "intake.source_authorization_required.v1"),
             # This is a state-contract audit action. Publication still uses
             # the existing closed-schema intake.state_changed domain event.
             "QUARANTINED": ("intake.quarantine", "intake.quarantined.v1"),
@@ -143,6 +142,12 @@ def evaluate_native_source_policy(source: dict, *, source_host: str, expected_so
     if expiry is None:
         return decision("QUARANTINED", "POLICY_UNKNOWN", "SOURCE_APPROVAL_UNVERIFIED")
     mode = source.get("retrieval_mode")
+    if mode == "AUTH_REQUIRED":
+        manual_expiry = _assisted_entry_approval_current(source, now)
+        if manual_expiry is not None:
+            return decision("AWAITING_ASSISTED_ENTRY", mode, "ASSISTED_ENTRY_SEPARATELY_APPROVED",
+                            expiry=min(expiry, manual_expiry))
+        return decision("AWAITING_SOURCE_AUTHORIZATION", mode, "SOURCE_ACCOUNT_AUTHORIZATION_REQUIRED", expiry=expiry)
     if mode == "ASSISTED_ENTRY_ONLY":
         return decision("AWAITING_ASSISTED_ENTRY", mode, "ASSISTED_ENTRY_APPROVED", expiry=expiry)
     if mode == "APPROVED_RETRIEVAL":
@@ -153,6 +158,22 @@ def evaluate_native_source_policy(source: dict, *, source_host: str, expected_so
             return decision("QUARANTINED", "POLICY_UNKNOWN", "SOURCE_RETRIEVAL_LIMITS_UNVERIFIED")
         return decision("RETRIEVING", mode, "RETRIEVAL_APPROVED", expiry=expiry)
     return decision("QUARANTINED", "POLICY_UNKNOWN", "SOURCE_POLICY_UNKNOWN")
+
+
+def _assisted_entry_approval_current(source: dict, now: datetime) -> datetime | None:
+    """A legal/license reference alone never implies manual-entry approval."""
+    try:
+        ref = source["assisted_entry_approval_ref"]
+        approver = source["assisted_entry_approved_by"]
+        if (not isinstance(ref, str) or not ref.strip()
+                or not isinstance(approver, str) or not UUID(approver).int
+                or str(UUID(approver)) != approver
+                or approver == str(uuid5(NAMESPACE_DNS, "system"))):
+            return None
+        expiry = _aware_time(source["assisted_entry_review_expires_at"])
+        return expiry if expiry > now else None
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return None
 
 
 POLICY_RULE_SOURCE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()

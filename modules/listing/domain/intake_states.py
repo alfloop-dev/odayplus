@@ -13,6 +13,7 @@ class IntakeStage(StrEnum):
     CHECKING_SOURCE_POLICY = "CHECKING_SOURCE_POLICY"
     RETRIEVING = "RETRIEVING"
     AWAITING_ASSISTED_ENTRY = "AWAITING_ASSISTED_ENTRY"
+    AWAITING_SOURCE_AUTHORIZATION = "AWAITING_SOURCE_AUTHORIZATION"
     PARSING = "PARSING"
     MATCHING = "MATCHING"
     NEEDS_REVIEW = "NEEDS_REVIEW"
@@ -301,8 +302,12 @@ class IntakeStateMachine(BaseStateMachine):
         IntakeStage.CHECKING_SOURCE_POLICY: {
             IntakeStage.RETRIEVING,
             IntakeStage.AWAITING_ASSISTED_ENTRY,
+            IntakeStage.AWAITING_SOURCE_AUTHORIZATION,
             IntakeStage.QUARANTINED
         },
+        # A later authorization command must re-evaluate current source policy.
+        # No direct retrieval, supplied-evidence or automatic resume is granted.
+        IntakeStage.AWAITING_SOURCE_AUTHORIZATION: set(),
         IntakeStage.RETRIEVING: {IntakeStage.PARSING, IntakeStage.FAILED, IntakeStage.QUARANTINED},
         IntakeStage.AWAITING_ASSISTED_ENTRY: {IntakeStage.PARSING, IntakeStage.CANCELLED},
         IntakeStage.PARSING: {IntakeStage.MATCHING, IntakeStage.NEEDS_REVIEW, IntakeStage.FAILED},
@@ -411,9 +416,9 @@ class IntakeStateMachine(BaseStateMachine):
                 if entity.owner_id and role == PrincipalRole.EXPANSION_STAFF and context.actor.actor_id != entity.owner_id:
                     raise DomainValidationError(DenialCode.OWNERSHIP_REQUIRED, "Staff can only replay own failures.")
 
-        elif target == IntakeStage.AWAITING_ASSISTED_ENTRY:
+        elif target in {IntakeStage.AWAITING_ASSISTED_ENTRY, IntakeStage.AWAITING_SOURCE_AUTHORIZATION}:
             if role not in {PrincipalRole.SVC_INTAKE, PrincipalRole.EMERGENCY_ADMIN}:
-                raise DomainValidationError(DenialCode.ROLE_DENIED, "Fallback to assisted entry must be system-initiated.")
+                raise DomainValidationError(DenialCode.ROLE_DENIED, "Source-policy waiting decisions must be system-initiated.")
 
         elif target == IntakeStage.QUARANTINED:
             # Section 2 transitions to Quarantined
