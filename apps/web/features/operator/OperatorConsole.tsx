@@ -1176,54 +1176,15 @@ export function OperatorConsole({
     }
   }
 
-  async function refreshOperatorEnvelope() {
-    const freshRes = await fetch("/api/v1/operator/bootstrap", {
-      headers: getSecurityHeaders(activeRoleId),
-    });
-    if (!freshRes.ok) {
-      throw new Error(`Operator bootstrap refresh returned ${freshRes.status}`);
-    }
-    const payload = await freshRes.json();
-    const inspection = inspectOperatorShellPayload(payload);
-    if (!fixturesAllowed && inspection.status !== "ready") {
-      setShellDataStatus(inspection.status);
-      throw new Error(`Operator bootstrap refresh was ${inspection.status}`);
-    }
-    applyOperatorEnvelope(payload);
-    setShellDataStatus(inspection.status === "ready" ? "ready" : "fixture");
-  }
-
-  async function handleApprovalDecision(approvalId: string, status: string, payload: any) {
-    const correlationId = "corr-" + Math.random().toString(36).substring(2, 11);
-    const idempotencyKey = "idem-" + Math.random().toString(36).substring(2, 11);
-    try {
-      const body = {
-        actorName: shellEnvelope.today.hero.name,
-        actorRoleId: activeRoleId,
-        reason: payload?.reason ?? `Decision from Operator Console for ${approvalId}`,
-        ...payload,
-        status,
-      };
-      const res = await fetch(`/api/v1/operator/approvals/${approvalId}/decision`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": idempotencyKey,
-          "X-Correlation-Id": correlationId,
-          ...getSecurityHeaders(activeRoleId),
-        },
-        body: JSON.stringify(body),
-      });
-      if (res.ok) {
-        showToast("決策已送出");
-        await refreshOperatorEnvelope();
-      } else {
-        showToast(`決策未送出（HTTP ${res.status}）`);
-      }
-    } catch (err) {
-      console.error("Error submitting approval decision:", err);
-      showToast("決策未送出，請重新整理後再試");
-    }
+  function handleApprovalDecision(_approvalId: string, _status: string, _payload: unknown) {
+    // The callback carries UI intent only. This read model has no supported
+    // durable operation acquisition/resolution owner, even with valid SELF
+    // context. Neither fixture mode nor browser state may unlock a first POST.
+    // No request/key/refresh is created here, and no historical outcome is
+    // reconciled by this refusal. Operational approval remains unavailable.
+    showToast(
+      "HOLD｜此檢視僅供唯讀：權威操作生命週期尚未提供，本次請求未提交。請使用既有授權的業務流程；先前請求結果仍未查證，本提示不代表已解決。",
+    );
   }
 
   return (
