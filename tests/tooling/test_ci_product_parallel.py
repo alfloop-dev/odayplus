@@ -265,6 +265,23 @@ def test_ci_workflow_retains_main_database_report_after_failure(ci_workflow: dic
     assert ".odp_data/ci/database-contracts.xml" in artifact["with"]["path"].splitlines()
 
 
+def test_native_sql_diagnostics_are_scoped_to_the_main_database_step(ci_workflow: dict[str, Any]) -> None:
+    key = "ODP_NATIVE_SQL_PROFILE"
+    assert key not in ci_workflow.get("env", {})
+    owners = []
+    for name, job in ci_workflow["jobs"].items():
+        assert key not in job.get("env", {})
+        for step in job.get("steps", []):
+            if key in step.get("env", {}):
+                assert step["env"][key] == "1"
+                owners.append((name, step["name"]))
+    assert owners == [("product-db", "Test database contracts, migrations and schema gates")]
+    artifact = next(step for step in ci_workflow["jobs"]["product-db"]["steps"]
+                    if step.get("uses", "").startswith("actions/upload-artifact@"))
+    assert artifact["if"] == "always()"
+    assert ".odp_data/ci/native-intake-command-profile.jsonl" in artifact["with"]["path"].splitlines()
+
+
 @pytest.mark.parametrize("level", ["workflow", "job", "step"])
 @pytest.mark.parametrize("options", [
     "-k native_intake", "--deselect=tests/integration/test_native_intake_command_closure_postgresql.py",
