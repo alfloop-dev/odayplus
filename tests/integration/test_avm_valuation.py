@@ -37,47 +37,13 @@ from tests.integration._authz import AVM_HEADERS
 
 
 def _provision_canonical_schema(database: Any) -> None:
-    migration_root = Path("infra/db/migrations")
-    with database.connect(autocommit=True) as conn:
-        canonical_ddl = (
-            migration_root / "000002_data_domain_canonical_entities.sql"
-        ).read_text(encoding="utf-8")
-        canonical_ddl = (
-            canonical_ddl.replace('CREATE EXTENSION IF NOT EXISTS "uuid-ossp";', "")
-            .replace('CREATE EXTENSION IF NOT EXISTS "postgis";', "")
-            .replace("uuid_generate_v4()", "gen_random_uuid()")
-            .replace("GEOMETRY(Point, 4326)", "TEXT")
-            .replace("GEOMETRY(Polygon, 4326)", "TEXT")
-            .replace(
-                "CREATE INDEX IF NOT EXISTS idx_address_locations_geom ON core.address_locations USING GIST(geom);",
-                "",
-            )
-            .replace(
-                "CREATE INDEX IF NOT EXISTS idx_h3_cells_geom ON geo.h3_cells USING GIST(geom);",
-                "",
-            )
-        )
-        conn.execute(canonical_ddl)
-        conn.execute("CREATE SCHEMA IF NOT EXISTS workflow;")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS workflow.decisions (
-                decision_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                decision_type VARCHAR(100) NOT NULL DEFAULT 'site_go_wait_reject',
-                entity_type VARCHAR(100) NOT NULL,
-                entity_id VARCHAR(255) NOT NULL,
-                recommendation TEXT,
-                decision_status VARCHAR(50) NOT NULL DEFAULT 'proposed',
-                policy_version_id VARCHAR(100) NOT NULL,
-                created_by VARCHAR(255) NOT NULL,
-                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            """
-        )
-        conn.execute(
-            (migration_root / "000014_decision_policy_registry.sql").read_text(encoding="utf-8")
-        )
+    # Validate the AVM bundle against the complete deployed schema rather than
+    # a hand-picked subset that drifts when required relations are added.
+    from tests.integration.test_postgresql_persistence import (
+        _provision_canonical_schema as provision_deployed_schema,
+    )
+
+    provision_deployed_schema(database)
 
 
 def _as_pre_status_payload(item):

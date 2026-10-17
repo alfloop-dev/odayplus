@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { primeOperatorPersona } from "./_operatorPersona";
 
 /**
  * ODP-FIN-FE-002 — Network Find Areas workspace API binding.
@@ -21,15 +22,27 @@ test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
   test.describe.configure({ timeout: 60_000 });
 
   test.beforeEach(async ({ page }) => {
+    await primeOperatorPersona(page, "expansion-manager");
     // Navigate to the operator console and activate the Network workspace.
     await page.goto("/operator");
+    // The stored persona is applied during client hydration. Start this
+    // workspace binding check after that setup has taken effect.
+    await expect(
+      page.getByRole("button", { name: "展店經理", exact: true }),
+    ).toBeVisible();
+    // The persona preference can render before the fixture API envelope.
+    // Bind this API suite to the applied envelope before navigating once.
+    await expect(page.getByTestId("operator-envelope-source")).toHaveText(
+      "operator-shell-api-envelope", { timeout: 15_000 },
+    );
     // Click the Network tab in the workspace navigation.
     const networkTab = page.getByRole("button", { name: /network/i }).first();
     await networkTab.click();
-    // Wait for the Network Find Areas workspace to mount.
+    // The Network workspace is lazy-loaded; allow its cold dev-server chunk
+    // to finish within the same bounded budget as the other Radar reads.
     await expect(
       page.getByTestId("network-find-areas-workspace"),
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 15_000 });
   });
 
   test("Network Find Areas workspace renders with HeatZone summary stats", async ({
@@ -68,7 +81,9 @@ test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
     // Click the Listing Radar tab (index 1).
     const listingTab = page.getByTestId("network-tab-1");
     await listingTab.click();
-    await expect(page.getByTestId("network-panel-listings")).toBeVisible();
+    await expect(page.getByTestId("network-panel-listings")).toBeVisible({
+      timeout: 15_000,
+    });
     // Either listings table or empty state.
     const table = page.getByTestId("network-listing-table");
     const empty = page.getByText(/No listings sourced yet/i);

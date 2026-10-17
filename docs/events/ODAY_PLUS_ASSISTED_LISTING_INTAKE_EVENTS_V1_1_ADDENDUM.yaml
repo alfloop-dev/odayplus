@@ -8,10 +8,24 @@ rules:
   event_type_versioning: event_type omits version suffix; event_version carries the integer version
   state_contract_labels:
     audit_action_codes:
+      - intake.source_policy_recheck_requested.v1
+      - intake.source_policy_recheck_admitted.v1
+      - intake.source_policy_recheck_completed.v1
+      - intake.source_policy_recheck_delivery_settled.v1
+      - intake.source_policy_recheck_request_cancelled.v1
+      - intake.assisted_entry_requested.v1
+      - intake.assisted_entry_admitted.v1
+      - intake.assisted_entry_attempt_accepted.v1
+      - intake.assisted_entry_delivery_settled.v1
+      - intake.assisted_entry_request_cancelled.v1
       - intake.identity_check_started.v1
       - intake.source_policy_started.v1
       - intake.retrieval_approved.v1
+      - intake.retrieval_requested.v1
+      - intake.retrieval_delivery_settled.v1
       - intake.assisted_entry_required.v1
+      - intake.source_authorization_required.v1
+      - intake.quarantined.v1
       - intake.parsing_started.v1
       - intake.processing_failed.v1
       - intake.assisted_entry_completed.v1
@@ -36,6 +50,66 @@ rules:
     rule: These strings are audit action codes unless an event_type with the same semantic phase is explicitly cataloged below.
 
 catalog_additions:
+  - event_type: intake.assisted_entry_requested
+    event_version: 1
+    producer: listing_intake_service
+    transaction_owner: workflow.outbox_events
+    aggregate_type: intake_assisted_entry
+    partition_key: tenant_id:intake_id
+    ordering_scope: one_intake
+    schema_ref: '#/payloads/IntakeAssistedEntryRequestedV1'
+    sensitive_fields: []
+    consumers: [assisted_entry_service]
+    retention_days: 30
+
+  - event_type: intake.assisted_entry_request_cancelled
+    event_version: 1
+    producer: listing_intake_service
+    transaction_owner: workflow.outbox_events
+    aggregate_type: intake_assisted_entry
+    partition_key: tenant_id:intake_id
+    ordering_scope: one_intake
+    schema_ref: '#/payloads/IntakeCommandCancellationV1'
+    sensitive_fields: []
+    consumers: [assisted_entry_service, listing_intake_service]
+    retention_days: 30
+
+  - event_type: intake.source_policy_recheck_cancelled
+    event_version: 1
+    producer: listing_intake_service
+    transaction_owner: workflow.outbox_events
+    aggregate_type: intake_policy_recheck
+    partition_key: tenant_id:intake_id
+    ordering_scope: one_intake
+    schema_ref: '#/payloads/IntakeCommandCancellationV1'
+    sensitive_fields: []
+    consumers: [listing_intake_service]
+    retention_days: 30
+
+  - event_type: snapshot.manual_entry_created
+    event_version: 1
+    producer: assisted_entry_service
+    transaction_owner: intake.source_snapshots
+    aggregate_type: source_snapshot
+    partition_key: tenant_id:intake_id
+    ordering_scope: one_intake
+    schema_ref: '#/payloads/SnapshotCreatedV1'
+    sensitive_fields: [payload.object_uri]
+    consumers: [parser_orchestrator, evidence_index, reconciliation_service]
+    retention_days: 14
+
+  - event_type: intake.source_policy_recheck_requested
+    event_version: 1
+    producer: listing_intake_service
+    transaction_owner: workflow.outbox_events
+    aggregate_type: intake_policy_recheck
+    partition_key: tenant_id:intake_id
+    ordering_scope: one_intake
+    schema_ref: '#/payloads/IntakeSourcePolicyRecheckRequestedV1'
+    sensitive_fields: []
+    consumers: [listing_intake_service]
+    retention_days: 30
+
   - event_type: assignment.claimed
     event_version: 1
     producer: workflow_service
@@ -168,7 +242,98 @@ catalog_additions:
     consumers: [audit_projection, evidence_verifier, export_notification]
     retention_days: 30
 
+  - event_type: sitescore.execution_requested
+    event_version: 1
+    producer: sitescore_execution_service
+    transaction_owner: sitescore.execution_requests
+    aggregate_type: sitescore_execution_request
+    partition_key: tenant_id:execution_request_id
+    ordering_scope: one_execution_request
+    schema_ref: '#/payloads/SiteScoreExecutionChangedV1'
+    sensitive_fields: []
+    consumers: [operator_console_projection, audit_projection]
+    retention_days: 14
+
+  - event_type: sitescore.execution_failed
+    event_version: 1
+    producer: sitescore_worker
+    transaction_owner: sitescore.execution_requests
+    aggregate_type: sitescore_execution_request
+    partition_key: tenant_id:execution_request_id
+    ordering_scope: one_execution_request
+    schema_ref: '#/payloads/SiteScoreExecutionChangedV1'
+    sensitive_fields: []
+    consumers: [operator_console_projection, audit_projection]
+    retention_days: 30
+
+  - event_type: sitescore.execution_completed
+    event_version: 1
+    producer: sitescore_worker
+    transaction_owner: sitescore.execution_requests
+    aggregate_type: sitescore_execution_request
+    partition_key: tenant_id:execution_request_id
+    ordering_scope: one_execution_request
+    schema_ref: '#/payloads/SiteScoreExecutionChangedV1'
+    sensitive_fields: []
+    consumers: [operator_console_projection, audit_projection]
+    retention_days: 30
+
 payloads:
+  IntakeAssistedEntryRequestedV1:
+    type: object
+    additionalProperties: false
+    required: [request_id, intake_id, expected_intake_version, requested_by, requested_at, input_sha256, fields_sha256, command_sha256, correction_ids, source_policy_event_id, source_policy_event_sha256, root_identity_event_id, policy_sha256, timeout_at]
+    properties:
+      request_id: {type: string, format: uuid}
+      intake_id: {type: string, format: uuid}
+      expected_intake_version: {type: integer, minimum: 1}
+      requested_by: {type: string, format: uuid}
+      requested_at: {type: string, format: date-time}
+      input_sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+      fields_sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+      command_sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+      correction_ids:
+        type: array
+        minItems: 3
+        maxItems: 7
+        uniqueItems: true
+        items: {type: string, format: uuid}
+      source_policy_event_id: {type: string, format: uuid}
+      source_policy_event_sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+      root_identity_event_id: {type: string, format: uuid}
+      policy_sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+      timeout_at: {type: string, format: date-time}
+
+  IntakeCommandCancellationV1:
+    type: object
+    additionalProperties: false
+    required: [cancellation_id, request_id, intake_id, expected_intake_version, requested_by, requested_at, original_request_sha256, request_kind, job_id]
+    properties:
+      cancellation_id: {type: string, format: uuid}
+      request_id: {type: string, format: uuid}
+      intake_id: {type: string, format: uuid}
+      expected_intake_version: {type: integer, minimum: 1}
+      requested_by: {type: string, format: uuid}
+      requested_at: {type: string, format: date-time}
+      original_request_sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+      request_kind: {type: string, enum: [ASSISTED_ENTRY, SOURCE_POLICY_RECHECK]}
+      job_id: {type: [string, 'null'], format: uuid}
+
+  IntakeSourcePolicyRecheckRequestedV1:
+    type: object
+    additionalProperties: false
+    required: [request_id, intake_id, expected_intake_version, requested_by, requested_at, input_sha256, root_identity_event_id]
+    properties:
+      request_id: {type: string, format: uuid}
+      intake_id: {type: string, format: uuid}
+      expected_intake_version: {type: integer, minimum: 1}
+      requested_by: {type: string, format: uuid}
+      requested_at: {type: string, format: date-time}
+      input_sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+      root_identity_event_id: {type: string, format: uuid}
+      waiting_state: {type: string, enum: [AWAITING_SOURCE_AUTHORIZATION, AWAITING_ASSISTED_ENTRY]}
+      waiting_source_policy: {type: string, enum: [AUTH_REQUIRED, ASSISTED_ENTRY_ONLY]}
+
   AssignmentStateChangedV1:
     type: object
     additionalProperties: false
@@ -279,6 +444,22 @@ payloads:
       content_sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
       watermark: {type: string}
       expires_at: {type: string, format: date-time}
+
+  # Technical execution-owner protocol; this does not grant model/source use.
+  SiteScoreExecutionChangedV1:
+    type: object
+    additionalProperties: false
+    required: [execution_request_id, candidate_site_id, job_id, request_version, status, base_report_id, base_report_version, result_report_id, result_report_version]
+    properties:
+      execution_request_id: {type: string, format: uuid}
+      candidate_site_id: {type: string, format: uuid}
+      job_id: {type: string, format: uuid}
+      request_version: {type: integer, minimum: 1}
+      status: {type: string, enum: [QUEUED, RUNNING, RETRYING, SUCCEEDED, FAILED, DEAD_LETTER, CANCELLED]}
+      base_report_id: {type: string}
+      base_report_version: {type: integer, minimum: 1}
+      result_report_id: {type: [string, 'null']}
+      result_report_version: {type: [integer, 'null'], minimum: 1}
 
 base_payload_completion_gate:
   rule: Every payload entry in the base v1 catalog must be expanded to a complete JSON Schema with type, additionalProperties, required, and properties before implementation approval.

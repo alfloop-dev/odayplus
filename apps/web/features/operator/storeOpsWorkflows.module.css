@@ -90,3 +90,6 @@
 @media (prefers-reduced-motion: reduce) {
   .dialog *, .drawer * { animation: none !important; transition: none !important; }
 }
+
+.submissionFields { margin: 0; padding: 0; min-width: 0; border: 0; }
+.submissionStatus { margin: 12px 18px 0; }

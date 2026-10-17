@@ -1,7 +1,7 @@
 import { expect, request as playwrightRequest, test } from "@playwright/test";
 
 // ODP-OC-R4-007 — Network Review decision + atomic governance sync.
-// Screens verified against package 6 (sha db3ea3d…): data-screen-label values
+// Current UI target: R7 / Package 10; data-screen-label values
 // "Network 選址審核" (review panel) / "Dialog Review Decision" (decision dialog).
 // Decision mapping GO→Approved, WAIT→On Hold, Return→Need Data, Reject→Rejected;
 // Candidate + Review + Approval + Decision + Audit sync in one transaction.
@@ -58,8 +58,29 @@ test.describe("ODP-OC-R4-007 Network Review decision", () => {
     const dialog = page.getByTestId("review-decision-dialog");
     await expect(dialog).toBeVisible();
     await expect(dialog).toHaveAttribute("data-screen-label", "Dialog Review Decision");
+    await expect(page.getByTestId("review-decision-reason")).toBeFocused();
     await page.getByTestId("review-decision-reason").fill("人流量體大且回本期可接受，核准進展店閘。");
-    await page.getByTestId("review-decision-submit").click();
+    // Preserve the actual API response while proving the pending UI cannot
+    // hide the request. No fixture response substitutes for the business write.
+    let releaseResponse: () => void = () => {};
+    const holdResponse = new Promise<void>(resolve => { releaseResponse = resolve; });
+    await page.route("**/network-reviews/RV-702/decide", async route => {
+      const response = await route.fetch();
+      await holdResponse;
+      await route.fulfill({ response });
+    });
+    try {
+      await page.getByTestId("review-decision-submit").click();
+      await expect(page.getByRole("dialog")).toHaveAttribute("aria-busy", "true");
+      await expect(page.getByTestId("review-decision-reason")).toBeFocused();
+      await expect(page.getByTestId("review-decision-reason")).toHaveAttribute("readonly");
+      await expect(page.getByTestId("review-decision-close")).toBeDisabled();
+      await expect(page.getByRole("button", { name:"取消", exact:true })).toBeDisabled();
+      await page.keyboard.press("Escape");
+      await expect(dialog).toBeVisible();
+    } finally {
+      releaseResponse();
+    }
 
     // The review moves to Approved and the decision surfaces the mapped status.
     await expect(page.getByTestId("review-decided-RV-702")).toContainText("Approved", { timeout: 15_000 });
@@ -157,11 +178,10 @@ test.describe("ODP-OC-R4-007 Network Review decision", () => {
     await api.dispose();
   });
 
-  test("Operations lead sees read-only review actions (no decision bar)", async ({ page }) => {
-    // operations_manager does not hold sitescore APPROVE. Keep its persona
-    // intact rather than impersonating a reviewer to make the flow succeed.
+  test("PM/audit persona sees read-only review actions (no decision bar)", async ({ page }) => {
+    // R7 admits PM/audit to Network as a read-only decision viewer.
     await page.addInitScript(() => {
-      window.sessionStorage.setItem("oday.operator.role", "ops-lead");
+      window.sessionStorage.setItem("oday.operator.role", "pm-audit");
     });
     await page.goto("/operator?ws=network");
     await expect(page.getByTestId("network-find-areas-workspace")).toBeVisible();

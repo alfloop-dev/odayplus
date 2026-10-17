@@ -103,9 +103,9 @@ def test_empty_live_repository_is_ready_without_seed_rows() -> None:
     assert envelope["workQueue"] == []
     assert envelope["approvals"] == []
     kpis = {item["label"]: item["value"] for item in envelope["kpis"]}
-    assert kpis["營運任務"] == "0"
-    assert kpis["待核准"] == "0"
-    assert kpis["交易淨額"] == "0.00"
+    assert kpis["高風險未指派"] is None
+    assert kpis["待我核准"] is None
+    assert envelope["meta"]["recordCounts"]["successfulTransactionNet"] == 0.0
 
 
 def test_live_repository_projects_persisted_rows_and_real_kpis() -> None:
@@ -156,8 +156,9 @@ def test_live_repository_projects_persisted_rows_and_real_kpis() -> None:
     assert envelope["notifications"][0]["id"] == "notification-alert-live-1"
     assert envelope["auditFeed"][0]["correlationId"] == "corr-live-1"
     kpis = {item["label"]: item["value"] for item in envelope["kpis"]}
-    assert kpis["有效門市"] == "1"
-    assert kpis["交易淨額"] == "180.50"
+    assert kpis["已逾期 Issue"] is None
+    assert envelope["meta"]["recordCounts"]["stores"] == 1
+    assert envelope["meta"]["recordCounts"]["successfulTransactionNet"] == 180.50
     assert envelope["meta"]["recordCounts"]["transactions"] == 1
     assert envelope["meta"]["source"] == "operator-shell-production"
 
@@ -288,6 +289,8 @@ def test_create_app_injects_live_repository_for_production_postgresql(
         DurableAssistedIntakeStore,
     )
     from shared.infrastructure.persistence.audit_log import DurableAuditLog
+    from shared.infrastructure.persistence.job_queue import DurableJobQueue
+    from shared.infrastructure.persistence.outbox import DurableOutboxRepository
 
     engine = _ProductionStubEngine()
     bundle = replace(
@@ -295,6 +298,8 @@ def test_create_app_injects_live_repository_for_production_postgresql(
         mode="postgresql",
         engine=engine,
         audit_log=DurableAuditLog(engine),
+        job_queue=DurableJobQueue(engine),
+        outbox_repository=DurableOutboxRepository(engine),
         assisted_intake_store=DurableAssistedIntakeStore(SimpleNamespace(engine=engine)),
     )
     app = create_app(
@@ -412,8 +417,8 @@ def test_live_operator_http_context_applies_verified_tenant_and_store_scope() ->
     assert payload["meta"]["recordCounts"]["stores"] == 1
     assert payload["meta"]["recordCounts"]["transactions"] == 1
     kpis = {item["label"]: item["value"] for item in payload["kpis"]}
-    assert kpis["有效門市"] == "1"
-    assert kpis["交易淨額"] == "100.00"
+    assert kpis["已逾期 Issue"] is None
+    assert payload["meta"]["recordCounts"]["successfulTransactionNet"] == 100.0
     assert "Tenant B Secret" not in str(payload)
 
     missing_tenant = _operator_request(
@@ -729,7 +734,10 @@ def test_canonical_writer_restart_provenance(tmp_path: Path, monkeypatch: Any) -
         )
 
         # Write canonical records through actual API / canonical writer paths with tenant header
-        app1 = create_app(persistence=bundle1)
+        # The legacy local batch producer must write the same durable tenant
+        # namespace read by the canonical owner, using the actual report service.
+        app1 = create_app(persistence=bundle1, sitescore_repository=
+            bundle1._scoped_repository("sitescore_repository", "tenant-canonical"))
         with TestClient(app1) as client1:
             headers = {
                 "x-tenant-id": "tenant-canonical",
@@ -751,12 +759,16 @@ def test_canonical_writer_restart_provenance(tmp_path: Path, monkeypatch: Any) -
                             "snapshot_id": "snap-canonical",
                             "rent_amount": 2000.0,
                             "area_ping": 50.0,
+                            "latitude": 25.026,
+                            "longitude": 121.543,
+                            "floor": "1F",
                         }
                     ],
                     "source_id": "src-canonical",
                 },
             )
             assert res_list.status_code == 202, res_list.text
+            candidate_id = res_list.json()["candidates"][0]["candidateSiteId"]
 
             # 2. HeatZone batch score job
             res_hz = client1.post(
@@ -797,7 +809,7 @@ def test_canonical_writer_restart_provenance(tmp_path: Path, monkeypatch: Any) -
                 json={
                     "features": [
                         {
-                            "candidate_site_id": "cand-canonical-1",
+                            "candidate_site_id": candidate_id,
                             "heat_zone_score": 80.0,
                             "monthly_rent": 50000.0,
                             "area_ping": 30.0,
@@ -811,10 +823,15 @@ def test_canonical_writer_restart_provenance(tmp_path: Path, monkeypatch: Any) -
 
             res_dec = client1.post(
                 "/api/v1/sitescore/decisions",
-                headers=headers,
+                headers={**headers, "If-Actor-Match": headers["x-subject-id"],
+                         "Idempotency-Key": "canonical-writer-submit"},
                 json={
                     "report_id": report_id,
                     "created_by": "user-canonical",
+                    "expected_actor_subject_id": headers["x-subject-id"],
+                    "expected_tenant_id": headers["x-tenant-id"],
+                    "submission_summary": "Review the imported canonical candidate and saved report.",
+                    "reviewer_group_id": "site_reviewer",
                 },
             )
             assert res_dec.status_code == 201, res_dec.text
@@ -953,8 +970,9 @@ def test_canonical_writer_restart_provenance(tmp_path: Path, monkeypatch: Any) -
         assert sections_canonical["siteScoreDecisions"]["state"] == "available"
         assert sections_canonical["siteScoreDecisions"]["recordCount"] == 1
 
-        assert meta_canonical["dataMode"] == "live"
-        assert meta_canonical["dataOrigin"]["complete"] is True
+        assert sections_canonical["storeOpsIssues"]["state"] == "unavailable"
+        assert meta_canonical["dataMode"] == "degraded"
+        assert meta_canonical["dataOrigin"]["complete"] is False
         assert "listing-ownership-less" not in str(state_canonical)
         assert "job-unscoped" not in str(state_canonical)
         assert "run-unscoped" not in str(state_canonical)
@@ -996,7 +1014,8 @@ def test_canonical_writer_restart_provenance(tmp_path: Path, monkeypatch: Any) -
             )
             assert res_canonical.status_code == 200, res_canonical.text
             data_c = res_canonical.json()
-            assert data_c["meta"]["dataMode"] == "live"
+            assert data_c["meta"]["dataMode"] == "degraded"
+            assert data_c["meta"]["sections"]["storeOpsIssues"]["state"] == "unavailable"
             assert data_c["meta"]["sections"]["listings"]["recordCount"] == 1
             assert data_c["meta"]["sections"]["heatZones"]["recordCount"] == 1
             assert data_c["meta"]["sections"]["ingestionRuns"]["recordCount"] == 1

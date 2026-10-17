@@ -98,11 +98,17 @@ def _score_candidate(client: TestClient, candidate_id: str, key: str, overrides:
     return resp.json()
 
 
-def _open_decision(client: TestClient, report_id: str, created_by: str) -> dict:
+def _open_decision(client: TestClient, report_id: str, created_by: str, submission_key: str) -> dict:
+    # This SQLite restart fixture uses the existing local header-trust adapter.
+    # Each actor is a distinct request principal; the JSON actor is not a grant.
     resp = client.post(
         "/sitescore/decisions",
-        headers=HEADERS,
-        json={"report_id": report_id, "created_by": created_by},
+        headers={**HEADERS, "x-subject-id": created_by, "If-Actor-Match": created_by,
+                 "Idempotency-Key": submission_key},
+        json={"report_id": report_id, "created_by": created_by,
+              "expected_actor_subject_id": created_by, "expected_tenant_id": HEADERS["x-tenant-id"],
+              "submission_summary": "Review the durable imported candidate and saved report.",
+              "reviewer_group_id": "site_reviewer"},
     )
     assert resp.status_code == 201, resp.text
     payload = resp.json()
@@ -132,7 +138,10 @@ def _heatzone_features() -> list[dict]:
 def test_expansion_flow_persists_across_restart(db_path) -> None:
     bundle = _durable_bundle(db_path)
     try:
-        client = TestClient(create_app(persistence=bundle))
+        # Bind the real local batch producer to the same durable tenant store
+        # used by the canonical review owner; no report is copied or fabricated.
+        client = TestClient(create_app(persistence=bundle, sitescore_repository=
+            bundle._scoped_repository("sitescore_repository", HEADERS["x-tenant-id"])))
 
         # 1. HeatZone ranking ------------------------------------------------
         heatzone = client.post(
@@ -199,16 +208,19 @@ def test_expansion_flow_persists_across_restart(db_path) -> None:
                 "source_snapshot_ids": ["flow002-v1"],
             },
         )
-        returned_decision = _open_decision(client, first["reports"][0]["report_id"], "analyst")
+        returned_decision = _open_decision(client, first["reports"][0]["report_id"], "analyst", "flow002-first-submit")
         returned = client.post(
             f"/sitescore/decisions/{returned_decision['decision_id']}/decision",
-            headers=HEADERS,
-            json={"action": "REQUEST_REVISION", "actor": "reviewer", "reason": "need comparables"},
+            headers={**HEADERS, "x-subject-id": "reviewer", "If-Actor-Match": "reviewer"},
+            json={"action": "REQUEST_REVISION", "actor": "reviewer", "reason": "need comparables",
+                  "expected_actor_subject_id": "reviewer", "expected_tenant_id": HEADERS["x-tenant-id"],
+                  "expected_version": returned_decision["version"]},
         )
         assert returned.status_code == 200
         assert returned.json()["decision_status"] == "DRAFT"
 
-        # 3b. SiteScore v2 -> APPROVE (realization) --------------------------
+        # 3b. Persist SiteScore v2, then resubmit the returned, frozen v1 round.
+        # A new saved report does not silently replace an existing review.
         second = _score_candidate(
             client,
             candidate_id,
@@ -222,13 +234,18 @@ def test_expansion_flow_persists_across_restart(db_path) -> None:
         )
         second_report = second["reports"][0]
         assert second_report["report_version"] == 2
-        approved_decision = _open_decision(client, second_report["report_id"], "analyst")
+        approved_decision = _open_decision(client, first["reports"][0]["report_id"], "analyst", "flow002-return-resubmit")
+        assert approved_decision["decision_id"] == returned_decision["decision_id"]
+        assert approved_decision["report_id"] == first["reports"][0]["report_id"]
+        assert approved_decision["report_version"] == 1
         approval = client.post(
             f"/sitescore/decisions/{approved_decision['decision_id']}/decision",
-            headers=HEADERS,
-            json={"action": "APPROVE", "actor": "director", "reason": "policy satisfied"},
+            headers={**HEADERS, "x-subject-id": "director", "If-Actor-Match": "director"},
+            json={"action": "APPROVE", "actor": "director", "reason": "policy satisfied",
+                  "expected_actor_subject_id": "director", "expected_tenant_id": HEADERS["x-tenant-id"],
+                  "expected_version": approved_decision["version"]},
         )
-        assert approval.status_code == 200
+        assert approval.status_code == 200, approval.text
         approval_body = approval.json()
         assert approval_body["decision_status"] == "APPROVED"
         assert approval_body["realization_events"][0]["candidate_site_id"] == candidate_id
@@ -238,7 +255,8 @@ def test_expansion_flow_persists_across_restart(db_path) -> None:
     # --- simulated process restart: fresh bundle + app, same DB file --------
     reopened = _durable_bundle(db_path)
     try:
-        client2 = TestClient(create_app(persistence=reopened))
+        client2 = TestClient(create_app(persistence=reopened, sitescore_repository=
+            reopened._scoped_repository("sitescore_repository", HEADERS["x-tenant-id"])))
 
         # AC1: HeatZone ranking + map/list/detail persist ---------------------
         hz_list = client2.get("/heatzones", headers=HEADERS).json()

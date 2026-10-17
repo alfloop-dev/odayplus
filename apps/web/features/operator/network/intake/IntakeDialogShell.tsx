@@ -14,6 +14,8 @@ export function IntakeDialogShell({
   ariaLabel,
   children,
   className,
+  dismissible = true,
+  onEscapeBlocked,
   onClose,
   screenLabel,
   stacked,
@@ -22,12 +24,14 @@ export function IntakeDialogShell({
   ariaLabel: string;
   children: ReactNode;
   className?: string;
+  dismissible?: boolean;
+  onEscapeBlocked?: () => void;
   onClose: () => void;
   screenLabel: string;
   stacked?: boolean;
   testId: string;
 }) {
-  const panelRef = useModalDialogBehavior({ onClose });
+  const panelRef = useModalDialogBehavior({ dismissible, onClose, onEscapeBlocked });
 
   return (
     <div
@@ -35,7 +39,7 @@ export function IntakeDialogShell({
       data-screen-label={screenLabel}
       data-testid={testId}
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (dismissible && event.target === event.currentTarget) onClose();
       }}
     >
       <div

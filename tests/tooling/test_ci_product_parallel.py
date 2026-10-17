@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -129,6 +130,31 @@ def count_exact_command_occurrences(
     return occurrences
 
 
+def pytest_addopts_reporting_errors(workflow: dict[str, Any]) -> list[str]:
+    """Keep inherited pytest options from narrowing the required acceptance commands."""
+    scopes = [("workflow", workflow)]
+    for name, job in workflow.get("jobs", {}).items():
+        scopes.append((name, job))
+        scopes.extend((f"{name}/step{index}", step) for index, step in enumerate(job.get("steps", [])))
+    errors = []
+    for name, scope in scopes:
+        env = scope.get("env", {})
+        if "PYTEST_ADDOPTS" not in env:
+            continue
+        value = env["PYTEST_ADDOPTS"]
+        if value == "":
+            continue
+        try:
+            options = shlex.split(value) if isinstance(value, str) else []
+        except ValueError:
+            options = []
+        if len(options) != 1 or not re.fullmatch(
+            r"--junitxml=\.odp_data/ci/[A-Za-z0-9][A-Za-z0-9_.-]*\.xml", options[0]
+        ):
+            errors.append(f"{name}: PYTEST_ADDOPTS must contain only a literal CI JUnit report path")
+    return errors
+
+
 @pytest.fixture(scope="module")
 def ci_workflow() -> dict[str, Any]:
     assert CI_WORKFLOW_PATH.exists(), f"{CI_WORKFLOW_PATH} does not exist."
@@ -222,6 +248,61 @@ def test_ci_workflow_command_exact_single_ownership(ci_workflow: dict[str, Any])
             f"found in: {list(occurrences.keys())}"
         )
         assert occurrences[expected_lane] == 1
+
+
+def test_ci_workflow_pytest_addopts_are_reporting_only(ci_workflow: dict[str, Any]) -> None:
+    assert pytest_addopts_reporting_errors(ci_workflow) == []
+
+
+def test_ci_workflow_retains_main_database_report_after_failure(ci_workflow: dict[str, Any]) -> None:
+    steps = ci_workflow["jobs"]["product-db"]["steps"]
+    database = next(step for step in steps if step.get("name") == "Test database contracts, migrations and schema gates")
+    assert database["env"]["PYTEST_ADDOPTS"] == "--junitxml=.odp_data/ci/database-contracts.xml"
+    assert database.get("if") is None and database.get("continue-on-error", False) is False
+    artifact = next(step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@"))
+    assert artifact.get("if") == "always()"
+    assert artifact["with"]["if-no-files-found"] == "error"
+    assert ".odp_data/ci/database-contracts.xml" in artifact["with"]["path"].splitlines()
+
+
+def test_native_sql_diagnostics_are_scoped_to_the_main_database_step(ci_workflow: dict[str, Any]) -> None:
+    key = "ODP_NATIVE_SQL_PROFILE"
+    assert key not in ci_workflow.get("env", {})
+    owners = []
+    for name, job in ci_workflow["jobs"].items():
+        assert key not in job.get("env", {})
+        for step in job.get("steps", []):
+            if key in step.get("env", {}):
+                assert step["env"][key] == "1"
+                owners.append((name, step["name"]))
+    assert owners == [("product-db", "Test database contracts, migrations and schema gates")]
+    artifact = next(step for step in ci_workflow["jobs"]["product-db"]["steps"]
+                    if step.get("uses", "").startswith("actions/upload-artifact@"))
+    assert artifact["if"] == "always()"
+    assert ".odp_data/ci/native-intake-command-profile.jsonl" in artifact["with"]["path"].splitlines()
+
+
+@pytest.mark.parametrize("level", ["workflow", "job", "step"])
+@pytest.mark.parametrize("options", [
+    "-k native_intake", "--deselect=tests/integration/test_native_intake_command_closure_postgresql.py",
+    "--maxfail=1", "-p no:some_plugin", "${{ inputs.pytest_options }}", "@pytest-options.txt",
+    "--junitxml=.odp_data/ci/database-contracts.xml -k narrowed", None, ["--junitxml=report.xml"],
+])
+def test_ci_pytest_addopts_reject_selection_plugins_and_dynamic_values(level: str, options: Any) -> None:
+    step: dict[str, Any] = {"run": "uv run pytest tests/integration"}
+    job: dict[str, Any] = {"steps": [step]}
+    workflow = {"jobs": {"product-db": job}}
+    scope = {"workflow": workflow, "job": job, "step": step}[level]
+    scope["env"] = {"PYTEST_ADDOPTS": options}
+    assert len(pytest_addopts_reporting_errors(workflow)) == 1
+
+
+@pytest.mark.parametrize("options", ["", "--junitxml=.odp_data/ci/database-contracts.xml"])
+def test_ci_pytest_addopts_accept_empty_or_literal_reporting(options: str) -> None:
+    workflow = {"env": {"PYTEST_ADDOPTS": options}, "jobs": {"product-db": {
+        "env": {"PYTEST_ADDOPTS": options}, "steps": [{"env": {"PYTEST_ADDOPTS": options}}],
+    }}}
+    assert pytest_addopts_reporting_errors(workflow) == []
 
 
 # ---------------------------------------------------------------------------

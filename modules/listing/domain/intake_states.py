@@ -13,6 +13,7 @@ class IntakeStage(StrEnum):
     CHECKING_SOURCE_POLICY = "CHECKING_SOURCE_POLICY"
     RETRIEVING = "RETRIEVING"
     AWAITING_ASSISTED_ENTRY = "AWAITING_ASSISTED_ENTRY"
+    AWAITING_SOURCE_AUTHORIZATION = "AWAITING_SOURCE_AUTHORIZATION"
     PARSING = "PARSING"
     MATCHING = "MATCHING"
     NEEDS_REVIEW = "NEEDS_REVIEW"
@@ -110,6 +111,7 @@ class DenialCode(StrEnum):
     SELF_REVIEW_DENIED = "SELF_REVIEW_DENIED"
     RISK_ACKNOWLEDGEMENT_REQUIRED = "RISK_ACKNOWLEDGEMENT_REQUIRED"
     SOURCE_POLICY_DENIED = "SOURCE_POLICY_DENIED"
+    SOURCE_POLICY_RECHECK_NOT_VERIFIED = "SOURCE_POLICY_RECHECK_NOT_VERIFIED"
     LEGAL_HOLD_CONFLICT = "LEGAL_HOLD_CONFLICT"
     RESIDENCY_DENIED = "RESIDENCY_DENIED"
     EXPORT_APPROVAL_REQUIRED = "EXPORT_APPROVAL_REQUIRED"
@@ -145,6 +147,7 @@ class TransitionContext:
     second_actor: Actor | None = None
     purpose: str | None = None
     current_time: datetime = field(default_factory=lambda: datetime.now(UTC))
+    source_policy_recheck_verified: bool = False
 
 
 # Aggregates
@@ -155,7 +158,7 @@ class IntakeAggregate:
     stage: IntakeStage
     version: int
     created_by: str
-    source_id: str
+    source_id: str | None  # Native SUBMITTED Intakes have not resolved a source yet.
     canonical_url: str | None = None
     policy: str | None = None
     is_cancelled: bool = False
@@ -197,6 +200,55 @@ class AssignmentAggregate:
     due_at: datetime | None = None
 
 
+@dataclass(frozen=True)
+class SlaSchedule:
+    """Tenant-bound checkpoints resolved by the backend policy/calendar owner.
+
+    These values are not policy approval or caller-supplied SLA durations.
+    No default policy, calendar, warning window or breach grace is inferred.
+    """
+
+    tenant_id: str
+    policy_version: str
+    calendar_version: str
+    started_at: datetime
+    due_soon_at: datetime
+    due_at: datetime
+    breach_at: datetime
+
+    def __post_init__(self) -> None:
+        for name in ("tenant_id", "policy_version", "calendar_version"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"SLA schedule requires {name}")
+        for name in ("started_at", "due_soon_at", "due_at", "breach_at"):
+            value = getattr(self, name)
+            if not isinstance(value, datetime) or value.utcoffset() is None:
+                raise ValueError(f"SLA {name} must be timezone-aware")
+            object.__setattr__(self, name, value.astimezone(UTC))
+        if not self.started_at <= self.due_soon_at <= self.due_at <= self.breach_at:
+            raise ValueError("SLA checkpoints must be chronologically ordered")
+
+
+@dataclass(frozen=True)
+class SlaPauseInterval:
+    started_at: datetime
+    expected_resume_at: datetime
+    reason: str
+    ended_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("started_at", "expected_resume_at", "ended_at"):
+            value = getattr(self, name)
+            if name == "ended_at" and value is None:
+                continue
+            if not isinstance(value, datetime) or value.utcoffset() is None:
+                raise ValueError(f"SLA pause {name} must be timezone-aware")
+            object.__setattr__(self, name, value.astimezone(UTC))
+        if not self.reason.strip() or self.expected_resume_at <= self.started_at:
+            raise ValueError("SLA pause requires a reason and future expected resume")
+        if self.ended_at is not None and self.ended_at < self.started_at:
+            raise ValueError("SLA pause ends before it starts")
 @dataclass
 class SlaInstanceAggregate:
     id: str
@@ -206,6 +258,9 @@ class SlaInstanceAggregate:
     due_at: datetime
     paused_reason: str | None = None
     resume_at: datetime | None = None
+    schedule: SlaSchedule | None = None
+    pause_intervals: list[SlaPauseInterval] = field(default_factory=list)
+    paused_duration_seconds: int = 0
 
 
 @dataclass
@@ -249,10 +304,14 @@ class IntakeStateMachine(BaseStateMachine):
         IntakeStage.CHECKING_SOURCE_POLICY: {
             IntakeStage.RETRIEVING,
             IntakeStage.AWAITING_ASSISTED_ENTRY,
+            IntakeStage.AWAITING_SOURCE_AUTHORIZATION,
             IntakeStage.QUARANTINED
         },
+        # A later authorization command must re-evaluate current source policy.
+        # No direct retrieval, supplied-evidence or automatic resume is granted.
+        IntakeStage.AWAITING_SOURCE_AUTHORIZATION: {IntakeStage.CANCELLED, IntakeStage.CHECKING_SOURCE_POLICY},
         IntakeStage.RETRIEVING: {IntakeStage.PARSING, IntakeStage.FAILED, IntakeStage.QUARANTINED},
-        IntakeStage.AWAITING_ASSISTED_ENTRY: {IntakeStage.PARSING, IntakeStage.CANCELLED},
+        IntakeStage.AWAITING_ASSISTED_ENTRY: {IntakeStage.PARSING, IntakeStage.CANCELLED, IntakeStage.CHECKING_SOURCE_POLICY},
         IntakeStage.PARSING: {IntakeStage.MATCHING, IntakeStage.NEEDS_REVIEW, IntakeStage.FAILED},
         IntakeStage.MATCHING: {IntakeStage.READY, IntakeStage.NEEDS_REVIEW, IntakeStage.QUARANTINED},
         IntakeStage.NEEDS_REVIEW: {IntakeStage.READY, IntakeStage.QUARANTINED, IntakeStage.CANCELLED},
@@ -339,6 +398,20 @@ class IntakeStateMachine(BaseStateMachine):
             if source == IntakeStage.CHECKING_IDENTITY:
                 if role not in {PrincipalRole.SVC_INTAKE, PrincipalRole.EMERGENCY_ADMIN}:
                     raise DomainValidationError(DenialCode.ROLE_DENIED, "Only system or admin can evaluate policy.")
+            elif source == IntakeStage.AWAITING_SOURCE_AUTHORIZATION:
+                if role not in {PrincipalRole.SVC_INTAKE, PrincipalRole.EMERGENCY_ADMIN}:
+                    raise DomainValidationError(DenialCode.ROLE_DENIED, "Only the verified service can recheck source policy.")
+                if (context.source_policy_recheck_verified is not True or not context.causation_id
+                        or not context.idempotency_key or not context.reason.strip()):
+                    raise DomainValidationError(DenialCode.SOURCE_POLICY_RECHECK_NOT_VERIFIED,
+                                                "A current verified recheck command is required.")
+            elif source == IntakeStage.AWAITING_ASSISTED_ENTRY:
+                if role not in {PrincipalRole.SVC_INTAKE, PrincipalRole.EMERGENCY_ADMIN}:
+                    raise DomainValidationError(DenialCode.ROLE_DENIED, "Only the verified service can recheck source policy.")
+                if (context.source_policy_recheck_verified is not True or not context.causation_id
+                        or not context.idempotency_key or not context.reason.strip()):
+                    raise DomainValidationError(DenialCode.SOURCE_POLICY_RECHECK_NOT_VERIFIED,
+                                                "A current verified recheck command is required.")
             elif source == IntakeStage.QUARANTINED:
                 if role not in {PrincipalRole.DATA_STEWARD, PrincipalRole.EMERGENCY_ADMIN}:
                     raise DomainValidationError(DenialCode.ROLE_DENIED, "Only steward or admin can reopen quarantine.")
@@ -359,9 +432,9 @@ class IntakeStateMachine(BaseStateMachine):
                 if entity.owner_id and role == PrincipalRole.EXPANSION_STAFF and context.actor.actor_id != entity.owner_id:
                     raise DomainValidationError(DenialCode.OWNERSHIP_REQUIRED, "Staff can only replay own failures.")
 
-        elif target == IntakeStage.AWAITING_ASSISTED_ENTRY:
+        elif target in {IntakeStage.AWAITING_ASSISTED_ENTRY, IntakeStage.AWAITING_SOURCE_AUTHORIZATION}:
             if role not in {PrincipalRole.SVC_INTAKE, PrincipalRole.EMERGENCY_ADMIN}:
-                raise DomainValidationError(DenialCode.ROLE_DENIED, "Fallback to assisted entry must be system-initiated.")
+                raise DomainValidationError(DenialCode.ROLE_DENIED, "Source-policy waiting decisions must be system-initiated.")
 
         elif target == IntakeStage.QUARANTINED:
             # Section 2 transitions to Quarantined
@@ -695,10 +768,10 @@ class SlaStateMachine(BaseStateMachine):
         cls._validate_common(entity, context)
         role = context.actor.role
 
-        if role not in {PrincipalRole.SVC_SLA, PrincipalRole.EXPANSION_MANAGER, PrincipalRole.EMERGENCY_ADMIN}:
-            # Human updates (e.g. pausing) must be manager or admin
+        if role not in {PrincipalRole.SVC_SLA, PrincipalRole.EXPANSION_MANAGER, PrincipalRole.DATA_STEWARD, PrincipalRole.EMERGENCY_ADMIN}:
+            # Human pause commands require manager, steward or emergency admin.
             if target == SlaState.PAUSED:
-                raise DomainValidationError(DenialCode.ROLE_DENIED, "Only manager can pause SLA.")
+                raise DomainValidationError(DenialCode.ROLE_DENIED, "Only manager or steward can pause SLA.")
 
         entity.status = target
         entity.version += 1

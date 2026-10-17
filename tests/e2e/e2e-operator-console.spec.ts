@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { randomUUID } from "node:crypto";
 import {
   acquireOperatorBackendLock,
   releaseOperatorBackendLock,
@@ -18,9 +19,22 @@ test.afterEach(() => {
   releaseOperatorBackendLock();
 });
 
+// These three cases explicitly exercise the anonymous design/legacy fixture
+// path. Prove no authenticated account is present before replacing only its
+// session-discovery premise; no business API payload or authority is supplied.
+async function anonymousFixtureSession(page: import("@playwright/test").Page) {
+  const session = await page.context().request.get("/auth/session");
+  expect(session.status()).toBe(401);
+  await page.route("**/auth/session", (route) => route.fulfill({
+    status: 404, contentType: "application/json",
+    body: JSON.stringify({ detail: "Anonymous design fixture; no authenticated session" }),
+  }));
+}
+
 test("ODP-OC-PREVIEW-001 design-preview-only smoke mounts iframe prototype and Store Ops dialog", async ({
   page,
 }) => {
+  await anonymousFixtureSession(page);
   test.info().annotations.push({
     type: "scope",
     description:
@@ -153,6 +167,8 @@ test("ODP-FIN-FE-003 command palette and task center are API-bound", async ({
 test("ODP-OC-FE-05 Governance Workspace details and evidence package export", async ({
   page,
 }) => {
+  await anonymousFixtureSession(page);
+  test.setTimeout(90_000);
   const browserErrors: string[] = [];
   page.on("console", (message) => {
     if (message.type() === "error") {
@@ -161,8 +177,17 @@ test("ODP-OC-FE-05 Governance Workspace details and evidence package export", as
   });
   page.on("pageerror", (error) => browserErrors.push(error.message));
 
+  const snapshotResponse = page.waitForResponse((response) =>
+    response.url().endsWith("/operator/governance/snapshot") && response.request().method() === "GET",
+  );
   await page.goto("/operator?ws=govern");
+  const confirmedSnapshot = await snapshotResponse;
+  expect(confirmedSnapshot.ok()).toBe(true);
+  expect((await confirmedSnapshot.json()).actionAuthority.verified).toBe(true);
   await expect(page.getByTestId("governance-workspace")).toBeVisible();
+
+  await expect(page.getByTestId("governance-decision-authority")).toHaveAttribute("data-authority", "granted");
+  await expect(page.getByTestId("governance-decision-authority")).toHaveAttribute("title", /operations_manager/);
 
   // Test 3: 退回/駁回 reason-gate enforced
   // Click on a pending approval, e.g. "Close escalated service issue"
@@ -180,8 +205,17 @@ test("ODP-OC-FE-05 Governance Workspace details and evidence package export", as
   const decisionReason =
     "Rejecting because candidate is too risky due to high competitor density";
   await page.locator("#governance-reason").fill(decisionReason);
+  const decisionResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith("/operator/governance/decisions"),
+  );
   // Click Return
   await page.getByRole("button", { name: "退回修改", exact: true }).click();
+  const confirmedDecision = await decisionResponse;
+  expect(confirmedDecision.ok()).toBe(true);
+  const decisionReceipt = await confirmedDecision.json();
+  expect(decisionReceipt.decision.actor).toBe("product-e2e-test");
   // Check that toast or success shows completed decision notice
   await expect(page.getByText(/已退回決策/)).toBeVisible();
   await expect(page.getByText(`決策理由：${decisionReason}`)).toBeVisible();
@@ -191,6 +225,7 @@ test("ODP-OC-FE-05 Governance Workspace details and evidence package export", as
   const decisionLog = page.getByRole("region", { name: "Decision Log" });
   await expect(decisionLog).toContainText("Returned");
   await expect(decisionLog).toContainText(decisionReason);
+  await expect(decisionLog).toContainText(decisionReceipt.decision.actor);
 
   // Go to Audit Trail tab
   await page.getByRole("button", { name: "Audit Trail" }).click();
@@ -205,10 +240,19 @@ test("ODP-OC-FE-05 Governance Workspace details and evidence package export", as
     page.getByRole("button", { name: "產生 Evidence Package", exact: true }),
   ).toBeVisible();
 
+  const exportResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith("/operator/governance/evidence-package"),
+  );
   // Click generate button
   await page
     .getByRole("button", { name: "產生 Evidence Package", exact: true })
     .click();
+  const confirmedExport = await exportResponse;
+  expect(confirmedExport.ok()).toBe(true);
+  const exportReceipt = await confirmedExport.json();
+  expect(exportReceipt.package.actor).toBe("product-e2e-test");
   // Wait for result
   const resultPanel = page.locator('[data-testid="evidence-package-result"]');
   await expect(resultPanel).toBeVisible({ timeout: 5000 });
@@ -216,12 +260,12 @@ test("ODP-OC-FE-05 Governance Workspace details and evidence package export", as
   expect(fileName).toContain("EVD-2026-0705-");
 
   // Go to Audit Trail tab and verify audit event has been written.
-  // The Govern workspace is now API-bound (ODP-OC-R4-009): the export audit is
-  // attributed to the acting role rather than the former hardcoded mock actor.
+  // This explicit-fixture export proves metadata and actor propagation only;
+  // production artifacts are verified separately from this demo receipt.
   await page.getByTestId("governance-tab-audit").click();
   const auditTrail = page.getByRole("region", { name: "Audit Trail" });
   await expect(auditTrail).toContainText("Export Evidence Package");
-  await expect(auditTrail).toContainText("營運主管");
+  await expect(auditTrail).toContainText(exportReceipt.package.actor);
 
   // Test 2: Status board renders DQ/Model/Connector/Runbook from fixtures
   // Go to 系統狀態盤 tab
@@ -248,10 +292,16 @@ test("ODP-OC-FE-05 Governance Workspace details and evidence package export", as
   ).toEqual([]);
 });
 
-test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({
+test("ODP-OC-FE-04 Network tabs preserve fixture Candidate navigation and review", async ({
   page,
   request,
 }) => {
+  await anonymousFixtureSession(page);
+  test.info().annotations.push({
+    type: "scope",
+    description:
+      "Local fixture compatibility, existing-record navigation and remaining Network tabs; canonical PostgreSQL promotion approval is covered by the assisted-intake journey.",
+  });
   // Only this test resets the shared operator listing backend, so the lock is
   // taken here rather than for the whole file. Released by the afterEach below,
   // which is a no-op for the tests that never took it.
@@ -290,18 +340,22 @@ test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({
   await page.addInitScript(() => {
     window.sessionStorage.setItem("oday.operator.role", "expansion-manager");
   });
+  await page.goto("/operator");
+  // This fixture API journey starts after its shell envelope is applied.
+  await expect(page.getByTestId("operator-envelope-source")).toHaveText(
+    "operator-shell-api-envelope", { timeout: 15_000 },
+  );
+  // Arm the response observer immediately before the single Network click.
   const listingSnapshotResponse = page.waitForResponse(
     (response) => response.url().includes("/api/v1/operator/network-listings?") &&
       response.request().method() === "GET" &&
       response.request().headers()["x-operator-role"] === "expansion-manager",
     { timeout: 15_000 },
   );
-  await page.goto("/operator");
-
   // Enter the Network (展店與店網) workspace.
   await page.getByRole("button", { name: /展店與店網/ }).click();
   const workspace = page.getByTestId("network-find-areas-workspace");
-  await expect(workspace).toBeVisible();
+  await expect(workspace).toBeVisible({ timeout: 15_000 });
 
   // Default tab is Find Areas.
   await expect(page.getByTestId("network-panel-find-areas")).toBeVisible();
@@ -319,13 +373,63 @@ test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({
   await expect(page.getByTestId("network-listing-table")).toContainText(
     "L-2030",
   );
-  await page.getByTestId("convert-L-2024").click();
+  // A reload must follow the committed tab URL, not its optimistic panel.
+  await expect(page).toHaveURL(
+    (url) => url.searchParams.get("ws") === "network" && url.searchParams.get("tab") === "radar",
+    { timeout: 15_000 },
+  );
+  // Explicit fixture-only setup retains the legacy API compatibility check.
+  // The following Radar click must only navigate to this existing candidate.
+  const converted = await request.post(
+    `${API_BASE_URL}/api/v1/operator/network-listings/listings/L-2024/convert`,
+    {
+      headers: {
+        "x-subject-id": "operator-expansion-manager",
+        "x-roles": "expansion_user,site_reviewer",
+        "x-operator-role": "expansion-manager",
+        "x-tenant-id": "tenant-a",
+        "X-Correlation-Id": randomUUID(),
+        "Idempotency-Key": `fixture-navigation-${randomUUID()}`,
+      },
+      data: {
+        actorRoleId: "expansion-manager",
+        reason: "Prepare the local synthetic Candidate navigation fixture.",
+        riskAcknowledged: true,
+        riskSummary: "Explicit local fixture setup for existing-record navigation.",
+      },
+    },
+  );
+  expect(converted.status(), await converted.text()).toBe(200);
+  expect(await converted.json()).toMatchObject({
+    listing: { id: "L-2024", status: "candidate", candidateId: "CS-1001" },
+    candidate: { id: "CS-1001", listingId: "L-2024" },
+    candidateCount: 1,
+  });
+  await page.reload();
+  await expect(page.getByTestId("network-panel-listings")).toBeVisible();
+
+  const navigationConversionPosts: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      /\/network-listings\/listings\/[^/]+\/convert$/.test(new URL(request.url()).pathname)
+    ) {
+      navigationConversionPosts.push(request.url());
+    }
+  });
+  await page.getByTestId("listing-navigate-L-2024").click();
+  await expect(page).toHaveURL((url) => url.searchParams.get("candidate") === "CS-1001");
 
   // 候選點 / Candidates
   await expect(page.getByTestId("network-panel-candidates")).toBeVisible();
   await expect(page.getByTestId("network-candidate-table")).toContainText(
     "CS-1001",
   );
+  await expect(page.getByTestId("candidate-row-CS-1001")).toHaveAttribute("data-active", "true");
+  await page.reload();
+  await expect(page).toHaveURL((url) => url.searchParams.get("candidate") === "CS-1001");
+  await expect(page.getByTestId("candidate-row-CS-1001")).toHaveAttribute("data-active", "true");
+  expect(navigationConversionPosts).toEqual([]);
 
   // SiteScore / Score Lab
   await page.getByTestId("network-tab-3").click();
@@ -364,7 +468,14 @@ test("ODP-OC-FE-04 Network workspace exposes all six remaining tabs", async ({
   await page
     .getByTestId("review-decision-reason")
     .fill("Review approved based on excellent SiteScore and fit metrics.");
+  const decisionResponse = page.waitForResponse(
+    (response) => response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith("/operator/network-reviews/RV-702/decide"),
+    { timeout: 15_000 },
+  );
   await page.getByTestId("review-decision-submit").click();
+  const decision = await decisionResponse;
+  expect(decision.status()).toBe(200);
   await expect(page.getByTestId("review-decision-dialog")).toHaveCount(0);
   await expect(page.getByTestId("review-decided-RV-702")).toContainText(
     "Approved",

@@ -1,0 +1,22 @@
+{
+  "upstream_repository": "https://github.com/IBM/plex",
+  "upstream_commit": "763c36ef9117782905ae010056dfbe8fd2653a25",
+  "license": "OFL-1.1",
+  "modified": false,
+  "files": [
+    {
+      "file": "IBMPlexSansTC-Regular.ttf",
+      "upstream_url": "https://raw.githubusercontent.com/IBM/plex/763c36ef9117782905ae010056dfbe8fd2653a25/packages/plex-sans-tc/fonts/complete/ttf/hinted/IBMPlexSansTC-Regular.ttf",
+      "upstream_git_blob": "2b656822c74847b527805dbd851a00e05d27a57a",
+      "bytes": 5460860,
+      "sha256": "654677156ffc9ba35503ff569a4d55bc7044501f055bd7752a404445ed31cee7"
+    },
+    {
+      "file": "LICENSE.txt",
+      "upstream_url": "https://raw.githubusercontent.com/IBM/plex/763c36ef9117782905ae010056dfbe8fd2653a25/packages/plex-sans-tc/fonts/complete/ttf/hinted/license.txt",
+      "upstream_git_blob": "f72f76504cd73cf2c00b140b2743c138320597b6",
+      "bytes": 4360,
+      "sha256": "91c25c350d3cac39da2736d74f7ba37ef648f5237a4e330a240615bc8d8c4360"
+    }
+  ]
+}

@@ -56,6 +56,7 @@ malformed or unreadable.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 import subprocess
@@ -728,6 +729,56 @@ def _exempt_capabilities(path: str, policy: Mapping[str, Any]) -> set[str]:
     return exempt
 
 
+_SNAPSHOT_REFERENCE = re.compile(r"intake\.source_snapshots", re.IGNORECASE)
+_SNAPSHOT_ADMISSION_READ = re.compile(
+    r"\s*SELECT\s+(?:\*|[a-z_]\w*(?:\s*,\s*[a-z_]\w*)*)"
+    r"\s+FROM\s+intake\.source_snapshots\s+WHERE\s+"
+    r"[a-z_]\w*\s*=\s*\?(?:\s+AND\s+[a-z_]\w*\s*=\s*\?)*"
+    r"(?:\s+FOR\s+(?:KEY\s+)?SHARE)?\s*;?\s*",
+    re.IGNORECASE,
+)
+
+
+def _capability_scan_text(path: str, capability_id: str, content: str) -> str:
+    """A bounded read of existing admission evidence does not add a raw store.
+
+    Recognize only literal, parameterized single-table SELECTs passed directly
+    to the persistence read API. Do not waive a path or the rest of a file:
+    writes, CTEs, SELECT INTO, multiple statements, dynamic SQL and store class
+    references still reach the unchanged capability patterns. Unknown syntax
+    retains the original fail-closed result.
+    """
+    if (capability_id != "new_raw_evidence_store" or not path.endswith(".py")
+            or not _SNAPSHOT_REFERENCE.search(content)):
+        return content
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return content
+    # AST columns are UTF-8 byte offsets, including in files with Chinese text.
+    raw = content.encode("utf-8")
+    line_starts = [0]
+    for line in raw.splitlines(keepends=True):
+        line_starts.append(line_starts[-1] + len(line))
+    spans = []
+    for call in ast.walk(tree):
+        if (not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute)
+                or call.func.attr not in {"query_one", "query_all"} or not call.args):
+            continue
+        sql = call.args[0]
+        if (not isinstance(sql, ast.Constant) or not isinstance(sql.value, str)
+                or not _SNAPSHOT_ADMISSION_READ.fullmatch(sql.value)):
+            continue
+        start = line_starts[sql.lineno - 1] + sql.col_offset
+        end = line_starts[sql.end_lineno - 1] + sql.end_col_offset
+        spans.append((start, end))
+    for start, end in sorted(spans, reverse=True):
+        literal = raw[start:end].decode("utf-8")
+        literal = _SNAPSHOT_REFERENCE.sub(lambda match: " " * len(match.group()), literal)
+        raw = raw[:start] + literal.encode("utf-8") + raw[end:]
+    return raw.decode("utf-8")
+
+
 def check_capabilities(
     files: Sequence[str],
     policy: Mapping[str, Any],
@@ -762,11 +813,12 @@ def check_capabilities(
                 if hit:
                     reasons.append(f"filename carries producer token(s) {', '.join(sorted(hit))}")
             if content_patterns:
+                content = _capability_scan_text(path, capability_id, read_text(path))
                 matched = sorted(
                     {
                         match.group(0)
                         for pattern in content_patterns
-                        for match in pattern.finditer(read_text(path))
+                        for match in pattern.finditer(content)
                     }
                 )
                 if matched:

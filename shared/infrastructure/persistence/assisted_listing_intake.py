@@ -1,4 +1,4 @@
-"""Ordered production migration loader for the Assisted Listing Intake schema.
+"""Assisted Listing Intake migrations and native snapshot metadata access.
 
 This module is the programmatic surface over the ordered PostgreSQL 16 migration
 under ``infra/db/migrations/assisted_listing_intake/``. That directory holds the
@@ -6,12 +6,10 @@ four approved contract DDL artifacts (baseline + three consistency/state/RLS
 patches) from ODP-SD-INTAKE-001, copied byte-for-byte so the production migration
 never drifts from the reviewed contract, plus a structural downgrade boundary.
 
-The module is intentionally driver-agnostic: it only reads SQL text and computes
-traceability checksums. Applying the SQL is the caller's responsibility (pass an
-``execute`` callable such as ``psycopg`` cursor ``.execute``). Keeping it free of
-any database driver lets it import cleanly in the minimal CI environment while the
-schema is proven at runtime against real PostgreSQL 16 by the contract and RLS
-security tests.
+Migration helpers read SQL and compute traceability checksums; applying their
+SQL is the caller's responsibility. Native snapshot metadata access borrows the
+caller's current engine and transaction. Neither surface imports a database
+driver or opens, commits or closes a connection.
 
 Contract references:
 - docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql
@@ -28,6 +26,7 @@ import json
 import pickle
 import threading
 from collections.abc import Callable, Iterable
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -225,6 +224,8 @@ _STATE_COLLECTIONS: dict[str, str] = {
     "slas": "assisted_intake.slas",
     "saved_views": "assisted_intake.saved_views",
     "replays": "assisted_intake.idempotency_replays",
+    "workflow_audits": "assisted_intake.workflow_audits",
+    "workflow_outbox": "assisted_intake.workflow_outbox",
 }
 
 _STATE_KEY_FIELDS: dict[str, tuple[str, ...]] = {
@@ -236,6 +237,8 @@ _STATE_KEY_FIELDS: dict[str, tuple[str, ...]] = {
     "promotions": ("promotion_decision_id",),
     "slas": ("sla_instance_id",),
     "saved_views": ("saved_view_id",),
+    "workflow_audits": ("audit_event_id",),
+    "workflow_outbox": ("event_id",),
 }
 
 
@@ -288,6 +291,22 @@ class DurableAssistedIntakeStore:
         self._store = store
         self._engine = store.engine
         self._local = threading.local()
+        self._canonical_audit_sink = None
+
+    def configure_canonical_audit(self, sink: Any) -> None:
+        if sink.writer.engine is not self._engine:
+            raise ValueError("Canonical audit must share the business transaction engine")
+        self._canonical_audit_sink = sink
+
+    def configure_audit_retention(self, provider: Any) -> None:
+        if self._canonical_audit_sink is None:
+            raise RuntimeError("Canonical Intake audit writer is not wired")
+        self._canonical_audit_sink.set_retention_provider(provider)
+
+    def canonical_audit_is_committed(self, audit: Any) -> bool:
+        return bool(self._canonical_audit_sink
+                    and audit.get("tenant_id") == self._local.tenant_id
+                    and self._canonical_audit_sink.is_committed(audit))
 
     def __getattr__(self, name: str) -> Any:
         if name not in _STATE_COLLECTIONS:
@@ -363,6 +382,20 @@ class DurableAssistedIntakeStore:
                 current[name] = dict(value)
         return current
 
+    @contextmanager
+    def transaction(self):
+        """Roll back request state as well as SQL on command/commit failure."""
+        self._current_collections()  # Require a verified tenant binding.
+        collections = deepcopy(self._local.collections)
+        baseline = deepcopy(self._local.baseline)
+        try:
+            with self._engine.lock:
+                yield
+        except BaseException:
+            self._local.collections = collections
+            self._local.baseline = baseline
+            raise
+
     def _read_locked(
         self,
         collection: str,
@@ -398,12 +431,15 @@ class DurableAssistedIntakeStore:
             for key, value in current_values.items():
                 baseline = baseline_values.get(key)
                 if key not in baseline_values or value != baseline:
+                    if name == "workflow_audits" and key in baseline_values:
+                        raise AssistedIntakePersistenceConflict("Workflow audit records are append-only")
                     changes.append((name, collection, key, baseline, value))
 
         if not changes:
             return
 
         with self._engine.lock:
+            canonical_audits = {}
             for _name, collection, key, baseline, value in sorted(changes):
                 storage_key = f"{tenant_id}:{key}"
                 persisted = self._read_locked(collection, storage_key)
@@ -411,12 +447,20 @@ class DurableAssistedIntakeStore:
                     raise AssistedIntakePersistenceConflict(
                         f"Concurrent Assisted Intake update for {collection}/{key}"
                     )
+                if _name == "workflow_audits":
+                    from shared.audit.errors import CanonicalAuditUnavailable
+                    parent = current["intakes"].get(value.get("intake_id"))
+                    if self._canonical_audit_sink is None or parent is None:
+                        raise CanonicalAuditUnavailable("Canonical audit writer/parent is unavailable")
+                    value = self._canonical_audit_sink.persist(value, parent["scope"])
+                    canonical_audits[key] = value
                 self._store.put(
                     collection,
                     storage_key,
                     self._wrap(tenant_id, key, deepcopy(value)),
                 )
-        self._local.baseline = deepcopy(current)
+        self.workflow_audits.update(canonical_audits)
+        self._local.baseline = deepcopy(self._current_collections())
 
     # Operator network-listings repository compatibility. Keeping one state
     # owner avoids dual writes between the operator and approved v1 routers.
@@ -446,7 +490,14 @@ class DurableAssistedIntakeStore:
         listing_id: str,
         metadata: dict[str, Any],
     ) -> None:
-        self._store.put(self._LISTING_META, listing_id, metadata)
+        with self._engine.lock:
+            collection = (self._store._collection(self._LISTING_META)
+                          if hasattr(self._store, "_collection") else self._LISTING_META)
+            # This store is PostgreSQL-only. Use the reader's exact partitioned
+            # advisory key before an upsert can insert a previously absent row.
+            self._engine.query_one("SELECT pg_advisory_xact_lock(hashtextextended(?, 0)) AS locked",
+                                   (f"{collection}:{listing_id}",))
+            self._store.put(self._LISTING_META, listing_id, metadata)
 
     def get_candidate_metadata(self, candidate_id: str) -> dict[str, Any]:
         return self._store.get(self._CANDIDATE_META, candidate_id) or {}
@@ -704,3 +755,35 @@ def manifest_checksum(steps: Iterable[MigrationStep] | None = None) -> str:
     payload = [asdict(step) for step in (steps if steps is not None else migration_steps())]
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+class NativeIntakeSnapshotMetadataRepository:
+    """Existing snapshot metadata within the caller's authorized SQL root.
+
+    This facade neither stores raw content nor owns a transaction. The native
+    owner retains its current authority, budget and fence checks around each
+    call, including the exact-generation/legacy-NULL reference guard.
+    """
+
+    def __init__(self, graph: Any) -> None:
+        self.graph = graph
+        self.engine = graph.engine
+
+    def referenced_object(self, tenant: str, uri: str, generation: int) -> dict | None:
+        return self.engine.query_one("SELECT source_snapshot_id FROM intake.source_snapshots "
+            "WHERE tenant_id=? AND raw_object_uri=? AND (object_generation=? OR object_generation IS NULL) LIMIT 1",
+            (tenant, uri, generation))
+
+    def find_content(self, tenant: str, intake: str, source: str, content_sha256: str) -> dict | None:
+        return self.engine.query_one("SELECT * FROM intake.source_snapshots WHERE tenant_id=? AND intake_id=? "
+            "AND source_id=? AND content_sha256=? FOR UPDATE", (tenant, intake, source, content_sha256))
+
+    def insert(self, values: tuple[object, ...]) -> None:
+        self.engine.execute("INSERT INTO intake.source_snapshots (source_snapshot_id,tenant_id,intake_id,source_id,"
+            "original_url,canonical_url,raw_object_uri,content_sha256,media_type,byte_length,captured_at,observed_at,"
+            "capture_method,retention_class,encryption_key_ref,object_generation,residency_mode,version) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", values)
+
+    def required_for_intake(self, tenant: str, snapshot: str, intake: str) -> dict:
+        return self.graph._one("SELECT * FROM intake.source_snapshots WHERE tenant_id=? AND source_snapshot_id=? "
+            "AND intake_id=?", (tenant, snapshot, intake))

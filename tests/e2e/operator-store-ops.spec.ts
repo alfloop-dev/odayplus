@@ -262,18 +262,36 @@ test("camera evidence remains locked until permitted purpose is submitted", asyn
   await dialog
     .getByRole("textbox", { name: /調閱目的/ })
     .fill("payment incident quality audit");
+  await dialog.getByRole("button", { exact: true, name: "記錄目的並檢視" }).click();
+  await expect(dialog.getByText("必須確認隱私與稽核告知。")).toBeVisible();
+  expect(api.writeRequests).toEqual([]);
+  await expect(page.getByText("影像鎖定 • 需授權")).toBeVisible();
   await dialog
     .getByRole("checkbox", { name: /確認隱私與稽核告知/ })
     .check();
-  await dialog
-    .getByRole("button", { exact: true, name: "記錄目的並檢視" })
-    .click();
+  const [purposeRequest] = await Promise.all([
+    page.waitForRequest((request) => request.method() === "POST"
+      && new URL(request.url()).pathname === "/api/v1/operator/store-ops/issues/ISS-1024/camera-purpose"),
+    dialog.getByRole("button", { exact: true, name: "記錄目的並檢視" }).click(),
+  ]);
   await waitForWrite(
     api,
     "/api/v1/operator/store-ops/issues/ISS-1024/camera-purpose",
   );
 
-  await expect(page.getByText("影像已解鎖")).toBeVisible();
+  expect(purposeRequest.postDataJSON()).toMatchObject({
+    purpose: "payment incident quality audit",
+    privacyAcknowledged: true,
+  });
+  // The production presentation uses the source evidence instead of inferring
+  // a grant from an absent lock flag or inventing a fixed unlocked label.
+  const cameraSummary = "Camera evidence unlocked for a recorded, audit-scoped purpose.";
+  const cameraCard = page.getByRole("article").filter({
+    has: page.getByText("Camera 影像", { exact: true }),
+  });
+  await expect(cameraCard.getByText(cameraSummary, { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Camera", { exact: true }).getByText(cameraSummary, { exact: true })).toBeVisible();
+  await expect(page.getByText("影像鎖定 • 需授權")).toBeHidden();
   expect(
     api.writeRequests.some(
       (url) =>

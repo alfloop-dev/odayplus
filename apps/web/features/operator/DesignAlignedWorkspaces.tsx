@@ -12,6 +12,7 @@ import {
   type OperatorDataAvailability,
 } from "./operatorDataMode";
 import styles from "./designAligned.module.css";
+import { ISSUE_STATUSES } from "./types";
 import type { AuditEvent, EvidenceItem, Issue, Severity, Store, StoreLightStatus, OperatorRoleId } from "./types";
 import { STORE_OPS_REFRESH_EVENT, type StoreOpsWorkflowDialogType } from "./storeOpsWorkflowTypes";
 import {
@@ -115,6 +116,61 @@ export function inspectStoreOpsApiPayload(
     return "empty";
   }
   return "ready";
+}
+
+function hasStoreOpsRenderData(payload: unknown): payload is StoreOpsApiState {
+  const object = (value: unknown): value is Record<string, unknown> =>
+    value !== null && typeof value === "object" && !Array.isArray(value);
+  const strings = (row: Record<string, unknown>, fields: string[]) =>
+    fields.every((field) => typeof row[field] === "string");
+  const text = (value: unknown) => value == null || typeof value === "string";
+  const finite = (value: unknown) => typeof value === "number" && Number.isFinite(value);
+  if (!object(payload)) return false;
+  const { issues, stores, evidence, auditEvents } = payload;
+  if (!Array.isArray(issues) || !Array.isArray(stores)
+    || !Array.isArray(evidence) || !Array.isArray(auditEvents)) return false;
+
+  return issues.every((row) => object(row)
+    && strings(row, ["id", "title", "storeId", "storeName", "status", "severity", "source",
+      "ownerRoleId", "ownerName", "slaDueAt", "createdAt", "updatedAt", "summary"])
+    && (ISSUE_STATUSES as readonly string[]).includes(String(row.status))
+    && ["low", "medium", "high", "critical"].includes(String(row.severity))
+    && ["googleReview", "csCase", "camera", "iot", "payment", "forecastOps", "cleaning", "multiSignal"].includes(String(row.source))
+    && Array.isArray(row.evidenceIds) && row.evidenceIds.every((id) => typeof id === "string")
+    && (row.outcomeMetrics == null || Array.isArray(row.outcomeMetrics)
+      && row.outcomeMetrics.every((metric) => object(metric) && strings(metric, ["label", "before", "after"]))))
+    && stores.every((row) => object(row)
+      && strings(row, ["id", "name", "district", "city", "manager"])
+      && finite(row.riskScore) && object(row.lights)
+      && ["demand", "operations", "staffing", "margin"].every((dimension) =>
+        typeof (row.lights as Record<string, unknown>)[dimension] === "string"
+        && ["green", "yellow", "red"].includes((row.lights as Record<string, string>)[dimension])))
+    && evidence.every((row) => object(row)
+      && strings(row, ["id", "issueId", "kind", "sourceLabel", "occurredAt", "polarity"])
+      && ["googleReview", "csCase", "camera", "iot", "payment", "forecastOps", "cleaning"].includes(String(row.kind))
+      && ["supporting", "contrary", "neutral"].includes(String(row.polarity))
+      && text(row.title) && text(row.summary) && text(row.lockedReason)
+      && (row.confidence == null || finite(row.confidence)
+        && Number(row.confidence) >= 0 && Number(row.confidence) <= 1)
+      && (row.paymentTrend == null || object(row.paymentTrend)
+        && finite(row.paymentTrend.failureRate) && finite(row.paymentTrend.baselineDeltaPp)
+        && (row.paymentTrend.baselineRelativeValue == null || finite(row.paymentTrend.baselineRelativeValue))
+        && Array.isArray(row.paymentTrend.relativeValues) && row.paymentTrend.relativeValues.every(finite)))
+    && auditEvents.every((row) => object(row)
+      && strings(row, ["id", "occurredAt", "actorRoleId", "actorName", "category", "action",
+        "targetType", "targetId", "message"]));
+}
+
+function sourceEvidenceText(item: EvidenceItem, field: "title" | "summary"): string {
+  const value = item[field];
+  return typeof value === "string" && value.trim() ? value : "資料不可用";
+}
+
+function sourceEvidenceConfidence(item: EvidenceItem): string {
+  const value = item.confidence;
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1
+    ? `${Math.round(value * 100)}%`
+    : "不可用";
 }
 
 const lightStatusLabels: Record<StoreLightStatus, string> = {
@@ -478,6 +534,7 @@ export function DesignStoreOpsWorkspace({
   // 1. Get current operator role from sessionStorage if available
   const [roleId, setRoleId] = useState<OperatorRoleId>("opsLead");
   const [apiState, setApiState] = useState<StoreOpsApiState | null>(null);
+  const [hasSuccessfulStoreOpsResponse, setHasSuccessfulStoreOpsResponse] = useState(false);
   const [storeOpsRefreshToken, setStoreOpsRefreshToken] = useState(0);
   const [isStoreOpsLoading, setIsStoreOpsLoading] = useState(false);
   const [storeOpsLoadState, setStoreOpsLoadState] = useState<OperatorDataAvailability>(
@@ -557,18 +614,27 @@ export function DesignStoreOpsWorkspace({
         if (!response.ok) {
           throw new Error(`Store Ops API returned ${response.status}`);
         }
-        const data = (await response.json()) as StoreOpsApiState;
+        // A successful response is no longer the initial no-response demo,
+        // even if its body is null, malformed, or cannot be decoded.
+        if (!cancelled) {
+          setHasSuccessfulStoreOpsResponse(true);
+          setApiState(null);
+          setStoreOpsLoadState("loading");
+        }
+        const data: unknown = await response.json();
         if (!cancelled) {
           const inspection = inspectStoreOpsApiPayload(data);
+          const usable = hasStoreOpsRenderData(data);
           setApiState(
-            inspection === "ready" || fixturesAllowed
+            usable && (inspection === "ready" || fixturesAllowed && inspection === "seed")
               ? data
               : null,
           );
           setStoreOpsLoadState(
-            inspection === "ready"
+            !usable ? "empty"
+              : inspection === "ready"
               ? "ready"
-              : fixturesAllowed
+              : fixturesAllowed && inspection === "seed"
                 ? "fixture"
                 : inspection,
           );
@@ -584,7 +650,7 @@ export function DesignStoreOpsWorkspace({
         }
         console.error("Error loading Store Ops issues:", error);
         if (!cancelled) {
-          setStoreOpsLoadState(fixturesAllowed ? "fixture" : "error");
+          setStoreOpsLoadState("error");
           setStoreOpsLoadError(
             error instanceof Error ? error.message : "Store Ops API request failed",
           );
@@ -614,10 +680,17 @@ export function DesignStoreOpsWorkspace({
     storeOpsRefreshToken,
   ]);
 
-  const issueSource = apiState?.issues ?? (fixturesAllowed ? propIssues ?? ISSUE_FIXTURES : []);
-  const activeStores = apiState?.stores ?? (fixturesAllowed ? STORE_FIXTURES : []);
-  const activeEvidence = apiState?.evidence ?? (fixturesAllowed ? EVIDENCE_FIXTURES : []);
-  const activeAuditEvents = apiState?.auditEvents ?? (fixturesAllowed ? AUDIT_EVENT_FIXTURES : []);
+  // A canonical API snapshot remains canonical even when local demo mode is allowed.
+  const fixturePresentation = fixturesAllowed && (
+    !hasSuccessfulStoreOpsResponse || apiState !== null && (
+      isSeedDataSource(apiState.source) || payloadContainsSeedData(apiState)
+    )
+  );
+
+  const issueSource = apiState?.issues ?? (fixturePresentation ? propIssues ?? ISSUE_FIXTURES : []);
+  const activeStores = apiState?.stores ?? (fixturePresentation ? STORE_FIXTURES : []);
+  const activeEvidence = apiState?.evidence ?? (fixturePresentation ? EVIDENCE_FIXTURES : []);
+  const activeAuditEvents = apiState?.auditEvents ?? (fixturePresentation ? AUDIT_EVENT_FIXTURES : []);
 
   // 3. Apply filters and sort (by severity + SLA)
   const filteredIssues = useMemo(() => {
@@ -661,8 +734,8 @@ export function DesignStoreOpsWorkspace({
   const issue = useMemo(() => {
     return filteredIssues.find((i) => i.id === selectedIssueId) ??
       filteredIssues[0] ??
-      (fixturesAllowed ? ISSUE_FIXTURES[0] : EMPTY_STORE_OPS_ISSUE);
-  }, [filteredIssues, fixturesAllowed, selectedIssueId]);
+      (fixturePresentation ? ISSUE_FIXTURES[0] : EMPTY_STORE_OPS_ISSUE);
+  }, [filteredIssues, fixturePresentation, selectedIssueId]);
 
   // 5. Generate 28-day revenue forecast band data based on selected store
   const forecastData = useMemo(() => {
@@ -932,7 +1005,7 @@ export function DesignStoreOpsWorkspace({
     { all: 0, open: 0, active: 0, observation: 0, done: 0 },
   );
 
-  if (!fixturesAllowed && storeOpsLoadState !== "ready") {
+  if (!fixturePresentation && storeOpsLoadState !== "ready") {
     return (
       <OperatorDataUnavailableGate
         detail={storeOpsLoadError}
@@ -1173,17 +1246,18 @@ export function DesignStoreOpsWorkspace({
             </span>
             <span>
               <small>型態</small>
-              <strong>自助洗衣</strong>
+              <strong>{fixturePresentation ? "自助洗衣" : "不可用"}</strong>
             </span>
             <span>
               <small>機台</small>
-              <strong>14 台</strong>
+              <strong>{fixturePresentation ? "14 台" : "不可用"}</strong>
             </span>
             <span>
               <small>今日營收</small>
               <strong>
-                NT$
-                {issue.storeId === "ST-008" ? "18,420" : issue.storeId === "ST-014" ? "14,200" : "9,500"}
+                {fixturePresentation
+                  ? `NT$${issue.storeId === "ST-008" ? "18,420" : issue.storeId === "ST-014" ? "14,200" : "9,500"}`
+                  : "不可用"}
               </strong>
             </span>
             <span>
@@ -1210,20 +1284,20 @@ export function DesignStoreOpsWorkspace({
             <div className={styles.sectionTitle}>
               <h3>證據融合</h3>
               <span>EVIDENCE FUSION</span>
-              <strong>證據強度 {supportingEvidence.length >= 3 ? "強" : "中"}</strong>
+              <strong>證據強度 {fixturePresentation ? supportingEvidence.length >= 3 ? "強" : "中" : "不可用"}</strong>
             </div>
             <div className={styles.evidenceCards}>
               <article>
                 <small>Google 評價</small>
                 {evGoogleReview ? (
                   <>
-                    <strong>★ {(evGoogleReview.confidence * 5).toFixed(1)} 未回覆</strong>
-                    <p>{evGoogleReview.summary}</p>
+                    <strong>{fixturePresentation ? `★ ${(evGoogleReview.confidence * 5).toFixed(1)} 未回覆` : sourceEvidenceText(evGoogleReview, "title")}</strong>
+                    <p>{sourceEvidenceText(evGoogleReview, "summary")}</p>
                   </>
                 ) : (
                   <>
-                    <strong style={{ color: "#087a47" }}>4.8 ★ 正常</strong>
-                    <p>近期無負面評價回報</p>
+                    <strong style={fixturePresentation ? { color: "#087a47" } : undefined}>{fixturePresentation ? "4.8 ★ 正常" : "資料不可用"}</strong>
+                    <p>{fixturePresentation ? "近期無負面評價回報" : "來源未提供評價證據"}</p>
                   </>
                 )}
               </article>
@@ -1231,13 +1305,13 @@ export function DesignStoreOpsWorkspace({
                 <small>客服案件</small>
                 {evCsCase ? (
                   <>
-                    <strong>Zendesk 異常</strong>
-                    <p>{evCsCase.summary}</p>
+                    <strong>{fixturePresentation ? "Zendesk 異常" : sourceEvidenceText(evCsCase, "title")}</strong>
+                    <p>{sourceEvidenceText(evCsCase, "summary")}</p>
                   </>
                 ) : (
                   <>
-                    <strong style={{ color: "#087a47" }}>0 件 正常</strong>
-                    <p>客服管道運作正常</p>
+                    <strong style={fixturePresentation ? { color: "#087a47" } : undefined}>{fixturePresentation ? "0 件 正常" : "資料不可用"}</strong>
+                    <p>{fixturePresentation ? "客服管道運作正常" : "來源未提供客服證據"}</p>
                   </>
                 )}
               </article>
@@ -1253,14 +1327,14 @@ export function DesignStoreOpsWorkspace({
                     </>
                   ) : (
                     <>
-                      <strong style={{ color: "#087a47" }}>影像已解鎖</strong>
-                      <p>{evCamera.summary}</p>
+                      <strong style={fixturePresentation ? { color: "#087a47" } : undefined}>{fixturePresentation ? "影像已解鎖" : sourceEvidenceText(evCamera, "title")}</strong>
+                      <p>{sourceEvidenceText(evCamera, "summary")}</p>
                     </>
                   )
                 ) : (
                   <>
-                    <strong style={{ color: "#087a47" }}>正常</strong>
-                    <p>影像監控無异常偵測</p>
+                    <strong style={fixturePresentation ? { color: "#087a47" } : undefined}>{fixturePresentation ? "正常" : "資料不可用"}</strong>
+                    <p>{fixturePresentation ? "影像監控無异常偵測" : "來源未提供影像證據"}</p>
                   </>
                 )}
               </article>
@@ -1268,13 +1342,13 @@ export function DesignStoreOpsWorkspace({
                 <small>支付</small>
                 {evPayment ? (
                   <>
-                    <strong>交易延遲警告</strong>
-                    <p>{evPayment.summary}</p>
+                    <strong>{fixturePresentation ? "交易延遲警告" : sourceEvidenceText(evPayment, "title")}</strong>
+                    <p>{sourceEvidenceText(evPayment, "summary")}</p>
                   </>
                 ) : (
                   <>
-                    <strong style={{ color: "#087a47" }}>交易正常</strong>
-                    <p>無異常交易或退款尖峰</p>
+                    <strong style={fixturePresentation ? { color: "#087a47" } : undefined}>{fixturePresentation ? "交易正常" : "資料不可用"}</strong>
+                    <p>{fixturePresentation ? "無異常交易或退款尖峰" : "來源未提供支付證據"}</p>
                   </>
                 )}
               </article>
@@ -1282,13 +1356,13 @@ export function DesignStoreOpsWorkspace({
                 <small>IoT 設備</small>
                 {evIot ? (
                   <>
-                    <strong>Telemetry 警告</strong>
-                    <p>{evIot.summary}</p>
+                    <strong>{fixturePresentation ? "Telemetry 警告" : sourceEvidenceText(evIot, "title")}</strong>
+                    <p>{sourceEvidenceText(evIot, "summary")}</p>
                   </>
                 ) : (
                   <>
-                    <strong style={{ color: "#087a47" }}>設備在線</strong>
-                    <p>硬體感測器狀態健康</p>
+                    <strong style={fixturePresentation ? { color: "#087a47" } : undefined}>{fixturePresentation ? "設備在線" : "資料不可用"}</strong>
+                    <p>{fixturePresentation ? "硬體感測器狀態健康" : "來源未提供設備證據"}</p>
                   </>
                 )}
               </article>
@@ -1296,13 +1370,13 @@ export function DesignStoreOpsWorkspace({
                 <small>ForecastOps</small>
                 {evForecastOps ? (
                   <>
-                    <strong>四燈評估警告</strong>
-                    <p>{evForecastOps.summary}</p>
+                    <strong>{fixturePresentation ? "四燈評估警告" : sourceEvidenceText(evForecastOps, "title")}</strong>
+                    <p>{sourceEvidenceText(evForecastOps, "summary")}</p>
                   </>
                 ) : (
                   <>
-                    <strong style={{ color: "#087a47" }}>指標正常</strong>
-                    <p>需求與營運四燈皆綠</p>
+                    <strong style={fixturePresentation ? { color: "#087a47" } : undefined}>{fixturePresentation ? "指標正常" : "資料不可用"}</strong>
+                    <p>{fixturePresentation ? "需求與營運四燈皆綠" : "來源未提供 ForecastOps 證據"}</p>
                   </>
                 )}
               </article>
@@ -1332,7 +1406,7 @@ export function DesignStoreOpsWorkspace({
               <section>
                 <h4>反向證據 {contraryEvidence.length}</h4>
                 {contraryEvidence.map((e) => <p key={e.id}>{e.title}：{e.summary}</p>)}
-                {contraryEvidence.length === 0 && <p>目前無反向反駁證據</p>}
+                {contraryEvidence.length === 0 && <p>{fixturePresentation ? "目前無反向反駁證據" : "來源未提供反向證據"}</p>}
               </section>
             </div>
             <div className={styles.aiBox}>
@@ -1399,7 +1473,7 @@ export function DesignStoreOpsWorkspace({
                   </div>
                   <div>
                     <dt>信心度</dt>
-                    <dd>{Math.round(activeEvidenceItem.confidence * 100)}%</dd>
+                    <dd>{sourceEvidenceConfidence(activeEvidenceItem)}</dd>
                   </div>
                   <div>
                     <dt>時間</dt>
@@ -1414,7 +1488,7 @@ export function DesignStoreOpsWorkspace({
               </div>
             ) : null}
 
-            {activeEvidenceTab === "forecastOps" ? (fixturesAllowed ? (
+            {activeEvidenceTab === "forecastOps" ? (fixturePresentation ? (
               <div className={styles.forecastChartSection} role="tabpanel" id="store-evidence-panel" aria-labelledby="store-evidence-tab-forecastOps" tabIndex={0}>
               <h4>28 天門市營運營收預測與異常帶 (Forecast Band Chart)</h4>
               <svg

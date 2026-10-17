@@ -4,6 +4,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GovernanceWorkspace, inspectGovernanceSnapshot } from "../GovernanceWorkspace";
 import { OperatorConsole } from "../OperatorConsole";
 import { normalizeGovernanceStatusBoard } from "../governance/governanceEnvelope";
+import type { GovernanceViewState } from "../governance/governanceUrlState";
+
+// Preserve the existing protected-read premise while the shell now rechecks
+// the canonical session. This is unit transport data, not a grant/principal.
+function stubAuthenticatedFetch(read: typeof fetch) {
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => String(input) === "/auth/session"
+    ? Promise.resolve(new Response(JSON.stringify({ subject: "unit-shell-account", expiresAt: Math.floor(Date.now() / 1000) + 3600 }), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    })) : read(input, init)));
+}
 
 const snapshot = {
   approvals: [{
@@ -74,6 +84,74 @@ const readAdminSnapshot = {
   actionAuthority: { verified: true, systemRoles: ["auditor", "platform_admin"], decide: false, exportEvidence: false },
 };
 
+describe("Governance URL target and decision ownership", () => {
+  const second = { ...snapshot.approvals[0], id:"APR-LIVE-2", title:"Second scoped approval", evidence:[{ id:"EV-SECOND", label:"Second scoped evidence" }] };
+  const twoRecords = { ...decidingSnapshot, approvals:[snapshot.approvals[0], second] };
+  const target: GovernanceViewState = { tab:"approvals", approvalId:second.id, evidenceId:"EV-SECOND", auditCategory:"all" };
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+
+  function reads() {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE","true");
+    const fetchMock=vi.fn(async (input:RequestInfo|URL,_init?:RequestInit) => new Response(JSON.stringify(String(input).endsWith("/snapshot") ? twoRecords : {items:[]}),{status:200}));
+    stubAuthenticatedFetch(fetchMock);return fetchMock;
+  }
+
+  it("keeps the requested second approval and evidence after asynchronous snapshot loading", async () => {
+    reads();
+    render(<GovernanceWorkspace roleId="ops-lead" viewState={target} />);
+    await screen.findByRole("heading",{name:second.title});
+    expect(screen.getByTestId("governance-selected-evidence")).toHaveTextContent("EV-SECOND");
+    expect(screen.getByTestId("governance-selected-evidence")).toHaveTextContent("未提供");
+    expect(within(screen.getByRole("article",{name:"Approval detail"})).queryByRole("heading",{name:snapshot.approvals[0].title})).not.toBeInTheDocument();
+  });
+
+  it("never substitutes a first approval or evidence for a missing URL target", async () => {
+    const fetchMock=reads();
+    const view=render(<GovernanceWorkspace roleId="ops-lead" viewState={{...target,approvalId:"APR-NOT-IN-SCOPE"}} />);
+    expect(await screen.findByTestId("governance-approval-unavailable")).toHaveTextContent("指定核准項目未取得");
+    expect(within(screen.getByRole("article",{name:"Approval detail"})).queryByRole("button",{name:"核准"})).not.toBeInTheDocument();
+    view.rerender(<GovernanceWorkspace roleId="ops-lead" viewState={{...target,evidenceId:"EV-NOT-IN-SCOPE"}} />);
+    expect(await screen.findByTestId("governance-evidence-unavailable")).toHaveTextContent("指定證據未取得");
+    expect(screen.queryByTestId("governance-selected-evidence")).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.every(([,init])=>!init || (init as RequestInit).method!=="POST")).toBe(true);
+  });
+
+  it("retains the record-bound reason when changing evidence or tabs", async () => {
+    reads();const navigate=vi.fn();
+    const view=render(<GovernanceWorkspace roleId="ops-lead" viewState={target} onViewStateChange={navigate} />);
+    await screen.findByRole("heading",{name:second.title});
+    fireEvent.change(screen.getByLabelText(/決策理由/),{target:{value:"Reason belongs only to the second approval"}});
+    view.rerender(<GovernanceWorkspace roleId="ops-lead" viewState={{...target,evidenceId:null}} onViewStateChange={navigate} />);
+    expect(screen.getByLabelText(/決策理由/)).toHaveValue("Reason belongs only to the second approval");
+    fireEvent.click(screen.getByTestId("governance-tab-audit"));
+    expect(navigate).toHaveBeenCalledWith(expect.objectContaining({tab:"audit",approvalId:second.id}));
+    view.rerender(<GovernanceWorkspace roleId="ops-lead" viewState={{...target,approvalId:snapshot.approvals[0].id,evidenceId:null}} />);
+    expect(screen.getByLabelText(/決策理由/)).toHaveValue("");
+  });
+
+  it("freezes navigation while a decision is pending and never copies its reason into the next target", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE","true");
+    let settle:(response:Response)=>void=()=>{};
+    const fetchMock=vi.fn((input:RequestInfo|URL,init?:RequestInit)=>init?.method==="POST"
+      ? new Promise<Response>(resolve=>{settle=resolve;})
+      : Promise.resolve(new Response(JSON.stringify(String(input).endsWith("/snapshot")?twoRecords:{items:[]}),{status:200})));
+    stubAuthenticatedFetch(fetchMock);
+    const view=render(<GovernanceWorkspace roleId="ops-lead" viewState={target} />);
+    await screen.findByRole("heading",{name:second.title});
+    fireEvent.change(screen.getByLabelText(/決策理由/),{target:{value:"Reason belongs only to the second approval"}});
+    fireEvent.click(screen.getByRole("button",{name:"退回修改"}));
+    expect(screen.getByLabelText(/決策理由/)).toHaveAttribute("readonly");
+    expect(screen.getByTestId("governance-tab-audit")).toBeDisabled();
+    view.rerender(<GovernanceWorkspace roleId="ops-lead" viewState={{...target,approvalId:snapshot.approvals[0].id,evidenceId:null}} />);
+    expect(screen.getByRole("heading",{name:second.title})).toBeInTheDocument();
+    const post=fetchMock.mock.calls.find(([,init])=>init?.method==="POST")!;
+    expect(JSON.parse(post[1]!.body as string)).toEqual(expect.objectContaining({approvalId:second.id,reason:"Reason belongs only to the second approval"}));
+    settle(new Response("Synthetic unconfirmed result",{status:503}));
+    await screen.findByRole("heading",{name:snapshot.approvals[0].title});
+    expect(screen.getByLabelText(/決策理由/)).toHaveValue("");
+  });
+});
+
 describe("GovernanceWorkspace high-risk failures", () => {
   afterEach(() => {
     cleanup();
@@ -94,7 +172,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
       ],
     };
     expect(inspectGovernanceSnapshot(canonical)).toBe("ready");
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(canonical), { status: 200 })));
+    stubAuthenticatedFetch( vi.fn(async () => new Response(JSON.stringify(canonical), { status: 200 })));
     render(<GovernanceWorkspace roleId="pm-audit" canDecide={false} />);
     await screen.findByTestId("governance-workspace");
     fireEvent.click(screen.getByTestId("governance-tab-statusBoard"));
@@ -133,13 +211,13 @@ describe("GovernanceWorkspace high-risk failures", () => {
         headers: { "Content-Type": "application/json" },
       });
     });
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<GovernanceWorkspace roleId="ops-lead" />);
     expect(await screen.findByTestId("governance-workspace")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "核准" }));
-    expect(await screen.findByText("決策未送出（API 無法連線）")).toBeInTheDocument();
+    expect(await screen.findByText("尚未確認決策結果，請重試相同內容以核對。")).toBeInTheDocument();
     expect(screen.queryByText(/已核准決策/)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("governance-tab-evidencePackage"));
@@ -149,9 +227,70 @@ describe("GovernanceWorkspace high-risk failures", () => {
     );
   });
 
+  it("never falls back to local approval after an uncertain API result, even in fixture mode", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    let attempts = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        attempts += 1;
+        if (attempts === 1) throw new Error("Synthetic lost acknowledgement");
+        const body = JSON.parse(init.body as string);
+        return new Response(JSON.stringify({ approvalId: body.approvalId, action: body.action, status: "approved", finalDecision: "Approved" }));
+      }
+      return new Response(JSON.stringify(decidingSnapshot));
+    });
+    stubAuthenticatedFetch( fetchMock);
+    const onApprove = vi.fn();
+    render(<GovernanceWorkspace roleId="ops-lead" callbacks={{ onApprove }} />);
+    await screen.findByRole("heading", { name: snapshot.approvals[0].title });
+    fireEvent.click(screen.getByRole("button", { name: "核准" }));
+    await screen.findByText("尚未確認決策結果，請重試相同內容以核對。");
+    expect(onApprove).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "核准" }));
+    await waitFor(() => expect(onApprove).toHaveBeenCalledTimes(1));
+    const writes = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(new Headers(writes[0][1]!.headers).get("Idempotency-Key")).toBe(new Headers(writes[1][1]!.headers).get("Idempotency-Key"));
+  });
+
+  it("does not accept another approval's acknowledgement", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    stubAuthenticatedFetch( vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => new Response(JSON.stringify(init?.method === "POST"
+      ? { approvalId: "wrong-approval", action: "approve", status: "approved", finalDecision: "Approved" }
+      : decidingSnapshot))));
+    const onApprove = vi.fn();
+    render(<GovernanceWorkspace roleId="ops-lead" callbacks={{ onApprove }} />);
+    await screen.findByRole("heading", { name: snapshot.approvals[0].title });
+    fireEvent.click(screen.getByRole("button", { name: "核准" }));
+    await screen.findByText("尚未確認決策結果，請重試相同內容以核對。");
+    expect(onApprove).not.toHaveBeenCalled();
+  });
+
+  it("retains export scope/key after failure and creates no local package", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    let settle!: (value: Response) => void;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => init?.method === "POST"
+      ? new Promise(resolve => { settle = resolve; })
+      : Promise.resolve(new Response(JSON.stringify(decidingSnapshot))));
+    stubAuthenticatedFetch( fetchMock);
+    render(<GovernanceWorkspace roleId="ops-lead" />);
+    await screen.findByRole("heading", { name: snapshot.approvals[0].title });
+    fireEvent.click(screen.getByTestId("governance-tab-evidencePackage"));
+    fireEvent.click(screen.getByTestId("governance-export-button"));
+    expect(screen.getByLabelText("起始日")).toBeDisabled();
+    expect(screen.getByLabelText("格式")).toBeDisabled();
+    settle(new Response("Synthetic unavailable", { status: 503 }));
+    await screen.findByText("尚未確認匯出結果，請重試相同內容；尚無可下載證據包。");
+    expect(screen.queryByTestId("evidence-package-result")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("governance-export-button"));
+    const writes = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(writes).toHaveLength(2);
+    expect(new Headers(writes[0][1]!.headers).get("Idempotency-Key")).toBe(new Headers(writes[1][1]!.headers).get("Idempotency-Key"));
+    settle(new Response("Synthetic still unavailable", { status: 503 }));
+  });
+
   it("blocks seed governance payloads instead of rendering local approvals", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(
       new Response(JSON.stringify({
         ...snapshot,
         source: "fixture-governance-replay",
@@ -171,7 +310,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
 
   it("retains governance fixtures in local mode when the API is unavailable", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    stubAuthenticatedFetch( vi.fn().mockRejectedValue(new Error("offline")));
 
     render(<GovernanceWorkspace roleId="ops-lead" />);
 
@@ -181,7 +320,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
 
   it("matches the Package 10 approval center and switches selected evidence", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(
       new Response(JSON.stringify(snapshot), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -211,7 +350,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
         headers: { "Content-Type": "application/json" },
       }),
     );
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<GovernanceWorkspace roleId="ops-lead" />);
     await screen.findByTestId("governance-workspace");
@@ -226,7 +365,7 @@ describe("GovernanceWorkspace high-risk failures", () => {
 
   it("renders dense decision, audit, evidence package and status surfaces", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(
       new Response(JSON.stringify(snapshot), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -311,7 +450,7 @@ function stubConsoleGovernance(governanceSnapshot: unknown) {
     }
     return new Response(JSON.stringify({ detail: "not routed" }), { status: 503, headers: { "Content-Type": "application/json" } });
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubAuthenticatedFetch( fetchMock);
   return { fetchMock, writes };
 }
 

@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tomllib
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -184,10 +184,38 @@ def get_installed_npm_metadata() -> dict[str, dict[str, Any]]:
                 except Exception:
                     data = {}
                 meta_by_dir[pkg_rel_path] = data
+                # npm file: dependencies are symlinks whose lock records use
+                # the source directory, including its nested dependencies.
+                try:
+                    real_rel_path = Path(entry.path).resolve().relative_to(ROOT).as_posix()
+                except ValueError:
+                    real_rel_path = pkg_rel_path
+                meta_by_dir[real_rel_path] = data
             walk(Path(entry.path) / "node_modules", f"{pkg_rel_path}/node_modules")
 
     walk(NODE_MODULES)
     return meta_by_dir
+
+
+def _resolve_npm_package_path(
+    dep_name: str, requester_path: str, packages: dict[str, Any]
+) -> str | None:
+    """Resolve a dependency through enclosing node_modules and lockfile links."""
+    directory = PurePosixPath(requester_path)
+    while True:
+        if directory.name != "node_modules":
+            candidate = (directory / "node_modules" / dep_name).as_posix()
+            seen: set[str] = set()
+            while candidate in packages and packages[candidate].get("link"):
+                if candidate in seen:
+                    return None
+                seen.add(candidate)
+                candidate = str(packages[candidate].get("resolved") or "")
+            if candidate in packages and packages[candidate].get("version"):
+                return candidate
+        if directory == directory.parent:
+            return None
+        directory = directory.parent
 
 
 def _get_python_license(dist: md.Distribution, name: str) -> str:
@@ -295,8 +323,8 @@ def generate_sbom() -> dict[str, Any]:
     if PACKAGE_LOCK.exists():
         try:
             data = json.loads(PACKAGE_LOCK.read_text(encoding="utf-8"))
-            packages = data.get("packages", {})
-            for pkg_path, pkg_info in packages.items():
+            npm_packages = data.get("packages", {})
+            for pkg_path, pkg_info in npm_packages.items():
                 if not pkg_path:  # Root workspace
                     continue
                 if "node_modules/" in pkg_path:
@@ -318,7 +346,7 @@ def generate_sbom() -> dict[str, Any]:
 
                 purl = f"pkg:npm/{pkg_name}@{version}"
                 npm_purls_by_pkg_path[pkg_path] = purl
-                npm_deps_raw[purl] = pkg_info.get("dependencies", {})
+                npm_deps_raw[pkg_path] = pkg_info.get("dependencies", {})
 
                 # License extraction
                 lic_str = _normalise_npm_license(
@@ -369,18 +397,15 @@ def generate_sbom() -> dict[str, Any]:
                 components.append(comp)
 
             def _resolve_npm_purl(dep_name: str, requester_path: str = "") -> str | None:
-                if requester_path and f"{requester_path}/node_modules/{dep_name}" in npm_purls_by_pkg_path:
-                    return npm_purls_by_pkg_path[f"{requester_path}/node_modules/{dep_name}"]
-                if f"node_modules/{dep_name}" in npm_purls_by_pkg_path:
-                    return npm_purls_by_pkg_path[f"node_modules/{dep_name}"]
-                for p_path, p_url in npm_purls_by_pkg_path.items():
-                    if p_path.endswith(f"node_modules/{dep_name}"):
-                        return p_url
-                return None
+                resolved_path = _resolve_npm_package_path(dep_name, requester_path, npm_packages)
+                return npm_purls_by_pkg_path.get(resolved_path) if resolved_path else None
 
             # Direct dependencies of root npm package and workspace members
-            for pkg_path, pkg_info in packages.items():
-                if not pkg_path or "node_modules" not in pkg_path:
+            for pkg_path, pkg_info in npm_packages.items():
+                if not pkg_path or (
+                    "node_modules" not in pkg_path
+                    and is_first_party(str(pkg_info.get("name") or ""))
+                ):
                     for d in pkg_info.get("dependencies", {}):
                         if not is_first_party(d):
                             resolved_purl = _resolve_npm_purl(d, pkg_path)
@@ -523,18 +548,20 @@ def generate_sbom() -> dict[str, Any]:
     )
 
     # Individual component dependency nodes
-    for purl, child_deps in npm_deps_raw.items():
-        depends_on = []
+    npm_edges: dict[str, set[str]] = {}
+    for pkg_path, child_deps in npm_deps_raw.items():
+        purl = npm_purls_by_pkg_path[pkg_path]
+        depends_on = npm_edges.setdefault(purl, set())
         for child_name in child_deps:
-            for p_path, p_url in npm_purls_by_pkg_path.items():
-                if p_path.endswith(f"node_modules/{child_name}"):
-                    depends_on.append(p_url)
-                    break
+            resolved_purl = _resolve_npm_purl(child_name, pkg_path)
+            if resolved_purl:
+                depends_on.add(resolved_purl)
+    for purl, depends_on in npm_edges.items():
         if depends_on:
             dependency_graph.append(
                 {
                     "ref": purl,
-                    "dependsOn": sorted(set(depends_on)),
+                    "dependsOn": sorted(depends_on),
                 }
             )
 

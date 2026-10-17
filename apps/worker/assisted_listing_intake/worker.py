@@ -28,6 +28,14 @@ logger = logging.getLogger("assisted-listing-intake-worker")
 INTAKE_JOB_TYPE = "assisted-listing-intake"
 
 
+class IntakeWorkerRetrievalError(RuntimeError):
+    """Preserve the security gate's typed failure and retry decision."""
+
+    def __init__(self, failure: Any) -> None:
+        self.failure = failure
+        super().__init__(failure.summary if failure is not None else "Retrieval failed")
+
+
 def ensure_uuid(val: Any, default: str = "00000000-0000-0000-0000-000000000000") -> str:
     import uuid
 
@@ -80,20 +88,67 @@ class HeartbeatScope:
 def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundle) -> None:
     """Run the intake pipeline stages asynchronously with leasing, heartbeats, and fencing."""
 
-    # Load or initialize intake repository
-    if persistence.is_durable:
+    payload = dict(job.payload)
+    tenant_id = payload.get("tenant_id")
+    canonical_store = getattr(persistence, "assisted_intake_store", None)
+    # The production HTTP submission and worker use the same tenant-bound
+    # canonical owner. Never recreate an unpartitioned operator fixture store.
+    if canonical_store is not None:
+        from shared.infrastructure.persistence.operator_intake_workflow import (
+            OperatorIntakeWorkflowRepository,
+        )
+
+        if not tenant_id:
+            raise ValueError("Intake job requires a verified tenant")
+        doc_store = canonical_store._store
+        intake_repo = OperatorIntakeWorkflowRepository(
+            canonical_store, persistence.operator_intake_repository_for_tenant(tenant_id),
+            tenant_id, persistence.assisted_intake_workflow_policy,
+        )
+        listing_repository = persistence.listing_repository_for_tenant(tenant_id)
+    elif persistence.is_durable:
         doc_store = SqliteDocumentStore(persistence.engine)
         intake_repo = DurableAssistedIntakeRepository(doc_store)
+        listing_repository = persistence.listing_repository
     else:
         intake_repo = InMemoryAssistedIntakeRepository()
+        listing_repository = persistence.listing_repository
 
     service = NetworkListingService(
-        listing_repository=persistence.listing_repository,
+        listing_repository=listing_repository,
         intake_repository=intake_repo,
+        seed_fixtures=canonical_store is None,
+        tenant_id=tenant_id,
     )
 
+    def save_progress(intake):
+        def save():
+            intake["version"] = intake.get("version", 0) + 1
+            service.save_intake(intake)
+
+        if canonical_store is None:
+            save()
+            return
+        # A stale worker can be first to save an otherwise unchanged Intake.
+        # Intake CAS alone does not establish ownership of its executing job.
+        # Hold the job row lock and validate its lease in the same SQL unit as
+        # the canonical Intake write, so a new claim cannot interleave.
+        # Use the same tenant-lock -> job-row order as the retry command.
+        with intake_repo.transaction(intake_id=intake["id"]):
+            canonical_store._engine.query_one(
+                "SELECT job_id FROM durable_jobs WHERE job_id = ? FOR UPDATE", (job.job_id,),
+            )
+            latest = persistence.job_queue.get(job.job_id)
+            if (latest is None or latest.status != JobStatus.RUNNING
+                    or latest.fence_token != job.fence_token
+                    or latest.payload.get("intake_id") != intake["id"]
+                    or latest.payload.get("tenant_id") != tenant_id
+                    or latest.lease_expires_at is None
+                    or latest.lease_expires_at <= datetime.now(UTC)):
+                raise JobFenceRejectedError("Intake worker no longer owns the executing job")
+            save()
+
     # Load parameters
-    payload = dict(job.payload)
     intake_id = payload.get("intake_id")
     url = payload.get("url")
     payload.get("heat_zone_id")
@@ -262,7 +317,11 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
                     f"Stage {stage_name} failed (local attempt {local_att}/{max_local_att}): {exc}"
                 )
 
-                if local_att < max_local_att:
+                retryable = not (
+                    isinstance(exc, IntakeWorkerRetrievalError)
+                    and (exc.failure is None or not exc.failure.retryable)
+                )
+                if local_att < max_local_att and retryable:
                     sleep_time = backoff_base * (2 ** (local_att - 1))
                     logger.info(f"Retrying stage {stage_name} in {sleep_time}s...")
                     time.sleep(sleep_time)
@@ -317,6 +376,23 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
                     except Exception as audit_exc:
                         logger.exception("Failed to write failure audit log: %s", audit_exc)
 
+                    if stage_name == "RETRIEVING":
+                        from modules.external_data.application.assisted_intake import (
+                            RetrievalFailure,
+                        )
+
+                        failure = exc.failure if isinstance(exc, IntakeWorkerRetrievalError) else None
+                        current = service.get_intake(intake_id)
+                        current["stage"] = "FAILED"
+                        current["failure"] = RetrievalFailure(
+                            code=failure.code if failure else "RETRIEVAL_FAILED",
+                            summary=failure.summary if failure else "Source retrieval could not be completed.",
+                            next_action=failure.next_action if failure else "Request source-policy and adapter review.",
+                            retryable=bool(failure and failure.retryable),
+                        ).to_dict()
+                        save_progress(current)
+                        if not retryable:
+                            raise NonRetryableJobError(str(exc)) from exc
                     raise exc
 
         # -------------------------------------------------------------
@@ -349,7 +425,7 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
                 "confidence": 1.0,
                 "targetListingId": existing.get("id"),
             }
-            intake_repo.save_intake(intake)
+            save_progress(intake)
             return
 
         # -------------------------------------------------------------
@@ -373,7 +449,7 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
                 "confidence": 0.0,
                 "summary": f"依來源政策 {policy.policy} 予以隔離：{policy.policy_reason}",
             }
-            intake_repo.save_intake(intake)
+            save_progress(intake)
 
             try:
                 persistence.audit_log.record(
@@ -396,7 +472,7 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
             return
         elif policy.policy in {"ASSISTED_ENTRY_ONLY", "AUTH_REQUIRED"}:
             intake["stage"] = "AWAITING_ASSISTED_ENTRY"
-            intake_repo.save_intake(intake)
+            save_progress(intake)
             return
 
         # -------------------------------------------------------------
@@ -428,15 +504,14 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
                 retrieval_method="fixture_replay",
             )
             if not retrieval_res.ok:
-                raise RuntimeError(
-                    f"Retrieval failed: {retrieval_res.failure.summary if retrieval_res.failure else 'unknown'}"
-                )
+                raise IntakeWorkerRetrievalError(retrieval_res.failure)
             
             raw_dict = json.loads(retrieval_res.body.decode("utf-8"))
             redacted_raw = redact_sensitive_snapshot(raw_dict)
             redacted_data = json.dumps(redacted_raw).encode("utf-8")
             
             snapshot_bucket = os.environ.get("ODP_SNAPSHOT_BUCKET", "").strip() or "taiwan-snapshots"
+            observed_at = datetime.now(UTC)
             snapshot_id = snapshot_service.create_snapshot(
                 tenant_id=resolved_tenant_id,
                 intake_id=intake_id,
@@ -448,15 +523,16 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
                 capture_method="SERVER_RETRIEVAL",
                 retention_class="STANDARD",
                 encryption_key_ref="kms://default-key",
-                observed_at=datetime.now(UTC),
+                observed_at=observed_at,
                 captured_at=datetime.now(UTC),
                 bucket=snapshot_bucket,
                 redacted_data=redacted_data,
             )
             
-            return redacted_raw, snapshot_id, datetime.now(UTC).isoformat().replace("+00:00", "Z")
+            return (redacted_raw, snapshot_id, datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                    observed_at.isoformat().replace("+00:00", "Z"))
 
-        raw_snapshot, snapshot_id, captured_at = run_stage("RETRIEVING", do_retrieval)
+        raw_snapshot, snapshot_id, captured_at, observed_at = run_stage("RETRIEVING", do_retrieval)
 
         # -------------------------------------------------------------
         # 4. Parsing
@@ -504,11 +580,12 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
         intake["rawSnapshot"] = raw_snapshot
         intake["snapshotId"] = snapshot_id
         intake["capturedAt"] = captured_at
+        intake["lastObservedAt"] = observed_at
         intake["parsedFields"] = parsed_fields
 
         if not has_all_required:
             intake["stage"] = "AWAITING_ASSISTED_ENTRY"
-            intake_repo.save_intake(intake)
+            save_progress(intake)
             return
 
         # -------------------------------------------------------------
@@ -542,4 +619,4 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
         else:
             intake["stage"] = "READY"
 
-        intake_repo.save_intake(intake)
+        save_progress(intake)

@@ -139,6 +139,8 @@ def test_decision_writeback_idempotent_and_audited() -> None:
     service.simulate(plan.plan_id)
     service.optimize(plan.plan_id)
 
+    service.submit_for_approval(plan.plan_id, actor="requester", reason="review pricing")
+
     key = "idem-key-writeback-1001"
     first = service.writeback_decision(
         plan.plan_id,

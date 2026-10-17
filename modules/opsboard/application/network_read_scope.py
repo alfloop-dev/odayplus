@@ -269,7 +269,8 @@ def project_review_snapshot(
     result["auditEvents"] = scoped_audit_events(result.get("auditEvents", []), {
         "candidate": ids, "review": review_ids,
     })
-    pending = sum(row.get("status") == "pending" for row in result["reviews"])
+    pending = sum(row.get("pending", row.get("status") == "pending") for row in result["reviews"])
     result["counts"] = {"reviews": len(result["reviews"]), "pending": pending,
-                        "decided": len(result["reviews"]) - pending}
+                        "decided": sum(row.get("decided", row.get("status") != "pending")
+                                       for row in result["reviews"])}
     return result

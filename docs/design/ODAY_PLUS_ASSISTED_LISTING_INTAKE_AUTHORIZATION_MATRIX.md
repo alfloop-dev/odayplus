@@ -80,6 +80,8 @@ Legend: `A` allowed within scope; `O` only own/assigned resource; `R` read-only;
 | Intake view | O | A | A | R | R | — | SVC_INTAKE/relevant worker |
 | Intake submit URL/manual | A | A | A | — | — | — | SVC_INTAKE |
 | Intake submit CSV/feed | A, max assigned scope | A | A | — | — | — | SVC_INTAKE |
+| Record source-authorization wait / `intake.await_source_authorization` | — | — | — | — | — | — | SVC_INTAKE after current scoped policy evaluation; grants no source access |
+| Request source-policy recheck / `recheck_source_policy` | — | — | Current SQL DATA_OWNER + native scope/listing/CONFIDENTIAL | — | — | — | Separate signed worker verifies current requester, then policy service re-evaluates source; no source approval |
 | Intake cancel | O before decision execution | A before execution | A for governance defect | — | — | — | SVC_INTAKE executes approved command |
 | Intake reopen from failed | O if retryable | A | A | R | — | — | authorized worker/replay service |
 | Intake reopen quarantine | — | `2P` | `2P` | R | `2P` when privacy cause | — | SVC_INTAKE executes approved decision |

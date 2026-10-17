@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -290,10 +290,13 @@ def test_postgres_snapshot_integration(intake_db) -> None:
             """
             INSERT INTO intake.source_registry (
                 source_id, display_name, allowed_hosts, canonicalization_rule_version,
-                retrieval_mode, policy_owner_subject_id, kill_switch, production_enabled
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                retrieval_mode, policy_owner_subject_id, kill_switch, production_enabled,
+                legal_approval_ref, license_approval_ref, review_expires_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (source_id, "PG Test Source", ["pg.com"], "v1.0", "APPROVED_RETRIEVAL", "00000000-0000-0000-0000-000000000000", False, True)
+            (source_id, "PG Test Source", ["pg.com"], "v1.0", "APPROVED_RETRIEVAL",
+             "11111111-1111-4111-8111-111111111111", False, True,
+             "synthetic-legal-receipt", "synthetic-license-receipt", datetime.now(UTC) + timedelta(hours=1))
         )
         cur.execute(
             """

@@ -25,6 +25,32 @@ from shared.auth import (
     check_tenant_isolation,
 )
 
+LEGAL_HOLD_FIELDS = ("hasLegalHold", "legalHold", "has_legal_hold", "legal_hold")
+
+
+def has_recorded_legal_hold(resource: dict[str, Any]) -> bool:
+    """Recognize positive custody facts from Privacy and operator producers.
+
+    False means no positive boolean was found. It does not establish that a
+    required current hold observation is available or well formed.
+    """
+    return any(resource.get(name) is True for name in LEGAL_HOLD_FIELDS)
+
+
+def recorded_legal_hold_state(resource: dict[str, Any]) -> bool | None:
+    """Project current custody observations without a false default.
+
+    Any recorded positive hold remains protective. A missing, null or malformed
+    observation cannot establish the negative state the Radar controls require.
+    """
+    values = [resource[name] for name in LEGAL_HOLD_FIELDS if name in resource]
+    if any(value is True for value in values):
+        return True
+    if not values or any(not isinstance(value, bool) for value in values):
+        return None
+    return False
+
+
 _SCOPE_AXIS_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("brand", ("brand_id", "brandId")),
     ("region", ("region_id", "regionId")),
@@ -146,6 +172,7 @@ def authorize_intake_action(
     waiver_registry: TenantAccessWaiverRegistry | None = None,
     tenant_id: str | None = None,
     collection_scope: dict[str, Any] | None = None,
+    collection_rows_projected: bool = False,
 ) -> None:
     """Enforce deny-by-default assisted intake authorization and segregation.
 
@@ -165,15 +192,23 @@ def authorize_intake_action(
     ``collection_scope`` carries the brand/region/area/heat-zone filters of a
     collection request so those axes are still enforced without dressing the
     filters up as a target resource.
+
+    ``collection_rows_projected`` is a server-owned contract for a collection
+    owner that applies current scope/ownership before pagination and authorizes
+    every returned row. It never relaxes object or CREATE checks and must not
+    be copied from request data. Existing collection owners keep their default.
     """
     def map_action_to_enum(action_str: str) -> Action:
         mapping = {
             "view": Action.VIEW,
             "submit_url": Action.CREATE,
+            "submit_manual": Action.CREATE,
             "submit_csv": Action.CREATE,
             "cancel": Action.UPDATE,
+            "archive": Action.UPDATE,
             "correct": Action.UPDATE,
             "decide": Action.UPDATE,
+            "reject_identity": Action.UPDATE,
             "merge": Action.UPDATE,
             "split": Action.UPDATE,
             "promote": Action.UPDATE,
@@ -264,7 +299,7 @@ def authorize_intake_action(
             collection_filters_in_scope(principal, scope_subject)
             if is_collection_request
             and action == "view"
-            and collection_rows_are_scope_projected(principal)
+            and (collection_rows_projected or collection_rows_are_scope_projected(principal))
             else intake_resource_in_scope(principal, scope_subject)
         )
         if not in_scope:
@@ -328,11 +363,17 @@ def authorize_intake_action(
         if not (is_staff or is_manager or is_steward or is_governance or is_privacy or is_operator_viewer):
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
-    elif action in ("submit_url", "submit_csv"):
+    elif action in ("submit_url", "submit_manual", "submit_csv"):
         if not (is_staff or is_manager or is_steward):
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
-    elif action == "cancel":
+    elif action == "recheck_source_policy":
+        if (not principal.has_role(Role.DATA_OWNER)
+                or not principal.scope.permits_module("listing")
+                or not principal.scope.permits_classification(DataClassification.CONFIDENTIAL)):
+            _raise_and_audit(status_code=403, detail="ROLE_OR_SCOPE_DENIED")
+
+    elif action in ("cancel", "archive"):
         if is_staff and resource is not None:
             owner = resource.get("owner")
             submitter = resource.get("submitter")
@@ -340,6 +381,8 @@ def authorize_intake_action(
                 _raise_and_audit(status_code=403, detail="OWNERSHIP_REQUIRED")
         if not (is_staff or is_manager or is_steward):
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
+        if action == "archive" and has_legal_hold:
+            _raise_and_audit(status_code=409, detail="LEGAL_HOLD_CONFLICT")
 
     elif action == "correct":
         # Check risk acknowledgement for corrections
@@ -372,11 +415,20 @@ def authorize_intake_action(
         elif not (is_manager or is_steward):
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
+    elif action == "reject_identity":
+        # Rejecting a pending proposal does not execute its graph plan. The
+        # identity state contract requires a reason, with the same reviewers.
+        if not (is_manager or is_steward):
+            _raise_and_audit(status_code=403, detail="ROLE_DENIED")
+
     elif action in ("merge", "split", "unmerge"):
         if is_staff:
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
         if not (is_manager or is_steward):
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
+
+        if action == "merge" and has_legal_hold:
+            _raise_and_audit(status_code=409, detail="LEGAL_HOLD_CONFLICT")
 
         # Check risk acknowledgement for merge/split/unmerge
         if not risk_summary or not risk_summary.strip():
@@ -496,7 +548,7 @@ def mask_listing(principal: Principal, listing: dict[str, Any]) -> dict[str, Any
 def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
     """Mask fields based on principal clearance and field classification."""
     clearance = principal.scope.clearance if principal.authenticated else DataClassification.PUBLIC
-    if clearance >= DataClassification.RESTRICTED:
+    if clearance >= DataClassification.HIGHLY_RESTRICTED:
         return intake
 
     masked = intake.copy()

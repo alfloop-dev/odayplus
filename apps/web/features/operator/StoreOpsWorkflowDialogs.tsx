@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Button } from "./components";
 import { useModalDialogBehavior } from "./network/useModalDialogBehavior";
 import { operatorFixturesAllowed } from "./operatorDataMode";
@@ -33,6 +33,7 @@ import type {
   StoreOpsWorkflowDialogsProps,
   StoreOpsWorkflowIssue,
   StoreOpsWorkflowPayloadBase,
+  StoreOpsWorkflowSubmitEvent,
 } from "./storeOpsWorkflowTypes";
 import { STORE_OPS_REFRESH_EVENT } from "./storeOpsWorkflowTypes";
 
@@ -129,62 +130,56 @@ const workflowActionEndpoints: Partial<Record<StoreOpsWorkflowDialogType, string
 };
 
 async function submitStoreOpsWorkflow(
-  type: StoreOpsWorkflowDialogType,
-  payload: StoreOpsWorkflowPayloadBase & Record<string, unknown>,
+  event: StoreOpsWorkflowSubmitEvent,
+  roleId: OperatorRoleId,
+  idempotencyKey: string,
 ) {
-  if (typeof window === "undefined") return;
-
-  const roleId = (window.sessionStorage.getItem("oday.operator.role") as OperatorRoleId | null) || "opsLead";
-  const correlationId = `corr-store-ops-${Math.random().toString(36).slice(2, 11)}`;
-  const idempotencyKey = `idem-store-ops-${payload.issueId}-${type}-${Math.random().toString(36).slice(2, 11)}`;
-  const path =
-    type === "cameraPurpose"
-      ? `/api/v1/operator/store-ops/issues/${payload.issueId}/camera-purpose`
-      : workflowActionEndpoints[type]
-        ? `/api/v1/operator/store-ops/issues/${payload.issueId}/${workflowActionEndpoints[type]}`
-        : "";
-
-  if (!path) return;
-
+  const { type, payload } = event;
+  const endpoint = type === "cameraPurpose" ? "camera-purpose" : workflowActionEndpoints[type];
+  if (!endpoint) throw new Error("無法送出此處置。");
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 20_000);
   try {
-    const response = await fetch(path, {
+    const response = await fetch(`/api/v1/operator/store-ops/issues/${encodeURIComponent(payload.issueId)}/${endpoint}`, {
       method: "POST",
+      signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
         "Idempotency-Key": idempotencyKey,
-        "X-Correlation-ID": correlationId,
+        "X-Correlation-ID": `corr-store-ops-${crypto.randomUUID()}`,
         ...operatorSecurityHeaders(roleId),
       },
-      body: JSON.stringify({
-        ...payload,
-        actorRoleId: roleId,
-        actorName: roleLabels[roleId] ?? "Operator",
-      }),
+      body: JSON.stringify({ ...payload, actorRoleId: roleId, actorName: roleLabels[roleId] }),
     });
-    const body = await response.json().catch(() => ({}));
-    window.dispatchEvent(
-      new CustomEvent(STORE_OPS_REFRESH_EVENT, {
-        detail: {
-          ok: response.ok,
-          status: response.status,
-          type,
-          issueId: payload.issueId,
-          body,
-        },
-      }),
-    );
+    if (!response.ok) throw new Error(`送出失敗（HTTP ${response.status}）。輸入已保留，請重試。`);
+    const body = await response.json();
+    if (body?.issue?.id !== payload.issueId) throw new Error("回應未確認此事件的處置結果。輸入已保留，請重試。");
+    return { body, status: response.status };
   } catch (error) {
-    window.dispatchEvent(
-      new CustomEvent(STORE_OPS_REFRESH_EVENT, {
-        detail: {
-          ok: false,
-          type,
-          issueId: payload.issueId,
-          error: error instanceof Error ? error.message : "Store Ops API request failed",
-        },
-      }),
-    );
+    if (error instanceof Error && (error.message.startsWith("送出失敗") || error.message.startsWith("回應未確認"))) throw error;
+    throw new Error("尚未確認送出結果。輸入已保留；請重試相同內容以核對結果。");
+  } finally {
+    window.clearTimeout(timeout);
   }
+}
+
+const WorkflowSubmissionContext = createContext<(event: StoreOpsWorkflowSubmitEvent) => void>(() => {
+  throw new Error("Store Ops submission requires its workflow panel");
+});
+
+function notifyWorkflowCallbacks(callbacks: StoreOpsWorkflowCallbacks | undefined, event: StoreOpsWorkflowSubmitEvent) {
+  switch (event.type) {
+    case "triage": callbacks?.onTriage?.(event.payload); break;
+    case "assign": callbacks?.onAssign?.(event.payload); break;
+    case "action": callbacks?.onCreateAction?.(event.payload); break;
+    case "fieldReport": callbacks?.onFieldReport?.(event.payload); break;
+    case "outcome": callbacks?.onOutcome?.(event.payload); break;
+    case "escalate": callbacks?.onEscalate?.(event.payload); break;
+    case "cameraPurpose": callbacks?.onCameraPurpose?.(event.payload); break;
+    case "replyReview": callbacks?.onReplyReview?.(event.payload); break;
+    case "transfer": callbacks?.onTransfer?.(event.payload); break;
+  }
+  callbacks?.onSubmit?.(event);
 }
 
 const severityOptions: Array<{ label: string; value: Severity }> = [
@@ -232,35 +227,78 @@ export function StoreOpsWorkflowDialogs({
   }
 
   const effectiveIssue = issue ?? fallbackIssue;
-  return <WorkflowPanel activeDialog={activeDialog} callbacks={callbacks} issue={effectiveIssue} onClose={onClose} />;
+  return <WorkflowPanel key={`${activeDialog}-${effectiveIssue.id}`} activeDialog={activeDialog} callbacks={callbacks} issue={effectiveIssue} onClose={onClose} />;
 }
 
 function WorkflowPanel({ activeDialog, callbacks, issue, onClose }: WorkflowFormProps & { activeDialog: StoreOpsWorkflowDialogType }) {
-  const panelRef = useModalDialogBehavior({ onClose });
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const busyRef = useRef(false);
+  const intentRef = useRef<{ signature: string; key: string } | null>(null);
+  const statusRef = useRef<HTMLParagraphElement | null>(null);
+  const close = () => { if (!busyRef.current) onClose(); };
+  const panelRef = useModalDialogBehavior({ dismissible: !pending, onClose: close });
   const meta = dialogMeta[activeDialog];
   const frameClass = activeDialog === "fieldReport" ? styles.drawer : styles.dialog;
 
+  useEffect(() => {
+    panelRef.current?.querySelector<HTMLElement>("input, select, textarea")?.focus();
+  }, [panelRef]);
+  useEffect(() => { if (pending || error) statusRef.current?.focus(); }, [pending, error]);
+
+  async function submit(event: StoreOpsWorkflowSubmitEvent) {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setPending(true);
+    setError(null);
+    const storedRole = window.sessionStorage.getItem("oday.operator.role");
+    const roleId = OPERATOR_ROLE_IDS.includes(storedRole as OperatorRoleId) ? storedRole as OperatorRoleId : "opsLead";
+    const signature = JSON.stringify({ event, roleId });
+    if (intentRef.current?.signature !== signature) {
+      intentRef.current = { signature, key: `idem-store-ops-${crypto.randomUUID()}` };
+    }
+    let result;
+    try {
+      result = await submitStoreOpsWorkflow(event, roleId, intentRef.current.key);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "送出失敗，請重試。");
+      busyRef.current = false;
+      setPending(false);
+      return;
+    }
+    // Only acknowledged writes notify consumers or dismiss the form.
+    try {
+      notifyWorkflowCallbacks(callbacks, event);
+    } finally {
+      window.dispatchEvent(new CustomEvent(STORE_OPS_REFRESH_EVENT, {
+        detail: { ok: true, status: result.status, type: event.type, issueId: issue.id, body: result.body },
+      }));
+      busyRef.current = false;
+      onClose();
+    }
+  }
+
   return (
-    <div ref={panelRef} className={styles.overlay} data-screen-label={dialogScreenLabels[activeDialog]}>
-      <section
-        aria-labelledby={`store-ops-workflow-${activeDialog}-title`}
-        className={frameClass}
-        data-workflow={activeDialog}
-        role="dialog"
-        aria-modal="true"
-      >
+    <div className={styles.overlay} data-screen-label={dialogScreenLabels[activeDialog]}>
+      <div ref={panelRef} aria-labelledby={`store-ops-workflow-${activeDialog}-title`}
+        className={frameClass} data-workflow={activeDialog} role="dialog" aria-modal="true" aria-busy={pending}>
         <header className={styles.header} role="presentation">
           <div className={styles.headerTitle}>
             <h2 id={`store-ops-workflow-${activeDialog}-title`}>{meta.title}</h2>
             <span className={styles.issueId}>{issue.id}</span>
           </div>
-          <button aria-label="關閉對話框" className={styles.closeButton} onClick={onClose} type="button">×</button>
+          <button aria-label="關閉對話框" className={styles.closeButton} disabled={pending} onClick={close} type="button">×</button>
         </header>
-
-        <div className={styles.body}>
-          <DialogContent activeDialog={activeDialog} callbacks={callbacks} issue={issue} onClose={onClose} />
-        </div>
-      </section>
+        {pending || error ? <p ref={statusRef} className={`${styles.submissionStatus} ${error ? styles.error : styles.notice}`}
+          role={error ? "alert" : "status"} tabIndex={0}>{error ?? "正在送出，請稍候…"}</p> : null}
+        <fieldset className={styles.submissionFields} disabled={pending}>
+          <div className={styles.body}>
+            <WorkflowSubmissionContext.Provider value={(event) => { void submit(event); }}>
+              <DialogContent activeDialog={activeDialog} issue={issue} onClose={close} />
+            </WorkflowSubmissionContext.Provider>
+          </div>
+        </fieldset>
+      </div>
     </div>
   );
 }
@@ -311,7 +349,8 @@ type WorkflowFormProps = {
   onClose: () => void;
 };
 
-function TriageForm({ callbacks, issue, onClose }: WorkflowFormProps) {
+function TriageForm({ issue, onClose }: WorkflowFormProps) {
+  const submitWorkflow = useContext(WorkflowSubmissionContext);
   const fixturesAllowed = operatorFixturesAllowed();
   const [severity, setSeverity] = useState<Severity>(issue.severity);
   const [category, setCategory] = useState<StoreOpsTriageCategory>("multiSignal");
@@ -335,10 +374,7 @@ function TriageForm({ callbacks, issue, onClose }: WorkflowFormProps) {
       demoFastForward,
       notes: notes.trim(),
     };
-    callbacks?.onTriage?.(payload);
-    callbacks?.onSubmit?.({ type: "triage", payload });
-    void submitStoreOpsWorkflow("triage", payload);
-    onClose();
+    submitWorkflow({ type: "triage", payload });
   }
 
   return (
@@ -410,7 +446,8 @@ function TriageForm({ callbacks, issue, onClose }: WorkflowFormProps) {
   );
 }
 
-function AssignForm({ callbacks, issue, onClose }: WorkflowFormProps) {
+function AssignForm({ issue, onClose }: WorkflowFormProps) {
+  const submitWorkflow = useContext(WorkflowSubmissionContext);
   const [ownerRoleId, setOwnerRoleId] = useState<OperatorRoleId>(issue.ownerRoleId);
   const [ownerName, setOwnerName] = useState(issue.ownerName);
   const [slaDueAt, setSlaDueAt] = useState(issue.slaDueAt);
@@ -425,10 +462,7 @@ function AssignForm({ callbacks, issue, onClose }: WorkflowFormProps) {
       slaDueAt: slaDueAt.trim(),
       handoffNote: handoffNote.trim(),
     };
-    callbacks?.onAssign?.(payload);
-    callbacks?.onSubmit?.({ type: "assign", payload });
-    void submitStoreOpsWorkflow("assign", payload);
-    onClose();
+    submitWorkflow({ type: "assign", payload });
   }
 
   return (
@@ -444,7 +478,8 @@ function AssignForm({ callbacks, issue, onClose }: WorkflowFormProps) {
   );
 }
 
-function ActionForm({ callbacks, issue, onClose }: WorkflowFormProps) {
+function ActionForm({ issue, onClose }: WorkflowFormProps) {
+  const submitWorkflow = useContext(WorkflowSubmissionContext);
   const [actionType, setActionType] = useState<StoreOpsActionType>("cleaningCheck");
   const [title, setTitle] = useState(`處理 ${issue.title}`);
   const [instructions, setInstructions] = useState("完成現場處置並附上可用證據。");
@@ -474,10 +509,7 @@ function ActionForm({ callbacks, issue, onClose }: WorkflowFormProps) {
       observationWindow: observationWindow.trim(),
       remoteRestartAuditNote: auditNote || undefined,
     };
-    callbacks?.onCreateAction?.(payload);
-    callbacks?.onSubmit?.({ type: "action", payload });
-    void submitStoreOpsWorkflow("action", payload);
-    onClose();
+    submitWorkflow({ type: "action", payload });
   }
 
   return (
@@ -545,7 +577,8 @@ function ActionForm({ callbacks, issue, onClose }: WorkflowFormProps) {
   );
 }
 
-function FieldReportForm({ callbacks, issue, onClose }: WorkflowFormProps) {
+function FieldReportForm({ issue, onClose }: WorkflowFormProps) {
+  const submitWorkflow = useContext(WorkflowSubmissionContext);
   const [reportedBy, setReportedBy] = useState(issue.ownerName);
   const [observedAt, setObservedAt] = useState(issue.updatedAt);
   const [summary, setSummary] = useState("");
@@ -571,10 +604,7 @@ function FieldReportForm({ callbacks, issue, onClose }: WorkflowFormProps) {
       attachmentNames: splitList(attachmentNames),
       blocker: trimmedBlocker || undefined,
     };
-    callbacks?.onFieldReport?.(payload);
-    callbacks?.onSubmit?.({ type: "fieldReport", payload });
-    void submitStoreOpsWorkflow("fieldReport", payload);
-    onClose();
+    submitWorkflow({ type: "fieldReport", payload });
   }
 
   return (
@@ -620,7 +650,8 @@ function FieldReportForm({ callbacks, issue, onClose }: WorkflowFormProps) {
   );
 }
 
-function OutcomeForm({ callbacks, issue, onClose }: WorkflowFormProps) {
+function OutcomeForm({ issue, onClose }: WorkflowFormProps) {
+  const submitWorkflow = useContext(WorkflowSubmissionContext);
   const [outcome, setOutcome] = useState<StoreOpsOutcomeStatus>("effective");
   const [impactSummary, setImpactSummary] = useState("");
   const [evidenceSummary, setEvidenceSummary] = useState("");
@@ -647,10 +678,7 @@ function OutcomeForm({ callbacks, issue, onClose }: WorkflowFormProps) {
       followUpTarget: needsFollowUp ? followUpTarget : undefined,
       followUpAction: trimmedFollowUp || undefined,
     };
-    callbacks?.onOutcome?.(payload);
-    callbacks?.onSubmit?.({ type: "outcome", payload });
-    void submitStoreOpsWorkflow("outcome", payload);
-    onClose();
+    submitWorkflow({ type: "outcome", payload });
   }
 
   return (
@@ -708,7 +736,8 @@ function OutcomeForm({ callbacks, issue, onClose }: WorkflowFormProps) {
   );
 }
 
-function EscalateForm({ callbacks, issue, onClose }: WorkflowFormProps) {
+function EscalateForm({ issue, onClose }: WorkflowFormProps) {
+  const submitWorkflow = useContext(WorkflowSubmissionContext);
   const [target, setTarget] = useState<StoreOpsEscalationTarget>("growth");
   const [urgency, setUrgency] = useState<StoreOpsUrgency>("high");
   const [reason, setReason] = useState("");
@@ -725,10 +754,7 @@ function EscalateForm({ callbacks, issue, onClose }: WorkflowFormProps) {
       requestedOutcome: requestedOutcome.trim(),
       notifyOwner,
     };
-    callbacks?.onEscalate?.(payload);
-    callbacks?.onSubmit?.({ type: "escalate", payload });
-    void submitStoreOpsWorkflow("escalate", payload);
-    onClose();
+    submitWorkflow({ type: "escalate", payload });
   }
 
   return (
@@ -777,7 +803,8 @@ function EscalateForm({ callbacks, issue, onClose }: WorkflowFormProps) {
   );
 }
 
-function CameraPurposeForm({ callbacks, issue, onClose }: WorkflowFormProps) {
+function CameraPurposeForm({ issue, onClose }: WorkflowFormProps) {
+  const submitWorkflow = useContext(WorkflowSubmissionContext);
   const [purpose, setPurpose] = useState("");
   const [cameraLocation, setCameraLocation] = useState(`${issue.storeName} 櫃檯攝影機`);
   const [timeWindow, setTimeWindow] = useState("最近 30 分鐘");
@@ -807,10 +834,7 @@ function CameraPurposeForm({ callbacks, issue, onClose }: WorkflowFormProps) {
       privacyAcknowledged,
       auditNote: auditNote.trim(),
     };
-    callbacks?.onCameraPurpose?.(payload);
-    callbacks?.onSubmit?.({ type: "cameraPurpose", payload });
-    void submitStoreOpsWorkflow("cameraPurpose", payload);
-    onClose();
+    submitWorkflow({ type: "cameraPurpose", payload });
   }
 
   return (
@@ -855,7 +879,8 @@ function CameraPurposeForm({ callbacks, issue, onClose }: WorkflowFormProps) {
   );
 }
 
-function ReplyReviewForm({ callbacks, issue, onClose }: WorkflowFormProps) {
+function ReplyReviewForm({ issue, onClose }: WorkflowFormProps) {
+  const submitWorkflow = useContext(WorkflowSubmissionContext);
   const [channel, setChannel] = useState<StoreOpsReplyChannel>("google");
   const [decision, setDecision] = useState<StoreOpsReplyDecision>("approve");
   const [draftReply, setDraftReply] = useState("感謝您的反映，門市團隊已確認問題並採取處置。");
@@ -880,10 +905,7 @@ function ReplyReviewForm({ callbacks, issue, onClose }: WorkflowFormProps) {
       reviewerNote: trimmedNote || undefined,
       publishAfterApproval,
     };
-    callbacks?.onReplyReview?.(payload);
-    callbacks?.onSubmit?.({ type: "replyReview", payload });
-    void submitStoreOpsWorkflow("replyReview", payload);
-    onClose();
+    submitWorkflow({ type: "replyReview", payload });
   }
 
   return (
@@ -939,7 +961,8 @@ function ReplyReviewForm({ callbacks, issue, onClose }: WorkflowFormProps) {
   );
 }
 
-function TransferForm({ callbacks, issue, onClose }: WorkflowFormProps) {
+function TransferForm({ issue, onClose }: WorkflowFormProps) {
+  const submitWorkflow = useContext(WorkflowSubmissionContext);
   const [targetRoleId, setTargetRoleId] = useState<OperatorRoleId>("supportLead");
   const [targetOwnerName, setTargetOwnerName] = useState("");
   const [reason, setReason] = useState("");
@@ -956,10 +979,7 @@ function TransferForm({ callbacks, issue, onClose }: WorkflowFormProps) {
       handoffNote: handoffNote.trim(),
       keepWatching,
     };
-    callbacks?.onTransfer?.(payload);
-    callbacks?.onSubmit?.({ type: "transfer", payload });
-    void submitStoreOpsWorkflow("transfer", payload);
-    onClose();
+    submitWorkflow({ type: "transfer", payload });
   }
 
   return (

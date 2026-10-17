@@ -20,7 +20,7 @@ dependencies = [
     "statsmodels>=0.14",
     # Solver / geospatial
     "h3>=4.5.0",
-    "ortools>=9.15.6755",
+    "ortools>=9.15.6755,<9.16",
     # Data
     "duckdb>=1.0",
     "dlt[postgres]>=1.20,<2",
@@ -42,12 +42,17 @@ dependencies = [
     "statsforecast>=2,<3",
     "mlforecast>=1,<2",
     "lifelines>=0.30,<1",
-    "cvxpy>=1.7,<2",
+    # OR-Tools 9.15 bundles HiGHS 1.12. Different libhighs SONAMEs
+    # collide in one process; this complete solver profile is tested in both
+    # import orders with actual CP-SAT and CVXPY/HiGHS integer models.
+    "cvxpy>=1.7,<1.8",
+    "highspy==1.12.0",
     "pyomo>=6.9,<7",
     "great-expectations>=1.8,<2",
     "dagster>=1.12,<2",
     "optuna>=4.9,<5",
     "pymoo>=0.6.1,<0.7",
+    "reportlab>=5.0.1,<6",
 ]
 
 [dependency-groups]
@@ -59,6 +64,7 @@ dev = [
     "pytest>=8",
     "pytest-xdist>=3.6",
     "ruff>=0.6",
+    "pypdf>=6.20,<7",
 ]
 
 # This repo is run as a set of scripts/services, not built as a distributable

@@ -2,7 +2,7 @@
 #
 # Contract:  emgi.market-cell-profile.v1 (decision_product, v1.0.0)
 # Release:   oday-data-product-contracts.v0.4.1
-# Producer:  alfloop-dev/oday-data-platform@245aa00e417b6f8450baa608e8976584e00be6fc
+# Producer:  alfloop-dev/oday-data-platform@606c35f26a47df9eae7667eaeb82f5eebf75fa22
 # Schema:    schemas/market-cell-profile.schema.json
 # Digest:    d239e2aa294cd0a8382b5d653147b653b367cc4d3e695a5c9a7a76c38b91f103
 """Canonical contract schemas for published market cell profiles (emgi.market-cell-profile.v1) and market zone profiles across H3 space, period grain, multi-domain observations, source support, and component manifests in EMGI v0.4.1."""

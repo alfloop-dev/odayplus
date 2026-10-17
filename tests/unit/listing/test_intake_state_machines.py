@@ -54,6 +54,32 @@ def sys_actor() -> Actor:
 # --- Unit Tests for Intake Stage Machine ---
 
 
+@pytest.mark.parametrize("role", [PrincipalRole.SVC_INTAKE, PrincipalRole.EXPANSION_STAFF,
+                                  PrincipalRole.DATA_STEWARD, PrincipalRole.SVC_RETRIEVAL])
+def test_source_authorization_wait_is_a_policy_service_decision(role):
+    entity = IntakeAggregate(id="synthetic-auth-intake", tenant_id="tenant-a",
+        stage=IntakeStage.CHECKING_SOURCE_POLICY, version=3, created_by="synthetic-author", source_id="synthetic-source")
+    context = TransitionContext(actor=Actor("synthetic-actor", role, "tenant-a"), version_before=3)
+    if role == PrincipalRole.SVC_INTAKE:
+        IntakeStateMachine.transition(entity, IntakeStage.AWAITING_SOURCE_AUTHORIZATION, context)
+        assert entity.stage == IntakeStage.AWAITING_SOURCE_AUTHORIZATION and entity.version == 4
+    else:
+        with pytest.raises(DomainValidationError) as error:
+            IntakeStateMachine.transition(entity, IntakeStage.AWAITING_SOURCE_AUTHORIZATION, context)
+        assert error.value.code == DenialCode.ROLE_DENIED
+        assert entity.stage == IntakeStage.CHECKING_SOURCE_POLICY and entity.version == 3
+
+
+@pytest.mark.parametrize("target", [IntakeStage.RETRIEVING, IntakeStage.AWAITING_ASSISTED_ENTRY, IntakeStage.PARSING])
+def test_waiting_for_source_authorization_is_never_a_direct_access_grant(target, sys_actor):
+    entity = IntakeAggregate(id="synthetic-auth-intake", tenant_id="tenant-a",
+        stage=IntakeStage.AWAITING_SOURCE_AUTHORIZATION, version=4, created_by="synthetic-author", source_id="synthetic-source")
+    with pytest.raises(DomainValidationError) as error:
+        IntakeStateMachine.transition(entity, target, TransitionContext(actor=sys_actor, version_before=4))
+    assert error.value.code == DenialCode.WORKFLOW_STATE_DENIED
+    assert entity.stage == IntakeStage.AWAITING_SOURCE_AUTHORIZATION and entity.version == 4
+
+
 def test_intake_cannot_transition_from_terminal_ready(manager_actor: Actor) -> None:
     entity = IntakeAggregate(
         id="IN-1",

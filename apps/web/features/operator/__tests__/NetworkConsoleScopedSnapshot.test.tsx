@@ -16,6 +16,16 @@ import { OperatorConsole } from "../OperatorConsole";
 import { resolveNetworkCountState } from "../NetworkFindAreasWorkspace";
 import { NETWORK_TAB_IDS } from "../network/networkUrlState";
 
+// Existing business assertions keep their transport premise: a current
+// canonical session precedes protected shell reads. No principal/grant is
+// derived from this unit-test response.
+function stubAuthenticatedFetch(read: typeof fetch) {
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => String(input) === "/auth/session"
+    ? Promise.resolve(new Response(JSON.stringify({ subject: "unit-shell-account", expiresAt: Math.floor(Date.now() / 1000) + 3600 }), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    })) : read(input, init)));
+}
+
 const nav = vi.hoisted(() => ({ search: "ws=network" }));
 const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
 
@@ -197,7 +207,7 @@ function stubProductionFetch(snapshot: unknown, denyScoring = false, reviews?: u
     }
     return jsonResponse({ detail: "not routed" }, 503);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubAuthenticatedFetch( fetchMock);
   return { fetchMock, legacyDomainPaths, networkListingUrls };
 }
 
@@ -265,7 +275,9 @@ describe("Network Find Areas in the production Operator Console composition", ()
 
     render(<OperatorConsole searchParams={{ ws: "network" }} />);
 
-    expect(await screen.findByTestId("network-panel-find-areas")).toBeInTheDocument();
+    // The authenticated shell loads Network lazily; its module may still be
+    // compiling while the parallel component suites initialise.
+    expect(await screen.findByTestId("network-panel-find-areas", {}, { timeout: 5000 })).toBeInTheDocument();
     // Production no longer preloads RBAC-only domain bindings.
     expect(legacyDomainPaths).toEqual([]);
     // First read carries no injected selection; the API-named zone is then used.
