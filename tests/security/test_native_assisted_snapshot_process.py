@@ -3,6 +3,7 @@
 import base64
 import json
 import os
+import subprocess
 import time
 from types import SimpleNamespace
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -165,8 +166,17 @@ c.main()
     assert result == {"kind": "storage#bucket", "name": BUCKET, "location": "ASIA-EAST1", "locationType": "region"}
 
 
-def test_actual_assisted_child_is_killed_and_reaped_when_provider_stalls(tmp_path):
+def test_actual_assisted_child_is_killed_and_reaped_at_deadline(tmp_path, monkeypatch):
     pid_file = tmp_path / "owned-assist-pid"
+    spawned = []
+    real_popen = subprocess.Popen
+
+    def capture_process(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        spawned.append(process)
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", capture_process)
     script = f"""
 import importlib.util,pathlib,os,sys,time
 pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))
@@ -180,6 +190,14 @@ c.main()
     with pytest.raises(NativeIORejected, match="NATIVE_IO_DEADLINE_EXPIRED"):
         runner(tmp_path, script).run({"operation": "gcs_assisted_bucket", "bucket": BUCKET},
             deadline=time.monotonic() + 0.4, guard=lambda: None, credential="dedicated-assist-only")
-    assert pid_file.exists()
+    assert len(spawned) == 1
+    process = spawned[0]
+    # The deadline also covers startup, so the child may be killed before it
+    # writes a PID file. Verify the actual owned process and completed reaping.
+    assert process.returncode is not None
+    with pytest.raises(ChildProcessError):
+        os.waitpid(process.pid, os.WNOHANG)
     with pytest.raises(ProcessLookupError):
-        os.kill(int(pid_file.read_text()), 0)
+        os.kill(process.pid, 0)
+    if pid_file.exists():
+        assert int(pid_file.read_text()) == process.pid

@@ -136,11 +136,11 @@ class NativeAssistedEntryHistory:
         self._event(job, result["outbox_event_id"], at, before, event_type="intake.state_changed",
             producer="listing_intake_service", aggregate_type="intake", aggregate_id=payload["intake_id"],
             version=result["version"], actor=payload["requested_by"], schema="IntakeStateChangedV1", data=changed,
-            sensitive=[], retention_days=14)
+            sensitive=[])
         self._event(job, result["snapshot_created_event_id"], at, before, event_type="snapshot.manual_entry_created",
             producer="assisted_entry_service", aggregate_type="source_snapshot", aggregate_id=result["source_snapshot_id"],
             version=1, actor=JOB_TYPE, schema="SnapshotCreatedV1", data=snapshot_payload(snapshot),
-            sensitive=["payload.object_uri"], retention_days=14)
+            sensitive=["payload.object_uri"])
         before()
         return result
 
@@ -236,7 +236,7 @@ class NativeAssistedEntryHistory:
         return command
 
     def _event(self, job, event_id, at, before, *, event_type, producer, aggregate_type, aggregate_id, version,
-               actor, schema, data, sensitive, retention_days):
+               actor, schema, data, sensitive):
         before()
         row = self.graph._one("SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?", (job["tenant_id"], event_id))
         event = _object(row["payload"])
@@ -250,5 +250,7 @@ class NativeAssistedEntryHistory:
                     "aggregate_type", "aggregate_id", "aggregate_version", "partition_key", "correlation_id"))
                 or type(event.get("aggregate_version")) is not int or type(event.get("event_version")) is not int
                 or _time(event.get("occurred_at")) != at or _time(row["occurred_at"]) != at
-                or _time(row["retention_until"]) != at + timedelta(days=retention_days)):
+                # The canonical outbox stores 30 days. Published bus events
+                # retain 14 days; that separate transport policy is not this row.
+                or _time(row["retention_until"]) != at + timedelta(days=30)):
             _reject()
