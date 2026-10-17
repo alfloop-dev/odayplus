@@ -64,6 +64,7 @@ from modules.sitescore.v3.domain.contracts import (
 from modules.sitescore.v3.domain.contracts import (
     CONTRACT_VERSION as SITESCORE_CONTRACT_VERSION,
 )
+from modules.sitescore.v3.domain.contracts import validate_sitescore_v3_payload
 from modules.sitescore.v3.domain.models import (
     DecisionReadiness,
     ScoreAvailability,
@@ -83,7 +84,7 @@ CONTRACT_CATEGORY = "decision_product"
 #: Bumped whenever the admission rules or the economics -> solver mapping
 #: changes.  It is persisted on every emitted document so a past plan stays
 #: reproducible after this file evolves.
-INTEGRATION_POLICY_VERSION = "netplan-emgi-admission-v2"
+INTEGRATION_POLICY_VERSION = "netplan-emgi-admission-v3"
 
 
 class CandidateAdmission(StrEnum):
@@ -604,6 +605,16 @@ class NetPlanEmgiIntegrationService:
         if actual_context_hash is None or _field(economics_doc, "source_market_context_sha256") != actual_context_hash:
             verdict.downgrade(CandidateAdmission.WITHHELD_PROVENANCE,
                               "Economics source market context content hash mismatch or missing.")
+        for label, source in (("Feasibility", feasibility_doc), ("SiteScore v3", sitescore_doc)):
+            mapping = _as_mapping(source)
+            metadata = _as_mapping(_field(source, "metadata"))
+            hashes = [record["source_market_context_sha256"] for record in (mapping, metadata)
+                      if "source_market_context_sha256" in record]
+            if actual_context_hash is None or not hashes or any(
+                value != actual_context_hash for value in hashes
+            ):
+                verdict.downgrade(CandidateAdmission.WITHHELD_PROVENANCE,
+                                  label + " source market context content hash mismatch or missing.")
         for label, source in (("Feasibility", feasibility_doc), ("Economics", economics_doc)):
             if _field(source, "site_id") != site_id:
                 verdict.downgrade(CandidateAdmission.WITHHELD_PROVENANCE,
@@ -799,6 +810,11 @@ class NetPlanEmgiIntegrationService:
             verdict,
         ):
             return
+        if not validate_sitescore_v3_payload(_as_mapping(document)):
+            verdict.downgrade(
+                CandidateAdmission.WITHHELD_INCOMPLETE,
+                "SiteScore v3 state or component scores are invalid.",
+            )
         if _text(_field(document, "site_id")) != site_id:
             verdict.downgrade(
                 CandidateAdmission.WITHHELD_PROVENANCE,

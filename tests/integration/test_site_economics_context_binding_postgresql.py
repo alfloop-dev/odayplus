@@ -28,12 +28,16 @@ def stack(tenant):
         overrides=SimulationOverrides(demand_multiplier=1.8, monthly_rent=40_000),
     )
     feasibility = SiteFeasibilityService().evaluate_feasibility(
-        site_id=SITE_ID, market_context=context, surveys=[_survey()],
+        site_id=SITE_ID, market_context=context, surveys=[_survey()], tenant_id=tenant,
     )
     score = SiteScoreV3Service().evaluate(
         site_id=SITE_ID, manifest_id=MANIFEST_ID, market_context=context,
-        feasibility_doc=feasibility, economics_doc=economics,
+        feasibility_doc=feasibility, economics_doc=economics, tenant_id=tenant,
     )
+    assert context["tenant_id"] == tenant
+    assert (score.source_market_context_sha256
+            == feasibility.metadata["source_market_context_sha256"]
+            == economics.source_market_context_sha256)
     return context, economics, feasibility, score
 
 

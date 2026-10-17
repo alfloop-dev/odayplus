@@ -8,6 +8,11 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
+from modules.site_economics.application.context_inputs import (
+    SiteEconomicsInputError,
+    content_sha256,
+    select_market_context,
+)
 from modules.site_feasibility.domain.contracts import (
     SiteFeasibilityDocument,
     validate_site_feasibility_document,
@@ -151,31 +156,13 @@ def _coerce_bool(value: Any) -> bool | None:
     return None
 
 
-def _context_for_site(market_context: Any, site_id: str) -> Mapping[str, Any]:
-    """Unwrap a context item from either a context or context-document payload."""
-
-    context = _as_mapping(market_context)
-    contexts = context.get("contexts")
-    if isinstance(contexts, Sequence) and not isinstance(contexts, (str, bytes)):
-        candidates = [_as_mapping(item) for item in contexts]
-        matching = [
-            item
-            for item in candidates
-            if _as_mapping(item.get("identity")).get("site_id") == site_id
-        ]
-        if matching:
-            return matching[0]
-        # A context document is not interchangeable with its sole child.
-        # Falling back to an unmatched child would let another site's zoning
-        # decide this site's binding recommendation.
+def _context_for_site(market_context: Any, site_id: str,
+                      tenant_id: str | None = None) -> Mapping[str, Any]:
+    """A duplicate, foreign or inconsistent released context is unavailable."""
+    try:
+        return select_market_context(market_context, site_id=site_id, tenant_id=tenant_id).context
+    except (SiteEconomicsInputError, TypeError, ValueError, OverflowError, RecursionError):
         return {}
-    # A single context object is still site-scoped.  Do not let a valid
-    # context for another site supply zoning or other decision inputs when
-    # the caller is evaluating this site.
-    identity = _as_mapping(context.get("identity"))
-    if identity.get("site_id") != site_id:
-        return {}
-    return context
 
 
 def _context_metadata(context: Mapping[str, Any]) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
@@ -473,8 +460,10 @@ class SiteFeasibilityService:
         site_id: str,
         market_context: Mapping[str, Any],
         surveys: list[Mapping[str, Any]],
+        *,
+        tenant_id: str | None = None,
     ) -> SiteFeasibilityDocument:
-        context = _context_for_site(market_context, site_id)
+        context = _context_for_site(market_context, site_id, tenant_id)
         signals = _Signals()
         _evaluate_zoning(context, signals)
 
@@ -517,7 +506,8 @@ class SiteFeasibilityService:
         )
         metadata = {
             "source_market_context_id": context.get("context_id") or context.get("document_id"),
-            "policy_version": "physical-feasibility-gate-v1",
+            "source_market_context_sha256": content_sha256(context) if context else None,
+            "policy_version": "physical-feasibility-gate-v2",
             "approved_survey_ids": sorted(
                 str(survey.get("survey_id"))
                 for survey in usable_surveys

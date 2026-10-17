@@ -1,0 +1,276 @@
+{
+  "fixture_scope": "Synthetic original v2 serialized plan and review; no production business approval or UAT",
+  "original_policy": "netplan-emgi-admission-v2",
+  "original_plan": {
+    "contract_id": "odayplus.netplan-emgi.v1",
+    "contract_version": "1.0.0",
+    "document_id": "netplan-emgi-09002ba4218d461b9d47bb07f3f0245d",
+    "tenant_id": "tenant-real-001",
+    "scenario_key": "fy27-h1-expansion",
+    "manifest_id": "mf-real-001",
+    "generated_at": "2026-10-17T09:20:52.163365+00:00",
+    "requires_human_approval": true,
+    "policy": {
+      "gross_margin_horizon_months": 12,
+      "risk_per_flag": 0.05,
+      "default_capacity_delta": 1,
+      "policy_version": "netplan-emgi-admission-v2"
+    },
+    "candidates": [
+      {
+        "candidate_site_id": "SITE-REAL-001",
+        "admission": "ADMITTED",
+        "reasons": [],
+        "requires_human_approval": true,
+        "evidence": {
+          "manifest_id": "mf-real-001",
+          "market_context_id": "ctx-real-001",
+          "market_context_sha256": "a042608734d90baee1f108eb0fa5053ed1df968dc289f2c4ee861e6c95b02b5e",
+          "policy_versions": {
+            "netplan_emgi_integration": "netplan-emgi-admission-v2",
+            "feasibility_gate": "physical-feasibility-gate-v1",
+            "economics_engine": "site-economics-simulator-v1.0.0",
+            "sitescore_contract": "1.0.0"
+          },
+          "refs": [
+            {
+              "label": "market_context",
+              "contract_id": "emgi.site-market-context.v1",
+              "contract_version": "1.0.0",
+              "document_id": "ctx-real-001",
+              "sha256": "a042608734d90baee1f108eb0fa5053ed1df968dc289f2c4ee861e6c95b02b5e"
+            },
+            {
+              "label": "sitescore_v3",
+              "contract_id": "odayplus.sitescore-v3.v1",
+              "contract_version": "1.0.0",
+              "document_id": "sitescore-doc-001",
+              "sha256": "e788291dfee32eade5109290ad68898ac92e56db5b13d1707a025742d1730ee6"
+            },
+            {
+              "label": "feasibility",
+              "contract_id": "odayplus.physical-feasibility.v1",
+              "contract_version": "1.0.0",
+              "document_id": "feas-doc-001",
+              "sha256": "c9cd4d659854e1d37e7bafa479109acd451f5ebabe4488e1ee7f7f74c9006416"
+            },
+            {
+              "label": "economics",
+              "contract_id": "odayplus.site-economics.v1",
+              "contract_version": "1.0.0",
+              "document_id": "econ-doc-001",
+              "sha256": "2c50a96672b1bf1e526a4bae44cc35da241f0fcd7b53d15debbb01cb35088b61"
+            }
+          ],
+          "snapshot_ids": [
+            "emgi.site-market-context.v1:ctx-real-001",
+            "odayplus.physical-feasibility.v1:feas-doc-001",
+            "odayplus.site-economics.v1:econ-doc-001",
+            "odayplus.sitescore-v3.v1:sitescore-doc-001"
+          ]
+        },
+        "candidate_input": {
+          "candidate_site_id": "SITE-REAL-001",
+          "expected_gross_margin": 1080000.0,
+          "open_cost": 3600000.0,
+          "risk_score": 0.2,
+          "capacity_delta": 1,
+          "source_snapshot_ids": [
+            "emgi.site-market-context.v1:ctx-real-001",
+            "odayplus.physical-feasibility.v1:feas-doc-001",
+            "odayplus.site-economics.v1:econ-doc-001",
+            "odayplus.sitescore-v3.v1:sitescore-doc-001"
+          ]
+        }
+      }
+    ],
+    "metadata": {
+      "engineering_fixture": "synthetic retained original-v2 record; no production or human acceptance claim"
+    }
+  },
+  "original_plan_digest": "a56b7c3435bc49368f527be9c25bebd526ce0624970cd644f8715e4c2bd77591",
+  "original_sitescore_wire": {
+    "document_id": "b5e27784-c070-425c-becc-a1c0696b6e9b",
+    "site_id": "SITE-REAL-001",
+    "contract_id": "odayplus.sitescore-v3.v1",
+    "contract_version": "1.0.0",
+    "manifest_id": "mf-real-001",
+    "evaluated_at": "2026-10-17T09:20:52.175307+00:00",
+    "assessment": {
+      "availability": "AVAILABLE",
+      "readiness": "READY",
+      "decision": "GO",
+      "components": {
+        "demand_score": 0.8,
+        "format_score": 0.9,
+        "ramp_score": 0.85,
+        "cannibalization_score": 0.1,
+        "economics_score": 0.95,
+        "policy_score": 1.0
+      },
+      "reasons": []
+    }
+  },
+  "original_sitescore_wire_sha256": "63be21f8038c5db047c483177640d8fa32ec665aff5dcccbc8b54def67361407",
+  "original_evidence_bundle": {
+    "packet_id": "netplan-emgi-approval-42a2a071ea75464287d1390e3ee5ebab",
+    "tenant_id": "tenant-real-001",
+    "scenario_key": "fy27-h1-expansion",
+    "manifest_id": "mf-real-001",
+    "document_id": "netplan-emgi-09002ba4218d461b9d47bb07f3f0245d",
+    "document_digest": "a56b7c3435bc49368f527be9c25bebd526ce0624970cd644f8715e4c2bd77591",
+    "document_contract_id": "odayplus.netplan-emgi.v1",
+    "document_contract_version": "1.0.0",
+    "state": "APPROVED",
+    "policy_versions": {
+      "opsboard_approval": "opsboard-netplan-emgi-approval-v1",
+      "netplan_emgi_document": {
+        "gross_margin_horizon_months": 12,
+        "risk_per_flag": 0.05,
+        "default_capacity_delta": 1,
+        "policy_version": "netplan-emgi-admission-v2"
+      },
+      "candidate_evidence": {
+        "SITE-REAL-001": {
+          "netplan_emgi_integration": "netplan-emgi-admission-v2",
+          "feasibility_gate": "physical-feasibility-gate-v1",
+          "economics_engine": "site-economics-simulator-v1.0.0",
+          "sitescore_contract": "1.0.0"
+        }
+      }
+    },
+    "candidate_evidence": {
+      "SITE-REAL-001": {
+        "manifest_id": "mf-real-001",
+        "market_context_id": "ctx-real-001",
+        "market_context_sha256": "a042608734d90baee1f108eb0fa5053ed1df968dc289f2c4ee861e6c95b02b5e",
+        "policy_versions": {
+          "netplan_emgi_integration": "netplan-emgi-admission-v2",
+          "feasibility_gate": "physical-feasibility-gate-v1",
+          "economics_engine": "site-economics-simulator-v1.0.0",
+          "sitescore_contract": "1.0.0"
+        },
+        "refs": [
+          {
+            "label": "market_context",
+            "contract_id": "emgi.site-market-context.v1",
+            "contract_version": "1.0.0",
+            "document_id": "ctx-real-001",
+            "sha256": "a042608734d90baee1f108eb0fa5053ed1df968dc289f2c4ee861e6c95b02b5e"
+          },
+          {
+            "label": "sitescore_v3",
+            "contract_id": "odayplus.sitescore-v3.v1",
+            "contract_version": "1.0.0",
+            "document_id": "sitescore-doc-001",
+            "sha256": "e788291dfee32eade5109290ad68898ac92e56db5b13d1707a025742d1730ee6"
+          },
+          {
+            "label": "feasibility",
+            "contract_id": "odayplus.physical-feasibility.v1",
+            "contract_version": "1.0.0",
+            "document_id": "feas-doc-001",
+            "sha256": "c9cd4d659854e1d37e7bafa479109acd451f5ebabe4488e1ee7f7f74c9006416"
+          },
+          {
+            "label": "economics",
+            "contract_id": "odayplus.site-economics.v1",
+            "contract_version": "1.0.0",
+            "document_id": "econ-doc-001",
+            "sha256": "2c50a96672b1bf1e526a4bae44cc35da241f0fcd7b53d15debbb01cb35088b61"
+          }
+        ],
+        "snapshot_ids": [
+          "emgi.site-market-context.v1:ctx-real-001",
+          "odayplus.physical-feasibility.v1:feas-doc-001",
+          "odayplus.site-economics.v1:econ-doc-001",
+          "odayplus.sitescore-v3.v1:sitescore-doc-001"
+        ]
+      }
+    },
+    "decision": {
+      "action": "APPROVE",
+      "actor": {
+        "subject_id": "synthetic-independent-reviewer",
+        "roles": [
+          "operations_manager"
+        ],
+        "token_type": "oidc",
+        "is_human": true
+      },
+      "decided_at": "2026-10-17T09:20:52.163764+00:00",
+      "reason": "Synthetic original-version serialization test only",
+      "approved_candidate_site_ids": [
+        "SITE-REAL-001"
+      ]
+    },
+    "audit_trail": [
+      {
+        "event_id": "evt-2c631f7f7658459b8c4cb347fd6a3c31",
+        "packet_id": "netplan-emgi-approval-42a2a071ea75464287d1390e3ee5ebab",
+        "event_type": "netplan_emgi.review_opened",
+        "actor_id": "user-ops-001",
+        "occurred_at": "2026-10-17T09:20:52.163637+00:00",
+        "payload": {
+          "document_id": "netplan-emgi-09002ba4218d461b9d47bb07f3f0245d",
+          "document_digest": "a56b7c3435bc49368f527be9c25bebd526ce0624970cd644f8715e4c2bd77591",
+          "manifest_id": "mf-real-001",
+          "admitted_candidate_site_ids": [
+            "SITE-REAL-001"
+          ],
+          "withheld_candidate_site_ids": [],
+          "policy_versions": {
+            "opsboard_approval": "opsboard-netplan-emgi-approval-v1",
+            "netplan_emgi_document": {
+              "gross_margin_horizon_months": 12,
+              "risk_per_flag": 0.05,
+              "default_capacity_delta": 1,
+              "policy_version": "netplan-emgi-admission-v2"
+            },
+            "candidate_evidence": {
+              "SITE-REAL-001": {
+                "netplan_emgi_integration": "netplan-emgi-admission-v2",
+                "feasibility_gate": "physical-feasibility-gate-v1",
+                "economics_engine": "site-economics-simulator-v1.0.0",
+                "sitescore_contract": "1.0.0"
+              }
+            }
+          }
+        }
+      },
+      {
+        "event_id": "evt-eea144e6c3a94fdead0144d02c607921",
+        "packet_id": "netplan-emgi-approval-42a2a071ea75464287d1390e3ee5ebab",
+        "event_type": "netplan_emgi.approved",
+        "actor_id": "synthetic-independent-reviewer",
+        "occurred_at": "2026-10-17T09:20:52.163764+00:00",
+        "payload": {
+          "document_id": "netplan-emgi-09002ba4218d461b9d47bb07f3f0245d",
+          "document_digest": "a56b7c3435bc49368f527be9c25bebd526ce0624970cd644f8715e4c2bd77591",
+          "manifest_id": "mf-real-001",
+          "reason": "Synthetic original-version serialization test only",
+          "approved_candidate_site_ids": [
+            "SITE-REAL-001"
+          ],
+          "policy_versions": {
+            "opsboard_approval": "opsboard-netplan-emgi-approval-v1",
+            "netplan_emgi_document": {
+              "gross_margin_horizon_months": 12,
+              "risk_per_flag": 0.05,
+              "default_capacity_delta": 1,
+              "policy_version": "netplan-emgi-admission-v2"
+            },
+            "candidate_evidence": {
+              "SITE-REAL-001": {
+                "netplan_emgi_integration": "netplan-emgi-admission-v2",
+                "feasibility_gate": "physical-feasibility-gate-v1",
+                "economics_engine": "site-economics-simulator-v1.0.0",
+                "sitescore_contract": "1.0.0"
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}
