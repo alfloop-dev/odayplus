@@ -274,6 +274,8 @@ jobs:
       # by path, and the one PostGIS-dependent test stays out by its own marker
       # so the residual exclusion is one named test rather than a silent bulk.
       - name: Test database contracts, migrations and schema gates
+        env:
+          PYTEST_ADDOPTS: --junitxml=.odp_data/ci/database-contracts.xml
         run: |
           uv run pytest -m "requires_live_env and not requires_postgis" \
             tests/contract tests/ops tests/integration
@@ -305,12 +307,13 @@ jobs:
               print(f"Verified {len(cases)} native SQL controls; zero skips: {path}")
           PY
 
-      - name: Retain model and deletion PostgreSQL evidence
+      - name: Retain database, model and deletion PostgreSQL evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: required-native-sql-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
+            .odp_data/ci/database-contracts.xml
             .odp_data/ci/current-model-admission.xml
             .odp_data/ci/delete-propagation.xml
           if-no-files-found: error

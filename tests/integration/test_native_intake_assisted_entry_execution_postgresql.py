@@ -4,6 +4,7 @@ import json
 import time
 from contextlib import contextmanager
 from datetime import datetime
+from pathlib import Path
 from types import MethodType
 
 import pytest
@@ -33,6 +34,7 @@ from modules.listing.application.native_intake_assisted_entry_terminal import (
     NativeAssistedEntryTerminal,
 )
 from modules.listing.application.native_intake_pending_commands import NativeIntakeCommandBudget
+from modules.listing.application.native_intake_retrieval_quota import NativeIntakeRetrievalQuota
 from shared.infrastructure.persistence.assisted_listing_intake import (
     NativeIntakeSnapshotMetadataRepository,
 )
@@ -135,7 +137,20 @@ class Provider:
 
 
 @pytest.fixture
-def accepted(assisted, monkeypatch):
+def storage_ready(assisted):
+    """Install the same real prerequisite used by native retrieval SQL tests."""
+    _, graph, _, db, _, _ = assisted
+    with db.connect() as connection:
+        connection.execute((Path(__file__).resolve().parents[2] /
+            "infra/db/migrations/000035_native_intake_retrieval_quota.sql").read_text())
+    with graph.transaction(assisted[2]["tenant"]):
+        NativeIntakeRetrievalQuota(graph.engine).schema(before=lambda: None)
+    return assisted
+
+
+@pytest.fixture
+def accepted(storage_ready, monkeypatch):
+    assisted = storage_ready
     _, graph, ids, _, _, _ = assisted
     monkeypatch.setenv("ODP_RESIDENCY_APPROVED_BUCKETS_TW_ONLY", "native-synthetic-manual")
     provider = Provider()
@@ -305,8 +320,9 @@ def test_historical_success_allows_later_independent_review_but_rejects_changed_
 
 
 @pytest.fixture
-def worker_ready(assisted, monkeypatch):
+def worker_ready(storage_ready, monkeypatch):
     """Real default factory and registry; only the explicit provider seam varies."""
+    assisted = storage_ready
     _, graph, ids, _, _, _ = assisted
     bundle = assisted[0][0][0][2]
     provider, constructed = Provider(), []
@@ -335,8 +351,15 @@ def worker_once(case):
     defer_audit(owner.graph)
     assert ODayWorker(persistence=bundle, heartbeat_interval_seconds=0.01).run_once() is True
     with owner.graph.transaction(assisted[2]["tenant"]):
-        return owner.graph._one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
+        row = owner.graph._one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
             (assisted[2]["tenant"], receipt["job_id"]))
+    # PostgreSQL's persistence adapter returns jsonb as JSON text. Decode only
+    # these object columns once for assertions against the owner read model.
+    for field in ("payload", "result", "last_error"):
+        if row[field] is not None:
+            row[field] = json.loads(row[field]) if isinstance(row[field], str) else row[field]
+            assert isinstance(row[field], dict)
+    return row
 
 
 def worker_terminal(case):
@@ -361,6 +384,23 @@ def preserved_business(case):
     return {key: state[key] for key in ("intake.intakes", "intake.intake_stage_transitions", "identity.match_cases",
         "expansion.listings", "intake.source_snapshots", "intake.parser_runs", "intake.human_corrections",
         "expansion.promotion_decisions")}
+
+
+def test_default_worker_missing_storage_controls_fails_closed_without_IO(worker_ready):
+    case = worker_ready
+    assisted = case[0]
+    _, owner, receipt, provider, _, _ = case
+    with assisted[3].connect() as connection:
+        connection.execute("DROP TABLE intake.native_retrieval_rate_reservations")
+        connection.execute("DROP TABLE intake.native_retrieval_inflight_slots")
+    with owner.graph.transaction(assisted[2]["tenant"]):
+        assert owner.engine.query_one("SELECT to_regclass('intake.native_retrieval_inflight_slots') AS table_name")["table_name"] is None
+    before = preserved_business(case)
+    job = worker_once(case)
+    assert job["status"] == "FAILED" and owner.queue.get(receipt["job_id"]).status == JobStatus.FAILED
+    assert job["last_error"]["error_class"] == "NativeIntakeRetrievalConflict"
+    assert provider.calls == [] and preserved_business(case) == before
+    assert worker_terminal(case) == {"terminal": True, "result": None}
 
 
 def test_real_default_factory_partition_worker_supports_zero_HTTP_budget_manual_source(worker_ready, monkeypatch):

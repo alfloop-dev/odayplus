@@ -428,6 +428,7 @@ def test_a_real_retry_keeps_original_budget_and_can_settle_after_later_key_retir
         # claim a real scheduler waited through the configured backoff.
         graph.engine.execute("UPDATE durable_jobs SET available_at=clock_timestamp() WHERE job_id=?", (delivery.job_id,))
     retire_settings(monkeypatch)
+    defer_audit(graph)
     assert ODayWorker(persistence=start[2]).run_once() is True
     assert graph.queue.get(delivery.job_id).status == JobStatus.FAILED
     assert recheck_preserved_business_state(recheck) == before
