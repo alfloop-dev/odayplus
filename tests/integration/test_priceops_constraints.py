@@ -238,6 +238,41 @@ def test_plan_comparison_snapshot_covers_approval_and_rollback_readiness() -> No
     assert item.candidate_simulation.gross_margin.p50 > item.baseline_simulation.gross_margin.p50
 
 
+def test_plan_comparison_current_review_round_precedes_retained_prior_approval() -> None:
+    service = PriceOpsService()
+    plan_id = _evaluable_plan(service)
+    prior_records = [record.to_dict() for record in service.repository.list_approvals(plan_id)]
+    assert len(prior_records) == 1
+    simulation = service.repository.get_simulation(plan_id)
+    optimization = service.repository.get_optimization(plan_id)
+    assert simulation is not None and optimization is not None
+    assert optimization.total_incremental_gross_margin > 0
+    result = service.evaluate(
+        plan_id,
+        actual_gross_margin=(
+            simulation.expected_gross_margin + optimization.total_incremental_gross_margin / 4
+        ),
+        generated_at=MOMENT,
+    )
+    assert result.plan.status is PlanStatus.ADJUST
+    assert service.get_plan_comparison(plan_id).approval_status == "approved"
+
+    service.simulate(plan_id, generated_at=MOMENT)
+    assert service.get_plan_comparison(plan_id).approval_status == "not_submitted"
+    service.optimize(plan_id, optimized_at=MOMENT)
+    assert service.get_plan_comparison(plan_id).approval_status == "not_submitted"
+    service.submit_for_approval(plan_id, actor="pricing-maker", occurred_at=MOMENT)
+    assert service.get_plan_comparison(plan_id).approval_status == "pending_review"
+    assert [record.to_dict() for record in service.repository.list_approvals(plan_id)] == prior_records
+
+    second = service.approve(
+        plan_id, actor_id="second-pricing-reviewer", reason="revised pilot approved", approved_at=MOMENT,
+    )
+    assert service.get_plan_comparison(plan_id).approval_status == "approved"
+    records = [record.to_dict() for record in service.repository.list_approvals(plan_id)]
+    assert records == prior_records + [second.to_dict()]
+
+
 def test_rejected_plan_moves_to_stop() -> None:
     service = PriceOpsService()
     plan = service.create_plan(tenant_id="tenant-1", items=[_item()], correlation_id="corr-1")

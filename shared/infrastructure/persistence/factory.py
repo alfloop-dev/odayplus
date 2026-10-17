@@ -83,6 +83,7 @@ class PersistenceBundle:
     outbox_repository: Any = None
     operator_intake_repository: Any = None
     assisted_intake_store: Any = None
+    assisted_intake_workflow_policy: Any = None
     engine: Any = None
     # Auth identity/session stores (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
     # In PostgreSQL mode these are durable (SqlIdentityStore + SessionService);
@@ -95,7 +96,24 @@ class PersistenceBundle:
     # memory/SQLite construction path while allowing API and worker callers to
     # share one registry repository when it is available.
     forecastops_policy_repository: Any = None
+    current_model_admission: Any = None
+    feature_flag_registry: Any = None
+    adlift_campaign_repository: Any = None
+    survey_assignment_repository: Any = None
+    diagnostic_evidence_repository: Any = None
 
+
+    def diagnostic_evidence_reader(self) -> Any:
+        """Actual current-principal reader; memory has no formal diagnostic owner."""
+        from modules.forecastops.application.root_cause_evidence import (
+            ScopedDiagnosticEvidenceReader,
+        )
+
+        return ScopedDiagnosticEvidenceReader(
+            engine=self.engine, forecasts=self.forecastops_repository,
+            issues=self.store_ops_repository, stores=self.store_repository,
+            evidence=self.diagnostic_evidence_repository, audit=self.audit_log,
+        )
 
     @property
     def is_durable(self) -> bool:
@@ -107,8 +125,66 @@ class PersistenceBundle:
             getattr(self.engine, "is_production", False)
         )
 
+    def score_execution_service(self, *, model_runtime: Any = None) -> Any:
+        from models.shared_ml.current_model_admission import CurrentModelAdmissionPort
+        from modules.sitescore.application.score_delivery import ScoreExecutionJobRepository
+        from modules.sitescore.application.score_execution import SiteScoreExecutionService
+        admission = self.current_model_admission
+        if admission is None:
+            admission = CurrentModelAdmissionPort(runtime=model_runtime,
+                registry_repository=self.learninghub_repository, engine=self.engine)
+        return SiteScoreExecutionService(ScoreExecutionJobRepository(self, model_admission=admission))
+
+    def network_review_resolver(self, *, hooks: Any = ()) -> Any:
+        """Native aliases share the Operator review domain's durable owner."""
+        from apps.api.app.routes.operator_modules.live_service import DurableTenantServiceResolver
+        from modules.opsboard.application.network_listings import NetworkListingService
+        from modules.opsboard.application.network_reviews import NetworkReviewService
+        from shared.audit.durable_delivery import DurableAuditDelivery
+        from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+        from shared.infrastructure.persistence.operator_domains import (
+            DurableOperatorDomainStateRepository,
+            TenantScopedDocumentStore,
+        )
+        from shared.infrastructure.persistence.operator_network_listings import (
+            DurableAssistedIntakeRepository,
+        )
+        from shared.infrastructure.persistence.repositories import (
+            DurableApprovalRepository,
+            DurableDecisionStore,
+            DurableListingRepository,
+            DurableSiteScoreRepository,
+        )
+        from shared.workflow.sitescore import SiteScoreDecisionWorkflow
+        if not self.is_durable:
+            return None
+        store = SqliteDocumentStore(self.engine)
+        def factory(state: Any, tenant: str) -> Any:
+            scoped = TenantScopedDocumentStore(store, tenant)
+            decisions = DurableDecisionStore(scoped)
+            candidate = NetworkListingService(listing_repository=DurableListingRepository(scoped),
+                intake_repository=DurableAssistedIntakeRepository(scoped), tenant_id=tenant,
+                review_decision_repository=decisions, seed_fixtures=False)
+            return NetworkReviewService(initial_state=state, seed_fixtures=False, require_canonical=True,
+                decision_repository=decisions, sitescore_repository=DurableSiteScoreRepository(scoped),
+                decision_workflow=SiteScoreDecisionWorkflow(store=decisions, audit_log=self.audit_log,
+                    approval_store=DurableApprovalRepository(scoped), hooks=hooks),
+                candidate_workflow_service=candidate,
+                feature_flags=self.feature_flag_registry, job_queue=self.job_queue,
+                audit_delivery_factory=lambda tid: DurableAuditDelivery(self.engine, tid, self.job_queue, self.audit_log._worm_sink))
+        return DurableTenantServiceResolver(DurableOperatorDomainStateRepository(store, "network-reviews"),
+            factory=factory, exporter=lambda value: value.export_state(),
+            mutating_methods={"submit_review", "submit_native_report", "decide_review", "decide_native_review"}, transactional_mutations=True)
+
+    def survey_assignment_repository_for_tenant(self, tenant_id: str) -> Any | None:
+        repository = self.survey_assignment_repository
+        return None if repository is None else repository.for_tenant(tenant_id)
+
     def listing_repository_for_tenant(self, tenant_id: str) -> Any | None:
         return self._scoped_repository("listing_repository", tenant_id)
+
+    def operator_intake_repository_for_tenant(self, tenant_id: str) -> Any | None:
+        return self._scoped_repository("operator_intake_repository", tenant_id)
 
     def sitescore_decision_store_for_tenant(self, tenant_id: str) -> Any | None:
         return self._scoped_repository("sitescore_decision_store", tenant_id)
@@ -251,12 +327,15 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
     )
     mem_corr_repo = InMemoryManualCorrectionRepository()
     mem_audit_log = InMemoryAuditLog(worm_sink=worm_sink)
+    from shared.auth.feature_flags import default_registry
+    memory_flags = default_registry()
 
     return PersistenceBundle(
         mode="memory",
         audit_log=mem_audit_log,
         evidence_store=InMemoryEvidenceBundleStore(worm_sink=worm_sink),
-        job_queue=InMemoryJobQueue(),
+        job_queue=InMemoryJobQueue(flags=memory_flags),
+        feature_flag_registry=memory_flags,
         avm_repository=InMemoryAVMRepository(),
         forecastops_repository=InMemoryForecastOpsRepository(),
         forecastops_policy_repository=_default_decision_policy_repository(),
@@ -299,7 +378,11 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
 def _durable_bundle(
     db_path: str | Path, *, worm_sink: AuditWormSink | None = None
 ) -> PersistenceBundle:
+    from modules.adlift.infrastructure.campaign_repository import DurableAdLiftCampaignRepository
     from modules.external_data.workers.scheduled_fetch import DurableExternalFetchStateStore
+    from modules.market_survey.infrastructure.assignment_repository import (
+        DurableSurveyAssignmentRepository,
+    )
     from modules.notifications import DurableNotificationRepository
     from modules.opsboard.application.store_ops import DurableStoreOpsRepository
     from modules.opsboard.audit.evidence_store import DurableEvidenceBundleStore
@@ -342,6 +425,12 @@ def _durable_bundle(
 
     engine = SqliteEngine(db_path)
     store = SqliteDocumentStore(engine)
+    from modules.forecastops.infrastructure.root_cause_repository import (
+        DurableDiagnosticEvidenceRepository,
+    )
+    from shared.infrastructure.persistence.feature_flags import DurableFeatureFlagRegistry
+    durable_flags = DurableFeatureFlagRegistry(store)
+    durable_flags.initialize_defaults()
     # The identity schema is PostgreSQL-only (migration 000011), so SQLite mode
     # carries in-memory doubles rather than None: the auth boundary always has
     # an identity store and a session verifier and never silently skips them.
@@ -369,9 +458,11 @@ def _durable_bundle(
         mode="durable",
         audit_log=durable_audit_log,
         evidence_store=DurableEvidenceBundleStore(engine, worm_sink=resolved_worm_sink),
-        job_queue=DurableJobQueue(engine),
+        job_queue=DurableJobQueue(engine, flags=durable_flags),
+        feature_flag_registry=durable_flags,
         avm_repository=DurableAVMRepository(store),
         forecastops_repository=DurableForecastOpsRepository(store),
+        diagnostic_evidence_repository=DurableDiagnosticEvidenceRepository(store),
         forecastops_policy_repository=_default_decision_policy_repository(),
         netplan_repository=DurableNetPlanRepository(store),
         learninghub_repository=DurableLearningHubRepository(store),
@@ -379,6 +470,8 @@ def _durable_bundle(
         priceops_repository=DurablePriceOpsRepository(store),
         sitescore_repository=DurableSiteScoreRepository(store),
         adlift_repository=DurableAdLiftRepository(store),
+        adlift_campaign_repository=DurableAdLiftCampaignRepository(store),
+        survey_assignment_repository=DurableSurveyAssignmentRepository(store),
         store_ops_repository=DurableStoreOpsRepository(store),
         intervention_repository=DurableInterventionRepository(store),
         intervention_label_registry=DurableLabelRegistry(store),
@@ -417,7 +510,11 @@ def _postgres_bundle(
     *,
     worm_sink: AuditWormSink | None = None,
 ) -> PersistenceBundle:
+    from modules.adlift.infrastructure.campaign_repository import DurableAdLiftCampaignRepository
     from modules.external_data.workers.scheduled_fetch import DurableExternalFetchStateStore
+    from modules.market_survey.infrastructure.assignment_repository import (
+        DurableSurveyAssignmentRepository,
+    )
     from modules.notifications import DurableNotificationRepository
     from modules.opsboard.application.store_ops import DurableStoreOpsRepository
     from modules.opsboard.audit.evidence_store import DurableEvidenceBundleStore
@@ -467,6 +564,9 @@ def _postgres_bundle(
 
     engine = PostgresEngine(database_url)
     store = PostgresDocumentStore(engine)
+    from modules.forecastops.infrastructure.root_cause_repository import (
+        DurableDiagnosticEvidenceRepository,
+    )
     try:
         validate_required_tables(engine)
         assisted_intake_store = DurableAssistedIntakeStore(store)
@@ -493,9 +593,35 @@ def _postgres_bundle(
         config=SessionConfig(),
     )
 
+    from modules.listing.application.intake_registry_calendar import RegistryIntakeWorkflowPolicy
+
+    pg_intake_workflow_policy = RegistryIntakeWorkflowPolicy(
+        SqlDecisionPolicyRepository(engine), pg_identity_store
+    )
+
+    from modules.listing.application.intake_audit import (
+        CanonicalIntakeAuditSink,
+        RegistryIntakeAuditRetention,
+    )
+    from shared.audit.canonical_delivery import CanonicalAuditDelivery
+    from shared.audit.canonical_postgresql import CanonicalPostgresAuditLog
+
     resolved_worm_sink = worm_sink or build_audit_worm_sink_from_env()
+    from shared.infrastructure.persistence.feature_flags import DurableFeatureFlagRegistry
+    pg_flags = DurableFeatureFlagRegistry(store)
+    pg_flags.initialize_defaults()
+    pg_job_queue = DurableJobQueue(engine, canonical_intake_score_schedule=True, flags=pg_flags)
+    canonical_audit_writer = CanonicalPostgresAuditLog(engine)
+
+    assisted_intake_store.configure_canonical_audit(CanonicalIntakeAuditSink(
+        canonical_audit_writer,
+        RegistryIntakeAuditRetention(SqlDecisionPolicyRepository(engine), pg_identity_store),
+        CanonicalAuditDelivery(canonical_audit_writer, pg_job_queue, resolved_worm_sink),
+    ))
+
     pg_audit_log = DurableAuditLog(engine, worm_sink=resolved_worm_sink)
     pg_manual_corr_repo = DurableManualCorrectionRepository(engine)
+    from shared.infrastructure.persistence.price_exploration import CanonicalPriceExplorationStore
 
     return PersistenceBundle(
         mode="postgresql",
@@ -504,16 +630,22 @@ def _postgres_bundle(
             engine,
             worm_sink=resolved_worm_sink,
         ),
-        job_queue=DurableJobQueue(engine),
+        job_queue=pg_job_queue,
+        feature_flag_registry=pg_flags,
         avm_repository=DurableAVMRepository(store),
         forecastops_repository=DurableForecastOpsRepository(store),
+        diagnostic_evidence_repository=DurableDiagnosticEvidenceRepository(store),
         forecastops_policy_repository=SqlDecisionPolicyRepository(engine),
         netplan_repository=DurableNetPlanRepository(store),
         learninghub_repository=DurableLearningHubRepository(store),
         artifact_store=DurableArtifactStore(store),
-        priceops_repository=DurablePriceOpsRepository(store),
+        priceops_repository=DurablePriceOpsRepository(
+            store, canonical_exploration=CanonicalPriceExplorationStore(engine),
+        ),
         sitescore_repository=DurableSiteScoreRepository(store),
         adlift_repository=DurableAdLiftRepository(store),
+        adlift_campaign_repository=DurableAdLiftCampaignRepository(store),
+        survey_assignment_repository=DurableSurveyAssignmentRepository(store),
         store_ops_repository=DurableStoreOpsRepository(store),
         intervention_repository=DurableInterventionRepository(store),
         intervention_label_registry=DurableLabelRegistry(store),
@@ -542,6 +674,7 @@ def _postgres_bundle(
         outbox_repository=DurableOutboxRepository(engine),
         operator_intake_repository=DurableAssistedIntakeRepository(store),
         assisted_intake_store=assisted_intake_store,
+        assisted_intake_workflow_policy=pg_intake_workflow_policy,
         engine=engine,
         identity_store=pg_identity_store,
         session_service=pg_session_service,

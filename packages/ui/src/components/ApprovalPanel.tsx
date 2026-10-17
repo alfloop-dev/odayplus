@@ -22,6 +22,7 @@ export type ApprovalPanelProps = {
   minReasonLength?: number;
   title?: string;
   className?: string;
+  allowedDecisions?: readonly ApprovalDecision[];
 };
 
 const decisionLabels: Record<ApprovalDecision, string> = {
@@ -39,9 +40,10 @@ export function ApprovalPanel({
   minReasonLength = 10,
   title = "Human approval",
   className,
+  allowedDecisions = ["APPROVE", "REJECT", "REQUEST_REVISION"],
 }: ApprovalPanelProps) {
   const reasonId = useId();
-  const [decision, setDecision] = useState<ApprovalDecision>("APPROVE");
+  const [decision, setDecision] = useState<ApprovalDecision>(allowedDecisions[0] ?? "APPROVE");
   const [reason, setReason] = useState("");
   const [riskAcknowledged, setRiskAcknowledged] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -50,7 +52,7 @@ export function ApprovalPanel({
 
   const blocked = Boolean(disabledReason);
   const reasonValid = reason.trim().length >= minReasonLength;
-  const canSubmit = !blocked && reasonValid && riskAcknowledged && !submitting;
+  const canSubmit = !blocked && allowedDecisions.includes(decision) && reasonValid && riskAcknowledged && !submitting;
 
   const submit = async () => {
     setError(null);
@@ -108,7 +110,7 @@ export function ApprovalPanel({
 
       <fieldset className="odp-approval__fieldset" disabled={blocked || submitting}>
         <legend>Human decision</legend>
-        {(Object.keys(decisionLabels) as ApprovalDecision[]).map((option) => (
+        {allowedDecisions.map((option) => (
           <label key={option} className="odp-radio">
             <input
               type="radio"

@@ -6,6 +6,8 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import wraps
+from inspect import signature
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
@@ -71,6 +73,30 @@ class MlflowAliasSynchronizationError(RuntimeError):
     """Raised when the remote and durable alias projections cannot be kept aligned."""
 
 
+def _model_write_guard(parameter: str):
+    """Place remote effects inside the repository's actual model writer guard."""
+
+    def decorate(method):
+        method_signature = signature(method)
+
+        @wraps(method)
+        def guarded(self, *args, **kwargs):
+            arguments = method_signature.bind(self, *args, **kwargs).arguments
+            value = arguments[parameter]
+            model_name = value.model_name if isinstance(value, ModelVersion) else value
+            guard = getattr(self.repository, "release_recovery_guard", None)
+            if not callable(guard):
+                raise LearningHubRuntimeConfigurationError(
+                    "Learning Hub registry writes require the actual model writer guard"
+                )
+            with guard(model_name):
+                return method(self, *args, **kwargs)
+
+        return guarded
+
+    return decorate
+
+
 @dataclass
 class MlflowRegistryAdapter:
     """Project the Learning Hub model contract onto an OSS MLflow registry."""
@@ -91,9 +117,7 @@ class MlflowRegistryAdapter:
         configured_uri = self.tracking_uri or os.getenv("MLFLOW_TRACKING_URI")
         if production_required:
             _require_remote_tracking_uri(configured_uri)
-            if configured_uri and (urlparse(configured_uri).hostname or "").endswith(
-                ".run.app"
-            ):
+            if configured_uri and (urlparse(configured_uri).hostname or "").endswith(".run.app"):
                 configure_cloud_run_mlflow_auth(tracking_uri=configured_uri)
         if self.client is None:
             from mlflow.tracking import MlflowClient
@@ -131,6 +155,7 @@ class MlflowRegistryAdapter:
         self.require_production_binding()
         _validate_production_model_lineage(model_version)
 
+    @_model_write_guard("model_version")
     def register_model_version(self, model_version: ModelVersion) -> ModelVersion:
         if learninghub_production_required(self.runtime_mode):
             self.validate_production_model_version(model_version)
@@ -189,6 +214,7 @@ class MlflowRegistryAdapter:
             self.repository.set_alias(restored.model_name, alias, restored.version)
         return self.repository.get_model_version(restored.model_name, restored.version) or restored
 
+    @_model_write_guard("model_name")
     def transition_stage(
         self,
         *,
@@ -209,6 +235,7 @@ class MlflowRegistryAdapter:
         )
         return self.repository.save_model_version(restored)
 
+    @_model_write_guard("model_name")
     def set_alias(self, *, model_name: str, alias: ModelAlias, version: str) -> ModelVersion:
         mlflow_version = self._require_model_version(model_name, version)
         client = self._require_client()
@@ -227,9 +254,7 @@ class MlflowRegistryAdapter:
                 alias.value,
                 str(mlflow_version.version),
             )
-            restored = self._to_domain(
-                client.get_model_version_by_alias(model_name, alias.value)
-            )
+            restored = self._to_domain(client.get_model_version_by_alias(model_name, alias.value))
             if restored.version != version:
                 raise MlflowAliasSynchronizationError(
                     f"MLflow alias {model_name}:{alias.value} resolved to "
@@ -258,6 +283,7 @@ class MlflowRegistryAdapter:
                 f"failed to synchronize alias {model_name}:{alias.value} -> {version}{detail}"
             ) from exc
 
+    @_model_write_guard("model_name")
     def clear_alias(self, *, model_name: str, alias: ModelAlias) -> None:
         client = self._require_client()
         remote_before = self._get_remote_alias(model_name, alias)
@@ -293,6 +319,7 @@ class MlflowRegistryAdapter:
         mlflow_version = self._get_remote_alias(model_name, alias)
         return self._to_domain(mlflow_version) if mlflow_version is not None else None
 
+    @_model_write_guard("model_version")
     def sync_release_metadata(self, model_version: ModelVersion) -> ModelVersion:
         """Write approval/lineage tags and verify the runtime-visible projection."""
 
@@ -314,6 +341,7 @@ class MlflowRegistryAdapter:
             )
         return restored
 
+    @_model_write_guard("model_version")
     def restore_release_metadata(self, model_version: ModelVersion) -> ModelVersion:
         """Rewrite a durable pre-release snapshot back onto MLflow.
 
@@ -350,7 +378,9 @@ class MlflowRegistryAdapter:
 
         tags = self._require_model_version(model_name, version).tags
         missing = sorted(
-            key for key in _REQUIRED_GOVERNANCE_TAG_KEYS if not str(tags.get(self._tag(key), "")).strip()
+            key
+            for key in _REQUIRED_GOVERNANCE_TAG_KEYS
+            if not str(tags.get(self._tag(key), "")).strip()
         )
         if missing:
             raise MlflowAliasSynchronizationError(
@@ -375,6 +405,7 @@ class MlflowRegistryAdapter:
                     f"governed release version {version}"
                 )
 
+    @_model_write_guard("model_version")
     def _write_release_metadata(self, model_version: ModelVersion) -> ModelVersion:
         mlflow_version = self._require_model_version(
             model_version.model_name,
@@ -399,17 +430,22 @@ class MlflowRegistryAdapter:
             )
         )
 
+    @_model_write_guard("model_name")
     def _reconcile_alias_unsafe(
         self,
         *,
         model_name: str,
         alias: ModelAlias,
         authority: str,
+        expected_target_version: str | None,
     ) -> ModelVersion | None:
         """Service-internal primitive; callers must use governed reconciliation."""
 
         if authority == "remote":
             remote = self._get_remote_alias(model_name, alias)
+            actual_version = self._to_domain(remote).version if remote is not None else None
+            if actual_version != expected_target_version:
+                raise MlflowAliasSynchronizationError("ALIAS_REPAIR_TARGET_CHANGED")
             if remote is None:
                 self.repository.clear_alias(model_name, alias)
                 return None
@@ -427,6 +463,9 @@ class MlflowRegistryAdapter:
 
         if authority == "durable":
             durable = self.repository.get_alias(model_name, alias)
+            actual_version = durable.version if durable is not None else None
+            if actual_version != expected_target_version:
+                raise MlflowAliasSynchronizationError("ALIAS_REPAIR_TARGET_CHANGED")
             client = self._require_client()
             if durable is None:
                 if self._get_remote_alias(model_name, alias) is not None:
@@ -448,6 +487,7 @@ class MlflowRegistryAdapter:
 
         raise ValueError("alias reconciliation authority must be 'remote' or 'durable'")
 
+    @_model_write_guard("model_name")
     def _restore_alias_versions_unsafe(
         self,
         *,
@@ -507,6 +547,7 @@ class MlflowRegistryAdapter:
                 f"remote={remote_version!r}, durable={durable_version!r}"
             )
 
+    @_model_write_guard("model_name")
     def _restore_alias(
         self,
         *,
@@ -546,6 +587,7 @@ class MlflowRegistryAdapter:
             raise RuntimeError("MLflow client was not initialized")
         return self.client
 
+    @_model_write_guard("model_name")
     def _ensure_registered_model(self, model_name: str) -> None:
         from mlflow.exceptions import MlflowException
 
@@ -570,6 +612,7 @@ class MlflowRegistryAdapter:
             if exc.error_code != "RESOURCE_ALREADY_EXISTS":
                 raise
 
+    @_model_write_guard("model_version")
     def _resolve_run(self, model_version: ModelVersion) -> str:
         from mlflow.exceptions import MlflowException
 
@@ -600,6 +643,7 @@ class MlflowRegistryAdapter:
         )
         return run.info.run_id
 
+    @_model_write_guard("model_version")
     def _write_run_lineage(
         self,
         run_id: str,
@@ -621,6 +665,7 @@ class MlflowRegistryAdapter:
             f"{_LINEAGE_ARTIFACT_ROOT}/{model_version.version}.json",
         )
 
+    @_model_write_guard("model_name")
     def _write_model_version_tags(
         self,
         model_name: str,
@@ -631,6 +676,7 @@ class MlflowRegistryAdapter:
         for key, value in tags.items():
             client.set_model_version_tag(model_name, mlflow_version, key, value)
 
+    @_model_write_guard("model_name")
     def _transition_mlflow_stage(
         self,
         model_name: str,
@@ -707,8 +753,7 @@ class MlflowRegistryAdapter:
     ) -> dict[str, str]:
         artifact_sha256 = self._artifact_sha256(model_version)
         governance = {
-            self._tag(key): value
-            for key, value in release_governance_values(model_version).items()
+            self._tag(key): value for key, value in release_governance_values(model_version).items()
         }
         return {
             **governance,

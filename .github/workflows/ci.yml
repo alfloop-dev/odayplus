@@ -355,6 +355,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Canonical Review frontend evidence exercises the real durable Python
+      # producer before validating its DTO. Keep that bridge in this lane.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install Python dependencies for canonical frontend evidence
+        run: uv sync --frozen --python 3.12
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
@@ -473,6 +486,20 @@ jobs:
     if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    services:
+      listing-search-postgres:
+        image: postgis/postgis:16-3.5
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: odp_score_browser_ci
+        # The original fixed130 Docker composition retains its own DB port.
+        ports:
+          - 5438:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d odp_score_browser_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
         with:
@@ -497,17 +524,168 @@ jobs:
         run: make product-e2e-bootstrap
 
       # Fixture UI geometry/axe checks are supplemental, not part of the exact
-      # 18-spec/122-test business-acceptance receipt inventory. Fail this required
+      # 18-spec/130-test deterministic product receipt inventory. Fail this required
       # lane on visual regressions without changing release authority or counts.
       - name: Verify Store Ops Package 10 geometry and accessibility
-        run: npx playwright test --config tests/visual/operator-store-ops-parity.config.ts
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ runner.temp }}/product-e2e-supplemental/geometry45/report.json
+          PLAYWRIGHT_HTML_OUTPUT_DIR: ${{ runner.temp }}/product-e2e-supplemental/geometry45/html-report
+          PLAYWRIGHT_HTML_OPEN: never
+        run: >-
+          npx playwright test --config tests/visual/operator-store-ops-parity.config.ts
+          --output "$RUNNER_TEMP/product-e2e-supplemental/geometry45/test-results"
+          --reporter=list,json,html
+
+      # Separate supplemental diagnostics; never inputs to the fixed130 collector.
+      # Retain first-attempt failure PNG/trace/context even when this gate fails.
+      - name: Preserve supplemental geometry45 Playwright diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-e2e-supplemental-geometry45-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/product-e2e-supplemental/geometry45/
+          if-no-files-found: warn
+          retention-days: 90
+
+      # Preserve the two reviewed narrow-viewport engineering controls without
+      # adding them to the exact 18-spec/130-case product receipt inventory.
+      - name: Verify Governance long-record geometry at 390 and 1024
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ runner.temp }}/product-e2e-supplemental/governance-visual2/report.json
+          PLAYWRIGHT_HTML_OUTPUT_DIR: ${{ runner.temp }}/product-e2e-supplemental/governance-visual2/html-report
+          PLAYWRIGHT_HTML_OPEN: never
+        run: >-
+          npx playwright test --config tests/visual/operator-governance-long-records.config.ts
+          --output "$RUNNER_TEMP/product-e2e-supplemental/governance-visual2/test-results"
+          --reporter=list,json,html
+
+      - name: Preserve supplemental Governance visual2 Playwright diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-e2e-supplemental-governance-visual2-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/product-e2e-supplemental/governance-visual2/
+          if-no-files-found: warn
+          retention-days: 90
+
+      # This build is explicit synthetic fixture proof. The ordinary build and
+      # its unchanged capacity budget remain owned by product-node.
+      - name: Build personal listing search supplemental fixture
+        timeout-minutes: 15
+        env:
+          ODP_API_BASE_URL: http://127.0.0.1:8116
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8116
+          ODP_DATA_BINDING_MODE: fixture
+          NEXT_PUBLIC_ODP_DATA_BINDING_MODE: fixture
+          ODP_PRODUCT_MODE: poc
+          NEXT_PUBLIC_ODP_PRODUCT_MODE: poc
+          ODP_DEPLOY_ENV: e2e
+          NEXT_PUBLIC_ODP_DEPLOY_ENV: e2e
+          ODP_E2E_MODE: "true"
+          NEXT_PUBLIC_ODP_E2E_MODE: "true"
+          ODAY_ENV: test
+        run: npm run build --workspace=@oday-plus/web
+
+      - name: Verify personal listing search with canonical API and PostgreSQL
+        timeout-minutes: 10
+        env:
+          ODP_SCORE_BROWSER_MODE: isolated-synthetic
+          ODP_SCORE_BROWSER_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5438/odp_score_browser_ci
+          ODP_SCORE_BROWSER_CONTROL_KEY: synthetic-browser-control-20261013-local-only
+          PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ runner.temp }}/product-e2e-supplemental/personal-search3/report.json
+          PLAYWRIGHT_HTML_OUTPUT_DIR: ${{ runner.temp }}/product-e2e-supplemental/personal-search3/html-report
+          PLAYWRIGHT_HTML_OPEN: never
+        run: >-
+          npx playwright test --config tests/visual/operator-personal-listing-search.config.ts
+          --output "$RUNNER_TEMP/product-e2e-supplemental/personal-search3/test-results"
+          --reporter=list,json,html
+
+      - name: Preserve supplemental personal listing search3 diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-e2e-supplemental-personal-search3-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/product-e2e-supplemental/personal-search3/
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Verify area planning drafts with password session and PostgreSQL
+        timeout-minutes: 10
+        env:
+          ODP_SCORE_BROWSER_MODE: isolated-synthetic
+          ODP_SCORE_BROWSER_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5438/odp_score_browser_quarterly_ci
+          ODP_SCORE_BROWSER_CONTROL_KEY: synthetic-quarterly-browser-control-20261016-local-only
+          PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ runner.temp }}/product-e2e-supplemental/area-planning3/report.json
+          PLAYWRIGHT_HTML_OUTPUT_DIR: ${{ runner.temp }}/product-e2e-supplemental/area-planning3/html-report
+          PLAYWRIGHT_HTML_OPEN: never
+        run: |
+          .venv/bin/python - <<'PY'
+          import os
+          import psycopg
+          from psycopg.conninfo import conninfo_to_dict
+          options = conninfo_to_dict(os.environ["ODP_SCORE_BROWSER_DATABASE_URL"])
+          assert options["host"] == "127.0.0.1" and options["dbname"] == "odp_score_browser_quarterly_ci"
+          options["dbname"] = "postgres"
+          with psycopg.connect(**options, autocommit=True) as connection:
+              connection.execute("CREATE DATABASE odp_score_browser_quarterly_ci")
+          PY
+          npx playwright test --config tests/visual/operator-area-planning-draft.config.ts \
+            --output "$RUNNER_TEMP/product-e2e-supplemental/area-planning3/test-results" \
+            --reporter=list,json,html
+
+      - name: Preserve supplemental area planning3 diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-e2e-supplemental-area-planning3-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/product-e2e-supplemental/area-planning3/
+          if-no-files-found: warn
+          retention-days: 90
 
       # A reviewed task PR must prove its current source through the complete
       # deterministic E2E runner. It must not manufacture production release
       # authority: a well-formed NO-GO Gate 0-6 registry is valid here, while
       # dev -> main promotion separately requires an authentic GO decision.
       - name: Run product E2E dev merge gate
+        id: product_e2e
         run: make product-e2e-gate
+
+      - name: Collect current-source product E2E evidence
+        if: always()
+        env:
+          E2E_RUNNER_OUTCOME: ${{ steps.product_e2e.outcome }}
+        run: |
+          args=()
+          if [[ "$E2E_RUNNER_OUTCOME" == "success" ]]; then
+            args+=(--expect-complete)
+          fi
+          python3 delivery_toolchain/e2e/collect_ci_product_e2e_evidence.py \
+            --output "$RUNNER_TEMP/product-e2e-evidence" "${args[@]}"
+
+      - name: Preserve product E2E execution evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          # The collector includes only traces/screenshots/context explicitly
+          # referenced by the validated current-source Playwright artifact.
+          name: product-e2e-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/product-e2e-evidence/
+          if-no-files-found: error
+          retention-days: 90
+
+      # Startup can fail before Playwright produces a source-bound receipt.
+      # Keep its explicit diagnostics separately; they grant no acceptance.
+      - name: Preserve product E2E startup diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-e2e-startup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .odp_data/e2e-diagnostics/source-identity.json
+            .odp_data/e2e-diagnostics/compose-ps.txt
+            .odp_data/e2e-diagnostics/compose-tail.log
+          if-no-files-found: warn
+          retention-days: 90
 
   automatic-dev-release:
     name: Request automatic dev release after checks

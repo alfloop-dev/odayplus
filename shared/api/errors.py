@@ -304,6 +304,7 @@ def install_error_handlers(app: Any) -> None:
         next_action = None
         retryable = False
         field_errors = []
+        reason_code = None
 
         detail_str = ""
         if isinstance(detail, str):
@@ -384,6 +385,12 @@ def install_error_handlers(app: Any) -> None:
         elif status_code == 409:
             code = "VERSION_CONFLICT"
             next_action = "REFRESH"
+        elif "AUDIT_POLICY_UNAVAILABLE" in detail_str or (
+            isinstance(detail, dict) and detail.get("reason_code") == "AUDIT_POLICY_UNAVAILABLE"
+        ):
+            code = "DEPENDENCY_CONFLICT"
+            reason_code = "AUDIT_POLICY_UNAVAILABLE"
+            next_action = "CONTACT_SUPPORT"
         elif status_code == 503:
             code = "BACKPRESSURE_ACTIVE"
             next_action = "WAIT"
@@ -403,7 +410,7 @@ def install_error_handlers(app: Any) -> None:
             "message": detail_str,
             "retryable": retryable,
             "correlation_id": contract_correlation_id,
-            "reason_code": None,
+            "reason_code": reason_code,
             "current_version": None,
             "retry_after_seconds": 30 if code == "BACKPRESSURE_ACTIVE" else None,
             "occurred_at": occurred_at,

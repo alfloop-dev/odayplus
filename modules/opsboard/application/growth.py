@@ -29,9 +29,11 @@ Composes with: apps/api/app/routes/operator_modules/growth.py route module.
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import uuid
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from shared.audit.events import AuditEvent, InMemoryAuditLog
@@ -161,9 +163,31 @@ def _judge_effectiveness(
     return "EFFECTIVE"
 
 
+def _observation_window(action: dict[str, Any]) -> dict[str, Any]:
+    """Read the server-recorded execution window; legacy status is no clock."""
+    observed = datetime.fromisoformat(_now_iso().replace("Z", "+00:00"))
+    result: dict[str, Any] = {"status": "UNAVAILABLE", "startedAt": None,
+                              "endsAt": None, "days": None, "observedAt": observed.isoformat()}
+    days = action.get("observationWindowFrozenDays")
+    if type(days) is not int or not 1 <= days <= 365:
+        return result
+    try:
+        start = datetime.fromisoformat(action["observationStartedAt"].replace("Z", "+00:00"))
+        end = datetime.fromisoformat(action["observationEndsAt"].replace("Z", "+00:00"))
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return result
+    if (start.tzinfo is None or end.tzinfo is None or observed.tzinfo is None
+            or start.utcoffset() is None or end.utcoffset() is None
+            or end - start != timedelta(days=days) or observed < start):
+        return result
+    return {"status": "MATURE" if observed >= end else "OBSERVING",
+            "startedAt": start.isoformat(), "endsAt": end.isoformat(),
+            "days": days, "observedAt": observed.isoformat()}
+
+
 def _closeout_gate(action: dict[str, Any]) -> dict[str, Any]:
     outcome = _judge_effectiveness(
-        status=action.get("status", "DRAFT"),
+        status=action.get("status", "DRAFT") if _observation_window(action)["status"] == "MATURE" else "OBSERVING",
         observed_lift=action.get("observedLift"),
         target_lift=float(action.get("targetLift") or 0),
         evidence_level=action.get("evidenceLevel"),
@@ -295,6 +319,9 @@ _SEED_ACTIONS: list[dict[str, Any]] = [
         "status": "OUTCOME_READY",
         "observationWindow": "2026-06-20 ~ 2026-07-04（14 天）",
         "observationWindowDays": 14,
+        "observationStartedAt": "2026-06-20T00:00:00+00:00",
+        "observationEndsAt": "2026-07-04T00:00:00+00:00",
+        "observationWindowFrozenDays": 14,
         "targetLift": 2.0,
         "observedLift": 2.6,
         "evidenceLevel": "L3",
@@ -320,6 +347,9 @@ _SEED_ACTIONS: list[dict[str, Any]] = [
         "status": "OUTCOME_READY",
         "observationWindow": "2026-06-18 ~ 2026-07-02（14 天）",
         "observationWindowDays": 14,
+        "observationStartedAt": "2026-06-18T00:00:00+00:00",
+        "observationEndsAt": "2026-07-02T00:00:00+00:00",
+        "observationWindowFrozenDays": 14,
         "targetLift": 3.0,
         "observedLift": -1.4,
         "evidenceLevel": "L2",
@@ -344,6 +374,9 @@ _SEED_ACTIONS: list[dict[str, Any]] = [
         "status": "OUTCOME_READY",
         "observationWindow": "2026-06-25 ~ 2026-07-09（14 天）",
         "observationWindowDays": 14,
+        "observationStartedAt": "2026-06-25T00:00:00+00:00",
+        "observationEndsAt": "2026-07-09T00:00:00+00:00",
+        "observationWindowFrozenDays": 14,
         "targetLift": 1.5,
         "observedLift": 0.6,
         "evidenceLevel": "L1",
@@ -368,6 +401,9 @@ _SEED_ACTIONS: list[dict[str, Any]] = [
         "status": "OBSERVING",
         "observationWindow": "2026-07-05 ~ 2026-07-19（觀察中）",
         "observationWindowDays": 14,
+        "observationStartedAt": "2026-07-05T00:00:00+00:00",
+        "observationEndsAt": "2026-07-19T00:00:00+00:00",
+        "observationWindowFrozenDays": 14,
         "targetLift": 2.5,
         "observedLift": None,
         "evidenceLevel": None,
@@ -509,6 +545,40 @@ class GrowthService:
     def export_state(self) -> dict[str, Any]:
         return _clone(self._state)
 
+    def _command_replay(
+        self, *, operation: str, payload: dict[str, Any], actor_name: str,
+        actor_role_id: str, tenant_id: str | None, idempotency_key: str | None,
+    ) -> tuple[str | None, str, dict[str, Any] | None]:
+        tenant = tenant_id or self._tenant_id
+        if self._tenant_id and tenant != self._tenant_id:
+            raise GrowthPolicyError("TENANT_SCOPE_DENIED")
+        if not tenant and not self._seed_fixtures:
+            raise GrowthPolicyError("TENANT_SCOPE_REQUIRED")
+        if not actor_name or not actor_name.strip():
+            raise GrowthPolicyError("AUTHENTICATED_ACTOR_REQUIRED")
+        try:
+            request_sha = hashlib.sha256(json.dumps(
+                {"operation": operation, "payload": payload, "actorRoleId": actor_role_id},
+                sort_keys=True, separators=(",", ":"), allow_nan=False,
+            ).encode()).hexdigest()
+        except ValueError as exc:
+            raise GrowthPolicyError("NON_FINITE_COMMAND_VALUE") from exc
+        key = hashlib.sha256(json.dumps([tenant, actor_name, idempotency_key]).encode()).hexdigest() if idempotency_key else None
+        cached = self._state.get("commandIdempotencyResults", {}).get(key) if key else None
+        if cached is not None:
+            if cached["requestSha256"] != request_sha:
+                raise GrowthConflict("IDEMPOTENCY_CONFLICT")
+            return key, request_sha, {**_clone(cached["response"]), "idempotentReplay": True}
+        if idempotency_key in self._state["idempotencyResults"]:
+            raise GrowthConflict("UNBOUND_LEGACY_REPLAY")
+        return key, request_sha, None
+
+    def _save_command_receipt(self, key: str | None, request_sha: str, response: dict[str, Any]) -> None:
+        if key:
+            self._state.setdefault("commandIdempotencyResults", {})[key] = {
+                "requestSha256": request_sha, "response": _clone(response),
+            }
+
     # ------------------------------------------------------------------
     # Read paths
     # ------------------------------------------------------------------
@@ -554,6 +624,7 @@ class GrowthService:
         result = []
         for action in actions:
             enriched = _clone(action)
+            enriched["observation"] = _observation_window(action)
             enriched["closeoutGate"] = _closeout_gate(action)
             result.append(enriched)
         return result
@@ -561,6 +632,7 @@ class GrowthService:
     def get_action(self, action_id: str) -> dict[str, Any]:
         action = self._find_action(action_id)
         enriched = _clone(action)
+        enriched["observation"] = _observation_window(action)
         enriched["closeoutGate"] = _closeout_gate(action)
         return enriched
 
@@ -570,17 +642,7 @@ class GrowthService:
         actions = self._state["actions"]
         segments = self._state["segments"]
         active_count = sum(1 for a in actions if a.get("status") in _ACTIVE_STATUSES)
-        effective_count = sum(
-            1
-            for a in actions
-            if _judge_effectiveness(
-                a.get("status", "DRAFT"),
-                a.get("observedLift"),
-                float(a.get("targetLift") or 0),
-                a.get("evidenceLevel"),
-            )
-            == "EFFECTIVE"
-        )
+        effective_count = sum(1 for a in actions if _closeout_gate(a)["outcome"] == "EFFECTIVE")
         blocked_closeout_count = sum(
             1
             for a in actions
@@ -616,6 +678,7 @@ class GrowthService:
         source_recommendation_id: str | None = None,
         actor_role_id: str = "opsLead",
         actor_name: str = "Operator",
+        tenant_id: str | None = None,
         idempotency_key: str | None = None,
         correlation_id: str = "",
     ) -> dict[str, Any]:
@@ -633,12 +696,6 @@ class GrowthService:
         Raises GrowthPolicyError when the seeding recommendation has
         HARD_CONSTRAINT_FAILED — callers must resolve the constraint first.
         """
-        # Idempotency replay
-        if idempotency_key:
-            cached = self._state["idempotencyResults"].get(idempotency_key)
-            if cached is not None:
-                return _clone(cached)
-
         draft_kind = kind if kind in _DRAFT_TYPES else "offpeak"
 
         # Conflict gate — block drafts seeded from hard-constrained recs
@@ -652,6 +709,19 @@ class GrowthService:
 
         # Validate segment exists
         self._find_segment(segment_id)
+        replay_key, request_sha, cached = self._command_replay(
+            operation="create_action", actor_name=actor_name, actor_role_id=actor_role_id,
+            tenant_id=tenant_id, idempotency_key=idempotency_key,
+            payload={"name": name, "segmentId": segment_id, "objective": objective,
+                     "targetLift": target_lift, "kind": draft_kind,
+                     "observationWindowDays": observation_window_days,
+                     "observationWindow": observation_window, "store": store, "channel": channel,
+                     "budget": budget, "rationale": rationale, "rollbackPlan": rollback_plan,
+                     "sourceRecommendationId": source_recommendation_id},
+        )
+        if cached is not None:
+            self._find_action(cached["id"])
+            return cached
 
         action_id = _new_action_id()
         now = _now_iso()
@@ -685,6 +755,7 @@ class GrowthService:
                 "featureSnapshotTime": self._state["freshness"]["featureSnapshotTime"],
             },
         }
+        new_action["audit"]["sourceSnapshotIds"] = self._action_source_snapshot_ids(new_action)
         self._state["actions"].append(new_action)
 
         audit = self._append_audit_event(
@@ -720,8 +791,7 @@ class GrowthService:
             "audit": _clone(new_action["audit"]),
             "idempotentReplay": False,
         }
-        if idempotency_key:
-            self._state["idempotencyResults"][idempotency_key] = _clone(result)
+        self._save_command_receipt(replay_key, request_sha, result)
         return result
 
     # ------------------------------------------------------------------
@@ -865,6 +935,7 @@ class GrowthService:
         action_id: str,
         actor_role_id: str = "growthLead",
         actor_name: str = "Operator",
+        tenant_id: str | None = None,
         idempotency_key: str | None = None,
         correlation_id: str = "",
     ) -> dict[str, Any]:
@@ -875,12 +946,13 @@ class GrowthService:
         Govern approval item (``module="Growth"``) is created and the action
         advances to PENDING_APPROVAL.
         """
-        if idempotency_key:
-            cached = self._state["idempotencyResults"].get(idempotency_key)
-            if cached is not None:
-                return {**_clone(cached), "idempotentReplay": True}
-
         action = self._find_action(action_id)
+        replay_key, request_sha, cached = self._command_replay(
+            operation="submit_for_approval", payload={"actionId": action_id}, actor_name=actor_name,
+            actor_role_id=actor_role_id, tenant_id=tenant_id, idempotency_key=idempotency_key,
+        )
+        if cached is not None:
+            return cached
         if action["status"] != "DRAFT":
             raise GrowthConflict(
                 f"only DRAFT actions can be submitted for approval; "
@@ -963,8 +1035,7 @@ class GrowthService:
             "correlation_id": correlation_id,
             "idempotentReplay": False,
         }
-        if idempotency_key:
-            self._state["idempotencyResults"][idempotency_key] = _clone(result)
+        self._save_command_receipt(replay_key, request_sha, result)
         return result
 
     def list_approvals(self) -> list[dict[str, Any]]:
@@ -979,6 +1050,7 @@ class GrowthService:
         reason: str = "",
         actor_role_id: str = "opsLead",
         actor_name: str = "營運主管",
+        tenant_id: str | None = None,
         idempotency_key: str | None = None,
         correlation_id: str = "",
     ) -> dict[str, Any]:
@@ -988,11 +1060,6 @@ class GrowthService:
         action to APPROVED; a rejection returns it to DRAFT for revision.  Both
         write a Decision Log entry and an Audit Trail event.
         """
-        if idempotency_key:
-            cached = self._state["idempotencyResults"].get(idempotency_key)
-            if cached is not None:
-                return {**_clone(cached), "idempotentReplay": True}
-
         normalized = decision.lower()
         if normalized not in {"approved", "rejected"}:
             raise GrowthConflict(
@@ -1000,12 +1067,23 @@ class GrowthService:
             )
 
         approval = self._find_approval(approval_id)
+        action = self._find_action(approval["ref"])
+        replay_key, request_sha, cached = self._command_replay(
+            operation="resolve_approval", payload={"approvalId": approval_id, "actionId": action["id"], "decision": normalized, "reason": reason},
+            actor_name=actor_name, actor_role_id=actor_role_id, tenant_id=tenant_id,
+            idempotency_key=idempotency_key,
+        )
+        if cached is not None:
+            return cached
         if approval["status"] != "pending":
             raise GrowthConflict(
                 f"approval {approval_id} already decided: {approval['status']}"
             )
 
-        action = self._find_action(approval["ref"])
+        if action["status"] != "PENDING_APPROVAL":
+            raise GrowthConflict("linked action is not PENDING_APPROVAL")
+
+        decision_provenance = self._decision_source_provenance(action)
         now = _now_iso()
         approval["status"] = normalized
         approval["reason"] = reason
@@ -1025,6 +1103,9 @@ class GrowthService:
             recommendation="送主管核准",
             verdict="核准" if normalized == "approved" else "駁回",
             reason=reason or ("核准通過" if normalized == "approved" else "退回修改"),
+            actor_name=actor_name,
+            approval_id=approval_id,
+            source_provenance=decision_provenance,
         )
 
         audit = self._append_audit_event(
@@ -1061,8 +1142,7 @@ class GrowthService:
             "correlation_id": correlation_id,
             "idempotentReplay": False,
         }
-        if idempotency_key:
-            self._state["idempotencyResults"][idempotency_key] = _clone(result)
+        self._save_command_receipt(replay_key, request_sha, result)
         return result
 
     def list_decisions(self) -> list[dict[str, Any]]:
@@ -1080,16 +1160,19 @@ class GrowthService:
         target_status: str,
         actor_role_id: str = "opsLead",
         actor_name: str = "Operator",
+        tenant_id: str | None = None,
         idempotency_key: str | None = None,
         correlation_id: str = "",
     ) -> dict[str, Any]:
         """Advance a Growth Action through its lifecycle."""
-        if idempotency_key:
-            cached = self._state["idempotencyResults"].get(idempotency_key)
-            if cached is not None:
-                return {**_clone(cached), "idempotentReplay": True}
-
         action = self._find_action(action_id)
+        replay_key, request_sha, cached = self._command_replay(
+            operation="transition_action", payload={"actionId": action_id, "targetStatus": target_status},
+            actor_name=actor_name, actor_role_id=actor_role_id, tenant_id=tenant_id,
+            idempotency_key=idempotency_key,
+        )
+        if cached is not None:
+            return cached
         current_status = action["status"]
         allowed = _LIFECYCLE_TRANSITIONS.get(current_status, set())
         if target_status not in allowed:
@@ -1104,8 +1187,27 @@ class GrowthService:
                     f"closeout blocked for {action_id}: {gate['reason']}"
                 )
 
+        # Decision/outcome writes must create their own linked records. The
+        # generic execution endpoint cannot bypass those command boundaries.
+        if target_status in {"PENDING_APPROVAL", "APPROVED", "DRAFT"}:
+            raise GrowthPolicyError("APPROVAL_WORKFLOW_REQUIRED")
+        if target_status in {"CLOSED", "INEFFECTIVE"}:
+            raise GrowthPolicyError("OUTCOME_WORKFLOW_REQUIRED")
+
+        if target_status == "OUTCOME_READY" and _observation_window(action)["status"] != "MATURE":
+            raise GrowthConflict("OBSERVATION_WINDOW_NOT_MATURE")
+        now = _now_iso()
+        if target_status in {"RUNNING", "EXECUTED"}:
+            days = action.get("observationWindowDays")
+            if type(days) is not int or not 1 <= days <= 365:
+                raise GrowthPolicyError("VALID_OBSERVATION_WINDOW_REQUIRED")
+            start = datetime.fromisoformat(now.replace("Z", "+00:00"))
+            action["executedAt"] = now
+            action["observationStartedAt"] = now
+            action["observationEndsAt"] = (start + timedelta(days=days)).isoformat()
+            action["observationWindowFrozenDays"] = days
         action["status"] = target_status
-        action["updatedAt"] = _now_iso()
+        action["updatedAt"] = now
 
         audit = self._append_audit_event(
             action=f"growth.action.{target_status.lower()}",
@@ -1138,8 +1240,7 @@ class GrowthService:
             "auditEvent": _clone(audit),
             "idempotentReplay": False,
         }
-        if idempotency_key:
-            self._state["idempotencyResults"][idempotency_key] = _clone(result)
+        self._save_command_receipt(replay_key, request_sha, result)
         return result
 
     # ------------------------------------------------------------------
@@ -1157,6 +1258,7 @@ class GrowthService:
         rationale: str = "",
         actor_role_id: str = "opsLead",
         actor_name: str = "Operator",
+        tenant_id: str | None = None,
         idempotency_key: str | None = None,
         correlation_id: str = "",
     ) -> dict[str, Any]:
@@ -1166,22 +1268,45 @@ class GrowthService:
         and required_action==CLOSE, the action moves to CLOSED — but only
         when the derived gate also confirms canClose=True.
         """
-        if idempotency_key:
-            cached = self._state["idempotencyResults"].get(idempotency_key)
-            if cached is not None:
-                return {**_clone(cached), "idempotentReplay": True}
-
         action = self._find_action(action_id)
+        tenant = tenant_id or self._tenant_id
+        if self._tenant_id and tenant != self._tenant_id:
+            raise GrowthPolicyError("TENANT_SCOPE_DENIED")
+        if not tenant and not self._seed_fixtures:
+            raise GrowthPolicyError("TENANT_SCOPE_REQUIRED")
+        if not actor_name or not actor_name.strip():
+            raise GrowthPolicyError("AUTHENTICATED_ACTOR_REQUIRED")
+        rationale = rationale.strip()
+        request_sha = hashlib.sha256(json.dumps({
+            "action_id": action_id, "outcome": outcome, "required_action": required_action,
+            "observed_lift": observed_lift, "evidence_level": evidence_level,
+            "rationale": rationale,
+        }, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+        receipts = self._state.get("outcomeIdempotencyResults", {})
+        replay_key = hashlib.sha256(json.dumps([tenant, actor_name, idempotency_key]).encode()).hexdigest() if idempotency_key else None
+        if replay_key and replay_key in receipts:
+            cached = receipts[replay_key]
+            if cached["requestSha256"] != request_sha:
+                raise GrowthConflict("IDEMPOTENCY_CONFLICT")
+            return {**_clone(cached["response"]), "idempotentReplay": True}
+        if idempotency_key in self._state["idempotencyResults"]:
+            raise GrowthConflict("UNBOUND_LEGACY_REPLAY")
+        if not rationale:
+            raise GrowthPolicyError("outcome rationale is required")
         if action["status"] not in _OUTCOME_STAGES:
             raise GrowthConflict(
                 f"outcome writeback is only valid for OUTCOME_READY or CLOSED actions; "
                 f"current status: {action['status']}"
             )
 
+        if _observation_window(action)["status"] != "MATURE":
+            raise GrowthConflict("OBSERVATION_WINDOW_NOT_MATURE")
+
         # The write boundary for this action's evidence claim. An unrecognised
         # rung is refused here rather than stored, and omitting the field leaves
         # the existing claim alone instead of overwriting it with a default.
         rated_evidence_level = coerce_evidence_level(evidence_level, field="evidenceLevel")
+        decision_provenance = self._decision_source_provenance(action)
 
         if observed_lift is not None:
             action["observedLift"] = observed_lift
@@ -1215,7 +1340,10 @@ class GrowthService:
             title=action["name"],
             recommendation="成效判斷",
             verdict=_verdict_label,
-            reason=rationale or derived["reason"],
+            reason=rationale,
+            actor_name=actor_name,
+            approval_id=action.get("approvalId"),
+            source_provenance=decision_provenance,
         )
 
         audit = self._append_audit_event(
@@ -1257,7 +1385,7 @@ class GrowthService:
             "idempotentReplay": False,
         }
         if idempotency_key:
-            self._state["idempotencyResults"][idempotency_key] = _clone(result)
+            self._state.setdefault("outcomeIdempotencyResults", {})[replay_key] = {"requestSha256": request_sha, "response": _clone(result)}
         return result
 
     # ------------------------------------------------------------------
@@ -1399,6 +1527,48 @@ class GrowthService:
                 return approval
         raise GrowthNotFound(f"growth approval {approval_id!r} not found")
 
+    def _action_source_snapshot_ids(self, action: dict[str, Any]) -> list[str] | None:
+        """Capture this canonical item's existing references at action CREATE.
+
+        A plan is updateable; a later read of the same item must not rebind the
+        action's input. This server-owned metadata is never accepted from body.
+        """
+        if not self._require_canonical or self._priceops_repository is None:
+            return None
+        segment = next((row for row in self._state["segments"]
+                        if row.get("id") == action.get("segmentId")), None)
+        if segment is None or not isinstance(segment.get("planId"), str):
+            return None
+        plan = self._priceops_repository.get_plan(segment["planId"])
+        if plan is None or plan.tenant_id != self._tenant_id:
+            return None
+        item = next((row for row in plan.items
+                     if action.get("segmentId") == f"priceops:{plan.plan_id}:{row.item_id}"
+                     and row.store_id == segment.get("storeId")
+                     and row.machine_type == segment.get("machineType")), None)
+        if item is None:
+            return None
+        recommendation_id = action.get("sourceRecommendationId")
+        if recommendation_id is not None and recommendation_id != f"priceops-rec:{plan.plan_id}:{item.item_id}":
+            return None
+        ids = item.source_snapshot_ids
+        if not isinstance(ids, (list, tuple)) or not ids or not all(isinstance(value, str) and value.strip() for value in ids):
+            return None
+        return list(ids)
+
+    def _decision_source_provenance(self, action: dict[str, Any]) -> dict[str, Any]:
+        """Freeze only the action's captured input, never a current plan read.
+
+        PriceElasticityEstimate.model_version has an engineering default; no
+        verified model-owner port is available here, so modelVersion is unknown.
+        """
+        audit = action.get("audit")
+        ids = audit.get("sourceSnapshotIds") if isinstance(audit, dict) else None
+        snapshots = (list(ids) if isinstance(ids, (list, tuple)) and ids
+                     and all(isinstance(value, str) and value.strip() for value in ids)
+                     else None)
+        return {"modelVersion": None, "sourceSnapshotIds": snapshots}
+
     def _append_decision_log(
         self,
         *,
@@ -1408,6 +1578,9 @@ class GrowthService:
         recommendation: str,
         verdict: str,
         reason: str,
+        actor_name: str | None = None,
+        approval_id: str | None = None,
+        source_provenance: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         ordinal = self._state.get("nextDecisionOrdinal", 9001)
         entry: dict[str, Any] = {
@@ -1420,6 +1593,9 @@ class GrowthService:
             "recommendation": recommendation,
             "verdict": verdict,
             "reason": reason,
+            "decidedBy": actor_name,
+            "approvalId": approval_id,
+            **_clone(source_provenance or {"modelVersion": None, "sourceSnapshotIds": None}),
         }
         self._state.setdefault("decisions", []).insert(0, entry)
         self._state["nextDecisionOrdinal"] = ordinal + 1

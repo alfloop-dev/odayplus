@@ -219,57 +219,7 @@ export const STORE_FIXTURES: Store[] = [
   },
 ];
 
-export const ISSUE_FIXTURES: Issue[] = [
-  {
-    id: "ISS-1024",
-    title: "晚間負評與清潔分數同步惡化",
-    storeId: "ST-008",
-    storeName: "台北信義 A11",
-    status: "new",
-    severity: "critical",
-    source: "multiSignal",
-    ownerRoleId: "opsLead",
-    ownerName: "營運主管",
-    slaDueAt: "2026-07-05T11:00:00.000Z",
-    createdAt: "2026-07-05T06:24:00.000Z",
-    updatedAt: "2026-07-05T06:24:00.000Z",
-    evidenceIds: ["EV-1024-GR", "EV-1024-CS", "EV-1024-CAM", "EV-1024-IOT", "EV-1024-PAY", "EV-1024-FOUR", "EV-1024-CLN"],
-    summary: "Google one-star reviews, CS complaints, and cleaning audit all point to a peak-hour service quality incident.",
-  },
-  {
-    id: "ISS-1021",
-    title: "冷氣遠端重啟等待核准",
-    storeId: "ST-014",
-    storeName: "台北大安復興",
-    status: "waitingapproval",
-    severity: "high",
-    source: "iot",
-    ownerRoleId: "facilitiesLead",
-    ownerName: "工務主任",
-    slaDueAt: "2026-07-05T10:30:00.000Z",
-    createdAt: "2026-07-05T04:50:00.000Z",
-    updatedAt: "2026-07-05T07:30:00.000Z",
-    evidenceIds: ["EV-1021-IOT", "EV-1021-PAY"],
-    relatedApprovalId: "APR-502",
-    summary: "HVAC telemetry shows repeated compressor fault codes; remote restart needs manager approval before peak traffic.",
-  },
-  {
-    id: "ISS-1008",
-    title: "補班日人力不足觀察中",
-    storeId: "ST-021",
-    storeName: "新北板橋文化",
-    status: "observing",
-    severity: "medium",
-    source: "forecastOps",
-    ownerRoleId: "supportLead",
-    ownerName: "客服主管",
-    slaDueAt: "2026-07-06T03:00:00.000Z",
-    createdAt: "2026-07-04T02:10:00.000Z",
-    updatedAt: "2026-07-05T01:15:00.000Z",
-    evidenceIds: ["EV-1008-FOUR", "EV-1008-CS"],
-    summary: "ForecastOps staffing light remains red after shift swap; CS queue is improving but still above baseline.",
-  },
-];
+export { ISSUE_FIXTURES } from "./issueFixtures";
 
 export const EVIDENCE_FIXTURES: EvidenceItem[] = [
   {

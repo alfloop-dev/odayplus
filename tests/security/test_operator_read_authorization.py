@@ -252,9 +252,9 @@ def test_operator_routes_select_verified_read_persona_and_refuse_business_writes
     ("roles", "decide", "export"),
     [
         # The deployed dev account: server-verified, but no business decision grant.
-        ("auditor,platform_admin", False, False),
+        ("auditor,platform_admin", False, True),
         ("platform_admin,operator_viewer", False, False),
-        ("operations_manager", True, True),
+        ("operations_manager", True, False),
     ],
 )
 def test_governance_snapshot_reports_the_write_guards_verdict_not_the_persona(roles, decide, export) -> None:

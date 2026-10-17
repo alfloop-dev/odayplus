@@ -97,8 +97,8 @@ def _production_backed_bundle(path: Path) -> Any:
 
 
 def test_operator_live_provenance_reports_live_data_mode_when_postgresql_ready(tmp_path: Path) -> None:
-    """Acceptance 2 (Run 30680943677 remediation): Operator bootstrap backed by PostgreSQL
-    reports non-placeholder live provenance and canonical dataMode='live'.
+    """A configured persistence mode and readable stores do not prove that
+    every domain source, including the issue aggregate, is materialized.
     """
     bundle = _production_backed_bundle(tmp_path / "prov-test.sqlite3")
     bundle.tenant_repository.save_tenant(
@@ -146,10 +146,11 @@ def test_operator_live_provenance_reports_live_data_mode_when_postgresql_ready(t
     assert envelope["meta"]["sections"]["stores"]["recordCount"] == 1
     assert envelope["meta"]["sections"]["riskRows"]["state"] == "available"
     assert envelope["meta"]["sections"]["listings"]["state"] == "available"
-    assert envelope["meta"]["dataMode"] == "live"
-    assert envelope["meta"]["dataOrigin"]["kind"] == "authoritative"
-    assert envelope["meta"]["dataOrigin"]["complete"] is True
-    assert envelope["meta"]["unavailableSections"] == []
+    assert envelope["meta"]["dataMode"] == "degraded"
+    assert envelope["meta"]["sections"]["storeOpsIssues"]["state"] == "unavailable"
+    assert envelope["meta"]["dataOrigin"]["kind"] == "degraded"
+    assert envelope["meta"]["dataOrigin"]["complete"] is False
+    assert envelope["meta"]["unavailableSections"] == ["storeOpsIssues"]
 
 
 def test_platform_health_and_readiness_200_ok_when_core_repository_is_ready(

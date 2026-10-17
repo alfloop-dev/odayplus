@@ -49,6 +49,10 @@ DEFAULT_STOP_CONDITIONS: dict[str, Any] = {
 }
 
 
+class PlanAlreadyExistsError(ValueError):
+    """Exclusive plan creation cannot replace any existing business record."""
+
+
 class PlanStatus(StrEnum):
     CANDIDATE = "candidate"
     SIMULATED = "simulated"
@@ -290,6 +294,7 @@ class PricingPlan:
     created_at: datetime
     correlation_id: str
     status_history: tuple[StatusTransition, ...] = ()
+    created_by: str | None = None
 
     @classmethod
     def create(
@@ -300,6 +305,7 @@ class PricingPlan:
         correlation_id: str,
         plan_id: str | None = None,
         created_at: datetime | None = None,
+        created_by: str | None = None,
     ) -> PricingPlan:
         return cls(
             plan_id=plan_id or f"pricing-plan-{uuid4()}",
@@ -309,6 +315,7 @@ class PricingPlan:
             created_at=created_at or datetime.now(UTC),
             correlation_id=correlation_id,
             status_history=(),
+            created_by=created_by,
         )
 
     def can_transition_to(self, to_status: PlanStatus) -> bool:
@@ -348,6 +355,7 @@ class PricingPlan:
             "status": self.status.value,
             "items": [item.to_dict() for item in self.items],
             "created_at": self.created_at.isoformat(),
+            "created_by": getattr(self, "created_by", None),
             "correlation_id": self.correlation_id,
             "status_history": [t.to_dict() for t in self.status_history],
         }
@@ -1017,6 +1025,9 @@ def simulate_candidate_scenario(
     """
     now = generated_at or datetime.now(UTC)
     scenario_id = scenario_id or f"pricing-scenario-{uuid4()}"
+    unknown_items = set(candidate_prices) - {item.item_id for item in plan.items}
+    if unknown_items:
+        raise InvalidScenarioError("candidate prices contain items outside this plan")
     item_simulations: list[ItemScenarioSimulation] = []
     hard_violations_count = 0
 

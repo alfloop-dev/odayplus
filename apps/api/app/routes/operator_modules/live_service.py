@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Collection
+from contextlib import contextmanager, nullcontext
 from threading import RLock
 from typing import Any
 
@@ -33,12 +34,14 @@ class DurableTenantServiceResolver:
         exporter: ServiceExporter,
         mutating_methods: Collection[str],
         after_save: AfterSave | None = None,
+        transactional_mutations: bool = False,
     ) -> None:
         self._repository = repository
         self._factory = factory
         self._exporter = exporter
         self._mutating_methods = frozenset(mutating_methods)
         self._after_save = after_save
+        self._transactional_mutations = transactional_mutations
         self._locks: dict[str, RLock] = {}
         self._locks_guard = RLock()
 
@@ -62,7 +65,7 @@ class DurableTenantServiceResolver:
         *args: Any,
         **kwargs: Any,
     ) -> Any:
-        with self._lock_for(partition_tenant_id):
+        with self._lock_for(partition_tenant_id), self._mutation_transaction(partition_tenant_id, method_name):
             try:
                 persisted_state = self._repository.load(partition_tenant_id)
             except HTTPException:
@@ -77,13 +80,48 @@ class DurableTenantServiceResolver:
                     },
                 ) from exc
             service = self._factory(persisted_state, partition_tenant_id)
-            result = getattr(service, method_name)(*args, **kwargs)
-            if method_name in self._mutating_methods:
+            mutation = method_name in self._mutating_methods
+            scope = (service.transaction_scope(self._repository.engine, partition_tenant_id)
+                     if mutation and self._transactional_mutations else nullcontext())
+            with scope:
+                return self._invoke_service(service, partition_tenant_id, method_name, args, kwargs)
+
+    @contextmanager
+    def _mutation_transaction(self, tenant_id: str, method_name: str):
+        if not self._transactional_mutations or method_name not in self._mutating_methods:
+            yield
+            return
+        engine = self._repository.engine
+        with engine.transaction():
+            if getattr(engine, "dialect", None) == "postgresql":
+                engine.query_one("SELECT pg_advisory_xact_lock(hashtextextended(?, 0)) AS locked",
+                                 (f"operator-domain:{self._repository.domain}:{tenant_id}",))
+            elif not engine._conn.in_transaction:
+                engine.execute("BEGIN IMMEDIATE")
+            yield
+
+    def _invoke_service(self, service, partition_tenant_id, method_name, args, kwargs):
+        result = getattr(service, method_name)(*args, **kwargs)
+        if method_name in self._mutating_methods:
+            try:
+                self._repository.save(
+                    partition_tenant_id,
+                    self._exporter(service),
+                )
+            except HTTPException:
+                raise
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": "OPERATOR_DOMAIN_PERSISTENCE_UNAVAILABLE",
+                        "operation": f"{method_name}.save",
+                        "message": f"{type(exc).__name__}: {exc}",
+                    },
+                ) from exc
+            if self._after_save is not None:
                 try:
-                    self._repository.save(
-                        partition_tenant_id,
-                        self._exporter(service),
-                    )
+                    self._after_save(service, partition_tenant_id)
                 except HTTPException:
                     raise
                 except Exception as exc:
@@ -91,26 +129,11 @@ class DurableTenantServiceResolver:
                         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                         detail={
                             "code": "OPERATOR_DOMAIN_PERSISTENCE_UNAVAILABLE",
-                            "operation": f"{method_name}.save",
+                            "operation": f"{method_name}.after_save",
                             "message": f"{type(exc).__name__}: {exc}",
                         },
                     ) from exc
-                if self._after_save is not None:
-                    try:
-                        self._after_save(service, partition_tenant_id)
-                    except HTTPException:
-                        raise
-                    except Exception as exc:
-                        raise HTTPException(
-                            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                            detail={
-                                "code": "OPERATOR_DOMAIN_PERSISTENCE_UNAVAILABLE",
-                                "operation": f"{method_name}.after_save",
-                                "message": f"{type(exc).__name__}: {exc}",
-                            },
-                        ) from exc
-            return result
-
+        return result
 
 class _TenantServiceProxy:
     def __init__(

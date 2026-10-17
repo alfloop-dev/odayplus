@@ -1,4 +1,5 @@
 import { expect, request as playwrightRequest, test } from "@playwright/test";
+import { primeOperatorPersona } from "./_operatorPersona";
 
 const API_BASE_URL = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";
 const NETWORK_HEADERS = {
@@ -17,7 +18,8 @@ const OPS_HEADERS = {
 test.describe.configure({ mode: "serial" });
 
 test.describe("ODP-OC-R4-008 Network Rebalance", () => {
-  test.beforeEach(async () => {
+  test.beforeEach(async ({ page }) => {
+    await primeOperatorPersona(page, "expansion-staff");
     const api = await apiContext(NETWORK_HEADERS);
     const reset = await api.post("/api/v1/operator/network-rebalance/reset");
     expect(reset.status()).toBe(200);

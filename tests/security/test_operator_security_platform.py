@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 
+import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
@@ -110,8 +112,6 @@ def test_store_ops_camera_purpose_audit_excludes_media_secrets() -> None:
         "retentionHours": 24,
         "privacyAcknowledged": True,
         "auditNote": "Purpose-limited review for ISS-1024.",
-        "mediaSecret": "sk-live-camera-token",
-        "signedPlaybackUrl": "https://media.example.invalid/secret-playback",
     }
 
     first = client.post(
@@ -144,6 +144,41 @@ def test_store_ops_camera_purpose_audit_excludes_media_secrets() -> None:
     assert "signedPlaybackUrl" not in metadata
     assert "mediaSecret" not in metadata
     assert "auditNote" not in metadata
+    assert payload["auditNote"] not in serialized_metadata
+
+
+@pytest.mark.parametrize("media_fields", [
+    {"mediaSecret": "sk-live-camera-token"},
+    {"signedPlaybackUrl": "https://media.example.invalid/secret-playback"},
+    {"mediaSecret": "sk-live-camera-token",
+     "signedPlaybackUrl": "https://media.example.invalid/secret-playback"},
+])
+def test_store_ops_camera_purpose_rejects_unknown_media_fields_without_effects(media_fields) -> None:
+    audit_log = InMemoryAuditLog()
+    client = _client(audit_log)
+    repository = client.app.state.store_ops_repository
+    before = deepcopy(repository.get_state())
+    audit_before = [event for event in audit_log.list_events()
+                    if event.event_type.startswith("operator.store_ops.")]
+    key = "security-camera-purpose-invalid-media"
+
+    response = client.post(
+        "/api/v1/operator/store-ops/issues/ISS-1024/camera-purpose",
+        json={"purpose": "payment incident quality audit", "privacyAcknowledged": True,
+              "auditNote": "Purpose-limited review for ISS-1024.", **media_fields},
+        headers={**OPS_HEADERS, "Idempotency-Key": key,
+                 "X-Correlation-Id": "corr-operator-camera-invalid-media"},
+    )
+
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+    assert repository.get_state() == before
+    assert repository.get_idempotency_result(key) is None
+    assert [event for event in audit_log.list_events()
+            if event.event_type.startswith("operator.store_ops.")] == audit_before
+    for event in audit_log.list_events():
+        serialized_metadata = json.dumps(event.metadata, ensure_ascii=False)
+        assert "auditNote" not in event.metadata
+        assert all(value not in serialized_metadata for value in media_fields.values())
 
 
 class _FailingAuditLog(InMemoryAuditLog):

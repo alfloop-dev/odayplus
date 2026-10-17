@@ -21,6 +21,7 @@ Composes with: operator_modules/* sub-routers via create_operator_router().
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -28,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 from modules.opsboard.application.operator_live_repository import (
     OperatorLiveRepositoryError,
 )
+from modules.opsboard.application.today_metrics import build_today_metrics
 from modules.opsboard.domain.r4_dtos import (
     ISSUE_STATUS_BY_ACTION,
     ApprovalDecisionRequest,
@@ -38,6 +40,8 @@ from modules.opsboard.domain.r4_dtos import (
     IssueTransitionResponse,
 )
 from modules.opsboard.infrastructure.seed_data import load_r4_seed
+from shared.auth import Action, Role
+from shared.auth.rbac import permissions_for
 
 if TYPE_CHECKING:
     from modules.opsboard.application.operator_live_repository import (
@@ -62,14 +66,14 @@ ROLES: list[dict[str, Any]] = [
         "id": "ops-lead",
         "label": "營運主管",
         "subtitle": "全域監控、跨域指派與核准",
-        "allowedWorkspaces": ["today", "store", "growth", "network", "govern"],
+        "allowedWorkspaces": ["today", "store", "govern"],
         "heroName": "林承翰",
     },
     {
         "id": "cs-lead",
         "label": "客服主管",
         "subtitle": "評論、客服案件與門市回覆",
-        "allowedWorkspaces": ["today", "store", "govern"],
+        "allowedWorkspaces": ["today", "store"],
         "heroName": "張珮珊",
     },
     {
@@ -83,14 +87,14 @@ ROLES: list[dict[str, Any]] = [
         "id": "marketing-manager",
         "label": "行銷經理",
         "subtitle": "活動、分群、定價建議",
-        "allowedWorkspaces": ["today", "growth", "govern"],
+        "allowedWorkspaces": ["today", "growth"],
         "heroName": "黃仕杰",
     },
     {
         "id": "expansion-manager",
         "label": "展店經理",
         "subtitle": "HeatZone、候選點與 SiteScore",
-        "allowedWorkspaces": ["today", "network", "govern"],
+        "allowedWorkspaces": ["today", "network"],
         "heroName": "王若寧",
     },
     {
@@ -104,7 +108,7 @@ ROLES: list[dict[str, Any]] = [
         "id": "pm-audit",
         "label": "PM／稽核",
         "subtitle": "模型、決策追蹤與稽核線索",
-        "allowedWorkspaces": ["today", "store", "network", "govern"],
+        "allowedWorkspaces": ["today", "network", "govern"],
         "heroName": "周子安",
     },
 ]
@@ -242,11 +246,15 @@ class OperatorStateService:
         persistence_mode: str = "memory",
         provider_mode: str = "fixture",
         live_repository: OperatorLiveRepositoryProtocol | None = None,
+        fixture_issue_repository: Any | None = None,
+        fixture_approval_reader: Callable[[str], list[dict[str, Any]]] | None = None,
     ) -> None:
         self._require_live_data = require_live_data or live_repository is not None
         self._persistence_mode = persistence_mode
         self._provider_mode = provider_mode
         self._live_repository = live_repository
+        self._fixture_issue_repository = None if self._require_live_data else fixture_issue_repository
+        self._fixture_approval_reader = None if self._require_live_data else fixture_approval_reader
         self._live_ready = False
         self._live_error: str | None = None
         self._state: dict[str, Any] = {} if self._require_live_data else load_r4_seed()
@@ -406,6 +414,7 @@ class OperatorStateService:
         brand_ids: tuple[str, ...] = (),
         region_ids: tuple[str, ...] = (),
         store_ids: tuple[str, ...] = (),
+        read_projection: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Return a role-aware shell envelope for bootstrap/today."""
         role = self.resolve_role(
@@ -413,15 +422,18 @@ class OperatorStateService:
             subject_id=subject_id,
             system_roles=system_roles,
         )
+        state = self._load_state(
+            tenant_id=tenant_id, brand_ids=brand_ids, region_ids=region_ids, store_ids=store_ids,
+        )
+        # The HTTP composition owns this per-call verified projection. Never
+        # retain its principal or callback on the router-lifetime service.
+        if read_projection is not None and self._require_live_data:
+            state = read_projection(state)
         return self._build_envelope(
             role=role,
+            system_roles=system_roles,
             correlation_id=correlation_id,
-            state=self._load_state(
-                tenant_id=tenant_id,
-                brand_ids=brand_ids,
-                region_ids=region_ids,
-                store_ids=store_ids,
-            ),
+            state=state,
         )
 
     def get_work_queue(
@@ -450,6 +462,38 @@ class OperatorStateService:
                 store_ids=store_ids,
             ),
         )
+
+    def get_task_center(
+        self,
+        *,
+        role_id: str | None = None,
+        subject_id: str | None = None,
+        system_roles: str | None = None,
+        tenant_id: str | None = None,
+        brand_ids: tuple[str, ...] = (),
+        region_ids: tuple[str, ...] = (),
+        store_ids: tuple[str, ...] = (),
+        read_projection: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Read retained owner facts through one verified request admission."""
+        role = self.resolve_role(operator_role_id=role_id, subject_id=subject_id, system_roles=system_roles)
+        state = self._load_state(tenant_id=tenant_id, brand_ids=brand_ids,
+                                 region_ids=region_ids, store_ids=store_ids)
+        if self._require_live_data:
+            if read_projection is None:
+                raise OperatorLiveRepositoryError("request-scoped task admission is required")
+            state = read_projection(state)
+            if state.get("_taskCenterRequestAdmitted") is not True:
+                raise OperatorLiveRepositoryError("task owner admission was not confirmed")
+        projection = state.get("taskCenterRecords")
+        if not isinstance(projection, dict):
+            # Explicit POC can still inspect its existing queue, but this is not
+            # evidence of a real initiator or a complete historical collection.
+            projection = {"records": [], "coverage": {"complete": False, "retentionComplete": False,
+                          "domains": [], "reasonCode": "TASK_FIXTURE_HAS_NO_CANONICAL_HISTORY"}}
+        return {"records": [_strip_roles(row) for row in projection["records"] if _has_role(row, role["id"])],
+                "coverage": deepcopy(projection["coverage"]),
+                "dataOrigin": deepcopy(state.get("_meta", {}).get("dataOrigin") or self.data_origin)}
 
     def get_approvals(
         self,
@@ -490,6 +534,7 @@ class OperatorStateService:
         brand_ids: tuple[str, ...] = (),
         region_ids: tuple[str, ...] = (),
         store_ids: tuple[str, ...] = (),
+        read_projection: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Search the role-aware shell index."""
         envelope = self.get_today(
@@ -501,6 +546,7 @@ class OperatorStateService:
             brand_ids=brand_ids,
             region_ids=region_ids,
             store_ids=store_ids,
+            read_projection=read_projection,
         )
         normalized = query.strip().casefold()
         items = envelope["search"]["items"]
@@ -717,10 +763,11 @@ class OperatorStateService:
         role: dict[str, Any],
         correlation_id: str | None,
         state: dict[str, Any],
+        system_roles: str | None = None,
     ) -> dict[str, Any]:
         role_id = role["id"]
         queue = self._filtered_queue(role_id=role_id, state=state)
-        approvals = self._filtered_approvals(role_id=role_id, state=state)
+        approvals = self._today_owner_approvals(role=role, system_roles=system_roles, state=state)
         risk_rows = self._filtered_risk_rows(role_id=role_id, state=state)
         notifications = self._filtered_notifications(role_id=role_id, state=state)
         audit_feed = self._filtered_audit_feed(role_id=role_id, state=state)
@@ -737,6 +784,15 @@ class OperatorStateService:
             if self._require_live_data
             else self._build_kpis(role=role, counts=counts, queue=queue)
         )
+        if self._require_live_data:
+            if "todayIssues" in state:
+                kpis = build_today_metrics(
+                    issues=state["todayIssues"],
+                    approvals_count=(counts["approvals"] if state.get("_meta", {}).get("sections", {}).get("approvals", {}).get("state") == "available" else None),
+                    now=datetime.now(UTC),
+                    role_id=role_id,
+                    growth_facts=state.get("todayGrowth"),
+                )
         response_role = deepcopy(role)
         response_roles = deepcopy(ROLES)
         if self._require_live_data:
@@ -834,6 +890,35 @@ class OperatorStateService:
             "auditFeed": audit_feed,
         }
         return deepcopy(envelope)
+
+    def _today_owner_approvals(
+        self, *, role: dict[str, Any], system_roles: str | None, state: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        role_id = role["id"]
+        if self._fixture_approval_reader is None:
+            return self._filtered_approvals(role_id=role_id, state=state)
+        # The POC owner is the same Govern service mounted by the router. Its
+        # pending rows, rather than unrelated R4 card IDs, determine the link
+        # and count. This remains a fixture read, never live approval authority.
+        if "govern" not in role["allowedWorkspaces"]:
+            return []
+        verified_role_names = {value.strip() for value in (system_roles or "").split(",")}
+        verified_roles = frozenset(value for value in Role if value.value in verified_role_names)
+        if not any(permission.matches("intervention", Action.APPROVE) for permission in permissions_for(verified_roles)):
+            return []
+        return [
+            {
+                "id": item["id"],
+                "title": item["title"],
+                "meta": item["module"],
+                "status": item["status"],
+                "cta": "Open Govern",
+                "tone": "warning",
+                "target": {"workspace": "govern", "entityId": item["id"], "tab": "approvals"},
+            }
+            for item in self._fixture_approval_reader(role_id)
+            if item["status"] == "pending"
+        ]
 
     def _enrich_queue_item(self, item: dict[str, Any]) -> dict[str, Any]:
         enriched = deepcopy(item)
@@ -946,59 +1031,21 @@ class OperatorStateService:
         counts: dict[str, int],
         queue: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        role_focus = {
-            "ops-lead": ("跨域 SLA", "全域隊列"),
-            "cs-lead": ("客服回覆", "評論與退款"),
-            "field-lead": ("現場派工", "設備與回報"),
-            "marketing-manager": ("活動草稿", "會員成長"),
-            "expansion-manager": ("SiteScore", "候選點佐證"),
-            "pm-audit": ("稽核抽查", "模型追蹤"),
-        }.get(role["id"], ("今日焦點", "角色隊列"))
-        due_label = queue[0]["status"] if queue else "Clear"
-        return [
-            {
-                "label": "今日待處理",
-                "value": str(counts["taskCenter"]),
-                "delta": role_focus[1],
-                "meta": due_label,
-                "tone": "info",
-            },
-            {
-                "label": "Critical SLA",
-                "value": str(counts["critical"]),
-                "delta": role_focus[0],
-                "meta": "API role-filtered",
-                "tone": "danger" if counts["critical"] else "success",
-            },
-            {
-                "label": "待核准",
-                "value": str(counts["approvals"]),
-                "delta": "Approval Center",
-                "meta": "after writes refreshed",
-                "tone": "warning" if counts["approvals"] else "success",
-            },
-            {
-                "label": "可用工作區",
-                "value": str(len(role["allowedWorkspaces"])),
-                "delta": "role policy",
-                "meta": "bootstrap envelope",
-                "tone": "accent",
-            },
-            {
-                "label": "通知",
-                "value": str(counts["notifications"]),
-                "delta": "unread",
-                "meta": "header source",
-                "tone": "neutral",
-            },
-            {
-                "label": "搜尋索引",
-                "value": str(counts["search"]),
-                "delta": "entity deep links",
-                "meta": "Ctrl/Cmd+K",
-                "tone": "success",
-            },
-        ]
+        issues = None
+        if self._fixture_issue_repository is not None:
+            try:
+                issue_state = self._fixture_issue_repository.get_state()
+                candidate_issues = issue_state.get("issues")
+                if isinstance(candidate_issues, list) and all(isinstance(issue, dict) for issue in candidate_issues):
+                    issues = candidate_issues
+            except Exception:
+                issues = None
+        return build_today_metrics(
+            issues=issues,
+            approvals_count=counts["approvals"],
+            now=datetime.now(UTC),
+            role_id=role["id"],
+        )
 
     def _build_search_items(
         self,

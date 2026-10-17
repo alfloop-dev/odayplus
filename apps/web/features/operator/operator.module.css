@@ -2349,22 +2349,20 @@
 
 /*
  * Header reflow is defined once for every workspace and data state:
- * <=1240px the workspace nav takes its own scrollable row; <=768px brand,
- * actions and nav stack. No page-level minimum width is imposed.
+ * R7 keeps brand, workspace navigation, then actions in that order. At
+ * <=1240px actions take the following row; <=768px all three groups stack.
+ * Navigation may scroll within its row; no page-level minimum width is imposed.
  */
 @media (max-width: 1240px) {
   .topActions {
-    flex: 1 1 auto;
+    flex: 1 0 100%;
     flex-wrap: wrap;
-    justify-content: flex-end;
+    justify-content: flex-start;
     min-width: 0;
   }
 
   .workspaceNav {
-    order: 3;
-    flex: 1 0 100%;
-    justify-content: flex-start;
-    margin: 0;
+    max-width: 100%;
     overflow-x: auto;
     overscroll-behavior-x: contain;
     scrollbar-width: thin;

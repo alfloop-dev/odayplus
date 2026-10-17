@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import hmac
 import json
 import re
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -14,6 +16,11 @@ from jsonschema import Draft202012Validator, FormatChecker
 from apps.api.app.routes.listings import AssistedIntakeStore
 from apps.api.oday_api.main import create_app
 from delivery_toolchain.openapi.generate_assisted_listing_intake_client import ARTIFACT
+from tests.intake_workflow_fixture import (
+    SyntheticIntakeWorkflowPolicy,
+    seed_synthetic_assignment_workflow,
+    seed_synthetic_sla,
+)
 
 TENANT_A = "00000000-0000-0000-0000-000000000001"
 TENANT_B = "00000000-0000-0000-0000-000000000002"
@@ -23,6 +30,201 @@ ACTOR_C = "00000000-0000-0000-0000-000000000103"
 ACTOR_B = "00000000-0000-0000-0000-000000000104"
 OWNER_STEWARD = "00000000-0000-0000-0000-000000000105"
 BRAND_X = "00000000-0000-0000-0000-000000000201"
+
+
+@pytest.fixture(scope="module")
+def workflow_scope_client():
+    app = create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
+    client = ContractTestClient(app)
+    client.workflow_scope_store = AssistedIntakeStore._instances[-1]
+    return client
+
+
+RESOURCE_SCOPE_ACTIONS = ["claim", "transfer", "complete", "pause", "resume"]
+RESOURCE_SCOPE_AXES = [
+    ("brand_id", "x-brand-ids"),
+    ("region_id", "x-region-ids"),
+    ("store_id", "x-store-ids"),
+    ("assigned_area_id", "x-assigned-area-ids"),
+    ("heat_zone_id", "x-heat-zone-ids"),
+]
+
+
+def _workflow_scope_case(client, action, *, scope, linked=True):
+    store = client.workflow_scope_store
+    resource_id, intake_id = str(uuid4()), str(uuid4())
+    intake = {
+        "intake_id": intake_id,
+        "scope": scope,
+        "version": 1,
+        "state": "NEEDS_REVIEW",
+        "processing_history": [],
+        "submitted_by": ACTOR_A,
+        "assigned_to": ACTOR_A,
+    }
+    if linked:
+        store.intakes[intake_id] = intake
+    common = {
+        "tenant_id": TENANT_A,
+        "intake_id": intake_id,
+        "version": 1,
+        "due_at": "2026-10-12T12:00:00Z",
+        "audit_event_id": str(uuid4()),
+        "correlation_id": str(uuid4()),
+        "scope": {"tenant_id": TENANT_A},
+    }
+    body = {"reason": "Scoped workflow verification"}
+    if action in {"pause", "resume"}:
+        resource = {
+            **common,
+            "sla_instance_id": resource_id,
+            "state": "PAUSED" if action == "resume" else "ON_TRACK",
+            "paused_duration_seconds": 0,
+        }
+        seed_synthetic_sla(resource, paused=action == "resume")
+        store.slas[resource_id] = resource
+        path = f"/api/v1/sla-instances/{resource_id}/actions/{action}"
+        if action == "pause":
+            body["expected_resume_at"] = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+    else:
+        resource = {
+            **common,
+            "assignment_id": resource_id,
+            "status": "CLAIMED" if action == "complete" else "ASSIGNED",
+            "owner_subject_id": ACTOR_A,
+        }
+        store.assignments[resource_id] = resource
+        seed_synthetic_assignment_workflow(store, resource, intake)
+        path = f"/api/v1/assignments/{resource_id}/actions/{action}"
+        if action == "transfer":
+            body.update(
+                {
+                    "target_owner_subject_id": ACTOR_C,
+                    "target_owner_role": "expansion_user",
+                    "handoff_note": "Transfer to scoped colleague",
+                }
+            )
+    return store, resource, intake, path, body
+
+
+@pytest.mark.parametrize("action", RESOURCE_SCOPE_ACTIONS)
+@pytest.mark.parametrize("axis,header", RESOURCE_SCOPE_AXES)
+def test_workflow_children_deny_other_scope_without_state_or_replay_writes(
+    workflow_scope_client, action, axis, header
+):
+    client = workflow_scope_client
+    permitted, other = str(uuid4()), str(uuid4())
+    store, resource, intake, path, body = _workflow_scope_case(
+        client, action, scope={"tenant_id": TENANT_A, axis: other}
+    )
+    before = copy.deepcopy((resource, intake, store.replays))
+    response = client.post(
+        path,
+        json=body,
+        headers={
+            **HEADERS_A,
+            header: permitted,
+            "Idempotency-Key": f"scope-denial-{uuid4()}",
+            "If-Match": 'W/"1"',
+        },
+    )
+    assert response.status_code == 403
+    assert (resource, intake, store.replays) == before
+
+
+@pytest.mark.parametrize("action", RESOURCE_SCOPE_ACTIONS)
+@pytest.mark.parametrize("kind", ["dangling", "foreign_tenant"])
+def test_workflow_children_cannot_authorize_from_less_specific_child_metadata(
+    workflow_scope_client, action, kind
+):
+    client = workflow_scope_client
+    store, resource, intake, path, body = _workflow_scope_case(
+        client,
+        action,
+        scope={"tenant_id": TENANT_B if kind == "foreign_tenant" else TENANT_A},
+        linked=kind != "dangling",
+    )
+    before = copy.deepcopy((resource, intake, store.replays))
+    response = client.post(
+        path,
+        json=body,
+        headers={**HEADERS_A, "Idempotency-Key": f"link-denial-{uuid4()}", "If-Match": 'W/"1"'},
+    )
+    assert response.status_code == 403
+    assert (resource, intake, store.replays) == before
+
+
+@pytest.mark.parametrize("action", RESOURCE_SCOPE_ACTIONS)
+def test_workflow_children_keep_authorized_same_scope_actions(workflow_scope_client, action):
+    client = workflow_scope_client
+    region = str(uuid4())
+    _, _, _, path, body = _workflow_scope_case(
+        client, action, scope={"tenant_id": TENANT_A, "region_id": region}
+    )
+    response = client.post(
+        path,
+        json=body,
+        headers={
+            **HEADERS_A,
+            "x-region-ids": region,
+            "Idempotency-Key": f"scope-success-{uuid4()}",
+            "If-Match": 'W/"1"',
+        },
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize("action", ["pause", "resume"])
+def test_sla_replays_recheck_current_parent_scope(workflow_scope_client, action):
+    client = workflow_scope_client
+    region = str(uuid4())
+    store, resource, intake, path, body = _workflow_scope_case(
+        client, action, scope={"tenant_id": TENANT_A, "region_id": region}
+    )
+    headers = {
+        **HEADERS_A,
+        "x-region-ids": region,
+        "Idempotency-Key": f"recheck-scope-{uuid4()}",
+        "If-Match": 'W/"1"',
+    }
+    assert client.post(path, json=body, headers=headers).status_code == 200
+    # A cached success is not authority after another manager changes routing.
+    intake["scope"]["region_id"] = str(uuid4())
+    before = copy.deepcopy((resource, intake, store.replays))
+    response = client.post(path, json=body, headers=headers)
+    assert response.status_code == 403
+    assert (resource, intake, store.replays) == before
+
+
+@pytest.mark.parametrize("action", RESOURCE_SCOPE_ACTIONS)
+@pytest.mark.parametrize("kind", ["matching", "missing", "different"])
+def test_standalone_workflow_resources_use_their_own_scope(workflow_scope_client, action, kind):
+    client = workflow_scope_client
+    region = str(uuid4())
+    store, resource, intake, path, body = _workflow_scope_case(
+        client, action, scope={"tenant_id": TENANT_A}, linked=False
+    )
+    resource.pop("intake_id")
+    if kind != "missing":
+        resource["scope"]["region_id"] = region if kind == "matching" else str(uuid4())
+    before = copy.deepcopy((resource, intake, store.replays))
+    response = client.post(
+        path,
+        json=body,
+        headers={
+            **HEADERS_A,
+            "x-region-ids": region,
+            "Idempotency-Key": f"standalone-scope-{uuid4()}",
+            "If-Match": 'W/"1"',
+        },
+    )
+    # Scope authorization remains valid for a matching standalone envelope,
+    # but SLA commands additionally require an actual Intake event binding.
+    expected = 503
+    assert response.status_code == (expected if kind == "matching" else 403)
+    if kind != "matching" or expected == 503:
+        assert (resource, intake, store.replays) == before
+
 
 EFFECTIVE_OPENAPI = json.loads(ARTIFACT.read_text())
 RUNTIME_SUCCESS_OPERATIONS: set[str] = set()
@@ -123,7 +325,7 @@ HEADERS_B = {
 
 @pytest.fixture
 def client() -> TestClient:
-    app = create_app()
+    app = create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
     return ContractTestClient(app)
 
 
@@ -470,6 +672,13 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     assert intake_id is not None
     assert receipt["state"] == "SUBMITTED"
 
+    # This is the submission's recorded intake-processing job, not a score
+    # result inferred from a promotion decision.
+    intake_job = client.get(f"/api/v1/jobs/{receipt['job_id']}/receipt", headers=HEADERS_A)
+    assert intake_job.status_code == 200
+    assert intake_job.json()["job_id"] == receipt["job_id"]
+    assert intake_job.json()["status"] == "QUEUED"
+
     # Replay with idempotency key -> returns 200
     resp_replay = client.post("/api/v1/intakes/url", json=payload, headers=headers)
     assert resp_replay.status_code == 200
@@ -774,6 +983,11 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
         ),
     )
 
+    # This positive synthetic fixture records a completed hard-rule check.
+    listing = repository.get_listing(target_listing_id)
+    assert listing is not None
+    object.__setattr__(listing, "hard_rule_failures", [])
+
     # 9. requestCandidatePromotion (POST /api/v1/intakes/{id}/promotion-requests)
 
     promo_payload = {
@@ -791,7 +1005,7 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
             "If-Match": f'W/"{version_after_reopen}"'
         }
     )
-    assert resp_promo.status_code == 202
+    assert resp_promo.status_code == 202, resp_promo.text
     promo_receipt = resp_promo.json()
     assert promo_receipt["status"] == "PENDING_REVIEW"
     promo_id = promo_receipt["promotion_decision_id"]
@@ -830,25 +1044,28 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
             "If-Match": f'W/"{promo_receipt["version"]}"'
         }
     )
-    assert resp_rev_promo.status_code == 200
-    assert resp_rev_promo.json()["status"] == "COMPLETED"
-    assert resp_rev_promo.json()["candidate_site_id"] is not None
-    assert resp_rev_promo.json()["site_score_job_id"] is not None
+    # This memory fixture has no transaction-bound scoring worker. Production
+    # approval/result delivery is exercised against PostgreSQL in integration.
+    assert resp_rev_promo.status_code == 503
+    unchanged = client.get(f"/api/v1/promotion-decisions/{promo_id}", headers=HEADERS_A)
+    assert unchanged.status_code == 200
+    assert unchanged.json() == resp_get_promo.json()
+    assert unchanged.json()["status"] == "PENDING_REVIEW"
+    assert unchanged.json()["candidate_site_id"] is None
+    assert unchanged.json()["site_score_job_id"] is None
 
-    # 13. getJobReceipt returns the authoritative version/attempt/checkpoint.
-    job_id = resp_rev_promo.json()["site_score_job_id"]
-    resp_get_job = client.get(f"/api/v1/jobs/{job_id}/receipt", headers=HEADERS_A_REVIEWER)
-    assert resp_get_job.status_code == 200
-    assert resp_get_job.json() == {
-        "job_id": job_id,
-        "status": "SUCCEEDED",
-        "delivery_state": None,
-        "checkpoint": "SCORE_QUEUED",
-        "attempt": 0,
-        "version": 1,
-        "correlation_id": resp_rev_promo.json()["correlation_id"],
-    }
-    assert resp_get_job.headers["ETag"] == 'W/"1"'
+    # An independent reviewer can still make a real rejection without a
+    # scoring dispatcher. The response is checked by ContractTestClient.
+    rejected = client.post(
+        f"/api/v1/promotion-decisions/{promo_id}/actions/review",
+        json={"decision": "REJECT", "reason": "Recorded independent review rejection", "risk_acknowledged": True},
+        headers={**HEADERS_A_REVIEWER, "Idempotency-Key": f"idem-reject-promo-{uuid4()}",
+                 "If-Match": unchanged.headers["ETag"]},
+    )
+    assert rejected.status_code == 200
+    assert rejected.json()["status"] == "REJECTED"
+    assert rejected.json()["candidate_site_id"] is None
+    assert rejected.json()["site_score_job_id"] is None
 
 
 
@@ -984,7 +1201,7 @@ def test_expansion_staff_can_retry_their_own_failed_intake(
     assert retried.json()["status"] == "QUEUED"
 
 
-def test_retry_exact_replay_precedes_mutable_ownership_authorization(
+def test_retry_exact_replay_requires_current_ownership_authorization(
     client: TestClient,
 ) -> None:
     staff_headers = {
@@ -1027,8 +1244,9 @@ def test_retry_exact_replay_precedes_mutable_ownership_authorization(
     )
     assert first.status_code == 202
 
-    # Ownership is mutable after acceptance. It must not invalidate replay of
-    # the exact prior command and receipt for the same actor.
+    accepted_job = copy.deepcopy(job)
+    # An immutable receipt is not continuing authorization. Once ownership is
+    # revoked, the same actor cannot use a prior key to disclose or retry it.
     intake["submitted_by"] = ACTOR_C
     intake["assigned_to"] = ACTOR_C
     replayed = client.post(
@@ -1037,8 +1255,8 @@ def test_retry_exact_replay_precedes_mutable_ownership_authorization(
         headers=retry_headers,
     )
 
-    assert replayed.status_code == 202
-    assert replayed.json() == first.json()
+    assert replayed.status_code == 403
+    assert job == accepted_job
 
 
 def test_retry_orphan_job_fails_closed_for_same_tenant_staff(
@@ -1201,6 +1419,14 @@ def test_assignment_actions(client: TestClient) -> None:
     version_after_transferred_claim = resp_transferred_claim.json()["version"]
 
     # 3. completeAssignment
+    # Completion requires actual terminal work, not just a request reason.
+    current_intake = AssistedIntakeStore._instances[-1].intakes[intake_id]
+    cancellation = client.post(
+        f"/api/v1/intakes/{intake_id}/actions/cancel",
+        json={"reason":"Synthetic triage is finished by cancellation"},
+        headers={**HEADERS_C,"Idempotency-Key":f"synthetic-complete-cancel-{uuid4()}","If-Match":f'W/"{current_intake["version"]}"'},
+    )
+    assert cancellation.status_code == 200, cancellation.text
     resp_complete = client.post(
         f"/api/v1/assignments/{assignment_id}/actions/complete",
         json={"reason": "Completed manual triage review with no issues found"},
@@ -1217,23 +1443,18 @@ def test_assignment_actions(client: TestClient) -> None:
 
 
 def test_sla_actions(client: TestClient) -> None:
-    sla_id = str(uuid4())
+    submitted = client.post(
+        "/api/v1/intakes/url", json={"original_url": "https://example.invalid/synthetic-sla", "scope": {"tenant_id": TENANT_A}},
+        headers={**HEADERS_A, "Idempotency-Key": f"synthetic-sla-submit-{uuid4()}"},
+    )
+    assert submitted.status_code == 202, submitted.text
     latest_store = AssistedIntakeStore._instances[-1]
-    latest_store.slas[sla_id] = {
-        "sla_instance_id": sla_id,
-        "state": "ON_TRACK",
-        "due_at": "2026-07-25T12:00:00Z",
-        "paused_duration_seconds": 0,
-        "version": 1,
-        "audit_event_id": str(uuid4()),
-        "correlation_id": str(uuid4()),
-        "tenant_id": TENANT_A,
-    }
+    sla_id = next(s["sla_instance_id"] for s in latest_store.slas.values() if s.get("intake_id") == submitted.json()["intake_id"])
 
     # 1. pauseSla
     resp_pause = client.post(
         f"/api/v1/sla-instances/{sla_id}/actions/pause",
-        json={"reason": "Awaiting customer feedback", "expected_resume_at": "2026-07-26T12:00:00Z"},
+        json={"reason": "Awaiting customer feedback", "expected_resume_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat()},
         headers={**HEADERS_A, "Idempotency-Key": f"idem-pause-{uuid4()}", "If-Match": 'W/"1"'}
     )
     assert resp_pause.status_code == 200
@@ -1756,7 +1977,7 @@ def test_cursor_uses_configured_signing_and_keyset_snapshot_pagination(
 ) -> None:
     signing_key = "cursor-signing-key-for-contract-tests-0001"
     monkeypatch.setenv("ODP_INTAKE_CURSOR_SIGNING_KEY", signing_key)
-    client = ContractTestClient(create_app())
+    client = ContractTestClient(create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy()))
 
     submitted_ids = []
     for index in range(3):

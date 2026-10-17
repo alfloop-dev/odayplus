@@ -49,6 +49,7 @@ def test_sql_decision_policy_repository_resolves_registry_row() -> None:
             ),
             "declared_inputs": json.dumps(["sitescore_gap_ratio"]),
             "approved_by": "architecture_owner",
+            "approved_at": "2026-09-01T00:00:00+00:00",
             "owner_role": "ops",
         }
     )
@@ -64,6 +65,7 @@ def test_sql_decision_policy_repository_resolves_registry_row() -> None:
     assert policy.policy_version_id == f"four-light-policy-v1:{tenant_id}"
     assert policy.parameters["thresholds"][0]["value"] == -0.35
     assert policy.declared_inputs == ("sitescore_gap_ratio",)
+    assert policy.approved_at == at
     assert engine.calls[0][1] == ("forecast_alert", tenant_id, at, at)
 
     # Verify that the resolved policy successfully evaluates a forecast in the domain evaluator
@@ -130,5 +132,4 @@ def test_sql_decision_policy_repository_find_version() -> None:
     assert pol.policy_version_id == policy_ver_id
     assert pol.owner_role == "expansion-manager"
     assert engine.calls[0][1] == (policy_ver_id,)
-
 

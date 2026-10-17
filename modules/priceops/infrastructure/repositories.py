@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from threading import Lock
 
 from modules.priceops.domain.exploration import (
     ActivationReceipt,
@@ -26,6 +27,7 @@ from modules.priceops.domain.pricing import (
     InterventionTreatmentHandoff,
     LabelRegistryEntry,
     ObservationWindow,
+    PlanAlreadyExistsError,
     PlanOptimization,
     PlanScenarioSimulation,
     PlanSimulation,
@@ -53,6 +55,15 @@ class InMemoryPriceOpsRepository:
     _gates: dict[str, ExplorationGate] = field(default_factory=dict)
     _exploration_decisions: dict[str, ExplorationDecision] = field(default_factory=dict)
     _activation_receipts: dict[str, ActivationReceipt] = field(default_factory=dict)
+
+    _plan_creation_lock: Lock = field(default_factory=Lock, repr=False, compare=False)
+
+    def insert_plan(self, plan: PricingPlan) -> PricingPlan:
+        with self._plan_creation_lock:
+            if plan.plan_id in self._plans:
+                raise PlanAlreadyExistsError("plan id already exists")
+            self._plans[plan.plan_id] = plan
+        return plan
 
     def save_plan(self, plan: PricingPlan) -> PricingPlan:
         self._plans[plan.plan_id] = plan

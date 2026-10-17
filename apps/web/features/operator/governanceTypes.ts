@@ -26,6 +26,11 @@ export type GovernanceEvidence = {
   state?: "ready" | "missing" | "stale" | (string & {});
 };
 
+/** Existing canonical review owners; no arbitrary URL or new workspace. */
+export type GovernanceNativeTarget =
+  | { workspace: "today"; tab: "interventions"; entityId: string }
+  | { workspace: "network"; tab: "review"; entityId: string; candidateId: string; reviewId: string };
+
 /**
  * A governance approval row.  `id`, `module`, `title` and `status` identify and
  * classify the row and are required — a record without them is not a governance
@@ -46,6 +51,11 @@ export type GovernanceApproval = {
   owner?: string;
   sla?: string;
   entityRef?: string;
+  decisionId?: string;
+  /** null retains a supplied but unverified native target without a generic fallback. */
+  nativeTarget?: GovernanceNativeTarget | null;
+  /** A row can narrow the snapshot's authority, never grant decision authority. */
+  actionAuthority?: { decide: false; reason?: string };
   summary?: string;
   systemRecommendation?: string;
   risk?: string;
@@ -118,4 +128,5 @@ export type GovernanceWorkspaceCallbacks = {
   onReturn?: (payload: GovernanceDecisionPayload) => void;
   onReject?: (payload: GovernanceDecisionPayload) => void;
   onSelectApproval?: (approval: GovernanceApproval) => void;
+  onOpenNativeTarget?: (target: GovernanceNativeTarget, approval: GovernanceApproval) => void;
 };

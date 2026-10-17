@@ -16,6 +16,8 @@ from collections.abc import Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
+from functools import wraps
+from inspect import signature
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -73,6 +75,10 @@ from modules.heatzone.domain.composition import (
     validate_composition_record,
 )
 from modules.heatzone.workers import HeatZoneBatchScoreResult
+from modules.intervention.application.approval_contract import (
+    InterventionOwnerIntegrityError,
+    require_positive_intervention_version,
+)
 from modules.intervention.domain.lifecycle import (
     ACTIVE_INTERVENTION_STATUSES,
     Intervention,
@@ -124,10 +130,13 @@ from modules.priceops.domain.exploration import (
 )
 from modules.priceops.domain.pricing import (
     ApprovalRecord,
+    DecisionWritebackRecord,
     InterventionTreatmentHandoff,
     LabelRegistryEntry,
     ObservationWindow,
+    PlanAlreadyExistsError,
     PlanOptimization,
+    PlanScenarioSimulation,
     PlanSimulation,
     PricingEffectEvaluation,
     PricingExecution,
@@ -231,22 +240,45 @@ class DurableSiteScoreRepository:
         self._store = store
 
     @property
+    def engine(self) -> Any:
+        return self._store.engine
+
+    @property
     def tenant_id(self) -> str:
         return getattr(self._store, "tenant_id", "")
 
+    @contextmanager
+    def report_guard(self, candidate_site_id: str) -> Iterator[None]:
+        """Serialize report version allocation for this exact tenant/candidate."""
+        if not isinstance(candidate_site_id, str) or not candidate_site_id.strip():
+            raise ValueError("candidate_site_id is required for a report guard")
+        engine = self.engine
+        with engine.lock, engine.transaction():
+            if getattr(engine, "dialect", None) == "postgresql":
+                key = "sitescore.reports:" + json.dumps(
+                    [self.tenant_id, candidate_site_id], separators=(",", ":")
+                )
+                engine.query_one(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(?, 0)) AS locked",
+                    (key,),
+                )
+            yield
+
     def save_report(self, report: SiteScoreReport) -> SiteScoreReport:
-        version = self._store.count_in_group(self._C, report.candidate_site_id) + 1
-        versioned = report.with_version(
-            report_version=version,
-            report_id=f"sitescore-report-{uuid4()}",
-        )
-        self._store.append_version(
-            self._C,
-            versioned.report_id,
-            versioned,
-            group_key=versioned.candidate_site_id,
-        )
-        return versioned
+        with self.report_guard(report.candidate_site_id):
+            version = self._store.count_in_group(self._C, report.candidate_site_id) + 1
+            versioned = report.with_version(
+                report_version=version,
+                report_id=f"sitescore-report-{uuid4()}",
+            )
+            self._store.append_version(
+                self._C,
+                versioned.report_id,
+                versioned,
+                group_key=versioned.candidate_site_id,
+            )
+            return versioned
+
 
     def latest(self, candidate_site_id: str) -> SiteScoreReport | None:
         return self._store.latest_in_group(self._C, candidate_site_id)
@@ -287,6 +319,19 @@ class DurableSiteScoreRepository:
         return self._store.get(self._SITESCORE_RUNS, sitescore_run_id)
 
 
+def _locked_avm_case_read(method):
+    """Legacy disposition may write; acquire its owner before the first read."""
+    method_signature = signature(method)
+
+    @wraps(method)
+    def invoke(self, *args, **kwargs):
+        arguments = method_signature.bind(self, *args, **kwargs).arguments
+        with self.case_transaction(arguments["case_id"]):
+            return method(self, *args, **kwargs)
+
+    return invoke
+
+
 class DurableAVMRepository:
     """Durable mirror of ``InMemoryAVMRepository``."""
 
@@ -298,6 +343,34 @@ class DurableAVMRepository:
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
+
+    @contextmanager
+    def case_transaction(self, case_id: str | None):
+        """Lock before the native service first reads a mutable case.
+
+        All native finance, valuation and DataRoom writers enter the same row
+        lock. A caller waiting for another engine cannot retain an old case.
+        """
+        engine = self._store.engine
+        with engine.transaction():
+            if getattr(engine, "dialect", None) == "postgresql":
+                tenant_id = getattr(self._store, "tenant_id", None)
+                if tenant_id:
+                    engine.query_one(
+                        "SELECT pg_advisory_xact_lock(hashtextextended(?, 0)) AS locked",
+                        (f"avm-case-owner:{tenant_id}",),
+                    )
+                collection = (self._store._collection(self._CASES)
+                              if hasattr(self._store, "_collection") else self._CASES)
+                if case_id is not None:
+                    engine.query_one(
+                        "SELECT doc_id FROM durable_documents "
+                        "WHERE collection = ? AND doc_id = ? FOR UPDATE",
+                        (collection, case_id),
+                    )
+            elif not engine._conn.in_transaction:
+                engine.execute("BEGIN IMMEDIATE")
+            yield
 
     def _migrate_legacy_case(self, case: ValuationCase | None) -> ValuationCase | None:
         """Stamp a durable status on cases stored before the field existed.
@@ -406,6 +479,7 @@ class DurableAVMRepository:
         self._store.put(self._CASES, case.case_id, case)
         return case
 
+    @_locked_avm_case_read
     def get_case(self, case_id: str) -> ValuationCase | None:
         return self._migrate_legacy_case(self._store.get(self._CASES, case_id))
 
@@ -413,7 +487,7 @@ class DurableAVMRepository:
         return [
             c
             for item in self._store.list_all(self._CASES)
-            if (c := self._migrate_legacy_case(item)) is not None
+            if (c := self.get_case(item.case_id)) is not None
         ]
 
     def save_margin(self, margin: NormalizedMargin) -> NormalizedMargin:
@@ -446,10 +520,12 @@ class DurableAVMRepository:
             self._store.replace_latest_in_group(self._REPORTS, report, group_key=report.case_id)
         return report
 
+    @_locked_avm_case_read
     def latest_report(self, case_id: str) -> ValuationReport | None:
         report = self._store.latest_in_group(self._REPORTS, case_id)
         return None if report is None else self._dispose_legacy_report(report)
 
+    @_locked_avm_case_read
     def report_history(self, case_id: str) -> list[ValuationReport]:
         return [
             self._dispose_legacy_report(report)
@@ -460,6 +536,7 @@ class DurableAVMRepository:
         self._store.put(self._DATAROOMS, dataroom.case_id, dataroom)
         return dataroom
 
+    @_locked_avm_case_read
     def get_dataroom(self, case_id: str) -> DataRoom | None:
         dataroom = self._store.get(self._DATAROOMS, case_id)
         return None if dataroom is None else self._dispose_legacy_dataroom(dataroom)
@@ -777,6 +854,78 @@ _INTERVENTION_EXISTS_SQL: dict[str, str] = {
 }
 
 
+_INTERVENTION_APPROVAL_PREDICATE_SQL = {
+    "interventions": " AND interventions.status = ? AND interventions.store_id = excluded.store_id",
+    "operations.interventions": " AND operations.interventions.status = ? AND operations.interventions.store_id = excluded.store_id",
+}
+_INTERVENTION_APPROVAL_READ_SQL = {
+    "interventions": "SELECT store_id, status FROM interventions WHERE intervention_id = ?",
+    "operations.interventions": "SELECT store_id, status FROM operations.interventions WHERE intervention_id = ? FOR UPDATE",
+}
+
+
+_INTERVENTION_OWNER_READ_SQL = {
+    ("interventions", False): "SELECT store_id FROM interventions WHERE intervention_id = ?",
+    ("interventions", True): "SELECT store_id FROM interventions WHERE intervention_id = ?",
+    ("operations.interventions", False): "SELECT store_id FROM operations.interventions WHERE intervention_id = ?",
+    ("operations.interventions", True): "SELECT store_id FROM operations.interventions WHERE intervention_id = ? FOR UPDATE",
+}
+
+
+# Ownership checks project metadata only; no business pickle is selected here.
+_INTERVENTION_GROUP_OWNER_METADATA_SQL = {
+    "interventions": (
+        "SELECT document.doc_id, document.group_key, native.intervention_id AS canonical_id, native.store_id "
+        "FROM durable_documents AS document LEFT JOIN interventions AS native "
+        "ON native.intervention_id = document.doc_id "
+        "WHERE document.collection = ? AND document.group_key = ? ORDER BY document.ordinal"
+    ),
+    "operations.interventions": (
+        "SELECT document.doc_id, document.group_key, native.intervention_id AS canonical_id, native.store_id "
+        "FROM durable_documents AS document LEFT JOIN operations.interventions AS native "
+        "ON (document.doc_id = CAST(native.intervention_id AS TEXT) "
+        "OR document.doc_id = 'intervention-' || CAST(native.intervention_id AS TEXT)) "
+        "WHERE document.collection = ? AND document.group_key = ? ORDER BY document.ordinal"
+    ),
+}
+_INTERVENTION_STORE_DOCUMENT_METADATA_SQL = {
+    "interventions": (
+        "SELECT document.doc_id, document.group_key, native.intervention_id AS canonical_id, native.store_id "
+        "FROM interventions AS native LEFT JOIN durable_documents AS document "
+        "ON document.doc_id = native.intervention_id AND document.collection = ? "
+        "WHERE native.store_id = ? ORDER BY document.ordinal"
+    ),
+    "operations.interventions": (
+        "SELECT document.doc_id, document.group_key, native.intervention_id AS canonical_id, native.store_id "
+        "FROM operations.interventions AS native LEFT JOIN durable_documents AS document "
+        "ON (document.doc_id = CAST(native.intervention_id AS TEXT) "
+        "OR document.doc_id = 'intervention-' || CAST(native.intervention_id AS TEXT)) "
+        "AND document.collection = ? WHERE native.store_id = ? ORDER BY document.ordinal"
+    ),
+}
+
+# A related payload is selected only through its current relational owner and
+# document index together. A metadata preflight must never be followed by a raw
+# group query that could decode a newly rotated, unauthorized record.
+_INTERVENTION_SCOPED_PAYLOAD_SQL = {
+    "interventions": (
+        "SELECT document.doc_id, document.group_key, native.intervention_id AS canonical_id, native.store_id, document.data "
+        "FROM durable_documents AS document JOIN interventions AS native "
+        "ON native.intervention_id = document.doc_id "
+        "WHERE document.collection = ? AND document.doc_id = ? "
+        "AND document.group_key = ? AND native.store_id = ?"
+    ),
+    "operations.interventions": (
+        "SELECT document.doc_id, document.group_key, native.intervention_id AS canonical_id, native.store_id, document.data "
+        "FROM durable_documents AS document JOIN operations.interventions AS native "
+        "ON (document.doc_id = CAST(native.intervention_id AS TEXT) "
+        "OR document.doc_id = 'intervention-' || CAST(native.intervention_id AS TEXT)) "
+        "WHERE document.collection = ? AND document.doc_id = ? "
+        "AND document.group_key = ? AND native.store_id = ?"
+    ),
+}
+
+
 def _to_uuid_if_prefixed(val: str | None) -> str | None:
     if val is None:
         return None
@@ -855,7 +1004,7 @@ class DurableInterventionRepository:
                     if not existing:
                         self._sync_sql(doc)
 
-    def _sync_sql(self, intervention: Intervention) -> None:
+    def _sync_sql(self, intervention: Intervention, *, expected_status: InterventionStatus | None = None) -> None:
         engine = self._store.engine
         table = self.table
         statement = _INTERVENTION_UPSERT_SQL.get(table)
@@ -910,26 +1059,27 @@ class DurableInterventionRepository:
         pred_id = _to_uuid_if_prefixed(intervention.predecessor_id) if is_pg else intervention.predecessor_id
         repl_id = _to_uuid_if_prefixed(intervention.replacement_id) if is_pg else intervention.replacement_id
 
-        cursor = engine.execute(
-            statement,
-            (
-                iid,
-                intervention.store_id,
-                intervention.kind.value if hasattr(intervention.kind, "value") else str(intervention.kind),
-                eligibility_status,
-                action_set_json,
-                approved_action_json,
-                intervention.planned_start.isoformat(),
-                intervention.planned_end.isoformat(),
-                obs_start,
-                obs_end,
-                intervention.status.value.lower() if hasattr(intervention.status, "value") else str(intervention.status).lower(),
-                pred_id,
-                repl_id,
-                adjustment_json,
-                intervention.created_at.isoformat() if hasattr(intervention, "created_at") else datetime.now(UTC).isoformat(),
-            ),
+        params = (
+            iid,
+            intervention.store_id,
+            intervention.kind.value if hasattr(intervention.kind, "value") else str(intervention.kind),
+            eligibility_status,
+            action_set_json,
+            approved_action_json,
+            intervention.planned_start.isoformat(),
+            intervention.planned_end.isoformat(),
+            obs_start,
+            obs_end,
+            intervention.status.value.lower() if hasattr(intervention.status, "value") else str(intervention.status).lower(),
+            pred_id,
+            repl_id,
+            adjustment_json,
+            intervention.created_at.isoformat() if hasattr(intervention, "created_at") else datetime.now(UTC).isoformat(),
         )
+        if expected_status is not None:
+            statement += _INTERVENTION_APPROVAL_PREDICATE_SQL[table]
+            params += (expected_status.value.lower(),)
+        cursor = engine.execute(statement, params)
         if cursor.rowcount == 0:
             # SQLite / PG earlier guard read does not reserve the writer lock.
             # Check the lineage and active status in the actual UPSERT, before writing
@@ -1018,6 +1168,122 @@ class DurableInterventionRepository:
             )
         return intervention
 
+    def save_expected(
+        self, intervention: Intervention, *, expected_version: int, expected_status: InterventionStatus
+    ) -> Intervention:
+        """CAS the exact locked approval snapshot and relational mirror together."""
+        if type(expected_version) is not int or expected_version < 1:
+            raise InterventionError("stale update: expected version must be a positive integer")
+        with self.command_atomic():
+            current = self.get(intervention.intervention_id, for_update=True)
+            if current is not None:
+                require_positive_intervention_version(current.version)
+            require_positive_intervention_version(intervention.version)
+            if (current is None or current.version != expected_version
+                    or current.status != expected_status
+                    or intervention.version != expected_version + 1
+                    or intervention.store_id != current.store_id
+                    or intervention.created_by != current.created_by):
+                raise InterventionError("stale update: approval snapshot changed")
+            lookup_id = (_to_uuid_if_prefixed(intervention.intervention_id)
+                if self.table == "operations.interventions" else intervention.intervention_id)
+            mirror = self._store.engine.query_one(_INTERVENTION_APPROVAL_READ_SQL[self.table], (lookup_id,))
+            if (mirror is None or mirror["status"] != expected_status.value.lower()
+                    or mirror["store_id"] != current.store_id):
+                raise InterventionError("stale update: canonical approval status or store changed")
+            if not self._store.replace_version(
+                self._C, intervention.intervention_id, intervention, expected_version=expected_version
+            ):
+                raise InterventionError("stale update: approval compare-and-save lost")
+            self._sync_sql(intervention, expected_status=expected_status)
+        return intervention
+
+    def lifecycle_snapshot(self, intervention_id: str, *, store_id: str) -> tuple[Intervention, bytes]:
+        """Metadata-first locked read retaining the exact document CAS bytes."""
+        if self.store_id_for_scope(intervention_id, for_update=True) != store_id:
+            raise InterventionError("stale update: lifecycle canonical owner changed")
+        current = self.get(intervention_id, for_update=True)
+        if (not isinstance(current, Intervention) or current.intervention_id != intervention_id
+                or current.store_id != store_id):
+            raise InterventionError("stale update: lifecycle decoded owner changed")
+        require_positive_intervention_version(current.version)
+        row = self._store.engine.query_one(
+            "SELECT data, group_key FROM durable_documents WHERE collection = ? AND doc_id = ?",
+            (self._C, intervention_id))
+        if row is None or row["group_key"] != store_id:
+            raise InterventionError("stale update: lifecycle document owner changed")
+        return current, bytes(row["data"])
+
+    def save_transition(self, intervention: Intervention, *, transition) -> Intervention:
+        from modules.intervention.application.lifecycle_command_contract import (
+            validate_native_transition,
+        )
+        from shared.api.idempotency import request_fingerprint
+        engine = self._store.engine
+        if transition.engine is not engine:
+            raise InterventionError("stale update: lifecycle engine changed")
+        with self.command_atomic():
+            current, raw = self.lifecycle_snapshot(intervention.intervention_id, store_id=transition.original.store_id)
+            if raw != transition.raw or request_fingerprint(current.to_dict()) != request_fingerprint(transition.original.to_dict()):
+                raise InterventionError("stale update: lifecycle raw snapshot changed")
+            validate_native_transition(transition.original, intervention, command=transition.command,
+                actor=transition.actor_subject_id, correlation_id=transition.correlation_id)
+            lookup_id = _to_uuid_if_prefixed(intervention.intervention_id) if self.table == "operations.interventions" else intervention.intervention_id
+            mirror = engine.query_one(_INTERVENTION_APPROVAL_READ_SQL[self.table], (lookup_id,))
+            if mirror is None or mirror["status"] != current.status.value.lower() or mirror["store_id"] != current.store_id:
+                raise InterventionError("stale update: lifecycle relational snapshot changed")
+            cursor = engine.execute(
+                "UPDATE durable_documents SET data = ? WHERE collection = ? AND doc_id = ? AND group_key = ? AND data = ?",
+                (pickle.dumps(intervention, protocol=pickle.HIGHEST_PROTOCOL), self._C,
+                 intervention.intervention_id, current.store_id, transition.raw))
+            if cursor.rowcount != 1:
+                raise InterventionError("stale update: lifecycle compare-and-save lost")
+            self._sync_sql(intervention, expected_status=current.status)
+        return intervention
+
+    def create_if_absent(self, intervention: Intervention) -> Intervention:
+        with self.command_atomic():
+            # A orphan relational row also blocks a new linked creation.
+            if self.store_id_for_scope(intervention.intervention_id, for_update=True) is not None:
+                raise InterventionError("stale update: linked canonical intervention already exists")
+            if not self._store.put_if_absent(self._C, intervention.intervention_id, intervention,
+                                            group_key=intervention.store_id):
+                raise InterventionError("stale update: linked intervention already exists")
+            self._sync_sql(intervention)
+        return intervention
+
+    def lifecycle_cohort_preflight(self, store_id: str) -> tuple[str, ...]:
+        from modules.intervention.application.lifecycle_command_contract import COHORT_LIMIT
+        ids = self.list_scope_ids_by_store(store_id)
+        if len(ids) > COHORT_LIMIT:
+            raise InterventionOwnerIntegrityError("canonical intervention cohort exceeds finite bound")
+        return ids
+
+    def lifecycle_cohort(self, store_id: str, *, exclude_id: str) -> str:
+        """Bounded full peer snapshots, with integrity checked before stale proof."""
+        from shared.api.idempotency import request_fingerprint
+        ids = self.lifecycle_cohort_preflight(store_id)
+        snapshots = []
+        for iid in sorted(ids):
+            item = self._read_scoped_aggregate(iid, store_id)
+            if iid != exclude_id:
+                snapshots.append(item.to_dict())
+        return request_fingerprint(snapshots)
+
+    def save_conflict_proof(self, intervention: Intervention, *, tenant_id: str, cohort_sha256: str) -> None:
+        from shared.api.idempotency import request_fingerprint
+        self._store.put("intervention.lifecycle_conflict_proofs.v1", intervention.intervention_id,
+            dict(tenant_id=tenant_id, store_id=intervention.store_id, version=intervention.version,
+                 snapshot_sha256=request_fingerprint(intervention.to_dict()), cohort_sha256=cohort_sha256),
+            group_key=intervention.store_id)
+
+    def require_conflict_proof(self, intervention: Intervention, *, tenant_id: str, cohort_sha256: str) -> None:
+        from shared.api.idempotency import request_fingerprint
+        expected = dict(tenant_id=tenant_id, store_id=intervention.store_id, version=intervention.version,
+            snapshot_sha256=request_fingerprint(intervention.to_dict()), cohort_sha256=cohort_sha256)
+        if self._store.get("intervention.lifecycle_conflict_proofs.v1", intervention.intervention_id) != expected:
+            raise InterventionError("stale update: conflict cohort changed; run conflict-check again")
+
     @contextmanager
     def atomic(self) -> Iterator[None]:
         """Commit every ``save`` made inside the block together, or none.
@@ -1029,6 +1295,52 @@ class DurableInterventionRepository:
         """
         with _atomic_write(self._store.engine):
             yield
+
+    @contextmanager
+    def command_atomic(self) -> Iterator[None]:
+        """Reserve the owned SQLite writer before strict command read/CAS."""
+        engine = self._store.engine
+        with _atomic_write(engine):
+            if str(getattr(engine, "dialect", "")).lower() != "postgresql" and not engine._conn.in_transaction:
+                engine.execute("BEGIN IMMEDIATE")
+            yield
+
+    def store_id_for_scope(self, intervention_id: str, *, for_update: bool = False) -> str | None:
+        """Resolve canonical owner metadata before reading the business aggregate."""
+        engine = self._store.engine
+        lookup_id = intervention_id
+        if self.table == "operations.interventions":
+            try:
+                lookup_id = str(UUID(_to_uuid_if_prefixed(intervention_id)))
+            except (ValueError, TypeError, AttributeError):
+                return None
+        if for_update and self.table == "operations.interventions":
+            # Keep the repository's document-then-relational lock order; this
+            # reads only the document id, never an unauthorized data payload.
+            engine.query_one(
+                "SELECT doc_id FROM durable_documents WHERE collection = ? AND doc_id = ? FOR UPDATE",
+                (self._C, intervention_id),
+            )
+        row = engine.query_one(_INTERVENTION_OWNER_READ_SQL[(self.table, for_update)], (lookup_id,))
+        return str(row["store_id"]) if row is not None else None
+
+    def list_scope_ids_by_store(self, store_id: str) -> tuple[str, ...]:
+        """Reconcile both index directions before any business aggregate read."""
+        engine = self._store.engine
+        group_rows = engine.query(_INTERVENTION_GROUP_OWNER_METADATA_SQL[self.table], (self._C, store_id))
+        owner_rows = engine.query(_INTERVENTION_STORE_DOCUMENT_METADATA_SQL[self.table], (self._C, store_id))
+        for row in [*group_rows, *owner_rows]:
+            if (type(row["doc_id"]) is not str or not row["doc_id"]
+                    or type(row["canonical_id"]) is not str or not row["canonical_id"]
+                    or row["store_id"] != store_id or row["group_key"] != store_id):
+                raise InterventionOwnerIntegrityError("canonical intervention owner/index conflict")
+        group_ids = {row["doc_id"] for row in group_rows}
+        owner_ids = {row["doc_id"] for row in owner_rows}
+        canonical_ids = {row["canonical_id"] for row in owner_rows}
+        if (group_ids != owner_ids or len(group_ids) != len(group_rows)
+                or len(owner_ids) != len(owner_rows) or len(canonical_ids) != len(owner_rows)):
+            raise InterventionOwnerIntegrityError("canonical intervention owner/index conflict")
+        return tuple(row["doc_id"] for row in owner_rows)
 
     def get(self, intervention_id: str, *, for_update: bool = False) -> Intervention | None:
         if for_update:
@@ -1055,7 +1367,33 @@ class DurableInterventionRepository:
         return self._store.list_all(self._C)
 
     def list_by_store(self, store_id: str) -> list[Intervention]:
-        return self._store.list_by_group(self._C, store_id)
+        """Read related cases with canonical ownership before every decode.
+
+        Conflict checks and the native Today producer share this entry point.
+        Missing or inconsistent native ownership is a storage failure, never a
+        reason to fall back to document grouping or repair records on a read.
+        """
+        with _atomic_write(self._store.engine):
+            scoped_ids = self.list_scope_ids_by_store(store_id)
+            return [self._read_scoped_aggregate(iid, store_id) for iid in scoped_ids]
+
+    def _read_scoped_aggregate(self, intervention_id: str, store_id: str) -> Intervention:
+        row = self._store.engine.query_one(
+            _INTERVENTION_SCOPED_PAYLOAD_SQL[self.table],
+            (self._C, intervention_id, store_id, store_id),
+        )
+        if (row is None or row["doc_id"] != intervention_id
+                or row["store_id"] != store_id or row["group_key"] != store_id):
+            raise InterventionOwnerIntegrityError("canonical intervention owner/index changed before payload read")
+        item = pickle.loads(row["data"])
+        if (not isinstance(item, Intervention) or item.intervention_id != intervention_id
+                or item.store_id != store_id):
+            raise InterventionOwnerIntegrityError("canonical intervention aggregate owner/identity conflict")
+        try:
+            require_positive_intervention_version(item.version)
+        except InterventionError as exc:
+            raise InterventionOwnerIntegrityError("canonical intervention aggregate version conflict") from exc
+        return item
 
 
 
@@ -1063,6 +1401,8 @@ class DurablePriceOpsRepository:
     """Durable mirror of ``InMemoryPriceOpsRepository``."""
 
     _PLANS = "priceops.plans"
+    _SCENARIOS = "priceops.scenario_simulations"
+    _WRITEBACKS = "priceops.decision_writebacks"
     _SIMULATIONS = "priceops.simulations"
     _OPTIMIZATIONS = "priceops.optimizations"
     _APPROVALS = "priceops.approvals"
@@ -1076,8 +1416,28 @@ class DurablePriceOpsRepository:
     _EXPLORATION_DECISIONS = "priceops.exploration_decisions"
     _ACTIVATION_RECEIPTS = "priceops.activation_receipts"
 
-    def __init__(self, store: SqliteDocumentStore) -> None:
+    def __init__(self, store: SqliteDocumentStore, *, canonical_exploration: Any = None) -> None:
         self._store = store
+        self.canonical_exploration = canonical_exploration
+
+    def insert_plan(self, plan: PricingPlan) -> PricingPlan:
+        if not self._store.put_if_absent(self._PLANS, plan.plan_id, plan, group_key=plan.tenant_id):
+            raise PlanAlreadyExistsError("plan id already exists")
+        return plan
+
+    def save_scenario_simulation(self, scenario: PlanScenarioSimulation) -> PlanScenarioSimulation:
+        self._store.put(self._SCENARIOS, scenario.scenario_id, scenario, group_key=scenario.plan_id)
+        return scenario
+
+    def get_scenario_simulation(self, scenario_id: str) -> PlanScenarioSimulation | None:
+        return self._store.get(self._SCENARIOS, scenario_id)
+
+    def save_decision_writeback(self, record: DecisionWritebackRecord) -> DecisionWritebackRecord:
+        self._store.put(self._WRITEBACKS, record.decision_id, record, group_key=record.plan_id)
+        return record
+
+    def list_decision_writebacks(self, plan_id: str) -> list[DecisionWritebackRecord]:
+        return self._store.list_by_group(self._WRITEBACKS, plan_id)
 
     def save_plan(self, plan: PricingPlan) -> PricingPlan:
         self._store.put(self._PLANS, plan.plan_id, plan, group_key=plan.tenant_id)
@@ -1157,15 +1517,18 @@ class DurablePriceOpsRepository:
         return self._store.get(self._EVALUATIONS, plan_id)
 
     # -- exploration gates and receipts ----------------------------------
-    # These records use the same durable document store as the rest of the
-    # PriceOps aggregate.  The Postgres deployment store implements the same
-    # interface, so production API composition cannot silently fall back to
-    # the process-local gate repository.
+    # Production delegates authority and budget tracking to canonical
+    # pricing/workflow SQL. Explicit local/test repositories retain their
+    # document fixtures; those records cannot authorize production exploration.
     def save_gate(self, gate: ExplorationGate) -> ExplorationGate:
+        if self.canonical_exploration is not None:
+            return self.canonical_exploration.save_gate(gate)
         self._store.put(self._GATES, gate.gate_id, gate, group_key=gate.tenant_id)
         return gate
 
     def get_gate(self, gate_id: str, tenant_id: str | None = None) -> ExplorationGate | None:
+        if self.canonical_exploration is not None:
+            return self.canonical_exploration.get_gate(gate_id, tenant_id)
         gate = self._store.get(self._GATES, gate_id)
         if gate is not None and tenant_id is not None and gate.tenant_id != tenant_id:
             return None
@@ -1174,6 +1537,8 @@ class DurablePriceOpsRepository:
     def find_active_gate(
         self, scope: PriceScope, at: datetime | None = None
     ) -> ExplorationGate | None:
+        if self.canonical_exploration is not None:
+            return self.canonical_exploration.find_active_gate(scope, at)
         now = at or datetime.now(UTC)
         for gate in self.list_gates(tenant_id=scope.tenant_id):
             if scope.matches(gate) and gate.is_valid_at(now) and gate.remaining_budget > 0:
@@ -1181,6 +1546,8 @@ class DurablePriceOpsRepository:
         return None
 
     def list_gates(self, tenant_id: str | None = None) -> list[ExplorationGate]:
+        if self.canonical_exploration is not None:
+            return self.canonical_exploration.list_gates(tenant_id)
         if tenant_id is not None:
             return self._store.list_by_group(self._GATES, tenant_id)
         return self._store.list_all(self._GATES)
@@ -1188,6 +1555,8 @@ class DurablePriceOpsRepository:
     def revoke_gate(
         self, gate_id: str, tenant_id: str, revoked_at: datetime | None = None
     ) -> ExplorationGate:
+        if self.canonical_exploration is not None:
+            return self.canonical_exploration.revoke_gate(gate_id, tenant_id, revoked_at)
         gate = self.get_gate(gate_id, tenant_id=tenant_id)
         if gate is None:
             raise LookupError(f"Gate {gate_id} not found for tenant {tenant_id}")
@@ -1218,6 +1587,8 @@ class DurablePriceOpsRepository:
     def record_exploration_decision(
         self, decision: ExplorationDecision
     ) -> ExplorationDecision:
+        if self.canonical_exploration is not None:
+            return self.canonical_exploration.record_exploration_decision(decision)
         gate = self.get_gate(decision.gate_id, tenant_id=decision.tenant_id)
         if gate is None:
             raise LookupError(
@@ -1269,6 +1640,8 @@ class DurablePriceOpsRepository:
     def list_exploration_decisions(
         self, gate_id: str | None = None
     ) -> list[ExplorationDecision]:
+        if self.canonical_exploration is not None:
+            return self.canonical_exploration.list_exploration_decisions(gate_id)
         if gate_id is not None:
             return self._store.list_by_group(self._EXPLORATION_DECISIONS, gate_id)
         return self._store.list_all(self._EXPLORATION_DECISIONS)
@@ -1372,13 +1745,14 @@ class DurableLearningHubRepository:
     # -- model versions ---------------------------------------------------
 
     def save_model_version(self, model_version: ModelVersion) -> ModelVersion:
-        self._store.put(
-            self._VERSIONS,
-            model_version.model_id,
-            model_version,
-            group_key=model_version.model_name,
-        )
-        return model_version
+        with self.release_recovery_guard(model_version.model_name):
+            self._store.put(
+                self._VERSIONS,
+                model_version.model_id,
+                model_version,
+                group_key=model_version.model_name,
+            )
+            return model_version
 
     def get_model_version(self, model_name: str, version: str) -> ModelVersion | None:
         return self._store.get(self._VERSIONS, f"{model_name}:{version}")
@@ -1392,13 +1766,14 @@ class DurableLearningHubRepository:
     # -- model cards ------------------------------------------------------
 
     def save_model_card(self, model_card: ModelCard) -> ModelCard:
-        self._store.put(
-            self._CARDS,
-            f"{model_card.model_name}:{model_card.model_version}",
-            model_card,
-            group_key=model_card.model_name,
-        )
-        return model_card
+        with self.release_recovery_guard(model_card.model_name):
+            self._store.put(
+                self._CARDS,
+                f"{model_card.model_name}:{model_card.model_version}",
+                model_card,
+                group_key=model_card.model_name,
+            )
+            return model_card
 
     def get_model_card(self, model_name: str, version: str) -> ModelCard | None:
         return self._store.get(self._CARDS, f"{model_name}:{version}")
@@ -1406,8 +1781,9 @@ class DurableLearningHubRepository:
     # -- validation runs --------------------------------------------------
 
     def save_validation_run(self, validation_run: ValidationRun) -> ValidationRun:
-        self._store.put(self._VALIDATIONS, validation_run.validation_run_id, validation_run)
-        return validation_run
+        with self.release_recovery_guard(validation_run.model_name):
+            self._store.put(self._VALIDATIONS, validation_run.validation_run_id, validation_run)
+            return validation_run
 
     def get_validation_run(self, validation_run_id: str) -> ValidationRun | None:
         return self._store.get(self._VALIDATIONS, validation_run_id)
@@ -1415,19 +1791,20 @@ class DurableLearningHubRepository:
     # -- backtest receipts ------------------------------------------------
 
     def save_backtest_receipt(self, receipt: BacktestReceipt) -> BacktestReceipt:
-        self._store.put(
-            self._BACKTEST_RECEIPTS,
-            f"{receipt.model_name}:{receipt.model_version}",
-            receipt,
-            group_key=receipt.model_name,
-        )
-        self._store.put(
-            self._BACKTEST_RECEIPTS,
-            receipt.receipt_id,
-            receipt,
-            group_key=receipt.model_name,
-        )
-        return receipt
+        with self.release_recovery_guard(receipt.model_name):
+            self._store.put(
+                self._BACKTEST_RECEIPTS,
+                f"{receipt.model_name}:{receipt.model_version}",
+                receipt,
+                group_key=receipt.model_name,
+            )
+            self._store.put(
+                self._BACKTEST_RECEIPTS,
+                receipt.receipt_id,
+                receipt,
+                group_key=receipt.model_name,
+            )
+            return receipt
 
     def get_backtest_receipt(self, model_name: str, version: str) -> BacktestReceipt | None:
         return self._store.get(self._BACKTEST_RECEIPTS, f"{model_name}:{version}")
@@ -1459,37 +1836,40 @@ class DurableLearningHubRepository:
         return self._store.get(self._ALIASES, self._alias_doc_id(model_name, alias))
 
     def _set_alias_pointer(self, model_name: str, alias: ModelAlias, version: str | None) -> None:
-        self._store.put(
-            self._ALIASES,
-            self._alias_doc_id(model_name, alias),
-            version,
-            group_key=model_name,
-        )
+        with self.release_recovery_guard(model_name):
+            self._store.put(
+                self._ALIASES,
+                self._alias_doc_id(model_name, alias),
+                version,
+                group_key=model_name,
+            )
 
     def set_alias(self, model_name: str, alias: ModelAlias, version: str) -> ModelVersion:
-        model_version = self.get_model_version(model_name, version)
-        if model_version is None:
-            raise ModelRegistryError(f"unknown model version {model_name}:{version}")
+        with self.release_recovery_guard(model_name):
+            model_version = self.get_model_version(model_name, version)
+            if model_version is None:
+                raise ModelRegistryError(f"unknown model version {model_name}:{version}")
 
-        previous_version = self._get_alias_pointer(model_name, alias)
-        if previous_version:
-            previous = self.get_model_version(model_name, previous_version)
-            if previous is not None:
-                self.save_model_version(previous.with_aliases(previous.aliases - {alias}))
+            previous_version = self._get_alias_pointer(model_name, alias)
+            if previous_version:
+                previous = self.get_model_version(model_name, previous_version)
+                if previous is not None:
+                    self.save_model_version(previous.with_aliases(previous.aliases - {alias}))
 
-        self._set_alias_pointer(model_name, alias, version)
-        updated = model_version.with_aliases(model_version.aliases | {alias})
-        self.save_model_version(updated)
-        return updated
+            self._set_alias_pointer(model_name, alias, version)
+            updated = model_version.with_aliases(model_version.aliases | {alias})
+            self.save_model_version(updated)
+            return updated
 
     def clear_alias(self, model_name: str, alias: ModelAlias) -> None:
-        version = self._get_alias_pointer(model_name, alias)
-        if version is None:
-            return
-        self._set_alias_pointer(model_name, alias, None)
-        model_version = self.get_model_version(model_name, version)
-        if model_version is not None:
-            self.save_model_version(model_version.with_aliases(model_version.aliases - {alias}))
+        with self.release_recovery_guard(model_name):
+            version = self._get_alias_pointer(model_name, alias)
+            if version is None:
+                return
+            self._set_alias_pointer(model_name, alias, None)
+            model_version = self.get_model_version(model_name, version)
+            if model_version is not None:
+                self.save_model_version(model_version.with_aliases(model_version.aliases - {alias}))
 
     def get_alias(self, model_name: str, alias: ModelAlias) -> ModelVersion | None:
         version = self._get_alias_pointer(model_name, alias)
@@ -1500,11 +1880,17 @@ class DurableLearningHubRepository:
     # -- release decisions ------------------------------------------------
 
     def save_release_decision(self, decision: ReleaseDecisionRecord) -> ReleaseDecisionRecord:
-        self._store.put(self._RELEASES, decision.release_id, decision)
-        return decision
+        with self.release_recovery_guard(decision.model_name):
+            self._store.put(self._RELEASES, decision.release_id, decision)
+            return decision
 
     def delete_release_decision(self, release_id: str) -> None:
-        self._store.put(self._RELEASES, release_id, None)
+        with self._store.engine.lock:
+            decision = self.get_release_decision(release_id)
+            if decision is None:
+                return
+            with self.release_recovery_guard(decision.model_name):
+                self._store.put(self._RELEASES, release_id, None)
 
     def get_release_decision(self, release_id: str) -> object | None:
         return self._store.get(self._RELEASES, release_id)
@@ -1515,42 +1901,43 @@ class DurableLearningHubRepository:
         ]
 
     def save_release_saga(self, saga):
-        from modules.learninghub.infrastructure.repositories import (
-            LearningHubReleaseConflict,
-            assert_release_saga_fence,
-        )
+        with self.release_recovery_guard(saga.model_name):
+            from modules.learninghub.infrastructure.repositories import (
+                LearningHubReleaseConflict,
+                assert_release_saga_fence,
+            )
 
-        engine = self._store.engine
-        pointer_id = f"{saga.model_name}:{saga.idempotency_key}"
-        with engine.lock:
-            if getattr(engine, "dialect", None) == "postgresql":
-                engine.query_one(
-                    "SELECT doc_id FROM durable_documents "
-                    "WHERE collection = ? AND doc_id = ? FOR UPDATE",
-                    (self._RELEASE_SAGAS, saga.release_id),
+            engine = self._store.engine
+            pointer_id = f"{saga.model_name}:{saga.idempotency_key}"
+            with engine.lock:
+                if getattr(engine, "dialect", None) == "postgresql":
+                    engine.query_one(
+                        "SELECT doc_id FROM durable_documents "
+                        "WHERE collection = ? AND doc_id = ? FOR UPDATE",
+                        (self._RELEASE_SAGAS, saga.release_id),
+                    )
+                existing_release_id = self._store.get(
+                    self._RELEASE_SAGA_IDEMPOTENCY,
+                    pointer_id,
                 )
-            existing_release_id = self._store.get(
-                self._RELEASE_SAGA_IDEMPOTENCY,
-                pointer_id,
-            )
-            if existing_release_id is not None and existing_release_id != saga.release_id:
-                raise LearningHubReleaseConflict(
-                    f"idempotency key already belongs to release {existing_release_id}"
+                if existing_release_id is not None and existing_release_id != saga.release_id:
+                    raise LearningHubReleaseConflict(
+                        f"idempotency key already belongs to release {existing_release_id}"
+                    )
+                assert_release_saga_fence(self.get_release_saga(saga.release_id), saga)
+                self._store.put(
+                    self._RELEASE_SAGAS,
+                    saga.release_id,
+                    saga,
+                    group_key=saga.model_name,
                 )
-            assert_release_saga_fence(self.get_release_saga(saga.release_id), saga)
-            self._store.put(
-                self._RELEASE_SAGAS,
-                saga.release_id,
-                saga,
-                group_key=saga.model_name,
-            )
-            self._store.put(
-                self._RELEASE_SAGA_IDEMPOTENCY,
-                pointer_id,
-                saga.release_id,
-                group_key=saga.model_name,
-            )
-        return saga
+                self._store.put(
+                    self._RELEASE_SAGA_IDEMPOTENCY,
+                    pointer_id,
+                    saga.release_id,
+                    group_key=saga.model_name,
+                )
+            return saga
 
     def get_release_saga(self, release_id):
         return self._store.get(self._RELEASE_SAGAS, release_id)
@@ -1585,21 +1972,7 @@ class DurableLearningHubRepository:
         *,
         expected_revision: int,
     ) -> Iterator[int]:
-        with self._release_locks_guard:
-            lock = self._release_locks.setdefault(model_name, RLock())
-        with lock:
-            engine = self._store.engine
-            if getattr(engine, "dialect", None) == "postgresql":
-                with engine.transaction():
-                    engine.query_one(
-                        "SELECT pg_advisory_xact_lock(hashtextextended(?, 0)) AS locked",
-                        (f"learninghub.release:{model_name}",),
-                    )
-                    yield from self._guard_release_revision(
-                        model_name,
-                        expected_revision=expected_revision,
-                    )
-                return
+        with self.release_recovery_guard(model_name):
             yield from self._guard_release_revision(
                 model_name,
                 expected_revision=expected_revision,
@@ -1607,20 +1980,24 @@ class DurableLearningHubRepository:
 
     @contextmanager
     def release_recovery_guard(self, model_name: str) -> Iterator[None]:
-        with self._release_locks_guard:
-            lock = self._release_locks.setdefault(model_name, RLock())
-        with lock:
-            engine = self._store.engine
-            if getattr(engine, "dialect", None) == "postgresql":
-                with engine.transaction():
+        """Hold the actual model writer key without reserving a new revision.
+
+        Every path enters the engine lock before a per-model Python lock. The
+        SQL model key then protects the same authority across engine instances
+        and processes. This order also permits scoring to enter from its outer
+        transaction without deadlocking with a registry writer.
+        """
+        engine = self._store.engine
+        with engine.lock:
+            with self._release_locks_guard:
+                lock = self._release_locks.setdefault(model_name, RLock())
+            with lock, engine.transaction():
+                if getattr(engine, "dialect", None) == "postgresql":
                     engine.query_one(
-                        "SELECT pg_advisory_xact_lock("
-                        "hashtextextended(?, 0)) AS locked",
+                        "SELECT pg_advisory_xact_lock(hashtextextended(?, 0)) AS locked",
                         (f"learninghub.release:{model_name}",),
                     )
-                    yield
-                return
-            yield
+                yield
 
     def _guard_release_revision(
         self,
@@ -1715,6 +2092,39 @@ class DurableNetPlanRepository:
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
+
+    @contextmanager
+    def scenario_transaction(self, scenario_id: str | None):
+        """Serialize the first read and all writes of a canonical command.
+
+        Lock the physical document row, so another engine's ordinary native
+        writer participates without relying on an Operator-only advisory lock.
+        The service enters before loading scenario/solve state, never after a
+        stale result has already been computed. Nested same-engine entry is safe.
+        """
+        engine = self._store.engine
+        with engine.transaction():
+            if getattr(engine, "dialect", None) == "postgresql":
+                tenant_id = getattr(self._store, "tenant_id", None)
+                if tenant_id:
+                    # Match the existing Operator order: tenant advisory first,
+                    # scenario row second. This also serializes a newly created
+                    # scenario with the current implicit/latest selection.
+                    engine.query_one(
+                        "SELECT pg_advisory_xact_lock(hashtextextended(?, 0)) AS locked",
+                        (f"operator-domain:network-rebalance:{tenant_id}",),
+                    )
+                if scenario_id is not None:
+                    collection = (self._store._collection(self._SCENARIOS)
+                                  if hasattr(self._store, "_collection") else self._SCENARIOS)
+                    engine.query_one(
+                        "SELECT doc_id FROM durable_documents "
+                        "WHERE collection = ? AND doc_id = ? FOR UPDATE",
+                        (collection, scenario_id),
+                    )
+            elif not engine._conn.in_transaction:
+                engine.execute("BEGIN IMMEDIATE")
+            yield
 
     def save_scenario(self, scenario: NetPlanScenario) -> NetPlanScenario:
         self._store.put(self._SCENARIOS, scenario.scenario_id, scenario)
@@ -3571,6 +3981,81 @@ class DurableMachineRepository:
         ]
 
 
+    def get_store_machine_snapshot(
+        self, *, tenant_id: str, store_id: str,
+        as_of: datetime,
+        brand_ids: tuple[str, ...] = (), region_codes: tuple[str, ...] = (),
+    ) -> dict[str, Any] | None:
+        from datetime import date, datetime
+
+        tenant_id = _require_tenant_scope(self._engine, tenant_id)
+        if not tenant_id or not store_id.strip():
+            raise TenantScopeRequiredError("Explicit tenant and store scope required for machine facts")
+        if as_of.tzinfo is None or as_of.utcoffset() is None:
+            raise ValueError("An explicit native store observation instant is required")
+        instant = as_of.astimezone(UTC).isoformat()
+        clauses = [
+            "store_row.tenant_id = ?", "store_row.is_current = ?",
+            "store_row.effective_from <= ?", "store_row.effective_to > ?",
+        ]
+        params: list[Any] = [tenant_id, True, instant, instant]
+        _append_in_filter(clauses, params, "store_row.store_id", (store_id,))
+        _append_in_filter(clauses, params, "store_row.brand_id", brand_ids)
+        _append_in_filter(clauses, params, "store_row.region_code", region_codes)
+        where_clause = " AND ".join(clauses)
+        rows = self._engine.query(
+            "SELECT store_row.store_id AS native_store_id, "
+            "store_row.tenant_id AS native_tenant_id, store_row.brand_id AS native_brand_id, "
+            "store_row.region_code AS native_region_code, "
+            "store_row.store_format_code AS native_store_format_code, "
+            "store_row.is_current AS native_is_current, "
+            "store_row.effective_from AS native_effective_from, "
+            "store_row.effective_to AS native_effective_to, machine_row.* "
+            "FROM stores AS store_row "
+            "LEFT JOIN machines AS machine_row ON store_row.store_id = machine_row.store_id "
+            f"WHERE {where_clause} ORDER BY machine_row.machine_id",  # nosec B608
+            tuple(params),
+        )
+        if not rows:
+            return None
+        # One statement binds both parent metadata and child rows to the same
+        # authorized native snapshot. LEFT JOIN distinguishes an empty register
+        # from a parent which no longer satisfies the principal's current scope.
+        parent = rows[0]
+        native_store = {
+            "store_id": parent["native_store_id"],
+            "tenant_id": parent["native_tenant_id"],
+            "brand_id": parent["native_brand_id"],
+            "region_code": parent["native_region_code"],
+            "store_format_code": parent["native_store_format_code"],
+            "is_current": bool(parent["native_is_current"]),
+            "effective_from": datetime.fromisoformat(parent["native_effective_from"]),
+            "effective_to": datetime.fromisoformat(parent["native_effective_to"]),
+        }
+        machines = [
+            Machine(
+                machine_id=row["machine_id"],
+                store_id=row["store_id"],
+                source_machine_id=row["source_machine_id"] or "",
+                machine_serial_no=row["machine_serial_no"] or "",
+                equipment_brand_id=row["equipment_brand_id"] or "",
+                machine_family=row["machine_family"],
+                machine_type=row["machine_type"] or "",
+                capacity_kg=row["capacity_kg"] or 0.0,
+                capacity_band=row["capacity_band"],
+                installed_on=date.fromisoformat(row["installed_on"])
+                if row["installed_on"]
+                else None,
+                removed_on=date.fromisoformat(row["removed_on"]) if row["removed_on"] else None,
+                machine_status=row["machine_status"],
+                effective_from=datetime.fromisoformat(row["effective_from"]),
+                effective_to=datetime.fromisoformat(row["effective_to"]),
+            )
+            for row in rows if row["machine_id"] is not None
+        ]
+        return {"store": native_store, "machines": machines}
+
+
 @dataclass
 class InMemoryTransactionRepository:
     _transactions: dict[str, Transaction] = field(default_factory=dict)
@@ -4841,8 +5326,46 @@ class DurableListingRepository:
         self._store.put(self._DEDUP, key.source_key, True)
         self._store.put(self._DEDUP, key.property_key, True)
 
+    @contextmanager
+    def candidate_guard(self, candidate_id: str) -> Iterator[None]:
+        """Owned review writes and ordinary candidate writers share this fence.
+
+        Report publishers acquire report_guard before this guard. Review owners
+        use that same order; this primitive never acquires a report/job lock.
+        """
+        engine = self._store.engine
+        with engine.lock, engine.transaction():
+            if getattr(engine, "dialect", None) == "postgresql":
+                key = "listing.candidate:" + json.dumps([self.tenant_id, candidate_id], separators=(",", ":"))
+                engine.query_one("SELECT pg_advisory_xact_lock(hashtextextended(?, 0)) AS locked", (key,))
+            elif not engine._conn.in_transaction:
+                engine.execute("BEGIN IMMEDIATE")
+            yield
+
     def save_candidate(self, candidate: CandidateSiteDraft) -> None:
-        self._store.put(self._CANDIDATES, candidate.candidate_site.candidate_site_id, candidate)
+        # A report/delivery refresh owns score fields, never the human review
+        # pointer or lifecycle. Preserve those fields from the physical row so
+        # a stale full draft cannot erase a concurrently committed submission.
+        from copy import deepcopy
+        from dataclasses import replace
+        candidate_id = candidate.candidate_site.candidate_site_id
+        with self.candidate_guard(candidate_id):
+            existing = self._store.get(self._CANDIDATES, candidate_id)
+            if existing is not None and (existing.review_id or existing.candidate_site.site_status in {"approved", "opened"}):
+                candidate = deepcopy(candidate)
+                candidate.review_id = existing.review_id
+                candidate.candidate_site = replace(candidate.candidate_site, site_status=existing.candidate_site.site_status)
+            self._store.put(self._CANDIDATES, candidate_id, candidate)
+
+    def save_review_candidate(self, candidate: CandidateSiteDraft, *, expected_review_id: str | None,
+                              expected_state: str) -> None:
+        candidate_id = candidate.candidate_site.candidate_site_id
+        with self.candidate_guard(candidate_id):
+            existing = self._store.get(self._CANDIDATES, candidate_id)
+            if (existing is None or existing.review_id != expected_review_id
+                    or existing.candidate_site.site_status != expected_state):
+                raise ValueError("CANDIDATE_REVIEW_PRECONDITION_CONFLICT")
+            self._store.put(self._CANDIDATES, candidate_id, candidate)
 
     def list_candidates(self) -> list[CandidateSiteDraft]:
         return self._store.list_all(self._CANDIDATES)
@@ -4876,6 +5399,10 @@ class DurableDecisionStore:
         self._store = store
 
     @property
+    def engine(self) -> Any:
+        return self._store.engine
+
+    @property
     def tenant_id(self) -> str:
         return getattr(self._store, "tenant_id", "")
 
@@ -4883,7 +5410,20 @@ class DurableDecisionStore:
         self._store.put(self._DECISIONS, decision.decision_id, decision)
 
     def save_report(self, decision_id: str, report: SiteScoreReport) -> None:
-        self._store.put(self._REPORTS, decision_id, report)
+        """Every retained-report writer shares the immutable insert contract."""
+        self.retain_report_once(decision_id, report)
+
+    def retain_report_once(self, decision_id: str, report: SiteScoreReport) -> None:
+        if not self._store.put_if_absent(self._REPORTS, decision_id, report):
+            if self.get_report(decision_id) != report:
+                raise ValueError("DECISION_RETAINED_REPORT_IMMUTABLE")
+
+    def save_decision_version(self, decision: SiteScoreDecision, *, expected_version: int) -> None:
+        base = getattr(self._store, "_store", self._store)
+        collection = (self._store._collection(self._DECISIONS)
+                      if hasattr(self._store, "_collection") else self._DECISIONS)
+        if not base.replace_version(collection, decision.decision_id, decision, expected_version=expected_version):
+            raise ValueError("DECISION_VERSION_CONFLICT")
 
     def get_decision(self, decision_id: str) -> SiteScoreDecision | None:
         return self._store.get(self._DECISIONS, decision_id)
@@ -4893,6 +5433,36 @@ class DurableDecisionStore:
 
     def list_decisions(self) -> list[SiteScoreDecision]:
         return self._store.list_all(self._DECISIONS)
+
+
+class DurableApprovalRepository:
+    """Actual generic workflow signatures, keyed by their own approval UUID."""
+
+    _COLLECTION = "workflow.approvals"
+
+    def __init__(self, store: SqliteDocumentStore) -> None:
+        self._store = store
+
+    @property
+    def engine(self) -> Any:
+        return self._store.engine
+
+    @property
+    def tenant_id(self) -> str:
+        return getattr(self._store, "tenant_id", "")
+
+    def save(self, approval: Any) -> None:
+        from shared.domain.models import Approval
+        if not isinstance(approval, Approval) or approval.approval_status not in {
+            "pending", "approved", "rejected", "returned", "escalated",
+        } or not isinstance(approval.decision_id, str) or not approval.decision_id.strip() or not isinstance(
+            approval.approval_id, str
+        ) or not approval.approval_id.strip() or approval.approval_id == approval.decision_id:
+            raise ValueError("canonical approval requires its own identity and an existing generic status")
+        self._store.put(self._COLLECTION, approval.approval_id, approval)
+
+    def get(self, approval_id: str) -> Any | None:
+        return self._store.get(self._COLLECTION, approval_id)
 
 
 class DurableRealizedSiteStore:
@@ -4925,6 +5495,7 @@ __all__ = [
     "DurableAVMRepository",
     "DurableAdLiftRepository",
     "DurableArtifactStore",
+    "DurableApprovalRepository",
     "DurableDecisionStore",
     "DurableForecastOpsRepository",
     "DurableHeatZoneCompositionRepository",

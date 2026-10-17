@@ -43,6 +43,7 @@ from modules.opsboard.integrations.emgi import (
     admitted_candidates,
 )
 from modules.site_economics import SimulationOverrides, SiteEconomicsService
+from modules.site_economics.application.context_inputs import content_sha256
 from modules.site_economics.domain.contracts import (
     CONTRACT_ID as ECONOMICS_CONTRACT_ID,
 )
@@ -179,6 +180,7 @@ def _feasibility_wire(
         metadata["source_market_context_id"] = context_id
     if policy_version is not None:
         metadata["policy_version"] = policy_version
+    metadata["source_market_context_sha256"] = content_sha256(_market_context(site_id=site_id))
     return {
         "contract_id": FEASIBILITY_CONTRACT_ID,
         "contract_version": contract_version,
@@ -221,6 +223,7 @@ def _economics_wire(
         "tenant_id": TENANT_ID,
         "engine_version": ECONOMICS_ENGINE_VERSION,
         "source_market_context_id": context_id,
+        "source_market_context_sha256": content_sha256(_market_context(site_id=site_id)),
         "metrics": metrics,
         "decision": decision,
     }
@@ -241,12 +244,16 @@ def _sitescore_wire(
         "document_id": "sitescore-doc-001",
         "site_id": site_id,
         "manifest_id": manifest_id,
+        "source_market_context_sha256": content_sha256(_market_context(site_id=site_id)),
         "evaluated_at": "2026-08-23T00:00:00+00:00",
         "assessment": {
             "availability": availability,
             "readiness": readiness,
             "decision": decision,
-            "components": None,
+            "components": {
+                name: value for name, value in _market_context(site_id=site_id).items()
+                if name in {"demand_score", "format_score", "ramp_score", "cannibalization_score", "economics_score", "policy_score"}
+            } if availability == ScoreAvailability.AVAILABLE.value else None,
             "reasons": [],
         },
     }
@@ -346,7 +353,7 @@ def test_real_producers_admit_a_candidate_and_persist_evidence_and_policy_versio
     assert evidence.market_context_id == CONTEXT_ID
     assert evidence.market_context_sha256
     assert evidence.policy_version("netplan_emgi_integration") == INTEGRATION_POLICY_VERSION
-    assert evidence.policy_version("feasibility_gate") == "physical-feasibility-gate-v1"
+    assert evidence.policy_version("feasibility_gate") == "physical-feasibility-gate-v2"
     assert evidence.policy_version("economics_engine") == ECONOMICS_ENGINE_VERSION
     assert evidence.policy_version("sitescore_contract") == SITESCORE_CONTRACT_VERSION
 
@@ -461,7 +468,12 @@ def test_a_sibling_context_manifest_does_not_vouch_for_this_site():
 def test_document_root_manifest_still_vouches_for_a_context_document():
     context = _market_context()
     context.pop("component_manifest_refs")
+    feasibility = _feasibility_wire()
+    feasibility["metadata"]["source_market_context_sha256"] = content_sha256(context)
     candidate = _build(
+        feasibility_doc=feasibility,
+        sitescore_doc={**_sitescore_wire(), "source_market_context_sha256": content_sha256(context)},
+        economics_doc={**_economics_wire(), "source_market_context_sha256": content_sha256(context)},
         market_context={
             "contexts": [context],
             "document_id": "smc-doc-001",

@@ -8,6 +8,12 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from modules.site_economics.application.context_inputs import (
+    INPUT_POLICY_VERSION,
+    context_number,
+    numeric_input,
+    select_market_context,
+)
 from modules.site_economics.domain.contracts import (
     ENGINE_VERSION,
     ScenarioSummary,
@@ -40,7 +46,7 @@ except ImportError:
 
 @dataclass(frozen=True, slots=True)
 class SimulationOverrides:
-    """Manual parameter overrides applied on top of format and context defaults."""
+    """Explicit simulation assumptions applied on top of observed inputs and model policy."""
 
     format_code: str | None = None
     format_version: str | None = None
@@ -172,59 +178,67 @@ class SiteEconomicsService:
         overrides: SimulationOverrides | None = None,
         horizon_months: int = 60,
         annual_discount_rate: float = 0.08,
+        *,
+        site_id: str | None = None,
     ) -> SiteEconomicsDocument:
         """Evaluate site economics using released emgi.site-market-context.v1 contract model."""
-        ctx_data: Mapping[str, Any]
-        if hasattr(market_context, "context"):
-            ctx = market_context.context
-            ctx_data = ctx.to_dict() if hasattr(ctx, "to_dict") else ctx
-            ctx_id = getattr(market_context, "document_id", None) or ctx_data.get("context_id")
-        elif hasattr(market_context, "to_dict"):
-            ctx_data = market_context.to_dict()
-            ctx_id = ctx_data.get("context_id")
-        else:
-            ctx_data = market_context
-            ctx_id = ctx_data.get("context_id") or ctx_data.get("document_id")
+        snapshot = select_market_context(market_context, site_id=site_id, tenant_id=tenant_id)
+        ctx_data, site_id, ctx_id = snapshot.context, snapshot.site_id, snapshot.context_id
+        numeric_input(horizon_months, "horizon_months", exclusive=True, integer=True)
+        numeric_input(annual_discount_rate, "annual_discount_rate")
+        origins: dict[str, str] = {}
 
-        identity = ctx_data.get("identity", {})
-        site_id = str(identity.get("site_id") or ctx_data.get("site_id") or "unknown-site")
+        def explicit(name, **bounds):
+            value = getattr(overrides, name, None)
+            if value is None:
+                return None
+            numeric_input(value, "overrides." + name, **bounds)
+            origins[name] = "explicit_simulation_assumption"
+            return value
 
-        # Derive area and rent
-        listing = ctx_data.get("listing", {})
-        rent_domain = ctx_data.get("rent", {})
-        demand = ctx_data.get("demand", {})
-        competitor = ctx_data.get("competitor", {})
+        eff_area = explicit("area_ping", exclusive=True)
+        if eff_area is None:
+            eff_area = context_number(ctx_data, "listing", "average_area_ping", exclusive=True)
+            origins["area_ping"] = "listing.average_area_ping"
+        eff_rent = explicit("monthly_rent")
+        if eff_rent is None:
+            listing = ctx_data.get("listing", {})
+            domain, field = ("listing", "median_asking_rent_per_ping") if (
+                isinstance(listing, dict) and listing.get("median_asking_rent_per_ping") is not None
+            ) else ("rent", "median_rent_per_ping")
+            rent_per_ping = context_number(ctx_data, domain, field)
+            eff_rent = numeric_input(eff_area * rent_per_ping, "monthly_rent")
+            origins["monthly_rent"] = domain + "." + field + " * area_ping"
 
-        area_ping = float(listing.get("average_area_ping") or 25.0)
-        median_rent_per_ping = float(
-            listing.get("median_asking_rent_per_ping")
-            or rent_domain.get("median_rent_per_ping")
-            or 2_200.0
-        )
-        monthly_rent = area_ping * median_rent_per_ping
+        derived_demand_mult = None
+        demand_multiplier = explicit("demand_multiplier")
+        if demand_multiplier is None:
+            total_pop = context_number(ctx_data, "demand", "total_population")
+            density = context_number(ctx_data, "demand", "density_per_sq_km")
+            # Existing reviewed model normalizers, never substitutes for facts.
+            pop_factor = max(0.5, min(1.8, (total_pop / 15_000.0) ** 0.5))
+            dense_factor = max(0.7, min(1.5, (density / 8_000.0) ** 0.3))
+            derived_demand_mult = round(pop_factor * dense_factor, 3)
+            demand_multiplier = derived_demand_mult
+            origins["demand_multiplier"] = "demand.total_population + demand.density_per_sq_km"
 
-        # Demand multiplier derived from population density & daytime population
-        total_pop = float(demand.get("total_population") or 15_000.0)
-        density = float(demand.get("density_per_sq_km") or 8_000.0)
-        # Scale demand multiplier: 1.0 is baseline (~15,000 catchment pop, 8,000 density)
-        pop_factor = max(0.5, min(1.8, (total_pop / 15_000.0) ** 0.5))
-        dense_factor = max(0.7, min(1.5, (density / 8_000.0) ** 0.3))
-        derived_demand_mult = round(pop_factor * dense_factor, 3)
+        derived_comp_discount = None
+        competitor_discount = explicit("competitor_discount", maximum=1)
+        if competitor_discount is None:
+            active_comps = context_number(ctx_data, "competitor", "active_competitors", integer=True)
+            comp_density = context_number(ctx_data, "competitor", "competitor_density_per_sq_km")
+            derived_comp_discount = round(min(0.35, active_comps * 0.04 + comp_density * 0.02), 3)
+            competitor_discount = derived_comp_discount
+            origins["competitor_discount"] = "competitor.active_competitors + competitor.competitor_density_per_sq_km"
 
-        # Competitor discount
-        active_comps = int(competitor.get("active_competitors") or 0)
-        comp_density = float(competitor.get("competitor_density_per_sq_km") or 0.0)
-        # Moderate saturation dampening
-        derived_comp_discount = round(min(0.35, active_comps * 0.04 + comp_density * 0.02), 3)
+        # Explicit assumptions may replace missing observations, but their
+        # origin remains visible; this method grants no production admission.
+        for name in ("custom_equipment_capex", "custom_fitout_capex", "annual_interest_rate", "annual_discount_rate"):
+            explicit(name)
+        explicit("debt_ratio", maximum=1)
+        explicit("cannibalization_discount", maximum=1)
+        explicit("lease_term_months", exclusive=True, integer=True)
 
-        eff_area = (
-            overrides.area_ping if overrides and overrides.area_ping is not None else area_ping
-        )
-        eff_rent = (
-            overrides.monthly_rent
-            if overrides and overrides.monthly_rent is not None
-            else monthly_rent
-        )
         eff_format_code = (
             overrides.format_code
             if overrides and overrides.format_code is not None
@@ -255,16 +269,8 @@ class SiteEconomicsService:
                 if overrides and overrides.annual_discount_rate is not None
                 else annual_discount_rate
             ),
-            demand_multiplier=(
-                overrides.demand_multiplier
-                if overrides and overrides.demand_multiplier is not None
-                else derived_demand_mult
-            ),
-            competitor_discount=(
-                overrides.competitor_discount
-                if overrides and overrides.competitor_discount is not None
-                else derived_comp_discount
-            ),
+            demand_multiplier=demand_multiplier,
+            competitor_discount=competitor_discount,
             cannibalization_discount=(
                 overrides.cannibalization_discount
                 if overrides and overrides.cannibalization_discount is not None
@@ -291,7 +297,8 @@ class SiteEconomicsService:
             evaluated_at=datetime.now(UTC).isoformat(),
             horizon_months=horizon_months,
             annual_discount_rate=sim_input.annual_discount_rate,
-            source_market_context_id=str(ctx_id) if ctx_id else None,
+            source_market_context_id=ctx_id,
+            source_market_context_sha256=snapshot.sha256,
             metrics=base_res.metrics,
             decision=base_res.decision,
             assumptions=assumptions,
@@ -299,6 +306,12 @@ class SiteEconomicsService:
             scenarios=scenarios,
             engine_version=ENGINE_VERSION,
             metadata={
+                "input_policy_version": INPUT_POLICY_VERSION,
+                "input_origins": origins,
+                "source_market_context_document_id": snapshot.document_id,
+                "source_market_context_document_sha256": snapshot.document_sha256,
+                "context_tenant_declared": snapshot.tenant_declared,
+                "production_admission": "not_established_by_simulation",
                 "derived_demand_mult": derived_demand_mult,
                 "derived_comp_discount": derived_comp_discount,
             },

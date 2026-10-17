@@ -2,7 +2,7 @@
 #
 # Contract:  emgi.site-market-context.v1 (decision_product, v1.0.0)
 # Release:   oday-data-product-contracts.v0.4.1
-# Producer:  alfloop-dev/oday-data-platform@245aa00e417b6f8450baa608e8976584e00be6fc
+# Producer:  alfloop-dev/oday-data-platform@606c35f26a47df9eae7667eaeb82f5eebf75fa22
 # Schema:    schemas/site-market-context.schema.json
 # Digest:    4b433cf747c0f89d423e42a2ba3bd53119e2af1cacc2b2e83045214aab5c0300
 """Canonical contract schemas for published componentized product-neutral site market context (emgi.site-market-context.v1) across identity, catchment, demand, POI, competitor, rent, listing, mobility, traffic, event, and coverage components in EMGI v0.4.1."""

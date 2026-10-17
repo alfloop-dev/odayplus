@@ -290,20 +290,31 @@ def build_batch_listing_intake_service(tenant_id: str, persistence: PersistenceB
         NetworkListingService,
     )
 
-    intake_repo = getattr(persistence, "operator_intake_repository", None)
+    tenant_id = str(tenant_id or "").strip()
+    if not tenant_id:
+        raise ValueError("batch intake requires a verified tenant")
+
+    durable = bool(getattr(persistence, "is_durable", False))
+    intake_provider = getattr(persistence, "operator_intake_repository_for_tenant", None)
+    intake_repo = intake_provider(tenant_id) if callable(intake_provider) else None
     if intake_repo is None:
-        intake_repo = InMemoryAssistedIntakeRepository()
+        if durable:
+            raise RuntimeError("tenant-aware batch intake persistence is unavailable")
+        intake_repo = getattr(persistence, "operator_intake_repository", None)
+        if intake_repo is None:
+            intake_repo = InMemoryAssistedIntakeRepository()
 
     # Prefer this tenant's own listing corpus, the same way the operator API
     # resolves it: the unscoped repository would let a batch row be told it
-    # duplicates a listing belonging to somebody else. Fall back to the plain
-    # repository when the deployment has no scoped view, rather than silently
-    # matching against nothing.
+    # duplicates a listing belonging to somebody else. Durable deployments
+    # must resolve this boundary instead of reading the unpartitioned corpus.
     listing_repository = None
     scoped = getattr(persistence, "listing_repository_for_tenant", None)
     if scoped is not None:
         listing_repository = scoped(tenant_id)
     if listing_repository is None:
+        if durable:
+            raise RuntimeError("tenant-aware batch listing persistence is unavailable")
         listing_repository = getattr(persistence, "listing_repository", None)
 
     return NetworkListingService(
@@ -346,9 +357,27 @@ def _default_batch_listing_item_executor(
     if service is None:
         service = build_batch_listing_intake_service(tenant_id, persistence)
 
+    intake_id = batch_listing_intake_id(tenant_id, job_id, item_id)
+    if bool(getattr(persistence, "is_durable", False)):
+        scoped_repo = persistence.operator_intake_repository_for_tenant(tenant_id)
+        legacy_repo = getattr(persistence, "operator_intake_repository", None)
+        # Historical workers used the unpartitioned collection. A crash replay
+        # must not silently create a second row and discard corrections there.
+        # Reconciliation is explicit; no legacy record is copied or exposed.
+        if (
+            scoped_repo.get_intake(intake_id) is None
+            and legacy_repo is not None
+            and legacy_repo.get_intake(intake_id) is not None
+        ):
+            return None, ItemError(
+                code="INTAKE_PARTITION_RECONCILIATION_REQUIRED",
+                message="Existing batch intake requires authorized partition reconciliation",
+                retryable=False,
+            )
+
     try:
         intake = service.record_batch_assisted_entry(
-            intake_id=batch_listing_intake_id(tenant_id, job_id, item_id),
+            intake_id=intake_id,
             tenant_id=tenant_id,
             row=item,
             source_id=BATCH_LISTING_INTAKE_SOURCE_ID,
@@ -823,13 +852,45 @@ def build_default_registry() -> JobRegistry:
         INTAKE_JOB_TYPE,
         handle_assisted_listing_intake,
     )
+    from apps.worker.consumers.canonical_audit import handle_canonical_audit_delivery
+    from apps.worker.consumers.durable_audit import handle_durable_audit_delivery
+    from apps.worker.consumers.listing_search import handle_listing_search_match
+    from apps.worker.consumers.retained_evidence import handle_retained_evidence_delivery
+    from apps.worker.consumers.store_ops_audit import handle_store_ops_audit_delivery
+    from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
+    from modules.netplan.workers.outcome_worker import handle_netplan_outcome_due
+    from modules.opsboard.application.store_ops_audit_delivery import (
+        JOB_TYPE as STORE_OPS_AUDIT_JOB_TYPE,
+    )
+    from modules.sitescore.application.intake_score_worker import (
+        handle_intake_score,
+        handle_score_execution,
+    )
+    from modules.sitescore.application.score_delivery import SITESCORE_EXECUTION_JOB_TYPE
+    from shared.audit.canonical_delivery import JOB_TYPE as CANONICAL_AUDIT_JOB_TYPE
+    from shared.audit.durable_delivery import JOB_TYPE as DURABLE_AUDIT_JOB_TYPE
+    from shared.infrastructure.persistence.netplan_outcomes import (
+        DUE_JOB_TYPE as NETPLAN_OUTCOME_DUE_JOB_TYPE,
+    )
 
     registry = JobRegistry()
+    from shared.infrastructure.persistence.listing_search_delivery import (
+        JOB_TYPE as LISTING_SEARCH_JOB_TYPE,
+    )
+
     registry.register(FORECAST_JOB_TYPE, handle_forecast)
+    registry.register(LISTING_SEARCH_JOB_TYPE, handle_listing_search_match)
     registry.register(EXTERNAL_FETCH_JOB_TYPE, handle_external_fetch)
     registry.register(INTAKE_JOB_TYPE, handle_assisted_listing_intake)
+    registry.register(INTAKE_SITESCORE_JOB_TYPE, handle_intake_score)
+    registry.register(SITESCORE_EXECUTION_JOB_TYPE, handle_score_execution)
     registry.register(BATCH_LISTING_INTAKE_JOB_TYPE, handle_batch_listing_intake)
+    registry.register(STORE_OPS_AUDIT_JOB_TYPE, handle_store_ops_audit_delivery)
+    registry.register(CANONICAL_AUDIT_JOB_TYPE, handle_canonical_audit_delivery)
+    registry.register(DURABLE_AUDIT_JOB_TYPE, handle_durable_audit_delivery)
+    registry.register("retained-evidence-delivery", handle_retained_evidence_delivery)
     registry.register(STORE_OPS_MATERIALIZE_JOB_TYPE, handle_store_ops_materialize)
+    registry.register(NETPLAN_OUTCOME_DUE_JOB_TYPE, handle_netplan_outcome_due)
     return registry
 
 

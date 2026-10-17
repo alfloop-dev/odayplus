@@ -4,7 +4,7 @@
  * Proves the task acceptance at the UI layer against the Package 10
  * governance workspace:
  *
- *   1. Every governance value builder is reachable from workspace navigation:
+ *   1. The approved default and existing extension deep links preserve:
  *      核准中心 / Decision Log / Audit Trail / Evidence Package 匯出 / 系統狀態盤,
  *      and the status board exposes Data Quality / Model / Connector / SLA / Users.
  *   2. Return/reject require a reason; the reason gate blocks submission.
@@ -35,13 +35,13 @@ async function openGovern(page: import("@playwright/test").Page) {
 // 1. Every value builder is reachable
 // ---------------------------------------------------------------------------
 
-test("Govern workspace exposes all five tabs and the DQ/Model/Connector/SLA/Users board", async ({
+test("Govern R7 default and existing extensions retain the DQ/Model/Connector/SLA/Users board", async ({
   page,
 }) => {
   await openGovern(page);
   await expect(page.locator(GOVERN)).toContainText("核准中心");
 
-  // Every tab is reachable from navigation.
+  // The R7 default exposes only the three approved tabs.
   await page.getByTestId("governance-tab-decisions").click();
   await expect(
     page.getByRole("heading", { name: "Decision Log" }),
@@ -52,6 +52,8 @@ test("Govern workspace exposes all five tabs and the DQ/Model/Connector/SLA/User
     page.getByRole("heading", { name: "Audit Trail" }),
   ).toBeVisible();
 
+  // Existing non-R7 extension entry; this does not prove discoverability.
+  await page.goto("/operator?ws=govern&tab=evidencePackage");
   await page.getByTestId("governance-tab-evidencePackage").click();
   await expect(page.getByTestId("governance-export-button")).toBeVisible();
 
@@ -123,6 +125,8 @@ test("Evidence Package export produces a record and an audit event", async ({
 }) => {
   await openGovern(page);
 
+  // Existing non-R7 extension entry; this does not prove discoverability.
+  await page.goto("/operator?ws=govern&tab=evidencePackage");
   await page.getByTestId("governance-tab-evidencePackage").click();
   await page.getByTestId("governance-export-button").click();
 

@@ -65,8 +65,16 @@ export function policyLabel(policy: SourcePolicyState): string {
   return SOURCE_POLICY_LABEL[policy] ?? policy;
 }
 
-export function matchLabel(outcome: MatchOutcome): string {
-  return MATCH_OUTCOME_LABEL[outcome] ?? outcome;
+export function isMatchOutcome(value: unknown): value is MatchOutcome {
+  return typeof value === "string" && Object.prototype.hasOwnProperty.call(MATCH_OUTCOME_LABEL, value);
+}
+
+export function matchLabel(outcome: MatchOutcome | null | undefined): string {
+  return outcome ? MATCH_OUTCOME_LABEL[outcome] ?? outcome : "UNAVAILABLE";
+}
+
+export function matchConfidence(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1 ? value : null;
 }
 
 export function stageTone(stage: IntakeStage): IntakeTone {
@@ -77,7 +85,7 @@ export function stageTone(stage: IntakeStage): IntakeTone {
   return "neutral";
 }
 
-export function matchTone(outcome: MatchOutcome): IntakeTone {
+export function matchTone(outcome: MatchOutcome | null | undefined): IntakeTone {
   if (outcome === "NEW") return "good";
   if (outcome === "QUARANTINED") return "risk";
   if (outcome === "POSSIBLE_MATCH") return "watch";
@@ -183,7 +191,8 @@ export function queueCounts(records: AssistedIntake[]): IntakeQueueCounts {
 }
 
 /** Trim a canonical URL for the fixed-width queue cell without losing identity. */
-export function shortUrl(url: string, max = 34): string {
+export function shortUrl(url: string | null, max = 34): string {
+  if (url === null) return "UNAVAILABLE";
   const stripped = url.replace(/^https?:\/\/(www\.)?/, "");
   return stripped.length > max ? `${stripped.slice(0, max)}…` : stripped;
 }

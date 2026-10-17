@@ -1,6 +1,6 @@
 import React from "react";
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AddListingFromUrlDialog } from "../AddListingFromUrlDialog";
 import type { IntakeApiError } from "../intakeClient";
@@ -57,7 +57,8 @@ describe("AddListingFromUrlDialog", () => {
     render(
       <AddListingFromUrlDialog
         busy={false}
-        defaultHeatZoneId="HZ-01"
+        defaultHeatZoneId="native-zone-a"
+        heatZoneOptions={{ state: "ready", options: [{ id: "native-zone-a", label: "原生已授權區域 A" }] }}
         error={null}
         onClose={mockOnClose}
         onSubmit={mockOnSubmit}
@@ -73,7 +74,7 @@ describe("AddListingFromUrlDialog", () => {
 
     expect(mockOnSubmit).toHaveBeenCalledWith({
       url: "https://www.591.com.tw/rent-detail-1234567.html",
-      heatZoneId: "HZ-01",
+      heatZoneId: "native-zone-a",
     });
   });
 
@@ -175,4 +176,32 @@ describe("AddListingFromUrlDialog", () => {
     fireEvent.click(screen.getByTestId("intake-open-existing"));
     expect(openExisting).toHaveBeenCalledWith("IN-999");
   });
+
+  it("shows only the supplied native zones and submits the actual selected ID", () => {
+    render(<AddListingFromUrlDialog busy={false} error={null} onClose={mockOnClose} onSubmit={mockOnSubmit}
+      submitterLabel="展店經理" heatZoneOptions={{ state: "ready", options: [
+        { id: "native-zone-b", label: "伺服器區域 B" }, { id: "native-zone-c", label: "伺服器區域 C" },
+      ] }} />);
+    const select = screen.getByTestId("intake-area-select");
+    expect(within(select).getAllByRole("option").map(option => option.getAttribute("value"))).toEqual(["", "native-zone-b", "native-zone-c"]);
+    expect(screen.queryByText(/信義松仁生活圈|板橋府中商圈/)).not.toBeInTheDocument();
+    fireEvent.change(select, { target: { value: "native-zone-c" } });
+    fireEvent.change(screen.getByTestId("intake-url-input"), { target: { value: "https://example.com/native-listing" } });
+    fireEvent.click(screen.getByTestId("intake-submit-button"));
+    expect(mockOnSubmit).toHaveBeenCalledWith({ url: "https://example.com/native-listing", heatZoneId: "native-zone-c" });
+  });
+
+  it.each(["loading", "error", "ready"] as const)("keeps the optional form usable with %s empty options and no stale zone", state => {
+    render(<AddListingFromUrlDialog busy={false} defaultHeatZoneId="stale-not-authorized" error={null}
+      heatZoneOptions={{ state, options: [] }} onClose={mockOnClose} onSubmit={mockOnSubmit} submitterLabel="展店經理" />);
+    const select = screen.getByTestId("intake-area-select");
+    expect(select).toBeDisabled();
+    expect(select).toHaveValue("");
+    expect(within(select).getAllByRole("option")).toHaveLength(1);
+    expect(screen.getByTestId("intake-area-note")).toHaveTextContent(state === "loading" ? "載入中" : state === "error" ? "無法取得" : "沒有可選區域");
+    fireEvent.change(screen.getByTestId("intake-url-input"), { target: { value: "https://example.com/native-listing" } });
+    fireEvent.click(screen.getByTestId("intake-submit-button"));
+    expect(mockOnSubmit).toHaveBeenCalledWith({ url: "https://example.com/native-listing", heatZoneId: "" });
+  });
+
 });

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -16,6 +17,8 @@ from shared.api.idempotency import (
 )
 from shared.api.pagination import page_params, paginate
 from shared.audit import AuditEvent, InMemoryAuditLog
+from shared.audit.backlog import AuditBacklogBlocked, AuditBacklogUnavailable, DurableAuditBacklog
+from shared.audit.durable_delivery import DurableAuditDelivery
 from shared.infrastructure.persistence.command_receipts import (
     CommandReceiptIncompleteError,
     CommandReceiptPersistenceError,
@@ -39,6 +42,7 @@ else:
         PlanNotFoundError,
         PriceOpsService,
         authorize_exploration,
+        normalize_approval_decision,
     )
     from modules.priceops.domain import (
         ExplorationBudgetExceededError,
@@ -52,8 +56,12 @@ else:
         PricingPlanItem,
         UnavailableSimulationResultError,
     )
+    from modules.priceops.domain.pricing import PlanAlreadyExistsError
     from modules.priceops.infrastructure import InMemoryPriceOpsRepository
-    from modules.priceops.infrastructure.oss_optimizer import PriceOpsProductionOptimizer
+    from modules.priceops.infrastructure.oss_optimizer import (
+        PriceOpsMissingSourceLineageError,
+        PriceOpsProductionOptimizer,
+    )
     from modules.priceops.workers.optimizer_worker import (
         PlanRequest,
         run_priceops_optimizer_batch,
@@ -61,6 +69,75 @@ else:
     from shared.governance.vocabularies import EvidenceLevel
 
     logger = logging.getLogger("oday-api.priceops")
+
+
+    def canonical_priceops_store(item: Any, expected_tenant: str | None, *,
+                                 store_repository: Any, brand_repository: Any,
+                                 production_required: bool = False) -> Any:
+        if store_repository is None and brand_repository is None and not production_required:
+            return None
+        try:
+            store = store_repository.get_store(item.store_id)
+            if store is None or not store.is_current or store.tenant_id != expected_tenant:
+                return None
+            brand = brand_repository.get_brand(store.brand_id)
+            if brand is None or brand.tenant_id != expected_tenant:
+                return None
+            return store
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail={
+                "code": "PRICEOPS_STORE_BINDING_UNAVAILABLE",
+                "message": "Canonical pricing ownership is unavailable",
+            }) from exc
+
+
+    def priceops_items_in_scope(items: Any, principal: Any, expected_tenant: str | None, *,
+                                store_repository: Any = None, brand_repository: Any = None,
+                                production_required: bool = False,
+                                scope_module: str = "priceops") -> bool:
+        """Share object axes while retaining the caller's existing module guard.
+
+        Native routes use priceops. Operator projections use operator_console,
+        the module their existing read guard verifies; this is not another
+        business-role or native PriceOps operation grant.
+        """
+        from shared.auth import DataClassification
+
+        scope = principal.scope
+        if not (
+            scope.permits_module(scope_module)
+            and scope.permits_classification(DataClassification.CONFIDENTIAL)
+            and scope.permits_assigned_area(None)
+            and scope.permits_heat_zone(None)
+        ):
+            return False
+        for item in items:
+            store = canonical_priceops_store(item, expected_tenant, store_repository=store_repository,
+                                             brand_repository=brand_repository,
+                                             production_required=production_required)
+            canonical_required = store_repository is not None or brand_repository is not None or production_required
+            if canonical_required and (store is None or item.brand_id != store.brand_id):
+                return False
+            brand_id = store.brand_id if store is not None else item.brand_id
+            region_id = (store.region_code or None) if store is not None else None
+            if not (scope.permits_store(item.store_id)
+                    and scope.permits_brand(brand_id)
+                    and scope.permits_region(region_id)):
+                return False
+        return True
+
+
+    def priceops_plan_in_scope(plan: Any, principal: Any, *, store_repository: Any = None,
+                               brand_repository: Any = None, production_required: bool = False,
+                               require_tenant: bool = False, scope_module: str = "priceops") -> bool:
+        scope = principal.scope
+        if scope.tenant_id and plan.tenant_id != scope.tenant_id:
+            return False
+        if require_tenant and not scope.tenant_id:
+            return False
+        return priceops_items_in_scope(plan.items, principal, plan.tenant_id,
+                                       store_repository=store_repository, brand_repository=brand_repository,
+                                       production_required=production_required, scope_module=scope_module)
 
 
     class PriceOpsPlanItemPayload(BaseModel):
@@ -207,10 +284,12 @@ else:
         require_durable_commands: bool | None = None,
         production_optimizer: PriceOpsProductionOptimizer | None = None,
         runtime_mode: str | None = None,
+        store_repository: Any = None,
+        brand_repository: Any = None,
     ) -> APIRouter:
         from apps.api.app.routes._common import runtime_binding_guard
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
-        from shared.auth import Action
+        from shared.auth import Action, DataClassification
 
         production_required = production_execution_required(runtime_mode)
         durable_commands_required = (
@@ -237,6 +316,13 @@ else:
             composition_error = exc
             service = None
 
+        if production_required and (
+            not callable(getattr(store_repository, "get_store", None))
+            or not callable(getattr(brand_repository, "get_brand", None))
+        ):
+            composition_error = ProductionExecutionConfigurationError(
+                "PriceOps production requires canonical store and brand repositories"
+            )
         require_runtime_binding = runtime_binding_guard(composition_error)
 
         router = APIRouter(
@@ -246,6 +332,7 @@ else:
         )
 
         def command_store(request: Request) -> TenantScopedCommandReceiptStore:
+            request.state.priceops_production_required = production_required
             active_queue = job_queue
             if active_queue is None:
                 app = request.scope.get("app")
@@ -265,7 +352,69 @@ else:
                 raise _durable_store_required(
                     "PriceOps production commands reject process-local stores"
                 )
+            if store.is_durable:
+                engine = getattr(getattr(price_repository, "_store", None), "engine", None)
+                if engine is None or any(bound is not engine for bound in (
+                    getattr(active_queue, "_engine", None),
+                    getattr(active_audit_log, "_engine", None),
+                )):
+                    raise _durable_store_required(
+                        "PriceOps commands require one engine for business, audit and receipts"
+                    )
+                for master in (store_repository, brand_repository):
+                    if master is not None and getattr(master, "_engine", None) is not engine:
+                        raise _durable_store_required(
+                            "PriceOps canonical ownership must share the command transaction"
+                        )
+                store = TenantScopedCommandReceiptStore(
+                    queue=active_queue, service="priceops",
+                    transaction_factory=lambda: command_transaction(engine, active_queue, request),
+                )
             return store
+
+        @contextmanager
+        def command_transaction(engine: Any, queue: Any, request: Request):
+            """Recheck locked ownership and atomically persist every command effect."""
+            with engine.transaction():
+                postgres = getattr(engine, "dialect", "") == "postgresql"
+                if not postgres and not engine._conn.in_transaction:
+                    engine.execute("BEGIN IMMEDIATE")
+                plan_id = request.path_params.get("plan_id")
+                proposals = tuple(getattr(request.state, "priceops_proposals", ()))
+                plan_ids = {p.plan_id for p in proposals if p.plan_id}
+                if plan_id:
+                    plan_ids.add(plan_id)
+                if postgres:
+                    for identity in sorted(plan_ids):
+                        engine.query_one("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+                                         ("priceops-plan:" + identity,))
+                plan = service.repository.get_plan(plan_id) if plan_id else None
+                items = [item for proposal in proposals for item in proposal.items]
+                if plan is not None:
+                    items.extend(plan.items)
+                if postgres and store_repository is not None:
+                    brand_ids = set()
+                    for identity in sorted({item.store_id for item in items}):
+                        row = engine.query_one("SELECT brand_id FROM stores WHERE store_id = ? FOR SHARE",
+                                               (identity,))
+                        if row:
+                            brand_ids.add(row["brand_id"])
+                    for identity in sorted(brand_ids):
+                        engine.query_one("SELECT brand_id FROM brands WHERE brand_id = ? FOR SHARE",
+                                         (identity,))
+                principal = request.state.operator_principal
+                if plan_id and (plan is None or not plan_in_scope(plan, principal)):
+                    raise HTTPException(status_code=404, detail="plan not found")
+                for proposal in proposals:
+                    require_proposal_scope(proposal, request)
+                approval = getattr(request.state, "priceops_approval", None)
+                if approval is not None:
+                    require_independent_approval(*approval, request)
+                sink = getattr(active_audit_log, "_worm_sink", None)
+                delivery = DurableAuditDelivery(engine, tenant_id(request), queue, sink) if sink else None
+                context = active_audit_log.transactional_worm_sink(delivery) if delivery else nullcontext()
+                with context:
+                    yield
 
         def tenant_id(request: Request, fallback: str | None = None) -> str:
             principal = getattr(request.state, "operator_principal", None)
@@ -281,7 +430,7 @@ else:
                         },
                     )
                 return str(value)
-            if durable_commands_required:
+            if durable_commands_required or production_required:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail={
@@ -291,7 +440,98 @@ else:
                 )
             return "__local__"
 
-        @router.post("/plans", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("priceops", Action.CREATE, engine=authz_engine))])
+        def canonical_store(item: Any, expected_tenant: str | None) -> Any:
+            return canonical_priceops_store(item, expected_tenant, store_repository=store_repository,
+                                             brand_repository=brand_repository,
+                                             production_required=production_required)
+
+        def items_in_scope(items: Any, principal: Any, expected_tenant: str | None) -> bool:
+            return priceops_items_in_scope(items, principal, expected_tenant,
+                                           store_repository=store_repository, brand_repository=brand_repository,
+                                           production_required=production_required)
+
+        def plan_in_scope(plan: Any, principal: Any) -> bool:
+            return priceops_plan_in_scope(plan, principal, store_repository=store_repository,
+                                          brand_repository=brand_repository, production_required=production_required,
+                                          require_tenant=durable_commands_required or production_required)
+
+        def require_proposal_scope(body: PriceOpsPlanPayload, request: Request) -> None:
+            principal = request.state.operator_principal
+            tenant_id(request, body.tenant_id)
+            if store_repository is not None or brand_repository is not None or production_required:
+                for item in body.items:
+                    store = canonical_store(item, body.tenant_id)
+                    if store is None or (item.brand_id and item.brand_id != store.brand_id):
+                        raise HTTPException(status_code=403, detail="pricing proposal ownership mismatch")
+                    # Persist the actual master-data brand, not a client claim.
+                    item.brand_id = store.brand_id
+            if not items_in_scope(body.items, principal, body.tenant_id):
+                raise HTTPException(status_code=403, detail="pricing proposal outside caller scope")
+            if body.plan_id is not None:
+                existing = service.repository.get_plan(body.plan_id)
+                if existing is not None and not plan_in_scope(existing, principal):
+                    raise HTTPException(status_code=404, detail="plan not found")
+            proposals = getattr(request.state, "priceops_proposals", None)
+            if proposals is None:
+                proposals = request.state.priceops_proposals = []
+            if not any(proposal is body for proposal in proposals):
+                proposals.append(body)
+
+
+        def require_plan_permission(action: Any) -> Any:
+            permission = require_permission("priceops", action, engine=authz_engine)
+
+            principal_dependency = Depends(permission)
+
+            def dependency(request: Request, principal: Any = principal_dependency) -> Any:
+                plan_id = request.path_params.get("plan_id")
+                if plan_id is not None:
+                    plan = service.repository.get_plan(plan_id)
+                    if plan is None or not plan_in_scope(plan, principal):
+                        raise HTTPException(status_code=404, detail="plan not found")
+                return principal
+
+            return dependency
+
+        def require_independent_approval(plan_id: str, decision: str, request: Request) -> None:
+            request.state.priceops_approval = (plan_id, decision)
+            blockers = service.approval_actor_blockers(
+                plan_id, request.state.operator_principal.subject_id, decision=decision,
+            )
+            if blockers:
+                raise HTTPException(status_code=403, detail={
+                    "code": "PRICEOPS_APPROVAL_SEPARATION_REQUIRED",
+                    "message": "; ".join(blockers),
+                })
+
+        def gate_in_scope(gate: Any, principal: Any) -> bool:
+            scope = principal.scope
+            return (
+                (not scope.tenant_id or gate.tenant_id == scope.tenant_id)
+                and scope.permits_module("priceops")
+                and scope.permits_classification(DataClassification.CONFIDENTIAL)
+                and scope.permits_brand(gate.scope_brand_id)
+                and scope.permits_store(None) and scope.permits_region(None)
+                and scope.permits_assigned_area(None) and scope.permits_heat_zone(None)
+            )
+
+        def require_workflow_gate_write() -> None:
+            if production_required or getattr(price_repository, "canonical_exploration", None) is not None:
+                raise HTTPException(status_code=405, detail={
+                    "code": "WORKFLOW_APPROVAL_REQUIRED",
+                    "message": "Exploration gate creation and revocation use the workflow approval path",
+                }, headers={"Allow": "GET"})
+
+        def require_canonical_exploration() -> Any:
+            canonical = getattr(price_repository, "canonical_exploration", None)
+            if production_required and canonical is None:
+                raise HTTPException(status_code=503, detail={
+                    "code": "PRICEOPS_EXPLORATION_BINDING_REQUIRED",
+                    "message": "Canonical pricing/workflow authorization is unavailable",
+                })
+            return canonical
+
+        @router.post("/plans", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_plan_permission(Action.CREATE))])
         def create_plan(
             body: PriceOpsPlanPayload,
             request: Request,
@@ -299,6 +539,7 @@ else:
         ) -> dict[str, Any]:
             effective_key = body.idempotency_key or idempotency_key
             active_tenant_id = tenant_id(request, body.tenant_id)
+            require_proposal_scope(body, request)
 
             def _execute(_receipt_id: str) -> dict[str, Any]:
                 try:
@@ -308,13 +549,17 @@ else:
                         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                     ) from exc
                 bindings = [binding for _item, binding in resolved]
-                plan = service.create_plan(
-                    tenant_id=body.tenant_id,
-                    items=[plan_item for plan_item, _binding in resolved],
-                    correlation_id=request.state.correlation_id,
-                    plan_id=body.plan_id,
-                    created_at=_parse_time(body.created_at),
-                )
+                try:
+                    plan = service.create_plan(
+                        tenant_id=body.tenant_id,
+                        items=[plan_item for plan_item, _binding in resolved],
+                        correlation_id=request.state.correlation_id,
+                        plan_id=body.plan_id,
+                        created_at=_parse_time(body.created_at),
+                        created_by=request.state.operator_principal.subject_id,
+                    )
+                except PlanAlreadyExistsError as exc:
+                    raise HTTPException(status_code=409, detail="plan id already exists") from exc
                 _record_audit(
                     active_audit_log,
                     request,
@@ -334,11 +579,12 @@ else:
                 correlation_id=request.state.correlation_id,
                 key=effective_key,
                 scope="priceops:create_plan",
-                payload=body.model_dump(mode="json"),
+                payload={"verified_actor": request.state.operator_principal.subject_id,
+                         "body": body.model_dump(mode="json")},
                 operation=_execute,
             )
 
-        @router.post("/optimizer-jobs", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/optimizer-jobs", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_plan_permission(Action.EXECUTE))])
         def create_optimizer_job(
             body: PriceOpsOptimizerJobPayload,
             request: Request,
@@ -347,9 +593,15 @@ else:
             effective_key = body.idempotency_key or idempotency_key
             active_tenant_id = tenant_id(request, body.plans[0].tenant_id)
             for plan in body.plans:
-                tenant_id(request, plan.tenant_id)
+                require_proposal_scope(plan, request)
+            active_store = command_store(request)
 
             def _execute(receipt_id: str) -> dict[str, Any]:
+                if any(plan.exploration_gate_id for plan in body.plans):
+                    _require_durable_audit_capacity(
+                        active_store, active_audit_log, active_tenant_id,
+                        production_required=production_required,
+                    )
                 try:
                     plan_requests = [
                         PlanRequest(
@@ -357,6 +609,7 @@ else:
                             correlation_id=request.state.correlation_id,
                             items=[_item_from_payload(item) for item in plan.items],
                             plan_id=plan.plan_id,
+                            created_by=request.state.operator_principal.subject_id,
                             exploration_gate_id=plan.exploration_gate_id,
                             exploration_algorithm=plan.exploration_algorithm,
                             exploration_seed=plan.exploration_seed,
@@ -368,14 +621,19 @@ else:
                     raise HTTPException(
                         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                     ) from exc
-                result = run_priceops_optimizer_batch(
-                    requests=plan_requests,
-                    job_id=receipt_id,
-                    optimized_at=_parse_time(body.optimized_at),
-                    repository=price_repository,
-                    production_optimizer=production_optimizer,
-                    runtime_mode=runtime_mode,
-                )
+                try:
+                    result = run_priceops_optimizer_batch(
+                        requests=plan_requests,
+                        job_id=receipt_id,
+                        optimized_at=_parse_time(body.optimized_at),
+                        repository=price_repository,
+                        production_optimizer=production_optimizer,
+                        runtime_mode=runtime_mode,
+                    )
+                except PriceOpsMissingSourceLineageError as exc:
+                    raise _missing_source_lineage_error() from exc
+                except PlanAlreadyExistsError as exc:
+                    raise HTTPException(status_code=409, detail="batch plan id already exists or is repeated") from exc
                 audit_event = _record_audit(
                     active_audit_log,
                     request,
@@ -395,16 +653,17 @@ else:
                 return payload
 
             return _guard_creation(
-                command_store(request),
+                active_store,
                 tenant_id=active_tenant_id,
                 correlation_id=request.state.correlation_id,
                 key=effective_key,
                 scope="priceops:create_optimizer_job",
-                payload=body.model_dump(mode="json"),
+                payload={"verified_actor": request.state.operator_principal.subject_id,
+                         "body": body.model_dump(mode="json")},
                 operation=_execute,
             )
 
-        @router.get("/optimizer-jobs/{job_id}", dependencies=[Depends(require_permission("priceops", Action.VIEW, engine=authz_engine))])
+        @router.get("/optimizer-jobs/{job_id}", dependencies=[Depends(require_plan_permission(Action.VIEW))])
         def get_optimizer_job(job_id: str, request: Request) -> dict[str, Any]:
             result = command_store(request).get(
                 tenant_id=tenant_id(request),
@@ -415,10 +674,18 @@ else:
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="optimizer job not found",
                 )
+            plans = result.get("plans", [])
+            if not plans or any(
+                (plan := service.repository.get_plan(row.get("plan_id"))) is None
+                or not plan_in_scope(plan, request.state.operator_principal)
+                for row in plans
+            ):
+                raise HTTPException(status_code=404, detail="optimizer job not found")
             return result
 
-        @router.get("/plans", dependencies=[Depends(require_permission("priceops", Action.VIEW, engine=authz_engine))])
+        @router.get("/plans", dependencies=[Depends(require_plan_permission(Action.VIEW))])
         def list_plans(
+            request: Request,
             tenant_id: str | None = Query(default=None),
             plan_status: str | None = Query(default=None, alias="status"),
             limit: int | None = Query(default=None),
@@ -433,7 +700,10 @@ else:
             `has_more`, so a caller that ignores the new fields and passes no
             query parameters sees what it saw before.
             """
-            rows = [plan.to_dict() for plan in service.repository.list_plans()]
+            rows = [
+                plan.to_dict() for plan in service.repository.list_plans()
+                if plan_in_scope(plan, request.state.operator_principal)
+            ]
             if tenant_id is not None:
                 rows = [row for row in rows if row.get("tenant_id") == tenant_id]
             if plan_status is not None:
@@ -442,7 +712,7 @@ else:
                 rows, page_params(limit=limit, offset=offset, sort=sort, order=order)
             )
 
-        @router.get("/plans/{plan_id}", dependencies=[Depends(require_permission("priceops", Action.VIEW, engine=authz_engine))])
+        @router.get("/plans/{plan_id}", dependencies=[Depends(require_plan_permission(Action.VIEW))])
         def get_plan(plan_id: str) -> dict[str, Any]:
             plan = service.repository.get_plan(plan_id)
             if plan is None:
@@ -465,13 +735,32 @@ else:
                 entry.to_dict() for entry in service.repository.list_label_entries(plan_id)
             ]
             payload["evaluation"] = _to_dict_or_none(service.repository.get_evaluation(plan_id))
+            payload["decision_writebacks"] = [
+                row.to_dict() for row in service.repository.list_decision_writebacks(plan_id)
+            ]
             return payload
 
-        @router.get("/plans/{plan_id}/comparison", dependencies=[Depends(require_permission("priceops", Action.VIEW, engine=authz_engine))])
-        def get_plan_comparison(plan_id: str) -> dict[str, Any]:
-            return _run_read(lambda: service.get_plan_comparison(plan_id))
+        @router.get("/plans/{plan_id}/comparison", dependencies=[Depends(require_plan_permission(Action.VIEW))])
+        def get_plan_comparison(plan_id: str, request: Request) -> dict[str, Any]:
+            from modules.priceops.domain.pricing import PRICEOPS_POLICY_VERSION
+            from shared.auth.rbac import rbac_allows
 
-        @router.post("/plans/{plan_id}/simulate", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+            payload = _run_read(lambda: service.get_plan_comparison(plan_id))
+            principal = request.state.operator_principal
+            payload["command_permissions"] = {
+                "simulate": rbac_allows(principal, "priceops", Action.EXECUTE),
+                "writeback": rbac_allows(principal, "priceops", Action.APPROVE),
+            }
+            actor_blockers = service.approval_actor_blockers(plan_id, principal.subject_id)
+            payload["approval_actor_blockers"] = actor_blockers
+            payload["created_by"] = getattr(service.repository.get_plan(plan_id), "created_by", None)
+            payload["is_approvable"] = payload["is_approvable"] and not actor_blockers
+            payload["actor_id"] = principal.subject_id
+            payload["policy_version"] = PRICEOPS_POLICY_VERSION
+            payload["solver_version"] = service.repository.get_optimization(plan_id).solver_version
+            return payload
+
+        @router.post("/plans/{plan_id}/simulate", dependencies=[Depends(require_plan_permission(Action.EXECUTE))])
         def simulate(
             plan_id: str,
             body: PriceOpsActorPayload,
@@ -496,7 +785,7 @@ else:
                 body=body,
             )
 
-        @router.post("/plans/{plan_id}/simulate-scenario", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/plans/{plan_id}/simulate-scenario", dependencies=[Depends(require_plan_permission(Action.EXECUTE))])
         def simulate_scenario(
             plan_id: str,
             body: PriceOpsScenarioSimulationPayload,
@@ -522,13 +811,14 @@ else:
                 body=body,
             )
 
-        @router.post("/plans/{plan_id}/decision-writeback", dependencies=[Depends(require_permission("priceops", Action.APPROVE, engine=authz_engine))])
+        @router.post("/plans/{plan_id}/decision-writeback", dependencies=[Depends(require_plan_permission(Action.APPROVE))])
         def decision_writeback(
             plan_id: str,
             body: PriceOpsDecisionWritebackPayload,
             request: Request,
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
+            require_independent_approval(plan_id, body.decision, request)
             return _run(
                 lambda: service.writeback_decision(
                     plan_id,
@@ -550,7 +840,7 @@ else:
                 body=body,
             )
 
-        @router.post("/plans/{plan_id}/optimize", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/plans/{plan_id}/optimize", dependencies=[Depends(require_plan_permission(Action.EXECUTE))])
         def optimize(
             plan_id: str,
             body: PriceOpsActorPayload,
@@ -579,7 +869,7 @@ else:
                 body=body,
             )
 
-        @router.post("/plans/{plan_id}/submit", dependencies=[Depends(require_permission("priceops", Action.CREATE, engine=authz_engine))])
+        @router.post("/plans/{plan_id}/submit", dependencies=[Depends(require_plan_permission(Action.CREATE))])
         def submit(
             plan_id: str,
             body: PriceOpsActorPayload,
@@ -604,13 +894,14 @@ else:
                 body=body,
             )
 
-        @router.post("/plans/{plan_id}/approve", dependencies=[Depends(require_permission("priceops", Action.APPROVE, engine=authz_engine))])
+        @router.post("/plans/{plan_id}/approve", dependencies=[Depends(require_plan_permission(Action.APPROVE))])
         def approve(
             plan_id: str,
             body: PriceOpsApprovalPayload,
             request: Request,
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
+            require_independent_approval(plan_id, body.decision, request)
             return _run(
                 lambda: service.approve(
                     plan_id,
@@ -630,7 +921,7 @@ else:
                 body=body,
             )
 
-        @router.post("/plans/{plan_id}/activate", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/plans/{plan_id}/activate", dependencies=[Depends(require_plan_permission(Action.EXECUTE))])
         def activate(
             plan_id: str,
             body: PriceOpsActivationPayload,
@@ -658,7 +949,7 @@ else:
                 body=body,
             )
 
-        @router.post("/plans/{plan_id}/observation", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/plans/{plan_id}/observation", dependencies=[Depends(require_plan_permission(Action.EXECUTE))])
         def start_observation(
             plan_id: str,
             body: PriceOpsObservationPayload,
@@ -683,7 +974,7 @@ else:
                 body=body,
             )
 
-        @router.post("/plans/{plan_id}/evaluate", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/plans/{plan_id}/evaluate", dependencies=[Depends(require_plan_permission(Action.EXECUTE))])
         def evaluate(
             plan_id: str,
             body: PriceOpsEvaluationPayload,
@@ -718,7 +1009,7 @@ else:
                 body=body,
             )
 
-        @router.post("/plans/{plan_id}/rollback", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/plans/{plan_id}/rollback", dependencies=[Depends(require_plan_permission(Action.EXECUTE))])
         def rollback(
             plan_id: str,
             body: PriceOpsActorPayload,
@@ -744,7 +1035,7 @@ else:
             )
 
         # -- Exploration Gates & Bandit (ODP-FR-PRICE-006) -------------------
-        @router.get("/exploration-gates", dependencies=[Depends(require_permission("priceops", Action.VIEW, engine=authz_engine))])
+        @router.get("/exploration-gates", dependencies=[Depends(require_plan_permission(Action.VIEW))])
         def get_exploration_gates(
             request: Request,
             tenant_id_param: str | None = Query(default=None, alias="tenant_id"),
@@ -754,7 +1045,10 @@ else:
             at: str | None = Query(default=None),
         ) -> dict[str, Any]:
             tid = tenant_id(request, tenant_id_param)
+            canonical = require_canonical_exploration()
             now = _parse_time(at) or datetime.now(UTC)
+            if production_required or canonical is not None:
+                now = datetime.now(UTC)
             scope = PriceScope(
                 tenant_id=tid,
                 brand_id=brand_id,
@@ -762,7 +1056,10 @@ else:
                 sku_group=sku_group,
             )
             active_gate = service.repository.find_active_gate(scope, at=now)
-            all_gates = service.repository.list_gates(tenant_id=tid)
+            principal = request.state.operator_principal
+            all_gates = [gate for gate in service.repository.list_gates(tenant_id=tid) if gate_in_scope(gate, principal)]
+            if active_gate is not None and not gate_in_scope(active_gate, principal):
+                active_gate = None
             return {
                 "tenant_id": tid,
                 "scope": scope.to_dict(),
@@ -771,7 +1068,7 @@ else:
                 "gates": [g.to_dict() for g in all_gates],
             }
 
-        @router.post("/exploration-gates", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/exploration-gates", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_workflow_gate_write), Depends(require_plan_permission(Action.EXECUTE))], responses={405: {"description": "Gate mutation requires workflow approval"}})
         def register_exploration_gate(
             body: PriceOpsExplorationGateRegisterPayload,
             request: Request,
@@ -809,7 +1106,7 @@ else:
             payload["correlation_id"] = request.state.correlation_id
             return payload
 
-        @router.post("/exploration-gates/{gate_id}/revoke", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/exploration-gates/{gate_id}/revoke", dependencies=[Depends(require_workflow_gate_write), Depends(require_plan_permission(Action.EXECUTE))], responses={405: {"description": "Gate mutation requires workflow approval"}})
         def revoke_exploration_gate(
             gate_id: str,
             body: PriceOpsExplorationGateRevokePayload,
@@ -838,65 +1135,77 @@ else:
             payload["correlation_id"] = request.state.correlation_id
             return payload
 
-        @router.post("/exploration-candidates", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+        @router.post("/exploration-candidates", dependencies=[Depends(require_plan_permission(Action.EXECUTE))])
         def generate_exploration_candidates(
             body: PriceOpsExplorationCandidatesPayload,
             request: Request,
+            idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
             active_tid = tenant_id(request, body.tenant_id)
+            canonical = require_canonical_exploration()
+            proposal = PriceOpsPlanPayload(tenant_id=body.tenant_id, items=body.items)
+            require_proposal_scope(proposal, request)
+            body.items = proposal.items
+            active_store = command_store(request)
             now = _parse_time(body.at) or datetime.now(UTC)
+            if production_required or canonical is not None:
+                now = datetime.now(UTC)
             scope = PriceScope(
                 tenant_id=active_tid,
                 brand_id=body.scope_brand_id,
                 store_group=body.scope_store_group,
                 sku_group=body.scope_sku_group,
             )
-            try:
-                grant = authorize_exploration(scope, at=now, repository=service.repository)
-            except ExplorationNotAuthorizedError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail={
-                        "code": "EXPLORATION_NOT_AUTHORIZED",
-                        "message": str(exc),
-                        "exploration_enabled": False,
-                    },
-                ) from exc
+            def _execute(_receipt_id: str) -> dict[str, Any]:
+                _require_durable_audit_capacity(active_store, active_audit_log, active_tid,
+                                               production_required=production_required)
+                try:
+                    gate = service.repository.find_active_gate(scope, at=now)
+                    if gate is None:
+                        raise ExplorationNotAuthorizedError("No active canonical exploration authorization")
+                    if not gate_in_scope(gate, request.state.operator_principal):
+                        raise HTTPException(status_code=403, detail="exploration gate outside caller scope")
+                    context = canonical.transaction(gate.gate_id, active_tid) if canonical is not None else nullcontext()
+                    with context:
+                        clock = datetime.now(UTC) if canonical is not None or production_required else now
+                        grant = authorize_exploration(scope, at=clock, repository=service.repository)
+                        if grant.gate_id != gate.gate_id:
+                            raise ExplorationNotAuthorizedError("Exploration authorization changed during preview")
+                        domain_items = [_item_from_payload(item) for item in body.items]
+                        if canonical is not None:
+                            canonical.validate_items(gate, domain_items)
+                        candidates = ExplorationService(repository=service.repository).explorer.generate_candidates(
+                            scope=scope, grant=grant, items=domain_items,
+                            algorithm=body.algorithm, history=body.history, seed=body.seed,
+                        )
+                        quoted_cost = sum(float(canonical.budget_cost(candidate.estimated_exploration_cost)) if canonical is not None
+                                          else candidate.estimated_exploration_cost for candidate in candidates)
+                        if quoted_cost > grant.budget_remaining + 1e-6:
+                            raise ExplorationBudgetExceededError("Candidate set exceeds the authorized remaining budget")
+                        audit = _record_audit(
+                            active_audit_log, request, "priceops.exploration_previewed.v1", "preview",
+                            "priceops/gates/" + gate.gate_id,
+                            {"gate_id": gate.gate_id, "approval_id": gate.approval_id,
+                             "approval_decision_id": gate.approval_decision_id,
+                             "decision_policy_version_id": gate.decision_policy_version_id, "mode": "shadow"},
+                        )
+                        return {"exploration_enabled": True, "grant": grant.to_dict(),
+                                "algorithm": body.algorithm, "mode": "shadow",
+                                "candidates": [candidate.to_dict() for candidate in candidates],
+                                "audit_event_id": audit.event_id, "correlation_id": request.state.correlation_id}
+                except (ExplorationNotAuthorizedError, ExplorationBudgetExceededError, ElasticityInputError, ValueError) as exc:
+                    raise HTTPException(status_code=422, detail={
+                        "code": "EXPLORATION_NOT_AUTHORIZED", "message": str(exc), "exploration_enabled": False,
+                    }) from exc
 
-            explore_service = ExplorationService(repository=service.repository)
-            try:
-                domain_items = [_item_from_payload(item) for item in body.items]
-            except ElasticityInputError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
-                ) from exc
-            try:
-                candidates = explore_service.explorer.generate_candidates(
-                    scope=scope,
-                    grant=grant,
-                    items=domain_items,
-                    algorithm=body.algorithm,
-                    history=body.history,
-                    seed=body.seed,
-                )
-            except ExplorationNotAuthorizedError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail={
-                        "code": "EXPLORATION_NOT_AUTHORIZED",
-                        "message": str(exc),
-                        "exploration_enabled": False,
-                    },
-                ) from exc
-            return {
-                "exploration_enabled": True,
-                "grant": grant.to_dict(),
-                "algorithm": body.algorithm,
-                "mode": "shadow",
-                "candidates": [c.to_dict() for c in candidates],
-            }
+            return _guard_creation(
+                active_store, tenant_id=active_tid, correlation_id=request.state.correlation_id,
+                key=idempotency_key, scope="priceops:exploration_preview",
+                payload={"verified_actor": request.state.operator_principal.subject_id,
+                         "body": body.model_dump(mode="json")}, operation=_execute,
+            )
 
-        @router.get("/plans/{plan_id}/activation-receipt", dependencies=[Depends(require_permission("priceops", Action.VIEW, engine=authz_engine))])
+        @router.get("/plans/{plan_id}/activation-receipt", dependencies=[Depends(require_plan_permission(Action.VIEW))])
         def get_activation_receipt(
             plan_id: str,
             request: Request,
@@ -986,12 +1295,12 @@ else:
         return audit_log.record(
             AuditEvent(
                 event_type=event_type,
-                actor="system",
+                actor=request.state.operator_principal.subject_id,
                 action=action,
                 resource=resource,
                 outcome="accepted",
                 correlation_id=request.state.correlation_id,
-                metadata=metadata,
+                metadata={**metadata, "tenant_id": request.state.operator_principal.tenant_id},
             )
         )
 
@@ -1015,13 +1324,11 @@ else:
     ) -> dict[str, Any]:
         """Run a creation under the idempotency policy and mark the replay.
 
-        The whole operation -- resolve, create, audit -- runs inside
-        the durable command receipt store so reservation and replay are covered
-        by one
-        lock. Looking up first and remembering afterwards leaves a
-        check-then-act window: these sync handlers run concurrently in the
-        threadpool, so N same-key POSTs all miss the lookup and all create,
-        returning N distinct ids and N ``created: true`` responses.
+        The receipt store reserves the key before executing and returns the
+        recorded response on replay. Durable PriceOps binds the entire run to
+        its same-engine transaction; process-local PoC keeps its reservation
+        policy. A separate lookup followed by a write would leave concurrent
+        requests free to create multiple plans for the same intent.
         """
         try:
             outcome = command_store.run(
@@ -1072,7 +1379,59 @@ else:
         transition happened again.
         """
 
+        principal = getattr(request.state, "operator_principal", None)
+        if principal is None or not principal.authenticated:
+            raise HTTPException(status_code=403, detail="verified principal required")
+        if hasattr(body, "actor"):
+            body.actor = principal.subject_id
+        if hasattr(body, "actor_id"):
+            body.actor_id = principal.subject_id
+        if hasattr(body, "executor"):
+            body.executor = principal.subject_id
+
+        def require_activation_flag() -> None:
+            # This key controls price go-live, not every EXECUTE permission.
+            # Read the same actual app owner as admin/API/queue composition.
+            from apps.api.oday_api.security.dependencies import require_feature_flag
+
+            if command_store is not None and command_store.is_durable:
+                from shared.infrastructure.persistence.feature_flags import (
+                    FeatureFlagStoreUnavailable,
+                    require_durable_flag_owner,
+                )
+
+                app = request.scope.get("app")
+                owner = getattr(getattr(app, "state", None), "feature_flag_registry", None)
+                try:
+                    queue = command_store.queue
+                    require_durable_flag_owner(owner, queue._engine, queue=queue)
+                except FeatureFlagStoreUnavailable as exc:
+                    raise HTTPException(status_code=503, detail="FEATURE_FLAG_STORE_UNAVAILABLE") from exc
+            require_feature_flag("high_risk.priceops.execute")(request)
+
+        activation = event_type == "priceops.activated.v1"
+        if activation and (command_store is None or not command_store.is_durable):
+            # Process-local receipt stores have no transaction rollback. Refuse
+            # before reserving any receipt; this is not a local-mode exemption.
+            require_activation_flag()
+
         def _execute() -> dict[str, Any]:
+            if activation:
+                # Durable command_store.run has already checked/replayed a
+                # committed key and revalidated locked tenant/object ownership.
+                # New refusal rolls back reservation before any domain/audit/job
+                # success. Replay remains a read of the prior committed result.
+                require_activation_flag()
+            approving = (
+                event_type in {"priceops.approved.v1", "priceops.decision_written_back.v1"}
+                and normalize_approval_decision(getattr(body, "decision", "")) == "approved"
+            )
+            exploring = event_type == "priceops.optimized.v1" and bool(getattr(body, "exploration_gate_id", None))
+            if approving or exploring or event_type == "priceops.activated.v1":
+                _require_durable_audit_capacity(
+                    command_store, audit_log, tenant_id or "__local__",
+                    production_required=getattr(request.state, "priceops_production_required", False),
+                )
             try:
                 result = action()
             except PlanNotFoundError as exc:
@@ -1097,6 +1456,8 @@ else:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                 ) from exc
+            except PriceOpsMissingSourceLineageError as exc:
+                raise _missing_source_lineage_error() from exc
             except RuntimeError as exc:
                 correlation_id = getattr(request.state, "correlation_id", None) or "unknown"
                 logger.exception(
@@ -1109,15 +1470,24 @@ else:
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail=f"PriceOps plan transition failed; correlation_id={correlation_id}",
                 ) from exc
+            payload = result.to_dict()
             audit_event = _record_audit(
                 audit_log,
                 request,
                 event_type,
                 audit_action,
                 f"priceops/plans/{plan_id}",
-                {"plan_id": plan_id},
+                {"plan_id": plan_id, **{
+                    key: payload.get("solver_metadata", {})[key]
+                    for key in ("gate_id", "decision_policy_version_id", "exploration_decision_ids", "exploration_budget_consumed")
+                    if key in payload.get("solver_metadata", {})
+                }, **{
+                    key: payload[key] for key in (
+                        "decision_id", "scenario_id", "selected_scenario_id",
+                        "reason", "policy_version", "solver_version",
+                    ) if key in payload
+                }},
             )
-            payload = result.to_dict()
             payload["audit_event_id"] = audit_event.event_id
             payload["correlation_id"] = request.state.correlation_id
             return payload
@@ -1151,7 +1521,40 @@ else:
             raise _persistence_error(exc) from exc
         return apply_replay_marker(outcome.value, replayed=outcome.replayed)
 
+    def _missing_source_lineage_error() -> ApiError:
+        return ApiError(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "價格輸入來源尚未備妥，無法執行正式最佳化。",
+            code=ErrorCode.UNPROCESSABLE,
+            next_action="請先確認價格資料的可追溯來源已備妥，再重試最佳化。",
+        )
+
     _durable_store_required = durable_store_required
+
+    def _require_durable_audit_capacity(
+        command_store: TenantScopedCommandReceiptStore | None,
+        audit_log: Any,
+        tenant_id: str,
+        *,
+        production_required: bool = False,
+    ) -> None:
+        if command_store is None or not command_store.is_durable:
+            return
+        sink = getattr(audit_log, "_worm_sink", None)
+        if sink is None and not production_required:
+            return
+        try:
+            DurableAuditBacklog(
+                command_store.queue._engine, getattr(sink, "sink_id", None),
+            ).require_available(tenant_id)
+            if sink is None:
+                raise AuditBacklogUnavailable("Production pricing requires its external audit sink")
+        except (AuditBacklogBlocked, AuditBacklogUnavailable) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "BACKPRESSURE_ACTIVE", "message": "Audit delivery must recover before this pricing command"},
+                headers={"Retry-After": "30"},
+            ) from exc
 
     def _incomplete_receipt_error(
         exc: CommandReceiptIncompleteError,

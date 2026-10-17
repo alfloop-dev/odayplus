@@ -47,6 +47,18 @@ export type AVMCasePayload = {
   working_capital?: number;
 };
 
+/** AVMCommand */
+export type AVMCommand = {
+  expectedVersion: string;
+  reason: string;
+  reservePrice?: number | null;
+};
+
+/** AVMCreateCommand */
+export type AVMCreateCommand = {
+  valuationInput: Record<string, unknown>;
+};
+
 /** AcquisitionGapPayload */
 export type AcquisitionGapPayload = {
   current_uncertainty_pct?: number;
@@ -68,6 +80,10 @@ export type AcquisitionGapPayload = {
 export type ActionPayload = {
   action_spec?: Record<string, unknown>;
   actor: string;
+  command_context?: LifecycleCommandContext | null;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
+  expected_version?: unknown;
 };
 
 /** ActorPayload */
@@ -115,6 +131,9 @@ export type AddressRollbackPayload = {
 export type AdjustPayload = {
   action_spec?: Record<string, unknown> | null;
   actor: string;
+  command_context?: LifecycleCommandContext | null;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
   expected_outcome?: string | null;
   expected_version?: number | null;
   planned_end?: string | null;
@@ -165,15 +184,74 @@ export type ApprovalDecisionResponse = {
   newStatus: string;
 };
 
+/** ApprovalReadContext */
+export type ApprovalReadContext = {
+  actor_subject_id: string;
+  intervention_id: string;
+  policy_version: string;
+  schema_version: number;
+  snapshot_sha256: string;
+  store_id: string;
+  tenant_id: string;
+  version: number;
+};
+
 /** ApproveFlagPayload */
 export type ApproveFlagPayload = {
-  approver: string;
+  approver?: string | null;
+  reason: string;
+  riskAcknowledged: boolean;
+};
+
+/** AreaPlanningDraftCommandResponse */
+export type AreaPlanningDraftCommandResponse = {
+  auditEventIds: string[];
+  draft: AreaPlanningDraftResponse;
+  receiptId: string;
+  replayed: boolean;
+};
+
+/** AreaPlanningDraftInput */
+export type AreaPlanningDraftInput = {
+  budget?: number | null;
+  candidateIds?: string[];
+  expectedVersion?: number | null;
+  heatZoneId: string;
+  name: string;
+  quarter?: string | null;
+};
+
+/** AreaPlanningDraftListResponse */
+export type AreaPlanningDraftListResponse = {
+  heatZoneId: string;
+  items: AreaPlanningDraftResponse[];
+};
+
+/** AreaPlanningDraftResponse */
+export type AreaPlanningDraftResponse = {
+  budget: number | null;
+  candidateIds: string[];
+  createdAt: string;
+  createdBy: string;
+  draftId: string;
+  heatZoneId: string;
+  materializedBy: string | null;
+  name: string;
+  nativeScenarioId: string | null;
+  quarter: string | null;
+  status: "DRAFT" | "MATERIALIZED";
+  tenantId: string;
+  updatedAt: string;
+  version: number;
 };
 
 /** AssignPayload */
 export type AssignPayload = {
   actor: string;
   assignee: string;
+  command_context?: LifecycleCommandContext | null;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
   expected_version?: number | null;
   role?: string | null;
 };
@@ -197,6 +275,9 @@ export type AssignmentRequest = {
   reason: string;
 };
 
+/** AssignmentState */
+export type AssignmentState = "UNASSIGNED" | "ASSIGNED" | "CLAIMED" | "TRANSFERRED" | "ESCALATED" | "COMPLETED";
+
 /** AssignmentStatus */
 export type AssignmentStatus = "ASSIGNED" | "CLAIMED" | "TRANSFERRED" | "ESCALATED" | "COMPLETED";
 
@@ -207,6 +288,20 @@ export type AssignmentTransferRequest = {
   reason: string;
   target_owner_role: string;
   target_owner_subject_id: string;
+};
+
+/** AssignmentTransferTarget */
+export type AssignmentTransferTarget = {
+  display_name: string;
+  owner_role: string;
+  subject_id: string;
+};
+
+/** AssignmentTransferTargetPage */
+export type AssignmentTransferTargetPage = {
+  assignment_id: string;
+  assignment_version: number;
+  items: AssignmentTransferTarget[];
 };
 
 /** Write body for POST /operator/store-ops/issues/{issue_id}/attachments. */
@@ -273,6 +368,45 @@ export type BatchSiteContextPayload = {
   site_ids: string[];
 };
 
+/** BoundReviewDecisionPayload */
+export type BoundReviewDecisionPayload = {
+  conditions?: string;
+  decision: string;
+  expectedActorSubjectId: string;
+  expectedApprovalId: string;
+  expectedCandidateDigest: string;
+  expectedCandidateId: string;
+  expectedDecisionVersion: number;
+  expectedReportId: string;
+  expectedReportVersion: number;
+  expectedTenantId: string;
+  overrideAck?: boolean;
+  reason: string;
+  requiredData?: string[];
+};
+
+/** CampaignBudgetProposalPayload */
+export type CampaignBudgetProposalPayload = {
+  budget_amount: string;
+  budget_currency: string;
+  declared_data_version: string;
+  reason: string;
+};
+
+/** CampaignCreatePayload */
+export type CampaignCreatePayload = {
+  budget_amount: string;
+  budget_currency: string;
+  channel: string;
+  creative_reference?: string | null;
+  declared_data_version: string;
+  name: string;
+  period_end: string;
+  period_start: string;
+  reason: string;
+  treatment_store_ids: string[];
+};
+
 /** CandidateDisposition */
 export type CandidateDisposition = "KEEP_HISTORICAL" | "REASSIGN" | "REQUIRE_REVIEW";
 
@@ -283,10 +417,43 @@ export type CandidateReassignment = {
   target_property_id?: string | null;
 };
 
+/** Selectors only; identity/classification/retention come from owners. */
+export type CanonicalEvidenceExportPayload = {
+  decision_id: string;
+  expected_decision_version: number;
+  expected_document_sha256?: string | null;
+  format?: "json";
+  from_time: string;
+  program_label?: string | null;
+  reason: string;
+  sections: ("decision_log" | "audit")[];
+  to_time: string;
+};
+
+/** CanonicalForecastMonitoringPayload */
+export type CanonicalForecastMonitoringPayload = {
+  current_ids: string[];
+  horizon_days: number;
+  reference_ids: string[];
+  store_id: string;
+};
+
+/** ChangeFieldAssignment */
+export type ChangeFieldAssignment = {
+  assignedTo?: string | null;
+  expectedRevision: number;
+  expiresAt?: string | null;
+  reason: string;
+};
+
 /** ClosePayload */
 export type ClosePayload = {
   actor: string;
+  command_context?: LifecycleCommandContext | null;
   disposition: string;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
+  expected_version?: unknown;
   follow_up?: boolean;
   follow_up_kind?: string | null;
   reason?: string;
@@ -405,6 +572,15 @@ export type CreateActionPayload = {
   targetLift: number;
 };
 
+/** CreateFieldAssignment */
+export type CreateFieldAssignment = {
+  assignedTo: string;
+  expiresAt: string;
+  reason: string;
+  targetId: string;
+  targetKind: "CANDIDATE_SITE" | "HEAT_ZONE";
+};
+
 /** DataRoomExportPayload */
 export type DataRoomExportPayload = {
   actor: string;
@@ -466,13 +642,19 @@ export type DqTriagePayload = {
 /** EligibilityPayload */
 export type EligibilityPayload = {
   actor: string;
+  command_context?: LifecycleCommandContext | null;
   eligible: boolean;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
+  expected_version?: unknown;
   reasons?: string[];
 };
 
 /** EnableFlagPayload */
 export type EnableFlagPayload = {
   approvals?: string[];
+  reason: string;
+  riskAcknowledged: boolean;
 };
 
 /** The single error contract for every endpoint. */
@@ -504,6 +686,10 @@ export type ErrorResponse = {
 /** EvaluatePayload */
 export type EvaluatePayload = {
   actor: string;
+  command_context?: LifecycleCommandContext | null;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
+  expected_version?: unknown;
   now?: string | null;
   replicated?: boolean;
 };
@@ -596,8 +782,12 @@ export type EvidenceRetentionPurgePayload = {
 
 /** ExecutePayload */
 export type ExecutePayload = {
+  command_context?: LifecycleCommandContext | null;
   executed_at?: string | null;
   executor: string;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
+  expected_version?: unknown;
 };
 
 /** ExportPayload */
@@ -642,6 +832,12 @@ export type FinanceApprovalPayload = {
   actor: string;
   reason?: string;
   reserve_price?: number | null;
+};
+
+/** FlagCommandProof */
+export type FlagCommandProof = {
+  reason: string;
+  riskAcknowledged: boolean;
 };
 
 /** ForecastOpsAlertAcknowledgePayload */
@@ -742,6 +938,15 @@ export type HeatZoneAbsorptionOutcomePayload = {
   period_end: string;
   period_start: string;
   store_ids: string[];
+};
+
+/** HeatZoneAvailabilityReadResponse */
+export type HeatZoneAvailabilityReadResponse = {
+  code?: string | null;
+  count?: number | null;
+  message?: string | null;
+  source: "canonical-heatzone";
+  state: "available" | "unavailable";
 };
 
 /** Request to evaluate merge/split for the caller's tenant.
@@ -1000,10 +1205,74 @@ export type JobRetryPayload = {
 /** JobStatus */
 export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "PARTIAL";
 
+/** LifecycleCommandContext */
+export type LifecycleCommandContext = {
+  actor_subject_id: string;
+  cohort_sha256?: string | null;
+  command: string;
+  intervention_id: string;
+  policy_version: string;
+  schema_version: number;
+  snapshot_sha256: string;
+  store_id: string;
+  tenant_id: string;
+  version: number;
+};
+
 /** ListingImportPayload */
 export type ListingImportPayload = {
   records?: Record<string, unknown>[];
   source_id?: string | null;
+};
+
+/** ListingQueryResponse */
+export type ListingQueryResponse = {
+  groundFloorOnly: boolean;
+  heatZoneId: string;
+  kind: "listing-search.v1";
+  maxAreaPing: number | null;
+  maxRentPerMonth: number | null;
+  minAreaPing: number | null;
+};
+
+/** ListingSearchCommandResponse */
+export type ListingSearchCommandResponse = {
+  auditEventIds: string[];
+  receiptId: string;
+  replayed: boolean;
+  search: PersonalListingSearchResponse;
+};
+
+/** ListingSearchDeleteInput */
+export type ListingSearchDeleteInput = {
+  expectedVersion: number;
+};
+
+/** ListingSearchInput */
+export type ListingSearchInput = {
+  expectedVersion?: number | null;
+  name: string;
+  query: Record<string, unknown>;
+};
+
+/** ListingSearchListResponse */
+export type ListingSearchListResponse = {
+  heatZoneId: string;
+  items: PersonalListingSearchResponse[];
+};
+
+/** ListingSearchMatchResponse */
+export type ListingSearchMatchResponse = {
+  intakeId: string;
+  intakeVersion: number;
+  recordedAt: string;
+};
+
+/** ListingSearchResultsResponse */
+export type ListingSearchResultsResponse = {
+  items: ListingSearchMatchResponse[];
+  search: PersonalListingSearchResponse;
+  total: number;
 };
 
 /** ManualIntakeRow */
@@ -1174,14 +1443,36 @@ export type NetworkListingActorPayload = {
   reason?: string | null;
 };
 
+/** NetworkListingArchivePayload */
+export type NetworkListingArchivePayload = {
+  actorName?: string | null;
+  actorRoleId?: string;
+  expectedActorSubjectId?: string | null;
+  reason?: string | null;
+};
+
 /** NetworkListingMergePayload */
 export type NetworkListingMergePayload = {
   actorName?: string | null;
   actorRoleId?: string;
+  expectedActorSubjectId?: string | null;
   reason?: string | null;
   riskAcknowledged?: boolean;
   riskSummary?: string | null;
+  targetIfMatch?: string | null;
   targetListingId: string;
+};
+
+/** Narrow read contract preserving the existing authorized snapshot fields. */
+export type NetworkListingRadarReadResponse = {
+  heatZoneAvailability?: HeatZoneAvailabilityReadResponse | null;
+  listings: NetworkListingReadResponse[];
+};
+
+/** The recorded hard-rule verdict; other authorized listing fields survive. */
+export type NetworkListingReadResponse = {
+  /** Recorded hard-rule failures. Null or absent means unmeasured, not passed. An empty array means a recorded check found no failures; a nonempty array names recorded failures. This field alone does not authorize promotion. */
+  hardRuleFailures?: string[] | null;
 };
 
 /** NetworkRebalanceCounts */
@@ -1240,6 +1531,12 @@ export type NetworkRebalanceSnapshotResponse = {
 export type NetworkScoringActorPayload = {
   actorName?: string | null;
   actorRoleId?: string;
+  expectedActorSubjectId?: string | null;
+  expectedJobVersion?: number | null;
+  expectedReportId?: string | null;
+  expectedReportVersion?: number | null;
+  expectedTenantId?: string | null;
+  reason?: string | null;
 };
 
 /** NetworkScoringBatchPayload */
@@ -1247,6 +1544,12 @@ export type NetworkScoringBatchPayload = {
   actorName?: string | null;
   actorRoleId?: string;
   candidateIds?: string[] | null;
+  expectedActorSubjectId?: string | null;
+  expectedJobVersion?: number | null;
+  expectedReportId?: string | null;
+  expectedReportVersion?: number | null;
+  expectedTenantId?: string | null;
+  reason?: string | null;
 };
 
 /** NetworkScoringComparePayload */
@@ -1254,6 +1557,12 @@ export type NetworkScoringComparePayload = {
   actorName?: string | null;
   actorRoleId?: string;
   candidateIds: string[];
+  expectedActorSubjectId?: string | null;
+  expectedJobVersion?: number | null;
+  expectedReportId?: string | null;
+  expectedReportVersion?: number | null;
+  expectedTenantId?: string | null;
+  reason?: string | null;
 };
 
 /** Per-role notification delivery preferences. */
@@ -1279,7 +1588,27 @@ export type OpenCasePayload = {
 /** OpenDecisionPayload */
 export type OpenDecisionPayload = {
   created_by: string;
+  expected_actor_subject_id?: string | null;
+  expected_tenant_id?: string | null;
   report_id: string;
+  reviewer_group_id?: string | null;
+  submission_summary?: string | null;
+};
+
+/** PersonalListingSearchResponse */
+export type PersonalListingSearchResponse = {
+  created_at: string;
+  deleted_at: string | null;
+  name: string;
+  owner_subject_id: string;
+  query: ListingQueryResponse;
+  resource: "intake";
+  saved_view_id: string;
+  shared_role: null;
+  tenant_id: string;
+  updated_at: string | null;
+  version: number;
+  visibility: "PRIVATE";
 };
 
 /** PlaceHoldPayload */
@@ -1450,6 +1779,8 @@ export type PromotionDecisionReceipt = {
   reviewer_subject_id?: string | null;
   site_score_job_id?: string | null;
   status: PromotionStatus;
+  /** Target code persisted with this decision, verbatim; null for historical receipts without one. */
+  target_format_code?: string | null;
   version: number;
 };
 
@@ -1595,6 +1926,8 @@ export type RegisterFlagPayload = {
   key: string;
   owner: string;
   readiness?: string;
+  reason: string;
+  riskAcknowledged: boolean;
 };
 
 /** ReleaseHoldPayload */
@@ -1666,6 +1999,23 @@ export type ReviewDecisionRequest = {
   risk_acknowledged?: boolean;
 };
 
+/** ReviewSubmissionPayload */
+export type ReviewSubmissionPayload = {
+  decisionId: string | null;
+  expectedActorSubjectId: string;
+  expectedCandidateDigest: string;
+  expectedCandidateReviewId: string | null;
+  expectedCandidateState: string;
+  expectedDecisionVersion?: number | null;
+  expectedLatestReportId: string;
+  expectedLatestReportVersion: number;
+  expectedReportId: string;
+  expectedReportVersion: number;
+  expectedTenantId: string;
+  reviewerGroupId: string;
+  submissionSummary: string;
+};
+
 /** RiskReasonCommand */
 export type RiskReasonCommand = {
   incident_or_change_id?: string | null;
@@ -1681,6 +2031,10 @@ export type RoleWorkspacesRequest = {
 /** RollbackPayload */
 export type RollbackPayload = {
   actor: string;
+  command_context?: LifecycleCommandContext | null;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
+  expected_version?: unknown;
   reason: string;
 };
 
@@ -1738,6 +2092,15 @@ export type ScopePayload = {
   region_ids?: string[];
   store_ids?: string[];
   tenant_id?: string;
+};
+
+/** ScoreExecutionRetryPayload */
+export type ScoreExecutionRetryPayload = {
+  expectedActorSubjectId?: string | null;
+  expectedJobVersion: number;
+  expectedTenantId?: string | null;
+  expectedVersion: number;
+  reason: string;
 };
 
 /** SegmentMetricPayload */
@@ -1817,6 +2180,10 @@ export type SplitRequest = {
 /** StopPayload */
 export type StopPayload = {
   actor: string;
+  command_context?: LifecycleCommandContext | null;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
+  expected_version?: unknown;
   reason: string;
 };
 
@@ -1845,6 +2212,26 @@ export type StoreOpsTransitionPayload = {
   payload?: Record<string, unknown>;
   storeId?: string | null;
   storeName?: string | null;
+};
+
+/** SubmitFieldEvidence */
+export type SubmitFieldEvidence = {
+  attributes?: Record<string, unknown>;
+  confidence?: number | null;
+  expectedRevision: number;
+  location: SurveyLocationPayload;
+  mediaIds?: string[];
+  reason: string;
+  surveyedAt: string;
+};
+
+/** SurveyLocationPayload */
+export type SurveyLocationPayload = {
+  address?: string | null;
+  h3_index?: string | null;
+  latitude: number;
+  longitude: number;
+  srid?: number;
 };
 
 /** Assign a Task Center task to a role/subject. */
@@ -1892,6 +2279,9 @@ export type TransitionReceipt = {
 /** UnassignPayload */
 export type UnassignPayload = {
   actor: string;
+  command_context?: LifecycleCommandContext | null;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
   expected_version?: number | null;
 };
 
@@ -1901,6 +2291,17 @@ export type UnmergeRequest = {
   reason: string;
   replacement_edges: IdentityPartition[];
   risk_acknowledged: true;
+};
+
+/** UploadFieldAttachment */
+export type UploadFieldAttachment = {
+  caption?: string | null;
+  capturedAt: string;
+  contentType: string;
+  dataBase64: string;
+  expectedRevision: number;
+  mediaKind: "PHOTO" | "VIDEO" | "AUDIO" | "DOCUMENT" | "SIGNATURE" | "OTHER";
+  reason: string;
 };
 
 /** UrlIntakeRequest */
@@ -1991,22 +2392,34 @@ export type XlsxPreviewResponse = {
 export type apps__api__app__routes__interventions__ConflictCheckPayload = {
   actor: string;
   allow_overlap?: boolean;
+  command_context?: LifecycleCommandContext | null;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
+  expected_version?: unknown;
   reason?: string;
 };
 
 /** DecisionPayload */
 export type apps__api__app__routes__interventions__DecisionPayload = {
   action: string;
-  actor: string;
+  actor?: string | null;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
+  expected_version?: number | null;
   reason?: string;
+  review_context?: ApprovalReadContext | null;
 };
 
 /** OutcomePayload */
 export type apps__api__app__routes__interventions__OutcomePayload = {
   actor: string;
   ad_spend?: number;
+  command_context?: LifecycleCommandContext | null;
   control_store_count?: number;
   evaluation_method?: string;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
+  expected_version?: unknown;
   has_control_group?: boolean;
   incremental_gross_margin?: number;
   incremental_revenue?: number;
@@ -2019,6 +2432,10 @@ export type apps__api__app__routes__interventions__OutcomePayload = {
 /** SubmitPayload */
 export type apps__api__app__routes__interventions__SubmitPayload = {
   actor: string;
+  command_context?: LifecycleCommandContext | null;
+  expectedActorSubjectId?: string | null;
+  expectedTenantId?: string | null;
+  expected_version?: unknown;
 };
 
 /** POST /operator/governance/decisions — approve / return / reject. */
@@ -2061,6 +2478,9 @@ export type apps__api__app__routes__operator_modules__growth__SubmitPayload = {
 export type apps__api__app__routes__sitescore__DecisionPayload = {
   action: string;
   actor: string;
+  expected_actor_subject_id?: string | null;
+  expected_tenant_id?: string | null;
+  expected_version?: number | null;
   reason?: string;
 };
 
@@ -2068,6 +2488,9 @@ export type apps__api__app__routes__sitescore__DecisionPayload = {
 
 /** Every versioned operation the API serves, and its methods. */
 export const API_PATHS = {
+  "/api/v1/adlift/campaigns": ["POST"],
+  "/api/v1/adlift/campaigns/{campaign_id}": ["GET"],
+  "/api/v1/adlift/campaigns/{campaign_id}/budget-revisions": ["POST"],
   "/api/v1/adlift/incrementality-jobs": ["POST"],
   "/api/v1/adlift/incrementality-jobs/{job_id}": ["GET"],
   "/api/v1/adlift/reports": ["GET"],
@@ -2080,13 +2503,17 @@ export const API_PATHS = {
   "/api/v1/assignments/{assignment_id}/actions/claim": ["POST"],
   "/api/v1/assignments/{assignment_id}/actions/complete": ["POST"],
   "/api/v1/assignments/{assignment_id}/actions/transfer": ["POST"],
+  "/api/v1/assignments/{assignment_id}/transfer-targets": ["GET"],
   "/api/v1/audit/events": ["GET"],
   "/api/v1/audit/evidence/export": ["POST"],
   "/api/v1/audit/evidence/exports": ["GET"],
   "/api/v1/audit/evidence/exports/{export_id}": ["GET"],
+  "/api/v1/audit/evidence/exports/{export_id}/download": ["GET"],
   "/api/v1/audit/evidence/exports/{export_id}/legal-hold": ["POST"],
+  "/api/v1/audit/evidence/preview": ["POST"],
   "/api/v1/audit/evidence/retention/expired": ["GET"],
   "/api/v1/audit/evidence/retention/purge": ["POST"],
+  "/api/v1/audit/evidence/sources": ["GET"],
   "/api/v1/auth/invitations/accept": ["POST"],
   "/api/v1/auth/principal": ["GET"],
   "/api/v1/avm/calibration": ["POST"],
@@ -2167,6 +2594,7 @@ export const API_PATHS = {
   "/api/v1/interventions/{intervention_id}/approve": ["POST"],
   "/api/v1/interventions/{intervention_id}/assign": ["POST"],
   "/api/v1/interventions/{intervention_id}/close": ["POST"],
+  "/api/v1/interventions/{intervention_id}/command-context": ["GET"],
   "/api/v1/interventions/{intervention_id}/conflict-check": ["POST"],
   "/api/v1/interventions/{intervention_id}/eligibility": ["POST"],
   "/api/v1/interventions/{intervention_id}/evaluate": ["POST"],
@@ -2192,6 +2620,7 @@ export const API_PATHS = {
   "/api/v1/learninghub/oss-capabilities": ["GET"],
   "/api/v1/learninghub/releases": ["GET", "POST"],
   "/api/v1/learninghub/releases/{release_id}/monitor": ["POST"],
+  "/api/v1/learninghub/releases/{release_id}/monitoring": ["GET", "POST"],
   "/api/v1/listings/addresses/{address_id}": ["GET"],
   "/api/v1/listings/addresses/{address_id}/corrections": ["GET", "POST"],
   "/api/v1/listings/addresses/{address_id}/corrections/{correction_id}/rollback": ["POST"],
@@ -2212,6 +2641,14 @@ export const API_PATHS = {
   "/api/v1/market-intelligence/health": ["GET"],
   "/api/v1/market-intelligence/sites/context/batch": ["POST"],
   "/api/v1/market-intelligence/sites/{site_id}/context": ["GET"],
+  "/api/v1/market-survey/assignees": ["GET"],
+  "/api/v1/market-survey/assignments": ["GET", "POST"],
+  "/api/v1/market-survey/assignments/{assignment_id}": ["GET"],
+  "/api/v1/market-survey/assignments/{assignment_id}/attachments": ["GET", "POST"],
+  "/api/v1/market-survey/assignments/{assignment_id}/attachments/{media_id}/content": ["GET"],
+  "/api/v1/market-survey/assignments/{assignment_id}/evidence": ["GET"],
+  "/api/v1/market-survey/assignments/{assignment_id}/submit": ["POST"],
+  "/api/v1/market-survey/assignments/{assignment_id}/{operation}": ["POST"],
   "/api/v1/match-cases/{match_case_id}/decisions": ["POST"],
   "/api/v1/netplan/scenarios": ["GET", "POST"],
   "/api/v1/netplan/scenarios/{scenario_id}": ["GET", "PUT"],
@@ -2223,6 +2660,17 @@ export const API_PATHS = {
   "/api/v1/netplan/scenarios/{scenario_id}/submit": ["POST"],
   "/api/v1/operator/approvals": ["GET"],
   "/api/v1/operator/approvals/{approval_id}/decision": ["POST"],
+  "/api/v1/operator/area-planning-drafts": ["GET", "POST"],
+  "/api/v1/operator/area-planning-drafts/{identity}": ["GET", "PUT"],
+  "/api/v1/operator/avm/cases": ["GET", "POST"],
+  "/api/v1/operator/avm/cases/{case_id}": ["GET"],
+  "/api/v1/operator/avm/cases/{case_id}/dataroom": ["POST"],
+  "/api/v1/operator/avm/cases/{case_id}/dataroom/exports": ["POST"],
+  "/api/v1/operator/avm/cases/{case_id}/dataroom/exports/{export_id}": ["GET"],
+  "/api/v1/operator/avm/cases/{case_id}/finance-approval": ["POST"],
+  "/api/v1/operator/avm/cases/{case_id}/normalize": ["POST"],
+  "/api/v1/operator/avm/cases/{case_id}/value": ["POST"],
+  "/api/v1/operator/avm/context": ["GET"],
   "/api/v1/operator/bootstrap": ["GET"],
   "/api/v1/operator/comments": ["GET", "POST"],
   "/api/v1/operator/comments/{comment_id}": ["PATCH"],
@@ -2259,6 +2707,9 @@ export const API_PATHS = {
   "/api/v1/operator/network-listings/listings/{listing_id}/convert": ["POST"],
   "/api/v1/operator/network-listings/listings/{listing_id}/merge": ["POST"],
   "/api/v1/operator/network-listings/reset": ["POST"],
+  "/api/v1/operator/network-listings/searches": ["GET", "POST"],
+  "/api/v1/operator/network-listings/searches/{identity}": ["DELETE", "GET", "PUT"],
+  "/api/v1/operator/network-listings/searches/{identity}/results": ["GET"],
   "/api/v1/operator/network-rebalance": ["GET"],
   "/api/v1/operator/network-rebalance/": ["GET"],
   "/api/v1/operator/network-rebalance/reset": ["POST"],
@@ -2269,12 +2720,19 @@ export const API_PATHS = {
   "/api/v1/operator/network-rebalance/stores/{store_id}/submit-review": ["POST"],
   "/api/v1/operator/network-reviews": ["GET"],
   "/api/v1/operator/network-reviews/": ["GET"],
+  "/api/v1/operator/network-reviews/candidates/{candidate_id}/submission-context": ["GET"],
+  "/api/v1/operator/network-reviews/candidates/{candidate_id}/submit": ["POST"],
   "/api/v1/operator/network-reviews/reset": ["POST"],
   "/api/v1/operator/network-reviews/{review_id}/decide": ["POST"],
+  "/api/v1/operator/network-reviews/{review_id}/decision": ["POST"],
+  "/api/v1/operator/network-reviews/{review_id}/decision-context": ["GET"],
   "/api/v1/operator/network-scoring": ["GET"],
   "/api/v1/operator/network-scoring/": ["GET"],
+  "/api/v1/operator/network-scoring/candidates/{candidate_id}/execution-context": ["GET"],
   "/api/v1/operator/network-scoring/candidates/{candidate_id}/score": ["POST"],
   "/api/v1/operator/network-scoring/compare": ["POST"],
+  "/api/v1/operator/network-scoring/execution-requests/{request_id}": ["GET"],
+  "/api/v1/operator/network-scoring/execution-requests/{request_id}/retry": ["POST"],
   "/api/v1/operator/network-scoring/reset": ["POST"],
   "/api/v1/operator/network-scoring/score": ["POST"],
   "/api/v1/operator/privacy/export": ["POST"],
@@ -2290,6 +2748,7 @@ export const API_PATHS = {
   "/api/v1/operator/shell/franchisee": ["GET"],
   "/api/v1/operator/shell/franchisee/acknowledgement": ["POST"],
   "/api/v1/operator/shell/franchisee/reports": ["POST"],
+  "/api/v1/operator/shell/franchisee/reports/{report_id}": ["GET"],
   "/api/v1/operator/shell/home": ["GET"],
   "/api/v1/operator/shell/notifications": ["GET"],
   "/api/v1/operator/shell/notifications/preferences": ["GET", "PUT"],

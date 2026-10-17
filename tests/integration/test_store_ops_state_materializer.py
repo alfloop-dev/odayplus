@@ -1,16 +1,13 @@
-"""ODP-STOREOPS-STATE-MATERIALIZER-001: the production Store Ops state writer.
+"""Live Store Ops availability contracts and explicitly separate CAS engineering.
 
-On PostgreSQL ``DurableStoreOpsRepository.get_state`` fails closed until a
-tenant's Store Ops state document exists, and every Store Ops write reads that
-document first, so the materializer is the only path that can end the 503.
-These tests pin that it writes an honest projection (empty when there are no
-stores, never fixtures) into the tenant's own partition, is idempotent, never
-rolls back an interleaved operator write, leaves the fail-closed read semantics
-intact, and is scheduled + handled.
+Live nonempty issue workflows remain available with partial nullable health.
+Missing KPI sources are not healthy measurements. Empty stores stay empty.
+The live-path fixture is the original SQL-backed PostgreSQL-dialect unit double;
+it does not establish real PostgreSQL, canonical KPI or deployment acceptance.
 
-The document store is the production ``PostgresDocumentStore`` class over a
-SQLite engine that reports the PostgreSQL dialect, so the versioned
-compare-and-swap runs as real SQL against ``durable_documents``.
+Nonempty projection/CAS/typed-history assertions use an ordinary SQLite engine
+and the pure projector. Their results are not native PostgreSQL acceptance.
+No fixture source label or timestamp supplies a missing production owner.
 """
 
 from __future__ import annotations
@@ -52,13 +49,20 @@ from modules.opsboard.application.store_ops import (
 )
 from modules.opsboard.application.store_ops_materializer import (
     MATERIALIZED_AUDIT_ORDINAL_START,
+    StoreOpsMaterializationResult,
     empty_store_ops_state,
     materialize_store_ops_state,
+    project_store_ops_state,
 )
+from modules.opsboard.application.store_ops_scope import ScopedStoreOpsRepository, binding_hash
+from modules.opsboard.domain.store_ops_reviews import TriageRecord
 from shared.audit import InMemoryAuditLog
 from shared.domain.models import Store
+from shared.infrastructure.persistence.audit_log import DurableAuditLog
+from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.engine import SqliteEngine
 from shared.infrastructure.persistence.factory import build_persistence
+from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
 from shared.infrastructure.persistence.postgresql import PostgresDocumentStore
 from shared.jobs.queue import JobRecord, NonRetryableJobError
 
@@ -75,7 +79,25 @@ def _state_collection(tenant_id: str = TENANT_ID) -> str:
 
 
 class _PostgresDialectSqliteEngine(SqliteEngine):
+    """SQLite unit double; it does not verify PostgreSQL advisory exclusion."""
+
     dialect = "postgresql"
+
+    def __init__(self, path: Path) -> None:
+        self.advisory_calls: list[tuple[Any, ...]] = []
+        super().__init__(path)
+
+    def execute(self, sql: str, params: tuple = ()) -> Any:
+        if sql == "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))":
+            self.advisory_calls.append(params)
+            return super().execute("SELECT 1")
+        return super().execute(sql, params)
+
+    def query_one(self, sql: str, params: tuple = ()) -> Any:
+        if sql == "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))":
+            self.advisory_calls.append(params)
+            return super().query_one("SELECT 1")
+        return super().query_one(sql, params)
 
 
 class LivePostgresDocumentStore(PostgresDocumentStore):
@@ -87,7 +109,10 @@ class LivePostgresDocumentStore(PostgresDocumentStore):
 
     def __init__(self, path: Path) -> None:
         super().__init__(_PostgresDialectSqliteEngine(path))  # type: ignore[arg-type]
+        # Explicit canonical test owner, never reconstructed from the view document.
+        self.canonical_store_repository = FakeStoreRepository([])
         self.put_calls: list[str] = []
+        self.canonical_forecastops_repository = FakeForecastOpsRepository()
         self.fail_reads = False
         self.before_next_write: Callable[[], None] | None = None
 
@@ -123,25 +148,125 @@ def document_store(tmp_path: Path) -> LivePostgresDocumentStore:
     return LivePostgresDocumentStore(tmp_path / "store-ops.db")
 
 
+class EngineeringSqliteDocumentStore(SqliteDocumentStore):
+    """Ordinary SQLite with deterministic write hooks; never a live owner.
+
+    Only the CAS/projection engineering tests below use this fixture. Its
+    intermediate four-light values cannot satisfy the production read guard.
+    """
+
+    def __init__(self, path: Path) -> None:
+        super().__init__(SqliteEngine(path))
+        self.put_calls: list[str] = []
+        self.fail_reads = False
+        self.before_next_write: Callable[[], None] | None = None
+
+    def _check_read(self) -> None:
+        if self.fail_reads:
+            raise ConnectionError("sqlite test read unavailable")
+
+    def get(self, collection: str, doc_id: str) -> Any:
+        self._check_read()
+        return super().get(collection, doc_id)
+
+    def get_versioned(self, collection: str, doc_id: str) -> tuple[Any, int] | None:
+        self._check_read()
+        return super().get_versioned(collection, doc_id)
+
+    def compare_and_put(
+        self, collection: str, doc_id: str, obj: Any, *, expected_version: int | None
+    ) -> int | None:
+        hook, self.before_next_write = self.before_next_write, None
+        if hook is not None:
+            hook()
+        self.put_calls.append(collection)
+        return super().compare_and_put(
+            collection, doc_id, obj, expected_version=expected_version
+        )
+
+    def state(self, tenant_id: str = TENANT_ID) -> Any:
+        return super().get(_state_collection(tenant_id), STATE_DOC_ID)
+
+
+@pytest.fixture
+def engineering_document_store(tmp_path: Path) -> EngineeringSqliteDocumentStore:
+    return EngineeringSqliteDocumentStore(tmp_path / "engineering-cas.sqlite")
+
+
+def _project_and_cas_engineering(
+    document_store: EngineeringSqliteDocumentStore,
+    *,
+    stores: list[Store] | None = None,
+    alerts: dict[str, list[dict[str, Any]]] | None = None,
+    tenant_id: str = TENANT_ID,
+    store_repository: FakeStoreRepository | None = None,
+) -> StoreOpsMaterializationResult:
+    """Pure projection + actual SQLite CAS; explicitly not the live materializer.
+
+    The writer hook exercises the shared repository version boundary without
+    claiming that missing canonical staffing/margin data has become available.
+    """
+    repository = DurableStoreOpsRepository(document_store).for_tenant(tenant_id)
+    assert repository.is_live is False
+    canonical = store_repository or FakeStoreRepository(stores or [])
+    projected_stores = canonical.list_stores(tenant_id=tenant_id)
+    alerts_by_store = {
+        store.store_id: FakeForecastOpsRepository(alerts).list_alerts_by_store(tenant_id, store.store_id)
+        for store in projected_stores
+    }
+    for _attempt in range(8):
+        existing, version = repository.read_versioned_state()
+        state = project_store_ops_state(
+            stores=projected_stores, alerts_by_store=alerts_by_store, existing_state=existing
+        )
+        fields = {
+            "store_count": len(state["stores"]), "issue_count": len(state["issues"]),
+            "new_issue_count": len(state["issues"]) - len(existing.get("issues", [])) if existing else len(state["issues"]),
+        }
+        if existing is not None and state == existing:
+            return StoreOpsMaterializationResult(status="unchanged", reason="engineering-only", **fields)
+        if repository.compare_and_save_state(state, expected_version=version):
+            return StoreOpsMaterializationResult(status="written", reason="engineering-only", **fields)
+    raise StoreOpsConcurrentWriteConflict("Engineering projection CAS did not settle")
+
+
+def _engineering_service(
+    document_store: EngineeringSqliteDocumentStore, tenant_id: str = TENANT_ID
+) -> StoreOpsService:
+    repository = DurableStoreOpsRepository(document_store).for_tenant(tenant_id)
+    assert repository.is_live is False
+    return StoreOpsService(repository=repository, require_live_data=False)
+
+
 class FakeStoreRepository:
     def __init__(self, stores: list[Store]) -> None:
         self.stores = stores
         self.calls: list[str | None] = []
         self.on_list: Callable[[], None] | None = None
 
-    def list_stores(self, *, tenant_id: str | None = None, **_kwargs: Any) -> list[Store]:
+    def list_stores(
+        self, *, tenant_id: str | None = None, store_ids: tuple[str, ...] = (),
+        brand_ids: tuple[str, ...] = (), region_codes: tuple[str, ...] = (),
+    ) -> list[Store]:
         self.calls.append(tenant_id)
         hook, self.on_list = self.on_list, None
         if hook is not None:
             hook()
-        return [store for store in self.stores if store.tenant_id == tenant_id]
+        return [
+            store for store in self.stores if store.tenant_id == tenant_id
+            and (not store_ids or store.store_id in store_ids)
+            and (not brand_ids or store.brand_id in brand_ids)
+            and (not region_codes or store.region_code in region_codes)
+        ]
 
 
 class FakeForecastOpsRepository:
     def __init__(self, alerts: dict[str, list[dict[str, Any]]] | None = None) -> None:
         self.alerts = alerts or {}
+        self.calls: list[tuple[str, str]] = []
 
     def list_alerts_by_store(self, tenant_id: str, store_id: str) -> list[dict[str, Any]]:
+        self.calls.append((tenant_id, store_id))
         return [
             alert
             for alert in self.alerts.get(store_id, [])
@@ -183,9 +308,21 @@ def _materialize(
     tenant_id: str = TENANT_ID,
     store_repository: FakeStoreRepository | None = None,
 ):
+    canonical_stores = store_repository or FakeStoreRepository(stores or [])
+    # Retain the actual typed input masters independently of projected state.
+    # A later empty tenant materialization must not erase another tenant's owner.
+    known = {
+        (store.tenant_id, store.store_id): store
+        for store in document_store.canonical_store_repository.stores
+    }
+    known.update({
+        (store.tenant_id, store.store_id): store for store in getattr(canonical_stores, "stores", [])
+    })
+    document_store.canonical_store_repository.stores = list(known.values())
+    document_store.canonical_forecastops_repository.alerts = alerts or {}
     return materialize_store_ops_state(
         repository=DurableStoreOpsRepository(document_store),
-        store_repository=store_repository or FakeStoreRepository(stores or []),
+        store_repository=canonical_stores,
         forecastops_repository=FakeForecastOpsRepository(alerts),
         tenant_id=tenant_id,
     )
@@ -206,6 +343,9 @@ def _client(
     app.include_router(
         create_operator_store_ops_router(
             repository=DurableStoreOpsRepository(document_store),
+            store_repository=document_store.canonical_store_repository,
+            forecastops_repository=document_store.canonical_forecastops_repository,
+            audit_log=DurableAuditLog(document_store.engine),
             require_live_data=require_live_data,
         ),
         prefix="/api/v1",
@@ -219,6 +359,8 @@ def _service(
     return StoreOpsService(
         repository=DurableStoreOpsRepository(document_store).for_tenant(tenant_id),
         require_live_data=True,
+        forecastops_repository=document_store.canonical_forecastops_repository,
+        tenant_id=tenant_id,
     )
 
 
@@ -258,6 +400,10 @@ def test_empty_core_stores_writes_honest_empty_state_and_api_returns_200(documen
     assert summary.status_code == 200
     assert summary.json()["stores"] == []
     assert all(sum(row["counts"].values()) == 0 for row in summary.json()["fourLightSummary"])
+    assert summary.json()["healthAvailability"] == {
+        "state": "available", "complete": True, "totalCount": 0,
+        "coveredCount": 0, "unavailableCount": 0, "warningCount": 0,
+    }
     assert issues.status_code == 200
     assert issues.json()["issues"] == []
     assert issues.json()["count"] == 0
@@ -309,16 +455,16 @@ def test_projects_stores_four_lights_and_issues_without_fixture_ids(document_sto
     assert stores_by_id["store-a"]["district"] == "TPE-XINYI"
     assert stores_by_id["store-a"]["lights"] == {
         "demand": "red",
-        "operations": "red",
-        "staffing": "green",
-        "margin": "green",
+        "operations": None,
+        "staffing": None,
+        "margin": None,
     }
     assert stores_by_id["store-a"]["lightSources"]["staffing"] is None
     assert stores_by_id["store-a"]["lightSources"]["margin"] is None
-    assert stores_by_id["store-a"]["riskScore"] == 40
+    assert stores_by_id["store-a"]["riskScore"] is None
     assert stores_by_id["store-b"]["lights"]["demand"] == "yellow"
-    assert stores_by_id["store-b"]["lights"]["operations"] == "red"
-    assert stores_by_id["store-b"]["riskScore"] == 30
+    assert stores_by_id["store-b"]["lights"]["operations"] is None
+    assert stores_by_id["store-b"]["riskScore"] is None
 
     issues_by_id = {issue["id"]: issue for issue in state["issues"]}
     assert set(issues_by_id) == {"ISS-FC-alert-red", "ISS-FC-alert-orange"}
@@ -331,6 +477,7 @@ def test_projects_stores_four_lights_and_issues_without_fixture_ids(document_sto
     assert red_issue["evidenceIds"] == ["EV-FC-alert-red"]
     assert issues_by_id["ISS-FC-alert-orange"]["severity"] == "high"
     assert {item["issueId"] for item in state["evidence"]} == set(issues_by_id)
+    assert all(item["confidence"] is None for item in state["evidence"])
     assert state["nextAuditOrdinal"] == MATERIALIZED_AUDIT_ORDINAL_START
 
     with _client(document_store) as client:
@@ -340,6 +487,10 @@ def test_projects_stores_four_lights_and_issues_without_fixture_ids(document_sto
     assert summary.status_code == 200
     demand = next(row for row in summary.json()["fourLightSummary"] if row["dimension"] == "demand")
     assert demand["counts"] == {"green": 0, "yellow": 1, "red": 1}
+    assert summary.json()["healthAvailability"] == {
+        "state": "degraded", "complete": False, "totalCount": 2,
+        "coveredCount": 0, "unavailableCount": 2, "warningCount": 2,
+    }
     assert issues.status_code == 200
     assert issues.json()["count"] == 2
     _assert_no_fixture_ids(summary.text + issues.text)
@@ -517,9 +668,9 @@ def _production_client(
 ) -> TestClient:
     """Mount the router exactly as ``apps/api/oday_api/main.py`` does.
 
-    Production passes only the bundle repository and audit log; live mode comes
-    from the runtime environment, and the bundle repository is the unscoped
-    ``DurableStoreOpsRepository`` over ``PostgresDocumentStore``.
+    Inject the same canonical store and transactional audit capabilities as
+    the scoped router. This remains an explicit SQLite unit double, including
+    its advisory-call recorder; it is not native PostgreSQL acceptance.
     """
     monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
     app = FastAPI()
@@ -532,7 +683,9 @@ def _production_client(
     app.include_router(
         create_operator_store_ops_router(
             repository=DurableStoreOpsRepository(document_store),
-            audit_log=InMemoryAuditLog(),
+            store_repository=document_store.canonical_store_repository,
+            forecastops_repository=document_store.canonical_forecastops_repository,
+            audit_log=DurableAuditLog(document_store.engine),
         ),
         prefix="/api/v1",
     )
@@ -568,12 +721,12 @@ def test_tenants_never_see_or_overwrite_each_others_state(
         cross_write = client.post(
             f"{BASE}/store-ops/issues/ISS-FC-alert-a/triage",
             headers=_headers(OTHER_TENANT_ID),
-            json={"payload": {"severity": "low"}},
+            json={"severity": "low"},
         )
         own_write = client.post(
             f"{BASE}/store-ops/issues/ISS-FC-alert-a/triage",
             headers={**_headers(), "Idempotency-Key": "shared-key"},
-            json={"payload": {"severity": "high"}},
+            json={"severity": "high"},
         )
 
     assert other_before.status_code == 503
@@ -597,20 +750,25 @@ def test_tenants_never_see_or_overwrite_each_others_state(
     assert document_store.state(OTHER_TENANT_ID)["issues"] == []
     assert document_store.state(OTHER_TENANT_ID)["auditEvents"] == []
 
-    # Idempotency results are partitioned too: the same key in another tenant
-    # is not a replay of tenant A's transition.
+    # Use the actual subject/operation/key receipt namespace, then read the
+    # identical storage key in both tenants to verify tenant partitioning.
+    receipt_key = binding_hash([
+        _headers()["x-subject-id"], "store_ops.transition", "shared-key",
+    ])
     assert (
         DurableStoreOpsRepository(document_store)
         .for_tenant(OTHER_TENANT_ID)
-        .get_idempotency_result("shared-key")
+        .get_idempotency_result(receipt_key)
         is None
     )
     assert (
         DurableStoreOpsRepository(document_store)
         .for_tenant(TENANT_ID)
-        .get_idempotency_result("shared-key")
+        .get_idempotency_result(receipt_key)
         is not None
     )
+    # Nonempty tenant/operator/idempotency isolation remains covered by the
+    # explicit SQLite engineering interleavings and namespace control below.
 
 
 def test_production_never_reads_or_writes_an_unscoped_document(
@@ -802,4 +960,446 @@ def test_worker_handler_refuses_job_without_tenant(document_store: LivePostgresD
 
     with pytest.raises(NonRetryableJobError):
         handle_store_ops_materialize(job, _live_bundle(document_store, []))
+    assert document_store.put_calls == []
+
+
+# Scoped Operator writes must use the same SQL CAS as the recurring materializer.
+# These are explicitly the existing SQLite-backed document-store test fixture,
+# not evidence of a PostgreSQL deployment or a human review.
+def _scoped_engineering_service(
+    document_store: EngineeringSqliteDocumentStore,
+) -> tuple[StoreOpsService, ScopedStoreOpsRepository, InMemoryAuditLog]:
+    repository = ScopedStoreOpsRepository(
+        DurableStoreOpsRepository(TenantScopedDocumentStore(document_store, TENANT_ID)),
+        store_ids=frozenset({"store-a"}),
+        subject_id="synthetic-scoped-operator",
+        scope_hash=binding_hash({"tenantId": TENANT_ID, "storeIds": ["store-a"]}),
+        request_hash=binding_hash({"issueId": "ISS-FC-alert-red", "severity": "high"}),
+        operation="triage",
+    )
+    audit_log = InMemoryAuditLog()
+    return (
+        StoreOpsService(
+            repository=repository,
+            audit_log=audit_log,
+            require_live_data=False,
+            actor_subject_id="synthetic-scoped-operator",
+        ),
+        repository,
+        audit_log,
+    )
+
+
+def _assert_scoped_typed_triage(
+    state: dict[str, Any], *, source_updated_at: str
+) -> dict[str, Any]:
+    issue = next(row for row in state["issues"] if row["id"] == "ISS-FC-alert-red")
+    assert issue["status"] == "triaged"
+    assert issue["severity"] == "high"
+    assert len(issue["workflowRecords"]) == 1
+    record = TriageRecord.model_validate(issue["workflowRecords"][0]).model_dump(mode="json")
+    assert record["actorSubjectId"] == "synthetic-scoped-operator"
+    assert record["actorEvidence"] == "authenticated_principal"
+    assert record["sourceIssueUpdatedAt"] == source_updated_at
+    assert record["issueId"] == issue["id"]
+    assert record["storeId"] == "store-a"
+    assert record["evidenceIds"] == issue["evidenceIds"]
+    assert record["submission"]["severity"] == "high"
+    assert len(state["auditEvents"]) == 1
+    audit = state["auditEvents"][0]
+    assert audit["id"] == record["id"] == record["workflowAuditId"]
+    assert audit["action"] == "issue.triage"
+    assert audit["actorSubjectId"] == record["actorSubjectId"]
+    assert audit["metadata"]["reviewRecordHash"] == binding_hash(record)
+    assert state["nextAuditOrdinal"] == MATERIALIZED_AUDIT_ORDINAL_START + 1
+    return record
+
+
+def test_scoped_operator_cas_retry_preserves_materialized_new_issue_and_hidden_rows(
+    engineering_document_store: EngineeringSqliteDocumentStore,
+) -> None:
+    document_store = engineering_document_store
+    stores = [_store("store-a", "A"), _store("store-b", "B")]
+    alerts = {
+        "store-a": [_alert("alert-red", "store-a", "red")],
+        "store-b": [_alert("alert-hidden", "store-b", "yellow")],
+    }
+    _project_and_cas_engineering(document_store, stores=stores, alerts=alerts)
+    before = copy.deepcopy(document_store.state())
+    source_updated_at = before["issues"][0]["updatedAt"]
+    hidden_issue = next(row for row in before["issues"] if row["storeId"] == "store-b")
+    hidden_evidence = [row for row in before["evidence"] if row["issueId"] == hidden_issue["id"]]
+    service, scoped, audit_log = _scoped_engineering_service(document_store)
+    assert [row["storeId"] for row in scoped.get_state()["issues"]] == ["store-a"]
+    alerts["store-a"].append(_alert("alert-new", "store-a", "yellow"))
+    document_store.before_next_write = lambda: _project_and_cas_engineering(
+        document_store, stores=stores, alerts=alerts
+    )
+    document_store.put_calls.clear()
+
+    result = service.transition_issue(
+        issue_id="ISS-FC-alert-red", action_type="triage", payload={"severity": "high"},
+        correlation_id="scoped-after-materializer", actor_name="Synthetic Operator",
+    )
+
+    state = document_store.state()
+    record = _assert_scoped_typed_triage(state, source_updated_at=source_updated_at)
+    assert {row["id"] for row in state["issues"]} == {
+        "ISS-FC-alert-red", "ISS-FC-alert-new", "ISS-FC-alert-hidden"
+    }
+    assert next(row for row in state["issues"] if row["id"] == hidden_issue["id"]) == hidden_issue
+    assert [row for row in state["evidence"] if row["issueId"] == hidden_issue["id"]] == hidden_evidence
+    assert result["issue"]["workflowRecords"] == [record]
+    assert all(row["storeId"] == "store-a" for row in result["issues"])
+    assert len(scoped.new_audits) == 1
+    shared = audit_log.list_events(correlation_id="scoped-after-materializer")
+    assert len(shared) == 1
+    assert shared[0].event_id == record["auditEventId"]
+    assert shared[0].actor == record["actorSubjectId"]
+    assert len(document_store.put_calls) == 3  # failed scoped CAS, materializer, scoped retry
+
+
+def test_materializer_cas_retry_preserves_scoped_typed_history_audit_and_ordinal(
+    engineering_document_store: EngineeringSqliteDocumentStore,
+) -> None:
+    document_store = engineering_document_store
+    stores = [_store("store-a", "A"), _store("store-b", "B")]
+    alerts = {
+        "store-a": [_alert("alert-red", "store-a", "red")],
+        "store-b": [_alert("alert-hidden", "store-b", "yellow")],
+    }
+    _project_and_cas_engineering(document_store, stores=stores, alerts=alerts)
+    before = copy.deepcopy(document_store.state())
+    source_updated_at = before["issues"][0]["updatedAt"]
+    hidden_issue = next(row for row in before["issues"] if row["storeId"] == "store-b")
+    service, scoped, audit_log = _scoped_engineering_service(document_store)
+    committed: dict[str, Any] = {}
+
+    def operator_commit() -> None:
+        service.transition_issue(
+            issue_id="ISS-FC-alert-red", action_type="triage", payload={"severity": "high"},
+            correlation_id="scoped-before-materializer", actor_name="Synthetic Operator",
+        )
+        committed.update(copy.deepcopy(document_store.state()))
+
+    alerts["store-a"].append(_alert("alert-new", "store-a", "yellow"))
+    document_store.before_next_write = operator_commit
+    document_store.put_calls.clear()
+    result = _project_and_cas_engineering(document_store, stores=stores, alerts=alerts)
+
+    assert result.status == "written"
+    state = document_store.state()
+    _assert_scoped_typed_triage(state, source_updated_at=source_updated_at)
+    assert state["auditEvents"] == committed["auditEvents"]
+    assert state["nextAuditOrdinal"] == committed["nextAuditOrdinal"]
+    assert next(row for row in state["issues"] if row["id"] == hidden_issue["id"]) == hidden_issue
+    assert {row["id"] for row in state["issues"]} == {
+        "ISS-FC-alert-red", "ISS-FC-alert-new", "ISS-FC-alert-hidden"
+    }
+    assert next(row for row in state["issues"] if row["id"] == "ISS-FC-alert-red")["workflowRecords"] == (
+        next(row for row in committed["issues"] if row["id"] == "ISS-FC-alert-red")["workflowRecords"]
+    )
+    assert len(scoped.new_audits) == len(audit_log.list_events()) == 1
+    assert len(document_store.put_calls) == 3  # failed materializer CAS, operator, retry
+
+
+def test_prebound_tenant_and_raw_factory_share_state_versions_and_idempotency_namespace(
+    document_store: LivePostgresDocumentStore,
+) -> None:
+    raw = DurableStoreOpsRepository(document_store)
+    tenant = raw.for_tenant(TENANT_ID)
+    prebound = DurableStoreOpsRepository(TenantScopedDocumentStore(document_store, TENANT_ID))
+    assert tenant.tenant_id == prebound.tenant_id == TENANT_ID
+    assert tenant.read_versioned_state() == prebound.read_versioned_state() == (None, None)
+    state = empty_store_ops_state()
+    assert prebound.compare_and_save_state(state, expected_version=None) is True
+    assert tenant.read_versioned_state() == prebound.read_versioned_state() == (state, 1)
+    updated = copy.deepcopy(state)
+    updated["nextAuditOrdinal"] += 1
+    assert tenant.compare_and_save_state(updated, expected_version=1) is True
+    assert prebound.read_versioned_state() == (updated, 2)
+    assert prebound.compare_and_save_state(state, expected_version=1) is False
+    prebound.save_idempotency_result("same-command", {"scope": "synthetic-test"})
+    assert tenant.get_idempotency_result("same-command") == {"scope": "synthetic-test"}
+    assert raw.for_tenant(OTHER_TENANT_ID).read_versioned_state() == (None, None)
+    assert raw.for_tenant(OTHER_TENANT_ID).get_idempotency_result("same-command") is None
+    with pytest.raises(StoreOpsLiveDataUnavailable, match="another tenant"):
+        prebound.for_tenant(OTHER_TENANT_ID)
+    with pytest.raises(StoreOpsLiveDataUnavailable, match="another tenant"):
+        tenant.for_tenant(OTHER_TENANT_ID)
+    foreign_stores = FakeStoreRepository([])
+    with pytest.raises(StoreOpsLiveDataUnavailable, match="another tenant"):
+        materialize_store_ops_state(
+            repository=tenant, store_repository=foreign_stores,
+            forecastops_repository=FakeForecastOpsRepository(), tenant_id=OTHER_TENANT_ID,
+        )
+    assert foreign_stores.calls == []
+    with pytest.raises(StoreOpsLiveDataUnavailable, match="tenant scopes differ"):
+        DurableStoreOpsRepository(
+            TenantScopedDocumentStore(document_store, TENANT_ID), tenant_id=OTHER_TENANT_ID
+        )
+    assert document_store.state() == updated
+    assert document_store.put_calls == [_state_collection(), _state_collection(), _state_collection()]
+
+
+def test_detached_scoped_save_rejects_stale_snapshot_instead_of_dropping_new_issue(
+    engineering_document_store: EngineeringSqliteDocumentStore,
+) -> None:
+    document_store = engineering_document_store
+    stores = [_store("store-a", "A")]
+    alerts = {"store-a": [_alert("alert-red", "store-a", "red")]}
+    _project_and_cas_engineering(document_store, stores=stores, alerts=alerts)
+    _service, scoped, audit_log = _scoped_engineering_service(document_store)
+    stale = scoped.get_state()
+    alerts["store-a"].append(_alert("alert-new", "store-a", "yellow"))
+    _project_and_cas_engineering(document_store, stores=stores, alerts=alerts)
+    current = copy.deepcopy(document_store.state())
+    with pytest.raises(StoreOpsConcurrentWriteConflict, match="scoped read"):
+        scoped.save_state(stale)
+    assert document_store.state() == current
+    assert len(current["issues"]) == 2
+    assert scoped.new_audits == []
+    assert audit_log.list_events() == []
+
+
+def test_live_partial_health_keeps_typed_issue_workflow_and_read_does_not_rewrite_state(
+    document_store: LivePostgresDocumentStore,
+) -> None:
+    _materialize(document_store, stores=[_store("store-a", "A")], alerts={
+        "store-a": [_alert("alert-red", "store-a", "red")],
+    })
+    repository = DurableStoreOpsRepository(document_store).for_tenant(TENANT_ID)
+    before = repository.read_versioned_state()
+    with _client(document_store) as client:
+        summary = client.get(f"{BASE}/store-ops/summary", headers=_headers())
+        issues = client.get(f"{BASE}/store-ops/issues", headers=_headers())
+        green = client.get(f"{BASE}/store-ops/issues?light=staffing&lightStatus=green", headers=_headers())
+        assert summary.status_code == issues.status_code == green.status_code == 200
+        assert repository.read_versioned_state() == before
+        nested = client.post(
+            f"{BASE}/store-ops/issues/ISS-FC-alert-red/triage",
+            headers={**_headers(), "Idempotency-Key": "partial-invalid-nested-triage"},
+            json={"payload": {"severity": "high"}},
+        )
+        assert nested.status_code == 422
+        assert repository.read_versioned_state() == before
+        transition = client.post(
+            f"{BASE}/store-ops/issues/ISS-FC-alert-red/triage",
+            headers={**_headers(), "Idempotency-Key": "partial-native-triage"},
+            json={"severity": "high"},
+        )
+    assert summary.json()["stores"][0]["lights"] == {
+        "demand": "red", "operations": None, "staffing": None, "margin": None,
+    }
+    assert summary.json()["stores"][0]["riskScore"] is None
+    assert summary.json()["healthAvailability"]["warningCount"] == 1
+    assert summary.json()["healthAvailability"]["unavailableCount"] == 1
+    assert summary.json()["healthAvailability"]["coveredCount"] == 0
+    assert issues.json()["count"] == 1 and green.json()["count"] == 0
+    assert transition.status_code == 200
+    assert transition.json()["issue"]["status"] == "triaged"
+    assert transition.json()["auditEvent"]["actorName"] == _headers()["x-subject-id"]
+    assert transition.json()["issue"]["workflowRecords"][-1]["actorEvidence"] == "authenticated_principal"
+    assert len(document_store.state()["auditEvents"]) == 1
+
+
+@pytest.mark.parametrize("claimed_sources", ["missing", None, {
+    "demand": "forecastops.alerts", "operations": "opsboard.store_ops.issues",
+    "staffing": "claimed-owner", "margin": "claimed-owner",
+}])
+def test_legacy_colors_flags_and_claimed_sources_are_health_only_unknown(
+    document_store: LivePostgresDocumentStore, claimed_sources: dict[str, str] | str | None,
+) -> None:
+    _materialize(document_store, stores=[_store("store-a", "A")], alerts={
+        "store-a": [_alert("alert-red", "store-a", "red")],
+    })
+    state = document_store.state()
+    store = state["stores"][0]
+    store["lights"] = {dimension: "green" for dimension in ("demand", "operations", "staffing", "margin")}
+    store["riskScore"] = 0
+    store["healthAvailability"] = {"state": "available", "complete": True}
+    if claimed_sources == "missing":
+        store.pop("lightSources")
+    else:
+        store["lightSources"] = claimed_sources
+    document_store.put(_state_collection(), STATE_DOC_ID, state)
+    # The actual owner now has no observation. Retained issue/evidence refs
+    # and arbitrary source metadata cannot keep an old color alive.
+    document_store.canonical_forecastops_repository.alerts = {}
+    repository = DurableStoreOpsRepository(document_store).for_tenant(TENANT_ID)
+    before = repository.read_versioned_state()
+    with _client(document_store) as client:
+        result = client.get(f"{BASE}/store-ops/issues", headers=_headers())
+        filtered = client.get(f"{BASE}/store-ops/issues?light=demand&lightStatus=green", headers=_headers())
+    assert result.status_code == filtered.status_code == 200
+    body = result.json()
+    assert [issue["id"] for issue in body["issues"]] == ["ISS-FC-alert-red"]
+    assert all(value is None for value in body["stores"][0]["lights"].values())
+    assert body["stores"][0]["riskScore"] is None
+    assert body["healthAvailability"] == {
+        "state": "unavailable", "complete": False, "totalCount": 1,
+        "coveredCount": 0, "unavailableCount": 1, "warningCount": 0,
+    }
+    assert all(row["counts"]["green"] == 0 and row["unavailableCount"] == 1 for row in body["fourLightSummary"])
+    assert filtered.json()["issues"] == []
+    assert repository.read_versioned_state() == before
+    assert repository.get_state() == state
+
+
+@pytest.mark.parametrize("replacement", ["closed", "green", "yellow", "absent"])
+def test_current_forecast_owner_replaces_retained_alert_health_without_rewriting_issue_history(
+    document_store: LivePostgresDocumentStore, replacement: str,
+) -> None:
+    _materialize(document_store, stores=[_store("store-a", "A")], alerts={
+        "store-a": [_alert("alert-red", "store-a", "red")],
+    })
+    before = copy.deepcopy(document_store.state())
+    current = [] if replacement == "absent" else [
+        _alert("new-alert" if replacement == "yellow" else "alert-red", "store-a",
+               "green" if replacement == "green" else "yellow" if replacement == "yellow" else "red",
+               status="closed" if replacement == "closed" else "open"),
+    ]
+    document_store.canonical_forecastops_repository.alerts = {"store-a": current}
+    result = _service(document_store).snapshot()
+    expected = "yellow" if replacement == "yellow" else "green" if replacement == "green" else None
+    assert result["stores"][0]["lights"]["demand"] == expected
+    assert result["healthAvailability"]["warningCount"] == (1 if expected == "yellow" else 0)
+    assert result["healthAvailability"]["coveredCount"] == 0
+    assert result["healthAvailability"]["complete"] is False
+    assert result["issues"][0]["status"] == "new"
+    if replacement == "yellow":
+        assert result["stores"][0]["healthAvailability"]["lights"]["demand"]["recordIds"] == ["new-alert"]
+    assert document_store.state() == before
+
+
+@pytest.mark.parametrize("failure", ["missing-port", "read-error", "foreign-tenant", "foreign-store", "missing-identity"])
+def test_optional_health_owner_failure_is_partial_and_never_grants_foreign_observation(
+    document_store: LivePostgresDocumentStore, failure: str,
+) -> None:
+    _materialize(document_store, stores=[_store("store-a", "A")], alerts={
+        "store-a": [_alert("alert-red", "store-a", "red")],
+    })
+
+    class CurrentOwner:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+
+        def list_alerts_by_store(self, tenant_id: str, store_id: str) -> list[Any]:
+            self.calls.append((tenant_id, store_id))
+            if failure == "read-error":
+                raise ConnectionError("private backend details must not be returned")
+            row = _alert("current", store_id, "red")
+            if failure == "foreign-tenant":
+                row["tenant_id"] = OTHER_TENANT_ID
+            elif failure == "foreign-store":
+                row["store_id"] = "foreign-store"
+            elif failure == "missing-identity":
+                row.pop("tenant_id")
+            return [row]
+
+    owner = CurrentOwner()
+    repository = DurableStoreOpsRepository(document_store).for_tenant(TENANT_ID)
+    service = StoreOpsService(
+        repository=repository, require_live_data=True, tenant_id=TENANT_ID,
+        forecastops_repository=None if failure == "missing-port" else owner,
+    )
+    before = copy.deepcopy(document_store.state())
+    result = service.snapshot()
+    assert all(value is None for value in result["stores"][0]["lights"].values())
+    assert result["healthAvailability"]["warningCount"] == 0
+    assert [row["id"] for row in result["issues"]] == ["ISS-FC-alert-red"]
+    assert owner.calls == ([] if failure == "missing-port" else [(TENANT_ID, "store-a")])
+    assert "private backend" not in str(result)
+    assert document_store.state() == before
+    document_store.canonical_forecastops_repository = None if failure == "missing-port" else owner
+    with _client(document_store) as client:
+        transition = client.post(
+            f"{BASE}/store-ops/issues/ISS-FC-alert-red/triage", headers=_headers(),
+            json={"severity": "high"},
+        )
+    assert transition.status_code == 200
+    assert transition.json()["issue"]["status"] == "triaged"
+    assert "private backend" not in transition.text
+
+
+def test_store_only_partial_and_worker_no_observation_never_create_green_or_risk_zero(
+    document_store: LivePostgresDocumentStore,
+) -> None:
+    job = JobRecord(
+        job_id="job-store-ops-partial", job_type=STORE_OPS_MATERIALIZE_JOB_TYPE,
+        payload={"tenant_id": TENANT_ID}, correlation_id="corr-store-ops-partial",
+    )
+    result = handle_store_ops_materialize(job, _live_bundle(document_store, [_store("store-a", "A")]))
+    assert result is None
+    state = document_store.state()
+    assert state["issues"] == []
+    assert all(value is None for value in state["stores"][0]["lights"].values())
+    assert state["stores"][0]["riskScore"] is None
+    document_store.canonical_store_repository = FakeStoreRepository([_store("store-a", "A")])
+    with _client(document_store) as client:
+        response = client.get(f"{BASE}/store-ops/issues", headers=_headers())
+    assert response.status_code == 200
+    assert [row["id"] for row in response.json()["stores"]] == ["store-a"]
+    assert response.json()["issues"] == []
+    assert response.json()["healthAvailability"]["unavailableCount"] == 1
+
+
+def test_health_read_port_only_reads_current_authorized_store_scope(
+    document_store: LivePostgresDocumentStore,
+) -> None:
+    _materialize(document_store, stores=[_store("store-a", "A"), _store("store-hidden", "Hidden")], alerts={
+        "store-a": [_alert("alert-a", "store-a", "yellow")],
+        "store-hidden": [_alert("alert-hidden", "store-hidden", "red")],
+    })
+    owner = document_store.canonical_forecastops_repository
+    owner.calls.clear()
+    with _client(document_store) as client:
+        response = client.get(f"{BASE}/store-ops/issues", headers={**_headers(), "x-store-ids": "store-a"})
+    assert response.status_code == 200
+    assert [row["id"] for row in response.json()["stores"]] == ["store-a"]
+    assert owner.calls == [(TENANT_ID, "store-a")]
+    assert "alert-hidden" not in response.text
+    assert response.json()["stores"][0]["healthAvailability"]["lights"]["demand"]["recordIds"] == ["alert-a"]
+
+
+@pytest.mark.parametrize("malformed", [None, [], "unavailable", {"stores": None}, {"stores": {}}])
+def test_malformed_live_workflow_still_has_503_before_mutation_or_fixture_probe(
+    document_store: LivePostgresDocumentStore, malformed: Any,
+) -> None:
+    state = malformed
+    if isinstance(malformed, dict):
+        state = {**empty_store_ops_state(), **malformed}
+    document_store.put(_state_collection(), STATE_DOC_ID, state)
+    document_store.put_calls.clear()
+    repository = DurableStoreOpsRepository(document_store).for_tenant(TENANT_ID)
+    called: list[bool] = []
+    with pytest.raises(StoreOpsLiveDataUnavailable):
+        repository.get_state()
+    with pytest.raises(StoreOpsLiveDataUnavailable):
+        repository.update_state(lambda value: called.append(True))
+    with pytest.raises(StoreOpsLiveDataUnavailable):
+        repository.compare_and_save_state(state, expected_version=0)
+    assert called == []
+    assert document_store.put_calls == []
+    assert document_store.state() == state
+
+
+@pytest.mark.parametrize("field,value", [
+    ("lights", {"demand": "blue"}), ("lights", {"demand": []}), ("lights", {"demand": {}}),
+    ("riskScore", True), ("riskScore", "0"),
+])
+def test_illegal_supplied_health_types_are_structural_failures_not_missing_data(
+    document_store: LivePostgresDocumentStore, field: str, value: Any,
+) -> None:
+    _materialize(document_store, stores=[_store("store-a", "A")])
+    state = document_store.state()
+    state["stores"][0][field] = value
+    document_store.put(_state_collection(), STATE_DOC_ID, state)
+    document_store.put_calls.clear()
+    repository = DurableStoreOpsRepository(document_store).for_tenant(TENANT_ID)
+    with pytest.raises(StoreOpsLiveDataUnavailable):
+        repository.get_state()
+    with pytest.raises(StoreOpsLiveDataUnavailable):
+        repository.compare_and_save_state(state, expected_version=0)
+    assert document_store.state() == state
     assert document_store.put_calls == []

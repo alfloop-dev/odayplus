@@ -1,0 +1,6 @@
+.page { min-width: 0; width: 100%; padding: var(--odp-space-4); }
+.inbox { min-width: 0; width: 100%; color: var(--odp-color-text-primary); background: var(--odp-color-bg-surface); border: 1px solid var(--odp-color-border-default); border-radius: var(--odp-radius-md); }
+.page dd, .page p, .page strong, .page time { overflow-wrap: anywhere; }
+.page dd { margin: 0; }
+.page dl { display: grid; gap: var(--odp-space-2); }
+.page fieldset { display: grid; gap: var(--odp-space-3); border: 1px solid var(--odp-color-border-default); padding: var(--odp-space-3); }
