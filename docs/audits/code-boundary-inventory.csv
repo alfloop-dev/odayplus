@@ -746,6 +746,7 @@ modules/priceops/workers/__init__.py,product_system,product_required,true,,engin
 modules/priceops/workers/optimizer_worker.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/site_economics/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/site_economics/application/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/site_economics/application/context_inputs.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/site_economics/application/service.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/site_economics/domain/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/site_economics/domain/contracts.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -1091,6 +1092,7 @@ tests/data/test_source_to_canonical.py,verification,verification_only,false,prod
 tests/data/test_taiwan_real_estate_outcomes.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/domain/test_canonical_measurement_nullable.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/domain/test_site_economics.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/domain/test_site_economics_context_inputs.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/domain/test_site_feasibility.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/e2e/test_acceptance_coverage.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/e2e/test_deployment_health_backup_rollback.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -1244,6 +1246,7 @@ tests/integration/test_net002_lease_disposition.py,verification,verification_onl
 tests/integration/test_netplan_builder_owner_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_netplan_constraint_disclosure_approval.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_netplan_disclosure_ui_e2e.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_netplan_economics_content_binding.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_netplan_emgi.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_netplan_hard_constraints.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_netplan_outcome_due_worker.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -1299,6 +1302,7 @@ tests/integration/test_saved_listing_search_postgresql.py,verification,verificat
 tests/integration/test_scheduled_ingestion_tenant_propagation.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_scoped_cdc_adapter.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_scoring_model_binding.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_site_economics_context_binding_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_site_economics_repository_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_sitescore_decision.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_sitescore_execution_api_composition.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.

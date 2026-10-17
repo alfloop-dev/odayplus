@@ -39,6 +39,11 @@ from typing import Any
 from uuid import uuid4
 
 from modules.netplan.domain.planning import CandidateSiteInput
+from modules.site_economics.application.context_inputs import (
+    SiteEconomicsInputError,
+    content_sha256,
+    select_market_context,
+)
 from modules.site_economics.domain.contracts import (
     CONTRACT_ID as ECONOMICS_CONTRACT_ID,
 )
@@ -78,7 +83,7 @@ CONTRACT_CATEGORY = "decision_product"
 #: Bumped whenever the admission rules or the economics -> solver mapping
 #: changes.  It is persisted on every emitted document so a past plan stays
 #: reproducible after this file evolves.
-INTEGRATION_POLICY_VERSION = "netplan-emgi-admission-v1"
+INTEGRATION_POLICY_VERSION = "netplan-emgi-admission-v2"
 
 
 class CandidateAdmission(StrEnum):
@@ -167,27 +172,6 @@ def _digest(value: Any) -> str | None:
     return hashlib.sha256(_canonical_json(dict(mapping)).encode("utf-8")).hexdigest()
 
 
-def _context_for_site(market_context: Any, site_id: str) -> Mapping[str, Any]:
-    """Unwrap the site-scoped context out of a context or context document.
-
-    A context document is not interchangeable with any single child: falling
-    back to an unmatched sibling would let another site's market decide this
-    site's plan.  An unmatched lookup returns ``{}`` so the caller withholds.
-    """
-
-    context = _as_mapping(market_context)
-    contexts = context.get("contexts")
-    if isinstance(contexts, Sequence) and not isinstance(contexts, (str, bytes)):
-        for item in contexts:
-            candidate = _as_mapping(item)
-            if _as_mapping(candidate.get("identity")).get("site_id") == site_id:
-                return candidate
-        return {}
-    if _as_mapping(context.get("identity")).get("site_id") != site_id:
-        return {}
-    return context
-
-
 def _manifest_ids(value: Any) -> set[str]:
     """Collect the manifest references one context or document level declares.
 
@@ -239,7 +223,7 @@ def _declares_contract(value: Any, contract_id: str) -> bool:
     for name in ("contract_id", "contract_version"):
         if _text(mapping.get(name)) == contract_id:
             return True
-    for name in ("component_manifest_refs", "contexts"):
+    for name in ("component_manifest_refs",):
         children = mapping.get(name)
         if isinstance(children, Sequence) and not isinstance(children, (str, bytes)):
             for child in children:
@@ -259,24 +243,11 @@ def _market_context_id(context: Mapping[str, Any], document: Any) -> str | None:
 
 
 def _market_context_digest(context: Mapping[str, Any], document: Any) -> str | None:
-    """Return the market context hash the decision chain is pinned to.
-
-    A producer-declared ``sha256``/``digest`` wins; otherwise the canonical
-    content hash of the site-scoped context is used, so the evidence still
-    identifies the exact payload the plan was derived from.
-    """
-
-    for source in (context, _as_mapping(document)):
-        for name in ("sha256", "digest"):
-            candidate = _text(source.get(name))
-            if candidate is not None:
-                return candidate
-        metadata = _as_mapping(source.get("metadata"))
-        for name in ("sha256", "digest"):
-            candidate = _text(metadata.get(name))
-            if candidate is not None:
-                return candidate
-    return _digest(context) or _digest(document)
+    """Hash the selected finite content; declared digest strings grant no trust."""
+    try:
+        return content_sha256(context) if context else None
+    except SiteEconomicsInputError:
+        return None
 
 
 def _source_market_context_id(document: Any) -> str | None:
@@ -584,6 +555,7 @@ class NetPlanEmgiIntegrationService:
         feasibility_doc: Any,
         economics_doc: Any,
         capacity_delta: int | None = None,
+        tenant_id: str | None = None,
     ) -> NetPlanCandidateDecision:
         """Return the admission verdict and evidence for one candidate site."""
 
@@ -594,13 +566,20 @@ class NetPlanEmgiIntegrationService:
                 CandidateAdmission.WITHHELD_PROVENANCE, "Evaluation manifest is missing."
             )
 
-        context = _context_for_site(market_context, site_id)
+        try:
+            context = select_market_context(
+                market_context, site_id=site_id,
+                tenant_id=tenant_id or _text(_field(economics_doc, "tenant_id")),
+            ).context
+        except SiteEconomicsInputError:
+            context = {}
         if not context:
             verdict.downgrade(
                 CandidateAdmission.WITHHELD_PROVENANCE,
                 "Market context does not cover this candidate site.",
             )
-        elif not _declares_contract(market_context, MARKET_CONTEXT_CONTRACT_ID):
+        elif not (_declares_contract(context, MARKET_CONTEXT_CONTRACT_ID)
+                  or _declares_contract(market_context, MARKET_CONTEXT_CONTRACT_ID)):
             verdict.downgrade(
                 CandidateAdmission.WITHHELD_PROVENANCE,
                 f"Market context does not declare {MARKET_CONTEXT_CONTRACT_ID}.",
@@ -621,6 +600,17 @@ class NetPlanEmgiIntegrationService:
 
         self._check_feasibility(feasibility_doc, market_context_id, verdict)
         self._check_economics(economics_doc, market_context_id, verdict)
+        actual_context_hash = _market_context_digest(context, market_context)
+        if actual_context_hash is None or _field(economics_doc, "source_market_context_sha256") != actual_context_hash:
+            verdict.downgrade(CandidateAdmission.WITHHELD_PROVENANCE,
+                              "Economics source market context content hash mismatch or missing.")
+        for label, source in (("Feasibility", feasibility_doc), ("Economics", economics_doc)):
+            if _field(source, "site_id") != site_id:
+                verdict.downgrade(CandidateAdmission.WITHHELD_PROVENANCE,
+                                  label + " document belongs to another site.")
+        if tenant_id is not None and _field(economics_doc, "tenant_id") != tenant_id:
+            verdict.downgrade(CandidateAdmission.WITHHELD_PROVENANCE,
+                              "Economics document belongs to another tenant.")
         self._check_sitescore(sitescore_doc, site_id, expected_manifest_id, verdict)
 
         evidence = self._build_evidence(
@@ -682,6 +672,7 @@ class NetPlanEmgiIntegrationService:
                 feasibility_doc=request.feasibility_doc,
                 economics_doc=request.economics_doc,
                 capacity_delta=request.capacity_delta,
+                tenant_id=tenant_id,
             )
             for request in requests
         )

@@ -43,6 +43,7 @@ from modules.opsboard.integrations.emgi import (
     admitted_candidates,
 )
 from modules.site_economics import SimulationOverrides, SiteEconomicsService
+from modules.site_economics.application.context_inputs import content_sha256
 from modules.site_economics.domain.contracts import (
     CONTRACT_ID as ECONOMICS_CONTRACT_ID,
 )
@@ -221,6 +222,7 @@ def _economics_wire(
         "tenant_id": TENANT_ID,
         "engine_version": ECONOMICS_ENGINE_VERSION,
         "source_market_context_id": context_id,
+        "source_market_context_sha256": content_sha256(_market_context(site_id=site_id)),
         "metrics": metrics,
         "decision": decision,
     }
@@ -462,6 +464,7 @@ def test_document_root_manifest_still_vouches_for_a_context_document():
     context = _market_context()
     context.pop("component_manifest_refs")
     candidate = _build(
+        economics_doc={**_economics_wire(), "source_market_context_sha256": content_sha256(context)},
         market_context={
             "contexts": [context],
             "document_id": "smc-doc-001",
