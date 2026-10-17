@@ -13,6 +13,7 @@ import threading
 import time
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from apps.api.oday_api.routes.heatzone import HeatZoneResultStore, create_heatzone_router
@@ -2088,6 +2089,7 @@ else:
 
         from models.shared_ml import (
             MlflowProductionModelRuntime,
+            ProductionModelRegistryError,
             ProductionModelRuntimeError,
             seed_scoring_models,
         )
@@ -2096,6 +2098,10 @@ else:
             AVMProductionExecutor,
         )
         from modules.learninghub.infrastructure import MlflowRegistryAdapter
+        from modules.learninghub.infrastructure.mlflow_cloud_run_auth import (
+            configure_cloud_run_mlflow_auth,
+        )
+        from modules.learninghub.runtime import LearningHubRuntimeConfigurationError
         from modules.netplan.application import NetPlanProductionExecutor
         from modules.priceops.infrastructure.oss_optimizer import (
             PriceOpsProductionOptimizer,
@@ -2115,6 +2121,16 @@ else:
                 from modules.heatzone.domain import HEATZONE_FEATURE_VERSION
                 from modules.sitescore.domain import SITESCORE_FEATURE_VERSION
 
+                # Model aliases are read before the Learning Hub adapter exists.
+                # Configure the SDK's identity provider before that first read.
+                tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "")
+                try:
+                    if (urlparse(tracking_uri).hostname or "").endswith(".run.app"):
+                        configure_cloud_run_mlflow_auth(tracking_uri=tracking_uri)
+                except (LearningHubRuntimeConfigurationError, ValueError) as exc:
+                    raise ProductionModelRegistryError(
+                        "MLflow registry identity configuration is invalid"
+                    ) from exc
                 model_runtime = MlflowProductionModelRuntime.from_environment(
                     model_names=production_model_names()
                 )
