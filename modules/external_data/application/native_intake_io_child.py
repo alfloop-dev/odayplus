@@ -18,6 +18,7 @@ import ssl
 import sys
 import time
 from urllib.parse import quote, urlencode, urlsplit
+from uuid import UUID
 
 MAX_CONTENT = 512_000
 MAX_INPUT = 750_000
@@ -29,6 +30,18 @@ _BUCKET = re.compile(r"[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]\Z")
 _KEY = re.compile(r"tenants/[0-9a-f-]{36}/native-intake-retrieval/[0-9a-f-]{36}/[1-9][0-9]*/[1-9][0-9]*/[0-9a-f-]{36}/raw\Z")
 _KMS = re.compile(r"projects/[A-Za-z0-9_-]{1,128}/locations/asia-east1/keyRings/[A-Za-z0-9_-]{1,63}/cryptoKeys/[A-Za-z0-9_-]{1,63}\Z")
 
+
+# A separate compiled family; HTTP and retrieval MEDIA/_KEY stay unchanged.
+ASSISTED_JSON_MEDIA = frozenset({"application/json"})
+_ASSISTED_UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+_ASSISTED_KEY = re.compile(
+    rf"tenants/{_ASSISTED_UUID}/native-intake-assisted-entry/{_ASSISTED_UUID}/"
+    rf"[1-9][0-9]{{0,18}}/[1-9][0-9]{{0,18}}/{_ASSISTED_UUID}/raw\Z"
+)
+_ASSISTED_GCS_OPERATIONS = frozenset({
+    "gcs_assisted_bucket", "gcs_assisted_upload", "gcs_assisted_head",
+    "gcs_assisted_download", "gcs_assisted_delete",
+})
 
 class ChildRejected(ValueError):
     def __init__(self, code, status=None):
@@ -236,6 +249,72 @@ def gcs_operation(request, deadline, descriptor):
         connection.close()
 
 
+def assisted_gcs_operation(request, deadline, descriptor):
+    operation = request["operation"]
+    common = {"operation", "timeout_seconds", "bucket"}
+    extra = {"gcs_assisted_bucket": set(), "gcs_assisted_upload": {"key", "body_base64", "media_type", "kms_key_name"},
+        "gcs_assisted_head": {"key", "generation"}, "gcs_assisted_download": {"key", "generation"}, "gcs_assisted_delete": {"key", "generation"}}
+    if operation not in extra or set(request) != common | extra[operation]:
+        raise ChildRejected("NATIVE_IO_PROTOCOL_REJECTED")
+    bucket = request["bucket"]
+    if not isinstance(bucket, str) or not _BUCKET.fullmatch(bucket) or ".." in bucket:
+        raise ChildRejected("NATIVE_GCS_BINDING_REJECTED")
+    path, query, method, body = "/storage/v1/b/" + quote(bucket, safe=""), {}, "GET", None
+    media_type = "application/json"
+    if operation != "gcs_assisted_bucket":
+        key = request["key"]
+        if not isinstance(key, str) or not _ASSISTED_KEY.fullmatch(key):
+            raise ChildRejected("NATIVE_GCS_BINDING_REJECTED")
+        parts = key.split("/")
+        if any(not UUID(parts[index]).int for index in (1, 3, 6)):
+            raise ChildRejected("NATIVE_GCS_BINDING_REJECTED")
+        _generation(int(parts[4]))
+        _generation(int(parts[5]))
+        path += "/o/" + quote(key, safe="")
+        if operation == "gcs_assisted_upload":
+            if not isinstance(request["media_type"], str) or request["media_type"] not in ASSISTED_JSON_MEDIA or not isinstance(request["kms_key_name"], str) or not _KMS.fullmatch(request["kms_key_name"]):
+                raise ChildRejected("NATIVE_GCS_BINDING_REJECTED")
+            body = base64.b64decode(request["body_base64"], validate=True)
+            if not 1 <= len(body) <= MAX_CONTENT:
+                raise ChildRejected("NATIVE_IO_LENGTH_REJECTED")
+            path, method, media_type = "/upload/storage/v1/b/" + quote(bucket, safe="") + "/o", "POST", request["media_type"]
+            query = {"uploadType": "media", "name": key, "ifGenerationMatch": "0", "kmsKeyName": request["kms_key_name"]}
+        elif request["generation"] is not None:
+            query["generation"] = str(_generation(request["generation"]))
+        elif operation != "gcs_assisted_head":
+            raise ChildRejected("NATIVE_GCS_GENERATION_REJECTED")
+        if operation == "gcs_assisted_download":
+            query["alt"] = "media"
+        elif operation == "gcs_assisted_delete":
+            method = "DELETE"
+            query["ifGenerationMatch"] = str(_generation(request["generation"]))
+    token = _storage_token(descriptor)
+    connection = _connection("storage.googleapis.com", 443, True, deadline)
+    try:
+        target = path + ("?" + urlencode(query) if query else "")
+        connection.request(method, target, body=body, headers={"Authorization": "Bearer " + token,
+            "Accept-Encoding": "identity", "Content-Type": media_type, "Connection": "close"})
+        connection.sock.settimeout(_remaining(deadline))
+        response = connection.getresponse()
+        if response.status not in ({204} if operation == "gcs_assisted_delete" else {200}):
+            raise ChildRejected("NATIVE_GCS_HTTP_REJECTED", response.status)
+        if operation == "gcs_assisted_delete":
+            return {}
+        raw = _content(response, connection, deadline, MAX_CONTENT if operation == "gcs_assisted_download" else MAX_JSON)
+        if operation == "gcs_assisted_download":
+            actual = response.getheader("x-goog-generation")
+            if actual is not None and actual != str(request["generation"]):
+                raise ChildRejected("NATIVE_GCS_GENERATION_REJECTED")
+            return {"body_base64": base64.b64encode(raw).decode("ascii")}
+        metadata = json.loads(raw)
+        if not isinstance(metadata, dict):
+            raise ChildRejected("NATIVE_GCS_METADATA_REJECTED")
+        fields = ("kind", "name", "location", "locationType") if operation == "gcs_assisted_bucket" else (
+            "kind", "name", "bucket", "generation", "size", "contentType", "contentEncoding", "kmsKeyName")
+        return {key: metadata[key] for key in fields if key in metadata}
+    finally:
+        connection.close()
+
 def main():
     try:
         descriptor = None
@@ -255,6 +334,8 @@ def main():
         deadline = time.monotonic() + timeout
         if request.get("operation") == "http_hop" and descriptor is None:
             result = http_hop(request, deadline)
+        elif isinstance(request.get("operation"), str) and request["operation"] in _ASSISTED_GCS_OPERATIONS:
+            result = assisted_gcs_operation(request, deadline, descriptor)
         elif isinstance(request.get("operation"), str) and request["operation"].startswith("gcs_"):
             result = gcs_operation(request, deadline, descriptor)
         else:

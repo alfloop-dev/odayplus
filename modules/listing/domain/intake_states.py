@@ -311,7 +311,7 @@ class IntakeStateMachine(BaseStateMachine):
         # No direct retrieval, supplied-evidence or automatic resume is granted.
         IntakeStage.AWAITING_SOURCE_AUTHORIZATION: {IntakeStage.CANCELLED, IntakeStage.CHECKING_SOURCE_POLICY},
         IntakeStage.RETRIEVING: {IntakeStage.PARSING, IntakeStage.FAILED, IntakeStage.QUARANTINED},
-        IntakeStage.AWAITING_ASSISTED_ENTRY: {IntakeStage.PARSING, IntakeStage.CANCELLED},
+        IntakeStage.AWAITING_ASSISTED_ENTRY: {IntakeStage.PARSING, IntakeStage.CANCELLED, IntakeStage.CHECKING_SOURCE_POLICY},
         IntakeStage.PARSING: {IntakeStage.MATCHING, IntakeStage.NEEDS_REVIEW, IntakeStage.FAILED},
         IntakeStage.MATCHING: {IntakeStage.READY, IntakeStage.NEEDS_REVIEW, IntakeStage.QUARANTINED},
         IntakeStage.NEEDS_REVIEW: {IntakeStage.READY, IntakeStage.QUARANTINED, IntakeStage.CANCELLED},
@@ -399,6 +399,13 @@ class IntakeStateMachine(BaseStateMachine):
                 if role not in {PrincipalRole.SVC_INTAKE, PrincipalRole.EMERGENCY_ADMIN}:
                     raise DomainValidationError(DenialCode.ROLE_DENIED, "Only system or admin can evaluate policy.")
             elif source == IntakeStage.AWAITING_SOURCE_AUTHORIZATION:
+                if role not in {PrincipalRole.SVC_INTAKE, PrincipalRole.EMERGENCY_ADMIN}:
+                    raise DomainValidationError(DenialCode.ROLE_DENIED, "Only the verified service can recheck source policy.")
+                if (context.source_policy_recheck_verified is not True or not context.causation_id
+                        or not context.idempotency_key or not context.reason.strip()):
+                    raise DomainValidationError(DenialCode.SOURCE_POLICY_RECHECK_NOT_VERIFIED,
+                                                "A current verified recheck command is required.")
+            elif source == IntakeStage.AWAITING_ASSISTED_ENTRY:
                 if role not in {PrincipalRole.SVC_INTAKE, PrincipalRole.EMERGENCY_ADMIN}:
                     raise DomainValidationError(DenialCode.ROLE_DENIED, "Only the verified service can recheck source policy.")
                 if (context.source_policy_recheck_verified is not True or not context.causation_id

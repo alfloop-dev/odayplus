@@ -19,6 +19,18 @@ from modules.external_data.security.assisted_listing_retrieval import (
     contains_sensitive_submission_material,
 )
 from modules.listing.application.intake_authorization import authorize_intake_action
+from modules.listing.application.native_intake_assisted_entry_input import (
+    NativeAssistedEntryCommand,
+)
+from modules.listing.application.native_intake_assisted_entry_policy import (
+    NativeAssistedEntryUnavailable,
+)
+from modules.listing.application.native_intake_assisted_entry_request import (
+    NativeAssistedEntryRequestOwner,
+)
+from modules.listing.application.native_intake_command_withdrawal import (
+    NativeIntakeCommandWithdrawalOwner,
+)
 from modules.listing.application.native_intake_requester_authority import (
     NativeIntakeRequesterAuthorityUnavailable,
 )
@@ -164,6 +176,49 @@ class CanonicalIntakeSourcePolicyRecheckReceipt(BaseModel):
     outbox_event_id: UUID
 
 
+class CanonicalIntakeAssistedEntryRequestReceipt(CanonicalIntakeSourcePolicyRecheckReceipt):
+    correction_ids: list[UUID] = Field(min_length=3, max_length=7)
+
+
+class CanonicalIntakeCommandWithdrawalReceipt(BaseModel):
+    cancellation_id: UUID
+    request_id: UUID
+    intake_id: UUID
+    status: Literal["WITHDRAWN", "CANCELLATION_REQUESTED"]
+    version: int = Field(ge=1)
+    requested_at: AwareDatetime
+    requested_by: UUID
+    job_id: UUID | None
+    correlation_id: UUID
+    audit_event_id: UUID
+    outbox_event_id: UUID
+
+
+@contextmanager
+def _assisted_errors():
+    try:
+        yield
+    except PermissionError:
+        raise HTTPException(403, "NATIVE_ASSISTED_CURRENT_AUTHORITY_DENIED") from None
+    except (NativeIntakeRequesterAuthorityUnavailable, NativeAssistedEntryUnavailable,
+            NativeIntakeSourcePolicyUnavailable):
+        raise HTTPException(503, "NATIVE_ASSISTED_AUTHORITY_OR_POLICY_UNAVAILABLE") from None
+    except NativeIntakeSourcePolicyConflict:
+        raise HTTPException(409, "NATIVE_ASSISTED_CURRENT_PROOF_CONFLICT") from None
+    except JobFenceRejectedError:
+        raise HTTPException(409, "NATIVE_ASSISTED_CURRENT_PROOF_CONFLICT") from None
+    except Exception as exc:
+        cause, seen = exc, set()
+        while cause is not None and id(cause) not in seen and len(seen) < 8:
+            seen.add(id(cause))
+            if getattr(cause, "sqlstate", None) in {"40001", "40P01", "55P03", "57014"}:
+                raise HTTPException(409, "NATIVE_ASSISTED_CONCURRENT_CHANGE") from None
+            cause = cause.__cause__ or cause.__context__
+        if getattr(exc, "sqlstate", None) in {"42P01", "42703", "3F000"}:
+            raise HTTPException(503, "NATIVE_ASSISTED_STORAGE_UNAVAILABLE") from None
+        raise
+
+
 @contextmanager
 def _recheck_errors():
     try:
@@ -182,10 +237,10 @@ def _recheck_errors():
         cause, seen = exc, set()
         while cause is not None and id(cause) not in seen and len(seen) < 8:
             seen.add(id(cause))
-            if getattr(cause, "sqlstate", None) in {"40001", "40P01"}:
+            if getattr(cause, "sqlstate", None) in {"40001", "40P01", "55P03", "57014"}:
                 raise HTTPException(409, "NATIVE_RECHECK_CONCURRENT_CHANGE") from None
-            cause = cause.__cause__
-        if getattr(exc, "sqlstate", None) in {"42P01", "42703", "3F000", "57014"}:
+            cause = cause.__cause__ or cause.__context__
+        if getattr(exc, "sqlstate", None) in {"42P01", "42703", "3F000"}:
             raise HTTPException(503, "NATIVE_RECHECK_STORAGE_UNAVAILABLE") from None
         raise
 
@@ -366,7 +421,7 @@ def create_canonical_intakes_router(store) -> APIRouter:
 
     @router.post("/canonical-intakes/{intake_id}/source-policy-rechecks", operation_id="requestCanonicalIntakeSourcePolicyRecheck",
                  response_model=CanonicalIntakeSourcePolicyRecheckReceipt, status_code=202, responses=errors,
-                 description="Request a current-authority recheck while the AUTH_REQUIRED Intake remains waiting.")
+                 description="Request a governed current-authority recheck from a native authorization or assisted-entry wait.")
     def request_source_policy_recheck(intake_id: UUID, body: RequestCanonicalIntakeSourcePolicyRecheck,
         request: Request, response: Response,
         key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")],
@@ -399,5 +454,52 @@ def create_canonical_intakes_router(store) -> APIRouter:
                         response.headers["Idempotency-Replayed"] = "false"
                     response.headers["ETag"] = f'W/"{result["version"]}"'
                     return result
+
+    @router.post("/canonical-intakes/{intake_id}/assisted-entry-completions",
+                 operation_id="requestCanonicalIntakeAssistedEntryCompletion", status_code=202,
+                 response_model=CanonicalIntakeAssistedEntryRequestReceipt, responses=errors,
+                 description="Record initial human proposals for a proven current manual-source wait.")
+    def request_assisted_entry_completion(intake_id: UUID, body: NativeAssistedEntryCommand,
+        request: Request, response: Response,
+        key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")],
+        if_match: Annotated[str, Header(alias="If-Match", pattern=r'^W/"[1-9][0-9]*"$')],
+    ):
+        with _http_errors(), _assisted_errors():
+            principal, repo = context(request)
+            receipt, replayed = NativeAssistedEntryRequestOwner(repo.graph).request(principal, str(intake_id),
+                expected_version=int(if_match[3:-1]), command=body, idempotency_key=key)
+            response.headers["ETag"] = f'W/"{receipt["version"]}"'
+            response.headers["Idempotency-Replayed"] = str(replayed).lower()
+            return receipt
+
+    def withdraw_command(intake_id, request_id, body, request, response, key, if_match, kind):
+        errors_context = _recheck_errors if kind == "SOURCE_POLICY_RECHECK" else _assisted_errors
+        with _http_errors(), errors_context():
+            principal, repo = context(request)
+            receipt, replayed = NativeIntakeCommandWithdrawalOwner(repo.graph).cancel(principal, str(intake_id), str(request_id),
+                request_kind=kind, expected_version=int(if_match[3:-1]), reason=body.reason, idempotency_key=key)
+            response.headers["ETag"] = f'W/"{receipt["version"]}"'
+            response.headers["Idempotency-Replayed"] = str(replayed).lower()
+            return receipt
+
+    @router.post("/canonical-intakes/{intake_id}/assisted-entry-completions/{request_id}/cancel",
+                 operation_id="withdrawCanonicalIntakeAssistedEntryRequest",
+                 response_model=CanonicalIntakeCommandWithdrawalReceipt, responses=errors)
+    def withdraw_assisted_entry_request(intake_id: UUID, request_id: UUID,
+        body: CancelCanonicalIntakeAuthorizationWaitRequest, request: Request, response: Response,
+        key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")],
+        if_match: Annotated[str, Header(alias="If-Match", pattern=r'^W/"[1-9][0-9]*"$')],
+    ):
+        return withdraw_command(intake_id, request_id, body, request, response, key, if_match, "ASSISTED_ENTRY")
+
+    @router.post("/canonical-intakes/{intake_id}/source-policy-rechecks/{request_id}/cancel",
+                 operation_id="withdrawCanonicalIntakeSourcePolicyRecheckRequest",
+                 response_model=CanonicalIntakeCommandWithdrawalReceipt, responses=errors)
+    def withdraw_source_policy_recheck_request(intake_id: UUID, request_id: UUID,
+        body: CancelCanonicalIntakeAuthorizationWaitRequest, request: Request, response: Response,
+        key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")],
+        if_match: Annotated[str, Header(alias="If-Match", pattern=r'^W/"[1-9][0-9]*"$')],
+    ):
+        return withdraw_command(intake_id, request_id, body, request, response, key, if_match, "SOURCE_POLICY_RECHECK")
 
     return router

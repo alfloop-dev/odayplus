@@ -184,6 +184,7 @@ class ODayWorker:
         canonical_native_source_policy_job = job.job_type == "native-intake-source-policy"
         canonical_native_source_policy_recheck_job = job.job_type == "native-intake-source-policy-recheck"
         canonical_native_retrieval_job = job.job_type == "native-intake-retrieval"
+        canonical_native_assisted_entry_job = job.job_type == "native-intake-assisted-entry"
         native_sql_command = (
             (canonical_native_start_job or canonical_native_identity_job or canonical_native_source_policy_job
              or canonical_native_source_policy_recheck_job)
@@ -192,7 +193,7 @@ class ODayWorker:
         canonical_transaction_owned_job = (
             canonical_score_job or canonical_identity_job or canonical_native_start_job
             or canonical_native_identity_job or canonical_native_source_policy_job or canonical_native_source_policy_recheck_job
-            or canonical_native_retrieval_job
+            or canonical_native_retrieval_job or canonical_native_assisted_entry_job
         )
         score_owner = ScoreExecutionJobRepository if job.job_type == SITESCORE_EXECUTION_JOB_TYPE else IntakeScoreJobRepository
 
@@ -261,7 +262,7 @@ class ODayWorker:
                     # checks the actual 45s lease during command/settlement;
                     # no renewal runs concurrently with that root.
                     native_intake_heartbeat(job.job_id, expected_version=job.version, fence_token=job.fence_token)
-                elif not canonical_native_retrieval_job:
+                elif not (canonical_native_retrieval_job or canonical_native_assisted_entry_job):
                     heartbeat.start()
                 self.execute_job(job)
                 current_version, heartbeat_failure = heartbeat.stop()

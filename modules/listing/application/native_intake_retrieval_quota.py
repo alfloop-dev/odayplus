@@ -119,6 +119,35 @@ class NativeIntakeRetrievalQuota:
         before()
         return NativeRetrievalReservation(slot_id, rate_id, source["source_id"], str(row["expires_at"]))
 
+    def reserve_storage(self, source_id: str, *, global_limit: int, source_limit: int,
+                        before) -> NativeRetrievalReservation:
+        """Reserve only storage capacity from the same anonymous global pool.
+
+        Manual-only sources may have zero HTTP rate/concurrency budgets. This
+        explicit interface uses separately closed owner configuration instead;
+        it neither reads nor charges the HTTP rate ledger. Retrieval reserve()
+        retains its original HTTP policy and counts these same inflight slots.
+        """
+        if (type(global_limit) is not int or not 1 <= global_limit <= MAX_GLOBAL_CONCURRENCY
+                or type(source_limit) is not int or not 1 <= source_limit <= global_limit):
+            raise NativeIntakeRetrievalConflict("NATIVE_ASSISTED_STORAGE_LIMITS_REJECTED")
+        self.schema(before=before)
+        self._locks(source_id, before)
+        self.engine.execute("DELETE FROM intake.native_retrieval_inflight_slots WHERE expires_at<=clock_timestamp()")
+        before()
+        counts = self.engine.query_one("SELECT count(*) AS total,count(*) FILTER (WHERE source_id=?) AS source_total "
+            "FROM intake.native_retrieval_inflight_slots WHERE expires_at>clock_timestamp()", (source_id,))
+        if counts["total"] >= global_limit or counts["source_total"] >= source_limit:
+            raise NativeRetrievalQuotaExceeded("NATIVE_ASSISTED_STORAGE_CONCURRENCY_FULL")
+        before()
+        slot_id = str(uuid4())
+        row = self.engine.query_one("INSERT INTO intake.native_retrieval_inflight_slots "
+            "(reservation_id,source_id,admitted_at,expires_at) "
+            "VALUES (?,?,clock_timestamp(),clock_timestamp()+interval '12 seconds') RETURNING expires_at",
+            (slot_id, source_id))
+        before()
+        return NativeRetrievalReservation(slot_id, None, source_id, str(row["expires_at"]))
+
     def release(self, reservation: NativeRetrievalReservation, *, process_reaped: bool, before):
         if process_reaped is not True:
             raise NativeIntakeRetrievalConflict("NATIVE_RETRIEVAL_QUOTA_REAP_PROOF_REQUIRED")

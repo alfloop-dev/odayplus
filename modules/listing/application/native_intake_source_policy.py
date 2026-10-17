@@ -253,7 +253,7 @@ class NativeIntakeSourcePolicyOwner:
                 or evidence["normalization_rule_source_sha256"] != identity.rule_source_sha256
                 or (pending and (intake["version"] != expected_version
                     or intake["processing_state"] != "CHECKING_SOURCE_POLICY"
-                    or intake["source_policy_state"] != ("AUTH_REQUIRED" if producer.get("recheck") is True else None)
+                    or intake["source_policy_state"] != self._pending_source_policy(producer)
                     or any(intake[key] is not None for key in ("resolved_listing_id", "completed_at"))))):
             raise NativeIntakeSourcePolicyConflict("NATIVE_SOURCE_POLICY_INTAKE_BINDING_CONFLICT")
         # Admission/execution recheck original actor and resource scope, bound
@@ -264,6 +264,17 @@ class NativeIntakeSourcePolicyOwner:
             raise NativeIntakeSourcePolicyConflict("NATIVE_SOURCE_POLICY_ORIGINAL_INPUT_CONFLICT")
         owner._input_binding(intake, started, admitted["intake_version"], pending=False)
 
+
+    @staticmethod
+    def _pending_source_policy(producer: dict) -> str | None:
+        if producer.get("recheck") is not True:
+            return None
+        from modules.listing.application.native_intake_source_policy_recheck import (
+            NativeIntakeSourcePolicyRecheckOwner,
+        )
+
+        provenance = _object(producer["recheck_provenance"])
+        return NativeIntakeSourcePolicyRecheckOwner._waiting_context(provenance)[1]
 
     @staticmethod
     def _input_digest(intake: dict) -> str:
@@ -410,7 +421,7 @@ class NativeIntakeSourcePolicyOwner:
                 "AND e.aggregate_version=i.version "
                 "AND ((e.payload->>'actor_ref'='native-intake-identity' AND e.payload->'payload'->>'from_state'='CHECKING_IDENTITY') "
                 "OR (e.payload->>'actor_ref'='native-intake-source-policy-recheck' "
-                "AND e.payload->'payload'->>'from_state'='AWAITING_SOURCE_AUTHORIZATION')) "
+                "AND e.payload->'payload'->>'from_state' IN ('AWAITING_SOURCE_AUTHORIZATION','AWAITING_ASSISTED_ENTRY'))) "
                 "AND e.payload->'payload'->>'to_state'='CHECKING_SOURCE_POLICY' "
                 "AND NOT EXISTS (SELECT 1 FROM workflow.jobs j WHERE j.tenant_id=e.tenant_id AND j.job_type=? "
                 "AND j.idempotency_key=i.intake_id::text||':'||e.event_id::text) "
@@ -633,7 +644,8 @@ class NativeIntakeSourcePolicyOwner:
                 or _time(business["timeout_at"]) <= now or _object(business["payload"]) != payload
                 or native_intake_source_policy_policy() != payload["policy"]
                 or actual["processing_state"] != expected_stage or actual["version"] != expected_version
-                or actual["source_policy_state"] != (("AUTH_REQUIRED" if "recheck_provenance" in payload else None)
+                or actual["source_policy_state"] != ((self._pending_source_policy({"recheck": True,
+                        "recheck_provenance": payload["recheck_provenance"]}) if "recheck_provenance" in payload else None)
                     if expected_stage == "CHECKING_SOURCE_POLICY" else proof["effective_policy"])
                 or actual["deleted_at"] is not None or self._input_digest(actual) != payload["input_sha256"]
                 or actual["resolved_listing_id"] is not None or actual["completed_at"] is not None):
@@ -712,10 +724,10 @@ class NativeIntakeSourcePolicyOwner:
             self._ensure_source_proof(current, job, payload, intake, proof, stage="CHECKING_SOURCE_POLICY", version=version)
             if self.engine.execute("UPDATE intake.intakes SET processing_state=?,version=?,last_transition_at=?,source_policy_state=? "
                 "WHERE tenant_id=? AND intake_id=? AND processing_state='CHECKING_SOURCE_POLICY' AND version=? AND deleted_at IS NULL "
-                "AND ((source_policy_state IS NULL AND NOT ?::boolean) OR (source_policy_state='AUTH_REQUIRED' AND ?::boolean)) "
+                "AND source_policy_state IS NOT DISTINCT FROM ?::text "
                 "AND (?::timestamptz IS NULL OR ?::timestamptz>clock_timestamp())",
                 (target, aggregate.version, at.isoformat(), classified.effective_policy,
-                 tenant, intake["intake_id"], version, producer.get("recheck") is True, producer.get("recheck") is True,
+                 tenant, intake["intake_id"], version, self._pending_source_policy(producer),
                  valid_until, valid_until)).rowcount != 1:
                 self._cas_rejected(current, job, payload, intake, proof,
                                    expected_stage="CHECKING_SOURCE_POLICY", expected_version=version)

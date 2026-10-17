@@ -8,6 +8,54 @@ import pytest
 from shared.domain.events import CONSUMER_MODE, DomainEvent, validate_event
 
 
+@pytest.fixture
+def snapshot_event():
+    def create(event_type, producer, changes):
+        tenant, intake, snapshot = str(uuid4()), str(uuid4()), str(uuid4())
+        return DomainEvent(event_type=event_type, producer=producer, tenant_id=tenant,
+            aggregate_type="source_snapshot", aggregate_id=snapshot, aggregate_version=1,
+            partition_key=f"{tenant}:{intake}", correlation_id=str(uuid4()),
+            schema_ref="#/payloads/SnapshotCreatedV1", sensitive_fields=["payload.object_uri"],
+            payload={"source_snapshot_id": snapshot, "intake_id": intake, "source_id": "synthetic-source",
+                "content_sha256": "a" * 64, "captured_at": "2026-10-17T00:00:00+00:00",
+                "retention_class": "SOURCE_RAW", "residency_mode": "TW_ONLY", "object_generation": 9,
+                **changes})
+    return create
+
+
+@pytest.mark.parametrize("event_type,producer", [("snapshot.created", "retrieval_service"),
+    ("snapshot.manual_entry_created", "assisted_entry_service")])
+@pytest.mark.parametrize("mode", ["producer", CONSUMER_MODE])
+@pytest.mark.parametrize("field,value", [("content_sha256", "invalid-digest"),
+    ("content_sha256", "A" * 64), ("captured_at", "2026-99-99T99:99:99+00:00"),
+    ("captured_at", "2026-02-30T01:02:03Z"), ("captured_at", "2026-10-17T01:02:03"),
+    ("captured_at", "2026-10-17T01:02:03+00:60"), ("captured_at", "2026-10-17T01:02:03+24:00"),
+    ("captured_at", "2026-10-17 01:02:03+00:00")])
+def test_snapshot_declared_digest_and_calendar_constraints_apply_in_both_modes(snapshot_event,
+        event_type, producer, mode, field, value):
+    errors = validate_event(snapshot_event(event_type, producer, {field: value}), mode=mode)
+    assert any(field in error and ("pattern" if field == "content_sha256" else "format") in error for error in errors)
+
+
+@pytest.mark.parametrize("event_type,producer", [("snapshot.created", "retrieval_service"),
+    ("snapshot.manual_entry_created", "assisted_entry_service")])
+@pytest.mark.parametrize("captured_at", ["2026-10-17T00:00:00Z", "2026-10-17t08:00:00z",
+    "2026-10-17T08:00:00.123456+08:00", "2024-02-29T12:34:56-03:30"])
+def test_snapshot_accepts_valid_calendar_dates_and_rfc3339_offsets(snapshot_event, event_type, producer, captured_at):
+    event = snapshot_event(event_type, producer, {"captured_at": captured_at})
+    assert validate_event(event) == []
+    assert validate_event(event, mode=CONSUMER_MODE) == []
+
+
+def test_declared_patterns_keep_json_schema_search_semantics():
+    from shared.domain.events import EventContractValidator
+
+    validator = EventContractValidator()
+    schema = {"type": "string", "pattern": "observed"}
+    assert validator.validate_schema("prefix-observed-suffix", schema) == []
+    assert validator.validate_schema("missing", schema)
+
+
 @pytest.mark.parametrize("invalid_field", [None, "source_listing_id", "listing_id"])
 def test_candidate_created_uses_the_effective_closed_payload_registry(invalid_field) -> None:
     """The later complete registry overrides the catalog's old field summary."""

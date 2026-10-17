@@ -146,8 +146,15 @@ class EventContractValidator:
             except ValueError:
                 return False
         if fmt == "date-time":
-            pattern = r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$"
-            return bool(re.match(pattern, val))
+            pattern = (r"\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?"
+                       r"(?:[Zz]|[+-](?:[01]\d|2[0-3]):[0-5]\d)")
+            if re.fullmatch(pattern, val) is None:
+                return False
+            try:
+                datetime.fromisoformat(val.replace("t", "T").replace("z", "Z"))
+            except ValueError:
+                return False
+            return True
         if fmt == "uri":
             return val.startswith("http://") or val.startswith("https://") or val.startswith("gs://") or val.startswith("odp-artifact://")
         return True
@@ -224,6 +231,11 @@ class EventContractValidator:
             enum_values = schema["enum"]
             if data not in enum_values:
                 errors.append(f"Value '{data}' is not in enum {enum_values}")
+
+        if "pattern" in schema and isinstance(data, str):
+            # JSON Schema patterns are searches; anchors belong to the schema.
+            if re.search(schema["pattern"], data) is None:
+                errors.append(f"Value '{data}' does not match pattern {schema['pattern']}")
 
         if "format" in schema and isinstance(data, str):
             fmt = schema["format"]

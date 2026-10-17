@@ -38,9 +38,8 @@ from modules.listing.domain.intake_states import (
     TransitionContext,
 )
 from shared.audit.backlog import CanonicalAuditBacklog
-from shared.audit.errors import CanonicalAuditUnavailable
 from shared.domain.events import DomainEvent, validate_event
-from shared.jobs.queue import JobDeliveryState, JobFenceRejectedError, JobRequest, JobStatus
+from shared.jobs.queue import JobFenceRejectedError, JobRequest, JobStatus
 
 NATIVE_INTAKE_SOURCE_POLICY_RECHECK_JOB_TYPE = "native-intake-source-policy-recheck"
 POLICY_ENV = "ODP_NATIVE_INTAKE_SOURCE_POLICY_RECHECK_POLICY_JSON"
@@ -84,6 +83,22 @@ class NativeIntakeSourcePolicyRecheckOwner:
     def _request_audit_id(request_id):
         return str(uuid5(UUID(request_id), "native-source-policy-recheck-request-audit-v1"))
 
+    @staticmethod
+    def _waiting_context(payload):
+        keys = {"waiting_state", "waiting_source_policy"}
+        present = keys & set(payload)
+        if not present:
+            # Existing v1 requests/admissions predate the assisted recheck.
+            return "AWAITING_SOURCE_AUTHORIZATION", "AUTH_REQUIRED"
+        if present != keys:
+            raise NativeIntakeSourcePolicyRecheckConflict("NATIVE_RECHECK_WAITING_CONTEXT_INCOMPLETE")
+        state, policy = payload["waiting_state"], payload["waiting_source_policy"]
+        if not (isinstance(state, str) and isinstance(policy, str)) or not (
+                (state == "AWAITING_SOURCE_AUTHORIZATION" and policy == "AUTH_REQUIRED")
+                or (state == "AWAITING_ASSISTED_ENTRY" and policy in {"AUTH_REQUIRED", "ASSISTED_ENTRY_ONLY"})):
+            raise NativeIntakeSourcePolicyRecheckConflict("NATIVE_RECHECK_WAITING_CONTEXT_REJECTED")
+        return state, policy
+
     def _authority(self, subject, intake, before):
         return current_native_recheck_principal(self.engine, subject, intake, before=before)
 
@@ -109,8 +124,9 @@ class NativeIntakeSourcePolicyRecheckOwner:
         return event, producer
 
     def _waiting(self, intake, version, before):
-        if (intake["processing_state"] != "AWAITING_SOURCE_AUTHORIZATION"
-                or intake["source_policy_state"] != "AUTH_REQUIRED" or intake["version"] != version
+        state, policy = intake["processing_state"], intake["source_policy_state"]
+        self._waiting_context({"waiting_state": state, "waiting_source_policy": policy})
+        if (intake["version"] != version
                 or any(intake[k] is not None for k in ("deleted_at", "resolved_listing_id", "completed_at"))):
             raise NativeIntakeSourcePolicyRecheckConflict("NATIVE_RECHECK_NOT_CURRENT_WAIT")
         before()
@@ -135,17 +151,24 @@ class NativeIntakeSourcePolicyRecheckOwner:
         delivery = view.queue.get(job["job_id"])
         if delivery is None:
             raise NativeIntakeSourcePolicyRecheckConflict("NATIVE_RECHECK_WAIT_PROOF_MISSING")
-        owner = NativeIntakeSourcePolicyOwner(view)
-        tenant, generation = owner.auth.decode(delivery)
-        result = owner._committed_result(delivery, tenant, generation)
+        from modules.listing.application.native_intake_source_policy_recheck_history import (
+            HistoricalSourcePolicyProof,
+        )
+
         payload = _object(job["payload"])
+        tenant = intake["tenant_id"]
+        result, produced = HistoricalSourcePolicyProof(view).committed_with_producer(delivery, tenant,
+            payload.get("delivery_generation"), producer_event_id=payload["event_id"])
         if (tenant != intake["tenant_id"] or result is None or result["version"] != version
                 or result["intake_id"] != intake["intake_id"]
-                or result["processing_state"] != "AWAITING_SOURCE_AUTHORIZATION"
+                or result["processing_state"] != state or result["policy_decision"]["effective_policy"] != policy
                 or payload["input_sha256"] != self.source._input_digest(intake)):
             raise NativeIntakeSourcePolicyRecheckConflict("NATIVE_RECHECK_WAIT_PROOF_CONFLICT")
-        _, event, _, producer = owner._event(tenant, payload["event_id"], before=before)
-        owner._input_binding(intake, event, payload["intake_version"], producer, pending=False, before=before)
+        _, event, _, producer = produced
+        if (("recheck_provenance" in payload) != (producer.get("recheck") is True)
+                or (producer.get("recheck") is True and payload["recheck_provenance"] != producer["recheck_provenance"])):
+            raise NativeIntakeSourcePolicyRecheckConflict("NATIVE_RECHECK_WAIT_PRODUCER_BINDING_CONFLICT")
+        self.source._input_binding(intake, event, payload["intake_version"], producer, pending=False, before=before)
         root = producer.get("root_identity_event_id", payload["event_id"])
         original, _ = self._root_identity(tenant, root, before)
         if original["aggregate_id"] != intake["intake_id"]:
@@ -158,22 +181,16 @@ class NativeIntakeSourcePolicyRecheckOwner:
                 or contains_sensitive_submission_material({"reason": reason})):
             raise ValueError("Explicit safe source-policy recheck intent is required")
         with self.graph.transaction(principal.tenant_id):
-            deadline = self.source._clock() + timedelta(milliseconds=750)
-            def before():
-                self.source._admission_budget(deadline)
+            from modules.listing.application.native_intake_pending_commands import (
+                NativeIntakeCommandBudget,
+                NativeIntakePendingCommands,
+            )
+
+            before = NativeIntakeCommandBudget(self.source)
             intake = self.command_context(principal, intake_id, before=before)
             root = self._waiting(intake, expected_version, before)
             before()
-            active = self.engine.query_one("SELECT e.event_id FROM workflow.outbox_events e "
-                "LEFT JOIN workflow.jobs j ON j.tenant_id=e.tenant_id AND j.aggregate_type='intake_policy_recheck' "
-                "AND j.aggregate_id=e.aggregate_id AND j.job_type='native-intake-source-policy-recheck' "
-                "WHERE e.tenant_id=? AND e.event_type='intake.source_policy_recheck_requested' "
-                "AND e.aggregate_type='intake_policy_recheck' AND e.payload->'payload'->>'intake_id'=? "
-                "AND e.payload->'payload'->>'expected_intake_version'=? "
-                "AND (j.job_id IS NULL OR j.status IN ('QUEUED','RUNNING','RETRYING')) LIMIT 1",
-                (intake["tenant_id"], intake_id, str(expected_version)))
-            if active:
-                raise NativeIntakeSourcePolicyRecheckConflict("NATIVE_RECHECK_REQUEST_ALREADY_ACTIVE")
+            NativeIntakePendingCommands(self.graph).require_clear(intake, before=before)
             before()
             CanonicalAuditBacklog(self.engine).require_available(intake["tenant_id"])
             request_id, at = str(uuid4()), self.source._clock()
@@ -185,7 +202,8 @@ class NativeIntakeSourcePolicyRecheckOwner:
                 schema_ref=REQUEST_SCHEMA, payload={"request_id": request_id, "intake_id": intake_id,
                     "expected_intake_version": expected_version, "requested_by": principal.subject_id,
                     "requested_at": at.isoformat(), "input_sha256": self.source._input_digest(intake),
-                    "root_identity_event_id": root})
+                    "root_identity_event_id": root, "waiting_state": intake["processing_state"],
+                    "waiting_source_policy": intake["source_policy_state"]})
             receipt = {"request_id": request_id, "intake_id": intake_id, "status": "REQUESTED",
                 "version": expected_version, "requested_at": at.isoformat(), "correlation_id": intake["correlation_id"],
                 "audit_event_id": audit_id, "outbox_event_id": event.event_id}
@@ -193,8 +211,9 @@ class NativeIntakeSourcePolicyRecheckOwner:
                 "resource_type": "intake", "resource_id": intake_id, "action": "intake.source_policy_recheck_requested.v1",
                 "result": "SUCCEEDED", "actor_subject_id": principal.subject_id, "actor_role": "DATA_STEWARD",
                 "correlation_id": intake["correlation_id"], "occurred_at": at.isoformat(),
-                "before_value": {"processing_state": intake["processing_state"], "version": expected_version},
-                "after_value": receipt, "reason": reason},
+                "before_value": {"processing_state": intake["processing_state"], "source_policy_state": intake["source_policy_state"],
+                    "version": expected_version},
+                "after_value": {**receipt, "native_recheck_request_provenance": event.payload}, "reason": reason},
                 {k: intake[k] for k in ("tenant_id", "brand_id", "region_id", "assigned_area_id", "heat_zone_id")})
             before()
             self.graph._outbox(event)
@@ -223,11 +242,12 @@ class NativeIntakeSourcePolicyRecheckOwner:
             raise NativeIntakeSourcePolicyRecheckConflict("NATIVE_RECHECK_REQUEST_EVENT_CONFLICT")
         _uuid(data["intake_id"])
         _uuid(data["requested_by"])
+        waiting_state, waiting_policy = self._waiting_context(data)
         original, producer = self._root_identity(tenant, data["root_identity_event_id"], before)
         if original["aggregate_id"] != data["intake_id"] or original["correlation_id"] != row["correlation_id"]:
             raise NativeIntakeSourcePolicyRecheckConflict("NATIVE_RECHECK_REQUEST_ROOT_CONFLICT")
         audit_id = self._request_audit_id(event_id)
-        audit = view._one("SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
+        audit = view._one("SELECT after_value,before_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
             "AND resource_type='intake' AND resource_id=? AND actor_subject_id=? AND actor_role='DATA_STEWARD' "
             "AND action='intake.source_policy_recheck_requested.v1' AND result='SUCCEEDED' AND correlation_id=?",
             (tenant, audit_id, data["intake_id"], data["requested_by"], row["correlation_id"]))
@@ -236,16 +256,26 @@ class NativeIntakeSourcePolicyRecheckOwner:
             "correlation_id": row["correlation_id"], "audit_event_id": audit_id, "outbox_event_id": event_id}
         if any(_object(audit["after_value"]).get(k) != v for k, v in receipt.items()):
             raise NativeIntakeSourcePolicyRecheckConflict("NATIVE_RECHECK_REQUEST_AUDIT_CONFLICT")
+        if "waiting_state" in data or "native_recheck_request_provenance" in _object(audit["after_value"]):
+            before_value = _object(audit["before_value"])
+            if ("waiting_state" not in data
+                    or _object(audit["after_value"]).get("native_recheck_request_provenance") != data
+                    or before_value != {"processing_state": waiting_state, "source_policy_state": waiting_policy,
+                        "version": data["expected_intake_version"]}):
+                raise NativeIntakeSourcePolicyRecheckConflict("NATIVE_RECHECK_REQUEST_WAITING_CONTEXT_NOT_AUDITED")
         return row, event, hashlib.sha256(_json(event).encode()).hexdigest(), producer
 
     def admit_event(self, tenant, event_id):
         policy = native_intake_source_policy_recheck_policy()
         self.source._partition(policy, tenant)
         with self.graph.transaction(tenant):
+            from modules.listing.application.native_intake_pending_commands import (
+                NativeIntakeCommandBudget,
+                NativeIntakePendingCommands,
+            )
+
+            before = NativeIntakeCommandBudget(self.source)
             at = self.source._clock()
-            deadline = at + timedelta(milliseconds=750)
-            def before():
-                self.source._admission_budget(deadline)
             row, event, digest, _ = self._request_event(tenant, event_id, before)
             data = event["payload"]
             job_id = str(uuid5(UUID(event_id), NATIVE_INTAKE_SOURCE_POLICY_RECHECK_JOB_TYPE))
@@ -255,6 +285,9 @@ class NativeIntakeSourcePolicyRecheckOwner:
             prior = self.engine.query_one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=? FOR UPDATE", (tenant, job_id))
             before()
             intake = self.graph._one("SELECT * FROM intake.intakes WHERE tenant_id=? AND intake_id=? FOR UPDATE", (tenant, data["intake_id"]))
+            pending = NativeIntakePendingCommands(self.graph)
+            pending.require_not_withdrawn(event, "SOURCE_POLICY_RECHECK", before)
+            pending.require_clear(intake, before=before, own_request_id=event_id)
             self._authority(data["requested_by"], intake, before)
             token = self.auth.sign(job_id, tenant, 1)
             if prior is not None:
@@ -262,7 +295,8 @@ class NativeIntakeSourcePolicyRecheckOwner:
                 self._admitted_request(prior, prior_payload, before)
                 return self._admission_receipt(prior, prior_payload, before)
             root = self._waiting(intake, data["expected_intake_version"], before)
-            if root != data["root_identity_event_id"] or self.source._input_digest(intake) != data["input_sha256"]:
+            if (root != data["root_identity_event_id"] or self.source._input_digest(intake) != data["input_sha256"]
+                    or self._waiting_context(data) != (intake["processing_state"], intake["source_policy_state"])):
                 raise NativeIntakeSourcePolicyRecheckConflict("NATIVE_RECHECK_REQUEST_INPUT_CHANGED")
             timeout = at + timedelta(seconds=policy["deadline_seconds"])
             audit_id = str(uuid4())
@@ -275,8 +309,8 @@ class NativeIntakeSourcePolicyRecheckOwner:
             before()
             self.engine.execute("INSERT INTO workflow.jobs (job_id,tenant_id,job_type,aggregate_type,aggregate_id,"
                 "status,checkpoint,attempt,max_attempts,fence_token,timeout_at,payload,correlation_id,idempotency_key) "
-                "VALUES (?,?,?,'intake_policy_recheck',?,'QUEUED','AWAITING_SOURCE_AUTHORIZATION',0,?,1,?,?::jsonb,?,?)",
-                (job_id, tenant, NATIVE_INTAKE_SOURCE_POLICY_RECHECK_JOB_TYPE, event_id, policy["max_attempts"],
+                "VALUES (?,?,?,'intake_policy_recheck',?,'QUEUED',?,0,?,1,?,?::jsonb,?,?)",
+                (job_id, tenant, NATIVE_INTAKE_SOURCE_POLICY_RECHECK_JOB_TYPE, event_id, intake["processing_state"], policy["max_attempts"],
                  timeout.isoformat(), _json(payload), row["correlation_id"], event_id))
             before()
             delivery, created = self.queue.enqueue(JobRequest(NATIVE_INTAKE_SOURCE_POLICY_RECHECK_JOB_TYPE,
@@ -296,10 +330,14 @@ class NativeIntakeSourcePolicyRecheckOwner:
 
     @staticmethod
     def _provenance(payload):
-        return {**{k: payload[k] for k in ("event_id", "event_sha256", "request_id", "intake_id",
+        result = {**{k: payload[k] for k in ("event_id", "event_sha256", "request_id", "intake_id",
             "expected_intake_version", "requested_by", "requested_at", "input_sha256", "root_identity_event_id",
             "delivery_generation", "attempt_token_sha256")},
             "policy_sha256": hashlib.sha256(_json(payload["policy"]).encode()).hexdigest()}
+        NativeIntakeSourcePolicyRecheckOwner._waiting_context(payload)
+        if "waiting_state" in payload:
+            result.update(waiting_state=payload["waiting_state"], waiting_source_policy=payload["waiting_source_policy"])
+        return result
 
     def _audit(self, intake, action, before, after, at, audit_id, causation):
         self.graph.audit_sink.persist({"audit_event_id": audit_id, "tenant_id": intake["tenant_id"],
@@ -343,25 +381,15 @@ class NativeIntakeSourcePolicyRecheckOwner:
             raise NativeIntakeSourcePolicyRecheckConflict("NATIVE_RECHECK_ADMISSION_AUDIT_CONFLICT")
         return receipt
 
-    def admit_partition(self, tenant, *, limit):
+    def admit_partition(self, tenant, *, limit, cursor=None):
+        from modules.listing.application.native_intake_source_policy_recheck_partition import (
+            NativeRecheckPartition,
+        )
+
         self.source._partition(native_intake_source_policy_recheck_policy(), tenant)
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("A bounded partition size from 1 to 100 is required")
-        with self.graph.transaction(tenant):
-            deadline = self.source._clock() + timedelta(milliseconds=750)
-            self.source._admission_budget(deadline)
-            rows = self.engine.query("SELECT e.event_id FROM workflow.outbox_events e "
-                "JOIN intake.intakes i ON i.tenant_id=e.tenant_id AND i.intake_id::text=e.payload->'payload'->>'intake_id' "
-                "WHERE e.tenant_id=? AND e.event_type='intake.source_policy_recheck_requested' "
-                "AND e.aggregate_type='intake_policy_recheck' AND i.deleted_at IS NULL "
-                "AND i.processing_state='AWAITING_SOURCE_AUTHORIZATION' AND i.source_policy_state='AUTH_REQUIRED' "
-                "AND i.version::text=e.payload->'payload'->>'expected_intake_version' "
-                "AND NOT EXISTS (SELECT 1 FROM workflow.jobs j WHERE j.tenant_id=e.tenant_id "
-                "AND j.job_type='native-intake-source-policy-recheck' AND j.aggregate_type='intake_policy_recheck' "
-                "AND j.aggregate_id=e.aggregate_id) ORDER BY e.occurred_at,e.event_id LIMIT ?", (tenant, limit))
-            self.source._admission_budget(deadline)
-        for row in rows:
-            yield self.admit_event(tenant, row["event_id"])
+        yield from NativeRecheckPartition(self).admit(tenant, limit=limit, cursor=cursor)
 
     def _admitted_request(self, job, payload, before):
         row, event, digest, producer = self._request_event(job["tenant_id"], payload["event_id"], before)
@@ -426,13 +454,14 @@ class NativeIntakeSourcePolicyRecheckOwner:
                 or result["authority"].get("role") != "data_owner"):
             raise JobFenceRejectedError("NATIVE_RECHECK_TERMINAL_RECEIPT_CONFLICT")
         before()
+        waiting_state, _ = self._waiting_context(payload)
         transition = self.engine.query_one("SELECT transition_id FROM intake.intake_stage_transitions "
             "WHERE tenant_id=? AND transition_id=? AND intake_id=? AND job_id=? "
-            "AND from_state='AWAITING_SOURCE_AUTHORIZATION' AND to_state='CHECKING_SOURCE_POLICY' "
+            "AND from_state=? AND to_state='CHECKING_SOURCE_POLICY' "
             "AND expected_version=? AND resulting_version=? AND actor_subject_id IS NULL AND service_principal=? "
             "AND permission='intake.recheck_source_policy' AND reason_code='SOURCE_POLICY_RECHECK_VERIFIED' "
             "AND idempotency_key=? AND causation_id=? AND correlation_id=?",
-            (tenant, result["transition_id"], payload["intake_id"], job["job_id"], payload["expected_intake_version"],
+            (tenant, result["transition_id"], payload["intake_id"], job["job_id"], waiting_state, payload["expected_intake_version"],
              result["version"], NATIVE_INTAKE_SOURCE_POLICY_RECHECK_JOB_TYPE, payload["event_id"], payload["event_id"], job["correlation_id"]))
         before()
         audit = self.engine.query_one("SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
@@ -446,7 +475,7 @@ class NativeIntakeSourcePolicyRecheckOwner:
         if not transition or not audit or not row:
             raise JobFenceRejectedError("NATIVE_RECHECK_TERMINAL_EVIDENCE_MISSING")
         snapshot, event = _object(audit["after_value"]), _object(row["payload"])
-        expected = {"intake_id": payload["intake_id"], "from_state": "AWAITING_SOURCE_AUTHORIZATION",
+        expected = {"intake_id": payload["intake_id"], "from_state": waiting_state,
             "to_state": "CHECKING_SOURCE_POLICY", "transition_id": result["transition_id"], "version": result["version"],
             "occurred_at": event.get("occurred_at")}
         if (any(snapshot.get(k) != v for k, v in result.items())
@@ -487,11 +516,17 @@ class NativeIntakeSourcePolicyRecheckOwner:
                 or result["intake_id"] != row["aggregate_id"]):
             raise NativeIntakeSourcePolicyRecheckConflict("NATIVE_RECHECK_PRODUCER_PROOF_CONFLICT")
         _, original = self._root_identity(tenant, result["root_identity_event_id"], before)
+        before()
+        recorded = self.graph._one("SELECT payload FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
+                                   (tenant, transition["job_id"]))
+        admitted_payload = _object(recorded["payload"])
+        waiting = ({k: admitted_payload[k] for k in ("waiting_state", "waiting_source_policy")}
+                   if "waiting_state" in admitted_payload else {})
         return row, event, hashlib.sha256(_json(event).encode()).hexdigest(), {
             **original, "recheck": True, "root_identity_event_id": result["root_identity_event_id"],
             "recheck_provenance": {"request_id": result["request_id"], "job_id": result["job_id"],
                 "outbox_event_id": event_id, "root_identity_event_id": result["root_identity_event_id"],
-                "input_sha256": result["input_sha256"]}}
+                "input_sha256": result["input_sha256"], **waiting}}
 
     def execute(self, delivery):
         tenant, generation = self.auth.decode(delivery)
@@ -514,7 +549,8 @@ class NativeIntakeSourcePolicyRecheckOwner:
             intake = self.graph._one("SELECT * FROM intake.intakes WHERE tenant_id=? AND intake_id=? FOR UPDATE", (tenant, payload["intake_id"]))
             principal = self._authority(payload["requested_by"], intake, before)
             root = self._waiting(intake, payload["expected_intake_version"], before)
-            if root != payload["root_identity_event_id"] or self.source._input_digest(intake) != payload["input_sha256"]:
+            if (root != payload["root_identity_event_id"] or self.source._input_digest(intake) != payload["input_sha256"]
+                    or self._waiting_context(payload) != (intake["processing_state"], intake["source_policy_state"])):
                 raise NativeIntakeSourcePolicyRecheckConflict("NATIVE_RECHECK_INPUT_CHANGED")
             before()
             if self.engine.execute("UPDATE workflow.jobs SET status='RUNNING',attempt=attempt+1,fence_token=fence_token+1,"
@@ -534,9 +570,10 @@ class NativeIntakeSourcePolicyRecheckOwner:
                 source_policy_recheck_verified=True))
             before()
             if self.engine.execute("UPDATE intake.intakes SET processing_state='CHECKING_SOURCE_POLICY',version=?,last_transition_at=? "
-                "WHERE tenant_id=? AND intake_id=? AND version=? AND processing_state='AWAITING_SOURCE_AUTHORIZATION' "
-                "AND source_policy_state='AUTH_REQUIRED' AND deleted_at IS NULL AND resolved_listing_id IS NULL AND completed_at IS NULL",
-                (aggregate.version, at.isoformat(), tenant, intake["intake_id"], intake["version"])).rowcount != 1:
+                "WHERE tenant_id=? AND intake_id=? AND version=? AND processing_state=? "
+                "AND source_policy_state=? AND deleted_at IS NULL AND resolved_listing_id IS NULL AND completed_at IS NULL",
+                (aggregate.version, at.isoformat(), tenant, intake["intake_id"], intake["version"],
+                 intake["processing_state"], intake["source_policy_state"])).rowcount != 1:
                 raise NativeIntakeSourcePolicyRecheckConflict("NATIVE_RECHECK_INTAKE_CAS_REJECTED")
             before()
             sequence = self.engine.query_one("SELECT COALESCE(MAX(sequence_no),0)+1 AS next FROM intake.intake_stage_transitions "
@@ -545,9 +582,9 @@ class NativeIntakeSourcePolicyRecheckOwner:
             self.engine.execute("INSERT INTO intake.intake_stage_transitions (transition_id,tenant_id,intake_id,sequence_no,"
                 "from_state,to_state,actor_subject_id,service_principal,permission,reason_code,reason_text,idempotency_key,"
                 "expected_version,resulting_version,job_id,correlation_id,causation_id,occurred_at) "
-                "VALUES (?,?,?,?,'AWAITING_SOURCE_AUTHORIZATION','CHECKING_SOURCE_POLICY',NULL,?,"
+                "VALUES (?,?,?,?,?,'CHECKING_SOURCE_POLICY',NULL,?,"
                 "'intake.recheck_source_policy','SOURCE_POLICY_RECHECK_VERIFIED',?,?,?,?,?,?,?,?)",
-                (transition_id, tenant, intake["intake_id"], sequence, NATIVE_INTAKE_SOURCE_POLICY_RECHECK_JOB_TYPE,
+                (transition_id, tenant, intake["intake_id"], sequence, intake["processing_state"], NATIVE_INTAKE_SOURCE_POLICY_RECHECK_JOB_TYPE,
                  "Verify current source policy recheck authority.", payload["event_id"], intake["version"], aggregate.version,
                  job["job_id"], intake["correlation_id"], payload["event_id"], at.isoformat()))
             state_event = DomainEvent(event_type="intake.state_changed", producer="listing_intake_service", tenant_id=tenant,
@@ -555,7 +592,7 @@ class NativeIntakeSourcePolicyRecheckOwner:
                 partition_key=tenant + ":" + intake["intake_id"], correlation_id=intake["correlation_id"],
                 causation_id=payload["event_id"], actor_ref=NATIVE_INTAKE_SOURCE_POLICY_RECHECK_JOB_TYPE, occurred_at=at,
                 schema_ref="#/payloads/IntakeStateChangedV1", payload={"intake_id": intake["intake_id"],
-                    "from_state": "AWAITING_SOURCE_AUTHORIZATION", "to_state": "CHECKING_SOURCE_POLICY",
+                    "from_state": intake["processing_state"], "to_state": "CHECKING_SOURCE_POLICY",
                     "transition_id": transition_id, "version": aggregate.version, "occurred_at": at.isoformat()})
             scope = principal.scope
             authority = {"subject_id": principal.subject_id, "role": "data_owner", "checked_at": at.isoformat(),
@@ -592,61 +629,11 @@ class NativeIntakeSourcePolicyRecheckOwner:
             return result
 
     def settle_failure(self, delivery, error):
-        tenant, generation = self.auth.decode(delivery)
-        with self.graph.transaction(tenant):
-            if result := self._committed_result(delivery, tenant, generation):
-                return result
-            current, job, payload = self._locked(delivery, tenant, generation, settlement=True)
-            if job["status"] not in {"QUEUED", "RETRYING"} or job["result"] is not None:
-                raise JobFenceRejectedError("NATIVE_RECHECK_UNKNOWN_ATTEMPT_OUTCOME")
-            now, policy = self.source._clock(), payload["policy"]
-            if isinstance(error, JobFenceRejectedError) and _time(job["timeout_at"]) > now and job["cancellation_requested_at"] is None:
-                raise error
-            try:
-                configured = native_intake_source_policy_recheck_policy()
-            except NativeIntakeSourcePolicyRecheckUnavailable:
-                configured = None
-            attempt = min(job["attempt"] + 1, job["max_attempts"])
-            cancelled = job["cancellation_requested_at"] is not None
-            retryable = getattr(error, "sqlstate", None) in {"40001", "40P01"} or isinstance(error, CanonicalAuditUnavailable)
-            due = None
-            if not cancelled and retryable and configured == policy and attempt < job["max_attempts"]:
-                due = now + timedelta(seconds=policy["backoff_seconds"][attempt - 1])
-                if due >= _time(job["timeout_at"]):
-                    due = None
-            status = "CANCELLED" if cancelled else "RETRYING" if due else "FAILED"
-            code = "NATIVE_RECHECK_CANCELLED" if cancelled else "NATIVE_RECHECK_RETRY_SCHEDULED" if due else "NATIVE_RECHECK_FAILED"
-            def before():
-                self.source._budget(current.lease_expires_at, current.lease_expires_at)
-            before()
-            intake = self.graph._one("SELECT * FROM intake.intakes WHERE tenant_id=? AND intake_id=? FOR UPDATE", (tenant, payload["intake_id"]))
-            before()
-            if self.engine.execute("UPDATE workflow.jobs SET status=?,attempt=?,last_error=?::jsonb,next_attempt_at=?,"
-                "version=version+1,updated_at=? WHERE tenant_id=? AND job_id=? AND version=? AND fence_token=?",
-                (status, attempt, _json({"code": code, "error_class": type(error).__name__}), due.isoformat() if due else None,
-                 now.isoformat(), tenant, job["job_id"], job["version"], job["fence_token"])).rowcount != 1:
-                raise JobFenceRejectedError("NATIVE_RECHECK_SETTLEMENT_FENCE_REJECTED")
-            before()
-            self._audit(intake, "intake.source_policy_recheck_delivery_settled.v1", {"job_id": job["job_id"], "status": job["status"]},
-                {"job_id": job["job_id"], "status": status, "attempt": attempt, "code": code}, now, str(uuid4()), payload["event_id"])
-            before()
-            self.queue.update_status(job["job_id"], JobStatus.CANCELLED if cancelled else JobStatus.QUEUED if due else JobStatus.FAILED,
-                delivery_state=None if cancelled else JobDeliveryState.RETRYING if due else JobDeliveryState.DEAD_LETTER,
-                expected_version=current.version, fence_token=current.fence_token, error_message=code)
-            before()
-            if due:
-                self.engine.execute("UPDATE durable_jobs SET available_at=? WHERE job_id=?", (due.isoformat(), job["job_id"]))
-            elif not cancelled:
-                self.graph._outbox(DomainEvent(event_type="job.dead_lettered", producer="job_platform", tenant_id=tenant,
-                    aggregate_type="job", aggregate_id=job["job_id"], aggregate_version=job["version"] + 1,
-                    partition_key=tenant + ":" + job["job_id"], correlation_id=job["correlation_id"], causation_id=payload["event_id"],
-                    actor_ref=NATIVE_INTAKE_SOURCE_POLICY_RECHECK_JOB_TYPE, occurred_at=now, schema_ref="#/payloads/JobDeadLetteredV1",
-                    sensitive_fields=["payload.last_error_details"], payload={"job_id": job["job_id"],
-                        "job_type": NATIVE_INTAKE_SOURCE_POLICY_RECHECK_JOB_TYPE, "checkpoint": job["checkpoint"],
-                        "attempt": attempt, "error_code": code, "dead_lettered_at": now.isoformat(),
-                        "last_error_details": {"error_class": type(error).__name__}}))
-            before()
-            return None
+        from modules.listing.application.native_intake_recheck_settlement import (
+            NativeRecheckSettlement,
+        )
+
+        return NativeRecheckSettlement(self).settle(delivery, error)
 
 
 def run_native_intake_source_policy_recheck_delivery(delivery, owner):

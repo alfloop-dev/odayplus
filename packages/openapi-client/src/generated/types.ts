@@ -391,6 +391,19 @@ export type CanonicalIdentitySummary = {
   version: number;
 };
 
+/** CanonicalIntakeAssistedEntryRequestReceipt */
+export type CanonicalIntakeAssistedEntryRequestReceipt = {
+  audit_event_id: string;
+  correction_ids: string[];
+  correlation_id: string;
+  intake_id: string;
+  outbox_event_id: string;
+  request_id: string;
+  requested_at: string;
+  status: "REQUESTED";
+  version: number;
+};
+
 /** CanonicalIntakeCancellationReceipt */
 export type CanonicalIntakeCancellationReceipt = {
   audit_event_id: string;
@@ -400,6 +413,21 @@ export type CanonicalIntakeCancellationReceipt = {
   outbox_event_id: string;
   processing_state: "CANCELLED";
   transition_id: string;
+  version: number;
+};
+
+/** CanonicalIntakeCommandWithdrawalReceipt */
+export type CanonicalIntakeCommandWithdrawalReceipt = {
+  audit_event_id: string;
+  cancellation_id: string;
+  correlation_id: string;
+  intake_id: string;
+  job_id: string | null;
+  outbox_event_id: string;
+  request_id: string;
+  requested_at: string;
+  requested_by: string;
+  status: "WITHDRAWN" | "CANCELLATION_REQUESTED";
   version: number;
 };
 
@@ -1398,6 +1426,25 @@ export type MonitorGuardrailPayload = {
   warning_max_relative_degradation?: number | null;
   warning_max_value?: number | null;
   warning_min_value?: number | null;
+};
+
+/** NativeAssistedEntryCommand */
+export type NativeAssistedEntryCommand = {
+  fields: NativeAssistedEntryFields;
+  reason: string;
+  risk_acknowledged: boolean;
+  risk_summary: string;
+};
+
+/** NativeAssistedEntryFields */
+export type NativeAssistedEntryFields = {
+  address: string;
+  areaPing: number;
+  floor?: string | null;
+  listingStatus?: string | null;
+  listingType?: string | null;
+  providerListingId?: string | null;
+  rent: number;
 };
 
 /** NativeIntakeScope */
@@ -2521,8 +2568,11 @@ export const API_PATHS = {
   "/api/v1/canonical-identity-decisions/{decision_id}/job": ["GET"],
   "/api/v1/canonical-intakes": ["GET", "POST"],
   "/api/v1/canonical-intakes/{intake_id}": ["GET"],
+  "/api/v1/canonical-intakes/{intake_id}/assisted-entry-completions": ["POST"],
+  "/api/v1/canonical-intakes/{intake_id}/assisted-entry-completions/{request_id}/cancel": ["POST"],
   "/api/v1/canonical-intakes/{intake_id}/cancel": ["POST"],
   "/api/v1/canonical-intakes/{intake_id}/source-policy-rechecks": ["POST"],
+  "/api/v1/canonical-intakes/{intake_id}/source-policy-rechecks/{request_id}/cancel": ["POST"],
   "/api/v1/external-data/freshness": ["GET"],
   "/api/v1/external-data/ingestion-runs": ["GET", "POST"],
   "/api/v1/external-data/ingestion-runs/{run_id}": ["GET"],

@@ -128,3 +128,42 @@ def current_native_retrieval_submitter(engine, intake: dict, *, before: Callable
     if not principal.scope.permits_module("listing"):
         raise PermissionError("NATIVE_RETRIEVAL_SUBMITTER_MODULE_DENIED")
     return principal
+
+
+def current_native_assisted_principal(engine, subject_id: str, intake: dict, *,
+                                      risk_summary: str, risk_acknowledged: bool,
+                                      before: Callable[[], None]) -> Principal:
+    """Resolve the actual initiating human inside the caller's current root.
+
+    This authorizes proposed evidence only. The owner separately proves the
+    frozen command/source and previews the human-only Intake transition with
+    the immutable original submitter as owner. It grants no later application
+    of identity corrections and introduces no human clearance requirement.
+    """
+    if (type(risk_acknowledged) is not bool or risk_acknowledged is not True
+            or not isinstance(risk_summary, str) or not 3 <= len(risk_summary.strip()) <= 4000):
+        raise ValueError("NATIVE_ASSISTED_RISK_ACKNOWLEDGEMENT_REQUIRED")
+    principal = _current_native_requester_profile(engine, subject_id, intake, before=before)
+    authorize_intake_action(principal, "correct",
+        resource={**intake, "submitter": intake["submitter_subject_id"]},
+        is_identity_affecting=True, risk_summary=risk_summary, risk_acknowledged=risk_acknowledged)
+    if not principal.scope.permits_module("listing"):
+        raise PermissionError("NATIVE_ASSISTED_REQUESTER_MODULE_DENIED")
+    return principal
+
+
+def current_native_command_withdrawal_principal(engine, subject_id: str, intake: dict, *,
+                                                request_kind: str, before: Callable[[], None]) -> Principal:
+    """A fresh negative action uses its existing lane-specific permission.
+
+    It needs neither a historical actor's role nor current positive source,
+    runtime, storage or signing settings. The caller owns the locked Intake.
+    """
+    if request_kind not in {"ASSISTED_ENTRY", "SOURCE_POLICY_RECHECK"}:
+        raise ValueError("NATIVE_COMMAND_KIND_REQUIRED")
+    principal = _current_native_requester_profile(engine, subject_id, intake, before=before)
+    authorize_intake_action(principal, "cancel" if request_kind == "ASSISTED_ENTRY" else "recheck_source_policy",
+        resource={**intake, "submitter": intake["submitter_subject_id"]})
+    if not principal.scope.permits_module("listing"):
+        raise PermissionError("NATIVE_COMMAND_WITHDRAWAL_MODULE_DENIED")
+    return principal

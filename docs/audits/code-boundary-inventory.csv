@@ -203,6 +203,7 @@ apps/worker/oday_worker/__init__.py,product_system,product_required,true,,engine
 apps/worker/oday_worker/__main__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/worker/oday_worker/handlers.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/worker/oday_worker/main.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+apps/worker/oday_worker/native_intake_assisted_entry.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/worker/oday_worker/native_intake_identity.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/worker/oday_worker/native_intake_retrieval.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/worker/oday_worker/native_intake_source_policy.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -464,6 +465,8 @@ modules/external_data/application/ingestion_store.py,product_system,product_requ
 modules/external_data/application/listing_feed_adapter.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/external_data/application/listing_feed_store.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/external_data/application/market_data_facade.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/external_data/application/native_assisted_snapshot_process_transport.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/external_data/application/native_assisted_snapshot_transport.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/external_data/application/native_intake_io_child.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/external_data/application/native_intake_process.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/external_data/application/native_snapshot_process_transport.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -594,8 +597,30 @@ modules/listing/application/intake_score_retry_policy.py,product_system,product_
 modules/listing/application/intake_sla_commands.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/listing/application/intake_workflow.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/listing/application/intake_workflow_bootstrap.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/native_intake_assisted_entry.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/native_intake_assisted_entry_execution.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/native_intake_assisted_entry_history.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/native_intake_assisted_entry_identity.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/native_intake_assisted_entry_input.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/native_intake_assisted_entry_io.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/native_intake_assisted_entry_job_proof.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/native_intake_assisted_entry_leases.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/native_intake_assisted_entry_partition.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/native_intake_assisted_entry_policy.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/native_intake_assisted_entry_request.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/native_intake_assisted_entry_request_proof.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/native_intake_assisted_entry_results.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/native_intake_assisted_entry_retry.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/native_intake_assisted_entry_runtime.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/native_intake_assisted_entry_settlement.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/native_intake_assisted_entry_source.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/native_intake_assisted_entry_terminal.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/native_intake_command_withdrawal.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/listing/application/native_intake_identity.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/listing/application/native_intake_job_runtime.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/native_intake_pending_commands.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/native_intake_recheck_settlement.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/native_intake_recheck_terminal_proof.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/listing/application/native_intake_requester_authority.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/listing/application/native_intake_retrieval.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/listing/application/native_intake_retrieval_io.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -606,6 +631,8 @@ modules/listing/application/native_intake_retrieval_results.py,product_system,pr
 modules/listing/application/native_intake_retrieval_runtime.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/listing/application/native_intake_source_policy.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/listing/application/native_intake_source_policy_recheck.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/native_intake_source_policy_recheck_history.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/application/native_intake_source_policy_recheck_partition.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/listing/application/native_intake_source_policy_rules.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/listing/application/native_intake_start.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/listing/application/native_intake_submission_validation.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -1185,6 +1212,12 @@ tests/integration/test_model_ready_materialization.py,verification,verification_
 tests/integration/test_model_registry_artifacts.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_model_training_release.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_native_assisted_snapshot_capture_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_native_intake_assisted_entry_controls_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_native_intake_assisted_entry_execution_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_native_intake_assisted_entry_history_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_native_intake_assisted_entry_requests_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_native_intake_assisted_recheck_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_native_intake_command_closure_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_native_intake_identity_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_native_intake_requester_authority_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_native_intake_retrieval_controls_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -1341,6 +1374,14 @@ tests/security/test_feature_flags.py,verification,verification_only,false,develo
 tests/security/test_local_npm_sbom.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_login_throttle_wiring.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_native_assisted_snapshot_capture.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/security/test_native_assisted_snapshot_process.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/security/test_native_assisted_snapshot_transport.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/security/test_native_intake_assisted_entry_ingress_errors.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/security/test_native_intake_assisted_entry_input.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/security/test_native_intake_assisted_entry_owner_contract.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/security/test_native_intake_assisted_entry_policy.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/security/test_native_intake_assisted_entry_settlement.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/security/test_native_intake_assisted_recheck_state_contract.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_native_intake_identity.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_native_intake_retrieval.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_native_intake_retrieval_gcs_process.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
