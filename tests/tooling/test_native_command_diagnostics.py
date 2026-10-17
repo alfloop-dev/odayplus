@@ -1,8 +1,10 @@
 """Diagnostic forwarding cannot change outcomes or disclose request data."""
 import json
+from types import SimpleNamespace
 
 import pytest
 
+from tests.integration import _native_command_diagnostics as diagnostics
 from tests.integration._native_command_diagnostics import (
     NativeCommandDiagnostics,
     diagnostics_requested,
@@ -149,3 +151,73 @@ def test_query_groups_and_count_samples_remain_bounded(tmp_path):
 ])
 def test_explicit_opt_in_is_limited_to_native_integration_nodes(node, value, expected):
     assert diagnostics_requested(node, value) is expected
+
+
+def test_engine_wall_thread_cpu_and_observation_are_distinct_windows(tmp_path, monkeypatch):
+    # Replace only this recorder's clock reference, never the shared time
+    # module or any business/SQL/root clock. This is a forwarding unit test.
+    wall = iter((0.0, 10.0, 12.0, 20.0, 24.0, 25.0))
+    cpu = iter((100.0, 100.25))
+    monkeypatch.setattr(diagnostics, "time", SimpleNamespace(
+        perf_counter=lambda: next(wall), thread_time=lambda: next(cpu)))
+    path = tmp_path / "profile.jsonl"
+    recorder = NativeCommandDiagnostics(path, "native-case")
+    value, calls = object(), []
+    class Engine:
+        def query_one(self, sql, parameters):
+            calls.append((sql, parameters))
+            return value
+    engine = Engine()
+    Engine.query_one = recorder.sql(Engine.query_one)
+    class Owner:
+        def execute(self):
+            return engine.query_one("SELECT private_value", ("private-parameter",))
+    Owner.execute = recorder.operation(Owner.execute, "Owner.execute")
+    assert Owner().execute() is value
+    assert calls == [("SELECT private_value", ("private-parameter",))]
+    metric = json.loads(path.read_text())
+    item = next(iter(metric["sql"].values()))
+    assert item["engine_wall_seconds"] == item["max_engine_wall_seconds"] == 2.0
+    assert item["thread_cpu_seconds"] == item["max_thread_cpu_seconds"] == .25
+    assert item["thread_cpu_samples"] == 1
+    assert item["observation_seconds"] == item["max_observation_seconds"] == 12.0
+    # Existing fields retain their previous, observation-inclusive meaning.
+    assert item["seconds"] == item["max_seconds"] == 10.0
+    assert "private_value" not in path.read_text() and "private-parameter" not in path.read_text()
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_unavailable_cpu_clock_preserves_exact_engine_result_or_exception(tmp_path, monkeypatch, fail):
+    real_time = diagnostics.time
+    def unavailable():
+        raise OSError("private-clock-error")
+    monkeypatch.setattr(diagnostics, "time", SimpleNamespace(
+        perf_counter=real_time.perf_counter, thread_time=unavailable))
+    path = tmp_path / "profile.jsonl"
+    recorder = NativeCommandDiagnostics(path, "native-case")
+    value, original_error, calls = object(), ValueError("private-business-error"), []
+    class Engine:
+        def query_one(self, sql):
+            calls.append(sql)
+            if fail:
+                raise original_error
+            return value
+    engine = Engine()
+    Engine.query_one = recorder.sql(Engine.query_one)
+    class Owner:
+        def execute(self):
+            return engine.query_one("SELECT private_value")
+    Owner.execute = recorder.operation(Owner.execute, "Owner.execute")
+    if fail:
+        with pytest.raises(ValueError) as caught:
+            Owner().execute()
+        assert caught.value is original_error
+    else:
+        assert Owner().execute() is value
+    assert calls == ["SELECT private_value"]
+    raw = path.read_text()
+    assert "private-clock-error" not in raw and "private-business-error" not in raw
+    metric = json.loads(raw)
+    item = next(iter(metric["sql"].values()))
+    assert item["count"] == 1 and item["thread_cpu_samples"] == 0
+    assert metric["diagnostic_error_classes"] == ["OSError", "OSError"]

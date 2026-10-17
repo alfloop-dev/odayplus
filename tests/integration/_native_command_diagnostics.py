@@ -68,6 +68,13 @@ class NativeCommandDiagnostics:
         if len(errors) < 4:
             errors.append(type(error).__name__)
 
+    def _thread_cpu(self, metric):
+        try:
+            return time.thread_time()
+        except Exception as error:
+            self._observation_error(metric, error)
+            return None
+
     def operation(self, original, label):
         @functools.wraps(original)
         def measured(instance, *args, **kwargs):
@@ -110,25 +117,42 @@ class NativeCommandDiagnostics:
             if metric is None or getattr(self.local, "sql_depth", False):
                 return original(instance, *args, **kwargs)
             self.local.sql_depth = True
+            cpu_started = self._thread_cpu(metric)
             started, result = time.perf_counter(), None
             try:
                 return_value = original(instance, *args, **kwargs)
                 result = return_value
                 return return_value
             finally:
+                # Capture the forwarded engine window before hash/callsite
+                # observation. No clock, root deadline or GC setting changes.
+                finished = time.perf_counter()
+                cpu_finished = self._thread_cpu(metric)
                 self.local.sql_depth = False
                 try:
                     statement = args[0] if args else kwargs.get(statement_parameter, "")
                     key = hashlib.sha256(str(statement).encode()).hexdigest()
                     if key not in metric["sql"] and len(metric["sql"]) < _MAX_QUERIES:
                         metric["sql"][key] = {"count": 0, "seconds": 0.0, "max_seconds": 0.0,
-                                              "source_callsite": _callsite()}
+                                              "source_callsite": _callsite(),
+                                              "engine_wall_seconds": 0.0, "max_engine_wall_seconds": 0.0,
+                                              "thread_cpu_seconds": 0.0, "max_thread_cpu_seconds": 0.0,
+                                              "thread_cpu_samples": 0,
+                                              "observation_seconds": 0.0, "max_observation_seconds": 0.0}
                     if key in metric["sql"]:
                         item = metric["sql"][key]
                         elapsed = time.perf_counter() - started
                         item["count"] += 1
                         item["seconds"] += elapsed
                         item["max_seconds"] = max(item["max_seconds"], elapsed)
+                        wall = finished - started
+                        item["engine_wall_seconds"] += wall
+                        item["max_engine_wall_seconds"] = max(item["max_engine_wall_seconds"], wall)
+                        if cpu_started is not None and cpu_finished is not None:
+                            cpu = cpu_finished - cpu_started
+                            item["thread_cpu_seconds"] += cpu
+                            item["max_thread_cpu_seconds"] = max(item["max_thread_cpu_seconds"], cpu)
+                            item["thread_cpu_samples"] += 1
                     else:
                         metric["sql_overflow_count"] = metric.get("sql_overflow_count", 0) + 1
                     samples = metric["quota_count_samples"]
@@ -136,6 +160,12 @@ class NativeCommandDiagnostics:
                             and all(type(result.get(k)) is int for k in ("total", "source_total"))):
                         samples.append({k: result[k] for k in ("total", "source_total")})
                         del samples[:-8]
+                    if key in metric["sql"]:
+                        # This is the measured observation interval; the last
+                        # two accumulator writes themselves are not included.
+                        observation = time.perf_counter() - finished
+                        item["observation_seconds"] += observation
+                        item["max_observation_seconds"] = max(item["max_observation_seconds"], observation)
                 except Exception as error:
                     self._observation_error(metric, error)
         return measured
