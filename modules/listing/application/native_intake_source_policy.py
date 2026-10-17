@@ -168,8 +168,8 @@ class NativeIntakeSourcePolicyOwner:
         if remaining < 1:
             raise NativeIntakeSourcePolicyConflict("NATIVE_SOURCE_POLICY_ADMISSION_DEADLINE_EXPIRED")
         value = str(remaining) + "ms"
-        self.engine.query_one("SELECT set_config('statement_timeout',?,true)", (value,))
-        self.engine.query_one("SELECT set_config('lock_timeout',?,true)", (value,))
+        self.engine.query_one("SELECT set_config('statement_timeout',?,true), "
+            "set_config('lock_timeout',?,true)", (value, value))
 
     @staticmethod
     def _occurrence(intake_id: str, event_id: str) -> str:

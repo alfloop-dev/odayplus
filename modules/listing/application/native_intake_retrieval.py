@@ -95,8 +95,8 @@ class NativeIntakeRetrievalOwner:
         if milliseconds < 1:
             raise NativeIntakeRetrievalConflict("NATIVE_RETRIEVAL_ADMISSION_DEADLINE_EXPIRED")
         value = str(milliseconds) + "ms"
-        self.engine.query_one("SELECT set_config('lock_timeout',?,true)", (value,))
-        self.engine.query_one("SELECT set_config('statement_timeout',?,true)", (value,))
+        self.engine.query_one("SELECT set_config('lock_timeout',?,true), "
+            "set_config('statement_timeout',?,true)", (value, value))
 
     def _budget(self, job, physical, *, settlement=False):
         lease = physical.lease_expires_at
