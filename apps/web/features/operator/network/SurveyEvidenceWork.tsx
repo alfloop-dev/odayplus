@@ -19,6 +19,7 @@ export function SurveyEvidenceWork({ api, assignment, onPendingChange }: {
   const reviewBusy = useRef(false);
   const [scope, setScope] = useState(context);
   const [data, setData] = useState<SurveyWorkRead | null>(null);
+  const [workReadAvailable, setWorkReadAvailable] = useState(false);
   const [error, setError] = useState<string | null>(null), [readError, setReadError] = useState<string | null>(null);
   const [pending, setPending] = useState(false), [reading, setReading] = useState(false);
   const [reason, setReason] = useState("");
@@ -31,7 +32,11 @@ export function SurveyEvidenceWork({ api, assignment, onPendingChange }: {
   const retry = useRef<{ fingerprint: string; key: string } | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const current = (captured: typeof context) => mounted.current && captured === latest.current;
-  const value = scope === context ? data : null;
+  const scopedData = scope === context ? data : null;
+  const value = workReadAvailable ? scopedData : null;
+  // A temporary Work read failure withdraws Work controls, while the separate
+  // evidence reader keeps its current review receipt and outstanding owner.
+  const reviewAssignment = scopedData?.assignment;
   const row = value?.assignment ?? assignment;
   const canManage = value?.canRequestUpdate === true;
   const sameSurveyor = value && (!row.assigned_to || row.assigned_to === value.currentSubjectId);
@@ -44,17 +49,20 @@ export function SurveyEvidenceWork({ api, assignment, onPendingChange }: {
     try {
       const result = await captured.api.read(selected);
       if (!current(captured) || sequence.current !== read) return;
-      if (result.ok) setData(result.value);
-      else if (!("superseded" in result)) {
-        setReadError(`狀態重讀失敗：${result.message}`);
-        if (result.denied) { setData(null); setPreview(null); setUploaded(null); setSubmitted(null); }
+      if (result.ok) { setData(result.value); setWorkReadAvailable(true); }
+      else {
+        // A fresh read failure withdraws cached operation authority. Keep an
+        // acknowledged receipt only while the authenticated source is current.
+        setWorkReadAvailable(false);
+        if ("superseded" in result || result.denied) withdraw();
+        if (!("superseded" in result)) setReadError(`狀態重讀失敗：${result.message}`);
       }
     } catch {
-      if (current(captured) && sequence.current === read) setReadError("狀態重讀失敗；已確認的命令識別仍保留，請重新讀取。");
+      if (current(captured) && sequence.current === read) { setWorkReadAvailable(false); setReadError("狀態重讀失敗；已確認的命令識別仍保留，請重新讀取。"); }
     } finally { if (current(captured) && sequence.current === read) setReading(false); }
   }
   useEffect(() => {
-    mounted.current = true; inFlight.current = false; reviewBusy.current = false; setScope(context); setData(null); setError(null); setReadError(null);
+    mounted.current = true; inFlight.current = false; reviewBusy.current = false; setScope(context); setData(null); setWorkReadAvailable(false); setError(null); setReadError(null);
     setPending(false); setReading(false); setReason(""); setFile(null); setCapturedAt(""); setKind(""); setCaption("");
     setLatitude(""); setLongitude(""); setSurveyedAt(""); setObservation(""); setConfidence("");
     setPreview(null); setUploaded(null); setSubmitted(null); retry.current = null;
@@ -74,9 +82,12 @@ export function SurveyEvidenceWork({ api, assignment, onPendingChange }: {
     if (retry.current?.fingerprint !== fingerprint) retry.current = { fingerprint, key: crypto.randomUUID() };
     return retry.current.key;
   }
-  function failure(result: { message: string; denied?: boolean }) {
-    setError(result.message);
-    if (result.denied) { setData(null); setPreview(null); setUploaded(null); setSubmitted(null); }
+  function withdraw() {
+    setData(null); setWorkReadAvailable(false); setPreview(null); setUploaded(null); setSubmitted(null);
+  }
+  function failure(result: { message: string; denied?: boolean } | { superseded: true }) {
+    if ("superseded" in result) withdraw();
+    else { setError(result.message); if (result.denied) withdraw(); }
   }
   async function change(operation: "claim" | "start" | "cancel") {
     if (!canManage || preview || !reason.trim()
@@ -88,7 +99,7 @@ export function SurveyEvidenceWork({ api, assignment, onPendingChange }: {
       const result = await captured.api.change(selected, operation, reason.trim(), intent(operation, { revision: selected.revision, reason: reason.trim() }));
       if (!current(captured)) return;
       if (result.ok) { setData(old => old ? { ...old, assignment: result.value.assignment } : old); retry.current = null; await reload(captured, result.value.assignment); }
-      else if (!("superseded" in result)) failure(result);
+      else failure(result);
     } catch { if (current(captured)) setError("狀態命令回應未確認；保留相同輸入與命令識別重試。"); }
     finally { end(captured); }
   }
@@ -129,7 +140,7 @@ export function SurveyEvidenceWork({ api, assignment, onPendingChange }: {
           if (fileInput.current) fileInput.current.value = "";
           setData(old => old ? { ...old, items: [...old.items.filter(item => item.mediaId !== result.value.attachment.mediaId), result.value.attachment] } : old);
           await reload(captured, selected);
-        } else if (!("superseded" in result)) failure(result);
+        } else failure(result);
       } else {
         const result = await captured.api.submit(selected, selectedPreview.input, intent("submit", selectedPreview.input));
         if (!current(captured)) return;
@@ -137,7 +148,7 @@ export function SurveyEvidenceWork({ api, assignment, onPendingChange }: {
           setSubmitted(result.value); setPreview(null); retry.current = null;
           setData(old => old ? { ...old, assignment: result.value.assignment } : old);
           await reload(captured, result.value.assignment);
-        } else if (!("superseded" in result)) failure(result);
+        } else failure(result);
       }
     } catch { if (current(captured)) setError("命令回應未確認；請保留相同輸入與命令識別後重試，尚未顯示成功。"); }
     finally { end(captured); }
@@ -151,7 +162,7 @@ export function SurveyEvidenceWork({ api, assignment, onPendingChange }: {
       if (result.ok) {
         const url = URL.createObjectURL(result.value); const link = document.createElement("a");
         link.href = url; link.download = `survey-${attachment.mediaId}.bin`; link.click(); URL.revokeObjectURL(url);
-      } else if (!("superseded" in result)) failure(result);
+      } else failure(result);
     } catch { if (current(captured)) setError("附件內容未核驗，未開啟下載。"); }
     finally { end(captured); }
   }
@@ -213,7 +224,7 @@ export function SurveyEvidenceWork({ api, assignment, onPendingChange }: {
           <Button disabled={pending || reading || !canSubmit} variant="primary" onClick={() => { void confirm(); }}>{preview.kind === "upload" ? "確認上傳附件" : "確認提交回報"}</Button></div>
       </section> : null}
     </> : scope === context && reading ? <p role="status">讀取實際回報狀態中…</p> : null}
-    {value && row.status === "SUBMITTED" && row.survey_id ? <SurveyEvidenceReview api={api} assignment={row} onPendingChange={busy => {
+    {reviewAssignment?.status === "SUBMITTED" && reviewAssignment.survey_id ? <SurveyEvidenceReview api={api} assignment={reviewAssignment} onPendingChange={busy => {
       if (current(context)) {
         // A download and a review may overlap. Either outstanding owner keeps
         // the parent modal fenced until its own response has settled.

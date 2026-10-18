@@ -136,6 +136,85 @@ describe("Survey actual content adapter and current authenticated pin", () => {
 });
 
 describe("Survey actual native work in the existing assignment dialog", () => {
+  it.each(["superseded", "denied", "unavailable"] as const)("withdraws cached work authority and preview after a fresh %s read", async kind => {
+    const failed: SurveyResult<SurveyWorkRead> = kind === "superseded" ? { ok: false, superseded: true }
+      : { ok: false, denied: kind === "denied", message: "fresh read unavailable" };
+    const api = workApi({ read: vi.fn<SurveyEvidenceApi["read"]>()
+      .mockResolvedValueOnce({ ok: true, value: read(assignment(), "surveyor-a", [attachment()]) }).mockResolvedValue(failed) });
+    render(<SurveyEvidenceWork api={api} assignment={assignment()} onPendingChange={vi.fn()} />);
+    await fillSubmission();
+    expect(screen.getByRole("button", { name: `下載已核驗附件 ${mediaId}` })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "重讀回報狀態" }));
+    await waitFor(() => expect(screen.queryByText("已驗證登入帳號")).not.toBeInTheDocument());
+    expect(screen.queryByRole("region", { name: "現勘回報預覽" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: `下載已核驗附件 ${mediaId}` })).not.toBeInTheDocument();
+    expect(api.submit).not.toHaveBeenCalled();
+  });
+
+  it.each(["claim", "start", "cancel"] as const)("withdraws work authority after a superseded %s command", async operation => {
+    const api = workApi({ change: vi.fn<SurveyEvidenceApi["change"]>(async () => ({ ok: false, superseded: true })) });
+    const notify = vi.fn();
+    render(<SurveyEvidenceWork api={api} assignment={assignment()} onPendingChange={notify} />);
+    await ready(); fireEvent.change(screen.getByLabelText("作業理由"), { target: { value: submission.reason } });
+    fireEvent.click(screen.getByRole("button", { name: { claim: "領取任務", start: "開始現勘", cancel: "取消任務" }[operation] }));
+    await waitFor(() => expect(api.change).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.queryByText("已驗證登入帳號")).not.toBeInTheDocument());
+    expect(notify).toHaveBeenLastCalledWith(false);
+    expect(api.read).toHaveBeenCalledOnce();
+  });
+
+  it("withdraws a superseded submission preview without showing a successful receipt", async () => {
+    const api = workApi({ submit: vi.fn<SurveyEvidenceApi["submit"]>(async () => ({ ok: false, superseded: true })) });
+    render(<SurveyEvidenceWork api={api} assignment={assignment()} onPendingChange={vi.fn()} />);
+    await fillSubmission(); fireEvent.click(screen.getByRole("button", { name: "確認提交回報" }));
+    await waitFor(() => expect(api.submit).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.queryByRole("region", { name: "現勘回報預覽" })).not.toBeInTheDocument());
+    expect(screen.queryByText("已驗證登入帳號")).not.toBeInTheDocument();
+    expect(screen.queryByText(/現勘回報已保存/)).not.toBeInTheDocument();
+  });
+
+  it("withdraws a superseded attachment upload preview without claiming bytes were saved", async () => {
+    const api = workApi({ upload: vi.fn<SurveyEvidenceApi["upload"]>(async () => ({ ok: false, superseded: true })) });
+    render(<SurveyEvidenceWork api={api} assignment={assignment()} onPendingChange={vi.fn()} />);
+    await ready();
+    const file = new File([bytes], "owned.jpg", { type: "image/jpeg" });
+    Object.defineProperty(file, "arrayBuffer", { value: async () => bytes.slice().buffer });
+    fireEvent.change(screen.getByLabelText("作業理由"), { target: { value: upload.reason } });
+    fireEvent.change(screen.getByLabelText("附件檔案"), { target: { files: [file] } });
+    fireEvent.change(screen.getByLabelText("附件種類"), { target: { value: "PHOTO" } });
+    fireEvent.change(screen.getByLabelText("回報拍攝時間（本機時間）"), { target: { value: "2026-10-16T08:00" } });
+    fireEvent.click(screen.getByRole("button", { name: "預覽附件上傳" }));
+    await screen.findByRole("region", { name: "附件上傳預覽" });
+    fireEvent.click(screen.getByRole("button", { name: "確認上傳附件" }));
+    await waitFor(() => expect(api.upload).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.queryByRole("region", { name: "附件上傳預覽" })).not.toBeInTheDocument());
+    expect(screen.queryByText("已驗證登入帳號")).not.toBeInTheDocument();
+    expect(screen.queryByText(/已核驗並保存附件/)).not.toBeInTheDocument();
+  });
+
+  it("withdraws revoked attachment metadata without opening a download for a superseded content read", async () => {
+    const api = workApi({ read: vi.fn<SurveyEvidenceApi["read"]>(async () => ({ ok: true, value: read(assignment(), "surveyor-a", [attachment()]) })),
+      download: vi.fn<SurveyEvidenceApi["download"]>(async () => ({ ok: false, superseded: true })) });
+    const createObjectURL = vi.fn(); vi.stubGlobal("URL", class extends URL { static createObjectURL = createObjectURL; });
+    render(<SurveyEvidenceWork api={api} assignment={assignment()} onPendingChange={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: `下載已核驗附件 ${mediaId}` }));
+    await waitFor(() => expect(api.download).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.queryByText("已驗證登入帳號")).not.toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: `下載已核驗附件 ${mediaId}` })).not.toBeInTheDocument();
+    expect(createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("withdraws an acknowledged survey receipt when its following fresh read is superseded", async () => {
+    const api = workApi({ read: vi.fn<SurveyEvidenceApi["read"]>()
+      .mockResolvedValueOnce({ ok: true, value: read() }).mockResolvedValue({ ok: false, superseded: true }) });
+    render(<SurveyEvidenceWork api={api} assignment={assignment()} onPendingChange={vi.fn()} />);
+    await fillSubmission(); fireEvent.click(screen.getByRole("button", { name: "確認提交回報" }));
+    await waitFor(() => expect(api.read).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText("已驗證登入帳號")).not.toBeInTheDocument());
+    expect(screen.queryByText(/現勘回報已保存/)).not.toBeInTheDocument();
+    expect(api.submit).toHaveBeenCalledOnce();
+  });
+
   it("requires preview and final confirmation for actual File bytes and retains the saved attachment after history failure", async () => {
     let count = 0;
     const api = workApi({ read: vi.fn<SurveyEvidenceApi["read"]>(async () => ++count === 2 ? { ok: false, message: "history temporarily unavailable" } : { ok: true, value: read() }) });

@@ -219,4 +219,35 @@ describe("canonical survey independent review", () => {
     await act(async () => waiting.resolve({ ok: true, value: reviewed() }));
     expect(screen.queryByText(/審查已保存/)).not.toBeInTheDocument();
   });
+it("retains an acknowledged review receipt across an ordinary parent Work reread failure", async () => {
+ let reads = 0;
+ const work = api({ read: vi.fn(async () => ++reads === 1 ? { ok: true as const, value: {
+  assignment: { ...assignment }, currentSubjectId: "reviewer", canRequestUpdate: false, items: [] } }
+  : { ok: false as const, message: "Explicit temporary parent read failure" }) });
+ render(<SurveyEvidenceWork api={work} assignment={assignment} onPendingChange={vi.fn()} />);
+ await preview(); fireEvent.click(screen.getByRole("button", { name: "確認保存審查" }));
+ await screen.findByText(/審查已保存/);
+ fireEvent.click(screen.getByRole("button", { name: "重讀回報狀態" }));
+ await screen.findByText(/Explicit temporary parent read failure/);
+ expect(screen.getByText(/審查已保存/)).toHaveTextContent("review-receipt");
+});
+
+it("keeps the review owner and accepts its valid reply across an ordinary parent Work reread failure", async () => {
+ let reads = 0; const waiting = deferred<SurveyResult<SurveyReviewed>>();
+ const work = api({ read: vi.fn(async () => ++reads === 1 ? { ok: true as const, value: {
+  assignment: { ...assignment }, currentSubjectId: "reviewer", canRequestUpdate: false, items: [] } }
+  : { ok: false as const, message: "Explicit temporary parent read failure" }), review: vi.fn(() => waiting.promise) });
+ const pending = vi.fn();
+ render(<SurveyEvidenceWork api={work} assignment={assignment} onPendingChange={pending} />);
+ await preview(); fireEvent.click(screen.getByRole("button", { name: "確認保存審查" }));
+ expect(pending).toHaveBeenLastCalledWith(true);
+ fireEvent.click(screen.getByRole("button", { name: "重讀回報狀態" }));
+ await screen.findByText(/Explicit temporary parent read failure/);
+ const stillFencedBeforeReviewSettled = pending.mock.lastCall?.[0];
+ await act(async () => waiting.resolve({ ok: true, value: reviewed() }));
+ expect(stillFencedBeforeReviewSettled).toBe(true);
+ expect(screen.getByText(/審查已保存/)).toHaveTextContent("review-receipt");
+ expect(pending).toHaveBeenLastCalledWith(false);
+});
+
 });
