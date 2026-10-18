@@ -483,6 +483,9 @@ export function OperatorConsole({
     // Preferences express intent, not authority. Wait for bootstrap before
     // validating them: principal grants can differ from the static persona.
     if (!hasHydratedPreferences || (shellDataStatus !== "ready" && !(fixturesAllowed && bootstrapAuthMode === "fixture"))) return;
+    // A pending effect can run after a click has recorded newer intent but
+    // before that state commits. Let the newer render validate that choice.
+    if (workspaceIntent.current !== activeWorkspaceId) return;
     const workspaceId = isWorkspaceAllowed(activeRole, activeWorkspaceId)
       ? activeWorkspaceId
       : DEFAULT_WORKSPACE_ID;
