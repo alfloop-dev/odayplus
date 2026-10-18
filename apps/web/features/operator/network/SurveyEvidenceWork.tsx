@@ -5,6 +5,7 @@ import { Button } from "@oday-plus/ui";
 import styles from "../networkFindAreas.module.css";
 import type { SurveyAssignment } from "./surveyAssignmentClient";
 import type { SurveyAttachment, SurveyEvidenceApi, SurveySubmission, SurveySubmitted, SurveyUpload, SurveyWorkRead } from "./surveyEvidenceClient";
+import { SurveyEvidenceReview } from "./SurveyEvidenceReview";
 
 type Preview = { kind: "upload"; input: SurveyUpload; fileName: string } | { kind: "submit"; input: SurveySubmission };
 const ACTIVE = ["ASSIGNED", "CLAIMED", "IN_PROGRESS"];
@@ -15,6 +16,7 @@ export function SurveyEvidenceWork({ api, assignment, onPendingChange }: {
   const context = useMemo(() => ({ api, identity: assignment.assignment_id }), [api, assignment.assignment_id]);
   const latest = useRef(context); latest.current = context;
   const mounted = useRef(false), sequence = useRef(0), inFlight = useRef(false);
+  const reviewBusy = useRef(false);
   const [scope, setScope] = useState(context);
   const [data, setData] = useState<SurveyWorkRead | null>(null);
   const [error, setError] = useState<string | null>(null), [readError, setReadError] = useState<string | null>(null);
@@ -52,7 +54,7 @@ export function SurveyEvidenceWork({ api, assignment, onPendingChange }: {
     } finally { if (current(captured) && sequence.current === read) setReading(false); }
   }
   useEffect(() => {
-    mounted.current = true; inFlight.current = false; setScope(context); setData(null); setError(null); setReadError(null);
+    mounted.current = true; inFlight.current = false; reviewBusy.current = false; setScope(context); setData(null); setError(null); setReadError(null);
     setPending(false); setReading(false); setReason(""); setFile(null); setCapturedAt(""); setKind(""); setCaption("");
     setLatitude(""); setLongitude(""); setSurveyedAt(""); setObservation(""); setConfidence("");
     setPreview(null); setUploaded(null); setSubmitted(null); retry.current = null;
@@ -65,7 +67,7 @@ export function SurveyEvidenceWork({ api, assignment, onPendingChange }: {
     inFlight.current = true; setPending(true); onPendingChange(true); setError(null); return true;
   }
   function end(captured: typeof context) {
-    if (current(captured)) { inFlight.current = false; setPending(false); onPendingChange(false); }
+    if (current(captured)) { inFlight.current = false; setPending(false); onPendingChange(reviewBusy.current); }
   }
   function intent(kind: string, input: unknown) {
     const fingerprint = JSON.stringify({ kind, identity: context.identity, input });
@@ -161,7 +163,7 @@ export function SurveyEvidenceWork({ api, assignment, onPendingChange }: {
     {scope === context && readError ? <p role="alert">{readError}</p> : null}
     <Button disabled={pending || reading} onClick={() => { void reload(); }}>重讀回報狀態</Button>
     {uploaded && scope === context ? <p role="status">已核驗並保存附件：<code>{uploaded.mediaId}</code> · SHA-256 {uploaded.sha256}</p> : null}
-    {submitted && scope === context ? <p role="status">現勘回報已保存：<code>{submitted.surveyId}</code> · Observation {submitted.observationId} · 稽核 {submitted.auditEventIds.join("、")}；等待獨立審查，尚未批准或提升為正式資料。</p> : null}
+    {submitted && scope === context ? <p role="status">現勘回報已保存：<code>{submitted.surveyId}</code> · Observation {submitted.observationId} · 稽核 {submitted.auditEventIds.join("、")}；審查結果以實際證據紀錄為準。</p> : null}
     {value ? <>
       {row.status === "SUBMITTED" && row.survey_id && !submitted ? <p role="status">目前已保存回報：<code>{row.survey_id}</code>；不重送建立命令，審查狀態以實際證據紀錄為準。</p> : null}
       <dl><div><dt>已驗證登入帳號</dt><dd>{value.currentSubjectId}</dd></div>
@@ -211,5 +213,12 @@ export function SurveyEvidenceWork({ api, assignment, onPendingChange }: {
           <Button disabled={pending || reading || !canSubmit} variant="primary" onClick={() => { void confirm(); }}>{preview.kind === "upload" ? "確認上傳附件" : "確認提交回報"}</Button></div>
       </section> : null}
     </> : scope === context && reading ? <p role="status">讀取實際回報狀態中…</p> : null}
+    {value && row.status === "SUBMITTED" && row.survey_id ? <SurveyEvidenceReview api={api} assignment={row} onPendingChange={busy => {
+      if (current(context)) {
+        // A download and a review may overlap. Either outstanding owner keeps
+        // the parent modal fenced until its own response has settled.
+        reviewBusy.current = busy; onPendingChange(inFlight.current || busy);
+      }
+    }} /> : null}
   </section>;
 }

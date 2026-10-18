@@ -82,6 +82,16 @@ class SubmitFieldEvidence(BaseModel):
     reason: StrictStr = Field(min_length=1)
 
 
+class ReviewFieldEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    surveyId: StrictStr = Field(min_length=1)
+    expectedRevision: StrictInt = Field(ge=1)
+    decision: Literal["APPROVED", "REJECTED", "NEEDS_REVISION"]
+    reason: StrictStr = Field(min_length=1)
+    reviewChecklist: dict[str, Any] = Field(default_factory=dict)
+    conditions: list[StrictStr] = Field(default_factory=list)
+
+
 def create_canonical_survey_assignment_router(*, factory: Any, audit_log: Any,
                                             boundary: Any) -> APIRouter:
     selected_boundary = boundary
@@ -105,7 +115,7 @@ def create_canonical_survey_assignment_router(*, factory: Any, audit_log: Any,
         try:
             principal = request.state.operator_principal
             owner = factory(principal, correlation_id=request.state.correlation_id)
-            if method in {"command", "upload_attachment", "submit_evidence"}:
+            if method in {"command", "upload_attachment", "submit_evidence", "review_evidence"}:
                 kwargs["correlation_id"] = request.state.correlation_id
             return getattr(owner, method)(principal, **kwargs)
         except (SurveyAssignmentForbidden, SurveyAuthorizationError) as exc:
@@ -170,6 +180,12 @@ def create_canonical_survey_assignment_router(*, factory: Any, audit_log: Any,
     @router.get("/assignments/{assignment_id}/evidence", dependencies=[Depends(read_guard)])
     def read_evidence(assignment_id: str, request: Request):
         return call(request, "evidence", identity=assignment_id)
+
+    @router.post("/assignments/{assignment_id}/review", dependencies=[Depends(read_guard)])
+    def review_evidence(assignment_id: str, request: Request, body: ReviewFieldEvidence,
+                        key: str = Header(min_length=1, alias="Idempotency-Key")):
+        return call(request, "review_evidence", identity=assignment_id,
+                    payload=body.model_dump(), idempotency_key=key)
 
     @router.post("/assignments/{assignment_id}/{operation}", dependencies=[Depends(update_guard)])
     def change_assignment(assignment_id: str, operation: Literal["assign", "claim", "start", "cancel"],

@@ -21,6 +21,7 @@ from modules.market_survey.application.survey_service import MarketSurveyService
 from modules.market_survey.domain.content import SurveyAttachmentRecord
 from modules.market_survey.domain.models import (
     AssignmentStatus,
+    EvidenceReviewStatus,
     MediaKind,
     SurveyAuthorizationError,
     SurveyLocation,
@@ -28,6 +29,7 @@ from modules.market_survey.domain.models import (
     SurveyType,
     TargetEntityKind,
 )
+from modules.market_survey.domain.state_machine import ALLOWED_REVIEW_ROLES
 from modules.market_survey.infrastructure.assignment_repository import (
     DurableSurveyAssignmentRepository,
     SurveyOwnerUnavailable,
@@ -82,6 +84,23 @@ class _CommandAudit:
             "reason": self.reason, "actor_evidence": "authenticated_principal.v1"}))
         self.ids.append(recorded.event_id)
         return recorded
+
+
+class _ReviewRepository:
+    """Only the native review service receives this revision-bound write port."""
+
+    def __init__(self, repository: Any, survey_id: str, revision: int):
+        self.repository, self.survey_id, self.revision = repository, survey_id, revision
+
+    def get_evidence(self, survey_id: str, tenant_id: str | None = None):
+        if survey_id != self.survey_id:
+            raise SurveyOwnerUnavailable("SURVEY_EVIDENCE_BINDING_INVALID")
+        return self.repository.get_evidence(survey_id, tenant_id=tenant_id)
+
+    def save_evidence(self, value):
+        if value.survey_id != self.survey_id:
+            raise SurveyOwnerUnavailable("SURVEY_EVIDENCE_BINDING_INVALID")
+        self.repository.save_evidence_review(value, expected_version=self.revision)
 
 
 class CanonicalSurveyAssignmentService:
@@ -465,9 +484,96 @@ class CanonicalSurveyAssignmentService:
     @audited_denial
     def evidence(self, principal: Any, *, identity: str) -> dict[str, Any]:
         repo, assignment = self._owned_assignment(principal, identity, Action.VIEW)
-        row = repo.get_evidence(assignment.survey_id) if assignment.survey_id else None
+        return self._evidence_view(repo, assignment, principal)
+
+    @staticmethod
+    def _has_review_role(principal: Any) -> bool:
+        return bool({role.value.upper() for role in principal.roles}.intersection(ALLOWED_REVIEW_ROLES))
+
+    def _evidence_view(self, repo: Any, assignment: Any, principal: Any) -> dict[str, Any]:
+        row = repo.get_evidence_versioned(assignment.survey_id) if assignment.survey_id else None
         if row is None:
             raise SurveyAssignmentNotFound("SURVEY_EVIDENCE_NOT_FOUND")
-        value = row.to_dict()
-        value["media_attachments"] = [repo.get_media(item.media_id, identity).public() for item in row.media_attachments]
-        return value
+        evidence, revision = row
+        value = evidence.to_dict()
+        value["media_attachments"] = [repo.get_media(item.media_id, assignment.assignment_id).public()
+                                       for item in evidence.media_attachments]
+        return {**value, "revision": revision, "currentSubjectId": principal.subject_id,
+                "canRequestReview": self._has_review_role(principal)
+                    and evidence.submitter_id != principal.subject_id
+                    and not evidence.is_superseded and not evidence.is_retracted}
+
+    def _require_review(self, repo: Any, principal: Any, assignment: Any):
+        if not self._has_review_role(principal):
+            raise SurveyAuthorizationError("Actual principal has no native survey review role")
+        row = repo.get_evidence_versioned(assignment.survey_id) if assignment.survey_id else None
+        if row is None:
+            raise SurveyAssignmentNotFound("SURVEY_EVIDENCE_NOT_FOUND")
+        evidence = row[0]
+        if evidence.submitter_id == principal.subject_id:
+            raise SurveyAuthorizationError("Submitter cannot review their own field evidence")
+        if evidence.is_superseded or evidence.is_retracted:
+            raise SurveyStateConflictError("Superseded or retracted evidence cannot be reviewed")
+        return row
+
+    @contextmanager
+    def _review_transaction(self, repo: Any, principal: Any, assignment: Any):
+        with self._transaction(repo, principal, assignment.target_entity_kind.value,
+                               assignment.target_entity_id, Action.VIEW, None):
+            current = repo.get_assignment(assignment.assignment_id)
+            if current is None:
+                raise SurveyAssignmentNotFound("SURVEY_ASSIGNMENT_NOT_FOUND")
+            self._require_review(repo, principal, current)
+            yield
+
+    @audited_denial
+    def review_evidence(self, principal: Any, *, identity: str, payload: dict[str, Any],
+                        idempotency_key: str, correlation_id: str) -> dict[str, Any]:
+        # Review authority is the existing native role set, intersected with
+        # current canonical parent read admission. Listing UPDATE is distinct.
+        repo, assignment = self._owned_assignment(principal, identity, Action.VIEW)
+        evidence, _ = self._require_review(repo, principal, assignment)
+        survey_id = required_text(payload.get("surveyId"))
+        if survey_id != evidence.survey_id:
+            raise SurveyRevisionConflict("SURVEY_EVIDENCE_REVISION_CONFLICT")
+        reason, key = required_text(payload.get("reason")), required_text(idempotency_key)
+        if correlation_id != self.parents.correlation_id:
+            raise SurveyOwnerUnavailable("SURVEY_CORRELATION_BINDING_INVALID")
+        decision = EvidenceReviewStatus(required_text(payload.get("decision")))
+        if decision not in {EvidenceReviewStatus.APPROVED, EvidenceReviewStatus.REJECTED,
+                            EvidenceReviewStatus.NEEDS_REVISION}:
+            raise ValueError("SURVEY_REVIEW_DECISION_INVALID")
+        checklist, conditions = payload.get("reviewChecklist", {}), payload.get("conditions", [])
+        if (not isinstance(checklist, dict) or not isinstance(conditions, list)
+                or any(not isinstance(item, str) or not item.strip() for item in conditions)):
+            raise ValueError("SURVEY_REVIEW_INPUT_INVALID")
+        try:
+            json.dumps(checklist, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("SURVEY_REVIEW_INPUT_INVALID") from exc
+
+        def execute(_receipt_id):
+            current = repo.get_assignment(identity)
+            if current is None:
+                raise SurveyAssignmentNotFound("SURVEY_ASSIGNMENT_NOT_FOUND")
+            evidence, revision = self._require_review(repo, principal, current)
+            if (evidence.survey_id != survey_id or type(payload.get("expectedRevision")) is not int
+                    or payload["expectedRevision"] != revision):
+                raise SurveyRevisionConflict("SURVEY_EVIDENCE_REVISION_CONFLICT")
+            audit = _CommandAudit(self.audit_log, tenant=principal.tenant_id,
+                                  subject=principal.subject_id, reason=reason)
+            native = MarketSurveyService(repository=_ReviewRepository(repo, evidence.survey_id, revision), audit_log=audit)
+            native.review_survey(evidence.survey_id, decision=decision,
+                reviewer_id=principal.subject_id, reviewer_roles=[role.value for role in principal.roles],
+                review_comment=reason, review_checklist=checklist, conditions=conditions,
+                tenant_id=principal.tenant_id, correlation_id=correlation_id, now=self._time())
+            return {"evidence": self._evidence_view(repo, current, principal), "auditEventIds": audit.ids}
+
+        receipts = TenantScopedCommandReceiptStore(queue=self.queue, service="market-survey.review",
+            transaction_factory=lambda: self._review_transaction(repo, principal, assignment))
+        outcome = receipts.run(tenant_id=principal.tenant_id, idempotency_key=key,
+            scope="review:" + identity + ":" + sha256(principal.subject_id.encode()).hexdigest(),
+            payload={"input": payload, "survey_id": assignment.survey_id, "actor": principal.subject_id,
+                     "roles": sorted(role.value for role in principal.roles)},
+            correlation_id=correlation_id, operation=execute)
+        return {**outcome.value, "receiptId": outcome.receipt_id, "replayed": outcome.replayed}

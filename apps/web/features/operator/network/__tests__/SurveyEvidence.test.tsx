@@ -36,7 +36,9 @@ function submitted(): SurveySubmitted {
     surveyId: "survey-owned", observationId: "observation-owned" };
 }
 function workApi(overrides: Partial<SurveyEvidenceApi> = {}): SurveyEvidenceApi {
-  return { read: vi.fn<SurveyEvidenceApi["read"]>(async () => ({ ok: true, value: read() })),
+  return { evidence: vi.fn(async () => ({ ok: false as const, message: "No review evidence supplied by this explicit test double" })),
+    review: vi.fn(async () => ({ ok: false as const, message: "No reviewer supplied by this explicit test double" })),
+    read: vi.fn<SurveyEvidenceApi["read"]>(async () => ({ ok: true, value: read() })),
     change: vi.fn<SurveyEvidenceApi["change"]>(async () => ({ ok: true, value: created() })),
     upload: vi.fn<SurveyEvidenceApi["upload"]>(async () => ({ ok: true, value: { attachment: attachment(), receiptId: "upload-receipt", replayed: false, auditEventIds: ["upload-audit"] } })),
     submit: vi.fn<SurveyEvidenceApi["submit"]>(async () => ({ ok: true, value: submitted() })),
@@ -172,7 +174,7 @@ describe("Survey actual native work in the existing assignment dialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "確認提交回報" }));
     const accepted = await screen.findByText(/現勘回報已保存/);
     expect(accepted).toHaveTextContent("survey-owned");
-    expect(accepted).toHaveTextContent("等待獨立審查，尚未批准或提升為正式資料");
+    expect(accepted).toHaveTextContent("審查結果以實際證據紀錄為準");
     await screen.findByText(/狀態重讀失敗：history temporarily unavailable/);
     expect(api.submit).toHaveBeenCalledWith(assignment(), { ...submission, surveyedAt: new Date("2026-10-16T08:00").toISOString() }, expect.any(String));
     fireEvent.click(screen.getByRole("button", { name: "重讀回報狀態" }));

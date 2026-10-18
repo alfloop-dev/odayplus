@@ -11,17 +11,51 @@ export type SurveySubmission = { expectedRevision: number; location: { latitude:
   surveyedAt: string; attributes: { observation: string }; mediaIds: string[]; confidence: number | null; reason: string };
 export type SurveySubmitted = SurveyCreated & { surveyId: string; observationId: string };
 export type SurveyUploaded = { attachment: SurveyAttachment; auditEventIds: string[]; receiptId: string; replayed: boolean };
+export type SurveyReviewStatus = "PENDING_REVIEW" | "APPROVED" | "REJECTED" | "NEEDS_REVISION";
+export type SurveyEvidence = { survey_id: string; assignment_id: string; tenant_id: string;
+  target_entity_kind: string; target_entity_id: string; submitter_id: string; revision: number;
+  currentSubjectId: string; canRequestReview: boolean; review_status: SurveyReviewStatus;
+  surveyed_at: string; submitted_at: string; attributes: Record<string, unknown>;
+  location: { latitude: number; longitude: number }; media_attachments: SurveyAttachment[];
+  review_record: { review_status: SurveyReviewStatus; reviewer_id: string; reviewed_at: string;
+    review_comment?: string; review_checklist: Record<string, unknown>; conditions: string[] } | null };
+export type SurveyReview = { surveyId: string; expectedRevision: number; decision: Exclude<SurveyReviewStatus, "PENDING_REVIEW">;
+  reason: string; reviewChecklist: Record<string, unknown>; conditions: string[] };
+export type SurveyReviewed = { evidence: SurveyEvidence; auditEventIds: string[]; receiptId: string; replayed: boolean };
+export type SurveyEvidenceSelection = Pick<SurveyAssignment,
+  "assignment_id" | "tenant_id" | "target_entity_kind" | "target_entity_id" | "survey_id">;
 export type SurveyEvidenceApi = {
   read: (assignment: SurveyAssignment) => Promise<SurveyResult<SurveyWorkRead>>;
   change: (assignment: SurveyAssignment, operation: "claim" | "start" | "cancel", reason: string, key: string) => Promise<SurveyResult<SurveyCreated>>;
   upload: (assignment: SurveyAssignment, input: SurveyUpload, key: string) => Promise<SurveyResult<SurveyUploaded>>;
   submit: (assignment: SurveyAssignment, input: SurveySubmission, key: string) => Promise<SurveyResult<SurveySubmitted>>;
   download: (assignment: SurveyAssignment, attachment: SurveyAttachment) => Promise<SurveyResult<Blob>>;
+  evidence: (assignment: SurveyEvidenceSelection) => Promise<SurveyResult<SurveyEvidence>>;
+  review: (assignment: SurveyEvidenceSelection, input: SurveyReview, key: string) => Promise<SurveyResult<SurveyReviewed>>;
 };
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const text = (v: unknown): v is string => typeof v === "string" && !!v.trim();
 const time = (v: unknown): v is string => text(v) && /T.*(?:Z|[+-]\d\d:\d\d)$/.test(v) && Number.isFinite(Date.parse(v));
 const digest = (v: unknown): v is string => typeof v === "string" && /^[a-f0-9]{64}$/.test(v);
+export function isSurveyEvidence(v: unknown, selected: SurveyEvidenceSelection): v is SurveyEvidence {
+  if (!object(v) || v.survey_id !== selected.survey_id || v.assignment_id !== selected.assignment_id
+    || v.tenant_id !== selected.tenant_id || v.target_entity_kind !== selected.target_entity_kind
+    || v.target_entity_id !== selected.target_entity_id || !text(v.submitter_id) || !text(v.currentSubjectId)
+    || typeof v.canRequestReview !== "boolean" || v.canRequestReview && v.currentSubjectId === v.submitter_id
+    || typeof v.revision !== "number" || !Number.isSafeInteger(v.revision) || v.revision < 1
+    || !["PENDING_REVIEW", "APPROVED", "REJECTED", "NEEDS_REVISION"].includes(String(v.review_status))
+    || !time(v.surveyed_at) || !time(v.submitted_at) || !object(v.attributes) || !object(v.location)
+    || typeof v.location.latitude !== "number" || !Number.isFinite(v.location.latitude) || Math.abs(v.location.latitude) > 90
+    || typeof v.location.longitude !== "number" || !Number.isFinite(v.location.longitude) || Math.abs(v.location.longitude) > 180
+    || !Array.isArray(v.media_attachments) || !v.media_attachments.every(item => isSurveyAttachment(item, selected.assignment_id))
+    || new Set(v.media_attachments.map(item => item.mediaId)).size !== v.media_attachments.length) return false;
+  if (v.review_status === "PENDING_REVIEW") return v.review_record === null;
+  const record = v.review_record;
+  return object(record) && record.review_status === v.review_status && text(record.reviewer_id)
+    && record.reviewer_id !== v.submitter_id && time(record.reviewed_at) && object(record.review_checklist)
+    && (record.review_comment === undefined || typeof record.review_comment === "string")
+    && Array.isArray(record.conditions) && record.conditions.every(text);
+}
 export function isSurveyAttachment(value: unknown, assignmentId: string): value is SurveyAttachment {
   return object(value) && text(value.mediaId) && /^media-[a-f0-9]{64}$/.test(value.mediaId) && value.assignmentId === assignmentId
     && digest(value.sha256) && typeof value.sizeBytes === "number" && Number.isSafeInteger(value.sizeBytes) && value.sizeBytes > 0
@@ -41,7 +75,7 @@ function submitted(value: unknown, selected: SurveyAssignment): value is SurveyS
     && value.assignment.status === "SUBMITTED" && value.assignment.survey_id === surveyId;
 }
 export function createSurveyEvidenceApi(headers: Record<string, string>, capture: () => (() => Promise<boolean>) | undefined): SurveyEvidenceApi {
-  async function request(selected: SurveyAssignment, suffix: string, body?: unknown, key?: string): Promise<SurveyResult<unknown>> {
+  async function request(selected: Pick<SurveyAssignment, "assignment_id">, suffix: string, body?: unknown, key?: string): Promise<SurveyResult<unknown>> {
     const guard = capture(); const cid = crypto.randomUUID();
     const current = async () => { try { return !!guard && await guard(); } catch { return false; } };
     try {
@@ -62,6 +96,22 @@ export function createSurveyEvidenceApi(headers: Record<string, string>, capture
     }
   }
   return {
+    async evidence(selected) {
+      const result = await request(selected, "/evidence"); if (!result.ok) return result;
+      return isSurveyEvidence(result.value, selected) ? { ok: true, value: result.value }
+        : { ok: false, message: "現勘證據的來源、版本或審查紀錄無法核對。" };
+    },
+    async review(selected, input, key) {
+      const result = await request(selected, "/review", input, key); if (!result.ok) return result;
+      const v = result.value;
+      return object(v) && isSurveyEvidence(v.evidence, selected) && v.evidence.survey_id === input.surveyId && v.evidence.review_status === input.decision
+        && v.evidence.revision === input.expectedRevision + 1 && v.evidence.review_record?.reviewer_id === v.evidence.currentSubjectId
+        && v.evidence.review_record.review_comment === input.reason
+        && text(v.receiptId) && typeof v.replayed === "boolean" && Array.isArray(v.auditEventIds)
+        && v.auditEventIds.length > 0 && v.auditEventIds.every(text)
+        ? { ok: true, value: { evidence: v.evidence, receiptId: v.receiptId, replayed: v.replayed, auditEventIds: v.auditEventIds } }
+        : { ok: false, message: "現勘審查的保存結果與命令收條無法核對。" };
+    },
     async read(selected) {
       const result = await request(selected, "/attachments"); if (!result.ok) return result;
       const v = result.value;

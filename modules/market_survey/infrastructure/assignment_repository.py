@@ -9,10 +9,16 @@ from __future__ import annotations
 from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
+from dataclasses import replace
 from typing import Any
 
 from modules.market_survey.domain.content import SurveyAttachmentRecord
-from modules.market_survey.domain.models import FieldSurveyEvidence, SurveyAssignment
+from modules.market_survey.domain.models import (
+    EvidenceReviewStatus,
+    FieldSurveyEvidence,
+    PromotionStatus,
+    SurveyAssignment,
+)
 from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
 
 
@@ -203,18 +209,50 @@ class DurableSurveyAssignmentRepository:
     def get_evidence(self, survey_id: str, tenant_id: str | None = None) -> FieldSurveyEvidence | None:
         if tenant_id is not None and tenant_id != self._tenant():
             return None
-        value = self._store.get(self.EVIDENCE, survey_id)
-        if value is None:
+        row = self.get_evidence_versioned(survey_id)
+        return None if row is None else row[0]
+
+    def get_evidence_versioned(self, survey_id: str) -> tuple[FieldSurveyEvidence, int] | None:
+        row = self._store.get_versioned(self.EVIDENCE, survey_id)
+        if row is None:
             return None
+        value, revision = row
         if (not isinstance(value, FieldSurveyEvidence) or value.tenant_id != self._tenant()
-                or value.survey_id != survey_id):
+                or value.survey_id != survey_id or type(revision) is not int or revision < 1):
             raise SurveyOwnerUnavailable("SURVEY_EVIDENCE_BINDING_INVALID")
         assignment = self.get_assignment(value.assignment_id)
         if (assignment is None or assignment.target_entity_id != value.target_entity_id
                 or assignment.target_entity_kind != value.target_entity_kind
                 or assignment.survey_id != survey_id):
             raise SurveyOwnerUnavailable("SURVEY_EVIDENCE_PARENT_INVALID")
-        return deepcopy(value)
+        return deepcopy(value), revision
+
+    def save_evidence_review(self, value: FieldSurveyEvidence, *, expected_version: int) -> None:
+        """Narrow native review CAS; submitted observations remain immutable."""
+        if (not self._command.get() or not isinstance(value, FieldSurveyEvidence)
+                or value.tenant_id != self._tenant()):
+            raise SurveyOwnerUnavailable("SURVEY_COMMAND_TRANSACTION_REQUIRED")
+        row = self.get_evidence_versioned(value.survey_id)
+        if row is None or type(expected_version) is not int or row[1] != expected_version:
+            raise SurveyRevisionConflict("SURVEY_EVIDENCE_REVISION_CONFLICT")
+        previous = row[0]
+        record = value.review_record
+        if (value.review_status not in {EvidenceReviewStatus.APPROVED,
+                EvidenceReviewStatus.REJECTED, EvidenceReviewStatus.NEEDS_REVISION}
+                or record is None or record.review_status != value.review_status
+                or record.reviewer_id == value.submitter_id or not record.reviewer_id
+                or record.reviewed_at != value.updated_at
+                or previous.is_retracted or previous.is_superseded
+                or replace(value, review_status=previous.review_status, review_record=previous.review_record,
+                    updated_at=previous.updated_at, promotion_status=previous.promotion_status) != previous):
+            raise SurveyOwnerUnavailable("SURVEY_REVIEW_MUTATION_INVALID")
+        if (value.promotion_status != previous.promotion_status
+                and not (value.promotion_status == PromotionStatus.NOT_PROMOTED
+                    and value.review_status in {EvidenceReviewStatus.REJECTED, EvidenceReviewStatus.NEEDS_REVISION})):
+            raise SurveyOwnerUnavailable("SURVEY_REVIEW_MUTATION_INVALID")
+        if self._store.compare_and_put(self.EVIDENCE, value.survey_id, deepcopy(value),
+                expected_version=expected_version) != expected_version + 1:
+            raise SurveyRevisionConflict("SURVEY_EVIDENCE_REVISION_CONFLICT")
 
     def save_evidence(self, value: FieldSurveyEvidence) -> None:
         if (not self._command.get() or not isinstance(value, FieldSurveyEvidence)
