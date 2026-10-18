@@ -198,12 +198,12 @@ def test_ci_workflow_command_exact_single_ownership(ci_workflow: dict[str, Any])
     """Assert each complete original acceptance command is present in exactly one lane."""
     jobs = ci_workflow["jobs"]
 
-    # Canonical acceptance commands from the baseline monolithic product job
+    # Canonical acceptance commands; database execution also preserves JUnit evidence.
     expected_command_lanes = {
         "uv run ruff check tests modules apps shared models solver pipelines infra": "product-lint-unit",
         'uv run pytest -m "not requires_live_env and not performance" tests modules apps shared models -n auto': "product-lint-unit",
         "uv run pytest tests/integration/test_official_real_estate_postgresql.py": "product-db",
-        'uv run pytest -m "requires_live_env and not requires_postgis" tests/contract tests/ops tests/integration': "product-db",
+        'uv run pytest -ra --junitxml="$RUNNER_TEMP/product-db-results.xml" -m "requires_live_env" tests/contract tests/ops tests/integration': "product-db",
         "make api-contract": "product-api-contract",
         "make security": "product-security",
         "make node-check": "product-node",

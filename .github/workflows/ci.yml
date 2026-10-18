@@ -222,7 +222,7 @@ jobs:
     needs: change-scope
     if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     services:
       postgres:
         image: postgis/postgis:16-3.5
@@ -257,6 +257,46 @@ jobs:
       - name: Prepare local config
         run: make bootstrap
 
+      - name: Bind native review tests to the owned PostgreSQL service
+        run: |
+          uv run python - <<'PY'
+          import os
+          import shutil
+          import tempfile
+          from pathlib import Path
+          from urllib.parse import urlsplit
+
+          runner = Path(os.environ["RUNNER_TEMP"]).resolve()
+          assert "\n" not in str(runner) and "\r" not in str(runner)
+          dsn = os.environ["INTAKE_TEST_DATABASE_URL"]
+          parsed = urlsplit(dsn)
+          assert parsed.scheme == "postgresql"
+          assert parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+          assert parsed.username == "postgres" and parsed.path == "/oday_product_test"
+          assert parsed.port is not None and not parsed.query and not parsed.fragment
+          descriptor, target = tempfile.mkstemp(prefix="oday-ci-owned-postgres-admin-", suffix=".dsn", dir=runner)
+          evidence = None
+          try:
+              with os.fdopen(descriptor, "w") as stream:
+                  stream.write(dsn + "\n")
+              evidence = Path(tempfile.mkdtemp(prefix="oday-ci-native-review-evidence-", dir=runner))
+              exported = {name: target for name in (
+                  "ODP_SUBMIT_AUTHOR_ADMIN_DSN_FILE", "ODP_NATIVE_SCOPE_ADMIN_DSN_FILE")}
+              exported["ODP_CI_NATIVE_REVIEW_EVIDENCE_DIR"] = str(evidence)
+              for name in ("ODP_SUBMIT_SOD_EVIDENCE_DIR", "ODP_NATIVE_SCOPE_EVIDENCE_DIR",
+                           "ODP_NATIVE_VERSION_EVIDENCE_DIR", "ODP_NEW_REPORT_ROUNDS_EVIDENCE_DIR"):
+                  directory = evidence / name.lower()
+                  directory.mkdir(mode=0o700)
+                  exported[name] = str(directory)
+              with Path(os.environ["GITHUB_ENV"]).open("a") as export:
+                  export.write("".join(name + "=" + value + "\n" for name, value in exported.items()))
+          except BaseException:
+              Path(target).unlink(missing_ok=True)
+              if evidence is not None:
+                  shutil.rmtree(evidence)
+              raise
+          PY
+
       - name: Test official real-estate outcomes on PostgreSQL 16
         run: uv run pytest tests/integration/test_official_real_estate_postgresql.py
 
@@ -270,13 +310,56 @@ jobs:
       # broken from commit 549ce261 onwards: the test that would have reported
       # it was excluded by the same marker expression.
       #
-      # This step runs the database side. The live-environment tests stay out
-      # by path, and the one PostGIS-dependent test stays out by its own marker
-      # so the residual exclusion is one named test rather than a silent bulk.
+      # This step runs all database-side live-environment cases, including the
+      # canonical PostGIS migration supported by the service image above. The
+      # multi-repo coordination tests remain outside these selected paths.
       - name: Test database contracts, migrations and schema gates
         run: |
-          uv run pytest -m "requires_live_env and not requires_postgis" \
+          uv run pytest -ra --junitxml="$RUNNER_TEMP/product-db-results.xml" \
+            -m "requires_live_env" \
             tests/contract tests/ops tests/integration
+
+      - name: Require the selected database cases to execute
+        run: |
+          uv run python - <<'PY'
+          import os
+          from pathlib import Path
+          from xml.etree import ElementTree
+
+          cases = ElementTree.parse(Path(os.environ["RUNNER_TEMP"]) / "product-db-results.xml").findall(".//testcase")
+          counts = {name: sum(case.find(name) is not None for case in cases)
+                    for name in ("failure", "error", "skipped")}
+          if not cases or any(counts.values()):
+              raise SystemExit(f"Database gate did not execute every selected case: {len(cases)} cases, {counts}")
+          print(f"Database gate executed {len(cases)} cases with no failures, errors or skips")
+          PY
+
+      - name: Preserve database execution evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-db-execution-evidence
+          path: |
+            ${{ runner.temp }}/product-db-results.xml
+            ${{ env.ODP_CI_NATIVE_REVIEW_EVIDENCE_DIR }}
+          if-no-files-found: warn
+
+      - name: Remove owned native review connection file
+        if: ${{ always() }}
+        run: |
+          uv run python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          names = {os.environ[key] for key in ("ODP_SUBMIT_AUTHOR_ADMIN_DSN_FILE", "ODP_NATIVE_SCOPE_ADMIN_DSN_FILE")
+                   if os.environ.get(key)}
+          for name in names:
+              target = Path(name)
+              assert target.parent.resolve() == Path(os.environ["RUNNER_TEMP"]).resolve()
+              assert re.fullmatch(r"oday-ci-owned-postgres-admin-[a-z0-9_]+\.dsn", target.name)
+              target.unlink(missing_ok=True)
+          PY
 
   product-api-contract:
     needs: change-scope
