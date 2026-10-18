@@ -1427,6 +1427,7 @@ tests/security/test_security_acceptance_suite.py,verification,verification_only,
 tests/security/test_supply_chain_security_gate.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_tenant_isolation_guard.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_user_role_management.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/site_economics_fixtures.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/smoke/test_foundation_smoke.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/solver/test_evolutionary_portfolio.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/solver/test_runtime_compat.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.

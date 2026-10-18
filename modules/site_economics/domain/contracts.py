@@ -23,7 +23,7 @@ from modules.site_economics.domain.models import (
 CONTRACT_ID = "odayplus.site-economics.v1"
 CONTRACT_VERSION = "1.0.0"
 CONTRACT_CATEGORY = "decision_product"
-ENGINE_VERSION = "site-economics-simulator-v1.0.0"
+ENGINE_VERSION = "site-economics-simulator-v1.1.0"
 
 
 @dataclass(frozen=True, slots=True)

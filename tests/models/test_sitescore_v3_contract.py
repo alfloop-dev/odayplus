@@ -17,6 +17,7 @@ from modules.sitescore.v3 import (
     SiteScoreV3Service,
     validate_sitescore_v3_document,
 )
+from tests.site_economics_fixtures import synthetic_g2_registry
 
 
 def _decision_doc(manifest_id: str | None, recommendation: object) -> MagicMock:
@@ -171,7 +172,7 @@ def test_sitescore_v3_real_decision_producers_preserve_market_context_provenance
         market_context=market_context,
         surveys=[survey],
     )
-    economics_doc = SiteEconomicsService().evaluate_site_market_context(
+    economics_doc = SiteEconomicsService(registry=synthetic_g2_registry()).evaluate_site_market_context(
         market_context=market_context,
         tenant_id="tenant-real-001",
         overrides=SimulationOverrides(demand_multiplier=1.8, monthly_rent=40_000.0),

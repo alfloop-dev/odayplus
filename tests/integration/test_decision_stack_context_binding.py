@@ -48,6 +48,7 @@ from tests.integration.test_netplan_emgi import (
     _sitescore_wire,
     _survey,
 )
+from tests.site_economics_fixtures import synthetic_g2_registry
 
 
 def score(context, feasibility=None, economics=None, **kwargs):
@@ -62,7 +63,7 @@ def stack(document):
     feasibility = SiteFeasibilityService().evaluate_feasibility(
         SITE_ID, document, [_survey()], tenant_id=TENANT_ID,
     )
-    economics = SiteEconomicsService().evaluate_site_market_context(
+    economics = SiteEconomicsService(registry=synthetic_g2_registry()).evaluate_site_market_context(
         document, tenant_id=TENANT_ID, site_id=SITE_ID,
         overrides=SimulationOverrides(demand_multiplier=1.8, monthly_rent=40_000),
     )

@@ -16,6 +16,7 @@ from shared.infrastructure.persistence.repositories import DurableNetPlanReposit
 from solver.netplan import NetworkAction
 from tests.integration.test_netplan_emgi import MANIFEST_ID, SITE_ID, _market_context, _survey
 from tests.integration.test_site_economics_repository_postgresql import owners as owners
+from tests.site_economics_fixtures import synthetic_g2_registry
 
 pytestmark = pytest.mark.requires_live_env
 
@@ -23,7 +24,7 @@ pytestmark = pytest.mark.requires_live_env
 def stack(tenant):
     context = _market_context()
     context["tenant_id"] = tenant
-    economics = SiteEconomicsService().evaluate_site_market_context(
+    economics = SiteEconomicsService(registry=synthetic_g2_registry()).evaluate_site_market_context(
         context, tenant_id=tenant,
         overrides=SimulationOverrides(demand_multiplier=1.8, monthly_rent=40_000),
     )

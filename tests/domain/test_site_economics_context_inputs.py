@@ -13,6 +13,7 @@ from packages.oday_data_product_contracts_client.models.site_market_context impo
     SiteMarketContextDocument,
 )
 from tests.integration.test_netplan_emgi import SITE_ID, TENANT_ID, _market_context
+from tests.site_economics_fixtures import synthetic_g2_registry
 
 FIELDS = [
     ("listing", "average_area_ping"),
@@ -25,7 +26,7 @@ FIELDS = [
 
 
 def evaluate(context=None, **kwargs):
-    return SiteEconomicsService().evaluate_site_market_context(
+    return SiteEconomicsService(registry=synthetic_g2_registry()).evaluate_site_market_context(
         _market_context() if context is None else context, tenant_id=TENANT_ID, **kwargs,
     )
 

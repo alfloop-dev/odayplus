@@ -8,6 +8,8 @@ Verifies acceptance criteria for ODP-ECONOMICS-001:
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from modules.site_economics import (
@@ -48,6 +50,138 @@ from modules.site_economics.domain.formats import (
     WASHER_LARGE_20KG_V1,
     build_default_g2_standard_v1,
 )
+from tests.site_economics_fixtures import (
+    legacy_arithmetic_format,
+    synthetic_g2_format,
+    synthetic_g2_registry,
+)
+
+
+def test_original_g2_mixed_catalog_cannot_generate_new_financial_results():
+    original = build_default_g2_standard_v1()
+    assert original.machine_mix.machine_counts_by_class == {
+        "WASHER": 5, "DRYER": 4, "COMBO": 1, "VENDING": 1,
+    }
+    with pytest.raises(ValueError, match="ODAY_G2_CONFIGURATION_REQUIRED"):
+        SiteEconomicsSimulator().simulate(SimulationInput(
+            format_spec=original,
+            operating_params=SiteOperatingParameters(monthly_base_rent=0, area_ping=25),
+        ))
+
+
+@pytest.mark.parametrize("area", [16.0, 25.0, 50.0])
+def test_default_oday_target_never_substitutes_another_store_format(area):
+    with pytest.raises(ValueError, match="ODAY_G2_CONFIGURATION_REQUIRED"):
+        SiteEconomicsService().evaluate_site("synthetic-g2-target", area, 0)
+
+
+@pytest.mark.parametrize("kind", ["quantity", "washer", "same_capacity", "same_model", "nonfinite", "bool_quantity", "known_model_retyped"])
+def test_explicit_g2_must_have_three_distinct_large_and_three_medium_combos(kind):
+    spec = synthetic_g2_format()
+    large, medium = spec.machine_mix.items
+    if kind == "quantity":
+        large = replace(large, quantity=2)
+    elif kind == "washer":
+        large = replace(large, machine_model=replace(large.machine_model, machine_class=MachineClass.WASHER))
+    elif kind == "same_capacity":
+        large = replace(large, machine_model=replace(large.machine_model, capacity_kg=medium.machine_model.capacity_kg))
+    elif kind == "same_model":
+        large = replace(large, machine_model=replace(large.machine_model, model_id=medium.machine_model.model_id))
+    elif kind == "nonfinite":
+        large = replace(large, machine_model=replace(large.machine_model, base_cycle_price=float("nan")))
+    elif kind == "bool_quantity":
+        large = replace(large, quantity=True)
+    else:
+        large = replace(large, machine_model=replace(large.machine_model, model_id=WASHER_LARGE_20KG_V1.model_id))
+    bad = replace(spec, machine_mix=replace(spec.machine_mix, items=(large, medium)))
+    with pytest.raises(ValueError, match="ODAY_G2_CONFIGURATION_REQUIRED"):
+        SiteEconomicsSimulator().simulate(SimulationInput(
+            format_spec=bad,
+            operating_params=SiteOperatingParameters(monthly_base_rent=0, area_ping=25),
+        ))
+
+
+def test_registered_format_version_cannot_be_replaced_with_different_financial_facts():
+    registry = synthetic_g2_registry()
+    spec = synthetic_g2_format()
+    registry.register(spec)
+    with pytest.raises(ValueError, match="TARGET_FORMAT_IMMUTABLE_VERSION"):
+        registry.register(replace(spec, machine_mix=replace(spec.machine_mix,
+            installation_and_delivery_fee=0)))
+    assert registry.get("ODAY_G2") == spec
+
+
+@pytest.mark.parametrize("field,value", [("quantity", "3"), ("quantity", 3.5),
+    ("capacity_kg", True), ("unit_capex", "100"), ("base_cycle_price", False)])
+def test_g2_deserialization_does_not_repair_nonmeasurements_into_valid_configuration(field, value):
+    raw = synthetic_g2_format().to_dict()
+    item = raw["machine_mix"]["items"][0]
+    if field == "quantity":
+        item[field] = value
+    else:
+        item["machine_model"][field] = value
+    with pytest.raises(ValueError, match="ODAY_G2_CONFIGURATION_REQUIRED"):
+        SiteEconomicsSimulator().simulate(SimulationInput(
+            format_spec=TargetFormatSpec.from_dict(raw),
+            operating_params=SiteOperatingParameters(monthly_base_rent=0, area_ping=25),
+        ))
+
+
+@pytest.mark.parametrize("area", [16.0, 25.0, 50.0])
+@pytest.mark.parametrize("entry", ["direct", "market_context"])
+def test_explicit_six_combo_g2_runs_all_scenarios_without_area_based_format_substitution(area, entry):
+    from modules.site_economics.application.context_inputs import content_sha256
+
+    registry = synthetic_g2_registry()
+    expected = registry.get("ODAY_G2")
+    inputs = []
+
+    class ObserveActualSimulator(SiteEconomicsSimulator):
+        def simulate(self, value):
+            inputs.append(value)
+            return super().simulate(value)
+
+    service = SiteEconomicsService(registry=registry, simulator=ObserveActualSimulator())
+    if entry == "direct":
+        document = service.evaluate_site("synthetic-g2", area, 0)
+    else:
+        context = {"context_id": "synthetic-g2-context", "identity": {"site_id": "synthetic-g2"},
+            "listing": {"status": "available", "average_area_ping": area, "median_asking_rent_per_ping": 0},
+            "demand": {"status": "available", "total_population": 15000, "density_per_sq_km": 8000},
+            "competitor": {"status": "available", "active_competitors": 0, "competitor_density_per_sq_km": 0}}
+        document = service.evaluate_site_market_context(context)
+    assert document.format_code == "ODAY_G2"
+    assert document.format_version == expected.format_version == "2.0.0-engineering"
+    assert document.assumptions.area_ping == area
+    assert document.metadata["target_format_snapshot"] == expected.to_dict()
+    assert document.metadata["target_format_sha256"] == content_sha256(expected.to_dict())
+    assert document.metadata["format_configuration_policy"] == "oday-g2-six-combo-v1"
+    assert document.metadata["production_admission"] == "not_established_by_simulation"
+    assert inputs and all(value.format_spec == expected for value in inputs)
+    assert expected.machine_mix.machine_counts_by_class == {"COMBO": 6}
+    assert sorted(item.quantity for item in expected.machine_mix.items) == [3, 3]
+    assert len({item.machine_model.capacity_kg for item in expected.machine_mix.items}) == 2
+    assert len(document.monthly_schedule) == 60
+    assert set(document.scenarios) == {"base", "optimistic", "pessimistic", "stress_test"}
+    validate_site_economics_document(document)
+    assert SiteEconomicsDocument.from_dict(document.to_dict()).metadata == document.metadata
+
+
+def test_retained_mixed_v1_roundtrip_remains_readable_without_new_calculation_authority():
+    retained = build_default_g2_standard_v1()
+    restored = TargetFormatSpec.from_dict(retained.to_dict())
+    assert restored == retained
+    assert TargetFormatRegistry().get("ODAY_G2", "1.0.0") == retained
+    with pytest.raises(ValueError, match="ODAY_G2_CONFIGURATION_REQUIRED"):
+        SiteEconomicsService().evaluate_site("synthetic-retained", 25, 0,
+            format_code="ODAY_G2", format_version="1.0.0")
+
+
+def test_new_six_combo_payload_cannot_reuse_the_retained_mixed_g2_version():
+    with pytest.raises(ValueError, match="ODAY_G2_CONFIGURATION_REQUIRED"):
+        SiteEconomicsSimulator().simulate(SimulationInput(
+            format_spec=replace(synthetic_g2_format(), format_version="1.0.0"),
+            operating_params=SiteOperatingParameters(monthly_base_rent=0, area_ping=25)))
 
 
 def test_machine_model_and_mix_versioning() -> None:
@@ -215,7 +349,7 @@ def test_censored_payback_outcomes() -> None:
 
 
 def test_full_site_economics_simulation_schedule() -> None:
-    g2_format = build_default_g2_standard_v1()
+    g2_format = legacy_arithmetic_format()
     operating = SiteOperatingParameters(
         monthly_base_rent=60_000.0,
         area_ping=25.0,
@@ -286,7 +420,7 @@ def test_full_site_economics_simulation_schedule() -> None:
 
 
 def test_service_evaluate_site_and_scenarios() -> None:
-    service = SiteEconomicsService()
+    service = SiteEconomicsService(registry=synthetic_g2_registry())
     doc = service.evaluate_site(
         site_id="SITE-TAIPEI-001",
         area_ping=25.0,
@@ -326,7 +460,7 @@ def test_service_evaluate_site_and_scenarios() -> None:
 
 
 def test_service_evaluate_with_site_market_context() -> None:
-    service = SiteEconomicsService()
+    service = SiteEconomicsService(registry=synthetic_g2_registry())
     # Mock / real emgi.site-market-context.v1 payload
     mock_market_context = {
         "context_id": "ctx-tw-tp-001",
@@ -370,6 +504,9 @@ def test_service_evaluate_with_site_market_context() -> None:
     doc = service.evaluate_site_market_context(
         market_context=mock_market_context,
         tenant_id="tenant-tw-01",
+        # This existing positive-NPV arithmetic control retains every original
+        # price and mixed-machine number without calling that legacy mix G2.
+        overrides=SimulationOverrides(format_code="ENGINEERING_MIXED"),
     )
 
     assert doc.site_id == "SITE-TP-XINYI-101"
@@ -388,7 +525,7 @@ def test_service_evaluate_with_site_market_context() -> None:
 
 
 def test_infeasible_extreme_rent_site_rejection() -> None:
-    service = SiteEconomicsService()
+    service = SiteEconomicsService(registry=synthetic_g2_registry())
     # Extremely exorbitant rent (300,000 TWD / month for small 15 ping space)
     doc = service.evaluate_site(
         site_id="SITE-OVERPRICED-001",
@@ -405,7 +542,7 @@ def test_infeasible_extreme_rent_site_rejection() -> None:
 
 def test_repository_save_and_retrieve() -> None:
     repo = InMemorySiteEconomicsRepository()
-    service = SiteEconomicsService()
+    service = SiteEconomicsService(registry=synthetic_g2_registry())
     doc1 = service.evaluate_site(
         site_id="SITE-REPO-001",
         area_ping=24.0,
@@ -434,7 +571,7 @@ def test_repository_save_and_retrieve() -> None:
 
 def test_zero_debt_and_full_debt_financing_edge_cases() -> None:
     simulator = SiteEconomicsSimulator()
-    g2 = build_default_g2_standard_v1()
+    g2 = legacy_arithmetic_format()
     operating = SiteOperatingParameters(monthly_base_rent=50_000.0, area_ping=25.0)
 
     # 1. 100% Equity / 0% Debt
@@ -469,7 +606,7 @@ def test_zero_debt_and_full_debt_financing_edge_cases() -> None:
 
 def test_tax_loss_carryforward_behavior() -> None:
     simulator = SiteEconomicsSimulator()
-    g2 = build_default_g2_standard_v1()
+    g2 = legacy_arithmetic_format()
     # High rent causing negative EBIT in year 1
     operating = SiteOperatingParameters(
         monthly_base_rent=150_000.0,
@@ -596,7 +733,7 @@ def test_payback_search_bounded_by_horizon() -> None:
 
 def test_zero_month_payback_decision_evaluation() -> None:
     simulator = SiteEconomicsSimulator()
-    g2 = build_default_g2_standard_v1()
+    g2 = legacy_arithmetic_format()
     operating = SiteOperatingParameters(monthly_base_rent=50_000.0, area_ping=25.0)
 
     # 100% debt financing -> zero equity outlay -> 0.0 payback months
@@ -617,7 +754,7 @@ def test_zero_month_payback_decision_evaluation() -> None:
 
 def test_untruncated_loan_term_when_horizon_less_than_loan_term() -> None:
     simulator = SiteEconomicsSimulator()
-    g2 = build_default_g2_standard_v1()
+    g2 = legacy_arithmetic_format()
     operating = SiteOperatingParameters(monthly_base_rent=50_000.0, area_ping=25.0)
 
     # Horizon = 36 months, Loan term = 60 months
@@ -727,7 +864,7 @@ def test_per_model_depreciation_and_salvage_rates() -> None:
 
 def test_monthly_capacity_capping_with_ramp_and_seasonality() -> None:
     # F3: Verify that under high demand multipliers and peak seasonality, monthly cycles never exceed capacity
-    g2 = build_default_g2_standard_v1()
+    g2 = legacy_arithmetic_format()
     simulator = SiteEconomicsSimulator()
     sim_input = SimulationInput(
         format_spec=g2,
@@ -750,7 +887,7 @@ def test_monthly_capacity_capping_with_ramp_and_seasonality() -> None:
 
 def test_unlevered_tax_loss_carryforward_behavior() -> None:
     # F4: Verify unlevered tax NOL carryforward
-    g2 = build_default_g2_standard_v1()
+    g2 = legacy_arithmetic_format()
     simulator = SiteEconomicsSimulator()
     # High rent in early months causing negative EBIT, then recovering
     sim_input = SimulationInput(
@@ -776,7 +913,7 @@ def test_unlevered_tax_loss_carryforward_behavior() -> None:
 
 def test_rent_override_updates_lease_deposit_and_scenarios() -> None:
     # F6: Verify rent overrides correctly update lease deposit at initial outlay and terminal return
-    service = SiteEconomicsService()
+    service = SiteEconomicsService(registry=synthetic_g2_registry())
     doc = service.evaluate_site(
         site_id="SITE-RENT-DEP-001",
         area_ping=25.0,
@@ -792,7 +929,7 @@ def test_rent_override_updates_lease_deposit_and_scenarios() -> None:
 
 def test_falsy_zero_rent_support() -> None:
     # F7: Verify custom_rent_amount=0.0 is preserved and not replaced with fallback
-    service = SiteEconomicsService()
+    service = SiteEconomicsService(registry=synthetic_g2_registry())
     doc = service.evaluate_site(
         site_id="SITE-ZERO-RENT",
         area_ping=25.0,
@@ -806,7 +943,7 @@ def test_falsy_zero_rent_support() -> None:
 def test_invalid_horizon_raises_value_error() -> None:
     # F8: Verify horizon <= 0 error handling
     simulator = SiteEconomicsSimulator()
-    g2 = build_default_g2_standard_v1()
+    g2 = legacy_arithmetic_format()
     with pytest.raises(ValueError, match="horizon_months must be greater than 0"):
         simulator.simulate(
             SimulationInput(
@@ -824,7 +961,7 @@ def test_invalid_horizon_raises_value_error() -> None:
 
 
 def test_sensitivity_scenarios_preserve_capex_and_cannibalization_overrides() -> None:
-    service = SiteEconomicsService()
+    service = SiteEconomicsService(registry=synthetic_g2_registry())
     overrides = SimulationOverrides(
         cannibalization_discount=0.15,
         custom_equipment_capex=1_500_000.0,

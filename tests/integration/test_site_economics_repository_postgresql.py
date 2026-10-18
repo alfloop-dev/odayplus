@@ -4,6 +4,7 @@ All financial parameters below are synthetic engineering inputs. Persisting
 them supplies no source admission, financial approval or production evidence.
 """
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from dataclasses import replace
 from threading import Barrier
 from uuid import uuid4
@@ -19,6 +20,7 @@ from shared.infrastructure.persistence import PostgresDocumentStore
 from shared.infrastructure.persistence.assisted_listing_intake import apply_upgrade_to_database
 from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
 from tests.integration.test_intake_registry_calendar_postgresql import _bundle, _upgrade
+from tests.site_economics_fixtures import synthetic_g2_registry
 
 pytestmark = pytest.mark.requires_live_env
 
@@ -45,7 +47,7 @@ def owners(intake_blank_db, monkeypatch, tmp_path):
 
 
 def _document(store):
-    return SiteEconomicsService().evaluate_site(
+    return SiteEconomicsService(registry=synthetic_g2_registry()).evaluate_site(
         site_id="synthetic-financial-site", tenant_id=store.tenant_id,
         area_ping=25.0, monthly_rent=45_000.0,
     )
@@ -55,14 +57,13 @@ def test_committed_document_survives_independent_owner_and_mutated_read(owners):
     documents, (first, second) = owners
     document = _document(documents[0])
     document.metadata["synthetic-input"] = {"revision": 1}
+    expected_metadata = deepcopy(document.metadata)
     first.save(document)
     document.metadata["synthetic-input"]["revision"] = 999
     loaded = second.get_by_document_id(document.document_id)
     assert loaded.metadata["synthetic-input"] == {"revision": 1}
     loaded.metadata.clear()
-    assert first.get_by_document_id(document.document_id).metadata == {
-        "synthetic-input": {"revision": 1},
-    }
+    assert first.get_by_document_id(document.document_id).metadata == expected_metadata
 
 
 def test_identical_replay_does_not_add_or_replace_a_version(owners):

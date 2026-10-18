@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from modules.site_economics.application.context_inputs import (
     INPUT_POLICY_VERSION,
+    content_sha256,
     context_number,
     numeric_input,
     select_market_context,
@@ -23,6 +24,8 @@ from modules.site_economics.domain.contracts import (
 from modules.site_economics.domain.formats import (
     DEFAULT_FORMAT_REGISTRY,
     TargetFormatRegistry,
+    TargetFormatSpec,
+    require_oday_g2_configuration,
 )
 from modules.site_economics.domain.models import (
     FinancialMetricsSummary,
@@ -42,6 +45,14 @@ try:
 except ImportError:
     SiteMarketContext = Any  # type: ignore[misc,assignment]
     SiteMarketContextDocument = Any  # type: ignore[misc,assignment]
+
+
+def _format_metadata(spec: TargetFormatSpec) -> dict[str, Any]:
+    snapshot = spec.to_dict()
+    return {"target_format_snapshot": snapshot,
+        "target_format_sha256": content_sha256(snapshot),
+        "format_configuration_policy": "oday-g2-six-combo-v1" if spec.format_code.upper() == "ODAY_G2" else "explicit-generic-format-v1",
+        "production_admission": "not_established_by_simulation"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,7 +109,7 @@ class SiteEconomicsService:
         eff_format_code = (
             overrides.format_code
             if overrides and overrides.format_code is not None
-            else (format_code or self.registry.find_best_format_for_area(eff_area).format_code)
+            else (format_code or "ODAY_G2")
         )
         eff_format_version = (
             overrides.format_version
@@ -107,6 +118,7 @@ class SiteEconomicsService:
         )
 
         format_spec = self.registry.get(eff_format_code, eff_format_version)
+        require_oday_g2_configuration(format_spec)
 
         operating_params = SiteOperatingParameters(
             monthly_base_rent=eff_rent,
@@ -169,6 +181,7 @@ class SiteEconomicsService:
             monthly_schedule=base_res.monthly_schedule,
             scenarios=scenarios,
             engine_version=ENGINE_VERSION,
+            metadata=_format_metadata(format_spec),
         )
 
     def evaluate_site_market_context(
@@ -242,13 +255,14 @@ class SiteEconomicsService:
         eff_format_code = (
             overrides.format_code
             if overrides and overrides.format_code is not None
-            else self.registry.find_best_format_for_area(eff_area).format_code
+            else "ODAY_G2"
         )
         eff_format_version = (
             overrides.format_version if overrides and overrides.format_version is not None else None
         )
 
         format_spec = self.registry.get(eff_format_code, eff_format_version)
+        require_oday_g2_configuration(format_spec)
 
         operating_params = SiteOperatingParameters(
             monthly_base_rent=eff_rent,
@@ -306,12 +320,12 @@ class SiteEconomicsService:
             scenarios=scenarios,
             engine_version=ENGINE_VERSION,
             metadata={
+                **_format_metadata(format_spec),
                 "input_policy_version": INPUT_POLICY_VERSION,
                 "input_origins": origins,
                 "source_market_context_document_id": snapshot.document_id,
                 "source_market_context_document_sha256": snapshot.document_sha256,
                 "context_tenant_declared": snapshot.tenant_declared,
-                "production_admission": "not_established_by_simulation",
                 "derived_demand_mult": derived_demand_mult,
                 "derived_comp_discount": derived_comp_discount,
             },

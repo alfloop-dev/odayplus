@@ -76,6 +76,7 @@ from modules.sitescore.v3.domain.models import (
 )
 from shared.auth import Principal, Role, Scope
 from solver.netplan import NetworkAction
+from tests.site_economics_fixtures import synthetic_g2_registry
 
 SITE_ID = "SITE-REAL-001"
 MANIFEST_ID = "mf-real-001"
@@ -153,7 +154,7 @@ def _real_decision_stack(
         market_context=context,
         surveys=[_survey(site_id)],
     )
-    economics_doc = SiteEconomicsService().evaluate_site_market_context(
+    economics_doc = SiteEconomicsService(registry=synthetic_g2_registry()).evaluate_site_market_context(
         market_context=context,
         tenant_id=TENANT_ID,
         overrides=SimulationOverrides(demand_multiplier=1.8, monthly_rent=40_000.0),

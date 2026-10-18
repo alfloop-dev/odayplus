@@ -13,6 +13,7 @@ from typing import Any
 from modules.site_economics.domain.formats import (
     DEFAULT_FORMAT_REGISTRY,
     TargetFormatSpec,
+    require_oday_g2_configuration,
 )
 from modules.site_economics.domain.models import (
     CensoringType,
@@ -276,6 +277,7 @@ class SiteEconomicsSimulator:
             )
 
         format_spec = sim_input.format_spec
+        require_oday_g2_configuration(format_spec)
         params = sim_input.operating_params
         horizon = sim_input.horizon_months
         discount_rate = sim_input.annual_discount_rate
