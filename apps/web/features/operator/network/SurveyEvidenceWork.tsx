@@ -4,11 +4,47 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@oday-plus/ui";
 import styles from "../networkFindAreas.module.css";
 import type { SurveyAssignment } from "./surveyAssignmentClient";
-import type { SurveyAttachment, SurveyEvidenceApi, SurveySubmission, SurveySubmitted, SurveyUpload, SurveyWorkRead } from "./surveyEvidenceClient";
+import type { SurveyAttachment, SurveyEvidenceApi, SurveyPhysicalAttributes, SurveySubmission, SurveySubmitted, SurveyUpload, SurveyWorkRead } from "./surveyEvidenceClient";
 import { SurveyEvidenceReview } from "./SurveyEvidenceReview";
 
 type Preview = { kind: "upload"; input: SurveyUpload; fileName: string } | { kind: "submit"; input: SurveySubmission };
 const ACTIVE = ["ASSIGNED", "CLAIMED", "IN_PROGRESS"];
+const PHYSICAL_NUMBERS = [["frontage_meters", "面寬（公尺）"], ["utilities_power_capacity_amp", "電力容量（安培）"],
+  ["utilities_water_pressure_psi", "水壓（psi）"]] as const;
+const PHYSICAL_FLAGS = [["legal_use_restrictions", "商業用途（已核對）"], ["utilities_drainage_available", "排水可用"],
+  ["loading_zone_available", "裝卸空間可用"], ["temporary_stop_allowed", "允許臨停"]] as const;
+const PHYSICAL_CHOICES = [["flood_risk_level", "淹水風險"], ["site_restrictions", "其他營運限制"]] as const;
+const PHYSICAL_LABELS = [...PHYSICAL_NUMBERS, ...PHYSICAL_FLAGS, ...PHYSICAL_CHOICES];
+const EMPTY_PHYSICAL: Record<keyof SurveyPhysicalAttributes, string> = { legal_use_restrictions: "", frontage_meters: "",
+  utilities_power_capacity_amp: "", utilities_water_pressure_psi: "", utilities_drainage_available: "",
+  loading_zone_available: "", temporary_stop_allowed: "", flood_risk_level: "", site_restrictions: "" };
+const PHYSICAL_VALUES = { LOW: "低", MEDIUM: "中", HIGH: "高", none: "無已知其他限制",
+  approval_required: "需許可或改善", prohibited: "存在禁止營運限制" };
+
+function physicalAttributes(input: typeof EMPTY_PHYSICAL): SurveyPhysicalAttributes | null {
+  const result: SurveyPhysicalAttributes = {};
+  for (const [key] of PHYSICAL_NUMBERS) {
+    const raw = input[key].trim(); if (!raw) continue;
+    const value = Number(raw); if (!Number.isFinite(value) || value < 0) return null;
+    result[key] = value;
+  }
+  for (const [key] of PHYSICAL_FLAGS) {
+    if (!input[key]) continue;
+    if (input[key] !== "true" && input[key] !== "false") return null;
+    result[key] = input[key] === "true";
+  }
+  const flood = input.flood_risk_level, restrictions = input.site_restrictions;
+  if (flood) { if (flood !== "LOW" && flood !== "MEDIUM" && flood !== "HIGH") return null; result.flood_risk_level = flood; }
+  if (restrictions) {
+    if (restrictions !== "none" && restrictions !== "approval_required" && restrictions !== "prohibited") return null;
+    result.site_restrictions = restrictions;
+  }
+  return result;
+}
+function physicalLabel(value: number | boolean | string) {
+  return typeof value === "boolean" ? value ? "是" : "否" : typeof value === "number" ? String(value)
+    : PHYSICAL_VALUES[value as keyof typeof PHYSICAL_VALUES] ?? value;
+}
 
 export function SurveyEvidenceWork({ api, assignment, onPendingChange }: {
   api: SurveyEvidenceApi; assignment: SurveyAssignment; onPendingChange: (pending: boolean) => void;
@@ -27,6 +63,7 @@ export function SurveyEvidenceWork({ api, assignment, onPendingChange }: {
   const [caption, setCaption] = useState("");
   const [latitude, setLatitude] = useState(""), [longitude, setLongitude] = useState("");
   const [surveyedAt, setSurveyedAt] = useState(""), [observation, setObservation] = useState(""), [confidence, setConfidence] = useState("");
+  const [physical, setPhysical] = useState({ ...EMPTY_PHYSICAL });
   const [preview, setPreview] = useState<Preview | null>(null);
   const [uploaded, setUploaded] = useState<SurveyAttachment | null>(null), [submitted, setSubmitted] = useState<SurveySubmitted | null>(null);
   const retry = useRef<{ fingerprint: string; key: string } | null>(null);
@@ -65,6 +102,7 @@ export function SurveyEvidenceWork({ api, assignment, onPendingChange }: {
     mounted.current = true; inFlight.current = false; reviewBusy.current = false; setScope(context); setData(null); setWorkReadAvailable(false); setError(null); setReadError(null);
     setPending(false); setReading(false); setReason(""); setFile(null); setCapturedAt(""); setKind(""); setCaption("");
     setLatitude(""); setLongitude(""); setSurveyedAt(""); setObservation(""); setConfidence("");
+    setPhysical({ ...EMPTY_PHYSICAL });
     setPreview(null); setUploaded(null); setSubmitted(null); retry.current = null;
     onPendingChange(false); void reload(context, assignment);
     return () => { mounted.current = false; ++sequence.current; };
@@ -109,8 +147,9 @@ export function SurveyEvidenceWork({ api, assignment, onPendingChange }: {
     const level = confidence.trim() ? Number(confidence) : null;
     if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180
       || !Number.isFinite(time.getTime()) || level !== null && (!Number.isFinite(level) || level < 0 || level > 1)) return null;
+    const attributes = physicalAttributes(physical); if (!attributes) return null;
     return { expectedRevision: row.revision, location: { latitude: lat, longitude: lon, srid: 4326 },
-      surveyedAt: time.toISOString(), attributes: { observation: observation.trim() }, confidence: level,
+      surveyedAt: time.toISOString(), attributes: { observation: observation.trim(), ...attributes }, confidence: level,
       mediaIds: value?.items.filter(item => item.uploadedBy === value.currentSubjectId).map(item => item.mediaId) ?? [], reason: reason.trim() };
   }
   async function previewUpload() {
@@ -209,6 +248,22 @@ export function SurveyEvidenceWork({ api, assignment, onPendingChange }: {
         <label className="odp-field">經度（回報值）<input className={styles.inputField} value={longitude} onChange={e => setLongitude(e.target.value)} inputMode="decimal" /></label>
         <label className="odp-field">現勘時間（本機時間）<input className={styles.inputField} type="datetime-local" value={surveyedAt} onChange={e => setSurveyedAt(e.target.value)} /></label>
         <label className="odp-field">現場觀察<textarea className={styles.textareaField} value={observation} onChange={e => setObservation(e.target.value)} /></label>
+        <fieldset className="odp-form">
+          <legend>現場條件（依實際查核填寫）</legend>
+          <p>未提供的條件維持未知；填寫後仍須獨立審查，不會直接判定可開店。</p>
+          {PHYSICAL_NUMBERS.map(([key, label]) => <label key={key} className="odp-field">{label}
+            <input className={styles.inputField} inputMode="decimal" value={physical[key]} onChange={e => setPhysical(old => ({ ...old, [key]: e.target.value }))} /></label>)}
+          {PHYSICAL_FLAGS.map(([key, label]) => <label key={key} className="odp-field">{label}
+            <select className={styles.inputField} value={physical[key]} onChange={e => setPhysical(old => ({ ...old, [key]: e.target.value }))}>
+              <option value="">尚未查明</option><option value="true">是</option><option value="false">否</option>
+            </select></label>)}
+          {PHYSICAL_CHOICES.map(([key, label]) => <label key={key} className="odp-field">{label}
+            <select className={styles.inputField} value={physical[key]} onChange={e => setPhysical(old => ({ ...old, [key]: e.target.value }))}>
+              <option value="">尚未查明</option>{(key === "flood_risk_level" ? ["LOW", "MEDIUM", "HIGH"] : ["none", "approval_required", "prohibited"]).map(choice =>
+                <option key={choice} value={choice}>{physicalLabel(choice)}</option>)}
+            </select></label>)}
+          {physicalAttributes(physical) === null ? <p role="alert">現場條件包含無效數值；請填入有限且非負的實際量測值。</p> : null}
+        </fieldset>
         <label className="odp-field">回報信心值（選填 0–1）<input className={styles.inputField} value={confidence} onChange={e => setConfidence(e.target.value)} inputMode="decimal" /></label>
         <Button disabled={!submission()} onClick={() => { const input = submission(); if (input) setPreview({ kind: "submit", input }); }}>預覽現勘回報</Button>
       </fieldset>
@@ -218,7 +273,10 @@ export function SurveyEvidenceWork({ api, assignment, onPendingChange }: {
           <div><dt>回報拍攝時間</dt><dd>{preview.input.capturedAt}</dd></div></dl>
           : <dl><div><dt>回報位置</dt><dd>{preview.input.location.latitude}, {preview.input.location.longitude}</dd></div>
             <div><dt>現勘時間</dt><dd>{preview.input.surveyedAt}</dd></div><div><dt>現場觀察</dt><dd>{preview.input.attributes.observation || "未提供"}</dd></div>
-            <div><dt>信心值／附件</dt><dd>{preview.input.confidence ?? "未提供"} · {preview.input.mediaIds.length} 件已保存附件</dd></div></dl>}
+            <div><dt>信心值／附件</dt><dd>{preview.input.confidence ?? "未提供"} · {preview.input.mediaIds.length} 件已保存附件</dd></div>
+            {PHYSICAL_LABELS.map(([key, label]) => { const fact = preview.kind === "submit" ? preview.input.attributes[key] : undefined;
+              return fact === undefined ? null : <div key={key}><dt>{label}</dt><dd>{physicalLabel(fact)}</dd></div>;
+            })}</dl>}
         <p>理由：{preview.input.reason}</p>
         <div className="odp-actions"><Button disabled={pending || reading} onClick={() => setPreview(null)}>返回修改回報</Button>
           <Button disabled={pending || reading || !canSubmit} variant="primary" onClick={() => { void confirm(); }}>{preview.kind === "upload" ? "確認上傳附件" : "確認提交回報"}</Button></div>

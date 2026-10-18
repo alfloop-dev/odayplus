@@ -12,6 +12,8 @@ import pytest
 
 from modules.market_survey.domain.models import PromotionStatus
 from modules.market_survey.infrastructure.assignment_repository import SurveyRevisionConflict
+from modules.site_feasibility import SiteFeasibilityService
+from modules.site_feasibility.domain.models import FeasibilityDecision
 from shared.auth import Role
 from tests.integration.test_canonical_survey_assignments import (
     ACTOR,
@@ -60,6 +62,52 @@ def _review(review, *, body=None, key="review-once", subject=ACTOR):
 def _evidence(review, subject=ACTOR):
     return review.client.get(f"{BASE}/assignments/{review.identity}/evidence",
         headers=review.headers(subject))
+
+
+def _physical_attributes(drainage):
+    attributes = {"observation": "Explicit synthetic structured field measurements",
+        "legal_use_restrictions": True, "frontage_meters": 5.5,
+        "utilities_power_capacity_amp": 100, "utilities_water_pressure_psi": 40,
+        "flood_risk_level": "LOW", "loading_zone_available": True,
+        "temporary_stop_allowed": True, "site_restrictions": "none"}
+    if drainage is not None:
+        attributes["utilities_drainage_available"] = drainage
+    return attributes
+
+
+@pytest.mark.parametrize("drainage,expected", [(True, FeasibilityDecision.FEASIBLE),
+    (False, FeasibilityDecision.CONDITIONAL), (None, FeasibilityDecision.UNKNOWN_REQUIRES_SURVEY)])
+def test_signed_structured_field_facts_survive_review_and_feed_original_physical_gate(context, drainage, expected):
+    # These are explicitly synthetic field measurements and a synthetic zoning
+    # context, not a real site visit, production source or financial admission.
+    made = context.client.post(BASE + "/assignments", json=_payload(),
+        headers={**context.headers(), "Idempotency-Key": "structured-physical-create"})
+    assert made.status_code == 201, made.text
+    identity = made.json()["assignment"]["assignment_id"]
+    attributes = _physical_attributes(drainage)
+    result = context.client.post(f"{BASE}/assignments/{identity}/submit",
+        json=_submit_payload(attributes=attributes),
+        headers={**context.headers(ASSIGNEE), "Idempotency-Key": "structured-physical-submit"})
+    assert result.status_code == 200, result.text
+    market_context = {"context_id": "synthetic-physical-context", "identity": {
+        "site_id": "candidate-owned", "metadata": {"zoning": "commercial"}}}
+    def evaluate(evidence):
+        return SiteFeasibilityService().evaluate_feasibility("candidate-owned", market_context, [evidence], tenant_id=TENANT)
+    before = context.client.get(f"{BASE}/assignments/{identity}/evidence", headers=context.headers())
+    assert before.status_code == 200 and before.json()["attributes"] == attributes
+    assert evaluate(before.json()).decision.recommendation is FeasibilityDecision.UNKNOWN_REQUIRES_SURVEY
+    context.bundle.identity_store.set_account_roles(ACTOR, [Role.SITE_REVIEWER])
+    reviewed = context.client.post(f"{BASE}/assignments/{identity}/review",
+        json={"surveyId": result.json()["surveyId"], **_review_body()},
+        headers={**context.headers(), "Idempotency-Key": "structured-physical-review"})
+    assert reviewed.status_code == 200, reviewed.text
+    actual = context.client.get(f"{BASE}/assignments/{identity}/evidence", headers=context.headers())
+    assert actual.status_code == 200 and actual.json()["attributes"] == attributes
+    assert actual.json()["review_record"]["reviewer_id"] == ACTOR
+    document = evaluate(actual.json())
+    assert document.decision.recommendation is expected
+    assert document.metadata["binding_recommendation_allowed"] is (expected is FeasibilityDecision.FEASIBLE)
+    assert document.metadata["policy_version"] == "physical-feasibility-gate-v3"
 
 
 @pytest.mark.parametrize("decision", ["APPROVED", "REJECTED", "NEEDS_REVISION"])

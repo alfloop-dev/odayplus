@@ -159,6 +159,7 @@ def test_sitescore_v3_real_decision_producers_preserve_market_context_provenance
             "frontage_meters": 5.0,
             "utilities_power_capacity_amp": 100,
             "utilities_water_pressure_psi": 40,
+            "utilities_drainage_available": True,
             "flood_risk_level": "LOW",
             "loading_zone_available": True,
             "temporary_stop_allowed": True,

@@ -7,8 +7,12 @@ export type SurveyAttachment = { mediaId: string; assignmentId: string; sha256: 
 export type SurveyWorkRead = { assignment: SurveyAssignment; currentSubjectId: string; canRequestUpdate: boolean; items: SurveyAttachment[] };
 export type SurveyUpload = { expectedRevision: number; dataBase64: string; contentType: string; mediaKind: string;
   capturedAt: string; caption: string | null; reason: string };
+export type SurveyPhysicalAttributes = { legal_use_restrictions?: boolean; frontage_meters?: number;
+  utilities_power_capacity_amp?: number; utilities_water_pressure_psi?: number; utilities_drainage_available?: boolean;
+  loading_zone_available?: boolean; temporary_stop_allowed?: boolean;
+  flood_risk_level?: "LOW" | "MEDIUM" | "HIGH"; site_restrictions?: "none" | "approval_required" | "prohibited" };
 export type SurveySubmission = { expectedRevision: number; location: { latitude: number; longitude: number; srid: 4326 };
-  surveyedAt: string; attributes: { observation: string }; mediaIds: string[]; confidence: number | null; reason: string };
+  surveyedAt: string; attributes: { observation: string } & SurveyPhysicalAttributes; mediaIds: string[]; confidence: number | null; reason: string };
 export type SurveySubmitted = SurveyCreated & { surveyId: string; observationId: string };
 export type SurveyUploaded = { attachment: SurveyAttachment; auditEventIds: string[]; receiptId: string; replayed: boolean };
 export type SurveyReviewStatus = "PENDING_REVIEW" | "APPROVED" | "REJECTED" | "NEEDS_REVISION";

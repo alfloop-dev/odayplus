@@ -322,6 +322,9 @@ def _evaluate_utilities(values: Mapping[str, Any], signals: _Signals) -> None:
             f"Water pressure requires an upgrade: {water_value:g} psi"
         )
 
+    if "utilities_drainage_available" not in values:
+        signals.unknown_reasons.add("Drainage availability is missing from the physical survey")
+
     for name in (
         "utilities_power_available",
         "utilities_water_available",
@@ -507,7 +510,7 @@ class SiteFeasibilityService:
         metadata = {
             "source_market_context_id": context.get("context_id") or context.get("document_id"),
             "source_market_context_sha256": content_sha256(context) if context else None,
-            "policy_version": "physical-feasibility-gate-v2",
+            "policy_version": "physical-feasibility-gate-v3",
             "approved_survey_ids": sorted(
                 str(survey.get("survey_id"))
                 for survey in usable_surveys

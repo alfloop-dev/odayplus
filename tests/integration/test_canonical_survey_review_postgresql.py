@@ -17,6 +17,8 @@ from modules.market_survey.infrastructure.assignment_repository import (
     SurveyOwnerUnavailable,
     SurveyRevisionConflict,
 )
+from modules.site_feasibility import SiteFeasibilityService
+from modules.site_feasibility.domain.models import FeasibilityDecision
 from shared.auth import Role
 from tests.integration.test_canonical_survey_assignments_postgresql import (
     _business,
@@ -28,7 +30,7 @@ from tests.integration.test_canonical_survey_assignments_postgresql import (
 from tests.integration.test_canonical_survey_assignments_postgresql import (
     owners as owners,
 )
-from tests.integration.test_canonical_survey_review import _review_body
+from tests.integration.test_canonical_survey_review import _physical_attributes, _review_body
 from tests.integration.test_survey_assignment_verified_content import _submit_payload
 
 pytestmark = pytest.mark.requires_live_env
@@ -49,6 +51,37 @@ def _review(owners, *, index=0, key="review-pg", body=None, principal=None):
     principal = principal or owners.reviewer
     return _service(owners, index, principal).review_evidence(principal, identity=owners.identity,
         payload={"surveyId": owners.survey_id, **(body or _review_body())}, idempotency_key=key, correlation_id=owners.cid)
+
+
+@pytest.mark.parametrize("drainage,expected", [(True, FeasibilityDecision.FEASIBLE),
+    (False, FeasibilityDecision.CONDITIONAL), (None, FeasibilityDecision.UNKNOWN_REQUIRES_SURVEY)])
+def test_structured_physical_facts_and_review_survive_two_real_engines(owners, drainage, expected):
+    identity = _create(owners)["assignment"]["assignment_id"]
+    attributes = _physical_attributes(drainage)
+    submitted = _service(owners, principal=owners.surveyor).submit_evidence(owners.surveyor,
+        identity=identity, payload=_submit_payload(attributes=attributes),
+        idempotency_key="physical-submit-pg", correlation_id=owners.cid)
+    repo = owners.second.survey_assignment_repository_for_tenant(owners.tenant)
+    before = repo.get_evidence(submitted["surveyId"])
+    assert before.attributes == attributes and before.review_status.value == "PENDING_REVIEW"
+    market_context = {"context_id": "synthetic-pg-physical-context", "identity": {
+        "site_id": "candidate-owned", "metadata": {"zoning": "commercial"}}}
+    def evaluate(evidence):
+        return SiteFeasibilityService().evaluate_feasibility("candidate-owned", market_context,
+            [evidence.to_dict()], tenant_id=owners.tenant)
+    assert evaluate(before).decision.recommendation is FeasibilityDecision.UNKNOWN_REQUIRES_SURVEY
+    reviewer = replace(owners.principal, roles=frozenset({Role.SITE_REVIEWER}))
+    reviewed = _service(owners, 1, reviewer).review_evidence(reviewer, identity=identity,
+        payload={"surveyId": submitted["surveyId"], **_review_body()},
+        idempotency_key="physical-review-pg", correlation_id=owners.cid)
+    assert reviewed["evidence"]["attributes"] == attributes
+    after = owners.first.survey_assignment_repository_for_tenant(owners.tenant).get_evidence(before.survey_id)
+    assert after.attributes == before.attributes
+    assert replace(after, review_status=before.review_status, review_record=before.review_record,
+                   updated_at=before.updated_at) == before
+    result = evaluate(after)
+    assert result.decision.recommendation is expected
+    assert result.metadata["binding_recommendation_allowed"] is (expected is FeasibilityDecision.FEASIBLE)
 
 
 def test_native_review_is_visible_from_another_engine_and_exact_retry_is_once(review):

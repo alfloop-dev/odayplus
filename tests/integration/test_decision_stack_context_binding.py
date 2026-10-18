@@ -112,8 +112,24 @@ def test_full_envelope_selects_child_scores_and_all_three_producer_hashes_agree(
     assert admitted.admission is CandidateAdmission.ADMITTED
     assert admitted.evidence.market_context_sha256 == expected
     assert admitted.evidence.policy_version("netplan_emgi_integration") == INTEGRATION_POLICY_VERSION == "netplan-emgi-admission-v3"
-    assert admitted.evidence.policy_version("feasibility_gate") == "physical-feasibility-gate-v2"
+    assert admitted.evidence.policy_version("feasibility_gate") == "physical-feasibility-gate-v3"
     assert admitted.requires_human_approval
+
+
+def test_unknown_drainage_withholds_native_candidate_even_with_six_available_model_components():
+    context, _, _, economics = _real_decision_stack()
+    survey = _survey()
+    survey["attributes"].pop("utilities_drainage_available")
+    feasibility = SiteFeasibilityService().evaluate_feasibility(SITE_ID, context, [survey])
+    assert feasibility.decision.recommendation is FeasibilityDecision.UNKNOWN_REQUIRES_SURVEY
+    result = score(context, feasibility, economics)
+    assert result.assessment.availability is ScoreAvailability.AVAILABLE
+    assert result.assessment.components is not None
+    assert result.assessment.decision is SiteScoreDecision.INCOMPLETE
+    decision = _build(market_context=context, sitescore_doc=result,
+        feasibility_doc=feasibility, economics_doc=economics)
+    assert decision.admission is CandidateAdmission.WITHHELD_INCOMPLETE
+    assert decision.candidate_input is None
 
 
 @pytest.mark.parametrize("reverse", [False, True])

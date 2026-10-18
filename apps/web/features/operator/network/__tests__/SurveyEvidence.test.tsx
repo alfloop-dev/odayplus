@@ -136,6 +136,89 @@ describe("Survey actual content adapter and current authenticated pin", () => {
 });
 
 describe("Survey actual native work in the existing assignment dialog", () => {
+  it("previews structured physical observations and submits exactly the declared native attributes", async () => {
+    const api = workApi();
+    render(<SurveyEvidenceWork api={api} assignment={assignment()} onPendingChange={vi.fn()} />);
+    await ready();
+    for (const [label, value] of [["商業用途（已核對）", "true"], ["面寬（公尺）", "5.5"],
+      ["電力容量（安培）", "100"], ["水壓（psi）", "40"], ["排水可用", "true"],
+      ["裝卸空間可用", "false"], ["允許臨停", "true"], ["淹水風險", "MEDIUM"],
+      ["其他營運限制", "approval_required"]]) fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    await fillSubmission();
+    const preview = screen.getByRole("region", { name: "現勘回報預覽" });
+    expect(within(preview).getByText("面寬（公尺）").nextElementSibling).toHaveTextContent("5.5");
+    expect(within(preview).getByText("排水可用").nextElementSibling).toHaveTextContent("是");
+    expect(within(preview).getByText("裝卸空間可用").nextElementSibling).toHaveTextContent("否");
+    expect(api.submit).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "確認提交回報" }));
+    await screen.findByText(/現勘回報已保存/);
+    expect(vi.mocked(api.submit).mock.calls[0][1].attributes).toEqual({ observation: submission.attributes.observation,
+      legal_use_restrictions: true, frontage_meters: 5.5, utilities_power_capacity_amp: 100,
+      utilities_water_pressure_psi: 40, utilities_drainage_available: true,
+      loading_zone_available: false, temporary_stop_allowed: true,
+      flood_risk_level: "MEDIUM", site_restrictions: "approval_required" });
+  });
+
+  it("keeps explicit zero and false physical observations while blank facts remain absent", async () => {
+    const api = workApi();
+    render(<SurveyEvidenceWork api={api} assignment={assignment()} onPendingChange={vi.fn()} />);
+    await ready();
+    fireEvent.change(screen.getByLabelText("電力容量（安培）"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("排水可用"), { target: { value: "false" } });
+    await fillSubmission(); fireEvent.click(screen.getByRole("button", { name: "確認提交回報" }));
+    await screen.findByText(/現勘回報已保存/);
+    expect(vi.mocked(api.submit).mock.calls[0][1].attributes).toEqual({ observation: submission.attributes.observation,
+      utilities_power_capacity_amp: 0, utilities_drainage_available: false });
+  });
+
+  it.each(["-1", "NaN", "Infinity"])("does not submit an invalid physical measurement %s", async invalid => {
+    const api = workApi();
+    render(<SurveyEvidenceWork api={api} assignment={assignment()} onPendingChange={vi.fn()} />);
+    await fillSubmission(); fireEvent.click(screen.getByRole("button", { name: "返回修改回報" }));
+    fireEvent.change(screen.getByLabelText("水壓（psi）"), { target: { value: invalid } });
+    expect(screen.getByRole("button", { name: "預覽現勘回報" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("現場條件包含無效數值");
+    expect(api.submit).not.toHaveBeenCalled();
+  });
+
+  it("keeps the same complete structured observation and key when retrying an unknown submission", async () => {
+    let attempts = 0;
+    const api = workApi({ submit: vi.fn<SurveyEvidenceApi["submit"]>(async () => ++attempts === 1
+      ? { ok: false, message: "Unknown structured survey reply" } : { ok: true, value: submitted() }) });
+    render(<SurveyEvidenceWork api={api} assignment={assignment()} onPendingChange={vi.fn()} />);
+    await ready();
+    fireEvent.change(screen.getByLabelText("電力容量（安培）"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("排水可用"), { target: { value: "false" } });
+    await fillSubmission(); fireEvent.click(screen.getByRole("button", { name: "確認提交回報" }));
+    await screen.findByText("Unknown structured survey reply");
+    expect(screen.queryByText(/現勘回報已保存/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重讀回報狀態" }));
+    await waitFor(() => expect(api.read).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole("button", { name: "確認提交回報" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "確認提交回報" }));
+    await screen.findByText(/現勘回報已保存/);
+    expect(vi.mocked(api.submit).mock.calls[0]).toEqual(vi.mocked(api.submit).mock.calls[1]);
+    expect(vi.mocked(api.submit).mock.calls[0][1].attributes).toEqual({ observation: submission.attributes.observation,
+      utilities_power_capacity_amp: 0, utilities_drainage_available: false });
+  });
+
+  it("does not carry structured field observations from a former task into a new task preview", async () => {
+    const first = workApi();
+    const second = workApi({ read: vi.fn<SurveyEvidenceApi["read"]>(async () => ({ ok: true, value: read(assignment("asgn-B")) })) });
+    const view = render(<SurveyEvidenceWork api={first} assignment={assignment()} onPendingChange={vi.fn()} />);
+    await ready();
+    fireEvent.change(screen.getByLabelText("面寬（公尺）"), { target: { value: "5.5" } });
+    fireEvent.change(screen.getByLabelText("排水可用"), { target: { value: "false" } });
+    view.rerender(<SurveyEvidenceWork api={second} assignment={assignment("asgn-B")} onPendingChange={vi.fn()} />);
+    await waitFor(() => expect(second.read).toHaveBeenCalledOnce());
+    await ready();
+    expect(screen.getByLabelText("面寬（公尺）")).toHaveValue("");
+    expect(screen.getByLabelText("排水可用")).toHaveValue("");
+    await fillSubmission();
+    expect(screen.getByRole("region", { name: "現勘回報預覽" })).not.toHaveTextContent("5.5");
+    expect(second.submit).not.toHaveBeenCalled();
+  });
+
   it.each(["superseded", "denied", "unavailable"] as const)("withdraws cached work authority and preview after a fresh %s read", async kind => {
     const failed: SurveyResult<SurveyWorkRead> = kind === "superseded" ? { ok: false, superseded: true }
       : { ok: false, denied: kind === "denied", message: "fresh read unavailable" };

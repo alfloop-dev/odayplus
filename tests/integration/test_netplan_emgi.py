@@ -131,6 +131,7 @@ def _survey(site_id: str = SITE_ID) -> dict[str, Any]:
             "frontage_meters": 5.0,
             "utilities_power_capacity_amp": 100,
             "utilities_water_pressure_psi": 40,
+            "utilities_drainage_available": True,
             "flood_risk_level": "LOW",
             "loading_zone_available": True,
             "temporary_stop_allowed": True,
@@ -353,7 +354,7 @@ def test_real_producers_admit_a_candidate_and_persist_evidence_and_policy_versio
     assert evidence.market_context_id == CONTEXT_ID
     assert evidence.market_context_sha256
     assert evidence.policy_version("netplan_emgi_integration") == INTEGRATION_POLICY_VERSION
-    assert evidence.policy_version("feasibility_gate") == "physical-feasibility-gate-v2"
+    assert evidence.policy_version("feasibility_gate") == "physical-feasibility-gate-v3"
     assert evidence.policy_version("economics_engine") == ECONOMICS_ENGINE_VERSION
     assert evidence.policy_version("sitescore_contract") == SITESCORE_CONTRACT_VERSION
 
