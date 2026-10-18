@@ -23,7 +23,7 @@ from modules.site_economics.domain.models import (
 CONTRACT_ID = "odayplus.site-economics.v1"
 CONTRACT_VERSION = "1.0.0"
 CONTRACT_CATEGORY = "decision_product"
-ENGINE_VERSION = "site-economics-simulator-v1.1.0"
+ENGINE_VERSION = "site-economics-simulator-v1.2.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,7 +204,9 @@ class SiteEconomicsDocument:
             source_market_context_id=data.get("source_market_context_id"),
             source_market_context_sha256=data.get("source_market_context_sha256"),
             scenarios=scenarios,
-            engine_version=str(data.get("engine_version", ENGINE_VERSION)),
+            # Retain the preceding reader's fallback; absent historical
+            # metadata cannot establish use of the new capital-asset engine.
+            engine_version=str(data.get("engine_version", "site-economics-simulator-v1.1.0")),
             metadata=dict(data.get("metadata", {})),
         )
 

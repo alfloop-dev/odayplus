@@ -239,3 +239,30 @@ def test_legitimate_zero_boolean_metadata_and_optional_none_remain_unchanged(own
     assert loaded.metrics.levered_irr is None
     assert loaded.decision.confidence_score == 0.0
     assert loaded.metadata == {"zero": 0, "enabled": False, "optional": None}
+
+
+def test_ancillary_costs_and_full_snapshot_survive_independent_postgresql_owner(owners):
+    from modules.site_economics import CapitalAssetKind, CapitalAssetSpec, TargetFormatRegistry
+    from modules.site_economics.application.context_inputs import content_sha256
+    from tests.site_economics_fixtures import synthetic_g2_format
+
+    documents, (writer, reader) = owners
+    asset = CapitalAssetSpec(asset_id="SYNTHETIC-PG-PAYMENT", asset_kind=CapitalAssetKind.PAYMENT_SYSTEM,
+        version="1.0.0-engineering", quantity=2, unit_capex=1234, useful_life_months=2,
+        residual_value_ratio=0.25, monthly_fixed_operating_cost=37)
+    spec = replace(synthetic_g2_format(), capital_assets=(asset,))
+    registry = TargetFormatRegistry()
+    registry.register(spec)
+    document = SiteEconomicsService(registry=registry).evaluate_site(
+        site_id="synthetic-ancillary-pg-site", area_ping=25, monthly_rent=0,
+        tenant_id=documents[0].tenant_id)
+    writer.save(document)
+    loaded = reader.get_by_document_id(document.document_id)
+    assert loaded == document
+    assert loaded.assumptions.total_equipment_capex == spec.machine_mix.total_equipment_capex + 2468
+    assert loaded.metadata["target_format_snapshot"]["capital_assets"] == [asset.to_dict()]
+    assert loaded.metadata["target_format_sha256"] == content_sha256(spec.to_dict())
+    assert loaded.metadata["production_admission"] == "not_established_by_simulation"
+    loaded.metadata["target_format_snapshot"]["capital_assets"][0]["unit_capex"] = 999
+    assert reader.get_by_document_id(document.document_id) == document
+    assert writer.get_by_document_id(document.document_id) == document

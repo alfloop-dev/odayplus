@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from modules.site_economics.domain.models import (
+    CapitalAssetSpec,
     FinancingSpec,
     FitoutSpec,
     MachineClass,
@@ -195,11 +196,43 @@ class TargetFormatSpec:
     residual_spec: ResidualValueSpec
     ramp_spec: RampCurveSpec
     seasonality_spec: SeasonalitySpec
+    capital_assets: tuple[CapitalAssetSpec, ...] = ()
+
+    def __post_init__(self) -> None:
+        if type(self.capital_assets) is not tuple or any(type(asset) is not CapitalAssetSpec for asset in self.capital_assets):
+            raise ValueError("CAPITAL_ASSET_INVALID: asset specifications must be an immutable tuple")
+        identities = [asset.asset_id for asset in self.capital_assets]
+        if any(identity in _KNOWN_MACHINE_MODELS
+               and _KNOWN_MACHINE_MODELS[identity].machine_class is not MachineClass.VENDING
+               for identity in identities):
+            raise ValueError("CAPITAL_ASSET_INVALID: known laundry models cannot be reclassified as ancillary assets")
+        if len(set(identities)) != len(identities) or set(identities).intersection(
+            item.machine_model.model_id for item in self.machine_mix.items
+        ):
+            raise ValueError("CAPITAL_ASSET_INVALID: capital asset identities must be unique and separate from productive machines")
+        if self.capital_assets:
+            try:
+                finite = all(math.isfinite(value) for value in (
+                    self.total_equipment_capex,
+                    sum(asset.total_residual_value for asset in self.capital_assets),
+                    sum(asset.total_monthly_operating_cost for asset in self.capital_assets),
+                ))
+            except OverflowError:
+                finite = False
+            if not finite:
+                raise ValueError("CAPITAL_ASSET_INVALID: aggregate asset costs must be finite")
+
+    @property
+    def total_equipment_capex(self) -> float:
+        return self.machine_mix.total_equipment_capex + sum(asset.total_capex for asset in self.capital_assets)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> TargetFormatSpec:
         if isinstance(data.get("format_code"), str) and data["format_code"].upper() == "ODAY_G2":
             _require_g2_numeric_payload(data)
+        assets = data.get("capital_assets", ())
+        if type(assets) not in (tuple, list):
+            raise ValueError("CAPITAL_ASSET_INVALID: capital_assets must be a collection of explicit asset specifications")
         return cls(
             format_code=str(data["format_code"]),
             format_name=str(data["format_name"]),
@@ -217,10 +250,11 @@ class TargetFormatSpec:
             residual_spec=ResidualValueSpec.from_dict(data["residual_spec"]),
             ramp_spec=RampCurveSpec.from_dict(data["ramp_spec"]),
             seasonality_spec=SeasonalitySpec.from_dict(data["seasonality_spec"]),
+            capital_assets=tuple(CapitalAssetSpec.from_dict(asset) for asset in assets),
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "format_code": self.format_code,
             "format_name": self.format_name,
             "format_version": self.format_version,
@@ -238,6 +272,10 @@ class TargetFormatSpec:
             "ramp_spec": self.ramp_spec.to_dict(),
             "seasonality_spec": self.seasonality_spec.to_dict(),
         }
+        # Preserve every retained no-asset snapshot and catalog serialization.
+        if self.capital_assets:
+            result["capital_assets"] = [asset.to_dict() for asset in self.capital_assets]
+        return result
 
 
 def _require_g2_numeric_payload(data: Mapping[str, Any]) -> None:

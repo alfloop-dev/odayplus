@@ -987,3 +987,161 @@ def test_sensitivity_scenarios_preserve_capex_and_cannibalization_overrides() ->
     assert stress_scen.levered_npv < base_scen.levered_npv
     assert pess_scen.levered_npv < base_scen.levered_npv
     assert opt_scen.levered_npv > base_scen.levered_npv
+
+
+# Nonproductive fixtures below are arbitrary engineering assumptions, not any
+# supplier quote, invoice basis, actual hardware measurement or financial grant.
+def _synthetic_capital_asset_payload():
+    return {"asset_id": "SYNTHETIC-PAYMENT-CONTROLLER", "asset_kind": "PAYMENT_SYSTEM", "version": "1.0.0-engineering",
+            "quantity": 2, "unit_capex": 1234.0, "useful_life_months": 2,
+            "residual_value_ratio": 0.25, "monthly_fixed_operating_cost": 37.0}
+
+
+def _capital_asset_format(payload=None):
+    raw = synthetic_g2_format().to_dict()
+    raw["capital_assets"] = [_synthetic_capital_asset_payload() if payload is None else payload]
+    return TargetFormatSpec.from_dict(raw)
+
+
+def test_ancillary_asset_costs_change_cash_flow_without_creating_laundry_demand():
+    base = synthetic_g2_format()
+    enriched = _capital_asset_format()
+    params = SiteOperatingParameters(monthly_base_rent=0, area_ping=25)
+    def run(spec):
+        return SiteEconomicsSimulator().simulate(SimulationInput(
+            format_spec=replace(spec, tax_spec=replace(spec.tax_spec, corporate_tax_rate=0)),
+            operating_params=params, horizon_months=3, custom_debt_ratio=0))
+    original, actual = run(base), run(enriched)
+    assert actual.metrics.total_initial_capex - original.metrics.total_initial_capex == 2468
+    assert actual.unlevered_cash_flows[0] - original.unlevered_cash_flows[0] == -2468
+    for a, b in zip(actual.monthly_schedule, original.monthly_schedule, strict=True):
+        assert (a.total_cycles_count, a.gross_revenue, a.utilities_expense, a.maintenance_expense) == (
+            b.total_cycles_count, b.gross_revenue, b.utilities_expense, b.maintenance_expense)
+        assert a.store_operations_expense - b.store_operations_expense == 74
+    assert [round(a.equipment_depreciation-b.equipment_depreciation, 2) for a, b in zip(
+        actual.monthly_schedule, original.monthly_schedule, strict=True)] == [925.5, 925.5, 0]
+    assert actual.monthly_schedule[-1].terminal_salvage_inflow - original.monthly_schedule[-1].terminal_salvage_inflow == 617
+    assert [round(a-b,2) for a,b in zip(actual.unlevered_cash_flows,original.unlevered_cash_flows,strict=True)] == [-2468,-74,-74,543]
+
+
+@pytest.mark.parametrize("field,value", [("quantity", True), ("quantity", 1.5),
+    ("unit_capex", "1234"), ("unit_capex", float("inf")),
+    ("useful_life_months", 2.5), ("residual_value_ratio", 1.1),
+    ("monthly_fixed_operating_cost", -1), ("baseline_turns_per_day", 10),
+    ("asset_kind", "WASHER"), ("asset_kind", "OTHER"), ("asset_kind", False)])
+def test_ancillary_asset_payload_does_not_repair_or_hide_invalid_financial_inputs(field, value):
+    raw = _synthetic_capital_asset_payload()
+    raw[field] = value
+    with pytest.raises(ValueError, match="CAPITAL_ASSET_INVALID"):
+        _capital_asset_format(raw)
+
+
+def test_ancillary_asset_must_survive_snapshot_roundtrip_and_version_guard():
+    spec = _capital_asset_format()
+    payload = spec.to_dict()
+    assert payload["capital_assets"] == [_synthetic_capital_asset_payload()]
+    assert TargetFormatSpec.from_dict(payload) == spec
+    registry = TargetFormatRegistry()
+    registry.register(spec)
+    changed = _synthetic_capital_asset_payload()
+    changed["unit_capex"] = 1235
+    with pytest.raises(ValueError, match="TARGET_FORMAT_IMMUTABLE_VERSION"):
+        registry.register(_capital_asset_format(changed))
+
+
+def test_explicit_total_equipment_override_preserves_ancillary_cost_and_lifetime():
+    spec = _capital_asset_format()
+    params = SiteOperatingParameters(monthly_base_rent=0, area_ping=25)
+    core = spec.machine_mix.total_equipment_capex
+    overridden = SiteEconomicsSimulator().simulate(SimulationInput(format_spec=spec,
+        operating_params=params, horizon_months=3, custom_equipment_capex=core+2468))
+    ordinary = SiteEconomicsSimulator().simulate(SimulationInput(format_spec=spec,
+        operating_params=params, horizon_months=3))
+    assert overridden.monthly_schedule == ordinary.monthly_schedule
+    assert overridden.metrics == ordinary.metrics
+    with pytest.raises(ValueError, match="CAPITAL_ASSET_INVALID"):
+        SiteEconomicsSimulator().simulate(SimulationInput(format_spec=spec,
+            operating_params=params, custom_equipment_capex=2467))
+
+
+def test_ancillary_assets_do_not_waive_the_six_combo_machine_requirement():
+    spec = _capital_asset_format()
+    large, medium = spec.machine_mix.items
+    wrong = replace(spec, machine_mix=replace(spec.machine_mix, items=(replace(large, quantity=2), medium)))
+    with pytest.raises(ValueError, match="ODAY_G2_CONFIGURATION_REQUIRED"):
+        SiteEconomicsSimulator().simulate(SimulationInput(format_spec=wrong,
+            operating_params=SiteOperatingParameters(monthly_base_rent=0, area_ping=25)))
+
+
+def test_ancillary_only_generic_scenario_does_not_depreciate_or_salvage_assets_twice():
+    spec = _capital_asset_format()
+    spec = replace(spec, format_code="ENGINEERING_ASSETS_ONLY",
+        machine_mix=replace(spec.machine_mix, items=(), installation_and_delivery_fee=0))
+    result = SiteEconomicsSimulator().simulate(SimulationInput(format_spec=spec,
+        operating_params=SiteOperatingParameters(monthly_base_rent=0, area_ping=25),
+        horizon_months=3))
+    assert all(row.total_cycles_count == 0 and row.gross_revenue == 0 for row in result.monthly_schedule)
+    assert [row.equipment_depreciation for row in result.monthly_schedule] == [925.5,925.5,0]
+    assert result.monthly_schedule[-1].terminal_salvage_inflow == 617
+
+
+def test_ancillary_asset_cost_and_snapshot_reach_all_service_scenarios():
+    from modules.site_economics.application.context_inputs import content_sha256
+
+    spec = _capital_asset_format()
+    registry = TargetFormatRegistry()
+    registry.register(spec)
+    service = SiteEconomicsService(registry=registry)
+    doc = service.evaluate_site("synthetic-ancillary", 25, 0)
+    assert doc.assumptions.total_equipment_capex == spec.machine_mix.total_equipment_capex + 2468
+    assert doc.metadata["target_format_snapshot"] == spec.to_dict()
+    assert doc.metadata["target_format_sha256"] == content_sha256(spec.to_dict())
+    assert doc.metadata["production_admission"] == "not_established_by_simulation"
+    assert doc.metadata["capital_assets_cost_policy"] == "explicit-nonlaundry-capital-v1"
+    assert doc.metadata["ancillary_sales_admission"] == "not_established_by_capital_costs"
+    assert doc.engine_version == "site-economics-simulator-v1.2.0"
+    validate_site_economics_document(doc)
+    restored = SiteEconomicsDocument.from_dict(doc.to_dict())
+    assert restored.metadata == doc.metadata and restored.assumptions == doc.assumptions
+    assert set(doc.scenarios) == {"base","optimistic","pessimistic","stress_test"}
+    old_reader_shape = doc.to_dict()
+    old_reader_shape.pop("engine_version")
+    assert SiteEconomicsDocument.from_dict(old_reader_shape).engine_version == "site-economics-simulator-v1.1.0"
+
+
+@pytest.mark.parametrize("kind", ["duplicate", "productive-id", "known-laundry-id", "non-collection", "aggregate-overflow"])
+def test_capital_asset_identity_and_aggregate_conflicts_are_refused(kind):
+    raw = synthetic_g2_format().to_dict()
+    asset = _synthetic_capital_asset_payload()
+    if kind == "duplicate":
+        raw["capital_assets"] = [asset,dict(asset,version="2.0.0-engineering")]
+    elif kind == "productive-id":
+        raw["capital_assets"] = [dict(asset,asset_id=raw["machine_mix"]["items"][0]["machine_model"]["model_id"])]
+    elif kind == "known-laundry-id":
+        raw["capital_assets"] = [dict(asset,asset_id=WASHER_LARGE_20KG_V1.model_id)]
+    elif kind == "non-collection":
+        raw["capital_assets"] = None
+    else:
+        first = dict(asset,quantity=1,unit_capex=1e308)
+        raw["capital_assets"] = [first,dict(first,asset_id="SYNTHETIC-SECOND-CONTROL")]
+    with pytest.raises(ValueError, match="CAPITAL_ASSET_INVALID"):
+        TargetFormatSpec.from_dict(raw)
+
+
+def test_ancillary_fixed_costs_increase_all_mature_breakeven_metrics():
+    base = synthetic_g2_format()
+    payload = dict(_synthetic_capital_asset_payload(), quantity=1,
+                   unit_capex=0, monthly_fixed_operating_cost=10_000)
+    with_cost = _capital_asset_format(payload)
+    params = SiteOperatingParameters(monthly_base_rent=0, area_ping=25)
+    original = SiteEconomicsSimulator().simulate(SimulationInput(
+        format_spec=base, operating_params=params, horizon_months=3))
+    actual = SiteEconomicsSimulator().simulate(SimulationInput(
+        format_spec=with_cost, operating_params=params, horizon_months=3))
+    assert actual.metrics.total_initial_cash_outlay == original.metrics.total_initial_cash_outlay
+    for a,b in zip(actual.monthly_schedule,original.monthly_schedule,strict=True):
+        assert a.total_cycles_count == b.total_cycles_count and a.gross_revenue == b.gross_revenue
+        assert a.store_operations_expense-b.store_operations_expense == 10_000
+    assert actual.metrics.breakeven_monthly_revenue > original.metrics.breakeven_monthly_revenue
+    assert actual.metrics.breakeven_turns_per_day > original.metrics.breakeven_turns_per_day
+    assert actual.metrics.breakeven_capacity_utilization > original.metrics.breakeven_capacity_utilization

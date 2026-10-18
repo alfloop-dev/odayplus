@@ -49,10 +49,14 @@ except ImportError:
 
 def _format_metadata(spec: TargetFormatSpec) -> dict[str, Any]:
     snapshot = spec.to_dict()
-    return {"target_format_snapshot": snapshot,
+    metadata = {"target_format_snapshot": snapshot,
         "target_format_sha256": content_sha256(snapshot),
         "format_configuration_policy": "oday-g2-six-combo-v1" if spec.format_code.upper() == "ODAY_G2" else "explicit-generic-format-v1",
         "production_admission": "not_established_by_simulation"}
+    if spec.capital_assets:
+        metadata["capital_assets_cost_policy"] = "explicit-nonlaundry-capital-v1"
+        metadata["ancillary_sales_admission"] = "not_established_by_capital_costs"
+    return metadata
 
 
 @dataclass(frozen=True, slots=True)
@@ -480,7 +484,7 @@ class SiteEconomicsService:
             total_equipment_capex=(
                 sim_input.custom_equipment_capex
                 if sim_input.custom_equipment_capex is not None
-                else format_spec.machine_mix.total_equipment_capex
+                else format_spec.total_equipment_capex
             ),
             total_fitout_capex=(
                 sim_input.custom_fitout_capex

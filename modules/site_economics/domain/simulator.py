@@ -6,6 +6,7 @@ tax schedules, discounted cash flow (DCF), NPV, IRR, and censored payback analys
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -37,6 +38,7 @@ class SimulationInput:
     demand_multiplier: float = 1.0
     competitor_discount: float = 0.0
     cannibalization_discount: float = 0.0
+    # Complete equipment total, including explicitly priced ancillary assets.
     custom_equipment_capex: float | None = None
     custom_fitout_capex: float | None = None
     custom_debt_ratio: float | None = None
@@ -286,8 +288,18 @@ class SiteEconomicsSimulator:
         equipment_capex = (
             sim_input.custom_equipment_capex
             if sim_input.custom_equipment_capex is not None
-            else format_spec.machine_mix.total_equipment_capex
+            else format_spec.total_equipment_capex
         )
+        capital_asset_capex = sum(asset.total_capex for asset in format_spec.capital_assets)
+        if format_spec.capital_assets:
+            # The existing override is the complete equipment total. Preserve
+            # explicitly priced assets and scale only the productive mix.
+            try:
+                valid = type(equipment_capex) in (int, float) and math.isfinite(equipment_capex)
+            except OverflowError:
+                valid = False
+            if not valid or equipment_capex < capital_asset_capex:
+                raise ValueError("CAPITAL_ASSET_INVALID: total equipment override cannot underfund explicitly priced capital assets")
         fitout_capex = (
             sim_input.custom_fitout_capex
             if sim_input.custom_fitout_capex is not None
@@ -327,7 +339,8 @@ class SiteEconomicsSimulator:
         # 3. Depreciation & Amortization (Per-model useful life and residual value)
         total_catalog_mix_capex = format_spec.machine_mix.total_equipment_capex
         mix_scale = (
-            equipment_capex / total_catalog_mix_capex if total_catalog_mix_capex > 0 else 1.0
+            (equipment_capex - capital_asset_capex) / total_catalog_mix_capex
+            if total_catalog_mix_capex > 0 else 1.0
         )
 
         item_depr_specs: list[tuple[float, int]] = []
@@ -354,9 +367,15 @@ class SiteEconomicsSimulator:
             )
         else:
             salvage_ratio = format_spec.residual_spec.equipment_salvage_ratio
-            total_equipment_salvage = equipment_capex * salvage_ratio
-            depreciable = max(0.0, equipment_capex - total_equipment_salvage)
+            productive_capex = equipment_capex - capital_asset_capex
+            total_equipment_salvage = productive_capex * salvage_ratio
+            depreciable = max(0.0, productive_capex - total_equipment_salvage)
             item_depr_specs.append((depreciable / 84.0, 84))
+
+        for asset in format_spec.capital_assets:
+            item_depr_specs.append(((asset.total_capex - asset.total_residual_value)
+                                    / asset.useful_life_months, asset.useful_life_months))
+            total_equipment_salvage += asset.total_residual_value
 
         fitout_amort_months = min(
             params.lease_term_months, format_spec.fitout_spec.fitout_useful_life_months
@@ -462,6 +481,7 @@ class SiteEconomicsSimulator:
                 + cleaning_expense
                 + iot_expense
                 + detergent_cogs
+                + sum(asset.total_monthly_operating_cost for asset in format_spec.capital_assets)
             )
 
             total_opex = rent_expense + utilities_expense + maintenance_expense + store_ops_expense
@@ -658,6 +678,7 @@ class SiteEconomicsSimulator:
             + (params.insurance_annual_cost / 12.0)
             + params.cleaning_monthly_cost
             + params.telemetry_iot_monthly_fee
+            + sum(asset.total_monthly_operating_cost for asset in format_spec.capital_assets)
         )
         avg_cycle_price = (
             base_mature_gross_revenue / base_monthly_cycles if base_monthly_cycles > 0 else 100.0

@@ -7,6 +7,7 @@ schedules, and financial valuation metrics (NPV, IRR, censored payback).
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -214,6 +215,91 @@ class MachineMixSpec:
             "total_equipment_capex": self.total_equipment_capex,
             "total_residual_value": self.total_residual_value,
         }
+
+
+class CapitalAssetKind(StrEnum):
+    PAYMENT_SYSTEM = "PAYMENT_SYSTEM"
+    KIOSK = "KIOSK"
+    VENDING = "VENDING"
+
+
+@dataclass(frozen=True, slots=True)
+class CapitalAssetSpec:
+    """Explicit nonproductive equipment costs, separate from laundry demand.
+
+    Every amount and lifetime is supplied by the scenario author. This value
+    object grants no source, financial-policy or production admission. Vending
+    sales require their own evidence and model; no sales follow from this cost.
+    """
+
+    asset_id: str
+    asset_kind: CapitalAssetKind
+    version: str
+    quantity: int
+    unit_capex: float
+    useful_life_months: int
+    residual_value_ratio: float
+    monthly_fixed_operating_cost: float
+
+    def __post_init__(self) -> None:
+        def refuse() -> None:
+            raise ValueError("CAPITAL_ASSET_INVALID: explicit finite costs, integer counts and lifetime are required")
+
+        if any(type(value) is not str or not value.strip() for value in (self.asset_id, self.version)):
+            refuse()
+        if type(self.asset_kind) is not CapitalAssetKind:
+            refuse()
+        if type(self.quantity) is not int or self.quantity < 1:
+            refuse()
+        if type(self.useful_life_months) is not int or self.useful_life_months < 1:
+            refuse()
+        try:
+            if not math.isfinite(self.quantity) or not math.isfinite(self.useful_life_months):
+                refuse()
+            for value in (self.unit_capex, self.residual_value_ratio, self.monthly_fixed_operating_cost):
+                if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+                    refuse()
+            if self.residual_value_ratio > 1:
+                refuse()
+            if not all(math.isfinite(value) for value in (
+                self.total_capex, self.total_residual_value, self.total_monthly_operating_cost,
+            )):
+                refuse()
+        except OverflowError:
+            refuse()
+
+    @property
+    def total_capex(self) -> float:
+        return self.unit_capex * self.quantity
+
+    @property
+    def total_residual_value(self) -> float:
+        return self.total_capex * self.residual_value_ratio
+
+    @property
+    def total_monthly_operating_cost(self) -> float:
+        return self.monthly_fixed_operating_cost * self.quantity
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> CapitalAssetSpec:
+        fields = {"asset_id", "asset_kind", "version", "quantity", "unit_capex", "useful_life_months",
+                  "residual_value_ratio", "monthly_fixed_operating_cost"}
+        if not isinstance(data, Mapping) or set(data) != fields:
+            raise ValueError("CAPITAL_ASSET_INVALID: supply exactly the nonproductive asset fields")
+        if type(data["asset_kind"]) is not str:
+            raise ValueError("CAPITAL_ASSET_INVALID: declare the ancillary asset kind explicitly")
+        try:
+            kind = CapitalAssetKind(data["asset_kind"])
+        except ValueError as exc:
+            raise ValueError("CAPITAL_ASSET_INVALID: only payment systems, kiosks and vending capital assets are supported") from exc
+        return cls(**{**data, "asset_kind": kind})
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"asset_id": self.asset_id, "asset_kind": self.asset_kind.value,
+                "version": self.version, "quantity": self.quantity,
+                "unit_capex": self.unit_capex, "useful_life_months": self.useful_life_months,
+                "residual_value_ratio": self.residual_value_ratio,
+                "monthly_fixed_operating_cost": self.monthly_fixed_operating_cost}
 
 
 @dataclass(frozen=True, slots=True)
