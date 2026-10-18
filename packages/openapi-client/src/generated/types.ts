@@ -1999,6 +1999,16 @@ export type ReviewDecisionRequest = {
   risk_acknowledged?: boolean;
 };
 
+/** ReviewFieldEvidence */
+export type ReviewFieldEvidence = {
+  conditions?: string[];
+  decision: "APPROVED" | "REJECTED" | "NEEDS_REVISION";
+  expectedRevision: number;
+  reason: string;
+  reviewChecklist?: Record<string, unknown>;
+  surveyId: string;
+};
+
 /** ReviewSubmissionPayload */
 export type ReviewSubmissionPayload = {
   decisionId: string | null;
@@ -2647,6 +2657,7 @@ export const API_PATHS = {
   "/api/v1/market-survey/assignments/{assignment_id}/attachments": ["GET", "POST"],
   "/api/v1/market-survey/assignments/{assignment_id}/attachments/{media_id}/content": ["GET"],
   "/api/v1/market-survey/assignments/{assignment_id}/evidence": ["GET"],
+  "/api/v1/market-survey/assignments/{assignment_id}/review": ["POST"],
   "/api/v1/market-survey/assignments/{assignment_id}/submit": ["POST"],
   "/api/v1/market-survey/assignments/{assignment_id}/{operation}": ["POST"],
   "/api/v1/match-cases/{match_case_id}/decisions": ["POST"],
