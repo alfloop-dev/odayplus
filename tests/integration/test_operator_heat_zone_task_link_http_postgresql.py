@@ -5,7 +5,6 @@ accounts and candidate metadata are explicit synthetic inputs, not media or UAT.
 No product projection, authorization, factory or repository is replaced here.
 """
 import json
-
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
