@@ -364,9 +364,20 @@ test.describe("Operator shared header layout", () => {
     await page.goto("/operator?ws=network&tab=radar");
     const search = page.getByTestId("intake-search-input");
     await expect(search).toBeVisible({ timeout: 30_000 });
-    const boxes = await Promise.all(
+    // Measure in one browser JavaScript turn to exclude mixed render samples.
+    const boxes = await page.evaluate(() =>
       ["intake-search-input", "intake-filter-method", "intake-filter-stage", "intake-filter-outcome"].map(
-        async (id) => page.getByTestId(id).boundingBox(),
+        (id) => {
+          const matches = document.querySelectorAll(`[data-testid="${id}"]`);
+          if (matches.length !== 1) throw new Error(`expected exactly one ${id}, found ${matches.length}`);
+          const element = matches[0];
+          if (!(element instanceof HTMLElement)) throw new Error(`expected HTMLElement for ${id}`);
+          const rect = element.getBoundingClientRect();
+          if (getComputedStyle(element).visibility !== "visible" || !(rect.width > 0 && rect.height > 0)) {
+            throw new Error(`expected visible, non-empty box for ${id}`);
+          }
+          return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+        },
       ),
     );
     const [searchBox, ...selects] = boxes.map((box) => box!);
