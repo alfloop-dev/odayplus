@@ -282,6 +282,7 @@ classification:
         - "delivery_toolchain/**"
         - ".github/**"
         - ".githooks/**"
+        - "AGENTS.md"
         - "Makefile"
         - "docker-compose.yml"
         - "playwright.config.ts"
