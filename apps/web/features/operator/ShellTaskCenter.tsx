@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertChip, Button, Drawer, PageHeader, Table, Tabs, Toolbar, type TableColumnSpec, type TableSort } from "@oday-plus/ui";
 import { payloadContainsSeedData } from "./operatorDataMode";
+import { heatZoneTaskHref } from "./network/heatZoneNavigation";
 import styles from "./taskCenter.module.css";
 
 type View = "assigned" | "approvals" | "initiated" | "completed";
@@ -14,7 +15,7 @@ type Task = {
   assigneeId: string | null; assigneeName: string | null; slaDueAt: string | null;
   expiresAt?: string | null;
   slaState: "none" | "on-track" | "at-risk" | "breached";
-  target: { workspace: string; tab?: string; entityId?: string; candidateId?: string; reviewId?: string } | null;
+  target: { workspace: string; tab?: string; entityId?: string; candidateId?: string; reviewId?: string; heatZoneId?: string } | null;
   sourceDetailAvailable: boolean;
   requestKey: string | null;
 };
@@ -62,7 +63,8 @@ function parseTask(value: unknown): Task {
   if (value.target !== null && value.target !== undefined) {
     if (!object(value.target) || typeof value.target.workspace !== "string") throw new Error("任務來源格式不正確。");
     target = { workspace: value.target.workspace, entityId: nullable(value.target.entityId) ?? undefined, tab: nullable(value.target.tab) ?? undefined,
-      candidateId: nullable(value.target.candidateId) ?? undefined, reviewId: nullable(value.target.reviewId) ?? undefined };
+      candidateId: nullable(value.target.candidateId) ?? undefined, reviewId: nullable(value.target.reviewId) ?? undefined,
+      heatZoneId: nullable(value.target.heatZoneId) ?? undefined };
   }
   return { taskId: value.taskId as string, sourceId: value.sourceId as string, sourceKind: value.sourceKind as string,
     title: value.title as string, taskType: value.taskType as string, status: value.status as string,
@@ -109,6 +111,7 @@ function urlState(): State {
 export function taskSourceHref(row: Task): string | null {
   const target = row.target;
   if (!row.sourceDetailAvailable || !target?.entityId) return null;
+  if (target.workspace === "network" && target.tab === "areas") return heatZoneTaskHref(target);
   const valid = target.workspace === "today" && target.tab === "interventions"
     || target.workspace === "store" && ["overview", "forecastOps"].includes(target.tab ?? "")
     || target.workspace === "govern" && target.tab === "approvals"

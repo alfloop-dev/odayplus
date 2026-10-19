@@ -68,6 +68,14 @@ import { createNetPlanBuilderApi } from "./network/netplanBuilderClient";
 import { createSurveyAssignmentApi, type SurveyTarget } from "./network/surveyAssignmentClient";
 import { createSurveyEvidenceApi } from "./network/surveyEvidenceClient";
 import { SurveyAssignmentDialog } from "./network/SurveyAssignmentDialog";
+import { parseHeatZoneSelection } from "./network/heatZoneNavigation";
+import {
+  heatZoneRequestArgument,
+  heatZoneSelectionParams,
+  heatZoneSnapshotReceipt,
+  heatZoneTargetGate,
+  resolveHeatZoneRequestedTarget,
+} from "./network/heatZoneRequestedSnapshot";
 import type {
   HeatZoneMergeSplitPanelProps,
   HeatZoneProposal,
@@ -778,6 +786,11 @@ export function NetworkFindAreasWorkspace({
   const workflowSelectionError = isCandidateWorkflowTab(activeTab) && !overrideApplies && urlCandidateSelection.invalid
     ? "候選點連結包含不一致或空白的選取值。" : null;
   const candidateSelectionError = activeTab === 2 ? workflowSelectionError : null;
+  // Exact Task Center HeatZone identity (frozen Root parser). Only Find Areas
+  // consumes it; the intake detail route and every other tab keep their own
+  // owners. It names a target only — the guarded read below decides access.
+  const heatZoneSelection = parseHeatZoneSelection(searchParams, intakeDetailOpen ? -1 : activeTab);
+  const heatZoneRequestId = heatZoneRequestArgument(heatZoneSelection, selectedHeatZoneId);
 
   useEffect(() => {
     setTabOverride((current) => (current !== null
@@ -787,6 +800,8 @@ export function NetworkFindAreasWorkspace({
   }, [urlTab, urlCandidateZoneId, searchParams]);
   const [networkSnapshotValue, setNetworkSnapshot] = useState<NetworkListingsSnapshot | null>(null);
   const networkSnapshot = networkNavigationGeneration === navigationContext.current.generation ? networkSnapshotValue : null;
+  // Generation+URL+location-epoch receipt of the last admitted scoped read (answer or refusal).
+  const [networkSnapshotReceipt, setNetworkSnapshotReceipt] = useState<string | null>(null);
   const [networkApiError, setNetworkApiError] = useState<string | null>(null);
   const [networkLoadFailureValue, setNetworkLoadFailure] = useState<OperatorLoadFailure | null>(null);
   const networkLoadFailure = networkNavigationGeneration === navigationContext.current.generation ? networkLoadFailureValue : null;
@@ -1107,19 +1122,24 @@ export function NetworkFindAreasWorkspace({
   const localCandidates = candidates;
 
   const effectiveLens = activeLens ?? localLens;
-  const effectiveSelectedId = selectedHeatZoneId ?? localSelectedId;
+  // An explicit valid request is the original selectedHeatZoneId argument; a
+  // refused one reads unfiltered without choosing any zone for it.
+  const effectiveSelectedId = heatZoneRequestId === undefined
+    ? selectedHeatZoneId ?? localSelectedId
+    : heatZoneRequestId ?? "";
   const effectiveTrackedIds = trackedHeatZoneIds ?? Array.from(localTrackedIds);
   const trackedSet = useMemo(() => new Set(effectiveTrackedIds), [effectiveTrackedIds]);
 
   useEffect(() => {
     if (
+      heatZoneRequestId === undefined &&
       selectedHeatZoneId === undefined &&
       !localSelectedId &&
       heatZones.length > 0
     ) {
       setLocalSelectedId(heatZones[0].id);
     }
-  }, [heatZones, localSelectedId, selectedHeatZoneId]);
+  }, [heatZoneRequestId, heatZones, localSelectedId, selectedHeatZoneId]);
 
   // Read leases include the observed URL and scope. When either changes,
   // replace the invalidated read; a late response alone cannot restart it.
@@ -1134,6 +1154,14 @@ export function NetworkFindAreasWorkspace({
     let cancelled = false;
     const generation = navigationContext.current.generation;
     const sequence = ++networkReadSequence.current;
+    // Explicit intent never adopts the server's default first zone, and the
+    // receipt lets Find Areas confirm a target only from this exact read.
+    const explicitHeatZoneRequest = heatZoneRequestId !== undefined;
+    // The location epoch is captured once, when this read starts. A late answer
+    // keeps the epoch it was issued under, so returning to a byte-identical URL
+    // (a newer epoch) never re-matches an earlier snapshot.
+    const locationEpoch = navigationLocation.current.version;
+    const receipt = heatZoneSnapshotReceipt(generation, navigationLocationKey, locationEpoch);
     async function load() {
       const read = await fetchNetworkSnapshot(effectiveSelectedId || null, effectiveLens, activeRoleId, snapshotReadGuard());
       if ("superseded" in read) return;
@@ -1141,11 +1169,13 @@ export function NetworkFindAreasWorkspace({
       const snapshot = read.ok ? read.snapshot : null;
       if (!cancelled && generation === navigationContext.current.generation && snapshot) {
         setNetworkNavigationGeneration(generation);
+        setNetworkSnapshotReceipt(receipt);
         const inspection = inspectNetworkListingsSnapshot(snapshot);
         const authorizedEmpty = inspection === "empty" && snapshot.source === "api" && hasNetworkListingsRenderShape(snapshot);
         const serverSelectedId = snapshot.selectedHeatZoneId;
         if (
           inspection === "ready" &&
+          !explicitHeatZoneRequest &&
           !effectiveSelectedId &&
           serverSelectedId &&
           snapshot.heatZones?.some((zone) => zone.id === serverSelectedId)
@@ -1172,6 +1202,7 @@ export function NetworkFindAreasWorkspace({
         );
       } else if (!cancelled && generation === navigationContext.current.generation && !read.ok) {
         setNetworkNavigationGeneration(generation);
+        setNetworkSnapshotReceipt(receipt);
         // A refused read leaves no snapshot behind: its collections were not
         // read, so nothing below may present them as an authorized result.
         setNetworkSnapshot(null);
@@ -1188,7 +1219,7 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [activeRoleId, canReadListings, effectiveLens, effectiveSelectedId, fixturesAllowed, navigationContextKey, navigationLocationKey]);
+  }, [activeRoleId, canReadListings, effectiveLens, effectiveSelectedId, fixturesAllowed, heatZoneRequestId, navigationContextKey, navigationLocationKey]);
 
   useEffect(() => {
     if (!canReadScoring) {
@@ -1958,7 +1989,25 @@ export function NetworkFindAreasWorkspace({
     [fixturesAllowed, localCandidates, effectiveLens, effectiveSelectedId, heatZones, listingsEffective, listingSourcesEffective, rebalanceStoresEffective, localSiteReviews],
   );
 
-  const selectedZone = viewModel.selectedZone;
+  const heatZoneTarget = resolveHeatZoneRequestedTarget({
+    selection: heatZoneSelection,
+    controlledSelectedId: selectedHeatZoneId,
+    snapshot: networkSnapshot,
+    loadState: networkLoadState,
+    snapshotReceipt: networkSnapshotReceipt,
+    currentReceipt: heatZoneSnapshotReceipt(navigationContext.current.generation, navigationLocationKey, navigationLocation.current.version),
+  });
+  const confirmedHeatZoneId = heatZoneTarget.state === "confirmed" ? heatZoneTarget.id : null;
+  // The view model falls back to HZ-01 or the first row. Under explicit intent
+  // only the exactly confirmed zone may be presented or acted on.
+  const selectedZone = heatZoneTarget.state === "none"
+    || confirmedHeatZoneId !== null && viewModel.selectedZone?.id === confirmedHeatZoneId
+    ? viewModel.selectedZone : null;
+  useEffect(() => {
+    // A confirmed target becomes the ordinary local selection, matching a
+    // user's own click, so leaving Find Areas keeps the same verified zone.
+    if (confirmedHeatZoneId !== null) setLocalSelectedId(confirmedHeatZoneId);
+  }, [confirmedHeatZoneId]);
   // Carry an area only when the intake options and the visible selection are
   // verified by the same current read. An earlier native map binding can have
   // different IDs while the scoped aggregate is still arriving.
@@ -2001,6 +2050,12 @@ export function NetworkFindAreasWorkspace({
   function selectHeatZone(zone: NetworkFindAreasZoneViewModel) {
     setLocalSelectedId(zone.id);
     callbacks?.onSelectHeatZone?.(zone.zone);
+    // With an explicit URL identity, the selected row must match reload and
+    // Back/Forward: both identities move together through the existing tab
+    // navigation helper. Ordinary visits keep their original local selection.
+    if (heatZoneSelection.requested && activeTab === 0 && zone.id !== confirmedHeatZoneId) {
+      changeActiveTab(0, heatZoneSelectionParams(zone.id));
+    }
   }
 
   function changeLens(lens: NetworkFindAreasLens) {
@@ -2467,6 +2522,9 @@ export function NetworkFindAreasWorkspace({
 
   const findAreasLoadState = resolveNetworkFindAreasLoadState(networkLoadState, heatZones.length,
     networkSnapshot?.heatZoneAvailability?.state);
+  // Explicit Task Center target that is not exactly confirmed by the fresh
+  // read: existing unavailable styling, no unrelated zone detail or actions.
+  const findAreasTargetGate = activeTab === 0 ? heatZoneTargetGate(heatZoneTarget) : null;
   const activeTabGateState = resolveNetworkTabGateState({
     activeTab,
     findAreasLoadState,
@@ -2731,6 +2789,13 @@ export function NetworkFindAreasWorkspace({
             onPreviewProposal={handlePreviewProposal}
             onRejectProposal={handleRejectProposal}
             proposals={proposals}
+          />
+        ) : findAreasTargetGate ? (
+          <OperatorDataUnavailableGate
+            failure={findAreasTargetGate.failure}
+            loadingDetail={findAreasTargetGate.loadingDetail}
+            onRetry={findAreasTargetGate.retry ? () => window.location.reload() : undefined}
+            status={findAreasTargetGate.status}
           />
         ) : (
           <FindAreasPanel

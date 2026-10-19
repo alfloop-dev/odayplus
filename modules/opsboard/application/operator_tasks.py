@@ -286,8 +286,8 @@ def build_task_center_records(sources: dict[str, Any]) -> dict[str, Any]:
                         sourceDetailAvailable=True)
         else:
             matches = [item for item in sources.get("heatzones", []) if _value(item, "heat_zone_id") == parent]
-            # There is no supported HeatZone entity deep-link consumer yet.
-            # Retain a task with its true target ID; never navigate to a different zone.
+            # Retain the unique owner's exact identity here. A source target is
+            # exposed only after the request's current scope/resource admission.
             if len(matches) == 1 and isinstance(matches[0], dict):
                 task["_surveyParent"]["scope"] = {"tenantId": tenant, **deepcopy(matches[0]), "heatZoneId": parent}
         records.append(task)
@@ -366,6 +366,13 @@ def admit_task_center_records(
             allowed = can_read("operator_console") and not _restricted(principal)
         if allowed:
             admitted = deepcopy(row)
+            parent = row.get("_surveyParent")
+            if kind == "market-survey.assignment" and isinstance(parent, dict) and parent.get("kind") == "HEAT_ZONE":
+                zone_id, evidence = parent.get("id"), parent.get("scope")
+                if (isinstance(zone_id, str) and zone_id.strip() and isinstance(evidence, dict)
+                    and evidence.get("heat_zone_id") == zone_id and evidence.get("heatZoneId") == zone_id):
+                    admitted.update(target={"workspace": "network", "tab": "areas", "entityId": zone_id,
+                                            "heatZoneId": zone_id}, sourceDetailAvailable=True)
             admitted.pop("_surveyParent", None)
             visible.append(admitted)
     # Canonical pending owners were scoped by project_pending_snapshot already;

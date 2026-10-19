@@ -29,6 +29,7 @@ import {
   type OperatorRoleId,
   type WorkspaceId,
 } from "./navigation";
+import { HEAT_ZONE_SELECTION_PARAM } from "./network/heatZoneNavigation";
 import type { NetworkFindAreasBindings } from "./network/networkFindAreasLoader";
 import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
 import {
@@ -1024,6 +1025,10 @@ export function OperatorConsole({
     nextUrl.searchParams.set("ws", target.workspace);
     nextUrl.searchParams.delete("evidence");
     nextUrl.searchParams.delete("auditCategory");
+    // ShellTarget carries no HeatZone identity: the exact entity+heatZone pair
+    // is written only by its existing producers. A target change must not keep
+    // a stale heatZone after `entity` is replaced or removed.
+    nextUrl.searchParams.delete(HEAT_ZONE_SELECTION_PARAM);
     if (target.workspace === "network" && target.tab === "review" && target.candidateId && target.reviewId) {
       nextUrl.searchParams.set("candidate", target.candidateId);
       nextUrl.searchParams.set("review", target.reviewId);

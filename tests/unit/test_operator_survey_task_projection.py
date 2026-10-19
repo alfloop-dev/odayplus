@@ -83,11 +83,16 @@ def test_current_parent_scope_and_resource_grant_are_required_for_each_native_ta
     assert _admit(raw)["records"] == []
 
 
-def test_heat_zone_task_requires_unique_current_owner_and_never_invents_an_unsupported_link():
+def test_heat_zone_task_requires_unique_current_owner_and_exposes_the_exact_admitted_link():
     raw = _sources("HEAT_ZONE")
+    before = deepcopy(raw)
+    unadmitted = build_task_center_records(raw)["records"][0]
+    assert unadmitted["target"] is None and unadmitted["sourceDetailAvailable"] is False
     row = _admit(raw)["records"][0]
     assert row["title"] == "熱區查核 zone-a"
-    assert row["target"] is None and row["sourceDetailAvailable"] is False
+    assert row["target"] == {"workspace": "network", "tab": "areas", "entityId": "zone-a", "heatZoneId": "zone-a"}
+    assert row["sourceDetailAvailable"] is True
+    assert raw == before
     raw["heatzones"] *= 2
     assert _admit(raw)["records"] == []
     raw["heatzones"] = []
