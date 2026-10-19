@@ -146,8 +146,8 @@ locals {
       ODP_AUTH_MODE                        = var.auth_mode
       ODP_AUTH_OIDC_ENABLED                = tostring(local.oidc_enabled)
       ODP_AUTH_LOCAL_ISSUER                = "urn:odp:identity:local"
-      ODP_AUTH_LOCAL_AUDIENCES             = google_cloud_run_v2_service.api.uri
-      ODP_AUTH_AUDIENCES                   = google_cloud_run_v2_service.api.uri
+      ODP_AUTH_LOCAL_AUDIENCES             = join(",", local.service_auth_audiences)
+      ODP_AUTH_AUDIENCES                   = join(",", local.service_auth_audiences)
       ODP_DATA_BINDING_MODE                = "live"
       ODP_DEPLOY_ENV                       = var.environment
       ODP_PRODUCT_MODE                     = (local.is_prod || var.live_data_enabled) ? "production" : "poc"
