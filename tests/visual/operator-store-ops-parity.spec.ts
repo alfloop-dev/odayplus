@@ -349,3 +349,202 @@ async function openDesignDialog(page: Page, id: string) {
   const buttons: Record<string, string> = { triage: "完成 Triage", assign: "指派 Owner", action: "採用建議並建立處置", outcome: "判斷成效", escalate: "升級（Growth／Network／Govern）", replyReview: "回覆評價" };
   await page.getByRole("button", { name: buttons[id], exact: true }).dispatchEvent("click");
 }
+
+import { primeOperatorPersona } from "../e2e/_operatorPersona";
+import { FIXTURE_FRESHNESS, GROWTH_ITEMS, PRICEOPS_RECOMMENDATIONS, SEGMENTS } from "../../apps/web/features/operator/growthViewModel";
+
+// Actual React/CSS regressions, not a prototype/DOM surrogate. Package 10 fixes
+// the side tracks and uses the shell's 20px gutter plus two 14px gaps. Half a
+// CSS pixel allows fractional layout rounding, not an alternative composition.
+for (const workspace of ["Store", "Growth", "Network"] as const) {
+  for (const width of [1024, 1440, 390]) {
+    test(`Package 10 three-region geometry ${workspace} at ${width}`, async ({ page }, info) => {
+      await page.setViewportSize({ width, height: 1000 });
+      if (workspace === "Store") {
+        await openStore(page);
+      } else if (workspace === "Growth") {
+        await primeOperatorPersona(page, "marketing-manager");
+        await page.route("**/api/v1/operator/growth/**", route => {
+          const pathname = new URL(route.request().url()).pathname;
+          const body = pathname.endsWith("/freshness") ? FIXTURE_FRESHNESS : {
+            items: pathname.endsWith("/segments") ? SEGMENTS
+              : pathname.endsWith("/recommendations") ? PRICEOPS_RECOMMENDATIONS : GROWTH_ITEMS,
+          };
+          return route.fulfill({ contentType: "application/json", body: JSON.stringify(body) });
+        });
+        await page.goto(`/operator?ws=growth&item=${GROWTH_ITEMS[4].id}`);
+        await expect(page.getByTestId("growth-item-detail")).toContainText(GROWTH_ITEMS[4].id);
+      } else {
+        await primeOperatorPersona(page, "expansion-manager");
+        await page.goto("/operator?ws=network");
+        // Same readiness windows as the original real-CSS Find Areas checks
+        // in operator-shell-layout.spec.ts; no existing test is changed.
+        await expect(page.getByTestId("find-areas-zone-detail")).toBeVisible({ timeout: 30_000 });
+        await expect(page.getByTestId("find-areas-zone-score")).not.toBeEmpty();
+        await expect(page.getByTestId("heat-zone-map-status")).toHaveText(/^HeatZone Lens：需求熱度 · /, { timeout: 30_000 });
+      }
+      await page.evaluate(() => document.fonts.ready);
+      await page.evaluate(() => scrollTo(0, 0));
+      const left = workspace === "Store" ? page.getByLabel("門市 Issue queue")
+        : workspace === "Growth" ? page.getByRole("region", { name: "Growth actions" }).locator(":scope > aside").first()
+        : page.getByTestId("find-areas-lens-list").locator("..");
+      const right = workspace === "Store" ? page.getByLabel("Action rail")
+        : workspace === "Growth" ? page.getByTestId("growth-item-detail")
+        : page.getByTestId("find-areas-zone-detail");
+      const container = workspace === "Store" ? left.locator("..")
+        : workspace === "Growth" ? page.getByRole("region", { name: "Growth actions" })
+        : page.getByTestId("network-panel-find-areas");
+      // Snapshot all regions in one browser turn: a source-freshness notice
+      // can reflow the header between separate awaited measurements.
+      const data = await container.evaluate((root, workspace) => {
+        const regions = workspace === "Network" ? [
+          root.querySelector('[data-testid="find-areas-lens-list"]')!.parentElement!,
+          root.querySelector('[data-testid="find-areas-map-frame"]')!,
+          root.querySelector('[data-testid="find-areas-zone-detail"]')!,
+        ] : Array.from(root.children);
+        const box = (element: Element) => {
+          const r = element.getBoundingClientRect();
+          return { x: r.x, y: r.y, width: r.width, height: r.height, scrollWidth: element.scrollWidth, radius: getComputedStyle(element).borderRadius };
+        };
+        return {
+          scope: "Synthetic local React/CSS geometry only; not typography parity, deployment or UAT",
+          left: box(regions[0]), center: box(regions[1]), right: box(regions[2]),
+          document: { width: innerWidth, scrollWidth: document.documentElement.scrollWidth },
+        };
+      }, workspace);
+      // Record before asserting so the unchanged-product RED retains the actual
+      // dropped-rail coordinates, not just an assertion error.
+      await record(info, `three-region-${workspace.toLowerCase()}-${width}`, data);
+      expect(data.document.scrollWidth).toBeLessThanOrEqual(width);
+      if (width >= 1024) {
+        const [leftWidth, rightWidth] = workspace === "Store" ? [326, 306]
+          : workspace === "Growth" ? [236, 336] : [206, 330];
+        const centerWidth = width - 40 - leftWidth - rightWidth - 28;
+        for (const [actual, expected] of [
+          [data.left.x, 20], [data.left.width, leftWidth],
+          [data.center.x, 20 + leftWidth + 14], [data.center.width, centerWidth],
+          [data.right.x, width - 20 - rightWidth], [data.right.width, rightWidth],
+          [data.right.y, data.center.y], [data.left.y, data.center.y],
+        ]) expect(Math.abs(actual - expected), `${workspace}: ${actual} vs ${expected}`).toBeLessThanOrEqual(0.5);
+        expect(data.right.y).toBeLessThan(1000);
+        expect(data.right.y).toBeLessThan(data.center.y + data.center.height);
+      } else if (workspace === "Network") {
+        expect(data.left.width).toBeGreaterThan(0);
+        expect(data.center.y).toBeGreaterThanOrEqual(data.left.y + data.left.height);
+        expect(data.right.y).toBeGreaterThanOrEqual(data.center.y + data.center.height);
+      } else {
+        expect(data.center.y).toBeGreaterThanOrEqual(data.left.y + data.left.height);
+        expect(data.right.y).toBeGreaterThanOrEqual(data.center.y + data.center.height);
+      }
+      const clipped = await container.evaluate(root => {
+        const bounds = root.getBoundingClientRect();
+        const isWithinScroller = (element: Element) => {
+          for (let node = element.parentElement; node && node !== root; node = node.parentElement) {
+            if (["auto", "scroll"].includes(getComputedStyle(node).overflowX)) return true;
+          }
+          return false;
+        };
+        return Array.from(root.querySelectorAll<HTMLElement>("*"))
+          .filter(element => element.getBoundingClientRect().width > 0 && element.getBoundingClientRect().height > 0)
+          // The original 1px, explicitly clipped search label is for assistive
+          // technology, not painted card data. Keep its accessible name below.
+          .filter(element => getComputedStyle(element).clip !== "rect(0px, 0px, 0px, 0px)")
+          .filter(element => !element.closest(".maplibregl-map"))
+          .filter(element => !isWithinScroller(element))
+          .filter(element => {
+            const box = element.getBoundingClientRect();
+            return box.left < bounds.left - 0.5 || box.right > bounds.right + 0.5
+              || (element.scrollWidth > Math.ceil(box.width) && !["auto", "scroll"].includes(getComputedStyle(element).overflowX));
+          })
+          .map(element => ({ tag: element.tagName, class: String(element.className), text: element.textContent?.slice(0, 100), width: element.getBoundingClientRect().width, scrollWidth: element.scrollWidth }));
+      });
+      await record(info, `three-region-content-${workspace.toLowerCase()}-${width}`, { clipped });
+      expect(clipped, "Internal data must fit; only original horizontal scrollers may scroll").toEqual([]);
+      if (workspace === "Store") {
+        await expect(left.getByRole("textbox", { name: "搜尋事件標題、門市或編號" })).toBeVisible();
+        await expect(right.getByRole("button", { name: "完成 Triage", exact: true })).toBeVisible();
+      }
+      if (workspace === "Network") await expect(right.getByRole("button", { name: /查看本區物件/ })).toBeVisible();
+      await save(page, info, `synthetic-local-${workspace.toLowerCase()}-${width}`);
+    });
+  }
+}
+
+// Scroll the real overflowing page, not a locator (which can scroll a different
+// ancestor). Header and both rails are sampled together after the same paint.
+for (const workspace of ["Store", "Growth"] as const) {
+  for (const width of [1024, 1440]) {
+    test(`Measured header clears sticky rails ${workspace} at ${width}`, async ({ page }, info) => {
+      await page.setViewportSize({ width, height: workspace === "Growth" ? 650 : 900 });
+      if (workspace === "Store") {
+        await openStore(page);
+      } else {
+        await primeOperatorPersona(page, "marketing-manager");
+        await page.route("**/api/v1/operator/growth/**", route => {
+          const pathname = new URL(route.request().url()).pathname;
+          const body = pathname.endsWith("/freshness") ? FIXTURE_FRESHNESS : {
+            items: pathname.endsWith("/segments") ? SEGMENTS
+              : pathname.endsWith("/recommendations") ? PRICEOPS_RECOMMENDATIONS : GROWTH_ITEMS,
+          };
+          return route.fulfill({ contentType: "application/json", body: JSON.stringify(body) });
+        });
+        await page.goto(`/operator?ws=growth&item=${GROWTH_ITEMS[4].id}`);
+        await expect(page.getByTestId("growth-item-detail")).toContainText(GROWTH_ITEMS[4].id);
+      }
+      await page.evaluate(() => document.fonts.ready);
+      const data = await page.evaluate(async workspace => {
+        const left = document.querySelector<HTMLElement>(workspace === "Store"
+          ? '[aria-label="門市 Issue queue"]' : '[aria-label="Growth actions"] > aside')!;
+        const right = document.querySelector<HTMLElement>(workspace === "Store"
+          ? '[aria-label="Action rail"]' : '[data-testid="growth-item-detail"]')!;
+        const root = left.parentElement!;
+        const header = document.querySelector('[data-screen-label="Top Navigation"]')!;
+        const box = (element: Element) => {
+          const r = element.getBoundingClientRect();
+          return { top: r.top, bottom: r.bottom, height: r.height };
+        };
+        scrollTo({ top: 0, behavior: "instant" });
+        await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+        const before = { header: box(header), left: box(left), right: box(right), scrollY };
+        // Beyond the rails' original flow position, while still inside their
+        // actual parent; no synthetic content/height/style is added to scroll.
+        const requestedScrollY = root.getBoundingClientRect().top + scrollY + 120;
+        scrollTo({ top: requestedScrollY, behavior: "instant" });
+        await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+        const rail = (element: HTMLElement) => ({
+          ...box(element), position: getComputedStyle(element).position,
+          cssTop: parseFloat(getComputedStyle(element).top),
+        });
+        return {
+          scope: "Synthetic local fixture/fallback fonts; real CSS page scrolling, not live acceptance",
+          before, requestedScrollY, scrollY, header: box(header), root: box(root),
+          left: rail(left), right: rail(right),
+          queueMaxHeight: workspace === "Store" ? parseFloat(getComputedStyle(left).maxHeight) : null,
+          measuredHeader: parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--operator-sticky-header-height")),
+          viewport: { width: innerWidth, height: innerHeight, scrollWidth: document.documentElement.scrollWidth },
+        };
+      }, workspace);
+      await record(info, `sticky-scroll-${workspace.toLowerCase()}-${width}`, data);
+      expect(data.before.scrollY).toBe(0);
+      expect(data.scrollY).toBeGreaterThan(data.before.left.top);
+      expect(Math.abs(data.scrollY - data.requestedScrollY)).toBeLessThanOrEqual(1);
+      expect(Math.abs(data.header.top)).toBeLessThanOrEqual(0.5);
+      expect(data.viewport.scrollWidth).toBeLessThanOrEqual(width);
+      for (const rail of [data.left, data.right]) {
+        expect(rail.position).toBe("sticky");
+        // Confirm the real parent has not reached its end constraint; a static
+        // rail, unengaged sticky or clipped negative top must not pass by chance.
+        expect(data.root.bottom).toBeGreaterThan(rail.bottom + 1);
+        expect(rail.top).toBeGreaterThanOrEqual(data.header.bottom + 9 - 0.5);
+        expect(Math.abs(rail.top - (data.header.bottom + 9))).toBeLessThanOrEqual(1.5);
+        expect(Math.abs(rail.cssTop - (data.measuredHeader + 9))).toBeLessThanOrEqual(0.5);
+        expect(rail.top).toBeLessThan(data.before.left.top);
+        expect(rail.top).toBeLessThan(data.viewport.height);
+      }
+      if (workspace === "Store") {
+        expect(data.left.bottom).toBeLessThanOrEqual(data.viewport.height - 18 + 0.5);
+        expect(data.queueMaxHeight).toBe(data.viewport.height - data.measuredHeader - 27);
+      }
+    });
+  }
+}
