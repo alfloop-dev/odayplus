@@ -143,7 +143,7 @@ on:
         default: ""
         type: string
       initial_release_recovery:
-        description: "Set only for the first release into a target that holds no approved release (build phase). The build reads the target back and refuses unless every Cloud Run service and job is absent; recovery for such a release is deleting the candidate and holding zero traffic, never a rollback."
+        description: "Set only for the first release into a target that holds no approved release (build phase; dev or staging). The build reads the target back and refuses unless every Cloud Run service and job is absent -- for ephemeral staging, this release's release-scoped names. A staging-sealed first release is the staging leg of production's first release: admission into staging or production re-reads that environment's target, binds the readback to the manifest digest, and refuses once production has admitted any other release. Recovery for such a release is deleting the candidate and holding zero traffic, never a rollback."
         required: false
         default: false
         type: boolean
@@ -478,16 +478,25 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "${HANDOFF_DIR}"
+          # Ephemeral staging has no long-lived names: the probe derives this
+          # release's release-scoped names from the release id instead.
+          if [ "${{ inputs.environment }}" = "staging" ]; then
+            target_args=(--staging-release-id "odp-${ODAY_RELEASE_SHA:0:12}")
+          else
+            target_args=(
+              --target "api=${API_SERVICE}"
+              --target "web=${WEB_SERVICE}"
+              --target "migration=${MIGRATION_JOB}"
+              --target "worker=${WORKER_JOB}"
+              --target "scheduler=${SCHEDULER_JOB}"
+            )
+          fi
           python3 delivery_toolchain/release/probe_release_target_absence.py \
             --environment "${{ inputs.environment }}" \
             --candidate-sha "${ODAY_RELEASE_SHA}" \
             --project "${GCP_PROJECT}" \
             --region "${GCP_REGION}" \
-            --target "api=${API_SERVICE}" \
-            --target "web=${WEB_SERVICE}" \
-            --target "migration=${MIGRATION_JOB}" \
-            --target "worker=${WORKER_JOB}" \
-            --target "scheduler=${SCHEDULER_JOB}" \
+            "${target_args[@]}" \
             --output "${HANDOFF_DIR}/initial-release-absence-readback.json"
 
       - name: Install Cosign
@@ -955,16 +964,25 @@ jobs:
           SCHEDULER_JOB: ${{ vars.ODP_CLOUD_RUN_SCHEDULER_JOB }}
         run: |
           set -euo pipefail
+          # Staging names come from the admitted manifest's release id; the
+          # probe refuses long-lived names for ephemeral staging.
+          if [ "${{ inputs.environment }}" = "staging" ]; then
+            target_args=()
+          else
+            target_args=(
+              --target "api=${API_SERVICE}"
+              --target "web=${WEB_SERVICE}"
+              --target "migration=${MIGRATION_JOB}"
+              --target "worker=${WORKER_JOB}"
+              --target "scheduler=${SCHEDULER_JOB}"
+            )
+          fi
           python3 delivery_toolchain/release/probe_release_target_absence.py \
             --environment "${{ inputs.environment }}" \
             --candidate-sha "${{ inputs.release_sha }}" \
             --project "${GCP_PROJECT}" \
             --region "${GCP_REGION}" \
-            --target "api=${API_SERVICE}" \
-            --target "web=${WEB_SERVICE}" \
-            --target "migration=${MIGRATION_JOB}" \
-            --target "worker=${WORKER_JOB}" \
-            --target "scheduler=${SCHEDULER_JOB}" \
+            "${target_args[@]}" \
             --manifest "${RELEASE_RECEIPT_DIR}/admitted-manifest/RELEASE_MANIFEST.json" \
             --receipt "${RELEASE_RECEIPT_DIR}/initial-release-recovery-receipt.json"
 
@@ -1029,6 +1047,15 @@ jobs:
           set -euo pipefail
           umask 077
           printf '%s' "${RELEASE_LEASE}" | base64 -d > "${RUNNER_TEMP}/release-lease.json"
+          # The re-read above writes this receipt only for a first-release
+          # manifest. The verifier requires it -- fresh and bound to this
+          # manifest digest -- whenever the manifest carries
+          # initial_release_recovery, so passing it only when present cannot
+          # admit a first release without it.
+          initial_release_args=()
+          if [ -f "${RELEASE_RECEIPT_DIR}/initial-release-recovery-receipt.json" ]; then
+            initial_release_args+=(--initial-release-receipt "${RELEASE_RECEIPT_DIR}/initial-release-recovery-receipt.json")
+          fi
           uv run python delivery_toolchain/release/check_runtime_admission.py \
             --sha "${EVENT_SHA}" \
             --environment "${RELEASE_ENVIRONMENT}" \
@@ -1043,6 +1070,7 @@ jobs:
             --manifest "${RELEASE_RECEIPT_DIR}/admitted-manifest/RELEASE_MANIFEST.json" \
             --manifest-digest "${MANIFEST_DIGEST_INPUT}" \
             --require-manifest-digest \
+            "${initial_release_args[@]}" \
             --receipt "${RELEASE_RECEIPT_DIR}/release-admission-receipt.json"
 
       - name: Extract admitted manifest digest

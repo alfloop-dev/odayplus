@@ -114,15 +114,75 @@ Task: ODP-CORE-OPS-RELEASE-PROFILE-001 · Owner: Claude2 · Reviewer: Codex2
    - 前提：registry 已綁定時，`/learninghub/models` 會檢查 `model` VIEW 權限，staging 演練身分若沒有這個權限會以 401/403 失敗（dependency 標為 `auth`），仍是 fail closed。registry 未綁定時，Learning Hub 的 runtime binding guard 在權限檢查前就回 503。
 4. **尚未涵蓋。** staging 尚未跑**完整的** `check_live_e2e_gate.py`（persistence、provider、worker、audit、租戶隔離、business journeys 等其他區段）。它需要 staging 目前沒有的 smoke 憑證、worker driver 與資料來源設定。後續項見 §7 的 F4。上面的模型最低檢查不在 F4 的延期範圍內，本 task 已實作。
 
-## 5. Rollback 綁定盤點（首次 staging/production release）
+## 5. 首次 staging/production release 的 rollback 綁定（F1，已實作）
 
-- `INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS = ("dev",)`（`release_manifest.py`）。`initial_release_recovery` 只允許 dev。staging 與 production 的首次 release 必須以 `rollback_release` 綁定一份先前可 admission 的 manifest（workflow 的 `rollback_manifest` 或 `vars.ODP_PREVIOUS_RELEASE_MANIFEST_PATH`）。
-- `validate_rollback_manifest` 驗證 rollback 目標時不帶 environment。實務上可以用更早 SHA、已在 dev admitted 的 manifest 當 rollback 目標，但帶 `initial_release_recovery(dev)` 的 manifest 永遠不能進 staging 或 production。
-- core-ops 晉升 production 時，production 使用的是 staging 封存 manifest 中同一個 `rollback_release`。這和 `full` 的共用 manifest 設計相同，並沒有變弱。但 production 從未有過 approved release，這個 rollback 目標也就從未在 production 執行過。
-- staging 演練中的 `rollback_rehearsal` 需要 ephemeral service 上已有非零流量，這是既有條件，沒有改變。
-- `.orchestrator/release_lease.py` 指出 production 目前由 gate stage 拒絕：沒有任何 release 到達 `staging-verified`，也還沒有 production blue-green 路徑。
+Task: ODP-CORE-OPS-FIRST-RELEASE-ROLLBACK-001 · Owner: Claude2 · Reviewer: Codex2
 
-**結論：** 現況是 fail closed。首次 staging/production release 在沒有合法 rollback 綁定時會被 admission 拒絕，本 task 沒有放寬。缺的是能力，不是安全漏洞，所以本 task 沒有以「最小修正」的名義開放 staging/production 的 `initial_release_recovery`。列為後續項 F1。
+### 5.1 修正前
+
+- `INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS = ("dev",)`。staging 與 production 的首次 release 只能以 `rollback_release` 綁定一份先前可 admission 的 manifest。
+- `validate_rollback_manifest` 驗 rollback 目標時不帶 environment，所以實務上只能拿一份在 dev admitted 過的 manifest 來當 staging／production 的「rollback 目標」。
+- `check_runtime_admission.py` 呼叫 `validate_release_admission(manifest)` 時沒有帶 environment，`initial_release_recovery` 與目標環境的綁定只靠 workflow 裡另一個 probe step 檢查，不在權威 verifier 內。
+
+### 5.2 盤點：各環境的 rollback 實際回到哪裡
+
+| 環境 | 實際 recovery 機制 | 讀不讀 manifest 的 `rollback_release` | 首次 release 時回到哪裡 |
+|---|---|---|---|
+| staging（ephemeral） | `staging_lifecycle.py` 的 `rollback_rehearsal`：先讀回 release-scoped API／Web service 目前已釘在 revision 上的非零流量配置，部署同一個 image 的 probe revision（`--no-traffic`、tag `rollback-probe`），切 100%、讀 health，再還原原配置並讀回比對 | 不讀 | 回到 **candidate 自己已釘選的 revision**。全新環境沒有前一版，所以這個演練驗證的是「流量指標切換與還原」的機制，不是「回到前一個版本」 |
+| production | `deploy_cloud_run_waji.sh` 在 deploy 前捕捉 API／Web traffic snapshot。失敗時 `release_recovery_mode` 依 snapshot 判斷：service 原本不存在就是 `initial-release-cleanup`，刪除 candidate job、維持零流量，log 寫明「沒有前一版可回滾」；否則還原 snapshot 的流量配置 | 不讀 | production 從未有 ODay Plus 工作負載，snapshot 顯示 service 不存在，所以是**刪除 candidate、維持 0% 流量**，等同 blue-green 的「移除 green、不切流量」。沒有舊狀態可保留，也不需要保留 |
+
+結論：manifest 的 `rollback_release` 是一份宣告。runtime 回復永遠以 target 當下的狀態為準，兩個環境都不會去部署 `rollback_release` 指向的版本。
+
+### 5.3 兩個方向，選 A
+
+- **B（以已 admitted 的前一個 manifest 當 rollback 目標）不採用。**
+  - 空的 production 在失敗時實際做的是刪除 candidate。manifest 卻會寫著一個在 production 從未存在過的 rollback 目標，正是 `EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN` §8.5「不得宣稱正在還原流量——那會描述一個從未存在過的版本」禁止的狀況。
+  - 若要讓 B 成真，production 就得在事故當下部署一個從未在 production 驗證過的版本，風險比刪除 candidate 更高。
+  - 自動 dev 部署是 `dev-admin`，依 profile 規則本來就不能進 staging／production，所以 B 還需要另外產生一份 core-ops／full 的 dev 前版，才有東西可綁。
+- **A（擴充 `initial_release_recovery`）採用。** 它如實記錄 `rollback_target_available=false` 與 `recovery_method=delete-candidate-zero-traffic`，和 runtime 實際做的事一致。B 的程式路徑（`rollback_release`）維持原狀，沒有被放寬。
+
+### 5.4 規則（已實作）
+
+| 規則 | 實作 |
+|---|---|
+| 可封存首次 release 的建置目標只有 dev 與 staging；production 永遠不是 | `INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS = ("dev", "staging")`；`probe_release_target_absence.py --output` 拒絕 production |
+| staging 封存的紀錄可 admission 到 staging 與 production；dev 封存的只能進 dev | `INITIAL_RELEASE_ADMISSIBLE_ENVIRONMENTS`、`initial_release_admissible_environments()`。由封存的 `target_environment` 推導，不是 manifest 欄位，所以 binding digest 已經涵蓋 |
+| staging 的讀回對象是這個 release 會建立的 release-scoped 名稱 | `staging_release_target_names(release_id)` 與 `staging_lifecycle.get_ephemeral_resource_names` 一致（anti-drift 測試）；staging probe 只收 `--staging-release-id`，拒收 `--target` |
+| 每次 admission 都要有**該環境**當下的讀回，綁 manifest digest 且未過期 | probe `--manifest` 寫出帶 `environment`、`observed_at`、`manifest_digest` 的 receipt；`check_runtime_admission.py --initial-release-receipt` 以 `initial_release_verification_errors` 驗證（10 分鐘內）。admission 環境等於封存目標時，讀回必須與封存的 readback 一致；production 則單獨驗證五個 target 全部不存在、Job 名稱為 SHA-suffixed candidate 名稱 |
+| 一個 lineage 只能用一次 | `initial_release_lineage_errors`：staging／production admission 時讀 Supervisor lease store，只要 production 曾為**其他** manifest 消耗過 lease 就拒絕，該 release 必須綁定 `rollback_release`。同一份 manifest 的重試不算；staging 的多次演練嘗試不算；store 讀不到或紀錄無法分類一律拒絕 |
+| 只允許外部來源關閉的 release | 沿用既有規則：`external_sources_expected_enabled` 非空時 build 拒絕、`validate_manifest` 也拒絕 |
+| dev 不變 | dev 仍是 build 讀回加 admission 重讀；lineage 檢查不套用到 dev，自動 dev 路徑（`automatic_dev.py`）也沒有修改 |
+| 權威 verifier 綁定環境 | `check_runtime_admission.py` 改呼叫 `validate_release_admission(manifest, environment=...)` |
+
+### 5.5 Fail closed：全部在 lease 消耗前拒絕，lease 保持 `issued`
+
+- admission 讀回缺失或無法讀取
+- `observed_at` 缺失、沒有時區、在未來，或超過 10 分鐘
+- 讀回的 `environment` 或 `absence_readback.target_environment` 與 admission 環境不符
+- `manifest_digest`、`candidate_sha`、`release_id`、`binding_digest`、`recovery_method`、`recovery_actions` 與 admitted manifest 不符
+- 任一 target 已存在或正在服務流量、target 清單不完整或重複、名稱不是這個 release 會部署的名稱
+- `gcloud` 讀不到（權限、網路）時 probe 直接失敗，不寫 receipt
+- production 已為其他 manifest admitted 過 release
+- dev 封存的紀錄進 staging／production、staging 封存的紀錄進 dev
+- 竄改後重新封存（改 `target_environment`、改 readback 環境、宣稱有 rollback 目標、改 `release_id`）仍被拒絕
+
+測試：`tests/release/test_first_release_staging_production.py`。其中三個 mutation 測試把讀回驗證、lineage 驗證分別換成 no-op，或把 dev 的 admission 路徑擴大到 production，證明對應的拒絕確實是由該 guard 造成的。
+
+### 5.6 與政策文件的對照
+
+- `ROLLBACK_AND_POSITION_SEMANTICS.md`、`KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md`：在 `origin/dev` 與整個 git 歷史中都不存在（`git log --all -- '*ROLLBACK_AND_POSITION_SEMANTICS.md' '*KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md'` 沒有結果）。它們只出現在 `ai-status.json` 的 `canonical_document_layers` 清單中，是 Pantheon 平台的文件分層樣板。本 task **無法逐條對照**，所以不宣稱一致，也沒有發現衝突；請 Human/Ops 確認這兩份政策是否存在於其他位置。
+- `docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md`（status: proposed，非 canonical）：
+  - §8.5 原本寫「只適用於 dev。staging 每個 release 重建、production 是被 promote 進去的，兩者都不會在沒有已核准前版的情況下走到首次部署」。對首次 production release 來說，這個前提不成立。本 task 依上面的規則更新 §8.5。
+  - §8.2「任一步驟失敗，就刪除或停用 green，production blue 維持 100%」：首次 release 沒有 blue，刪除 green、維持 0% 與它一致。
+  - §8.4 的回滾順序假設 blue 存在，不適用於首次 release，由 §8.5 處理。
+  - §7.2「rollback rehearsal：service/image/snapshot pointer 回到前一版本」：既有實作演練的是 candidate 自己 revision 的流量切換（見 §5.2），和規劃文字有落差。這不是本 task 造成的，本 task 也沒有修改演練實作；列為觀察項。
+
+### 5.7 前提與未涵蓋
+
+- staging／production admission 的身分必須能 list lease store（GCS `storage.objects.list`）。若不能，lineage 檢查會拒絕（fail closed）。本 task 不改 IAM，也沒有 live 驗證這個權限。
+- 首次 production release 若在 lease 消耗後失敗，且下一個候選是不同的 manifest，lineage 檢查會拒絕它，而它也沒有可綁的 rollback 目標。這是刻意的 fail closed，需要 Human/Ops 決策（後續項 F1-a）。
+- admission receipt 由同一個 admission job 的 probe 產生，verifier 本身不執行 `gcloud`。能修改 workflow 的人可以偽造這份檔案，和 workflow 內其他 receipt 屬於同一信任等級。主要控制仍是 Supervisor lease 與 GitHub `production` environment 的人工核准。
+- 沒有部署、沒有觸發 deploy workflow、沒有修改 `RELEASE_GATE_REGISTRY`、IAM 或 secret。首次 staging／production 的 live 執行仍是 Human/Ops 的後續步驟。
 
 ## 6. `infra/terraform/checks.tf` 對 core-ops production 的影響
 
@@ -141,7 +201,8 @@ Task: ODP-CORE-OPS-RELEASE-PROFILE-001 · Owner: Claude2 · Reviewer: Codex2
 
 | ID（建議） | 內容 | 權責 |
 |---|---|---|
-| F1 `ODP-CORE-OPS-FIRST-RELEASE-ROLLBACK-BINDING` | 首次 staging/production release 的 rollback 綁定：決定是開放 `initial_release_recovery` 給 staging/production（含 absence readback 與 binding digest），還是以已 admitted 的前一個 dev manifest 作為 rollback 目標的明確政策 | Release owner + Human/Ops |
+| F1 `ODP-CORE-OPS-FIRST-RELEASE-ROLLBACK-BINDING` | **已由 ODP-CORE-OPS-FIRST-RELEASE-ROLLBACK-001 實作（見 §5）**：擴充 `initial_release_recovery` 到 staging（建置目標）與 production（晉升目標），admission 讀回綁 digest 且限時，production lineage 只能用一次 | Release owner |
+| F1-a | 首次 production release 在 lease 消耗後失敗、下一個候選是不同 manifest 時，lineage 檢查會拒絕它且沒有可綁的 rollback 目標；如何解除需要具名決策（§5.7） | Release owner + Human/Ops |
 | F2 `ODP-CORE-OPS-PROD-TERRAFORM-MODEL-CONTRACT` | `terraform_data.production_contract` 的模型 precondition 與 core-ops production 並存的方式（不得填假值；可能需要 profile-aware 的契約，且仍 fail closed） | Infra owner + ML Risk Owner |
 | F3 gate-3 | Model and Solver Gate 的 passed-with-deviation 由 Human/Ops 具名簽署（見 §8 草稿），或維持 blocked | Product Owner + ML Risk Owner |
 | F4 `ODP-CORE-OPS-STAGING-LIVE-GATE` | 在 staging 跑完整的 `check_live_e2e_gate.py`（需要 staging smoke 憑證、worker driver，並確認 provider posture） | Release owner |
@@ -214,6 +275,7 @@ reopen_trigger: >
 離線回歸測試只是測試輸入，不是 live 證據：
 
 - `tests/release/test_release_profile.py`：建置、封存、晉升路徑、admission parity、lease 未消耗、竄改、deploy `case`、phase check、anti-drift。
+- `tests/release/test_first_release_staging_production.py`：首次 staging／production release 的封存、probe、admission 讀回（缺失、過期、未來時間、環境不符、digest 不符、target 已存在）、lineage、lease 未消耗、竄改後重新封存，以及三個 mutation 測試。
 - `tests/e2e/test_live_e2e_gate_dev_admin.py`（core-ops 區段）：三個環境的正向路徑、不需要 dev-admin 輸入、環境外拒絕、`full` 仍然拒絕、runtime profile 不符、偽造模型狀態、registry 不拒絕、已驗證模型時改用 `full` 斷言、PostgreSQL 失敗、`NOT_ADMITTED`、真實 API composition。
 - `tests/e2e/test_live_business_journeys.py`：core-ops manifest 是已知 profile，但 `NOT_ADMITTED`。
 - `tests/ops/test_ephemeral_staging_lifecycle.py` 等 staging 測試：profile 寫入 tfvars 與模組、verify 必填、`/readiness` 讀回 fail closed；模型檢查的兩個分支（缺模型時 registry 仍回 200 非空清單、capability 狀態不合法、宣稱就緒卻 `autoSeeded=true`、mode 錯誤、缺 capabilities、缺 production alias 或 lineage 都會失敗），以及 live executor 實際讀 registry 的整合測試。

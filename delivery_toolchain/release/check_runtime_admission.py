@@ -93,7 +93,10 @@ from delivery_toolchain.release.release_lease import (  # noqa: E402
     load_public_key,
 )
 from delivery_toolchain.release.release_manifest import (  # noqa: E402
+    INITIAL_RELEASE_LINEAGE_ENVIRONMENTS,
     component_binding_errors,
+    initial_release_lineage_errors,
+    initial_release_verification_errors,
     is_sha256_digest,
     load_manifest,
     manifest_release_profile,
@@ -260,6 +263,49 @@ def _receipt_errors(
     ]
 
 
+def initial_release_admission_errors(
+    manifest: Any,
+    *,
+    environment: str,
+    receipt: Any,
+    state_store: LeaseStateStore,
+    now: datetime,
+) -> list[str]:
+    """Return why a first-release manifest is not admissible *now*, *here*.
+
+    A manifest that binds ``rollback_release`` is not asked anything. One that
+    carries ``initial_release_recovery`` is admitted only with a fresh,
+    digest-bound readback of this environment's target taken during this
+    admission (ODP-CORE-OPS-FIRST-RELEASE-ROLLBACK-001), and -- for staging and
+    production -- only while the durable lease history shows production has
+    never admitted another release. Every refusal here lands in the errors that
+    block consumption, so the single-use lease survives it.
+    """
+
+    if not isinstance(manifest, dict) or manifest.get("initial_release_recovery") is None:
+        return []
+    errors = list(
+        initial_release_verification_errors(
+            receipt, manifest=manifest, environment=environment, now=now
+        )
+    )
+    if environment in INITIAL_RELEASE_LINEAGE_ENVIRONMENTS:
+        try:
+            records: Any = state_store.list_records()
+        except LeaseStateError:
+            records = None
+        errors.extend(
+            error
+            for error in initial_release_lineage_errors(
+                records,
+                environment=environment,
+                manifest_digest=manifest.get("manifest_digest"),
+            )
+            if error not in errors
+        )
+    return errors
+
+
 def admit_release(
     registry: Any,
     lease: Any,
@@ -275,12 +321,24 @@ def admit_release(
     component_images: dict[str, str] | None = None,
     allowed_action: str = DEFAULT_ACTION,
     consumed_by: str,
+    initial_release_receipt: Any = None,
     root: Path = ROOT,
     now: datetime | None = None,
 ) -> tuple[bool, list[str], dict[str, Any]]:
     """Run the whole admission decision and consume the lease when it passes."""
 
     extra = list(manifest_errors or [])
+    extra.extend(
+        error
+        for error in initial_release_admission_errors(
+            manifest,
+            environment=environment,
+            receipt=initial_release_receipt,
+            state_store=state_store,
+            now=now or datetime.now(UTC),
+        )
+        if error not in extra
+    )
     # The acceptance scope is sealed into the manifest digest; this is where it
     # is bound to the target. A dev-admin manifest fails here, before the lease
     # is consumed and before anything mutates the cloud, when it is pointed at
@@ -416,6 +474,16 @@ def main(argv: list[str] | None = None) -> int:
             "strength of being self-consistent, which any rebuilt manifest also is."
         ),
     )
+    parser.add_argument(
+        "--initial-release-receipt",
+        type=Path,
+        default=None,
+        help=(
+            "Admission-time target readback written by probe_release_target_absence.py "
+            "--manifest. Required, fresh and bound to the manifest digest whenever the "
+            "admitted manifest carries initial_release_recovery; ignored otherwise."
+        ),
+    )
     parser.add_argument("--receipt", type=Path, default=None)
     args = parser.parse_args(argv)
 
@@ -494,7 +562,11 @@ def main(argv: list[str] | None = None) -> int:
         expected_digest=expected_manifest_digest or None,
     )
     if manifest is not None:
-        admission_errors = validate_release_admission(manifest)
+        # Bound to the requested environment: an initial-release record admits
+        # only the environments on its sealed target's admission path.
+        admission_errors = validate_release_admission(
+            manifest, environment=args.environment
+        )
         manifest_errors.extend(
             error for error in admission_errors if error not in manifest_errors
         )
@@ -506,6 +578,17 @@ def main(argv: list[str] | None = None) -> int:
         if not name.strip() or not ref.strip():
             return fail([f"--component-image expects NAME=REF, got: {raw!r}"])
         component_images[name.strip()] = ref.strip()
+
+    initial_release_receipt: Any = None
+    if args.initial_release_receipt is not None:
+        try:
+            initial_release_receipt = json.loads(
+                args.initial_release_receipt.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError) as exc:
+            # An unreadable receipt is reported as what it is; the manifest
+            # check below still refuses a first release that has none.
+            manifest_errors.append(f"cannot read initial-release receipt: {exc}")
 
     admitted, errors, receipt = admit_release(
         registry,
@@ -521,6 +604,7 @@ def main(argv: list[str] | None = None) -> int:
         component_images=component_images,
         allowed_action=args.action,
         consumed_by=_consumer_label(args.environment, args.release_sha),
+        initial_release_receipt=initial_release_receipt,
         now=now,
     )
     # Digests are not secrets, and an admission receipt that does not say which

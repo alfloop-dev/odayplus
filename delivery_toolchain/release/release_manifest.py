@@ -17,7 +17,7 @@ import json
 import re
 import subprocess
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -288,14 +288,20 @@ RUNTIME_FOUNDATION_MODULE_FILES = (
 #   delete the candidate and hold zero traffic. A first release has no earlier
 #   version, so a record that promised a rollback would be promising something
 #   that does not exist; and
-# * it is refused outside :data:`INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS` and
-#   refused for any release that expects an enabled external source. Staging,
-#   production, and every source-enabled release keep the unchanged
-#   rollback/snapshot requirements.
+# * it is sealed only for :data:`INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS` (dev,
+#   and staging as the leg of production's first release), admitted only along
+#   :data:`INITIAL_RELEASE_ADMISSIBLE_ENVIRONMENTS`, and refused for any release
+#   that expects an enabled external source, which keeps the unchanged
+#   rollback/snapshot requirements; and
+# * every admission re-reads *its own* target, bound to the manifest digest and
+#   held to a freshness window (:func:`initial_release_verification_errors`),
+#   and staging/production admission is refused once production has admitted
+#   any other release (:func:`initial_release_lineage_errors`).
 #
 # Nothing here weakens the *second* release: once the target holds a release,
-# the readback observes it, this branch refuses, and the ordinary
-# ``rollback_release`` binding is the only way through.
+# the readback observes it (and, for production, the lease history records
+# it), this branch refuses, and the ordinary ``rollback_release`` binding is
+# the only way through.
 INITIAL_RELEASE_RECOVERY_KIND = "initial-release-recovery"
 
 #: What recovery means when there is no earlier release. Deleting the candidate
@@ -309,10 +315,49 @@ INITIAL_RELEASE_RECOVERY_ACTIONS = (
     "hold-zero-traffic",
 )
 
-#: Only dev bootstraps this way. Staging is created per release and production
-#: is promoted into, so neither reaches a first deploy without an approved
-#: predecessor to bind.
-INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS = ("dev",)
+#: The build targets that may *seal* an initial-release record
+#: (ODP-CORE-OPS-FIRST-RELEASE-ROLLBACK-001). Production is never one: it only
+#: receives the manifest staging sealed and rehearsed, so production is reached
+#: through :data:`INITIAL_RELEASE_ADMISSIBLE_ENVIRONMENTS` instead.
+INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS = ("dev", "staging")
+
+#: Where a record sealed for a build target may be admitted. Staging shares one
+#: manifest with production (the staging digest is the production digest), so a
+#: staging-sealed first release is the staging leg of production's first
+#: release. Derived from the sealed ``target_environment`` rather than written
+#: into the record, so the binding digest already covers it.
+INITIAL_RELEASE_ADMISSIBLE_ENVIRONMENTS = {
+    "dev": ("dev",),
+    "staging": ("staging", "production"),
+}
+
+#: The environments whose first-release admission also has to clear the
+#: durable lineage check: production must never have consumed a lease for any
+#: other manifest. Dev keeps its unchanged live-readback semantics.
+INITIAL_RELEASE_LINEAGE_ENVIRONMENTS = ("staging", "production")
+INITIAL_RELEASE_LINEAGE_TARGET = "production"
+
+#: An admission readback older than this is not a statement about the target
+#: the deploy is about to touch. The probe and the verifier run back to back in
+#: one admission job, so the window only has to cover that job.
+INITIAL_RELEASE_ADMISSION_READBACK_MAX_AGE_SECONDS = 600
+INITIAL_RELEASE_VERIFICATION_KIND = "initial-release-recovery-verification"
+INITIAL_RELEASE_VERIFICATION_FIELDS = (
+    "schema_version",
+    "kind",
+    "environment",
+    "observed_at",
+    "release_id",
+    "candidate_sha",
+    "manifest_digest",
+    "target_environment",
+    "recovery_method",
+    "recovery_actions",
+    "rollback_target_available",
+    "binding_digest",
+    "verified_absent",
+    "absence_readback",
+)
 
 #: Every deploy target whose absence has to be observed before "this
 #: environment has no existing approved release" is a statement about the
@@ -358,6 +403,18 @@ INITIAL_RELEASE_TARGET_FIELDS = (
 # probe must inspect the names the deploy will actually create.
 RELEASE_JOB_NAME_MAX_LENGTH = 63
 RELEASE_JOB_NAME_SHA_LENGTH = 12
+
+#: Ephemeral staging does not deploy to long-lived names: every release gets
+#: its own ``stg-<slug>-<hash>`` namespace, and its Jobs carry no SHA suffix.
+#: Mirrors ``staging_lifecycle.get_ephemeral_resource_names`` and the
+#: ``ephemeral_staging`` Terraform module (anti-drift test in tests/release).
+STAGING_RELEASE_TARGET_SUFFIXES = {
+    "api": "api",
+    "web": "web",
+    "migration": "migration",
+    "scheduler": "scheduler",
+    "worker": "worker",
+}
 INITIAL_RELEASE_RECOVERY_FIELDS = (
     "kind",
     "target_environment",
@@ -649,6 +706,34 @@ def release_candidate_job_name(base_name: Any, candidate_sha: Any) -> str:
     suffix = f"-r-{candidate_sha[:RELEASE_JOB_NAME_SHA_LENGTH]}"
     prefix_length = RELEASE_JOB_NAME_MAX_LENGTH - len(suffix)
     return f"{base[:prefix_length]}{suffix}"
+
+
+def staging_release_target_names(release_id: Any) -> dict[str, str]:
+    """Return the release-scoped staging Cloud Run names one release deploys.
+
+    The initial-release readback of an ephemeral staging target has to probe
+    the names ``staging_lifecycle.py create`` will actually create, not the
+    long-lived names dev and production use; a readback of names nobody deploys
+    to proves nothing.
+    """
+
+    if not isinstance(release_id, str) or not release_id.strip():
+        raise ValueError("staging release_id must be a non-empty string")
+    clean = re.sub(r"[^a-z0-9-]", "-", release_id.lower()).strip("-")
+    release_hash = hashlib.sha256(release_id.encode("utf-8")).hexdigest()[:8]
+    name_prefix = f"stg-{clean[:24]}-{release_hash}"
+    return {
+        component: f"{name_prefix}-{suffix}"
+        for component, suffix in STAGING_RELEASE_TARGET_SUFFIXES.items()
+    }
+
+
+def initial_release_admissible_environments(target_environment: Any) -> tuple[str, ...]:
+    """Return where a record sealed for *target_environment* may be admitted."""
+
+    if not isinstance(target_environment, str):
+        return ()
+    return INITIAL_RELEASE_ADMISSIBLE_ENVIRONMENTS.get(target_environment, ())
 
 
 def is_sha256_digest(value: Any) -> bool:
@@ -1160,9 +1245,14 @@ def initial_release_readback_errors(
     *,
     target_environment: Any = None,
     candidate_sha: Any = None,
+    release_id: Any = None,
     label: str = "manifest.initial_release_recovery.absence_readback",
 ) -> list[str]:
-    """Return why *readback* does not prove the deploy target is empty."""
+    """Return why *readback* does not prove the deploy target is empty.
+
+    ``release_id`` matters only for an ephemeral staging readback, whose
+    targets are the release-scoped names this release creates.
+    """
 
     if not isinstance(readback, dict):
         return [f"{label} must be an object"]
@@ -1210,6 +1300,13 @@ def initial_release_readback_errors(
         errors.append(f"{label}.targets must be a list")
         return errors
 
+    staging_names: dict[str, str] | None = None
+    if readback_environment == "staging" and release_id is not None:
+        try:
+            staging_names = staging_release_target_names(release_id)
+        except ValueError as exc:
+            errors.append(f"{label} cannot resolve staging target names: {exc}")
+
     observed: list[str] = []
     for index, entry in enumerate(targets):
         entry_label = f"{label}.targets[{index}]"
@@ -1238,6 +1335,20 @@ def initial_release_readback_errors(
             errors.append(
                 f"{entry_label}.resource_name must name the resource that was probed"
             )
+        elif readback_environment == "staging":
+            # Ephemeral staging Jobs are release-scoped by their namespace, not
+            # by a SHA suffix; the name has to be the one this release creates.
+            if (
+                staging_names is not None
+                and isinstance(component, str)
+                and component in staging_names
+                and resource_name != staging_names[component]
+            ):
+                errors.append(
+                    f"{entry_label}.resource_name must be the release-scoped staging "
+                    f"name {staging_names[component]!r}; a readback of another "
+                    "namespace says nothing about the one this release deploys"
+                )
         elif (
             candidate_sha is not None
             and entry.get("resource_kind") == "cloud-run-job"
@@ -1287,14 +1398,18 @@ def initial_release_recovery_errors(
     candidate_sha: Any = None,
     components: Any = None,
     environment: Any = None,
+    release_id: Any = None,
     label: str = "manifest.initial_release_recovery",
 ) -> list[str]:
     """Return why *recovery* is not an admissible initial-release admission.
 
     ``environment`` is the target a deploy is actually about to run against.
-    When it is supplied the record must be the one issued for that target;
-    omitting it validates the record on its own terms, which is what auditing a
-    stored manifest needs.
+    When it is supplied it must be on the sealed target's admission path
+    (:data:`INITIAL_RELEASE_ADMISSIBLE_ENVIRONMENTS`); omitting it validates the
+    record on its own terms, which is what auditing a stored manifest needs.
+    A record that is structurally valid here is still not an admission: the
+    admission-time readback (:func:`initial_release_verification_errors`) and,
+    for staging/production, the durable lineage check have to pass as well.
     """
 
     if not isinstance(recovery, dict):
@@ -1322,14 +1437,15 @@ def initial_release_recovery_errors(
         errors.append(
             f"{label}.target_environment must be one of "
             f"{list(INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS)}; got "
-            f"{target_environment!r}. Staging and production keep the unchanged "
-            "rollback binding requirement"
+            f"{target_environment!r}. Production is never sealed as a first-release "
+            "build target; it only receives the manifest staging sealed and rehearsed"
         )
-    if environment is not None and target_environment != environment:
+    admissible = initial_release_admissible_environments(target_environment)
+    if environment is not None and environment not in admissible:
         errors.append(
             f"{label}.target_environment is {target_environment!r}, but this deploy "
-            f"targets {environment!r}; an initial-release admission is valid only for "
-            "the target it read back"
+            f"targets {environment!r}; a record sealed for {target_environment!r} is "
+            f"admissible only into {list(admissible)}"
         )
 
     recovery_method = recovery.get("recovery_method")
@@ -1358,6 +1474,7 @@ def initial_release_recovery_errors(
             readback,
             target_environment=target_environment,
             candidate_sha=candidate_sha,
+            release_id=release_id,
             label=f"{label}.absence_readback",
         )
     )
@@ -1390,6 +1507,181 @@ def initial_release_recovery_errors(
                 f"{label}.binding_digest is not bound to this release's candidate SHA, "
                 "component image digests, target environment, and recovery method"
             )
+    return errors
+
+
+def _parse_observed_at(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(UTC)
+
+
+def initial_release_verification_errors(
+    receipt: Any,
+    *,
+    manifest: Any,
+    environment: str,
+    now: datetime,
+    max_age_seconds: int = INITIAL_RELEASE_ADMISSION_READBACK_MAX_AGE_SECONDS,
+    label: str = "initial-release admission readback",
+) -> list[str]:
+    """Return why *receipt* does not prove the admission target is empty *now*.
+
+    The sealed readback is build-time truth about the build target. Admission
+    needs deploy-time truth about the target the lease is about to be spent
+    on, which for a staging-sealed manifest promoted into production is a
+    target the build never read. This receipt is that readback: taken by the
+    admission environment's own identity, bound to the admitted manifest
+    digest, and only good for :data:`INITIAL_RELEASE_ADMISSION_READBACK_MAX_AGE_SECONDS`.
+    Missing, stale, future-dated, mis-targeted, or mis-bound receipts and a
+    target that is no longer empty are all refused before the lease is spent.
+    """
+
+    if receipt is None:
+        return [
+            f"{label} is missing; a first release is admitted only against a "
+            "readback of the target taken during this admission"
+        ]
+    if not isinstance(receipt, dict):
+        return [f"{label} must be a JSON object"]
+    if not isinstance(manifest, dict):
+        return [f"{label} cannot be checked without the admitted manifest"]
+    recovery = manifest.get("initial_release_recovery")
+    if not isinstance(recovery, dict):
+        return [f"{label} was supplied for a manifest with no initial_release_recovery"]
+
+    errors: list[str] = []
+    for field in INITIAL_RELEASE_VERIFICATION_FIELDS:
+        if field not in receipt:
+            errors.append(f"{label} missing required field: {field}")
+    unknown = sorted(set(receipt) - set(INITIAL_RELEASE_VERIFICATION_FIELDS))
+    if unknown:
+        errors.append(f"{label} carries unexpected fields: " + ", ".join(unknown))
+    if receipt.get("schema_version") != 1:
+        errors.append(f"{label}.schema_version must be 1")
+    if receipt.get("kind") != INITIAL_RELEASE_VERIFICATION_KIND:
+        errors.append(
+            f"{label}.kind must be {INITIAL_RELEASE_VERIFICATION_KIND!r}; "
+            f"got {receipt.get('kind')!r}"
+        )
+    if receipt.get("environment") != environment:
+        errors.append(
+            f"{label}.environment is {receipt.get('environment')!r}, but this "
+            f"admission targets {environment!r}; a readback of another environment "
+            "says nothing about this one"
+        )
+    for field in ("manifest_digest", "candidate_sha", "release_id"):
+        if receipt.get(field) != manifest.get(field):
+            errors.append(
+                f"{label}.{field} does not match the admitted manifest; the readback "
+                "was not taken for this release"
+            )
+    for field in ("target_environment", "recovery_method", "binding_digest"):
+        if receipt.get(field) != recovery.get(field):
+            errors.append(
+                f"{label}.{field} does not match manifest.initial_release_recovery"
+            )
+    if receipt.get("recovery_actions") != recovery.get("recovery_actions"):
+        errors.append(
+            f"{label}.recovery_actions does not match manifest.initial_release_recovery"
+        )
+    if receipt.get("rollback_target_available") is not False:
+        errors.append(f"{label}.rollback_target_available must be False")
+    if receipt.get("verified_absent") is not True:
+        errors.append(f"{label}.verified_absent must be True")
+
+    observed_at = _parse_observed_at(receipt.get("observed_at"))
+    check_time = now.astimezone(UTC)
+    if observed_at is None:
+        errors.append(
+            f"{label}.observed_at must be a timezone-aware ISO-8601 timestamp; a "
+            "readback that cannot say when it looked cannot be held to a freshness "
+            "window"
+        )
+    elif observed_at > check_time:
+        errors.append(
+            f"{label}.observed_at {receipt.get('observed_at')!r} is in the future"
+        )
+    elif (check_time - observed_at).total_seconds() > max_age_seconds:
+        errors.append(
+            f"{label} is stale: observed at {receipt.get('observed_at')!r}, more than "
+            f"{max_age_seconds} seconds before admission; read the target again"
+        )
+
+    readback = receipt.get("absence_readback")
+    errors.extend(
+        initial_release_readback_errors(
+            readback,
+            target_environment=environment,
+            candidate_sha=manifest.get("candidate_sha"),
+            release_id=manifest.get("release_id"),
+            label=f"{label}.absence_readback",
+        )
+    )
+    if environment == recovery.get("target_environment") and (
+        initial_release_readback_payload(readback)
+        != initial_release_readback_payload(recovery.get("absence_readback"))
+    ):
+        errors.append(
+            f"{label}.absence_readback does not match the readback sealed into the "
+            "manifest; the admitted readback must be this target's current state"
+        )
+    return errors
+
+
+def initial_release_lineage_errors(
+    lease_records: Any,
+    *,
+    environment: str,
+    manifest_digest: Any,
+) -> list[str]:
+    """Return why the durable lease history says this is not a first release.
+
+    Live absence can be manufactured by deleting services; the Supervisor's
+    lease store cannot. Once any production lease has been consumed for a
+    different manifest, production has admitted a release, and every later
+    release -- into staging or production, which share one manifest -- must
+    bind it as ``rollback_release``. A consumed lease for *this* manifest is a
+    retry of the same first release and does not count against it.
+
+    A record that cannot be classified is refused rather than skipped.
+    """
+
+    if environment not in INITIAL_RELEASE_LINEAGE_ENVIRONMENTS:
+        return []
+    if not isinstance(lease_records, list):
+        return [
+            "durable lease history is unreadable; cannot prove "
+            f"{INITIAL_RELEASE_LINEAGE_TARGET} has never admitted a release"
+        ]
+    errors: list[str] = []
+    for index, record in enumerate(lease_records):
+        lease = record.get("lease") if isinstance(record, dict) else None
+        if not isinstance(lease, dict) or not isinstance(record.get("state"), str):
+            errors.append(
+                f"durable lease record #{index} cannot be classified; refusing an "
+                "initial-release admission rather than guessing"
+            )
+            continue
+        if lease.get("target_environment") != INITIAL_RELEASE_LINEAGE_TARGET:
+            continue
+        if record.get("state") != "consumed":
+            continue
+        if lease.get("manifest_digest") == manifest_digest:
+            continue
+        errors.append(
+            f"{INITIAL_RELEASE_LINEAGE_TARGET} already admitted release "
+            f"{lease.get('release_id')!r} (lease {lease.get('lease_id')!r}, manifest "
+            f"{lease.get('manifest_digest')!r}); an initial-release record is usable "
+            "once per lineage, so this release must bind that release as "
+            "rollback_release"
+        )
     return errors
 
 
@@ -1602,6 +1894,7 @@ def validate_manifest(
                 initial_release_recovery,
                 candidate_sha=manifest.get("candidate_sha"),
                 components=manifest.get("components"),
+                release_id=manifest.get("release_id"),
             )
         )
 
@@ -1812,6 +2105,7 @@ def validate_release_admission(
                 candidate_sha=manifest.get("candidate_sha"),
                 components=components,
                 environment=environment,
+                release_id=manifest.get("release_id"),
             )
             if error not in errors
         )
@@ -2602,7 +2896,14 @@ __all__ = [
     "compute_sources_off_binding_digest",
     "ensure_candidate_commit",
     "extract_rollback_release_binding",
+    "INITIAL_RELEASE_ADMISSIBLE_ENVIRONMENTS",
+    "INITIAL_RELEASE_ADMISSION_READBACK_MAX_AGE_SECONDS",
     "INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS",
+    "INITIAL_RELEASE_LINEAGE_ENVIRONMENTS",
+    "INITIAL_RELEASE_LINEAGE_TARGET",
+    "INITIAL_RELEASE_VERIFICATION_FIELDS",
+    "INITIAL_RELEASE_VERIFICATION_KIND",
+    "STAGING_RELEASE_TARGET_SUFFIXES",
     "INITIAL_RELEASE_PROBE_COMMAND",
     "INITIAL_RELEASE_READBACK_FIELDS",
     "INITIAL_RELEASE_READBACK_KIND",
@@ -2614,9 +2915,13 @@ __all__ = [
     "INITIAL_RELEASE_TARGET_INVENTORY",
     "build_initial_release_recovery",
     "compute_initial_release_binding_digest",
+    "initial_release_admissible_environments",
+    "initial_release_lineage_errors",
     "initial_release_readback_errors",
     "initial_release_readback_payload",
     "initial_release_recovery_errors",
+    "initial_release_verification_errors",
+    "staging_release_target_names",
     "is_exact_sha",
     "is_sha256_digest",
     "load_manifest",
