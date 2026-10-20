@@ -244,6 +244,11 @@ version, checkpoint, policy/parser admission and reason, renews the signed
 generation, and reuses the job and candidate IDs. Retry-budget overrides are
 refused because the current request contract has no incident/change reference.
 The UI does not offer ordinary replay for an exhausted dead-letter receipt.
+For a fresh score execution, the failed request also remains the candidate's
+head: a new idempotency key or a larger configured budget cannot reopen it or
+admit another execution for that candidate. The dead-letter event reports this
+state; it does not authorize recovery or reset. Recovery of this existing job
+still requires the separately reviewed fenced procedure described above.
 Manual replay cannot skip a pending automatic retry delay.
 Repeated expired attempts settle in dead letter at the recorded limit. An old
 attempt whose input changed cannot commit; a fresh delivery claim settles that

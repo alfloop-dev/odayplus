@@ -98,9 +98,8 @@ test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
     await expect(page.getByTestId("network-panel-candidates")).toBeVisible();
     const table = page.getByTestId("network-candidate-table");
     const empty = page.getByText(/No candidates yet/i);
-    const hasTable = await table.isVisible().catch(() => false);
-    const hasEmpty = await empty.isVisible().catch(() => false);
-    expect(hasTable || hasEmpty).toBe(true);
+    // The panel can appear before its contents finish the route transition.
+    await expect(table.or(empty)).toBeVisible();
   });
 
   test("SiteScore Lab tab renders without crash", async ({ page }) => {

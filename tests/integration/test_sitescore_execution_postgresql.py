@@ -136,6 +136,192 @@ def test_fresh_same_candidate_next_report_and_original_acceptance_are_immutable(
     assert len(runtime.calls) == 2
 
 
+@pytest.mark.parametrize("max_attempts", [1, 2], ids=["exhausted", "in_budget"])
+def test_fresh_failure_emits_dead_letter_only_at_recorded_budget(successful, monkeypatch, max_attempts):
+    import json
+    from datetime import datetime
+
+    from apps.worker.oday_worker.handlers import build_default_registry
+    from modules.listing.application.intake_score_retry_policy import RETRY_POLICY_ENV
+    from shared.jobs.queue import JobDeliveryState, JobFenceRejectedError
+
+    db, bundle, promotion, runtime, principal, authority, delivery = successful
+    # Bind a legal policy before admission; never rewrite an admitted attempt/budget.
+    policy = {"policy_id": "synthetic-fresh-dlq-v1", "version": 1,
+              "max_attempts": max_attempts, "backoff_seconds": [600] * (max_attempts - 1)}
+    monkeypatch.setenv(RETRY_POLICY_ENV, json.dumps(policy))
+    original_job = _physical(db, promotion["site_score_job_id"])
+    original_promotion = deepcopy(bundle.assisted_intake_store.promotions[promotion["promotion_decision_id"]])
+    candidates = deepcopy(bundle.listing_repository_for_tenant(TENANT).list_candidates())
+    reports = delivery._reports(TENANT).history(promotion["candidate_site_id"])
+    original_command = command(delivery, promotion, principal)
+    request = delivery.create_execution(original_command, principal=principal)
+    admitted = _physical(db, request["jobId"])
+    assert admitted["attempt"] == 0 and admitted["max_attempts"] == max_attempts
+    assert admitted["payload"]["retry_policy"] == policy
+    failed_calls = []
+
+    def fail(**kwargs):
+        failed_calls.append(kwargs)
+        raise TimeoutError("synthetic-fresh-score-transient")
+
+    monkeypatch.setattr(runtime, "infer", fail)
+    claimed = _claim(bundle, request["jobId"])
+    handler = build_default_registry().get(claimed.job_type)
+    assert handler is handle_score_execution
+    handler(claimed, bundle, model_runtime=runtime, model_admission=authority)
+    row = _physical(db, request["jobId"])
+    receipt = delivery.get_execution(request["executionRequestId"], principal=principal)
+    queued = bundle.job_queue.get(request["jobId"])
+    assert len(failed_calls) == 1
+    assert row["attempt"] == 1 and row["max_attempts"] == admitted["max_attempts"]
+    assert row["payload"]["retry_policy"] == policy
+    assert row["payload"]["admission"] == admitted["payload"]["admission"]
+    acceptance = row["payload"]["worker_acceptance"]
+    assert acceptance["job_id"] == request["jobId"]
+    assert acceptance["execution_request_id"] == request["executionRequestId"]
+    assert acceptance["accepted_fence"] == row["fence_token"]
+    assert row["last_error"] == {"code": "SITESCORE_INFERENCE_UNAVAILABLE", "retryable": True}
+    assert row["result"] is None and receipt["result"] is None
+    assert queued.attempts == 1 and queued.max_retries == max_attempts
+    events = bundle.outbox_repository.get_unpublished_events()
+    job_events = [event for event in events if event.payload.get("job_id") == request["jobId"]]
+    dead_letters = [event for event in job_events if event.event_type == "job.dead_lettered"]
+    failures = [event for event in job_events if event.event_type == "sitescore.execution_failed"]
+    if max_attempts == 1:
+        assert row["status"] == receipt["status"] == "DEAD_LETTER"
+        assert queued.status == JobStatus.FAILED and queued.delivery_state == JobDeliveryState.DEAD_LETTER
+        assert row["next_attempt_at"] is None and row["dead_lettered_at"] is not None
+        # The existing sitescore.failed call is mapped to this fresh-request event.
+        assert len(failures) == 1
+        assert failures[0].aggregate_id == request["executionRequestId"]
+        assert failures[0].payload["status"] == "DEAD_LETTER"
+        assert len(dead_letters) == 1
+        event = dead_letters[0]
+        assert event.event_version == 1 and event.producer == "job_platform"
+        assert event.schema_ref == "#/payloads/JobDeadLetteredV1"
+        assert event.tenant_id == TENANT and event.aggregate_type == "job"
+        assert event.aggregate_id == request["jobId"] and event.aggregate_version == row["version"]
+        assert event.partition_key == f"{TENANT}:{request['jobId']}"
+        assert event.correlation_id == row["correlation_id"]
+        assert event.sensitive_fields == ["payload.last_error_details"]
+        assert {key: event.payload[key] for key in ("job_id", "job_type", "checkpoint", "attempt", "error_code")} == {
+            "job_id": row["job_id"], "job_type": row["job_type"], "checkpoint": row["checkpoint"],
+            "attempt": row["attempt"], "error_code": row["last_error"]["code"],
+        }
+        assert datetime.fromisoformat(event.payload["dead_lettered_at"]) == datetime.fromisoformat(row["dead_lettered_at"])
+        # Neither an ordinary retry nor a newly configured budget may reopen this job.
+        retry_key = str(uuid4())
+        for offered_policy in (policy, {**policy, "max_attempts": 5, "backoff_seconds": [10, 30, 120, 600]}):
+            monkeypatch.setenv(RETRY_POLICY_ENV, json.dumps(offered_policy))
+            with pytest.raises(ScoreDeliveryConflict, match="VERSION_OR_STATE"):
+                delivery.retry_execution(request["executionRequestId"], principal=principal,
+                    expected_version=receipt["actualVersion"], expected_job_version=receipt["jobVersion"],
+                    reason="Synthetic exhausted retry", idempotency_key=retry_key, correlation_id=str(uuid4()))
+            with pytest.raises(ScoreDeliveryConflict, match="ACTIVE_OR_FAILED"):
+                delivery.create_execution(replace(original_command, idempotency_key=str(uuid4())), principal=principal)
+    else:
+        assert row["status"] == receipt["status"] == "RETRYING"
+        assert queued.status == JobStatus.QUEUED and queued.delivery_state == JobDeliveryState.RETRYING
+        assert row["next_attempt_at"] is not None and row["dead_lettered_at"] is None
+        assert dead_letters == [] and failures == []
+    replay = delivery.create_execution(original_command, principal=principal)
+    assert replay == receipt and replay["created"] is False
+    with pytest.raises(JobFenceRejectedError):
+        handler(claimed, bundle, model_runtime=runtime, model_admission=authority)
+    assert len(failed_calls) == 1
+    assert _physical(db, request["jobId"]) == row
+    assert bundle.job_queue.get(request["jobId"]) == queued
+    assert delivery.get_execution(request["executionRequestId"], principal=principal) == receipt
+    assert bundle.outbox_repository.get_unpublished_events() == events
+    assert _physical(db, promotion["site_score_job_id"]) == original_job
+    bundle.assisted_intake_store.refresh(TENANT)
+    assert bundle.assisted_intake_store.promotions[promotion["promotion_decision_id"]] == original_promotion
+    assert bundle.listing_repository_for_tenant(TENANT).list_candidates() == candidates
+    assert delivery._reports(TENANT).history(promotion["candidate_site_id"]) == reports
+
+
+@pytest.mark.parametrize("fault", ["audit", "outbox"])
+def test_fresh_dead_letter_settlement_rolls_back_and_rejects_stale_attempt(successful, monkeypatch, fault):
+    import json
+
+    from modules.listing.application.intake_score_retry_policy import RETRY_POLICY_ENV
+    from shared.jobs.queue import JobFenceRejectedError
+
+    db, bundle, promotion, _, principal, _, delivery = successful
+    monkeypatch.setenv(RETRY_POLICY_ENV, json.dumps({
+        "policy_id": "synthetic-fresh-dlq-fault-v1", "version": 1,
+        "max_attempts": 1, "backoff_seconds": [],
+    }))
+    request = delivery.create_execution(command(delivery, promotion, principal), principal=principal)
+    claimed = _claim(bundle, request["jobId"])
+    attempt = delivery.begin_attempt(claimed)
+    assert attempt is not None
+    before = _physical(db, request["jobId"])
+    assert before["status"] == "RUNNING" and before["attempt"] == before["max_attempts"] == 1
+    assert before["payload"]["worker_acceptance"]["accepted_fence"] == attempt.token["fence"]
+    original_job = _physical(db, promotion["site_score_job_id"])
+    original_promotion = deepcopy(bundle.assisted_intake_store.promotions[promotion["promotion_decision_id"]])
+    candidates = deepcopy(bundle.listing_repository_for_tenant(TENANT).list_candidates())
+    reports = delivery._reports(TENANT).history(promotion["candidate_site_id"])
+    documents = delivery._documents(TENANT)
+    saved_documents = {collection: documents.store.list_all(collection)
+                       for collection in (documents.REQUESTS, documents.HEADS, documents.KEYS)}
+    # Include audit delivery rows so a leaked audit enqueue cannot escape detection.
+    queue_rows = bundle.engine.query("SELECT * FROM durable_jobs ORDER BY job_id")
+    audits = deepcopy(bundle.assisted_intake_store.workflow_audits)
+    audit_writer = bundle.assisted_intake_store._canonical_audit_sink.writer
+    canonical_audits = audit_writer.list_events(TENANT)
+    events = bundle.outbox_repository.get_unpublished_events()
+    assert not any(event.event_type == "job.dead_lettered" and event.payload.get("job_id") == request["jobId"]
+                   for event in events)
+    with monkeypatch.context() as fault_patch:
+        if fault == "audit":
+            original_flush = bundle.assisted_intake_store.flush
+
+            def fail_flush():
+                original_flush()
+                raise RuntimeError("synthetic-dlq-audit-fault")
+
+            fault_patch.setattr(bundle.assisted_intake_store, "flush", fail_flush)
+        else:
+            original_save = bundle.outbox_repository.save
+
+            def fail_save(event):
+                original_save(event)
+                if event.event_type == "job.dead_lettered" and event.payload.get("job_id") == request["jobId"]:
+                    raise RuntimeError("synthetic-dlq-outbox-fault")
+
+            fault_patch.setattr(bundle.outbox_repository, "save", fail_save)
+        with pytest.raises(RuntimeError, match=f"synthetic-dlq-{fault}-fault"):
+            delivery.fail_attempt(claimed, attempt, error_code="SITESCORE_INFERENCE_UNAVAILABLE", retryable=True)
+    assert _physical(db, request["jobId"]) == before
+    assert bundle.engine.query("SELECT * FROM durable_jobs ORDER BY job_id") == queue_rows
+    assert {collection: documents.store.list_all(collection) for collection in saved_documents} == saved_documents
+    bundle.assisted_intake_store.refresh(TENANT)
+    assert bundle.assisted_intake_store.workflow_audits == audits
+    assert audit_writer.list_events(TENANT) == canonical_audits
+    assert bundle.outbox_repository.get_unpublished_events() == events
+    # Expire the actual accepted lease using the existing fault-test mechanism.
+    with db.connect() as connection:
+        connection.execute("UPDATE workflow.jobs SET lease_expires_at=now()-interval '1 minute' WHERE job_id=%s",
+                           (request["jobId"],))
+    stale = _physical(db, request["jobId"])
+    with pytest.raises(JobFenceRejectedError, match="SITESCORE_RESULT_FENCE_REJECTED"):
+        delivery.fail_attempt(claimed, attempt, error_code="SITESCORE_INFERENCE_UNAVAILABLE", retryable=True)
+    assert _physical(db, request["jobId"]) == stale
+    assert bundle.engine.query("SELECT * FROM durable_jobs ORDER BY job_id") == queue_rows
+    assert {collection: documents.store.list_all(collection) for collection in saved_documents} == saved_documents
+    bundle.assisted_intake_store.refresh(TENANT)
+    assert bundle.assisted_intake_store.workflow_audits == audits
+    assert audit_writer.list_events(TENANT) == canonical_audits
+    assert bundle.outbox_repository.get_unpublished_events() == events
+    assert _physical(db, promotion["site_score_job_id"]) == original_job
+    assert bundle.assisted_intake_store.promotions[promotion["promotion_decision_id"]] == original_promotion
+    assert bundle.listing_repository_for_tenant(TENANT).list_candidates() == candidates
+    assert delivery._reports(TENANT).history(promotion["candidate_site_id"]) == reports
+
+
 def test_same_key_pending_and_successful_replay_never_enqueue_or_infer(successful):
     _, bundle, promotion, runtime, principal, authority, delivery = successful
     original_command = command(delivery, promotion, principal)
