@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 from mlflow.tracking import MlflowClient
@@ -55,11 +59,21 @@ def _adapter(tracking_uri: str) -> MlflowRegistryAdapter:
     )
 
 
+@pytest.mark.parametrize("digest_metadata", ["local", "prefixed", "uppercase", "alias"])
 def test_register_model_version_persists_run_tags_artifact_and_registry_lineage(
     tmp_path: Path,
     tracking_uri: str,
+    digest_metadata: str,
 ) -> None:
     model_version = _model_version(tmp_path)
+    digest = hashlib.sha256(b"model-bytes").hexdigest()
+    declared = {
+        "local": {},
+        "prefixed": {"artifact_sha256": "sha256:" + digest},
+        "uppercase": {"artifact_sha256": digest.upper()},
+        "alias": {"artifact_digest": digest},
+    }[digest_metadata]
+    model_version = replace(model_version, monitoring_config={**model_version.monitoring_config, **declared})
     adapter = _adapter(tracking_uri)
 
     registered = adapter.register_model_version(model_version)
@@ -77,6 +91,7 @@ def test_register_model_version_persists_run_tags_artifact_and_registry_lineage(
     assert stored.tags["oday.model_version.dataset_snapshot_id"] == "snapshot-2026-07-23"
     assert stored.tags["oday.model_version.feature_schema_version"] == "site-features-v4"
     assert stored.tags["oday.model_version.label_version"] == "revenue-w24-v2"
+    assert stored.tags["oday.model_version.artifact_sha256"] == "sha256:" + digest
 
     run = client.get_run(stored.run_id)
     assert run.data.tags["oday.model_version.git_sha"] == "abc123def"
@@ -94,6 +109,74 @@ def test_register_model_version_persists_run_tags_artifact_and_registry_lineage(
     assert lineage["artifact_uri"] == model_version.artifact_uri
     assert lineage["run_id"] == "external-training-run-42"
     assert lineage["mlflow_run_id"] == stored.run_id
+
+
+def test_different_models_register_concurrently_in_one_new_experiment(
+    tmp_path: Path, tracking_uri: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    client = MlflowClient(tracking_uri=tracking_uri, registry_uri=tracking_uri)
+    client.search_experiments()  # Initialize the actual backend before racing.
+    repository = InMemoryLearningHubRepository()
+    adapter = MlflowRegistryAdapter(
+        repository, tracking_uri=tracking_uri, client=client, runtime_mode="poc",
+        experiment_name="concurrent-model-registration",
+    )
+    barrier = Barrier(2)
+    original = client.get_experiment_by_name
+
+    def observe_missing(name):
+        experiment = original(name)
+        if experiment is None:
+            barrier.wait(timeout=10)
+        return experiment
+
+    monkeypatch.setattr(client, "get_experiment_by_name", observe_missing)
+    base = _model_version(tmp_path, stage=ModelStage.DEV, aliases=frozenset())
+    candidates = [replace(base, model_name=name, run_id=None) for name in ("model-a", "model-b")]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        registered = list(pool.map(adapter.register_model_version, candidates))
+
+    experiment = original(adapter.experiment_name)
+    assert experiment is not None
+    runs = client.search_runs([experiment.experiment_id])
+    assert len(runs) == 2 and len({run.info.run_id for run in runs}) == 2
+    assert {run.data.tags["oday.model_name"] for run in runs} == {"model-a", "model-b"}
+    for candidate, result in zip(candidates, registered, strict=True):
+        assert result.model_name == candidate.model_name
+        assert result.stage is ModelStage.DEV and not result.aliases
+        assert repository.get_model_version(candidate.model_name, candidate.version) == result
+        versions = client.search_model_versions(f"name = '{candidate.model_name}'")
+        assert len(versions) == 1
+        assert client.get_run(versions[0].run_id).info.experiment_id == experiment.experiment_id
+
+
+@pytest.mark.parametrize("error_code", ["INTERNAL_ERROR", "RESOURCE_ALREADY_EXISTS"])
+def test_registration_propagates_experiment_creation_failure_without_a_resolved_experiment(
+    tmp_path: Path, tracking_uri: str, monkeypatch: pytest.MonkeyPatch, error_code: str,
+) -> None:
+    from mlflow.exceptions import MlflowException
+
+    monkeypatch.chdir(tmp_path)
+    client = MlflowClient(tracking_uri=tracking_uri, registry_uri=tracking_uri)
+    repository = InMemoryLearningHubRepository()
+    adapter = MlflowRegistryAdapter(
+        repository, tracking_uri=tracking_uri, client=client, runtime_mode="poc",
+        experiment_name="unresolved-registration",
+    )
+    error = MlflowException("Experiment creation failed", error_code=error_code)
+
+    def fail_creation(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(client, "create_experiment", fail_creation)
+    candidate = replace(_model_version(tmp_path, stage=ModelStage.DEV, aliases=frozenset()), run_id=None)
+    with pytest.raises(MlflowException) as caught:
+        adapter.register_model_version(candidate)
+    assert caught.value is error
+    assert client.get_experiment_by_name(adapter.experiment_name) is None
+    assert client.search_model_versions(f"name = '{candidate.model_name}'") == []
+    assert repository.get_model_version(candidate.model_name, candidate.version) is None
 
 
 def test_stage_and_alias_round_trip_from_mlflow_with_a_fresh_repository(

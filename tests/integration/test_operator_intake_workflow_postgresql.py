@@ -477,7 +477,10 @@ def test_stale_worker_cannot_publish_after_job_fence_changes(bridge_database, mo
             # Represent another claimant acquiring the lease while MATCHING
             # was computing. The Intake version itself has not changed.
             bundle.engine.execute("UPDATE durable_jobs SET fence_token=fence_token+1 WHERE job_id=?", (job.job_id,))
-            return SimpleNamespace(outcome="NEW", to_dict=lambda: {"outcome": "NEW"})
+            return assisted_intake.MatchResult(
+                outcome="NEW", confidence=1.0, target_listing_id=None,
+                signals=(), summary="Synthetic new listing after lease change",
+            )
 
         monkeypatch.setattr(assisted_intake, "match_listing", match)
         with pytest.raises(JobFenceRejectedError):

@@ -33,6 +33,7 @@ from models.shared_ml import (
     ProductionModelArtifactError,
     ProductionModelInputError,
     ProductionModelRegistryError,
+    compute_content_digest,
     production_model_execution_required,
 )
 from models.shared_ml.oss_estimators import train_oss_estimator
@@ -120,7 +121,8 @@ def _registered_runtime(
         feature_names=MODEL_SPECS["sitescore"].feature_columns,
     )
     artifact_path = tmp_path / "sitescore-lightgbm.zip"
-    artifact_path.write_bytes(trained.estimator.to_artifact_bytes())
+    artifact_bytes = trained.estimator.to_artifact_bytes()
+    artifact_path.write_bytes(artifact_bytes)
     tracking_uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
     adapter = MlflowRegistryAdapter(
         repository if repository is not None else InMemoryLearningHubRepository(),
@@ -143,6 +145,7 @@ def _registered_runtime(
             approved_by="model-risk-reviewer" if approved else None,
             approved_at=NOW if approved else None,
             monitoring_config={
+                "artifact_sha256": compute_content_digest(artifact_bytes),
                 "output_transform": dict(SITESCORE_OUTPUT_TRANSFORM),
             },
         )

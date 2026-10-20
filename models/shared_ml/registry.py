@@ -54,6 +54,17 @@ class ModelVersion:
     def model_id(self) -> str:
         return f"{self.model_name}:{self.version}"
 
+    @property
+    def artifact_sha256(self) -> str | None:
+        """Declared immutable digest, without reading model artifact bytes."""
+        configured = self.monitoring_config.get("artifact_sha256") or self.monitoring_config.get("artifact_digest")
+        if configured:
+            value = str(configured).lower()
+            return value if value.startswith("sha256:") else f"sha256:{value}"
+        if self.artifact_uri.startswith("odp-artifact://sha256/"):
+            return f"sha256:{self.artifact_uri.removeprefix('odp-artifact://sha256/')}"
+        return None
+
     def with_stage(self, stage: ModelStage) -> ModelVersion:
         return self._replace(stage=stage)
 

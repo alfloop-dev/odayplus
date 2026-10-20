@@ -622,7 +622,16 @@ class MlflowRegistryAdapter:
 
         experiment = client.get_experiment_by_name(self.experiment_name)
         if experiment is None:
-            experiment_id = client.create_experiment(self.experiment_name)
+            try:
+                experiment_id = client.create_experiment(self.experiment_name)
+            except MlflowException as exc:
+                if exc.error_code != "RESOURCE_ALREADY_EXISTS":
+                    raise
+                # Different model guards can race on the shared experiment.
+                experiment = client.get_experiment_by_name(self.experiment_name)
+                if experiment is None:
+                    raise
+                experiment_id = experiment.experiment_id
         else:
             experiment_id = experiment.experiment_id
         run = client.create_run(
@@ -773,16 +782,11 @@ class MlflowRegistryAdapter:
 
     @staticmethod
     def _artifact_sha256(model_version: ModelVersion) -> str | None:
-        configured = model_version.monitoring_config.get(
-            "artifact_sha256"
-        ) or model_version.monitoring_config.get("artifact_digest")
-        if configured:
-            value = str(configured).lower()
-            return value if value.startswith("sha256:") else f"sha256:{value}"
+        declared = model_version.artifact_sha256
+        if declared:
+            return declared
 
         uri = model_version.artifact_uri
-        if uri.startswith("odp-artifact://sha256/"):
-            return f"sha256:{uri.removeprefix('odp-artifact://sha256/')}"
         parsed = urlparse(uri)
         if parsed.scheme not in {"", "file"}:
             return None
