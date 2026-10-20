@@ -1349,21 +1349,20 @@ else:
                 from apps.api.app.routes.operator_modules.network_scoring import (
                     execution_http_error,
                 )
-                from modules.sitescore.application.score_delivery import ScoreExecutionJobRepository
-                from modules.sitescore.application.score_execution import SiteScoreExecutionService
                 principal = principal_from_headers(request.headers)
                 if not principal.authenticated:
                     raise HTTPException(status.HTTP_401_UNAUTHORIZED, "AUTHENTICATION_REQUIRED")
                 if not principal.tenant_id or job_tenant != principal.tenant_id:
                     raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
                 try:
-                    owner = ScoreExecutionJobRepository(bundle)
+                    service = bundle.score_execution_service(model_runtime=model_runtime)
+                    owner = service.repository
                     with bundle.engine.lock:
                         owner._tenant(principal.tenant_id)
                         row = owner._row(job.job_id, principal.tenant_id)
                         if row is None or not row["payload"].get("execution_request_id"):
                             raise HTTPException(404, "job not found")
-                        receipt = SiteScoreExecutionService(owner).get(row["payload"]["execution_request_id"], principal=principal)
+                        receipt = service.get(row["payload"]["execution_request_id"], principal=principal)
                         if receipt is None or receipt["jobId"] != job.job_id or receipt["candidateSiteId"] != row["payload"]["candidate_site_id"]:
                             raise HTTPException(404, "job not found")
                         return receipt
