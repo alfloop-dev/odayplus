@@ -24,6 +24,7 @@ def create_args(tmp_path: Path, instance: str) -> list[str]:
         "--kms-key-id", f"projects/{PROJECT}/locations/asia-east1/keyRings/staging/cryptoKeys/release",
         "--deployer-service-account-email", f"deployer@{PROJECT}.iam.gserviceaccount.com",
         "--owner-task-id", "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+        "--release-profile", "full",
         "--state-dir", str(tmp_path / "state"),
         "--tfvars-out", str(tmp_path / "generated.tfvars.json"),
         "--dry-run",

@@ -708,8 +708,10 @@ def main(argv: list[str] | None = None) -> int:
         default=RELEASE_PROFILE_FULL,
         help=(
             "Acceptance scope sealed into the manifest digest: 'full' (default, "
-            "complete product including production models) or 'dev-admin' "
-            "(dev only; core administration with models still refused)."
+            "complete product including production models), 'dev-admin' "
+            "(dev only; core administration with models still refused) or "
+            "'core-ops' (dev/staging/production; core operations with models "
+            "still refused)."
         ),
     )
     args = parser.parse_args(argv)

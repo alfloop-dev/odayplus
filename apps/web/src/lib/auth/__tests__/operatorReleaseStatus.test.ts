@@ -72,7 +72,7 @@ describe("server-side operator release status projection", () => {
     expect(JSON.stringify(status)).not.toMatch(/sensitive|server-only|sealed-cookie/);
   });
 
-  it.each(["full", "dev-admin"])("reports actual ready models under %s without claiming every capability available", async profile => {
+  it.each(["full", "dev-admin", "core-ops"])("reports actual ready models under %s without claiming every capability available", async profile => {
     payload = readiness(profile, true);
     expect(await readOperatorReleaseStatus("cookie", { ...env, ODP_RELEASE_PROFILE: profile })).toEqual({
       profile, models: "ready", unavailableServices: ["AVM", "HeatZone", "SiteScore"],
@@ -90,13 +90,35 @@ describe("server-side operator release status projection", () => {
     expect(await readOperatorReleaseStatus("cookie", { ...env, ODP_RELEASE_PROFILE: undefined })).toMatchObject({ profile: "full", models: "limited" });
   });
 
+  // ODP-CORE-OPS-RELEASE-PROFILE-001: core-ops serves every environment and,
+  // like dev-admin, never claims model readiness.
+  it.each(["dev", "staging", "production"])("admits core-ops in %s and reports the missing-model limitation", async deployment => {
+    payload = readiness("core-ops");
+    payload.details.deploymentMode = deployment;
+    expect(await readOperatorReleaseStatus("cookie", { ...env, ODP_RELEASE_PROFILE: "core-ops", ODP_DEPLOY_ENV: deployment })).toEqual({
+      profile: "core-ops", models: "limited", unavailableServices: ["AVM", "ForecastOps", "HeatZone", "SiteScore"],
+    });
+  });
+
+  it.each(["claim", "runtime_full", "runtime_dev_admin"])("does not trust a core-ops runtime that disagrees on its scope (%s)", async kind => {
+    payload = readiness("core-ops");
+    payload.details.deploymentMode = "production";
+    if (kind === "claim") payload.details.releaseProfile.modelReadinessClaimed = true;
+    if (kind === "runtime_full") payload.details.releaseProfile = { name: "full", valid: true, modelReadinessClaimed: true };
+    if (kind === "runtime_dev_admin") payload.details.releaseProfile.name = "dev-admin";
+    expect(await readOperatorReleaseStatus("cookie", { ...env, ODP_RELEASE_PROFILE: "core-ops", ODP_DEPLOY_ENV: "production" })).toEqual({
+      profile: "core-ops", models: "unknown", unavailableServices: [],
+    });
+  });
+
   it.each(["staging", "production"])("does not admit admin scope in %s", async deployment => {
     expect(await readOperatorReleaseStatus("cookie", { ...env, ODP_DEPLOY_ENV: deployment })).toEqual({ ...unknown, profile: null });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it.each([
-    { ODP_RELEASE_PROFILE: "bogus" }, { ODP_API_BASE_URL: "" },
+    { ODP_RELEASE_PROFILE: "bogus" }, { ODP_RELEASE_PROFILE: "core-ops", ODP_DEPLOY_ENV: "qa" },
+    { ODP_RELEASE_PROFILE: "constructor" }, { ODP_API_BASE_URL: "" },
     { ODP_API_BASE_URL: "http://private-api.invalid" }, { ODP_API_BASE_URL: "https://user:secret@private-api.invalid" },
     { ODP_API_SERVICE_AUDIENCE: "" }, { ODAY_RELEASE_SHA: "local" },
   ])("refuses absent/unsafe runtime binding before network calls: %j", async change => {

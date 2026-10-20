@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-a56362fc2c5615d26bc352d8b34edf28",
+  "serialNumber": "urn:uuid:sha256-6777dcd6cbe424d99ee427329f510337",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-12T22:54:38.365267+00:00",
+    "timestamp": "2026-10-20T15:03:41.891547+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,21 +16,21 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@170a2691e635fc230ea872db3ae8aa46cad6c088",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@170a2691e635fc230ea872db3ae8aa46cad6c088"
+      "purl": "pkg:generic/alfloop-dev/odayplus@1e3c71dd350604e6196b679dc5b08c662b0e99bb",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@1e3c71dd350604e6196b679dc5b08c662b0e99bb"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "170a2691e635fc230ea872db3ae8aa46cad6c088"
+        "value": "1e3c71dd350604e6196b679dc5b08c662b0e99bb"
       },
       {
         "name": "sbom-hash",
-        "value": "a56362fc2c5615d26bc352d8b34edf280f8f3c893596a07a620d7312d6794e0a"
+        "value": "6777dcd6cbe424d99ee427329f510337de13f1b675d185c87ee752383f6b6111"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:7d1979389a4405533c2c13b135abfb0ca14a9ac046bd55c8054efb78bb9e6e10"
+        "value": "sha256:787ff386e7be7e8d65ae9d570b87858e758a66f72246e8e2adfb1ba5f8f75d1d"
       },
       {
         "name": "container-base-images",
@@ -4116,10 +4116,10 @@
     },
     {
       "name": "aiohttp",
-      "version": "3.14.3",
+      "version": "3.14.4",
       "type": "library",
-      "purl": "pkg:pypi/aiohttp@3.14.3",
-      "bom-ref": "pkg:pypi/aiohttp@3.14.3",
+      "purl": "pkg:pypi/aiohttp@3.14.4",
+      "bom-ref": "pkg:pypi/aiohttp@3.14.4",
       "scope": "required",
       "licenses": [
         {
@@ -4129,11 +4129,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "9491196535a88924a60afd5b5f434b5b203b6cc616250878dbdb223a8f7844bc"
+          "content": "831fc5bd39ec2517851e348f613ddb5447a47cf4b71cb09845af7ad7ed45d8f9"
         },
         {
           "alg": "SHA256",
-          "content": "39aded8c7f3b935b54aab1d8d73c70ec0ee2d3ec3b943e0e86611bc150ba47f5"
+          "content": "55b0b335982b0db7117dff7f6a8e3aad43c4105f9e392ca04f9fc8d958a95cce"
         }
       ]
     },
@@ -18527,10 +18527,10 @@
     },
     {
       "name": "yarl",
-      "version": "1.24.5",
+      "version": "1.25.1",
       "type": "library",
-      "purl": "pkg:pypi/yarl@1.24.5",
-      "bom-ref": "pkg:pypi/yarl@1.24.5",
+      "purl": "pkg:pypi/yarl@1.25.1",
+      "bom-ref": "pkg:pypi/yarl@1.25.1",
       "scope": "required",
       "licenses": [
         {
@@ -18542,11 +18542,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "e81b83143bee16329c23db3c1b2d82b29892fcbcb849186d2f6e98a5abe9a57f"
+          "content": "03dd38de09bc213e9a8b29761eec33ee1d5318dac0e49d8af36e4d27830e23a7"
         },
         {
           "alg": "SHA256",
-          "content": "d693396e5aea78db03decd60aec9ece16c9b40ba00a587f089615ff4e718a81d"
+          "content": "94d7aa6debf92a1dd14cb5280b083a764169a13cfb23a452111160274ed989f4"
         }
       ],
       "supplier": {
@@ -18608,7 +18608,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@170a2691e635fc230ea872db3ae8aa46cad6c088",
+      "ref": "pkg:generic/alfloop-dev/odayplus@1e3c71dd350604e6196b679dc5b08c662b0e99bb",
       "dependsOn": [
         "pkg:npm/@deck.gl/core@9.3.7",
         "pkg:npm/@deck.gl/layers@9.3.7",
@@ -20930,7 +20930,7 @@
       ]
     },
     {
-      "ref": "pkg:pypi/aiohttp@3.14.3",
+      "ref": "pkg:pypi/aiohttp@3.14.4",
       "dependsOn": [
         "pkg:pypi/aiohappyeyeballs@2.7.1",
         "pkg:pypi/aiosignal@1.4.0",
@@ -20939,7 +20939,7 @@
         "pkg:pypi/multidict@6.9.1",
         "pkg:pypi/propcache@0.5.2",
         "pkg:pypi/typing-extensions@4.15.0",
-        "pkg:pypi/yarl@1.24.5"
+        "pkg:pypi/yarl@1.25.1"
       ]
     },
     {
@@ -21465,7 +21465,7 @@
     {
       "ref": "pkg:pypi/mlflow@3.16.0",
       "dependsOn": [
-        "pkg:pypi/aiohttp@3.14.3",
+        "pkg:pypi/aiohttp@3.14.4",
         "pkg:pypi/alembic@1.18.5",
         "pkg:pypi/cryptography@50.0.1",
         "pkg:pypi/docker@7.2.0",
@@ -21987,7 +21987,7 @@
       ]
     },
     {
-      "ref": "pkg:pypi/yarl@1.24.5",
+      "ref": "pkg:pypi/yarl@1.25.1",
       "dependsOn": [
         "pkg:pypi/idna@3.18",
         "pkg:pypi/multidict@6.9.1",

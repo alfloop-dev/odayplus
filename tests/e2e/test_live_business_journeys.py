@@ -1045,6 +1045,34 @@ def test_dev_admin_manifest_is_not_admitted_even_when_caller_claims_full() -> No
     assert "business_journeys:sealed_profile" in failing_checks(reseal(receipt))
 
 
+def test_core_ops_manifest_binds_but_is_not_admitted_for_full_acceptance() -> None:
+    """ODP-CORE-OPS-RELEASE-PROFILE-001: known (never "unknown"), never upgraded."""
+
+    core_manifest = manifest("core-ops")
+    assert core_manifest["release_profile"]["model_readiness"] == "not_claimed"
+    binding = bj.bind_release(
+        core_manifest,
+        expected_sha=SHA,
+        expected_digest=core_manifest["manifest_digest"],
+        caller_profile="full",
+    )
+    assert binding.valid and binding.profile == "core-ops"
+    assert binding.full_admitted is False
+
+    receipt, web, api = run(
+        manifest_doc=core_manifest,
+        expected_digest=core_manifest["manifest_digest"],
+        caller_profile="full",
+    )
+
+    assert receipt["summary"]["statuses"] == {j: "NOT_ADMITTED" for j in bj.JOURNEY_IDS}
+    assert receipt["summary"]["status"] == "NOT_ADMITTED"
+    assert receipt["release"]["sealed_release_profile"] == "core-ops"
+    assert receipt["release"]["full_profile_admitted"] is False
+    assert receipt["command"]["exit_code"] == 1
+    assert web.calls == [] and api.calls == []
+
+
 def test_dev_admin_release_reports_no_full_admission_in_the_verifier() -> None:
     receipt, _, _ = run()
 
