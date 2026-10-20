@@ -2825,19 +2825,23 @@ def _live_json_get(url: str, token: str, *, timeout: float = 30.0) -> Mapping[st
 
 
 def _live_http_get(
-    url: str, token: str, *, timeout: float = 30.0
+    url: str, token: str, *, transport_token: str = "", timeout: float = 30.0
 ) -> tuple[int, Mapping[str, Any], str]:
     """Read an endpoint whose refusal is itself evidence: ``(status, payload, error)``.
 
     Unlike :func:`_live_json_get`, an HTTP error status is returned rather than
     raised, so a 503 refusal can be asserted. A transport failure returns
     status 0 and a non-empty error, which no check accepts.
+
+    With ``transport_token`` the Cloud Run invoker identity travels in
+    ``X-Serverless-Authorization`` and ``token`` is the application bearer
+    only, as the live E2E gate's API client sends them.
     """
 
-    request = urllib.request.Request(
-        url,
-        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-    )
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    if transport_token:
+        headers["X-Serverless-Authorization"] = f"Bearer {transport_token}"
+    request = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - Terraform output URL
             status, body = response.status, response.read()
@@ -3210,8 +3214,13 @@ def make_live_rehearsal_executor(
         problems = staging_release_profile_errors(payload, expected_profile=expected)
         if problems:
             raise RuntimeError("staging release profile readback failed: " + "; ".join(problems))
+        # A protected read: the API only trusts the release smoke principal
+        # (its release-bound audience), so the bearer is that token and the
+        # API-audience token is the Cloud Run transport credential alone.
         status, registry_payload, registry_error = _live_http_get(
-            f"{api_uri}{LEARNINGHUB_MODELS_PATH}", token_for(api_uri)
+            f"{api_uri}{LEARNINGHUB_MODELS_PATH}",
+            token_for(staging_smoke_token_audience(str(outputs["release_id"]))),
+            transport_token=token_for(api_uri),
         )
         checks = staging_model_gate_checks(
             payload,

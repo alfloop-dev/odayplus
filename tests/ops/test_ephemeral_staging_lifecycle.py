@@ -4142,6 +4142,287 @@ class StagingLiveE2EGateTests(unittest.TestCase):
         )
 
 
+class _StagingReleaseEdge:
+    """One release's private Cloud Run edge plus the API auth boundary.
+
+    Mirrors what Terraform configures for the release: Cloud Run admits a
+    caller only on an ID token for the service URL, read from
+    ``X-Serverless-Authorization`` when present and otherwise from
+    ``Authorization``. The API then authenticates ``Authorization`` itself
+    and, for protected paths, trusts only the release smoke audience
+    (``ODP_AUTH_SERVICE_AUDIENCES``); any other audience is ``audience_mismatch``.
+    Public paths are served without application authentication.
+    """
+
+    PUBLIC_PATHS = frozenset({"/readiness", "/platform/health", "/platform/version"})
+
+    def __init__(self, app: Any, *, api_origin: str, web_origin: str, trusted_audience: str) -> None:
+        self.app = app
+        self.api_origin = api_origin.rstrip("/")
+        self.web_origin = web_origin.rstrip("/")
+        self.trusted_audience = trusted_audience
+        self.protected_reads: list[tuple[str, str, str]] = []
+
+    @staticmethod
+    def token(audience: str) -> str:
+        return f"id-token-aud:{audience}"
+
+    @staticmethod
+    def _audience(header: str) -> str:
+        token = header.removeprefix("Bearer ")
+        return token.removeprefix("id-token-aud:") if token.startswith("id-token-aud:") else ""
+
+    def open(self, request: Any, timeout: float = 0.0) -> Any:
+        import email.message
+        import io
+        import urllib.error
+        import urllib.parse
+
+        parts = urllib.parse.urlsplit(request.full_url)
+        origin = f"{parts.scheme}://{parts.netloc}"
+        path = parts.path + (f"?{parts.query}" if parts.query else "")
+        headers = {key.lower(): value for key, value in request.header_items()}
+        transport = headers.get("x-serverless-authorization") or headers.get("authorization", "")
+        application = headers.get("authorization", "")
+
+        status: int
+        payload: Mapping[str, Any]
+        location = ""
+        if origin not in {self.api_origin, self.web_origin} or self._audience(transport) != origin:
+            status, payload = 403, {"error": "cloud run invoker denied"}
+        elif origin == self.web_origin:
+            status, payload = 200, {"status": "ok"}
+        elif parts.path in self.PUBLIC_PATHS:
+            response = self.app.request(request.get_method(), path, authenticated=False)
+            status, payload = response.status, response.payload
+        elif not application:
+            response = self.app.request(request.get_method(), path, authenticated=False)
+            status, payload, location = response.status, response.payload, response.location
+        else:
+            self.protected_reads.append(
+                (path, self._audience(application), self._audience(headers.get("x-serverless-authorization", "")))
+            )
+            if self._audience(application) != self.trusted_audience:
+                status, payload = 401, {"detail": "audience_mismatch"}
+            else:
+                body = json.loads(request.data.decode("utf-8")) if request.data else None
+                response = self.app.request(request.get_method(), path, authenticated=True, body=body)
+                status, payload, location = response.status, response.payload, response.location
+
+        message = email.message.Message()
+        if location:
+            message["location"] = location
+        raw = json.dumps(payload).encode("utf-8")
+        if status >= 400:
+            raise urllib.error.HTTPError(request.full_url, status, "error", message, io.BytesIO(raw))
+
+        class _Response(io.BytesIO):
+            def __init__(self) -> None:
+                super().__init__(raw)
+                self.status = status
+                self.headers = message
+
+        return _Response()
+
+
+class StagingSmokeAudienceIntegrationTests(unittest.TestCase):
+    """Review P2: both the smoke stage and the live gate read protected API
+    paths, so both must send the release smoke bearer with the API transport
+    token apart, end to end through ``verify_ephemeral_staging``."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.fx = _load_gate_fixtures()
+
+    def setUp(self) -> None:
+        StagingLiveE2EGateTests.setUp(self)
+
+    def _app(self, profile: str = "core-ops", **overrides: Any) -> Any:
+        base = self.fx.base
+        readiness = self.fx.missing_model_readiness(profile)
+        readiness["details"]["deploymentMode"] = "staging"
+        return base.FakeHttp(self.fx.api_routes(**{
+            "anon GET /readiness": base.response(200, readiness),
+            "anon GET /platform/health": base.response(200, {"status": "ok"}),
+            "anon GET /platform/version": base.response(
+                200, {"status": "ok", "release_sha": self.candidate_sha, "service": "oday-api"}
+            ),
+            **overrides,
+        }))
+
+    def _edge(self, app: Any, *, trusted_audience: str = "") -> _StagingReleaseEdge:
+        from product_ops.deployment.staging_lifecycle import staging_smoke_token_audience
+
+        return _StagingReleaseEdge(
+            app,
+            api_origin=self.outputs["staging_api_uri"],
+            web_origin=self.outputs["staging_web_uri"],
+            trusted_audience=trusted_audience or staging_smoke_token_audience(self.release_id),
+        )
+
+    def _executor(self, edge: _StagingReleaseEdge) -> Any:
+        """The real live executor; only gcloud and the network are doubles."""
+
+        from contextlib import ExitStack
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        outputs = self.outputs
+
+        def describe(kind: str, name: str, **_kwargs: Any) -> dict[str, Any]:
+            image = outputs[
+                "staging_api_image" if "api" in name
+                else "staging_web_image" if "web" in name
+                else "staging_worker_image"
+            ]
+            container = {"containers": [{"image": image}], "vpcAccess": {"egress": "ALL_TRAFFIC"}}
+            return {"spec": {"template": container}, "template": {"template": container}}
+
+        real_clients = lifecycle._live_gate_clients
+
+        def clients(config: Any, **kwargs: Any) -> Any:
+            # The API client is the gate's real urllib client; only the Web
+            # origin (a browser redirect check) keeps the gate's own double.
+            api, _web = real_clients(config, **kwargs)
+            return api, self.fx.base.passing_web_http()
+
+        class _Opener:
+            def open(self, request: Any, timeout: float = 0.0) -> Any:
+                return edge.open(request, timeout)
+
+        stack = ExitStack()
+        for target, kwargs in (
+            ("_live_gcloud", {"side_effect": lambda argv, **kw: argv[3] if argv[0] == "iam" else ""}),
+            ("_live_cloud_run_description", {"side_effect": describe}),
+            ("_live_identity_token", {"side_effect": lambda *, audience, **kw: edge.token(audience)}),
+            ("_live_gate_clients", {"side_effect": clients}),
+            ("_live_gate_worker_driver", {"return_value": self.fx.base.FakeWorkerDriver()}),
+            ("_live_gate_correlation_id", {"return_value": self.fx.base.CORRELATION_ID}),
+            ("STAGING_LIVE_E2E_POLL_INTERVAL_SECONDS", {"new": 0.001}),
+        ):
+            stack.enter_context(patch.object(lifecycle, target, **kwargs))
+        stack.enter_context(patch("urllib.request.urlopen", side_effect=edge.open))
+        stack.enter_context(patch("urllib.request.build_opener", return_value=_Opener()))
+        self.addCleanup(stack.close)
+        return lifecycle.make_live_rehearsal_executor(
+            outputs,
+            project_id=self.project_id,
+            region="asia-east1",
+            operator_identity=outputs["staging_runtime_service_account"],
+        )
+
+    def _verify(self, edge: _StagingReleaseEdge, profile: str = "core-ops") -> Any:
+        """Live verify with the smoke stage and the live gate both real."""
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        live = self._executor(edge)
+        real_stages = {"api_web_authenticated_smoke", "live_e2e_gate"}
+
+        def executor(stage: str, context: Mapping[str, Any]) -> Mapping[str, Any]:
+            return live(stage, context) if stage in real_stages else {"success": True}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            EphemeralStagingVerificationAndHoldTests._seed_live_state(self, state_dir)
+            marker_path = lifecycle._lifecycle_state_path(self.release_id, state_dir)
+            seeded = json.loads(marker_path.read_text(encoding="utf-8"))
+            marker_path.write_text(json.dumps({**seeded, "outputs": self.outputs}), encoding="utf-8")
+            return lifecycle.verify_ephemeral_staging(
+                release_id=self.release_id,
+                candidate_sha=self.candidate_sha,
+                manifest_digest=self.manifest_digest,
+                project_id=self.project_id,
+                state_dir=state_dir,
+                operator_identity=self.outputs["staging_runtime_service_account"],
+                lifecycle_outputs=self.outputs,
+                stage_executor=executor,
+                now=self.now,
+                release_profile=profile,
+            )
+
+    def _stage(self, receipt: Any, name: str) -> Mapping[str, Any]:
+        return next(row for row in receipt.resources if row["stage"] == name)
+
+    def test_both_stages_read_protected_paths_as_the_smoke_principal(self) -> None:
+        from product_ops.deployment.staging_lifecycle import staging_smoke_token_audience
+
+        edge = self._edge(self._app())
+        receipt = self._verify(edge)
+
+        self.assertTrue(receipt.success, receipt.errors)
+        self.assertEqual(self._stage(receipt, "api_web_authenticated_smoke")["status"], "passed")
+        self.assertTrue(self._stage(receipt, "live_e2e_gate")["proof"]["live_e2e_gate"]["ok"])
+        smoke = staging_smoke_token_audience(self.release_id)
+        api = self.outputs["staging_api_uri"]
+        model_reads = [read for read in edge.protected_reads if read[0] == "/api/v1/learninghub/models"]
+        # The smoke stage's model read and the gate's both happened, each
+        # with the smoke bearer and the API token as transport only.
+        self.assertEqual(model_reads, [("/api/v1/learninghub/models", smoke, api)] * 2)
+        self.assertTrue(edge.protected_reads)
+        self.assertEqual({(app, transport) for _path, app, transport in edge.protected_reads}, {(smoke, api)})
+
+    def test_the_smoke_stage_reads_a_bound_registry_for_full(self) -> None:
+        # full (or a registry-bound core-ops) serves models only to an
+        # authenticated principal with model VIEW; healthy models must pass.
+        readiness = EphemeralStagingVerificationAndHoldTests._readiness("full", ready=True)
+        status, models = EphemeralStagingVerificationAndHoldTests._registry()
+        base = self.fx.base
+        edge = self._edge(self._app(**{
+            "anon GET /readiness": base.response(200, readiness),
+            "GET /api/v1/learninghub/models": base.response(status, models),
+        }))
+
+        result = self._executor(edge)("api_web_authenticated_smoke", {"release_profile": "full"})
+
+        self.assertTrue(result["success"])
+        self.assertIn("models:registry", result["release_profile"]["model_checks"])
+
+    def test_an_api_trusting_another_audience_fails_both_stages_and_verify(self) -> None:
+        from product_ops.deployment.staging_lifecycle import staging_smoke_token_audience
+
+        edge = self._edge(self._app(), trusted_audience=staging_smoke_token_audience("odp-20260824-002"))
+        receipt = self._verify(edge)
+
+        self.assertFalse(receipt.success)
+        smoke_stage = self._stage(receipt, "api_web_authenticated_smoke")
+        self.assertEqual(smoke_stage["status"], "failed")
+        self.assertTrue(any(
+            error.startswith("Stage api_web_authenticated_smoke") and "models:registry_refused" in error
+            for error in receipt.errors
+        ), receipt.errors)
+        gate_stage = self._stage(receipt, "live_e2e_gate")
+        self.assertEqual(gate_stage["status"], "failed")
+        self.assertIn("auth:operator_bootstrap", json.dumps(receipt.errors))
+
+    def test_the_api_token_as_application_bearer_is_refused(self) -> None:
+        """The pre-fix read shape: API-audience token in Authorization only."""
+
+        from product_ops.deployment.staging_lifecycle import _live_http_get
+
+        status, models = EphemeralStagingVerificationAndHoldTests._registry()
+        edge = self._edge(self._app(**{
+            "GET /api/v1/learninghub/models": self.fx.base.response(status, models),
+        }))
+        api = self.outputs["staging_api_uri"]
+        url = api + "/api/v1/learninghub/models"
+        from unittest.mock import patch
+
+        with patch("urllib.request.urlopen", side_effect=edge.open):
+            refused = _live_http_get(url, edge.token(api))
+            served = _live_http_get(
+                url,
+                edge.token(edge.trusted_audience),
+                transport_token=edge.token(api),
+            )
+            # The smoke bearer alone never passes Cloud Run.
+            no_transport = _live_http_get(url, edge.token(edge.trusted_audience))
+        self.assertEqual((refused[0], refused[1]), (401, {"detail": "audience_mismatch"}))
+        self.assertEqual((served[0], served[1]), (status, models))
+        self.assertEqual(no_transport[0], 403)
+
+
 def dataclasses_replace(obj: StagingConfig, **changes: Any) -> StagingConfig:
     d = obj.to_dict()
     d.update(changes)

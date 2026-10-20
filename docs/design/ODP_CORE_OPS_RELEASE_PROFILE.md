@@ -112,6 +112,7 @@ Task: ODP-CORE-OPS-RELEASE-PROFILE-001 · Owner: Claude2 · Reviewer: Codex2
      - 缺 capabilities、缺 registry 證據或 registry 讀不到都直接失敗，不做任何推定。
    - 任何不符都會讓 stage 失敗，並沿用既有的 `hold` 流程。stage 回執記錄通過的模型檢查名稱（`model_checks`）。
    - 前提：registry 已綁定時，`/learninghub/models` 會檢查 `model` VIEW 權限，staging 演練身分若沒有這個權限會以 401/403 失敗（dependency 標為 `auth`），仍是 fail closed。registry 未綁定時，Learning Hub 的 runtime binding guard 在權限檢查前就回 503。
+   - 憑證：這是受保護的讀取，與 §12 的 live gate 使用相同的分工。`Authorization` 帶 release smoke 身分的 token（audience 為 `urn:odp:staging-smoke:<release>`，API 只透過 `ODP_AUTH_SERVICE_AUDIENCES` 與 principal map 信任它，`model_owner` 角色具 `model` VIEW）。API audience 的 token 只放在 `X-Serverless-Authorization`，當 Cloud Run 傳輸憑證。若把 API audience token 當 application bearer，API 會以 `audience_mismatch` 拒絕，`full` 或 registry 已綁定的 core-ops 即使模型健康也會失敗。`/readiness`、`/platform/*` 是公開路徑，應用層不驗 bearer，維持只在 `Authorization` 帶 API audience token 作為 Cloud Run 傳輸憑證。
 4. **完整 live gate（F4，已由 ODP-CORE-OPS-STAGING-LIVE-GATE-001 實作）。** staging verify 新增最後一個 stage `live_e2e_gate`，執行**完整的** `check_live_e2e_gate.py`（persistence、provider、auth、Web 受保護路由、模型、worker、audit、資料來源）。smoke 身分、worker driver 與 provider posture 的設定來源見 §12。上面的模型最低檢查保留在 `api_web_authenticated_smoke`，兩者不衝突。
 
 ## 5. Rollback 綁定盤點（首次 staging/production release）
