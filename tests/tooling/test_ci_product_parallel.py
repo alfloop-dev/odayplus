@@ -229,7 +229,7 @@ def test_ci_workflow_command_exact_single_ownership(ci_workflow: dict[str, Any])
         "uv run ruff check tests modules apps shared models solver pipelines infra": "product-lint-unit",
         'uv run pytest -m "not requires_live_env and not performance" tests modules apps shared models -n auto': "product-lint-unit",
         "uv run pytest tests/integration/test_official_real_estate_postgresql.py": "product-db",
-        'uv run pytest -m "requires_live_env and not requires_postgis" tests/contract tests/ops tests/integration': "product-db",
+        'uv run pytest -m "requires_live_env and not requires_postgis" tests/contract tests/ops tests/integration -x --tb=short -vv': "product-db",
         "make api-contract": "product-api-contract",
         "make security": "product-security",
         "make node-check": "product-node",
@@ -344,11 +344,11 @@ def test_parse_executable_commands_handles_chaining_and_comments() -> None:
 
 
 def test_command_exact_matching_rejects_narrowed_selector() -> None:
-    expected = 'uv run pytest -m "requires_live_env and not requires_postgis" tests/contract tests/ops tests/integration'
+    expected = 'uv run pytest -m "requires_live_env and not requires_postgis" tests/contract tests/ops tests/integration -x --tb=short -vv'
     # Mutated with an additional ignore flag
     mutated_script = (
         'uv run pytest -m "requires_live_env and not requires_postgis" \\\n'
-        '  tests/contract tests/ops tests/integration --ignore=tests/contract'
+        '  tests/contract tests/ops tests/integration -x --tb=short -vv --ignore=tests/contract'
     )
     mock_jobs = {
         "product-db": {"steps": [{"run": mutated_script}]},

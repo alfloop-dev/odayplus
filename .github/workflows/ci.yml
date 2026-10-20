@@ -282,8 +282,10 @@ jobs:
           PYTEST_ADDOPTS: --junitxml=.odp_data/ci/database-contracts.xml
           ODP_NATIVE_SQL_PROFILE: "1"
         run: |
+          # Preserve the first failure and JUnit report before the job deadline.
+          # A successful invocation still executes the complete original selection.
           uv run pytest -m "requires_live_env and not requires_postgis" \
-            tests/contract tests/ops tests/integration
+            tests/contract tests/ops tests/integration -x --tb=short -vv
 
       # These offline PostgreSQL controls live under unit/ and apps/, so
       # both the non-live selection and the database paths above omit them.
