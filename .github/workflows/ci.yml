@@ -308,8 +308,12 @@ jobs:
           # Qualify the original product path; SQL profiling remains opt-in.
           # Preserve the first failure and JUnit report before the job deadline.
           # A successful invocation still executes the complete original selection.
+          # Scratch databases isolate file groups. Keep each file on one worker
+          # so its stateful fixtures and browser composition stay serialized.
+          # Overlap real lease waits without shortening root or IO budgets.
           uv run pytest -m "requires_live_env and not requires_postgis" \
-            tests/contract tests/ops tests/integration -x --tb=short -vv
+            tests/contract tests/ops tests/integration -x --tb=short -vv \
+            -n2 --dist=loadfile --max-worker-restart=0
 
       # These offline PostgreSQL controls live under unit/ and apps/, so
       # both the non-live selection and the database paths above omit them.
