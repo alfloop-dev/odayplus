@@ -104,9 +104,15 @@ Task: ODP-CORE-OPS-RELEASE-PROFILE-001 · Owner: Claude2 · Reviewer: Codex2
 3. **Verify。** `verify_ephemeral_staging(..., release_profile=...)` 在 live 模式下會拒絕非 staging profile。live executor 的 `api_web_authenticated_smoke` stage 新增 `/readiness` 讀回，由 `staging_release_profile_errors` 判定：
    - `status=ok`、`deploymentMode=staging`。
    - `runtime:release_profile`：名稱等於 admitted profile、`valid=true`、只有 `full` 宣稱模型就緒。
-   - 未宣稱模型就緒且 runtime 沒有回報已驗證綁定時，必須符合 `runtime:model_limitation_reported`：`productionBindingsReady=false`、`autoSeeded=false`、mode 不是 `mlflow-production`、有 error、帶有 `PRODUCTION_MODEL_BINDINGS_UNVERIFIED`。
-   - readiness 503 會在讀取時直接失敗。任何不符都會讓 stage 失敗，並沿用既有的 `hold` 流程。
-4. **尚未涵蓋。** staging 尚未跑完整的 `check_live_e2e_gate.py`。它需要 staging 目前沒有的 smoke 憑證、worker driver 與資料來源設定。後續項見 §7 的 F4。
+   - readiness 503 會在讀取時直接失敗。
+   - 接著讀 `GET /api/v1/learninghub/models`（HTTP 錯誤狀態照實回傳、不拋出，因為 503 本身就是要驗證的證據；連線失敗回 status 0，任何檢查都不接受）。模型斷言由 `staging_model_gate_checks` 執行，它**直接載入 canonical `check_live_e2e_gate.py` 的函式**，不另寫一份規則，兩者不會漂移。分支也由 gate 自己的 `_models_refused_in_scope` 決定：
+     - **未宣稱就緒**（profile 不宣稱模型就緒，且 runtime 沒有回報 `productionBindingsReady=true`）：`runtime:model_limitation_reported`（`productionBindingsReady=false`、`autoSeeded=false`、mode 不是 `mlflow-production`、有 error、帶有 `PRODUCTION_MODEL_BINDINGS_UNVERIFIED`）、每個 `runtime:model_capability:*`（governed-disabled 證據完整；其餘 available 與 reasonCode 必須如實）、`models:registry_refused`（registry 實際回 503；runtime 回報 `learninghubRegistryBound=true` 時才接受 200 且空清單，沿用 gate 既有例外）與 `models:no_surrogate_markers`。
+     - **宣稱就緒**（`full`，或 runtime 回報 `productionBindingsReady=true` 的 core-ops）：完整的 `runtime:model_bindings`、`runtime:model_capability:*`、`models:registry`，以及每個 active service 恰好一個 `production` alias 加 lineage 與 artifact store；governed-disabled service 不得有 alias。
+     - 兩個分支都另外掃描 readiness 的 `details.models` 是否有 surrogate marker（`runtime:model_no_surrogate_markers`）。
+     - 缺 capabilities、缺 registry 證據或 registry 讀不到都直接失敗，不做任何推定。
+   - 任何不符都會讓 stage 失敗，並沿用既有的 `hold` 流程。stage 回執記錄通過的模型檢查名稱（`model_checks`）。
+   - 前提：registry 已綁定時，`/learninghub/models` 會檢查 `model` VIEW 權限，staging 演練身分若沒有這個權限會以 401/403 失敗（dependency 標為 `auth`），仍是 fail closed。registry 未綁定時，Learning Hub 的 runtime binding guard 在權限檢查前就回 503。
+4. **尚未涵蓋。** staging 尚未跑**完整的** `check_live_e2e_gate.py`（persistence、provider、worker、audit、租戶隔離、business journeys 等其他區段）。它需要 staging 目前沒有的 smoke 憑證、worker driver 與資料來源設定。後續項見 §7 的 F4。上面的模型最低檢查不在 F4 的延期範圍內，本 task 已實作。
 
 ## 5. Rollback 綁定盤點（首次 staging/production release）
 
@@ -169,7 +175,7 @@ deviation:
     - solver hard constraints, feasibility, infeasibility diagnostics, and runtime report captured
   compensating_controls:
     - live E2E gate 的 runtime:model_limitation_reported、runtime:model_capability:*、models:registry_refused
-    - staging verify 的 runtime:release_profile 與缺模型拒絕檢查
+    - staging verify 的 runtime:release_profile，以及重用 live gate 的模型檢查（limitation、capabilities、registry refusal、surrogate；宣稱就緒時改用完整 bindings 與 alias/lineage 斷言）
     - Web 營運通知如實顯示「模型功能尚未就緒」
 risk_owner: ""            # 風險承擔人（空白，待 Human/Ops 具名填寫）
 approved_by: ""           # 空白
@@ -210,7 +216,7 @@ reopen_trigger: >
 - `tests/release/test_release_profile.py`：建置、封存、晉升路徑、admission parity、lease 未消耗、竄改、deploy `case`、phase check、anti-drift。
 - `tests/e2e/test_live_e2e_gate_dev_admin.py`（core-ops 區段）：三個環境的正向路徑、不需要 dev-admin 輸入、環境外拒絕、`full` 仍然拒絕、runtime profile 不符、偽造模型狀態、registry 不拒絕、已驗證模型時改用 `full` 斷言、PostgreSQL 失敗、`NOT_ADMITTED`、真實 API composition。
 - `tests/e2e/test_live_business_journeys.py`：core-ops manifest 是已知 profile，但 `NOT_ADMITTED`。
-- `tests/ops/test_ephemeral_staging_lifecycle.py` 等 staging 測試：profile 寫入 tfvars 與模組、verify 必填、`/readiness` 讀回 fail closed。
+- `tests/ops/test_ephemeral_staging_lifecycle.py` 等 staging 測試：profile 寫入 tfvars 與模組、verify 必填、`/readiness` 讀回 fail closed；模型檢查的兩個分支（缺模型時 registry 仍回 200 非空清單、capability 狀態不合法、宣稱就緒卻 `autoSeeded=true`、mode 錯誤、缺 capabilities、缺 production alias 或 lineage 都會失敗），以及 live executor 實際讀 registry 的整合測試。
 - `apps/web` 的 vitest：`operatorReleaseStatus` 與 `OperatorAdminAccess`。
 
 本 task 沒有部署、沒有觸發 deploy workflow、沒有修改 `RELEASE_GATE_REGISTRY`、沒有修改 IAM。live staging/production 執行是 Human/Ops 的後續步驟，本 task 沒有宣稱已完成。

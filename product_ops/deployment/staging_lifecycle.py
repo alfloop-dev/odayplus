@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -36,6 +37,7 @@ import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 # --- Validation Regex Patterns ---
@@ -132,7 +134,26 @@ IMMUTABLE_RELEASE_IDENTITY_FIELDS: tuple[str, ...] = (
 STAGING_RELEASE_PROFILES: tuple[str, ...] = ("full", "core-ops")
 #: Profiles that claim production model readiness (as in the live E2E gate).
 MODEL_READINESS_CLAIMING_PROFILES: frozenset[str] = frozenset({"full"})
-MODEL_BINDINGS_UNVERIFIED_REASON = "PRODUCTION_MODEL_BINDINGS_UNVERIFIED"
+#: The canonical live E2E gate. Staging reuses its model assertions verbatim
+#: rather than restating them, so the two cannot drift apart.
+LIVE_E2E_GATE_PATH = Path(__file__).resolve().parents[2] / "delivery_toolchain/e2e/check_live_e2e_gate.py"
+LEARNINGHUB_MODELS_PATH = "/api/v1/learninghub/models"
+_live_e2e_gate_module: Any = None
+
+
+def _live_e2e_gate() -> Any:
+    """Load the canonical live E2E gate once (stdlib-only, no runtime import)."""
+
+    global _live_e2e_gate_module
+    if _live_e2e_gate_module is None:
+        spec = importlib.util.spec_from_file_location("odp_staging_live_e2e_gate", LIVE_E2E_GATE_PATH)
+        if spec is None or spec.loader is None:  # pragma: no cover - packaging error
+            raise RuntimeError(f"cannot load the live E2E gate from {LIVE_E2E_GATE_PATH}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        _live_e2e_gate_module = module
+    return _live_e2e_gate_module
 
 
 def staging_release_profile_errors(
@@ -140,13 +161,10 @@ def staging_release_profile_errors(
 ) -> list[str]:
     """Check the staging ``/readiness`` payload against the admitted profile.
 
-    The runtime must report exactly the admitted profile, valid, claiming model
-    readiness only for ``full``. A profile that claims no model readiness and
-    whose runtime does not report verified production bindings must report the
-    missing models truthfully (the live gate's ``runtime:model_limitation_reported``
-    contract): no seeded models, no ``mlflow-production`` mode, a composition
-    error and the ``PRODUCTION_MODEL_BINDINGS_UNVERIFIED`` blocking reason.
-    Anything missing or malformed is an error; nothing is assumed.
+    The runtime must be ready, in staging, and report exactly the admitted
+    profile, valid, claiming model readiness only for ``full``. The model
+    assertions themselves are :func:`staging_model_gate_checks`. Anything
+    missing or malformed is an error; nothing is assumed.
     """
 
     errors: list[str] = []
@@ -172,25 +190,71 @@ def staging_release_profile_errors(
             f"valid={profile.get('valid')} "
             f"modelReadinessClaimed={profile.get('modelReadinessClaimed')}"
         )
-    models = details.get("models")
-    models = models if isinstance(models, Mapping) else {}
-    if not claims_models and models.get("productionBindingsReady") is not True:
-        reasons = models.get("blockingReasons")
-        reasons = reasons if isinstance(reasons, list) else []
-        if not (
-            models.get("productionBindingsReady") is False
-            and models.get("autoSeeded") is False
-            and models.get("mode") != "mlflow-production"
-            and bool(str(models.get("error") or "").strip())
-            and MODEL_BINDINGS_UNVERIFIED_REASON in reasons
-        ):
-            errors.append(
-                "runtime:model_limitation_reported: missing production models are not "
-                f"reported truthfully (mode={models.get('mode')!r} "
-                f"ready={models.get('productionBindingsReady')!r} "
-                f"autoSeeded={models.get('autoSeeded')!r} blockingReasons={reasons})"
-            )
     return errors
+
+
+def staging_model_gate_checks(
+    readiness: Mapping[str, Any],
+    *,
+    registry_status: int,
+    registry_payload: Mapping[str, Any],
+    registry_error: str = "",
+    expected_profile: str,
+) -> list[Any]:
+    """Run the live E2E gate's model assertions on staging readbacks.
+
+    Both branches are the gate's own functions, chosen by the gate's own
+    ``_models_refused_in_scope``:
+
+    * a profile that claims no model readiness, whose runtime does not report
+      verified bindings, must report the limitation truthfully, keep every
+      capability truthful, and have the Learning Hub registry actually refuse
+      (503; or an empty listing when the runtime reports the remote registry
+      as bound), with no surrogate markers;
+    * otherwise -- ``full``, or any profile whose runtime claims bindings --
+      the full model assertions apply: production bindings, capabilities, and
+      exactly one production alias with lineage per active service.
+
+    The ``details.models`` readback is also scanned for surrogate markers.
+    Absent inputs are not assumed: they fail the respective check.
+    """
+
+    gate = _live_e2e_gate()
+    details = readiness.get("details")
+    models = details.get("models") if isinstance(details, Mapping) else None
+    models = dict(models) if isinstance(models, Mapping) else {}
+    claims_models = expected_profile in MODEL_READINESS_CLAIMING_PROFILES
+    refused = gate._models_refused_in_scope(
+        SimpleNamespace(model_readiness_claimed=claims_models), models
+    )
+    checks: list[Any] = []
+    if refused:
+        gate._check_model_limitation(models, checks=checks)
+    else:
+        gate._check_model_bindings(models, checks=checks)
+    gate._check_model_capabilities(models, refused_in_scope=refused, checks=checks)
+    markers = gate.find_surrogate_values(models)
+    gate._check(
+        checks,
+        not markers,
+        "runtime:model_no_surrogate_markers",
+        "none" if not markers else f"paths={markers[:10]}",
+        "data-binding",
+    )
+    response = gate.HttpResponse(
+        status=registry_status,
+        payload=dict(registry_payload) if isinstance(registry_payload, Mapping) else {},
+        error=registry_error,
+    )
+    if refused:
+        gate._check_model_registry_refused(
+            response,
+            checks=checks,
+            registry_bound=models.get("learninghubRegistryBound") is True,
+        )
+    else:
+        gate._check_model_lineage(response, checks=checks)
+    return checks
 
 
 class ReleaseIdentityConflict(RuntimeError):
@@ -2605,6 +2669,34 @@ def _live_json_get(url: str, token: str, *, timeout: float = 30.0) -> Mapping[st
     return payload
 
 
+def _live_http_get(
+    url: str, token: str, *, timeout: float = 30.0
+) -> tuple[int, Mapping[str, Any], str]:
+    """Read an endpoint whose refusal is itself evidence: ``(status, payload, error)``.
+
+    Unlike :func:`_live_json_get`, an HTTP error status is returned rather than
+    raised, so a 503 refusal can be asserted. A transport failure returns
+    status 0 and a non-empty error, which no check accepts.
+    """
+
+    request = urllib.request.Request(
+        url,
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - Terraform output URL
+            status, body = response.status, response.read()
+    except urllib.error.HTTPError as exc:
+        status, body = exc.code, exc.read()
+    except (OSError, urllib.error.URLError, TimeoutError) as exc:
+        return 0, {}, f"release-scoped endpoint readback failed for {url}: {type(exc).__name__}"
+    try:
+        payload = json.loads(body.decode("utf-8")) if body else {}
+    except ValueError:
+        payload = {}
+    return status, payload if isinstance(payload, Mapping) else {}, ""
+
+
 def _live_health_is_valid(payload: Mapping[str, Any], *, providers_disabled: bool = False) -> bool:
     """Require explicit health/readback values instead of treating HTTP 200 as proof."""
 
@@ -2959,7 +3051,24 @@ def make_live_rehearsal_executor(
         problems = staging_release_profile_errors(payload, expected_profile=expected)
         if problems:
             raise RuntimeError("staging release profile readback failed: " + "; ".join(problems))
-        return {"name": expected, "verified": True}
+        status, registry_payload, registry_error = _live_http_get(
+            f"{api_uri}{LEARNINGHUB_MODELS_PATH}", token_for(api_uri)
+        )
+        checks = staging_model_gate_checks(
+            payload,
+            registry_status=status,
+            registry_payload=registry_payload,
+            registry_error=registry_error,
+            expected_profile=expected,
+        )
+        failed = [f"{check.name}: {check.detail}" for check in checks if not check.ok]
+        if failed:
+            raise RuntimeError("staging model gate failed: " + "; ".join(failed))
+        return {
+            "name": expected,
+            "verified": True,
+            "model_checks": [check.name for check in checks],
+        }
 
     def execute(stage_name: str, _context: Mapping[str, Any]) -> Mapping[str, Any]:
         ensure_release_identities_exist()

@@ -2989,28 +2989,91 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
     # ODP-CORE-OPS-RELEASE-PROFILE-001: staging must serve and verify the
     # admitted profile; a model-less runtime defaulting to full fails closed.
 
+    MODEL_ERROR = (
+        "forecastops: MLFLOW_TRACKING_URI_REQUIRED: production model runtime is not configured"
+    )
+    REGISTRY_REFUSED: tuple[int, dict[str, Any]] = (
+        503,
+        {
+            "error": {
+                "code": "LEARNINGHUB_RUNTIME_CONFIGURATION_ERROR",
+                "message": "Learning Hub production requires an injected remote MLflow registry",
+            }
+        },
+    )
+
     @staticmethod
-    def _readiness(profile: str = "core-ops", *, ready: bool = False) -> dict[str, Any]:
-        return {
-            "status": "ok",
-            "details": {
-                "deploymentMode": "staging",
-                "requireLiveData": True,
-                "releaseProfile": {
-                    "name": profile,
-                    "valid": True,
-                    "modelReadinessClaimed": profile == "full",
-                    "error": None,
-                },
-                "models": {
-                    "mode": "mlflow-production" if ready else "mlflow-production-unverified",
-                    "productionBindingsReady": ready,
-                    "autoSeeded": False,
-                    "error": None if ready else "forecastops: MLFLOW_TRACKING_URI_REQUIRED",
-                    "blockingReasons": [] if ready else ["PRODUCTION_MODEL_BINDINGS_UNVERIFIED"],
-                },
-            },
+    def _gate_fixtures() -> Any:
+        """The live E2E gate's own passing fixtures (real capability evidence)."""
+
+        import importlib.util
+
+        name = "staging_live_e2e_gate_base_fixtures"
+        if name not in sys.modules:
+            spec = importlib.util.spec_from_file_location(
+                name, ROOT / "tests/e2e/test_live_e2e_gate.py"
+            )
+            assert spec and spec.loader
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[name] = module
+            spec.loader.exec_module(module)
+        return sys.modules[name]
+
+    @classmethod
+    def _readiness(cls, profile: str = "core-ops", *, ready: bool = False) -> dict[str, Any]:
+        from copy import deepcopy
+
+        payload = deepcopy(cls._gate_fixtures().readiness_payload())
+        details = payload["details"]
+        details["deploymentMode"] = "staging"
+        details["releaseProfile"] = {
+            "name": profile,
+            "valid": True,
+            "modelReadinessClaimed": profile == "full",
+            "error": None,
         }
+        if not ready:
+            models = details["models"]
+            models.update(
+                {
+                    "mode": "mlflow-production-unverified",
+                    "productionBindingsReady": False,
+                    "autoSeeded": False,
+                    "error": cls.MODEL_ERROR,
+                    "blockingReasons": ["PRODUCTION_MODEL_BINDINGS_UNVERIFIED"],
+                }
+            )
+            models["capabilities"]["forecastops"].update(
+                {
+                    "available": False,
+                    "reasonCode": "MLFLOW_TRACKING_URI_REQUIRED",
+                    "error": "production model runtime is not configured",
+                }
+            )
+        return payload
+
+    @classmethod
+    def _registry(cls) -> tuple[int, dict[str, Any]]:
+        return 200, cls._gate_fixtures().models_payload()
+
+    @staticmethod
+    def _model_failures(
+        readiness: dict[str, Any],
+        registry: tuple[int, dict[str, Any]],
+        expected: str = "core-ops",
+        *,
+        error: str = "",
+    ) -> dict[str, str]:
+        from product_ops.deployment.staging_lifecycle import staging_model_gate_checks
+
+        checks = staging_model_gate_checks(
+            readiness,
+            registry_status=registry[0],
+            registry_payload=registry[1],
+            registry_error=error,
+            expected_profile=expected,
+        )
+        return {check.name: check.detail for check in checks if not check.ok}
 
     def test_staging_release_profile_check_accepts_truthful_runtimes(self) -> None:
         from product_ops.deployment.staging_lifecycle import staging_release_profile_errors
@@ -3042,9 +3105,7 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
         )
         self.assertTrue(any(e.startswith("runtime:release_profile") for e in errors), errors)
 
-    def test_staging_release_profile_check_refuses_mismatches_and_manufactured_models(
-        self,
-    ) -> None:
+    def test_staging_release_profile_check_refuses_mismatches(self) -> None:
         from product_ops.deployment.staging_lifecycle import staging_release_profile_errors
 
         cases: list[tuple[str, Any, str]] = [
@@ -3052,15 +3113,6 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
              "runtime:release_profile"),
             ("invalid", lambda d: d["releaseProfile"].update(valid=False), "runtime:release_profile"),
             ("missing", lambda d: d.pop("releaseProfile"), "runtime:release_profile"),
-            ("seeded", lambda d: d["models"].update(autoSeeded=True),
-             "runtime:model_limitation_reported"),
-            ("no-reason", lambda d: d["models"].update(blockingReasons=[]),
-             "runtime:model_limitation_reported"),
-            ("no-error", lambda d: d["models"].update(error=None),
-             "runtime:model_limitation_reported"),
-            ("prod-mode", lambda d: d["models"].update(mode="mlflow-production"),
-             "runtime:model_limitation_reported"),
-            ("no-models", lambda d: d.pop("models"), "runtime:model_limitation_reported"),
             ("deployment", lambda d: d.update(deploymentMode="production"), "deploymentMode"),
         ]
         for name, mutate, fragment in cases:
@@ -3079,12 +3131,218 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
                     staging_release_profile_errors(self._readiness(), expected_profile=expected)
                 )
 
-    def _smoke_with_readiness(self, readiness: dict[str, Any], expected: str) -> Any:
+    def test_staging_model_gate_accepts_truthful_runtimes(self) -> None:
+        # core-ops without models: limitation reported, registry really refuses.
+        self.assertEqual(self._model_failures(self._readiness(), self.REGISTRY_REFUSED), {})
+        # The gate's bound-registry exception: an empty listing is honest.
+        bound = self._readiness()
+        bound["details"]["models"]["learninghubRegistryBound"] = True
+        self.assertEqual(self._model_failures(bound, (200, {"items": [], "count": 0})), {})
+        # Claimed bindings (core-ops or full) pass only with the full assertions.
+        self.assertEqual(self._model_failures(self._readiness(ready=True), self._registry()), {})
+        self.assertEqual(
+            self._model_failures(self._readiness("full", ready=True), self._registry(), "full"),
+            {},
+        )
+
+    def test_staging_model_gate_names_every_assertion_it_ran(self) -> None:
+        from product_ops.deployment.staging_lifecycle import staging_model_gate_checks
+
+        def names(readiness: dict[str, Any], registry: tuple[int, dict[str, Any]]) -> set[str]:
+            return {
+                check.name
+                for check in staging_model_gate_checks(
+                    readiness,
+                    registry_status=registry[0],
+                    registry_payload=registry[1],
+                    expected_profile="core-ops",
+                )
+            }
+
+        refused = names(self._readiness(), self.REGISTRY_REFUSED)
+        self.assertTrue(
+            {
+                "runtime:model_limitation_reported",
+                "runtime:model_capability:forecastops",
+                "runtime:model_capability:avm",
+                "runtime:model_no_surrogate_markers",
+                "models:registry_refused",
+                "models:no_surrogate_markers",
+            }
+            <= refused,
+            refused,
+        )
+        self.assertNotIn("runtime:model_bindings", refused)
+        claimed = names(self._readiness(ready=True), self._registry())
+        self.assertTrue(
+            {
+                "runtime:model_bindings",
+                "runtime:model_capability:forecastops",
+                "models:registry",
+                "models:forecastops:production_alias",
+                "models:forecastops:lineage",
+                "models:forecastops:artifact_store",
+                "models:avm:no_fabricated_alias",
+            }
+            <= claimed,
+            claimed,
+        )
+        self.assertNotIn("models:registry_refused", claimed)
+
+    def test_staging_model_gate_refuses_missing_models_that_are_not_refused(self) -> None:
+        """Branch (a): no readiness claimed, so absence must be truthful end to end."""
+
+        def caps(mutate: Any) -> Any:
+            return lambda d: mutate(d["models"]["capabilities"])
+
+        readiness_cases: list[tuple[str, Any, str]] = [
+            ("seeded", lambda d: d["models"].update(autoSeeded=True),
+             "runtime:model_limitation_reported"),
+            ("no-reason", lambda d: d["models"].update(blockingReasons=[]),
+             "runtime:model_limitation_reported"),
+            ("no-error", lambda d: d["models"].update(error=None),
+             "runtime:model_limitation_reported"),
+            ("prod-mode", lambda d: d["models"].update(mode="mlflow-production"),
+             "runtime:model_limitation_reported"),
+            ("no-models", lambda d: d.pop("models"), "runtime:model_limitation_reported"),
+            ("unavailable-without-reason",
+             caps(lambda c: c["forecastops"].update(reasonCode=None)),
+             "runtime:model_capability:forecastops"),
+            ("available-with-reason",
+             caps(lambda c: c["forecastops"].update(available=True)),
+             "runtime:model_capability:forecastops"),
+            ("no-capabilities", lambda d: d["models"].pop("capabilities"),
+             "runtime:model_capability:forecastops"),
+            ("governed-disabled-seeded",
+             caps(lambda c: c["avm"]["governedDisabledEvidence"].update(autoSeeded=True)),
+             "runtime:model_capability:avm"),
+            ("governed-disabled-available", caps(lambda c: c["avm"].update(available=True)),
+             "runtime:model_capability:avm"),
+            ("surrogate", lambda d: d["models"].update(source="fixture"),
+             "runtime:model_no_surrogate_markers"),
+        ]
+        for name, mutate, check in readiness_cases:
+            with self.subTest(name):
+                payload = self._readiness()
+                mutate(payload["details"])
+                self.assertIn(check, self._model_failures(payload, self.REGISTRY_REFUSED))
+
+        bound = self._readiness()
+        bound["details"]["models"]["learninghubRegistryBound"] = True
+        registry_cases: list[tuple[str, dict[str, Any], tuple[int, dict[str, Any]], str]] = [
+            # Reports missing models while the registry serves a non-empty listing.
+            ("served-versions", self._readiness(), self._registry(), "models:registry_refused"),
+            ("served-empty-unbound", self._readiness(), (200, {"items": [], "count": 0}),
+             "models:registry_refused"),
+            ("bound-but-served", bound, self._registry(), "models:registry_refused"),
+            ("forbidden", self._readiness(), (403, {}), "models:registry_refused"),
+            ("surrogate-refusal", self._readiness(), (503, {"source": "fixture"}),
+             "models:no_surrogate_markers"),
+        ]
+        for name, payload, registry, check in registry_cases:
+            with self.subTest(name):
+                self.assertIn(check, self._model_failures(payload, registry))
+        self.assertIn(
+            "models:registry_refused",
+            self._model_failures(self._readiness(), (0, {}), error="URLError"),
+        )
+
+    def test_staging_model_gate_holds_claimed_readiness_to_full_assertions(self) -> None:
+        """Branch (b): claimed bindings get the full model assertions, no shortcuts."""
+
+        def registry_with(mutate: Any) -> tuple[int, dict[str, Any]]:
+            status, payload = self._registry()
+            mutate(payload)
+            return status, payload
+
+        def fabricated_alias(payload: dict[str, Any]) -> None:
+            payload["items"].append(
+                {**payload["items"][0], "model_name": "dealroom_avm", "version": "1"}
+            )
+
+        for profile in ("core-ops", "full"):
+            readiness_cases: list[tuple[str, Any, str]] = [
+                ("seeded", lambda d: d["models"].update(autoSeeded=True), "runtime:model_bindings"),
+                ("mode", lambda d: d["models"].update(mode="mlflow-production-unverified"),
+                 "runtime:model_bindings"),
+                ("error", lambda d: d["models"].update(error="degraded"), "runtime:model_bindings"),
+                ("no-capabilities", lambda d: d["models"].pop("capabilities"),
+                 "runtime:model_capability:forecastops"),
+                ("forecastops-unavailable",
+                 lambda d: d["models"]["capabilities"]["forecastops"].update(available=False),
+                 "runtime:model_capability:forecastops"),
+            ]
+            for name, mutate, check in readiness_cases:
+                with self.subTest(profile=profile, case=name):
+                    payload = self._readiness(profile, ready=True)
+                    mutate(payload["details"])
+                    self.assertIn(check, self._model_failures(payload, self._registry(), profile))
+
+            registry_cases: list[tuple[str, tuple[int, dict[str, Any]], str]] = [
+                ("refused", self.REGISTRY_REFUSED, "models:registry"),
+                ("empty", (200, {"items": [], "count": 0}), "models:registry"),
+                ("no-alias", registry_with(lambda p: p["items"][0].update(aliases=[])),
+                 "models:forecastops:production_alias"),
+                ("no-lineage", registry_with(lambda p: p["items"][0].pop("approved_by")),
+                 "models:forecastops:lineage"),
+                ("no-snapshot", registry_with(lambda p: p["items"][0].pop("dataset_snapshot_id")),
+                 "models:forecastops:lineage"),
+                ("local-artifact",
+                 registry_with(lambda p: p["items"][0].update(artifact_uri="file:///tmp/m")),
+                 "models:forecastops:artifact_store"),
+                ("fabricated-alias", registry_with(fabricated_alias),
+                 "models:avm:no_fabricated_alias"),
+            ]
+            for name, registry, check in registry_cases:
+                with self.subTest(profile=profile, case=name):
+                    self.assertIn(
+                        check,
+                        self._model_failures(
+                            self._readiness(profile, ready=True), registry, profile
+                        ),
+                    )
+
+        # full never takes the refusal branch: missing models simply fail.
+        failures = self._model_failures(self._readiness("full"), self.REGISTRY_REFUSED, "full")
+        self.assertIn("runtime:model_bindings", failures)
+        self.assertIn("models:registry", failures)
+
+    def test_live_http_get_returns_refusals_instead_of_raising(self) -> None:
+        import io
+        import urllib.error
+        from unittest.mock import patch
+
+        from product_ops.deployment.staging_lifecycle import _live_http_get
+
+        refusal = urllib.error.HTTPError(
+            "https://api.example/api/v1/learninghub/models", 503, "Service Unavailable", {},
+            io.BytesIO(json.dumps(self.REGISTRY_REFUSED[1]).encode()),
+        )
+        with patch("urllib.request.urlopen", side_effect=refusal):
+            self.assertEqual(
+                _live_http_get("https://api.example/x", "token"),
+                (503, self.REGISTRY_REFUSED[1], ""),
+            )
+        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("down")):
+            status, payload, error = _live_http_get("https://api.example/x", "token")
+        self.assertEqual((status, payload), (0, {}))
+        self.assertIn("URLError", error)
+
+    def _smoke_with_readiness(
+        self,
+        readiness: dict[str, Any],
+        expected: str,
+        registry: tuple[int, dict[str, Any]] | None = None,
+        *,
+        registry_error: str = "",
+    ) -> Any:
         from unittest.mock import patch
 
         from product_ops.deployment.staging_lifecycle import make_live_rehearsal_executor
 
         outputs = self._valid_outputs()
+        registry = self.REGISTRY_REFUSED if registry is None else registry
+        registry_reads: list[str] = []
 
         def describe(kind: str, name: str, **_kwargs: Any) -> dict[str, Any]:
             image = outputs["staging_api_image" if "api" in name else "staging_web_image"]
@@ -3098,6 +3356,10 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
                 return {"status": "ok", "release_sha": outputs["resource_labels"]["candidate_sha"]}
             return {"status": "ok"}
 
+        def http_get(url: str, _token: str, **_kwargs: Any) -> tuple[int, Any, str]:
+            registry_reads.append(url)
+            return registry[0], registry[1], registry_error
+
         with patch(
             "product_ops.deployment.staging_lifecycle._live_gcloud",
             side_effect=lambda argv, **kwargs: argv[3] if argv[0] == "iam" else "",
@@ -3109,6 +3371,8 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
             return_value="token",
         ), patch(
             "product_ops.deployment.staging_lifecycle._live_json_get", side_effect=json_get
+        ), patch(
+            "product_ops.deployment.staging_lifecycle._live_http_get", side_effect=http_get
         ):
             executor = make_live_rehearsal_executor(
                 outputs,
@@ -3116,19 +3380,62 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
                 region="asia-east1",
                 operator_identity=outputs["staging_runtime_service_account"],
             )
-            return executor("api_web_authenticated_smoke", {"release_profile": expected})
+            try:
+                return executor("api_web_authenticated_smoke", {"release_profile": expected})
+            finally:
+                self.assertLessEqual(len(registry_reads), 1)
+                for url in registry_reads:
+                    self.assertEqual(
+                        url, outputs["staging_api_uri"].rstrip("/") + "/api/v1/learninghub/models"
+                    )
 
     def test_live_smoke_stage_verifies_the_admitted_profile(self) -> None:
         result = self._smoke_with_readiness(self._readiness(), "core-ops")
 
         self.assertTrue(result["success"])
-        self.assertEqual(result["release_profile"], {"name": "core-ops", "verified": True})
+        proof = result["release_profile"]
+        self.assertEqual((proof["name"], proof["verified"]), ("core-ops", True))
+        self.assertIn("runtime:model_limitation_reported", proof["model_checks"])
+        self.assertIn("models:registry_refused", proof["model_checks"])
+
+        full = self._smoke_with_readiness(
+            self._readiness("full", ready=True), "full", self._registry()
+        )
+        self.assertIn("models:forecastops:lineage", full["release_profile"]["model_checks"])
 
     def test_live_smoke_stage_fails_closed_on_a_runtime_defaulting_to_full(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "runtime:release_profile"):
             self._smoke_with_readiness(self._readiness("full"), "core-ops")
         with self.assertRaisesRegex(RuntimeError, "may not run in staging"):
             self._smoke_with_readiness(self._readiness(), "")
+
+    def test_live_smoke_stage_runs_the_model_gate_against_the_live_registry(self) -> None:
+        # (a) missing models reported, but the registry still serves versions.
+        with self.assertRaisesRegex(RuntimeError, "staging model gate failed: .*models:registry_refused"):
+            self._smoke_with_readiness(self._readiness(), "core-ops", self._registry())
+        # (a) capability state that is neither bound nor truthfully refused.
+        broken = self._readiness()
+        broken["details"]["models"]["capabilities"]["forecastops"]["reasonCode"] = None
+        with self.assertRaisesRegex(RuntimeError, "runtime:model_capability:forecastops"):
+            self._smoke_with_readiness(broken, "core-ops")
+        # (b) claimed bindings with seeded models, no capabilities, or no lineage.
+        seeded = self._readiness(ready=True)
+        seeded["details"]["models"]["autoSeeded"] = True
+        with self.assertRaisesRegex(RuntimeError, "runtime:model_bindings"):
+            self._smoke_with_readiness(seeded, "core-ops", self._registry())
+        bare = self._readiness(ready=True)
+        bare["details"]["models"].pop("capabilities")
+        with self.assertRaisesRegex(RuntimeError, "runtime:model_capability"):
+            self._smoke_with_readiness(bare, "core-ops", self._registry())
+        status, models = self._registry()
+        models["items"][0].pop("approved_by")
+        with self.assertRaisesRegex(RuntimeError, "models:forecastops:lineage"):
+            self._smoke_with_readiness(self._readiness(ready=True), "core-ops", (status, models))
+        # An unreadable registry is never evidence.
+        with self.assertRaisesRegex(RuntimeError, "models:registry_refused"):
+            self._smoke_with_readiness(
+                self._readiness(), "core-ops", (0, {}), registry_error="URLError"
+            )
 
     def test_live_verify_requires_the_admitted_release_profile(self) -> None:
         from product_ops.deployment.staging_lifecycle import verify_ephemeral_staging
