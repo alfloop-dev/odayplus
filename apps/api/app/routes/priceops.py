@@ -339,12 +339,14 @@ else:
                 if approval is not None:
                     require_independent_approval(*approval, request)
                 sink = getattr(active_audit_log, "_worm_sink", None)
-                delivery = DurableAuditDelivery(engine, tenant_id(request), queue, sink) if sink else None
+                delivery = DurableAuditDelivery(
+                    engine, tenant_id(request, require_scope=True), queue, sink,
+                ) if sink else None
                 context = active_audit_log.transactional_worm_sink(delivery) if delivery else nullcontext()
                 with context:
                     yield
 
-        def tenant_id(request: Request, fallback: str | None = None) -> str:
+        def tenant_id(request: Request, fallback: str | None = None, *, require_scope: bool = False) -> str:
             principal = getattr(request.state, "operator_principal", None)
             scope = getattr(principal, "scope", None)
             value = getattr(scope, "tenant_id", None)
@@ -358,7 +360,7 @@ else:
                         },
                     )
                 return str(value)
-            if durable_commands_required or production_required:
+            if require_scope or durable_commands_required or production_required:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail={

@@ -15,6 +15,7 @@ from apps.api.app.routes.priceops import create_priceops_router
 from modules.priceops.application import PriceOpsService
 from modules.priceops.domain.pricing import PlanAlreadyExistsError
 from shared.api.errors import install_error_handlers
+from shared.audit.worm import LocalAppendOnlyWormSink
 from shared.infrastructure.persistence.audit_log import DurableAuditLog
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.engine import SqliteEngine
@@ -26,9 +27,10 @@ from tests.integration.test_priceops_command_authority import proposal
 HEADERS = {"x-subject-id": "durable-pricer", "x-roles": "pricing_manager", "x-tenant-id": "tenant-a", "x-correlation-id": "corr-durable-command"}
 
 
-def http_context(engine, *, store_repository=None, brand_repository=None):
+def http_context(engine, *, store_repository=None, brand_repository=None,
+                 require_durable_commands=True, worm_sink=None):
     repository = DurablePriceOpsRepository(SqliteDocumentStore(engine))
-    audit = DurableAuditLog(engine)
+    audit = DurableAuditLog(engine, worm_sink=worm_sink)
     app = FastAPI()
     install_error_handlers(app)
 
@@ -41,8 +43,52 @@ def http_context(engine, *, store_repository=None, brand_repository=None):
                                              store_repository=store_repository,
                                              brand_repository=brand_repository,
                                              job_queue=DurableJobQueue(engine),
-                                             require_durable_commands=True, runtime_mode="poc"))
+                                             require_durable_commands=require_durable_commands, runtime_mode="poc"))
     return TestClient(app, headers=HEADERS), repository, audit
+
+
+@pytest.mark.parametrize("required", [False, True])
+def test_external_delivery_requires_verified_tenant_before_business_writes(database, tmp_path, required):
+    open_engine, _env = database
+    engine = open_engine()
+    try:
+        client, repository, audit = http_context(
+            engine, require_durable_commands=required,
+            worm_sink=LocalAppendOnlyWormSink(tmp_path / "tenant-bound-worm"),
+        )
+        with client:
+            client.headers.pop("x-tenant-id")
+            headers = {"Idempotency-Key": "tenant-bound-create"}
+            body = proposal("tenant-bound-plan")
+            denied = client.post("/priceops/plans", headers=headers, json=body)
+            assert denied.status_code == 403, denied.text
+            assert denied.json()["detail"]["code"] == "TENANT_SCOPE_REQUIRED"
+            assert repository.list_plans() == []
+            assert not [event for event in audit.list_events() if event.event_type.startswith("priceops.")]
+
+            client.headers["x-tenant-id"] = HEADERS["x-tenant-id"]
+            accepted = client.post("/priceops/plans", headers=headers, json=body)
+            assert accepted.status_code == 201, accepted.text
+            assert accepted.json()["created"] is True
+            assert [plan.plan_id for plan in repository.list_plans()] == ["tenant-bound-plan"]
+            assert len([event for event in audit.list_events() if event.event_type == "priceops.plan_created.v1"]) == 1
+    finally:
+        engine.close()
+
+
+def test_unbound_poc_without_external_delivery_retains_local_receipt_scope(database):
+    open_engine, _env = database
+    engine = open_engine()
+    try:
+        client, repository, _audit = http_context(engine, require_durable_commands=False)
+        with client:
+            client.headers.pop("x-tenant-id")
+            response = client.post("/priceops/plans", headers={"Idempotency-Key": "local-poc-create"},
+                                   json=proposal("local-poc-plan"))
+            assert response.status_code == 201, response.text
+            assert repository.get_plan("local-poc-plan").tenant_id == "tenant-a"
+    finally:
+        engine.close()
 
 
 @pytest.fixture(params=["sqlite", "postgresql"])
