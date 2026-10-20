@@ -57,6 +57,7 @@ from delivery_toolchain.release.release_manifest import (  # noqa: E402
     INITIAL_RELEASE_READBACK_KIND,
     INITIAL_RELEASE_TARGET_INVENTORY,
     INITIAL_RELEASE_VERIFICATION_KIND,
+    initial_release_admission_recovery,
     initial_release_readback_payload,
     initial_release_recovery_errors,
     initial_release_verification_errors,
@@ -369,6 +370,11 @@ def verify_manifest_recovery(
                 ]
             )
 
+    # The recovery this admission commits to is what the manifest states for the
+    # environment being admitted: a staging seal promoted into production states
+    # production's own recovery in promotion_recovery.
+    stated_recovery = initial_release_admission_recovery(recovery, environment)
+    stated_method, stated_actions = stated_recovery or (None, None)
     receipt = {
         "schema_version": 1,
         "kind": VERIFICATION_KIND,
@@ -378,8 +384,8 @@ def verify_manifest_recovery(
         "candidate_sha": manifest.get("candidate_sha"),
         "manifest_digest": manifest.get("manifest_digest"),
         "target_environment": recovery.get("target_environment"),
-        "recovery_method": recovery.get("recovery_method"),
-        "recovery_actions": list(recovery.get("recovery_actions") or []),
+        "recovery_method": stated_method,
+        "recovery_actions": list(stated_actions or []),
         "rollback_target_available": recovery.get("rollback_target_available"),
         "binding_digest": recovery.get("binding_digest"),
         "verified_absent": True,

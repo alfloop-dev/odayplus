@@ -143,7 +143,7 @@ on:
         default: ""
         type: string
       initial_release_recovery:
-        description: "Set only for the first release into a target that holds no approved release (build phase; dev or staging). The build reads the target back and refuses unless every Cloud Run service and job is absent -- for ephemeral staging, this release's release-scoped names. A staging-sealed first release is the staging leg of production's first release: admission into staging or production re-reads that environment's target, binds the readback to the manifest digest, and refuses once production has admitted any other release. Recovery for such a release is deleting the candidate and holding zero traffic, never a rollback."
+        description: "Set only for the first release into a target that holds no approved release (build phase; dev or staging). The build reads the target back and refuses unless every Cloud Run service and job is absent -- for ephemeral staging, this release's release-scoped names. A staging-sealed first release is the staging leg of production's first release: admission into staging or production re-reads that environment's target, binds the readback to the manifest digest, and refuses once production's lease store shows any other admitted release (staging reads it via vars.ODP_PRODUCTION_RELEASE_LEASE_STATE_URI and is refused without it). Recovery is never a rollback: dev and production delete the candidate and hold zero traffic; ephemeral staging holds the release-scoped namespace for forensics until cleanup."
         required: false
         default: false
         type: boolean
@@ -1038,6 +1038,10 @@ jobs:
           RELEASE_LEASE: ${{ inputs.release_lease }}
           ODP_RELEASE_LEASE_PUBLIC_KEY: ${{ vars.ODP_RELEASE_LEASE_PUBLIC_KEY }}
           RELEASE_LEASE_STATE_URI: ${{ vars.ODP_RELEASE_LEASE_STATE_URI }}
+          # Production's lease store, read by a staging first-release admission
+          # (production's history is not in the staging store). Unset in the
+          # staging environment, that admission is refused before consumption.
+          PRODUCTION_LEASE_STATE_URI: ${{ vars.ODP_PRODUCTION_RELEASE_LEASE_STATE_URI }}
           API_IMAGE_INPUT: ${{ inputs.api_image }}
           WEB_IMAGE_INPUT: ${{ inputs.web_image }}
           WORKER_IMAGE_INPUT: ${{ inputs.worker_image }}
@@ -1055,6 +1059,10 @@ jobs:
           initial_release_args=()
           if [ -f "${RELEASE_RECEIPT_DIR}/initial-release-recovery-receipt.json" ]; then
             initial_release_args+=(--initial-release-receipt "${RELEASE_RECEIPT_DIR}/initial-release-recovery-receipt.json")
+          fi
+          # Opened by the verifier only for an initial-release manifest.
+          if [ "${RELEASE_ENVIRONMENT}" = "staging" ] && [ -n "${PRODUCTION_LEASE_STATE_URI:-}" ]; then
+            initial_release_args+=(--lineage-state-uri "${PRODUCTION_LEASE_STATE_URI}")
           fi
           uv run python delivery_toolchain/release/check_runtime_admission.py \
             --sha "${EVENT_SHA}" \

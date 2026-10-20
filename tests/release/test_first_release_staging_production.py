@@ -15,7 +15,13 @@ the rollback binding:
 * every admission of such a manifest needs a readback of *that* environment
   taken during the admission, bound to the manifest digest and fresh; and
 * staging and production admission are refused once production has consumed a
-  lease for any other manifest -- the record is usable once per lineage.
+  lease for any other manifest -- the record is usable once per lineage. That
+  history lives in *production's* lease store, so a staging admission reads it
+  across environments and is refused without it; a record that cannot be
+  classified is refused, never skipped; and
+* the record states each environment's real failure path: ephemeral staging
+  holds its release-scoped namespace for forensics, production deletes the
+  candidate and holds zero traffic.
 
 Every refusal happens before the single-use lease is consumed.
 """
@@ -31,7 +37,7 @@ from pathlib import Path
 import pytest
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
-from delivery_toolchain.release import check_runtime_admission
+from delivery_toolchain.release import check_runtime_admission, release_manifest
 from delivery_toolchain.release.build_release_handoff import HandoffError, build_handoff
 from delivery_toolchain.release.check_runtime_admission import main as admission_main
 from delivery_toolchain.release.probe_release_target_absence import (
@@ -43,6 +49,7 @@ from delivery_toolchain.release.probe_release_target_absence import (
     main as probe_main,
 )
 from delivery_toolchain.release.release_lease import (
+    LEASE_STATES,
     STATE_CONSUMED,
     STATE_ISSUED,
     LeaseStateStore,
@@ -53,11 +60,20 @@ from delivery_toolchain.release.release_manifest import (
     INITIAL_RELEASE_ADMISSIBLE_ENVIRONMENTS,
     INITIAL_RELEASE_ADMISSION_READBACK_MAX_AGE_SECONDS,
     INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS,
+    INITIAL_RELEASE_ENVIRONMENT_RECOVERY,
+    INITIAL_RELEASE_LINEAGE_LEASE_STATES,
     INITIAL_RELEASE_PROBE_COMMAND,
+    INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD,
     INITIAL_RELEASE_READBACK_KIND,
+    INITIAL_RELEASE_RECOVERY_ACTIONS,
+    INITIAL_RELEASE_RECOVERY_METHOD,
+    INITIAL_RELEASE_STAGING_RECOVERY_ACTIONS,
+    INITIAL_RELEASE_STAGING_RECOVERY_METHOD,
     INITIAL_RELEASE_TARGET_INVENTORY,
     INITIAL_RELEASE_VERIFICATION_KIND,
+    compute_initial_release_binding_digest,
     compute_manifest_digest,
+    initial_release_admission_recovery,
     initial_release_lineage_errors,
     initial_release_verification_errors,
     release_candidate_job_name,
@@ -189,6 +205,9 @@ def admission_receipt(
     fresh: dict | None = None,
 ) -> dict:
     recovery = manifest["initial_release_recovery"]
+    method, actions = initial_release_admission_recovery(recovery, environment) or (
+        recovery["recovery_method"], recovery["recovery_actions"]
+    )
     return {
         "schema_version": 1,
         "kind": INITIAL_RELEASE_VERIFICATION_KIND,
@@ -198,8 +217,8 @@ def admission_receipt(
         "candidate_sha": manifest["candidate_sha"],
         "manifest_digest": manifest["manifest_digest"],
         "target_environment": recovery["target_environment"],
-        "recovery_method": recovery["recovery_method"],
-        "recovery_actions": list(recovery["recovery_actions"]),
+        "recovery_method": method,
+        "recovery_actions": list(actions),
         "rollback_target_available": False,
         "binding_digest": recovery["binding_digest"],
         "verified_absent": True,
@@ -309,6 +328,15 @@ def test_an_enabled_source_keeps_the_rollback_and_snapshot_requirement() -> None
         ),
         lambda m: m["initial_release_recovery"].update(rollback_target_available=True),
         lambda m: m.update(release_id="odp-other-release"),
+        # Staging claiming the delete-candidate cleanup it does not perform.
+        lambda m: m["initial_release_recovery"].update(
+            recovery_method=INITIAL_RELEASE_RECOVERY_METHOD,
+            recovery_actions=list(INITIAL_RELEASE_RECOVERY_ACTIONS),
+        ),
+        lambda m: m["initial_release_recovery"].pop(INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD),
+        lambda m: m["initial_release_recovery"][
+            INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD
+        ].update(recovery_method=INITIAL_RELEASE_STAGING_RECOVERY_METHOD),
     ],
 )
 def test_resealing_a_tampered_staging_record_is_still_refused(
@@ -318,7 +346,8 @@ def test_resealing_a_tampered_staging_record_is_still_refused(
     mutate(manifest)
     manifest["manifest_digest"] = compute_manifest_digest(manifest)
 
-    assert validate_release_admission(manifest, environment="production") != []
+    for environment in ("staging", "production"):
+        assert validate_release_admission(manifest, environment=environment) != []
 
 
 # --------------------------------------------------------------------------
@@ -393,6 +422,8 @@ def test_production_admission_reads_production_and_writes_a_bound_receipt(
 
     assert receipt["environment"] == "production"
     assert receipt["observed_at"] == NOW.isoformat()
+    assert receipt["recovery_method"] == INITIAL_RELEASE_RECOVERY_METHOD
+    assert receipt["recovery_actions"] == list(INITIAL_RELEASE_RECOVERY_ACTIONS)
     assert receipt["manifest_digest"] == staging_manifest["manifest_digest"]
     assert receipt["absence_readback"] == readback("production")
     assert initial_release_verification_errors(
@@ -449,6 +480,8 @@ def test_staging_admission_re_reads_the_release_namespace(
         now=NOW,
     )
     assert receipt["absence_readback"] == readback("staging")
+    assert receipt["recovery_method"] == INITIAL_RELEASE_STAGING_RECOVERY_METHOD
+    assert receipt["recovery_actions"] == list(INITIAL_RELEASE_STAGING_RECOVERY_ACTIONS)
 
     with pytest.raises(ProbeError):
         verify_manifest_recovery(
@@ -607,6 +640,7 @@ def test_the_freshness_window_is_inclusive_at_its_edge(staging_manifest: dict) -
 
 def _record(state: str, environment: str, digest: str) -> dict:
     return {
+        "lease_id": "lease-x",
         "state": state,
         "lease": {
             "lease_id": "lease-x",
@@ -651,11 +685,87 @@ def test_history_that_is_not_a_production_admission_does_not_count(records) -> N
         ) == []
 
 
-@pytest.mark.parametrize("records", [None, [{"state": "consumed"}], ["garbage"]])
+def _unclassifiable() -> list[tuple[str, object]]:
+    def record(**changes) -> dict:
+        value = _record(STATE_CONSUMED, "production", OTHER)
+        lease_changes = changes.pop("lease", {})
+        value.update(changes)
+        value["lease"].update(lease_changes)
+        return value
+
+    no_env = record()
+    del no_env["lease"]["target_environment"]
+    return [
+        ("not-a-list", None),
+        ("no-lease", [{"state": "consumed"}]),
+        ("garbage", ["garbage"]),
+        # The reviewer's probes: each of these used to be skipped as unrelated.
+        ("empty-lease", [{"state": "consumed", "lease": {}}]),
+        ("env-null", [record(lease={"target_environment": None})]),
+        ("env-missing", [no_env]),
+        ("env-unknown", [record(lease={"target_environment": "prod"})]),
+        ("state-unknown", [record(state="unknown")]),
+        ("state-missing", [{k: v for k, v in record().items() if k != "state"}]),
+        ("lease-id-mismatch", [record(lease_id="lease-y")]),
+        ("lease-id-missing", [record(lease={"lease_id": None}, lease_id=None)]),
+        ("production-digest-missing", [record(lease={"manifest_digest": None})]),
+        ("production-digest-malformed", [record(lease={"manifest_digest": "sha256:x"})]),
+        # Corruption is not diluted by valid neighbours.
+        ("one-bad-among-good", [
+            _record(STATE_CONSUMED, "production", THIS),
+            record(state="unknown"),
+        ]),
+    ]
+
+
+@pytest.mark.parametrize(
+    "records", [case for _, case in _unclassifiable()],
+    ids=[name for name, _ in _unclassifiable()],
+)
 def test_unreadable_or_unclassifiable_history_is_refused(records) -> None:
+    for environment in ("staging", "production"):
+        assert initial_release_lineage_errors(
+            records, environment=environment, manifest_digest=THIS
+        ) != []
+
+
+def test_the_lineage_states_mirror_the_lease_store() -> None:
+    assert INITIAL_RELEASE_LINEAGE_LEASE_STATES == LEASE_STATES
+
+
+def test_a_store_read_as_production_lineage_must_hold_only_production_leases() -> None:
+    """Staging's own store, handed over as production's, is recognised as such."""
+
+    staging_store_records = [_record(STATE_ISSUED, "staging", THIS)]
+    assert initial_release_lineage_errors(
+        staging_store_records, environment="staging", manifest_digest=THIS
+    ) == []
+    errors = initial_release_lineage_errors(
+        staging_store_records, environment="staging", manifest_digest=THIS,
+        lineage_target_store=True,
+    )
+    assert any("is not production's lease store" in e for e in errors)
+
+
+@pytest.mark.parametrize("name", ["state-unknown", "env-unknown"])
+def test_mutation_the_old_shape_check_would_skip_unclassifiable_history(
+    monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    records = dict(_unclassifiable())[name]
     assert initial_release_lineage_errors(
         records, environment="production", manifest_digest=THIS
     ) != []
+
+    def old_shape_check(record):
+        lease = record.get("lease") if isinstance(record, dict) else None
+        if not isinstance(lease, dict) or not isinstance(record.get("state"), str):
+            return "cannot be classified"
+        return None
+
+    monkeypatch.setattr(release_manifest, "_lineage_record_problem", old_shape_check)
+    assert initial_release_lineage_errors(
+        records, environment="production", manifest_digest=THIS
+    ) == []
 
 
 def test_dev_keeps_its_live_readback_semantics() -> None:
@@ -713,7 +823,19 @@ def _admit(
     receipt: dict | None,
     prior_production_digest: str | None = None,
     now: datetime | None = None,
+    lineage: str | None = "production",
+    production_records: list[dict] | None = None,
 ) -> tuple[int, dict, dict, LeaseStateStore]:
+    """Admit *manifest* into *environment* with separate per-environment stores.
+
+    As deployed, staging and production each have their own lease store
+    (``vars.ODP_RELEASE_LEASE_STATE_URI`` per environment). Production's
+    history -- ``prior_production_digest`` and ``production_records`` -- is
+    written to production's store; a staging admission sees it only through
+    ``--lineage-state-uri``. ``lineage`` is ``"production"`` (pass production's
+    store to a staging admission), ``None`` (pass nothing), or a literal value.
+    """
+
     private_pem, public_pem = generate_keypair()
     private_key = load_pem_private_key(private_pem, password=None)
     (tmp_path / "lease.pub").write_bytes(public_pem)
@@ -722,6 +844,14 @@ def _admit(
         json.dumps(_registry(manifest["manifest_digest"], environment)), encoding="utf-8"
     )
     store = LeaseStateStore(tmp_path / "leases")
+    production_dir = (
+        tmp_path / "leases" if environment == "production" else tmp_path / "production-leases"
+    )
+    production_store = LeaseStateStore(production_dir)
+    for index, raw in enumerate(production_records or []):
+        (production_dir / f"lease-{index:032x}.json").write_text(
+            json.dumps(raw), encoding="utf-8"
+        )
     if prior_production_digest is not None:
         prior = build_lease(
             task_id=TASK_ID,
@@ -732,8 +862,8 @@ def _admit(
             allowed_action="deploy",
             private_key=private_key,
         )
-        store.record_issued(prior)
-        store.consume(prior, consumed_by="earlier-production-admission")
+        production_store.record_issued(prior)
+        production_store.consume(prior, consumed_by="earlier-production-admission")
     lease = build_lease(
         task_id=TASK_ID,
         release_id=manifest["release_id"],
@@ -761,6 +891,11 @@ def _admit(
     if receipt is not None:
         (tmp_path / "initial.json").write_text(json.dumps(receipt), encoding="utf-8")
         argv += ["--initial-release-receipt", str(tmp_path / "initial.json")]
+    if lineage == "production":
+        if environment == "staging":
+            argv += ["--lineage-state-uri", str(production_dir)]
+    elif lineage is not None:
+        argv += ["--lineage-state-uri", lineage]
     code = admission_main(argv)
     result = json.loads((tmp_path / "receipt.json").read_text(encoding="utf-8"))
     return code, result, lease, store
@@ -907,6 +1042,124 @@ def test_staging_admission_is_also_closed_by_a_production_admission(
     assert store.get(lease["lease_id"])["state"] == STATE_ISSUED
 
 
+def test_staging_reads_production_history_from_production_s_store(
+    tmp_path: Path, staging_manifest: dict
+) -> None:
+    """The reviewer's case: production admitted A in its own store; B into staging.
+
+    Staging's own store holds nothing but B's staging lease, so it alone would
+    say "production never admitted anything".
+    """
+
+    code, result, lease, store = _admit(
+        tmp_path, staging_manifest, environment="staging",
+        receipt=_fresh(staging_manifest, "staging"),
+        prior_production_digest=OTHER,
+    )
+    assert code != 0
+    assert any("production already admitted" in e for e in result["errors"])
+    assert store.get(lease["lease_id"])["state"] == STATE_ISSUED
+    assert initial_release_lineage_errors(
+        store.list_records(), environment="staging",
+        manifest_digest=staging_manifest["manifest_digest"],
+    ) == []
+
+
+def _staging_lineage_refusals(tmp_path: Path) -> list[tuple[str, dict, str]]:
+    return [
+        ("not-supplied", {"lineage": None}, "needs production's lease store"),
+        ("own-store", {"lineage": str(tmp_path / "leases")}, "the staging lease store itself"),
+        ("absent", {"lineage": str(tmp_path / "no-such-store")}, "cannot open production"),
+        (
+            "not-production-store",
+            {"production_records": [_record(STATE_ISSUED, "staging", OTHER)]},
+            "is not production's lease store",
+        ),
+        (
+            "unclassifiable",
+            {"production_records": [{"state": "consumed", "lease": {}}]},
+            "refusing an initial-release admission rather than guessing",
+        ),
+    ]
+
+
+@pytest.mark.parametrize("case", range(5), ids=[
+    "not-supplied", "own-store", "absent", "not-production-store", "unclassifiable",
+])
+def test_staging_without_trustworthy_production_history_is_refused_unspent(
+    tmp_path: Path, staging_manifest: dict, case: int
+) -> None:
+    _name, kwargs, expected = _staging_lineage_refusals(tmp_path)[case]
+    code, result, lease, store = _admit(
+        tmp_path, staging_manifest, environment="staging",
+        receipt=_fresh(staging_manifest, "staging"), **kwargs,
+    )
+
+    assert code != 0
+    assert result["admitted"] is False
+    assert any(expected in e for e in result["errors"]), result["errors"]
+    assert store.get(lease["lease_id"])["state"] == STATE_ISSUED
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_unclassifiable_production_history_leaves_the_lease_unspent(
+    tmp_path: Path, staging_manifest: dict, environment: str
+) -> None:
+    bad = _record(STATE_CONSUMED, "production", OTHER)
+    bad["state"] = "unknown"
+    code, result, lease, store = _admit(
+        tmp_path, staging_manifest, environment=environment,
+        receipt=_fresh(staging_manifest, environment), production_records=[bad],
+    )
+
+    assert code != 0
+    assert any("has state 'unknown'" in e for e in result["errors"])
+    assert store.get(lease["lease_id"])["state"] == STATE_ISSUED
+
+
+def test_production_refuses_a_lineage_store_other_than_its_own(
+    tmp_path: Path, staging_manifest: dict
+) -> None:
+    (tmp_path / "elsewhere").mkdir()
+    code, result, lease, store = _admit(
+        tmp_path, staging_manifest, environment="production",
+        receipt=_fresh(staging_manifest, "production"),
+        lineage=str(tmp_path / "elsewhere"),
+    )
+
+    assert code != 0
+    assert any("reads its lineage from its own lease store" in e for e in result["errors"])
+    assert store.get(lease["lease_id"])["state"] == STATE_ISSUED
+
+
+def test_an_ordinary_staging_release_never_opens_production_s_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--lineage-state-uri is ignored unless the manifest is a first release."""
+
+    opened: list[str] = []
+    real = check_runtime_admission.LeaseStateStore
+
+    def recording(path, **kwargs):
+        opened.append(str(path))
+        return real(path, **kwargs)
+
+    monkeypatch.setattr(check_runtime_admission, "LeaseStateStore", recording)
+    (tmp_path / "leases").mkdir()
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"rollback_release": {"release_id": "x"}}), encoding="utf-8"
+    )
+    check_runtime_admission.main([
+        "--sha", SHA, "--environment", "staging", "--task-id", TASK_ID,
+        "--lease-file", str(tmp_path / "missing-lease.json"),
+        "--lease-state-dir", str(tmp_path / "leases"),
+        "--manifest", str(tmp_path / "manifest.json"),
+        "--lineage-state-uri", str(tmp_path / "production-leases"),
+        "--receipt", str(tmp_path / "receipt.json"),
+    ])
+    assert str(tmp_path / "production-leases") not in opened
+
+
 def test_an_ordinary_release_is_not_asked_for_a_readback(tmp_path: Path) -> None:
     """The branch adds nothing to a release that binds its predecessor."""
 
@@ -967,12 +1220,39 @@ def test_mutation_without_the_lineage_guard_a_second_first_release_would_admit(
     assert code == 0, result.get("errors")
 
 
+def test_mutation_reading_staging_s_own_store_would_admit_after_production(
+    tmp_path: Path, staging_manifest: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reverting to the staging store as lineage source re-opens the bypass."""
+
+    (tmp_path / "guarded").mkdir()
+    (tmp_path / "mutant").mkdir()
+    receipt = _fresh(staging_manifest, "staging")
+    code, _, _, _ = _admit(
+        tmp_path / "guarded", staging_manifest, environment="staging",
+        receipt=receipt, prior_production_digest=OTHER,
+    )
+    assert code != 0
+
+    # The pre-fix verifier: staging answers the lineage question from the
+    # store it was admitted against, i.e. its own.
+    monkeypatch.setattr(check_runtime_admission, "INITIAL_RELEASE_LINEAGE_TARGET", "staging")
+    code, result, lease, store = _admit(
+        tmp_path / "mutant", staging_manifest, environment="staging",
+        receipt=receipt, prior_production_digest=OTHER, lineage=None,
+    )
+    assert code == 0, result.get("errors")
+    assert store.get(lease["lease_id"])["state"] == STATE_CONSUMED
+
+
 def test_mutation_widening_the_admission_path_to_dev_sealed_records_is_caught(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """If dev records were admissible into production, this suite must notice."""
+    """If dev records were admissible into production, this suite must notice.
 
-    from delivery_toolchain.release import release_manifest
+    Two guards stand in the way: the admission path itself, and the missing
+    production ``promotion_recovery`` a dev seal never carries.
+    """
 
     manifest = first_release(
         initial_release_readback=readback("dev"), target_environment="dev",
@@ -984,13 +1264,125 @@ def test_mutation_widening_the_admission_path_to_dev_sealed_records_is_caught(
         release_manifest.INITIAL_RELEASE_ADMISSIBLE_ENVIRONMENTS,
         "dev", ("dev", "production"),
     )
+    widened = validate_release_admission(manifest, environment="production")
+    assert widened and all(
+        INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD in error for error in widened
+    ), widened
+
+    monkeypatch.setattr(release_manifest, "expected_promotion_recovery", lambda _env: None)
     assert validate_release_admission(manifest, environment="production") == []
+
+
+# --------------------------------------------------------------------------
+# Recovery semantics: each environment's record says what its failure path does
+# --------------------------------------------------------------------------
+
+
+def test_staging_seals_its_forensic_hold_and_production_s_cleanup(
+    staging_manifest: dict,
+) -> None:
+    recovery = staging_manifest["initial_release_recovery"]
+
+    assert recovery["recovery_method"] == INITIAL_RELEASE_STAGING_RECOVERY_METHOD
+    assert recovery["recovery_actions"] == list(INITIAL_RELEASE_STAGING_RECOVERY_ACTIONS)
+    assert recovery[INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD] == {
+        "environment": "production",
+        "recovery_method": INITIAL_RELEASE_RECOVERY_METHOD,
+        "recovery_actions": list(INITIAL_RELEASE_RECOVERY_ACTIONS),
+    }
+    assert initial_release_admission_recovery(recovery, "staging") == (
+        INITIAL_RELEASE_STAGING_RECOVERY_METHOD,
+        list(INITIAL_RELEASE_STAGING_RECOVERY_ACTIONS),
+    )
+    assert initial_release_admission_recovery(recovery, "production") == (
+        INITIAL_RELEASE_RECOVERY_METHOD,
+        list(INITIAL_RELEASE_RECOVERY_ACTIONS),
+    )
+    assert initial_release_admission_recovery(recovery, "dev") is None
+
+
+def test_the_staging_recovery_promises_no_deletion_and_no_traffic_change() -> None:
+    method, actions = INITIAL_RELEASE_ENVIRONMENT_RECOVERY["staging"]
+    for word in ("delete", "zero-traffic"):
+        assert word not in method
+        assert not any(word in action for action in actions)
+    assert INITIAL_RELEASE_ENVIRONMENT_RECOVERY["dev"] == (
+        INITIAL_RELEASE_RECOVERY_METHOD, INITIAL_RELEASE_RECOVERY_ACTIONS
+    )
+    assert INITIAL_RELEASE_ENVIRONMENT_RECOVERY["production"] == (
+        INITIAL_RELEASE_RECOVERY_METHOD, INITIAL_RELEASE_RECOVERY_ACTIONS
+    )
+
+
+def test_the_staging_record_matches_the_workflow_s_staging_failure_path() -> None:
+    """Anti-drift: staging failure holds; it neither deletes nor moves traffic."""
+
+    workflow = (ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
+    start = workflow.index("- name: Hold ephemeral staging resources on failure")
+    end = workflow.index("- name:", start + 1)
+    step = workflow[start:end]
+
+    assert "failure() && inputs.environment == 'staging'" in step
+    assert "staging_lifecycle.py hold" in step
+    for forbidden in ("delete", "update-traffic", "cleanup"):
+        assert forbidden not in step
+
+
+def test_a_dev_seal_is_unchanged_and_carries_no_promotion() -> None:
+    manifest = first_release(
+        initial_release_readback=readback("dev"), target_environment="dev",
+        release_profile="full",
+    )
+    recovery = manifest["initial_release_recovery"]
+
+    assert INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD not in recovery
+    assert recovery["recovery_method"] == INITIAL_RELEASE_RECOVERY_METHOD
+    # A dev record's binding digest is computed exactly as before this change.
+    assert recovery["binding_digest"] == compute_initial_release_binding_digest(
+        candidate_sha=SHA,
+        components=manifest["components"],
+        target_environment="dev",
+        recovery_method=INITIAL_RELEASE_RECOVERY_METHOD,
+        readback=recovery["absence_readback"],
+    )
+
+    forged = copy.deepcopy(manifest)
+    forged["initial_release_recovery"][INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD] = {
+        "environment": "production",
+        "recovery_method": INITIAL_RELEASE_RECOVERY_METHOD,
+        "recovery_actions": list(INITIAL_RELEASE_RECOVERY_ACTIONS),
+    }
+    forged["manifest_digest"] = compute_manifest_digest(forged)
+    assert any(
+        "is not allowed for a record sealed for 'dev'" in error
+        for error in validate_release_admission(forged, environment="dev")
+    )
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_a_receipt_stating_the_other_environment_s_recovery_is_refused(
+    staging_manifest: dict, environment: str
+) -> None:
+    other = "production" if environment == "staging" else "staging"
+    receipt = admission_receipt(staging_manifest, environment)
+    method, actions = initial_release_admission_recovery(
+        staging_manifest["initial_release_recovery"], other
+    )
+    receipt.update(recovery_method=method, recovery_actions=list(actions))
+
+    errors = initial_release_verification_errors(
+        receipt, manifest=staging_manifest, environment=environment, now=NOW
+    )
+    assert any("recovery_method does not match" in e for e in errors)
+    assert any("recovery_actions does not match" in e for e in errors)
 
 
 def test_the_workflow_passes_the_admission_readback_to_the_verifier() -> None:
     workflow = (ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
 
     assert "--initial-release-receipt" in workflow
+    assert "--lineage-state-uri" in workflow
+    assert "vars.ODP_PRODUCTION_RELEASE_LEASE_STATE_URI" in workflow
     assert '--staging-release-id "odp-${ODAY_RELEASE_SHA:0:12}"' in workflow
     assert os.path.basename(
         "${RELEASE_RECEIPT_DIR}/initial-release-recovery-receipt.json"

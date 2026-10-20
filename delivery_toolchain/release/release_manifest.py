@@ -284,10 +284,12 @@ RUNTIME_FOUNDATION_MODULE_FILES = (
 #   digests, this target environment, and this recovery method, so the record
 #   cannot be lifted onto another release, replayed after a rebuild, or
 #   re-pointed at another environment;
-# * ``recovery_method`` states what recovery actually is for a first release --
-#   delete the candidate and hold zero traffic. A first release has no earlier
-#   version, so a record that promised a rollback would be promising something
-#   that does not exist; and
+# * ``recovery_method`` states what recovery actually is for a first release in
+#   the environment it is admitted into -- delete the candidate and hold zero
+#   traffic for dev and production, hold the release-scoped namespace for
+#   forensics in ephemeral staging (:data:`INITIAL_RELEASE_ENVIRONMENT_RECOVERY`).
+#   A first release has no earlier version, so a record that promised a
+#   rollback would be promising something that does not exist; and
 # * it is sealed only for :data:`INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS` (dev,
 #   and staging as the leg of production's first release), admitted only along
 #   :data:`INITIAL_RELEASE_ADMISSIBLE_ENVIRONMENTS`, and refused for any release
@@ -315,6 +317,39 @@ INITIAL_RELEASE_RECOVERY_ACTIONS = (
     "hold-zero-traffic",
 )
 
+#: Ephemeral staging does not delete a failed first release: the deploy
+#: workflow's failure step runs ``staging_lifecycle.py hold``, which retains the
+#: release-scoped namespace for forensic inspection until its TTL, and the
+#: namespace is destroyed later by ``staging_lifecycle.py cleanup``. Nothing is
+#: deleted and no traffic is moved at failure time; the namespace is created for
+#: this release alone, so no other release's traffic depends on it. Naming the
+#: hold here keeps a staging record from promising a cleanup staging does not
+#: perform.
+INITIAL_RELEASE_STAGING_RECOVERY_METHOD = "forensic-hold-release-scoped-namespace"
+INITIAL_RELEASE_STAGING_RECOVERY_ACTIONS = (
+    "hold-release-scoped-namespace-for-forensics",
+    "cleanup-release-scoped-namespace-after-ttl",
+)
+
+#: What a first-release failure actually does, per environment it is admitted
+#: into. Dev and production run ``deploy_cloud_run_waji.sh``'s
+#: ``initial-release-cleanup`` (delete the candidate, keep zero traffic);
+#: staging runs the forensic hold above.
+INITIAL_RELEASE_ENVIRONMENT_RECOVERY = {
+    "dev": (INITIAL_RELEASE_RECOVERY_METHOD, INITIAL_RELEASE_RECOVERY_ACTIONS),
+    "staging": (
+        INITIAL_RELEASE_STAGING_RECOVERY_METHOD,
+        INITIAL_RELEASE_STAGING_RECOVERY_ACTIONS,
+    ),
+    "production": (INITIAL_RELEASE_RECOVERY_METHOD, INITIAL_RELEASE_RECOVERY_ACTIONS),
+}
+
+#: A record sealed for one environment but admissible into another states the
+#: other environment's recovery here, sealed under the binding digest, so the
+#: manifest production admits says what production's recovery is rather than
+#: staging's.
+INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD = "promotion_recovery"
+
 #: The build targets that may *seal* an initial-release record
 #: (ODP-CORE-OPS-FIRST-RELEASE-ROLLBACK-001). Production is never one: it only
 #: receives the manifest staging sealed and rehearsed, so production is reached
@@ -336,6 +371,13 @@ INITIAL_RELEASE_ADMISSIBLE_ENVIRONMENTS = {
 #: other manifest. Dev keeps its unchanged live-readback semantics.
 INITIAL_RELEASE_LINEAGE_ENVIRONMENTS = ("staging", "production")
 INITIAL_RELEASE_LINEAGE_TARGET = "production"
+
+#: What a lineage record has to say before it may be skipped as unrelated.
+#: Mirrors ``release_lease.LEASE_STATES`` (anti-drift test in tests/release); a
+#: record outside these values is not "some other environment's lease", it is
+#: a record nobody can classify, and a first release is refused over it.
+INITIAL_RELEASE_LINEAGE_LEASE_STATES = ("issued", "consumed", "revoked")
+INITIAL_RELEASE_LINEAGE_KNOWN_ENVIRONMENTS = ("dev", "staging", "production")
 
 #: An admission readback older than this is not a statement about the target
 #: the deploy is about to touch. The probe and the verifier run back to back in
@@ -1162,6 +1204,7 @@ def compute_initial_release_binding_digest(
     target_environment: Any,
     recovery_method: Any,
     readback: Any,
+    promotion_recovery: Any = None,
 ) -> str:
     """Bind an initial-release admission to one candidate, image set, and target.
 
@@ -1171,6 +1214,9 @@ def compute_initial_release_binding_digest(
     release without a rollback binding.  Binding it to the candidate SHA, the
     component image digests, the target environment, and the recovery method is
     what keeps it a statement about *this* release into *this* target.
+
+    ``promotion_recovery`` is bound only when the record carries one (a staging
+    seal), so a dev record's digest is unchanged.
     """
 
     payload = {
@@ -1180,6 +1226,8 @@ def compute_initial_release_binding_digest(
         "recovery_method": recovery_method,
         "absence_readback": initial_release_readback_payload(readback),
     }
+    if promotion_recovery is not None:
+        payload[INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD] = promotion_recovery
     encoded = json.dumps(
         payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
@@ -1217,27 +1265,87 @@ def build_initial_release_recovery(
     """
 
     readback = copy.deepcopy(absence_readback)
+    recovery_method, recovery_actions = _sealed_recovery(target_environment)
     recovery: dict[str, Any] = {
         "kind": INITIAL_RELEASE_RECOVERY_KIND,
         "target_environment": target_environment,
-        "recovery_method": INITIAL_RELEASE_RECOVERY_METHOD,
-        "recovery_actions": list(INITIAL_RELEASE_RECOVERY_ACTIONS),
+        "recovery_method": recovery_method,
+        "recovery_actions": list(recovery_actions),
         # Stated rather than implied. A first release has no earlier version, so
-        # the honest recovery is to remove the candidate and stay at zero
-        # traffic; recording "no rollback target" is what stops an operator
-        # reading this manifest as an offer to roll back.
+        # the honest recovery is to remove the candidate (or, in ephemeral
+        # staging, hold its own namespace); recording "no rollback target" is
+        # what stops an operator reading this manifest as an offer to roll back.
         "rollback_target_available": False,
         "prior_release_absent": _derived_prior_release_absent(readback),
         "absence_readback": readback,
     }
+    promotion_recovery = expected_promotion_recovery(target_environment)
+    if promotion_recovery is not None:
+        recovery[INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD] = promotion_recovery
     recovery["binding_digest"] = compute_initial_release_binding_digest(
         candidate_sha=candidate_sha,
         components=components,
         target_environment=target_environment,
-        recovery_method=INITIAL_RELEASE_RECOVERY_METHOD,
+        recovery_method=recovery_method,
         readback=readback,
+        promotion_recovery=promotion_recovery,
     )
     return recovery
+
+
+def _sealed_recovery(target_environment: Any) -> tuple[str, tuple[str, ...]]:
+    """Return the recovery a record sealed for *target_environment* must state.
+
+    An environment that may not seal at all falls back to the dev/production
+    method; the record is refused for its target anyway.
+    """
+
+    if target_environment in INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS:
+        return INITIAL_RELEASE_ENVIRONMENT_RECOVERY[target_environment]
+    return INITIAL_RELEASE_RECOVERY_METHOD, INITIAL_RELEASE_RECOVERY_ACTIONS
+
+
+def expected_promotion_recovery(target_environment: Any) -> dict[str, Any] | None:
+    """Return the sealed recovery for the one environment a record is promoted into.
+
+    ``None`` for a record admissible only where it was sealed (dev).
+    """
+
+    promoted = [
+        environment
+        for environment in initial_release_admissible_environments(target_environment)
+        if environment != target_environment
+    ]
+    if not promoted:
+        return None
+    (environment,) = promoted
+    method, actions = INITIAL_RELEASE_ENVIRONMENT_RECOVERY[environment]
+    return {
+        "environment": environment,
+        "recovery_method": method,
+        "recovery_actions": list(actions),
+    }
+
+
+def initial_release_admission_recovery(
+    recovery: Any, environment: Any
+) -> tuple[Any, Any] | None:
+    """Return the ``(recovery_method, recovery_actions)`` *recovery* states for
+    an admission into *environment*, or ``None`` when it states none.
+
+    The sealed target's recovery is the record's own; a promotion target's is
+    its ``promotion_recovery``. Nothing here is derived from code, so an
+    admission receipt is checked against what the admitted manifest says.
+    """
+
+    if not isinstance(recovery, dict):
+        return None
+    if environment == recovery.get("target_environment"):
+        return recovery.get("recovery_method"), recovery.get("recovery_actions")
+    promotion = recovery.get(INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD)
+    if isinstance(promotion, dict) and promotion.get("environment") == environment:
+        return promotion.get("recovery_method"), promotion.get("recovery_actions")
+    return None
 
 
 def initial_release_readback_errors(
@@ -1419,7 +1527,11 @@ def initial_release_recovery_errors(
     for field in INITIAL_RELEASE_RECOVERY_FIELDS:
         if field not in recovery:
             errors.append(f"{label} missing required field: {field}")
-    unknown = sorted(set(recovery) - set(INITIAL_RELEASE_RECOVERY_FIELDS))
+    unknown = sorted(
+        set(recovery)
+        - set(INITIAL_RELEASE_RECOVERY_FIELDS)
+        - {INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD}
+    )
     if unknown:
         errors.append(
             f"{label} carries fields the binding digest does not cover: "
@@ -1448,18 +1560,33 @@ def initial_release_recovery_errors(
             f"admissible only into {list(admissible)}"
         )
 
+    expected_method, expected_actions = _sealed_recovery(target_environment)
     recovery_method = recovery.get("recovery_method")
-    if recovery_method != INITIAL_RELEASE_RECOVERY_METHOD:
+    if recovery_method != expected_method:
         errors.append(
-            f"{label}.recovery_method must be {INITIAL_RELEASE_RECOVERY_METHOD!r}; "
-            f"got {recovery_method!r}. There is no earlier release to roll back to, "
-            "so recovery is deleting the candidate and holding zero traffic"
+            f"{label}.recovery_method must be {expected_method!r} for a record sealed "
+            f"for {target_environment!r}; got {recovery_method!r}. There is no "
+            "earlier release to roll back to, and the record has to state what this "
+            "environment's failure path actually does"
         )
-    if recovery.get("recovery_actions") != list(INITIAL_RELEASE_RECOVERY_ACTIONS):
+    if recovery.get("recovery_actions") != list(expected_actions):
         errors.append(
-            f"{label}.recovery_actions must be "
-            f"{list(INITIAL_RELEASE_RECOVERY_ACTIONS)}; the recovery a first release "
-            "can perform is not open to redefinition by the manifest"
+            f"{label}.recovery_actions must be {list(expected_actions)}; the recovery "
+            "a first release can perform is not open to redefinition by the manifest"
+        )
+    expected_promotion = expected_promotion_recovery(target_environment)
+    promotion = recovery.get(INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD)
+    if expected_promotion is None and INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD in recovery:
+        errors.append(
+            f"{label}.{INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD} is not allowed for a "
+            f"record sealed for {target_environment!r}; it is admissible nowhere else"
+        )
+    elif expected_promotion is not None and promotion != expected_promotion:
+        errors.append(
+            f"{label}.{INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD} must be "
+            f"{expected_promotion!r}; a record promoted into "
+            f"{expected_promotion['environment']!r} has to state that environment's "
+            "own recovery"
         )
     if recovery.get("rollback_target_available") is not False:
         errors.append(
@@ -1501,6 +1628,7 @@ def initial_release_recovery_errors(
             target_environment=target_environment,
             recovery_method=recovery_method,
             readback=readback,
+            promotion_recovery=promotion,
         )
         if recorded_binding != expected_binding:
             errors.append(
@@ -1589,15 +1717,31 @@ def initial_release_verification_errors(
                 f"{label}.{field} does not match the admitted manifest; the readback "
                 "was not taken for this release"
             )
-    for field in ("target_environment", "recovery_method", "binding_digest"):
+    for field in ("target_environment", "binding_digest"):
         if receipt.get(field) != recovery.get(field):
             errors.append(
                 f"{label}.{field} does not match manifest.initial_release_recovery"
             )
-    if receipt.get("recovery_actions") != recovery.get("recovery_actions"):
+    # The recovery this admission commits to is the one the manifest states
+    # for *this* environment, not the sealed target's.
+    stated = initial_release_admission_recovery(recovery, environment)
+    if stated is None:
         errors.append(
-            f"{label}.recovery_actions does not match manifest.initial_release_recovery"
+            f"{label}: manifest.initial_release_recovery states no recovery for "
+            f"{environment!r}"
         )
+    else:
+        stated_method, stated_actions = stated
+        if receipt.get("recovery_method") != stated_method:
+            errors.append(
+                f"{label}.recovery_method does not match the recovery "
+                f"manifest.initial_release_recovery states for {environment!r}"
+            )
+        if receipt.get("recovery_actions") != stated_actions:
+            errors.append(
+                f"{label}.recovery_actions does not match the recovery "
+                f"manifest.initial_release_recovery states for {environment!r}"
+            )
     if receipt.get("rollback_target_available") is not False:
         errors.append(f"{label}.rollback_target_available must be False")
     if receipt.get("verified_absent") is not True:
@@ -1647,8 +1791,14 @@ def initial_release_lineage_errors(
     *,
     environment: str,
     manifest_digest: Any,
+    lineage_target_store: bool = False,
 ) -> list[str]:
     """Return why the durable lease history says this is not a first release.
+
+    *lease_records* must be the lineage target's (production's) lease store:
+    production's own store for a production admission, and for a staging
+    admission the same production store read across environments -- staging's
+    own store never holds a production admission, so it cannot answer this.
 
     Live absence can be manufactured by deleting services; the Supervisor's
     lease store cannot. Once any production lease has been consumed for a
@@ -1657,7 +1807,12 @@ def initial_release_lineage_errors(
     bind it as ``rollback_release``. A consumed lease for *this* manifest is a
     retry of the same first release and does not count against it.
 
-    A record that cannot be classified is refused rather than skipped.
+    A record is skipped as unrelated only after it has been classified: a known
+    state, a known lease environment, matching lease ids, and -- for a
+    production record -- a well-formed manifest digest. Anything else is
+    refused rather than read as "production never admitted anything". With
+    ``lineage_target_store`` every record must also be a production lease; a
+    store holding anything else is not the production store.
     """
 
     if environment not in INITIAL_RELEASE_LINEAGE_ENVIRONMENTS:
@@ -1669,18 +1824,27 @@ def initial_release_lineage_errors(
         ]
     errors: list[str] = []
     for index, record in enumerate(lease_records):
-        lease = record.get("lease") if isinstance(record, dict) else None
-        if not isinstance(lease, dict) or not isinstance(record.get("state"), str):
+        problem = _lineage_record_problem(record)
+        if problem is None and lineage_target_store:
+            lease_environment = record["lease"]["target_environment"]
+            if lease_environment != INITIAL_RELEASE_LINEAGE_TARGET:
+                problem = (
+                    f"is a {lease_environment!r} lease, so the store read as "
+                    f"{INITIAL_RELEASE_LINEAGE_TARGET}'s lineage is not "
+                    f"{INITIAL_RELEASE_LINEAGE_TARGET}'s lease store"
+                )
+        if problem is not None:
             errors.append(
-                f"durable lease record #{index} cannot be classified; refusing an "
+                f"durable lease record #{index} {problem}; refusing an "
                 "initial-release admission rather than guessing"
             )
             continue
-        if lease.get("target_environment") != INITIAL_RELEASE_LINEAGE_TARGET:
+        lease = record["lease"]
+        if lease["target_environment"] != INITIAL_RELEASE_LINEAGE_TARGET:
             continue
-        if record.get("state") != "consumed":
+        if record["state"] != "consumed":
             continue
-        if lease.get("manifest_digest") == manifest_digest:
+        if lease["manifest_digest"] == manifest_digest:
             continue
         errors.append(
             f"{INITIAL_RELEASE_LINEAGE_TARGET} already admitted release "
@@ -1690,6 +1854,39 @@ def initial_release_lineage_errors(
             "rollback_release"
         )
     return errors
+
+
+def _lineage_record_problem(record: Any) -> str | None:
+    """Return why *record* cannot be classified, or ``None`` when it can."""
+
+    if not isinstance(record, dict):
+        return "is not an object"
+    lease = record.get("lease")
+    if not isinstance(lease, dict):
+        return "carries no lease object"
+    state = record.get("state")
+    if state not in INITIAL_RELEASE_LINEAGE_LEASE_STATES:
+        return (
+            f"has state {state!r}, not one of "
+            f"{list(INITIAL_RELEASE_LINEAGE_LEASE_STATES)}"
+        )
+    lease_id = lease.get("lease_id")
+    if not isinstance(lease_id, str) or not lease_id or record.get("lease_id") != lease_id:
+        return "does not carry one lease id on both the record and its lease"
+    lease_environment = lease.get("target_environment")
+    if lease_environment not in INITIAL_RELEASE_LINEAGE_KNOWN_ENVIRONMENTS:
+        return (
+            f"targets {lease_environment!r}, not one of "
+            f"{list(INITIAL_RELEASE_LINEAGE_KNOWN_ENVIRONMENTS)}"
+        )
+    if lease_environment == INITIAL_RELEASE_LINEAGE_TARGET and not is_sha256_digest(
+        lease.get("manifest_digest")
+    ):
+        return (
+            f"is a {INITIAL_RELEASE_LINEAGE_TARGET} lease without a sha256 manifest "
+            "digest, so whether it admitted this manifest is unknown"
+        )
+    return None
 
 
 def validate_manifest(
@@ -2906,8 +3103,14 @@ __all__ = [
     "INITIAL_RELEASE_ADMISSIBLE_ENVIRONMENTS",
     "INITIAL_RELEASE_ADMISSION_READBACK_MAX_AGE_SECONDS",
     "INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS",
+    "INITIAL_RELEASE_ENVIRONMENT_RECOVERY",
     "INITIAL_RELEASE_LINEAGE_ENVIRONMENTS",
+    "INITIAL_RELEASE_LINEAGE_KNOWN_ENVIRONMENTS",
+    "INITIAL_RELEASE_LINEAGE_LEASE_STATES",
     "INITIAL_RELEASE_LINEAGE_TARGET",
+    "INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD",
+    "INITIAL_RELEASE_STAGING_RECOVERY_ACTIONS",
+    "INITIAL_RELEASE_STAGING_RECOVERY_METHOD",
     "INITIAL_RELEASE_VERIFICATION_FIELDS",
     "INITIAL_RELEASE_VERIFICATION_KIND",
     "STAGING_RELEASE_TARGET_SUFFIXES",
@@ -2923,6 +3126,8 @@ __all__ = [
     "build_initial_release_recovery",
     "compute_initial_release_binding_digest",
     "initial_release_admissible_environments",
+    "initial_release_admission_recovery",
+    "expected_promotion_recovery",
     "initial_release_lineage_errors",
     "initial_release_readback_errors",
     "initial_release_readback_payload",

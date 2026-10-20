@@ -57,6 +57,10 @@ to keep secret, and one it does not have to share at all:
   that cannot reach it cannot admit, which is the intended failure: consuming a
   lease in a directory that disappears with the runner does not stop a replay
   anywhere that matters.
+* `--lineage-state-uri` / `ODP_PRODUCTION_RELEASE_LEASE_STATE_URI` - production's
+  lease store, read only by a staging admission of an initial-release manifest
+  (production's history is not in the staging store). Unset or unreadable, that
+  admission is refused before the lease is consumed.
 * the private key, which stays with the Supervisor and is never needed here.
 """
 
@@ -94,6 +98,7 @@ from delivery_toolchain.release.release_lease import (  # noqa: E402
 )
 from delivery_toolchain.release.release_manifest import (  # noqa: E402
     INITIAL_RELEASE_LINEAGE_ENVIRONMENTS,
+    INITIAL_RELEASE_LINEAGE_TARGET,
     component_binding_errors,
     initial_release_lineage_errors,
     initial_release_verification_errors,
@@ -270,6 +275,8 @@ def initial_release_admission_errors(
     receipt: Any,
     state_store: LeaseStateStore,
     now: datetime,
+    lineage_state_store: LeaseStateStore | None = None,
+    lineage_store_errors: list[str] | None = None,
 ) -> list[str]:
     """Return why a first-release manifest is not admissible *now*, *here*.
 
@@ -277,9 +284,15 @@ def initial_release_admission_errors(
     carries ``initial_release_recovery`` is admitted only with a fresh,
     digest-bound readback of this environment's target taken during this
     admission (ODP-CORE-OPS-FIRST-RELEASE-ROLLBACK-001), and -- for staging and
-    production -- only while the durable lease history shows production has
+    production -- only while production's durable lease history shows it has
     never admitted another release. Every refusal here lands in the errors that
     block consumption, so the single-use lease survives it.
+
+    Production's history lives in production's lease store. A production
+    admission reads it as its own ``state_store``. A staging admission's own
+    store holds only staging leases, so it must be handed production's store
+    as ``lineage_state_store``; without it, or when it cannot be read, the
+    staging admission is refused.
     """
 
     if not isinstance(manifest, dict) or manifest.get("initial_release_recovery") is None:
@@ -289,20 +302,58 @@ def initial_release_admission_errors(
             receipt, manifest=manifest, environment=environment, now=now
         )
     )
-    if environment in INITIAL_RELEASE_LINEAGE_ENVIRONMENTS:
-        try:
-            records: Any = state_store.list_records()
-        except LeaseStateError:
-            records = None
-        errors.extend(
-            error
-            for error in initial_release_lineage_errors(
-                records,
-                environment=environment,
-                manifest_digest=manifest.get("manifest_digest"),
+    if environment not in INITIAL_RELEASE_LINEAGE_ENVIRONMENTS:
+        return errors
+
+    lineage_errors: list[str] = list(lineage_store_errors or [])
+    records: Any = None
+    cross_environment = environment != INITIAL_RELEASE_LINEAGE_TARGET
+    if not cross_environment:
+        store: LeaseStateStore | None = state_store
+        if lineage_state_store is not None and str(lineage_state_store.directory) != str(
+            state_store.directory
+        ):
+            lineage_errors.append(
+                f"{INITIAL_RELEASE_LINEAGE_TARGET} admission reads its lineage from its "
+                "own lease store; a different --lineage-state-uri is refused"
             )
-            if error not in errors
+    else:
+        store = lineage_state_store
+        if store is None and not lineage_errors:
+            lineage_errors.append(
+                f"{environment} initial-release admission needs "
+                f"{INITIAL_RELEASE_LINEAGE_TARGET}'s lease store (--lineage-state-uri); "
+                f"the {environment} store never records a "
+                f"{INITIAL_RELEASE_LINEAGE_TARGET} admission, so it cannot prove "
+                f"{INITIAL_RELEASE_LINEAGE_TARGET} has never admitted a release"
+            )
+        elif store is not None and str(store.directory) == str(state_store.directory):
+            lineage_errors.append(
+                f"--lineage-state-uri names the {environment} lease store itself; "
+                f"{INITIAL_RELEASE_LINEAGE_TARGET}'s lineage has to be read from "
+                f"{INITIAL_RELEASE_LINEAGE_TARGET}'s store"
+            )
+            store = None
+    if store is not None and not lineage_errors:
+        try:
+            records = store.list_records()
+        except LeaseStateError as exc:
+            lineage_errors.append(
+                f"cannot read {INITIAL_RELEASE_LINEAGE_TARGET} lease history: {exc}"
+            )
+    if lineage_errors:
+        errors.extend(error for error in lineage_errors if error not in errors)
+        return errors
+    errors.extend(
+        error
+        for error in initial_release_lineage_errors(
+            records,
+            environment=environment,
+            manifest_digest=manifest.get("manifest_digest"),
+            lineage_target_store=cross_environment,
         )
+        if error not in errors
+    )
     return errors
 
 
@@ -322,6 +373,8 @@ def admit_release(
     allowed_action: str = DEFAULT_ACTION,
     consumed_by: str,
     initial_release_receipt: Any = None,
+    lineage_state_store: LeaseStateStore | None = None,
+    lineage_store_errors: list[str] | None = None,
     root: Path = ROOT,
     now: datetime | None = None,
 ) -> tuple[bool, list[str], dict[str, Any]]:
@@ -336,6 +389,8 @@ def admit_release(
             receipt=initial_release_receipt,
             state_store=state_store,
             now=now or datetime.now(UTC),
+            lineage_state_store=lineage_state_store,
+            lineage_store_errors=lineage_store_errors,
         )
         if error not in extra
     )
@@ -484,6 +539,17 @@ def main(argv: list[str] | None = None) -> int:
             "admitted manifest carries initial_release_recovery; ignored otherwise."
         ),
     )
+    parser.add_argument(
+        "--lineage-state-uri",
+        default="",
+        help=(
+            "Production's durable lease store (gs://bucket/prefix or directory), read "
+            "for a staging admission of an initial-release manifest so staging can "
+            "prove production never admitted another release. Required then; a "
+            "production admission reads its own --lease-state-dir and refuses a "
+            "different value here."
+        ),
+    )
     parser.add_argument("--receipt", type=Path, default=None)
     args = parser.parse_args(argv)
 
@@ -579,6 +645,24 @@ def main(argv: list[str] | None = None) -> int:
             return fail([f"--component-image expects NAME=REF, got: {raw!r}"])
         component_images[name.strip()] = ref.strip()
 
+    # Opened only when it can matter, so an ordinary release never needs access
+    # to another environment's store. Failure to open it is carried into the
+    # admission errors, which refuse before the lease is consumed.
+    lineage_state_store: LeaseStateStore | None = None
+    lineage_store_errors: list[str] = []
+    lineage_uri = str(args.lineage_state_uri or "").strip()
+    if (
+        lineage_uri
+        and isinstance(manifest, dict)
+        and manifest.get("initial_release_recovery") is not None
+    ):
+        try:
+            lineage_state_store = LeaseStateStore(lineage_uri, require_existing=True)
+        except LeaseStateError as exc:
+            lineage_store_errors.append(
+                f"cannot open {INITIAL_RELEASE_LINEAGE_TARGET} lease history: {exc}"
+            )
+
     initial_release_receipt: Any = None
     if args.initial_release_receipt is not None:
         try:
@@ -605,6 +689,8 @@ def main(argv: list[str] | None = None) -> int:
         allowed_action=args.action,
         consumed_by=_consumer_label(args.environment, args.release_sha),
         initial_release_receipt=initial_release_receipt,
+        lineage_state_store=lineage_state_store,
+        lineage_store_errors=lineage_store_errors,
         now=now,
     )
     # Digests are not secrets, and an admission receipt that does not say which
