@@ -112,7 +112,7 @@ Task: ODP-CORE-OPS-RELEASE-PROFILE-001 · Owner: Claude2 · Reviewer: Codex2
      - 缺 capabilities、缺 registry 證據或 registry 讀不到都直接失敗，不做任何推定。
    - 任何不符都會讓 stage 失敗，並沿用既有的 `hold` 流程。stage 回執記錄通過的模型檢查名稱（`model_checks`）。
    - 前提：registry 已綁定時，`/learninghub/models` 會檢查 `model` VIEW 權限，staging 演練身分若沒有這個權限會以 401/403 失敗（dependency 標為 `auth`），仍是 fail closed。registry 未綁定時，Learning Hub 的 runtime binding guard 在權限檢查前就回 503。
-4. **尚未涵蓋。** staging 尚未跑**完整的** `check_live_e2e_gate.py`（persistence、provider、worker、audit、租戶隔離、business journeys 等其他區段）。它需要 staging 目前沒有的 smoke 憑證、worker driver 與資料來源設定。後續項見 §7 的 F4。上面的模型最低檢查不在 F4 的延期範圍內，本 task 已實作。
+4. **完整 live gate（F4，已由 ODP-CORE-OPS-STAGING-LIVE-GATE-001 實作）。** staging verify 新增最後一個 stage `live_e2e_gate`，執行**完整的** `check_live_e2e_gate.py`（persistence、provider、auth、Web 受保護路由、模型、worker、audit、資料來源）。smoke 身分、worker driver 與 provider posture 的設定來源見 §12。上面的模型最低檢查保留在 `api_web_authenticated_smoke`，兩者不衝突。
 
 ## 5. Rollback 綁定盤點（首次 staging/production release）
 
@@ -144,7 +144,7 @@ Task: ODP-CORE-OPS-RELEASE-PROFILE-001 · Owner: Claude2 · Reviewer: Codex2
 | F1 `ODP-CORE-OPS-FIRST-RELEASE-ROLLBACK-BINDING` | 首次 staging/production release 的 rollback 綁定：決定是開放 `initial_release_recovery` 給 staging/production（含 absence readback 與 binding digest），還是以已 admitted 的前一個 dev manifest 作為 rollback 目標的明確政策 | Release owner + Human/Ops |
 | F2 `ODP-CORE-OPS-PROD-TERRAFORM-MODEL-CONTRACT` | `terraform_data.production_contract` 的模型 precondition 與 core-ops production 並存的方式（不得填假值；可能需要 profile-aware 的契約，且仍 fail closed） | Infra owner + ML Risk Owner |
 | F3 gate-3 | Model and Solver Gate 的 passed-with-deviation 由 Human/Ops 具名簽署（見 §8 草稿），或維持 blocked | Product Owner + ML Risk Owner |
-| F4 `ODP-CORE-OPS-STAGING-LIVE-GATE` | 在 staging 跑完整的 `check_live_e2e_gate.py`（需要 staging smoke 憑證、worker driver，並確認 provider posture） | Release owner |
+| F4 `ODP-CORE-OPS-STAGING-LIVE-GATE` | 在 staging 跑完整的 `check_live_e2e_gate.py`。**程式已由 ODP-CORE-OPS-STAGING-LIVE-GATE-001 實作（見 §12）**；實際 live 執行仍需 §12.5 的 Human/Ops 前置條件 | Release owner |
 | F5 | production 的 `staging-verified` registry stage 與 blue-green 路徑（既有阻擋，不屬於本 task） | Release owner |
 
 ## 8. gate-3 passed-with-deviation 草稿（DRAFT — 未簽署）
@@ -220,3 +220,86 @@ reopen_trigger: >
 - `apps/web` 的 vitest：`operatorReleaseStatus` 與 `OperatorAdminAccess`。
 
 本 task 沒有部署、沒有觸發 deploy workflow、沒有修改 `RELEASE_GATE_REGISTRY`、沒有修改 IAM。live staging/production 執行是 Human/Ops 的後續步驟，本 task 沒有宣稱已完成。
+
+## 12. Staging 完整 live E2E gate（F4）
+
+Task: ODP-CORE-OPS-STAGING-LIVE-GATE-001 · Owner: Claude2 · Reviewer: Codex2
+
+### 12.1 執行位置與判定
+
+- `staging_lifecycle.py verify` 的 live executor 新增第 10 個 stage `live_e2e_gate`，排在 `external_providers_disabled_readback` 之後，也就是在 rollback 演練把流量還原之後，對還原後的 release 執行。
+- 這個 stage 直接載入 canonical `check_live_e2e_gate.py`，呼叫它的 `evaluate_gate`，不另寫規則。`GateConfig.release_profile` 是 admitted manifest 的 profile（workflow 的 `--release-profile`，只來自 admission 輸出）：
+  - `core-ops`：缺模型必須如實拒絕（`runtime:model_limitation_reported`、`models:registry_refused` 等）。
+  - `full`：完整模型斷言（`runtime:model_bindings`、`models:*:lineage`）。
+  - 其他 profile（含 `dev-admin`、空值）在 gate 執行前就拒絕。
+- gate 回報任何 blocker，stage 就回 `success=false`。verify receipt 因此失敗，CLI exit 1，lifecycle 狀態寫成 `verification_failed`。workflow 既有的 `if: failure()` hold 步驟照常保留資源，流程沒有改。
+- receipt 的 stage proof 只放 `live_e2e_gate` 摘要：`ok`、profile 宣稱、每個 check 的名稱與結果、`blocking_dependencies`、`full_acceptance_status`。不放 URL、request detail、token。失敗時 `errors` 帶 blocker 名稱與經 gate redactor 處理過的 detail，並再用本次三個 token 做一次 redaction。gate 內部例外只回報例外型別。
+- staging 不提供 business journey receipt，所以 `full_acceptance_status` 不會是 `PASSED`。staging 演練證明的是 runtime gate，不是完整產品驗收。
+
+### 12.2 Staging smoke 帳號（身分來源）
+
+- **身分**：這個 release 自己的 runtime service account（`staging_runtime_service_account`）。它就是 verify 既有規定的 operator identity（`--operator-identity` 必須等於這個 output）。Terraform 隨 release 建立它，release destroy 時一起刪除。
+- **API 如何信任它**：模組只在 API 容器加上四個非機密 env：
+  - `ODP_AUTH_SERVICE_ISSUER=https://accounts.google.com`
+  - `ODP_AUTH_SERVICE_JWKS_URI=https://www.googleapis.com/oauth2/v3/certs`
+  - `ODP_AUTH_SERVICE_AUDIENCES=urn:odp:staging-smoke:<release_label>`
+  - `ODP_AUTH_PRINCIPAL_MAP`：只有一筆，key 是 `google_service_account.staging_runtime.unique_id`（ID token 的數字 `sub`），值是 `roles=["operations_manager","model_owner","data_owner"]` 與 `tenant_id=<release tenant>`。
+  
+  issuer/JWKS 與 root stack 的 `service_auth_*` 預設值相同。
+- **Token**：gate stage 執行時，以 `gcloud auth print-identity-token --impersonate-service-account=<runtime SA> --include-email` 現場簽發三個短效 ID token：
+  - smoke bearer（audience 是上面的 urn）
+  - API transport（audience 是 API URI）
+  - Web transport（audience 是 Web URI）
+
+  三個 token 只存在記憶體，不寫入檔案、receipt 或 log。
+- **沒有新增**：
+  - 沒有密碼。
+  - 沒有新 secret（模組的 secret 仍只有 database URL、cursor key、web session 三個）。
+  - 沒有新 IAM binding（模組的 `*_iam_member` 清單不變，有測試）。
+  - 沒有新 Terraform variable。
+  - 沒有讀取任何 dev 輸入：`ODP_DEV_ADMIN_*`、`ODP_DEV_ADMIN_CREDENTIAL_BUNDLE`、`ODP_OPERATOR_SMOKE_*`、`ODP_AUTH_PRINCIPAL_MAP_SECRET`、`ODP_IDENTITY_BOOTSTRAP_*`。staging 的 `GateConfig` 完全由 Terraform outputs 與 admitted manifest 組成，不讀 process env（有測試：即使 env 帶有 dev 值也不會進入 config）。
+- **為什麼不用 identity bootstrap 的密碼帳號**：bootstrap 只建立 `platform_admin`，而且 `must_change=true`。core-ops/full gate 需要的是帶有 operator、model、integration、audit 讀取權的 bearer principal（與 dev smoke 相同的三個角色），密碼帳號還得經過 Web 登入與換密碼流程，也需要新的 signing key secret。用 release 自己的 service identity 可以不新增任何 secret，而且帳號與環境同生同滅。
+- **銷毀**：principal map 只引用這個 release 的 runtime SA，該 SA 在 `plan_staging_resources` 與 release ownership inventory 中。cleanup 的 release-scoped `terraform destroy` 會同時刪除 SA 與帶著 principal map 的 API service。release 銷毀後，這個身分已不存在，map 也已不存在。
+
+### 12.3 Worker driver（設定來源）
+
+- `CloudRunWorkerDriver`，job 是 Terraform output `staging_worker_job_name`，region/project 是 verify 的 `--region`/`--project-id`，gcloud 執行檔是 executor 的 `gcloud_bin`。
+- 以 `--args=product_ops/deployment/cloud_run_job_entrypoint.py,worker,--max-jobs,4` 執行。gate 在 provider disabled 時只 enqueue 一個 probe job，再加上 replay。
+- 執行前先讀回 worker job 的 image 與 VPC egress，確認等於 Terraform output 並為 `ALL_TRAFFIC`。
+
+### 12.4 Provider posture（設定來源）
+
+- 模組把五個容器的 `ODP_EXTERNAL_PROVIDER_MODE` 都寫死為 `disabled`，沒有 variable 可以改。
+- gate 以 `external_provider_mode=disabled`、`required_provider_ids=()` 執行。它要求 runtime 回報 disabled，worker probe 對 `listing.partner_feed` 產生 `provider_mode_disabled` 的 BLOCKED receipt（`worker:terminal_disabled`），並且不得有任何 live ingestion。
+- 外部來源維持 disabled。本 task 沒有任何啟用路徑。
+
+### 12.5 Human/Ops 前置條件（本 task 沒有新增，也沒有設定）
+
+以下是**既有** verify stage 本來就依賴、這次 live gate 也依賴的條件。本 task 沒有修改 IAM、secret、網路或 workflow 變數；live staging 執行前需要由 Human/Ops 確認：
+
+1. **ID token 簽發權**：模組只授予 deployer `roles/iam.serviceAccountUser`（`actAs`），它不含 `iam.serviceAccounts.getOpenIdToken`。verify 既有的 `_live_identity_token` 與本 gate 都需要 deployer 對 release runtime SA 有 `roles/iam.serviceAccountOpenIdTokenCreator`（或在專案層級已有同等權限）。
+2. **Cloud Run invoker**：模組只授予 web SA 與 worker SA `run.invoker`。verify 以 runtime SA 的 token 讀 API 與 Web，需要 runtime SA 對兩個 service 有 `roles/run.invoker`（或在專案層級已有同等權限）。
+3. **API 可達性**：staging API 的 ingress 是 `INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER`。執行 verify 的 runner 必須在可到達它的網路路徑上（既有 `/platform/health` 讀取也是如此）。
+4. **JWKS 連線**：API 的 egress 是 `ALL_TRAFFIC`，經過 default-deny 的 VPC。驗證 smoke token 需要從 API 連到 `www.googleapis.com`（Private Google Access 與對應的 firewall/DNS）。GCS、Pub/Sub 本來就需要同樣的路徑。
+5. **既有 stage 的已知問題（不屬於本 task）**：`worker_idempotency` 以 `--max-jobs 1 --require-job` 執行 worker job。scheduler trigger 是 paused，演練中沒有其他步驟先 enqueue，所以佇列為空時這個 stage 會以 `required_job_not_claimed` 失敗。gate 的 worker 檢查（enqueue、replay、drain、terminal、audit）是自足的，不依賴這個 stage。
+
+這些條件不成立時，gate 會如實失敗（例如 `auth:operator_bootstrap` 401 的 dependency 是 `auth`），stage 失敗並進入 hold，不會被當成通過。
+
+### 12.6 測試
+
+`tests/ops/test_ephemeral_staging_lifecycle.py::StagingLiveE2EGateTests`：
+- core-ops 在 staging 以缺模型如實拒絕通過完整 gate，且所有區段都有實際執行。
+- `full` 套用完整模型斷言，對缺模型 runtime 失敗。
+- persistence、auth、Web 登入導向、worker drain、registry 不拒絕，每一種失敗都會讓 stage 失敗。
+- 不在 staging profile 清單中的 profile，不會進入 gate。
+- live verify 失敗會寫入 `verification_failed`，可被 hold。
+- 即使 API 回應內容夾帶三個 token，receipt 與 errors 中也不會出現 token。
+- 例外只回報型別。
+- `GateConfig` 不讀 dev 的 env。
+- worker driver 的 argv。
+- API/Web client 綁定 release origin 與 transport token。
+- Terraform 的 audience、角色、principal map 與 Python 釘選值一致。
+- 沒有新增 secret、IAM 或 dev 輸入。
+- smoke 身分是 release 擁有、會隨 release 刪除的資源。
+
+本 task 沒有部署、沒有觸發 deploy workflow、沒有修改 `RELEASE_GATE_REGISTRY`、IAM 或 secret。

@@ -3651,6 +3651,497 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
             self.assertTrue(any("immutable scheduler_image" in err for err in errors), errors)
 
 
+def _load_gate_fixtures() -> Any:
+    """The live gate's own passing-deployment doubles (tests/e2e)."""
+
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "staging_live_gate_fixtures", ROOT / "tests/e2e/test_live_e2e_gate_dev_admin.py"
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class StagingLiveE2EGateTests(unittest.TestCase):
+    """ODP-CORE-OPS-STAGING-LIVE-GATE-001: staging verify runs the complete gate."""
+
+    SMOKE_TOKEN = "staging-smoke-id-token-value"
+    API_TOKEN = "staging-api-transport-token-value"
+    WEB_TOKEN = "staging-web-transport-token-value"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.fx = _load_gate_fixtures()
+
+    def setUp(self) -> None:
+        self.release_id = "odp-20260824-001"
+        # The gate fixtures serve this SHA from /platform/version.
+        self.candidate_sha = self.fx.base.EXPECTED_SHA
+        self.manifest_digest = "sha256:" + "b" * 64
+        self.project_id = "oday-staging-proj"
+        self.now = datetime(2026, 8, 27, 6, 0, 0, tzinfo=UTC)
+        self.outputs = EphemeralStagingVerificationAndHoldTests._valid_outputs(self)
+
+    def _core_ops_routes(self, profile: str = "core-ops", **overrides: Any) -> dict[str, Any]:
+        readiness = self.fx.missing_model_readiness(profile)
+        readiness["details"]["deploymentMode"] = "staging"
+        return self.fx.api_routes(
+            **{"anon GET /readiness": self.fx.base.response(200, readiness), **overrides}
+        )
+
+    def _run_stage(
+        self,
+        routes: dict[str, Any],
+        profile: str = "core-ops",
+        *,
+        worker_ok: bool = True,
+        web_http: Any = None,
+    ) -> tuple[Mapping[str, Any], dict[str, Any]]:
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        seen: dict[str, Any] = {"tokens": [], "clients": []}
+        tokens = {
+            lifecycle.staging_smoke_token_audience(self.release_id): self.SMOKE_TOKEN,
+            self.outputs["staging_api_uri"]: self.API_TOKEN,
+            self.outputs["staging_web_uri"]: self.WEB_TOKEN,
+        }
+
+        def mint(*, audience: str, operator_identity: str, gcloud_bin: str) -> str:
+            seen["tokens"].append((audience, operator_identity))
+            return tokens[audience]
+
+        def describe(kind: str, name: str, **_kwargs: Any) -> dict[str, Any]:
+            return {"template": {"template": {
+                "containers": [{"image": self.outputs["staging_worker_image"]}],
+                "vpcAccess": {"egress": "ALL_TRAFFIC"},
+            }}}
+
+        def clients(config: Any, *, web_transport_token: str, correlation_id: str) -> Any:
+            seen["config"] = config
+            seen["clients"].append((web_transport_token, correlation_id))
+            return (
+                self.fx.base.FakeHttp(routes),
+                web_http if web_http is not None else self.fx.base.passing_web_http(),
+            )
+
+        def driver(config: Any, *, job: str, region: str, project_id: str, gcloud_bin: str) -> Any:
+            seen["driver"] = (job, region, project_id)
+            return self.fx.base.FakeWorkerDriver(ok=worker_ok)
+
+        with patch.object(lifecycle, "_live_gcloud", side_effect=lambda argv, **kw: argv[3] if argv[0] == "iam" else ""), \
+                patch.object(lifecycle, "_live_cloud_run_description", side_effect=describe), \
+                patch.object(lifecycle, "_live_identity_token", side_effect=mint), \
+                patch.object(lifecycle, "_live_gate_clients", side_effect=clients), \
+                patch.object(lifecycle, "_live_gate_worker_driver", side_effect=driver), \
+                patch.object(lifecycle, "_live_gate_correlation_id", return_value=self.fx.base.CORRELATION_ID), \
+                patch.object(lifecycle, "STAGING_LIVE_E2E_POLL_INTERVAL_SECONDS", 0.001):
+            executor = lifecycle.make_live_rehearsal_executor(
+                self.outputs,
+                project_id=self.project_id,
+                region="asia-east1",
+                operator_identity=self.outputs["staging_runtime_service_account"],
+            )
+            result = executor(
+                "live_e2e_gate",
+                {"release_profile": profile, "manifest_digest": self.manifest_digest},
+            )
+        return result, seen
+
+    def test_the_gate_is_the_last_rehearsal_stage(self) -> None:
+        from product_ops.deployment.staging_lifecycle import REHEARSAL_STAGE_NAMES
+
+        self.assertEqual(REHEARSAL_STAGE_NAMES[-1], "live_e2e_gate")
+        self.assertEqual(len(set(REHEARSAL_STAGE_NAMES)), 10)
+
+    def test_core_ops_staging_passes_the_complete_gate_with_missing_models_refused(self) -> None:
+        from product_ops.deployment.staging_lifecycle import (
+            STAGING_SMOKE_ROLES,
+            staging_smoke_token_audience,
+        )
+
+        result, seen = self._run_stage(self._core_ops_routes())
+
+        self.assertTrue(result["success"], result.get("detail"))
+        proof = result["live_e2e_gate"]
+        self.assertTrue(proof["ok"])
+        names = {check["name"] for check in proof["checks"]}
+        # The whole gate ran, not only the model subset staging already had.
+        self.assertTrue({
+            "config:release_profile_deployment",
+            "release:platform_version",
+            "runtime:readiness",
+            "runtime:persistence",
+            "runtime:release_profile",
+            "runtime:provider",
+            "runtime:model_limitation_reported",
+            "auth:anonymous_denied",
+            "auth:operator_bootstrap",
+            "auth:web_operator_requires_login",
+            "models:registry_refused",
+            "worker:enqueue",
+            "worker:idempotent_replay",
+            "worker:drain_trigger",
+            "worker:terminal_disabled",
+            "audit:durable_receipt",
+            "audit:receipt_integrity",
+        } <= names, names)
+        self.assertNotIn("runtime:model_bindings", names)
+        self.assertFalse(any(name.startswith(("session:", "admin:", "config:dev_admin")) for name in names))
+        self.assertEqual(
+            proof["release_profile"],
+            {"name": "core-ops", "model_readiness_claimed": False, "full_product_acceptance_claimed": False},
+        )
+        # Inputs come from the release's own Terraform outputs and identity.
+        config = seen["config"]
+        runtime_sa = self.outputs["staging_runtime_service_account"]
+        self.assertEqual(
+            sorted(seen["tokens"]),
+            sorted([
+                (staging_smoke_token_audience(self.release_id), runtime_sa),
+                (self.outputs["staging_api_uri"], runtime_sa),
+                (self.outputs["staging_web_uri"], runtime_sa),
+            ]),
+        )
+        self.assertEqual(config.bearer_token, self.SMOKE_TOKEN)
+        self.assertEqual(config.api_transport_token, self.API_TOKEN)
+        self.assertEqual(seen["clients"][0][0], self.WEB_TOKEN)
+        self.assertEqual(config.expected_deployment, "staging")
+        self.assertEqual(config.expected_sha, self.candidate_sha)
+        self.assertEqual(config.operator_role, ",".join(STAGING_SMOKE_ROLES))
+        self.assertEqual(config.operator_tenant, self.outputs["staging_tenant_id"])
+        self.assertEqual((config.external_provider_mode, config.required_provider_ids), ("disabled", ()))
+        self.assertEqual(config.expected_manifest_digest, self.manifest_digest)
+        self.assertEqual(
+            seen["driver"], (self.outputs["staging_worker_job_name"], "asia-east1", self.project_id)
+        )
+
+    def test_full_profile_is_held_to_the_full_model_assertions(self) -> None:
+        result, _ = self._run_stage(self._core_ops_routes("full"), "full")
+
+        self.assertFalse(result["success"])
+        failed = {check["name"] for check in result["live_e2e_gate"]["checks"] if not check["ok"]}
+        self.assertIn("runtime:model_bindings", failed)
+        self.assertIn("runtime:model_bindings", result["detail"])
+
+    def test_each_gate_section_failure_fails_the_stage(self) -> None:
+        base = self.fx.base
+        cases = {
+            "runtime:persistence": dict(routes=self._failed_persistence_routes()),
+            "auth:operator_bootstrap": dict(routes=self._core_ops_routes(**{
+                "GET /api/v1/operator/bootstrap": base.response(401, {"detail": "UNKNOWN_SERVICE"}),
+            })),
+            "auth:web_operator_requires_login": dict(
+                routes=self._core_ops_routes(),
+                web_http=base.FakeHttp({"anon GET /operator": base.response(403)}),
+            ),
+            "worker:drain_trigger": dict(routes=self._core_ops_routes(), worker_ok=False),
+            "models:registry_refused": dict(routes=self._core_ops_routes(**{
+                "GET /api/v1/learninghub/models": base.response(200, {"items": [{"name": "x"}]}),
+            })),
+        }
+        for check, kwargs in cases.items():
+            with self.subTest(check=check):
+                result, _ = self._run_stage(kwargs.pop("routes"), **kwargs)
+                self.assertFalse(result["success"])
+                self.assertFalse(result["live_e2e_gate"]["ok"])
+                self.assertIn(check, result["detail"])
+
+    def _failed_persistence_routes(self) -> dict[str, Any]:
+        readiness = self.fx.missing_model_readiness("core-ops")
+        readiness["details"]["deploymentMode"] = "staging"
+        readiness["details"]["persistence"]["reachable"] = False
+        return self.fx.api_routes(**{"anon GET /readiness": self.fx.base.response(200, readiness)})
+
+    def test_a_profile_staging_may_not_serve_never_reaches_the_gate(self) -> None:
+        for profile in ("", "dev-admin"):
+            with self.subTest(profile=profile):
+                with self.assertRaisesRegex(RuntimeError, "may not run in staging"):
+                    self._run_stage(self._core_ops_routes(), profile)
+
+    def test_gate_failure_fails_live_verify_and_leaves_the_release_holdable(self) -> None:
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        stage_result, _ = self._run_stage(self._failed_persistence_routes())
+
+        def executor(stage: str, _context: Mapping[str, Any]) -> Mapping[str, Any]:
+            return stage_result if stage == "live_e2e_gate" else {"success": True}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            EphemeralStagingVerificationAndHoldTests._seed_live_state(self, state_dir)
+            marker_path = lifecycle._lifecycle_state_path(self.release_id, state_dir)
+            seeded = json.loads(marker_path.read_text(encoding="utf-8"))
+            marker_path.write_text(json.dumps({**seeded, "outputs": self.outputs}), encoding="utf-8")
+            with patch.object(lifecycle, "_write_lifecycle_state", wraps=lifecycle._write_lifecycle_state) as write:
+                receipt = lifecycle.verify_ephemeral_staging(
+                    release_id=self.release_id,
+                    candidate_sha=self.candidate_sha,
+                    manifest_digest=self.manifest_digest,
+                    project_id=self.project_id,
+                    state_dir=state_dir,
+                    operator_identity=self.outputs["staging_runtime_service_account"],
+                    lifecycle_outputs=self.outputs,
+                    stage_executor=executor,
+                    now=self.now,
+                    release_profile="core-ops",
+                )
+            marker = json.loads(lifecycle._lifecycle_state_path(self.release_id, state_dir).read_text())
+
+        self.assertFalse(receipt.success)
+        self.assertTrue(any(
+            error.startswith("Stage live_e2e_gate failed.") and "runtime:persistence" in error
+            for error in receipt.errors
+        ), receipt.errors)
+        stage = next(r for r in receipt.resources if r["stage"] == "live_e2e_gate")
+        self.assertEqual(stage["status"], "failed")
+        self.assertFalse(stage["proof"]["live_e2e_gate"]["ok"])
+        self.assertIn("postgresql", stage["proof"]["live_e2e_gate"]["blocking_dependencies"])
+        # The existing hold path accepts a release in this state.
+        self.assertEqual(write.call_args.kwargs["status"], "verification_failed")
+        self.assertEqual(marker["status"], "verification_failed")
+
+    def test_tokens_never_reach_the_receipt_or_its_errors(self) -> None:
+        base = self.fx.base
+        echo = {
+            "detail": f"Bearer {self.SMOKE_TOKEN}",
+            "transport": self.API_TOKEN,
+            "web": self.WEB_TOKEN,
+        }
+        stage_result, _ = self._run_stage(self._core_ops_routes(**{
+            "GET /api/v1/operator/bootstrap": base.response(500, echo),
+        }))
+        self.assertFalse(stage_result["success"])
+
+        from product_ops.deployment.staging_lifecycle import verify_ephemeral_staging
+
+        receipt = verify_ephemeral_staging(
+            release_id=self.release_id,
+            candidate_sha=self.candidate_sha,
+            manifest_digest=self.manifest_digest,
+            project_id=self.project_id,
+            dry_run=True,
+            stage_executor=lambda stage, _c: stage_result if stage == "live_e2e_gate" else True,
+            now=self.now,
+        )
+        published = json.dumps(receipt.to_dict())
+        self.assertIn("auth:operator_bootstrap", published)
+        for secret in (self.SMOKE_TOKEN, self.API_TOKEN, self.WEB_TOKEN):
+            self.assertNotIn(secret, published)
+            self.assertNotIn(secret, json.dumps(stage_result))
+
+    def test_an_exception_inside_the_gate_is_reported_by_type_only(self) -> None:
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        with patch.object(
+            lifecycle._live_e2e_gate(),
+            "evaluate_gate",
+            side_effect=ValueError(f"boom {self.SMOKE_TOKEN}"),
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                self._run_stage(self._core_ops_routes())
+        self.assertEqual(str(ctx.exception), "live E2E gate could not run: ValueError")
+
+    def test_staging_gate_config_never_reads_dev_inputs_from_the_environment(self) -> None:
+        import os
+        from unittest.mock import patch
+
+        from product_ops.deployment.staging_lifecycle import staging_live_gate_config
+
+        dev_env = {
+            "ODP_DEV_ADMIN_USERNAME": "dev-admin-user",
+            "ODP_DEV_ADMIN_PASSWORD": "dev-admin-password",
+            "ODP_DEV_ADMIN_CREDENTIAL_BUNDLE": '{"username": "x"}',
+            "ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD": "bootstrap-password",
+            "ODP_OPERATOR_SMOKE_BEARER_TOKEN": "dev-smoke-token",
+            "ODP_API_INVOKER_TOKEN": "dev-invoker-token",
+            "ODP_OPERATOR_SMOKE_ROLE": "platform_admin",
+            "ODP_RELEASE_PROFILE": "dev-admin",
+            "ODP_EXTERNAL_PROVIDER_MODE": "live",
+        }
+        with patch.dict(os.environ, dev_env):
+            config = staging_live_gate_config(
+                self.outputs,
+                release_profile="core-ops",
+                manifest_digest=self.manifest_digest,
+                bearer_token=self.SMOKE_TOKEN,
+                api_transport_token=self.API_TOKEN,
+            )
+        rendered = repr(config) + json.dumps(
+            {k: v for k, v in vars(config).items() if isinstance(v, str)}
+        )
+        for value in dev_env.values():
+            if value not in {"core-ops", "live"}:
+                self.assertNotIn(value, rendered)
+        self.assertFalse(config.dev_admin)
+        self.assertEqual(config.release_profile, "core-ops")
+        self.assertEqual(config.external_provider_mode, "disabled")
+
+    def test_the_worker_driver_executes_the_release_scoped_worker_job(self) -> None:
+        from unittest.mock import patch
+
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        config = lifecycle.staging_live_gate_config(
+            self.outputs,
+            release_profile="core-ops",
+            manifest_digest=self.manifest_digest,
+            bearer_token=self.SMOKE_TOKEN,
+            api_transport_token=self.API_TOKEN,
+        )
+        driver = lifecycle._live_gate_worker_driver(
+            config,
+            job=self.outputs["staging_worker_job_name"],
+            region="asia-east1",
+            project_id=self.project_id,
+            gcloud_bin="/opt/gcloud",
+        )
+        with patch.object(lifecycle._live_e2e_gate(), "_run_subprocess", return_value=(0, "")) as run:
+            ok, _detail = driver.drain()
+        self.assertTrue(ok)
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[:5], ["/opt/gcloud", "run", "jobs", "execute", self.outputs["staging_worker_job_name"]])
+        self.assertIn(f"--project={self.project_id}", argv)
+        self.assertIn("--wait", argv)
+
+    def test_both_clients_are_bound_to_the_release_origins_with_transport_tokens(self) -> None:
+        from product_ops.deployment import staging_lifecycle as lifecycle
+
+        config = lifecycle.staging_live_gate_config(
+            self.outputs,
+            release_profile="core-ops",
+            manifest_digest=self.manifest_digest,
+            bearer_token=self.SMOKE_TOKEN,
+            api_transport_token=self.API_TOKEN,
+        )
+        api, web = lifecycle._live_gate_clients(
+            config, web_transport_token=self.WEB_TOKEN, correlation_id="corr-1"
+        )
+        self.assertEqual(api._base_url, self.outputs["staging_api_uri"])
+        self.assertEqual((api._bearer_token, api._transport_token), (self.SMOKE_TOKEN, self.API_TOKEN))
+        self.assertEqual(web._base_url, self.outputs["staging_web_uri"])
+        self.assertEqual((web._bearer_token, web._transport_token), ("", self.WEB_TOKEN))
+
+    # --- the smoke principal is release-scoped Terraform, nothing else ---
+
+    def _api_service_block(self, main_text: str) -> str:
+        start = main_text.index('resource "google_cloud_run_v2_service" "staging_api"')
+        end = main_text.index('resource "google_cloud_run_v2_service" "staging_web"')
+        return main_text[start:end]
+
+    def test_terraform_smoke_principal_matches_the_pinned_python_contract(self) -> None:
+        from product_ops.deployment.staging_lifecycle import (
+            STAGING_SMOKE_ROLES,
+            STAGING_SMOKE_TOKEN_AUDIENCE_PREFIX,
+            staging_smoke_token_audience,
+        )
+
+        main_text = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
+        audience = re.search(r'smoke_token_audience\s*=\s*"([^"]+)"', main_text)
+        self.assertIsNotNone(audience)
+        self.assertEqual(audience.group(1), STAGING_SMOKE_TOKEN_AUDIENCE_PREFIX + "${local.release_label}")
+        self.assertEqual(
+            staging_smoke_token_audience(self.release_id),
+            STAGING_SMOKE_TOKEN_AUDIENCE_PREFIX + release_label_value(self.release_id),
+        )
+        roles = re.search(r"smoke_roles\s*=\s*\[([^\]]*)\]", main_text)
+        self.assertIsNotNone(roles)
+        self.assertEqual(tuple(re.findall(r'"([^"]+)"', roles.group(1))), STAGING_SMOKE_ROLES)
+
+        api = self._api_service_block(main_text)
+        for name, value in (
+            ("ODP_AUTH_SERVICE_ISSUER", '"https://accounts.google.com"'),
+            ("ODP_AUTH_SERVICE_JWKS_URI", '"https://www.googleapis.com/oauth2/v3/certs"'),
+            ("ODP_AUTH_SERVICE_AUDIENCES", "local.smoke_token_audience"),
+        ):
+            self.assertRegex(api, rf'name\s*=\s*"{name}"\s*\n\s*value\s*=\s*{re.escape(value)}')
+        principal_map = re.search(
+            r'name\s*=\s*"ODP_AUTH_PRINCIPAL_MAP"\s*\n\s*value\s*=\s*jsonencode\(\{(.*?)\}\)\n', api, re.S
+        )
+        self.assertIsNotNone(principal_map)
+        body = principal_map.group(1)
+        # Exactly one principal: this release's runtime account, by numeric id.
+        self.assertEqual(re.findall(r"\(([^)]+)\)\s*=", body), ["google_service_account.staging_runtime.unique_id"])
+        self.assertIn("roles     = local.smoke_roles", body)
+        self.assertIn("tenant_id = local.tenant_id", body)
+        self.assertNotIn("var.", body)
+        # Only the API verifies application tokens.
+        self.assertEqual(main_text.count('"ODP_AUTH_PRINCIPAL_MAP"'), 1)
+
+    def test_the_smoke_principal_adds_no_secret_iam_or_dev_input(self) -> None:
+        main_text = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
+        variables_text = (MODULE_DIR / "variables.tf").read_text(encoding="utf-8")
+        for forbidden in (
+            "ODP_DEV_ADMIN",
+            "ODP_OPERATOR_SMOKE",
+            "ODP_AUTH_PRINCIPAL_MAP_SECRET",
+            "ODP_IDENTITY_BOOTSTRAP",
+            "ODP_IDENTITY_TOKEN_SIGNING_KEY",
+            "ODP_AUTH_HS256_KEYS",
+        ):
+            self.assertNotIn(forbidden, main_text)
+            self.assertNotIn(forbidden, variables_text)
+        self.assertNotRegex(variables_text, r'variable\s+"[^"]*(smoke|principal)[^"]*"')
+        # The release-scoped secrets and IAM grants are unchanged.
+        self.assertEqual(
+            re.findall(r'resource "google_secret_manager_secret" "(\w+)"', main_text),
+            ["staging_database_url", "staging_cursor_signing_key", "staging_web_session"],
+        )
+        self.assertEqual(len(re.findall(r'resource "random_password"', main_text)), 3)
+        self.assertEqual(
+            re.findall(r'resource "google_[a-z0-9_]*iam_member" "(\w+)"', main_text),
+            [
+                "staging_runtime_cloudsql",
+                "staging_runtime_db_url",
+                "staging_runtime_data",
+                "deployer_sa_user_runtime",
+                "deployer_sa_user_web",
+                "deployer_sa_user_worker",
+                "staging_web_invokes_api",
+                "staging_worker_invokes_api",
+                "staging_runtime_publisher",
+                "staging_worker_subscriber",
+                "staging_runtime_cursor_key",
+                "staging_web_session",
+            ],
+        )
+
+    def test_the_smoke_principal_is_a_release_owned_resource_destroyed_with_the_release(self) -> None:
+        cfg = StagingConfig(
+            release_id=self.release_id,
+            candidate_sha=self.candidate_sha,
+            manifest_digest=self.manifest_digest,
+            project_id=self.project_id,
+            owner_task_id="ODP-CORE-OPS-STAGING-LIVE-GATE-001",
+            kms_key_id="projects/oday-staging-proj/locations/asia-east1/keyRings/staging/cryptoKeys/release",
+            deployer_service_account_email="deployer@oday-staging-proj.iam.gserviceaccount.com",
+            created_at="2026-08-27T06:00:00Z",
+        )
+        names = get_ephemeral_resource_names(self.release_id, self.project_id)
+        planned = plan_staging_resources(cfg, now=self.now)
+        smoke = [
+            resource for resource in planned
+            if resource.resource_type == "google_service_account"
+            and resource.resource_name == names["sa_runtime"]
+        ]
+        self.assertEqual(len(smoke), 1)
+        self.assertTrue(is_staging_ephemeral_resource(smoke[0].labels, self.release_id))
+        # The verify operator (whose tokens the gate uses) is that same account.
+        self.assertEqual(
+            self.outputs["staging_runtime_service_account"],
+            f"{names['sa_runtime']}@{self.project_id}.iam.gserviceaccount.com",
+        )
+
+
 def dataclasses_replace(obj: StagingConfig, **changes: Any) -> StagingConfig:
     d = obj.to_dict()
     d.update(changes)
