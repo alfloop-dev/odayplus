@@ -10,6 +10,7 @@ from uuid import uuid4
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from psycopg import errors
@@ -104,6 +105,7 @@ def _bundle(database, monkeypatch):
 
 def test_expand_migration_preserves_registry_rows_and_rejects_unknown_kind(intake_blank_db):
     db = intake_blank_db
+    migration_head = ScriptDirectory.from_config(Config("infra/db/migrations/alembic.ini")).get_current_head()
     _upgrade(db, "0022")
     with db.connect() as conn:
         _seed_identities(conn)
@@ -116,7 +118,7 @@ def test_expand_migration_preserves_registry_rows_and_rejects_unknown_kind(intak
     with db.connect() as conn:
         assert (
             conn.execute("SELECT version_num FROM public.oday_plus_alembic_version").fetchone()[0]
-            == "0028"
+            == migration_head
         )
         assert (
             conn.execute(
