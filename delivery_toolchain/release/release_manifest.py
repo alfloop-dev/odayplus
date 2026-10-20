@@ -381,17 +381,34 @@ INITIAL_RELEASE_RECOVERY_FIELDS = (
 # (real login/session, PostgreSQL, RBAC, tenant isolation, audit) is healthy
 # while trained models are still absent and remain refused.
 #
+# ``core-ops`` (ODP-CORE-OPS-RELEASE-PROFILE-001) is the same "models absent
+# and refused" scope for core operations, admissible to dev, staging and
+# production, without dev-admin's dev-only password journey.
+#
 # The profile is part of the canonical payload, so ``manifest_digest`` -- and
 # through it the Supervisor lease -- binds it.  The deploy phase reads it from
 # the admitted manifest; there is deliberately no deploy-time input that could
 # switch an already built full release into the narrower scope.
 RELEASE_PROFILE_FULL = "full"
 RELEASE_PROFILE_DEV_ADMIN = "dev-admin"
-RELEASE_PROFILES = (RELEASE_PROFILE_FULL, RELEASE_PROFILE_DEV_ADMIN)
-#: The only targets a narrowed profile may be admitted into.  ``full`` is not
-#: listed because it is admissible everywhere and is never spelled explicitly.
+RELEASE_PROFILE_CORE_OPS = "core-ops"
+RELEASE_PROFILES = (RELEASE_PROFILE_FULL, RELEASE_PROFILE_DEV_ADMIN, RELEASE_PROFILE_CORE_OPS)
+#: The build targets a narrowed profile may be sealed for (its
+#: ``target_environment``).  ``full`` is not listed because it is admissible
+#: everywhere and is never spelled explicitly.  ``core-ops`` is never sealed for
+#: production: production admits only the staging-sealed manifest (below).
 RELEASE_PROFILE_ENVIRONMENTS: dict[str, frozenset[str]] = {
     RELEASE_PROFILE_DEV_ADMIN: frozenset({"dev"}),
+    RELEASE_PROFILE_CORE_OPS: frozenset({"dev", "staging"}),
+}
+#: Where a manifest sealed for ``(profile, target_environment)`` may be
+#: admitted, when that is more than the sealed target itself.  A core-ops
+#: manifest rehearsed in staging is promoted to production *as the same sealed
+#: manifest*: production runs exactly the image digests staging ran, and the
+#: production lease is issued against the very digest the staging lease was.
+#: That is stronger than ``full``, whose manifest binds no environment at all.
+RELEASE_PROFILE_PROMOTIONS: dict[tuple[str, str], frozenset[str]] = {
+    (RELEASE_PROFILE_CORE_OPS, "staging"): frozenset({"staging", "production"}),
 }
 RELEASE_PROFILE_FIELDS = ("name", "target_environment", "model_readiness")
 #: A narrowed profile records, inside the digest, that it claims nothing about
@@ -415,15 +432,50 @@ def build_release_profile(name: str, *, target_environment: str) -> dict[str, An
         )
     allowed = RELEASE_PROFILE_ENVIRONMENTS[name]
     if target_environment not in allowed:
+        promoted_from = sorted(
+            target
+            for target in allowed
+            if target_environment in release_profile_admissible_environments(name, target)
+        )
+        hint = (
+            f"; {target_environment!r} admits only the manifest sealed for "
+            f"{promoted_from} (the same digests that were rehearsed there)"
+            if promoted_from
+            else ""
+        )
         raise ValueError(
             f"release profile {name!r} may only target {sorted(allowed)}, "
-            f"not {target_environment!r}"
+            f"not {target_environment!r}{hint}"
         )
     return {
         "name": name,
         "target_environment": target_environment,
         "model_readiness": RELEASE_PROFILE_MODEL_READINESS_NOT_CLAIMED,
     }
+
+
+def release_profile_admissible_environments(
+    name: str, target_environment: str | None = None
+) -> frozenset[str]:
+    """Return where a narrowed profile may be admitted.
+
+    With *target_environment* this is the admission set of a manifest sealed
+    for that target; without it, the union over every target the profile may
+    be sealed for (what the runtime, gate and Web mirrors pin).  Unknown
+    profiles and targets admit nowhere.
+    """
+
+    targets = RELEASE_PROFILE_ENVIRONMENTS.get(name, frozenset())
+    if target_environment is not None:
+        if target_environment not in targets:
+            return frozenset()
+        return RELEASE_PROFILE_PROMOTIONS.get(
+            (name, target_environment), frozenset({target_environment})
+        )
+    admissible: set[str] = set()
+    for target in targets:
+        admissible |= release_profile_admissible_environments(name, target)
+    return frozenset(admissible)
 
 
 def manifest_release_profile(manifest: Any) -> str:
@@ -445,7 +497,8 @@ def release_profile_errors(
 
     ``environment`` is the deploy target.  It is optional so a stored manifest
     can still be audited on its own terms, but every deploy-time caller passes
-    it: a ``dev-admin`` manifest must never reach staging or production.
+    it: a ``dev-admin`` manifest must never reach staging or production, and a
+    ``core-ops`` manifest reaches production only as the staging-sealed one.
     """
 
     if not isinstance(manifest, dict) or "release_profile" not in manifest:
@@ -485,7 +538,11 @@ def release_profile_errors(
             f"{label}.model_readiness must be "
             f"{RELEASE_PROFILE_MODEL_READINESS_NOT_CLAIMED!r} for profile {name!r}"
         )
-    if environment is not None and environment != target:
+    if environment is not None and environment not in (
+        release_profile_admissible_environments(name, target)
+        if isinstance(target, str)
+        else frozenset()
+    ):
         errors.append(
             f"{label} binds profile {name!r} to {target!r}; it cannot be "
             f"admitted into {environment!r}"
@@ -2494,11 +2551,13 @@ __all__ = [
     "source_id_env_tokens",
     "EXTERNAL_SOURCE_INVENTORY",
     "RELEASE_ID_PATTERN",
+    "RELEASE_PROFILE_CORE_OPS",
     "RELEASE_PROFILE_DEV_ADMIN",
     "RELEASE_PROFILE_ENVIRONMENTS",
     "RELEASE_PROFILE_FIELDS",
     "RELEASE_PROFILE_FULL",
     "RELEASE_PROFILE_MODEL_READINESS_NOT_CLAIMED",
+    "RELEASE_PROFILE_PROMOTIONS",
     "RELEASE_PROFILES",
     "RELEASE_STATUSES",
     "REQUIRED_FIELDS",
@@ -2528,6 +2587,7 @@ __all__ = [
     "build_release_manifest",
     "build_release_profile",
     "manifest_release_profile",
+    "release_profile_admissible_environments",
     "release_profile_errors",
     "build_sources_off_egress_evidence",
     "build_sources_off_attestation",

@@ -148,11 +148,11 @@ on:
         default: false
         type: boolean
       release_profile:
-        description: "Acceptance scope sealed into the candidate manifest digest (build phase only). 'full' is the complete product contract including approved production model aliases. 'dev-admin' is dev-only: real login/session, PostgreSQL, RBAC, tenant isolation and audit must pass while missing models stay refused; it claims no model readiness and admission refuses it for staging/production. The deploy phase reads the profile from the admitted manifest; it has no input of its own."
+        description: "Acceptance scope sealed into the candidate manifest digest (build phase only). 'full' is the complete product contract including approved production model aliases. 'dev-admin' is dev-only: real login/session, PostgreSQL, RBAC, tenant isolation and audit must pass while missing models stay refused; it claims no model readiness and admission refuses it for staging/production. 'core-ops' ships core operations (login, RBAC, tenant isolation, audit, PostgreSQL) while missing models stay refused; build it for dev or staging (never production): production admits only the staging-sealed core-ops manifest, so it runs the exact digests staging rehearsed. It claims no model readiness and is never full-product acceptance. The deploy phase reads the profile from the admitted manifest; it has no input of its own."
         required: false
         default: full
         type: choice
-        options: [full, dev-admin]
+        options: [full, dev-admin, core-ops]
       external_sources_enabled:
         description: "Comma-separated source ids this release expects to be enabled (build phase; empty means the standing sources-off posture, which is derived from the deployed provider configuration rather than supplied here). Any value here makes the approved masked snapshot mandatory."
         required: false
@@ -1055,7 +1055,7 @@ jobs:
           # verified against the lease-bound digest; an unknown value stops here.
           release_profile="$(python3 -c 'import json; print(json.load(open(".odp_data/release/release-admission-receipt.json"))["release_profile"])')"
           case "${release_profile}" in
-            full|dev-admin) ;;
+            full|dev-admin|core-ops) ;;
             *)
               echo "Error: admitted manifest carries no usable release profile (got '${release_profile}')." >&2
               exit 1
@@ -1505,6 +1505,7 @@ jobs:
             --worker-image "${WORKER_IMAGE}" \
             --scheduler-image "${SCHEDULER_IMAGE}" \
             --owner-task-id "${{ inputs.task_id }}" \
+            --release-profile "${ODP_RELEASE_PROFILE}" \
             --state-dir "${STAGING_STATE_DIR}" \
             --terraform-backend-bucket "${ODP_STAGING_TERRAFORM_STATE_BUCKET}" \
             --terraform-backend-prefix "${STAGING_BACKEND_PREFIX}" \
@@ -1536,6 +1537,7 @@ jobs:
             --worker-image "${WORKER_IMAGE}" \
             --scheduler-image "${SCHEDULER_IMAGE}" \
             --operator-identity "${operator_identity}" \
+            --release-profile "${ODP_RELEASE_PROFILE}" \
             --state-dir "${STAGING_STATE_DIR}" \
             --terraform-backend-bucket "${ODP_STAGING_TERRAFORM_STATE_BUCKET}" \
             --terraform-backend-prefix "${STAGING_BACKEND_PREFIX}" \

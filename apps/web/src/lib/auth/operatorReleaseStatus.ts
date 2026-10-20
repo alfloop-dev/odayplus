@@ -1,4 +1,7 @@
-import type { OperatorReleaseStatus } from "../../../features/operator/OperatorReleaseNotice";
+import type {
+  OperatorReleaseProfile,
+  OperatorReleaseStatus,
+} from "../../../features/operator/OperatorReleaseNotice";
 import { resolveGoogleMetadataIdentityToken } from "./cloudRunIdentity";
 import { readWebSession } from "./session";
 
@@ -8,6 +11,24 @@ const MODEL_LABELS: Record<string, string> = {
   heatzone: "HeatZone",
   sitescore: "SiteScore",
 };
+
+/**
+ * Mirrors the release manifest profile vocabulary (anti-drift bound by
+ * tests/release/test_release_profile.py): where each profile may serve, `null`
+ * meaning everywhere. Only `full` claims production model readiness.
+ */
+export const RELEASE_PROFILE_DEPLOYMENTS: Record<OperatorReleaseProfile, readonly string[] | null> = {
+  full: null,
+  "dev-admin": ["dev"],
+  "core-ops": ["dev", "staging", "production"],
+};
+
+function admittedProfile(declared: string, deployment: string | undefined): OperatorReleaseProfile | null {
+  if (!Object.prototype.hasOwnProperty.call(RELEASE_PROFILE_DEPLOYMENTS, declared)) return null;
+  const profile = declared as OperatorReleaseProfile;
+  const allowed = RELEASE_PROFILE_DEPLOYMENTS[profile];
+  return allowed === null || allowed.includes(deployment || "") ? profile : null;
+}
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -26,8 +47,7 @@ export async function readOperatorReleaseStatus(
 ): Promise<OperatorReleaseStatus> {
   const declared = environment.ODP_RELEASE_PROFILE?.trim() || "full";
   const deployment = environment.ODP_DEPLOY_ENV?.trim();
-  const profile = declared === "full" || (declared === "dev-admin" && deployment === "dev")
-    ? declared : null;
+  const profile = admittedProfile(declared, deployment);
   const unknown: OperatorReleaseStatus = { profile, models: "unknown", unavailableServices: [] };
   try {
     const session = await readWebSession(cookie, { environment });

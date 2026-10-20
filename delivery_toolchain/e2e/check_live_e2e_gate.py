@@ -103,12 +103,21 @@ BOOTSTRAP_AUDIT_EVENT = "identity.account.bootstrap"
 # model assertion. ``dev-admin`` is dev-only: it replaces the "models must be
 # production-ready" assertions with "missing models must be truthfully refused"
 # and adds a real password sign-in/session/sign-out journey through the Web.
+# ODP-CORE-OPS-RELEASE-PROFILE-001: ``core-ops`` ships core operations to dev,
+# staging and production ahead of trained models. It shares dev-admin's
+# "missing models must be truthfully refused" scope but not its dev-only
+# password journey or ODP_DEV_ADMIN_* inputs.
 RELEASE_PROFILE_FULL = "full"
 RELEASE_PROFILE_DEV_ADMIN = "dev-admin"
+RELEASE_PROFILE_CORE_OPS = "core-ops"
 RELEASE_PROFILE_DEPLOYMENTS: Mapping[str, frozenset[str] | None] = {
     RELEASE_PROFILE_FULL: None,
     RELEASE_PROFILE_DEV_ADMIN: frozenset({"dev"}),
+    RELEASE_PROFILE_CORE_OPS: frozenset({"dev", "staging", "production"}),
 }
+#: Profiles that claim production model readiness. Every other known profile
+#: is held to "missing models are reported and refused" instead.
+MODEL_READINESS_CLAIMING_PROFILES = frozenset({RELEASE_PROFILE_FULL})
 #: Runtime blocking reason the API publishes while production model bindings
 #: are not verified; a dev-admin release must say so rather than hide it.
 MODEL_BINDINGS_UNVERIFIED_REASON = "PRODUCTION_MODEL_BINDINGS_UNVERIFIED"
@@ -400,6 +409,12 @@ class GateConfig:
     @property
     def dev_admin(self) -> bool:
         return self.release_profile == RELEASE_PROFILE_DEV_ADMIN
+
+    @property
+    def model_readiness_claimed(self) -> bool:
+        """Whether the admitted profile claims production model readiness."""
+
+        return self.release_profile in MODEL_READINESS_CLAIMING_PROFILES
 
     @property
     def unknown_provider_ids(self) -> tuple[str, ...]:
@@ -1126,7 +1141,7 @@ def _check_runtime_readiness(
         "postgresql",
     )
     runtime_profile = _as_dict(details.get("releaseProfile"))
-    expected_claim = config.release_profile == RELEASE_PROFILE_FULL
+    expected_claim = config.model_readiness_claimed
     _check(
         checks,
         runtime_profile.get("name") == config.release_profile
@@ -1185,12 +1200,16 @@ def _check_runtime_readiness(
 def _models_refused_in_scope(config: GateConfig, models: Mapping[str, Any]) -> bool:
     """True when this scope accepts, and therefore must verify, absent models.
 
-    Only a dev-admin release whose runtime does not claim production bindings
-    takes this branch. A dev-admin release that *does* have verified bindings is
-    held to the full model assertions, and a full release always is.
+    Only a release whose profile claims no model readiness (dev-admin,
+    core-ops) and whose runtime does not claim production bindings takes this
+    branch. Such a release that *does* have verified bindings is held to the
+    full model assertions, and a full release always is.
     """
 
-    return config.dev_admin and models.get("productionBindingsReady") is not True
+    return (
+        not config.model_readiness_claimed
+        and models.get("productionBindingsReady") is not True
+    )
 
 
 def _check_model_limitation(
@@ -1305,7 +1324,7 @@ def _check_model_capabilities(
                 "mlflow",
             )
         elif refused_in_scope:
-            # dev-admin with absent models: an active service is either really
+            # A profile that claims no model readiness, with absent models: an active service is either really
             # bound, or truthfully unavailable with the runtime's reason code
             # (the composition error is asserted once, on ``models.error``). A
             # capability that is neither -- unavailable with no reason, or
@@ -3135,7 +3154,7 @@ def evaluate_gate(
     # runtime gate alone only proves the platform, not the business journeys.
     report["release_profile"] = {
         "name": config.release_profile,
-        "model_readiness_claimed": config.release_profile == RELEASE_PROFILE_FULL,
+        "model_readiness_claimed": config.model_readiness_claimed,
         "full_product_acceptance_claimed": full_acceptance["status"] == "PASSED",
     }
     return checks, report
@@ -3293,9 +3312,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--release-profile",
         default=os.environ.get(RELEASE_PROFILE_ENV, RELEASE_PROFILE_FULL),
         help=(
-            "Acceptance scope of the admitted manifest: 'full' (default) or "
+            "Acceptance scope of the admitted manifest: 'full' (default), "
             "'dev-admin' (dev only; adds the Web password-session journey and "
-            "requires missing models to stay refused)."
+            "requires missing models to stay refused) or 'core-ops' (dev, "
+            "staging or production; requires missing models to stay refused, "
+            "no dev-admin journey)."
         ),
     )
     parser.add_argument(

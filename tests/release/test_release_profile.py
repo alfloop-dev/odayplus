@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from delivery_toolchain.release.release_lease import (
     generate_keypair,
 )
 from delivery_toolchain.release.release_manifest import (
+    RELEASE_PROFILE_CORE_OPS,
     RELEASE_PROFILE_DEV_ADMIN,
     RELEASE_PROFILE_ENVIRONMENTS,
     RELEASE_PROFILE_FULL,
@@ -39,6 +41,7 @@ from delivery_toolchain.release.release_manifest import (
     compute_data_contract_digest,
     compute_manifest_digest,
     manifest_release_profile,
+    release_profile_admissible_environments,
     release_profile_errors,
     validate_manifest,
     validate_release_admission,
@@ -53,6 +56,10 @@ DEV_ADMIN = {
     "target_environment": "dev",
     "model_readiness": "not_claimed",
 }
+
+
+def core_ops(target: str = "staging") -> dict:
+    return {"name": "core-ops", "target_environment": target, "model_readiness": "not_claimed"}
 
 
 def sealed(manifest: dict) -> dict:
@@ -214,6 +221,108 @@ def test_admission_refuses_dev_admin_for_staging_and_production(environment: str
     assert release_profile_errors(manifest, environment="dev") == []
 
 
+# --------------------------------------------------------------------------
+# core-ops (ODP-CORE-OPS-RELEASE-PROFILE-001)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("target", ["dev", "staging"])
+def test_core_ops_binds_its_build_target_and_claims_no_model_readiness(target: str) -> None:
+    assert build_release_profile(RELEASE_PROFILE_CORE_OPS, target_environment=target) == (
+        core_ops(target)
+    )
+
+
+def test_core_ops_is_never_sealed_for_production() -> None:
+    # Production only ever admits the staging-sealed manifest, so a production
+    # core-ops release cannot carry digests staging never rehearsed.
+    with pytest.raises(ValueError, match="admits only the manifest sealed for \\['staging'\\]"):
+        build_release_profile(RELEASE_PROFILE_CORE_OPS, target_environment="production")
+
+
+@pytest.mark.parametrize("target", ["", "qa", "Production"])
+def test_core_ops_cannot_be_built_for_an_unknown_target(target: str) -> None:
+    with pytest.raises(ValueError, match="may only target"):
+        build_release_profile(RELEASE_PROFILE_CORE_OPS, target_environment=target)
+
+
+@pytest.mark.parametrize(
+    ("target", "environment", "admitted"),
+    [
+        ("dev", "dev", True),
+        ("dev", "staging", False),
+        ("dev", "production", False),
+        ("staging", "staging", True),
+        # The staging-rehearsed manifest is promoted unchanged.
+        ("staging", "production", True),
+        ("staging", "dev", False),
+    ],
+)
+def test_core_ops_admission_follows_the_promotion_path(
+    target: str, environment: str, admitted: bool
+) -> None:
+    manifest = base_manifest(release_profile=core_ops(target))
+
+    assert validate_manifest(manifest, expected_candidate_sha=SHA) == []
+    errors = release_profile_errors(manifest, environment=environment)
+    assert (errors == []) is admitted, errors
+    if not admitted:
+        assert any(f"cannot be admitted into '{environment}'" in e for e in errors)
+
+
+def test_a_core_ops_manifest_has_its_own_digest_per_target_and_profile() -> None:
+    digests = {
+        base_manifest()["manifest_digest"],
+        base_manifest(release_profile=DEV_ADMIN)["manifest_digest"],
+        base_manifest(release_profile=core_ops("dev"))["manifest_digest"],
+        base_manifest(release_profile=core_ops("staging"))["manifest_digest"],
+    }
+    assert len(digests) == 4
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(lambda m: m.pop("release_profile"), id="profile-stripped-to-full"),
+        pytest.param(lambda m: m["release_profile"].update(name="dev-admin"), id="renamed"),
+        pytest.param(
+            lambda m: m["release_profile"].update(target_environment="dev"), id="retargeted"
+        ),
+        pytest.param(
+            lambda m: m["release_profile"].update(model_readiness="claimed"), id="claimed"
+        ),
+    ],
+)
+def test_editing_a_core_ops_profile_after_sealing_breaks_the_digest(mutate) -> None:
+    manifest = base_manifest(release_profile=core_ops("staging"))
+    mutate(manifest)
+
+    assert "manifest.manifest_digest does not match its canonical immutable payload" in (
+        validate_manifest(manifest)
+    )
+
+
+@pytest.mark.parametrize(
+    ("profile", "fragment"),
+    [
+        (core_ops("production"), "target_environment must be one of"),
+        (core_ops("qa"), "target_environment must be one of"),
+        ({**core_ops(), "model_readiness": "claimed"}, "model_readiness must be"),
+        ({**core_ops(), "promoted_to": "production"}, "must carry exactly"),
+        ({"name": "core-ops", "target_environment": "staging"}, "must carry exactly"),
+    ],
+)
+def test_a_malformed_core_ops_profile_is_invalid_even_when_resealed(
+    profile: dict, fragment: str
+) -> None:
+    manifest = base_manifest(release_profile=profile)
+
+    errors = validate_manifest(manifest)
+    assert any(fragment in error for error in errors), errors
+    # A resealed production target is not a production admission either.
+    assert release_profile_errors(manifest, environment="production") != []
+
+
 def test_profile_vocabularies_agree_across_manifest_runtime_and_gate() -> None:
     import importlib.util
     import sys
@@ -229,10 +338,112 @@ def test_profile_vocabularies_agree_across_manifest_runtime_and_gate() -> None:
 
     assert set(RELEASE_PROFILES) == set(gate.RELEASE_PROFILE_DEPLOYMENTS)
     assert set(RELEASE_PROFILES) == set(runtime_mode._RELEASE_PROFILE_DEPLOYMENTS)
-    for name, environments in RELEASE_PROFILE_ENVIRONMENTS.items():
+    for name in RELEASE_PROFILE_ENVIRONMENTS:
+        environments = release_profile_admissible_environments(name)
         assert gate.RELEASE_PROFILE_DEPLOYMENTS[name] == environments
         assert runtime_mode._RELEASE_PROFILE_DEPLOYMENTS[name] == environments
     assert gate.RELEASE_PROFILE_DEPLOYMENTS[RELEASE_PROFILE_FULL] is None
+    assert runtime_mode._RELEASE_PROFILE_DEPLOYMENTS[RELEASE_PROFILE_FULL] is None
+    # Only full claims model readiness; every narrowed profile is held to the
+    # missing-model refusal scope by the gate.
+    assert gate.MODEL_READINESS_CLAIMING_PROFILES == frozenset({RELEASE_PROFILE_FULL})
+
+
+# --------------------------------------------------------------------------
+# Anti-drift (ODP-CORE-OPS-RELEASE-PROFILE-001): every pinned mirror of the
+# profile vocabulary -- Python, workflow, shell and TypeScript -- must equal
+# release_manifest.RELEASE_PROFILES, so adding or removing a profile anywhere
+# without the others fails here rather than at a live deploy.
+# --------------------------------------------------------------------------
+
+
+def _deploy_script_profile_labels() -> set[str]:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = script.index('case "${ODP_RELEASE_PROFILE}" in')
+    block = script[start:script.index("\nesac\n", start)]
+    return set(re.findall(r"^  ([a-z][a-z-]*)\)$", block, flags=re.MULTILINE))
+
+
+def _ts_string_union(source: str, type_name: str) -> set[str]:
+    match = re.search(rf"export type {type_name} = ([^;]+);", source)
+    assert match, type_name
+    return set(re.findall(r'"([^"]+)"', match.group(1)))
+
+
+def _ts_profile_deployments(source: str) -> dict[str, frozenset[str] | None]:
+    match = re.search(
+        r"export const RELEASE_PROFILE_DEPLOYMENTS[^=]*= \{(.*?)\n\};", source, flags=re.DOTALL
+    )
+    assert match
+    result: dict[str, frozenset[str] | None] = {}
+    for key, value in re.findall(r'^\s*"?([a-z-]+)"?: (null|\[[^\]]*\]),$', match.group(1), re.M):
+        result[key] = None if value == "null" else frozenset(re.findall(r'"([^"]+)"', value))
+    return result
+
+
+def test_every_profile_mirror_matches_the_manifest_vocabulary() -> None:
+    from delivery_toolchain.e2e import live_business_journeys
+
+    profiles = set(RELEASE_PROFILES)
+
+    assert set(live_business_journeys.KNOWN_RELEASE_PROFILES) == profiles
+
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    # PyYAML reads the bare ``on:`` key as boolean True.
+    dispatch_inputs = workflow[True]["workflow_dispatch"]["inputs"]
+    assert set(dispatch_inputs["release_profile"]["options"]) == profiles
+    assert dispatch_inputs["release_profile"]["default"] == RELEASE_PROFILE_FULL
+    (extract,) = [
+        step
+        for step in workflow["jobs"]["admission"]["steps"]
+        if step.get("id") == "extract-admitted-manifest"
+    ]
+    (case_pattern,) = re.findall(r"^\s*([a-z|-]+)\) ;;$", extract["run"], flags=re.MULTILINE)
+    assert set(case_pattern.split("|")) == profiles
+
+    assert _deploy_script_profile_labels() == profiles
+
+    notice = (ROOT / "apps/web/features/operator/OperatorReleaseNotice.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert _ts_string_union(notice, "OperatorReleaseProfile") == profiles
+    for profile in profiles:
+        # Each profile has its own operator wording; none falls through to unknown.
+        assert f'status.profile === "{profile}"' in notice
+
+    # Staging runs exactly the profiles admissible into staging (full runs
+    # everywhere), in the lifecycle and in the Terraform module validation.
+    from product_ops.deployment import staging_lifecycle
+
+    staging_profiles = {RELEASE_PROFILE_FULL} | {
+        name
+        for name in RELEASE_PROFILE_ENVIRONMENTS
+        if "staging" in release_profile_admissible_environments(name)
+    }
+    assert set(staging_lifecycle.STAGING_RELEASE_PROFILES) == staging_profiles
+    assert staging_lifecycle.MODEL_READINESS_CLAIMING_PROFILES == frozenset(
+        {RELEASE_PROFILE_FULL}
+    )
+    staging_vars = (ROOT / "infra/terraform/modules/ephemeral_staging/variables.tf").read_text(
+        encoding="utf-8"
+    )
+    (tf_pattern,) = re.findall(
+        r'regex\("\^\(([a-z|-]+)\)\$", var\.release_profile\)', staging_vars
+    )
+    assert set(tf_pattern.split("|")) == staging_profiles
+
+    status = (ROOT / "apps/web/src/lib/auth/operatorReleaseStatus.ts").read_text(
+        encoding="utf-8"
+    )
+    deployments = _ts_profile_deployments(status)
+    assert set(deployments) == profiles
+    for profile in profiles:
+        expected = (
+            None
+            if profile == RELEASE_PROFILE_FULL
+            else release_profile_admissible_environments(profile)
+        )
+        assert deployments[profile] == expected, profile
 
 
 # --------------------------------------------------------------------------
@@ -334,6 +545,21 @@ def test_the_build_refuses_dev_admin_for_staging_and_production(environment: str
     assert any("may only target" in error for error in excinfo.value.errors)
 
 
+@pytest.mark.parametrize("target", ["dev", "staging"])
+def test_the_build_seals_core_ops_into_its_target_manifest(target: str) -> None:
+    _, manifest = _handoff(target_environment=target, release_profile="core-ops")
+
+    assert manifest["release_profile"] == core_ops(target)
+    assert release_profile_errors(manifest, environment=target) == []
+
+
+def test_the_build_refuses_core_ops_for_production() -> None:
+    with pytest.raises(HandoffError) as excinfo:
+        _handoff(target_environment="production", release_profile="core-ops")
+
+    assert any("may only target ['dev', 'staging']" in error for error in excinfo.value.errors)
+
+
 def test_the_build_refuses_an_unknown_profile() -> None:
     with pytest.raises(HandoffError) as excinfo:
         _handoff(target_environment="dev", release_profile="admin-only")
@@ -383,9 +609,11 @@ def _admit(
     private_key = load_pem_private_key(private_pem, password=None)
     (tmp_path / "lease.pub").write_bytes(public_pem)
     (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    stage, registry_env = (
-        ("candidate-built", "dev") if environment == "dev" else ("dev-verified", "dev")
-    )
+    stage, registry_env = {
+        "dev": ("candidate-built", "dev"),
+        "staging": ("dev-verified", "dev"),
+        "production": ("staging-verified", "staging"),
+    }[environment]
     (tmp_path / "registry.json").write_text(
         json.dumps(
             _registry(
@@ -466,6 +694,47 @@ def test_a_dev_admin_manifest_with_a_valid_staging_lease_is_refused_unconsumed(
     assert receipt["admitted"] is False
     assert any("cannot be admitted into 'staging'" in e for e in receipt["errors"])
     # Refused before anything is spent: the lease is still issued.
+    assert store.get(lease["lease_id"])["state"] == STATE_ISSUED
+
+
+@pytest.mark.parametrize(
+    ("target", "environment"), [("dev", "dev"), ("staging", "staging"), ("staging", "production")]
+)
+def test_core_ops_admission_matches_full_on_its_promotion_path(
+    tmp_path: Path, target: str, environment: str
+) -> None:
+    """On its promotion path core-ops is admitted wherever full is, lease consumed."""
+
+    (tmp_path / "full").mkdir()
+    (tmp_path / "core-ops").mkdir()
+    full_code, full_receipt, _, _ = _admit(
+        tmp_path / "full", base_manifest(), environment=environment
+    )
+    code, receipt, lease, store = _admit(
+        tmp_path / "core-ops", base_manifest(release_profile=core_ops(target)),
+        environment=environment,
+    )
+
+    assert full_code == 0, full_receipt.get("errors")
+    assert code == 0, receipt.get("errors")
+    assert receipt["admitted"] is True
+    assert receipt["release_profile"] == "core-ops"
+    assert store.get(lease["lease_id"])["state"] == STATE_CONSUMED
+
+
+@pytest.mark.parametrize(
+    ("target", "environment"), [("dev", "staging"), ("dev", "production"), ("staging", "dev")]
+)
+def test_core_ops_off_its_promotion_path_is_refused_with_the_lease_unconsumed(
+    tmp_path: Path, target: str, environment: str
+) -> None:
+    code, receipt, lease, store = _admit(
+        tmp_path, base_manifest(release_profile=core_ops(target)), environment=environment
+    )
+
+    assert code != 0
+    assert receipt["admitted"] is False
+    assert any(f"cannot be admitted into '{environment}'" in e for e in receipt["errors"])
     assert store.get(lease["lease_id"])["state"] == STATE_ISSUED
 
 
@@ -580,6 +849,42 @@ def test_deploy_refuses_dev_admin_without_its_denied_role(tmp_path: Path) -> Non
     assert result.calls == ""  # type: ignore[attr-defined]
 
 
+def _run_profile_case(**env: str) -> subprocess.CompletedProcess:
+    """Run only the deploy script's profile block, up to its cloud boundary."""
+
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    block = script[
+        script.index('ODP_RELEASE_PROFILE="${ODP_RELEASE_PROFILE:-full}"'):
+        script.index("export ODP_RELEASE_PROFILE\n")
+    ]
+    return subprocess.run(
+        ["bash", "-c", "set -euo pipefail\n" + block + '\nprintf "profile=%s\\n" "${ODP_RELEASE_PROFILE}"'],
+        env={"PATH": "/usr/bin:/bin", **env},
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize("environment", ["dev", "staging", "production"])
+def test_deploy_accepts_core_ops_everywhere_without_dev_admin_inputs(environment: str) -> None:
+    # No ODP_DEV_ADMIN_* at all: they never become a core-ops prerequisite.
+    result = _run_profile_case(ODP_DEPLOY_ENV=environment, ODP_RELEASE_PROFILE="core-ops")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "profile=core-ops"
+
+
+@pytest.mark.parametrize("environment", ["qa", "development", ""])
+def test_deploy_refuses_core_ops_outside_its_environments(environment: str) -> None:
+    result = _run_profile_case(ODP_DEPLOY_ENV=environment, ODP_RELEASE_PROFILE="core-ops")
+
+    assert result.returncode != 0
+    assert "may only deploy to dev, staging or production" in result.stderr
+    assert "profile=" not in result.stdout
+
+
 # --------------------------------------------------------------------------
 # The build phase publishes, signs and attests images before the handoff seals
 # the manifest, so the profile/target refusal must already happen in the pure,
@@ -617,6 +922,17 @@ def test_the_phase_check_refuses_dev_admin_for_staging_and_production(
     errors = _build_phase_errors(environment, RELEASE_PROFILE_DEV_ADMIN)
     assert len(errors) == 1
     assert "may only target ['dev']" in errors[0]
+
+
+@pytest.mark.parametrize("environment", ["dev", "staging"])
+def test_the_phase_check_admits_a_core_ops_build_for_dev_and_staging(environment: str) -> None:
+    assert _build_phase_errors(environment, RELEASE_PROFILE_CORE_OPS) == []
+
+
+def test_the_phase_check_refuses_a_core_ops_production_build() -> None:
+    errors = _build_phase_errors("production", RELEASE_PROFILE_CORE_OPS)
+    assert len(errors) == 1
+    assert "may only target ['dev', 'staging']" in errors[0]
 
 
 @pytest.mark.parametrize("name", ["admin", "Dev-Admin", ""])
