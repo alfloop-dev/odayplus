@@ -1,5 +1,6 @@
 """Native submissions, using an owned PostgreSQL and synthetic principals only."""
 
+import gc
 import json
 from dataclasses import replace
 from types import MethodType, SimpleNamespace
@@ -37,6 +38,9 @@ def native_api(canonical_graph, monkeypatch):
     app.state.persistence_bundle, app.state.audit_log = bundle, InMemoryAuditLog()
     app.include_router(create_assisted_intake_router(store), prefix="/api/v1")
     with TestClient(app) as client:
+        # Release cyclic garbage from test application setup before exercising
+        # bounded commands. GC stays enabled throughout the actual commands.
+        gc.collect()
         yield client, caller, store
 
 

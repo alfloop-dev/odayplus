@@ -222,7 +222,9 @@ jobs:
     needs: change-scope
     if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Allow the full live SQL selection and fixture cleanup to finish.
+    # Individual native commands retain their original root and IO deadlines.
+    timeout-minutes: 60
     services:
       postgres:
         image: postgis/postgis:16-3.5
