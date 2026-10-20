@@ -461,11 +461,14 @@ def native_command_diagnostics(request, monkeypatch):
         monkeypatch.setattr(PostgresEngine, name, recorder.sql(getattr(PostgresEngine, name)))
     for cls, name in [(NativeIntakeCommandBudget, "__call__"), (NativeIntakePendingCommands, "require_clear"),
             (NativeAssistedEntrySourceProof, "parent"), (NativeIntakeSourcePolicyRecheckOwner, "_waiting"),
+            (NativeIntakeSourcePolicyRecheckOwner, "_request_event"),
+            (NativeIntakeSourcePolicyRecheckOwner, "_root_identity"),
             (NativeIntakeRetrievalQuota, "reserve"), (NativeIntakeRetrievalQuota, "reserve_storage"),
             (NativeIntakeRetrievalQuota, "release"), (NativeIntakeRetrievalIO, "_intent"),
             (NativeIntakeRetrievalIO, "_finish")]:
         monkeypatch.setattr(cls, name, recorder.stage(getattr(cls, name), cls.__name__ + "." + name))
     for cls, name in [(NativeAssistedEntryRequestOwner, "request"), (NativeIntakeSourcePolicyRecheckOwner, "request"),
+            (NativeIntakeSourcePolicyRecheckOwner, "admit_event"),
             (NativeIntakeIdentityOwner, "confirm_exact_case"),
             (NativeIntakeSourcePolicyRecheckOwner, "execute"), (NativeIntakeRetrievalOwner, "execute"),
             (NativeIntakeAssistedEntryOwner, "execute")]:
