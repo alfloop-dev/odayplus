@@ -1838,3 +1838,247 @@ def test_gate_matches_bundle_account_and_requires_real_invitation(mismatch: str)
     elif mismatch != "none":
         assert blockers(report)["admin:credential_bundle_durable_acknowledgement"] == "audit"
     assert PASSWORD not in json.dumps(report)
+
+
+# ---------------------------------------------------------------------------
+# core-ops (ODP-CORE-OPS-RELEASE-PROFILE-001): the same missing-model refusal
+# scope, admissible to dev/staging/production, without dev-admin's journey.
+# ---------------------------------------------------------------------------
+
+
+def core_ops_api(deployment: str = "dev", **overrides: Any) -> dict[str, Any]:
+    readiness = missing_model_readiness("core-ops")
+    readiness["details"]["deploymentMode"] = deployment
+    return api_routes(**{"anon GET /readiness": base.response(200, readiness), **overrides})
+
+
+def core_ops_config(deployment: str = "dev", **overrides: Any) -> Any:
+    return base.disabled_config(
+        release_profile="core-ops", expected_deployment=deployment, **overrides
+    )
+
+
+@pytest.mark.parametrize("deployment", ["dev", "staging", "production"])
+def test_core_ops_passes_with_missing_models_refused_in_every_environment(
+    deployment: str,
+) -> None:
+    checks, report = base.run_gate(core_ops_api(deployment), cfg=core_ops_config(deployment))
+
+    assert report["ok"] is True, report["blockers"]
+    names = {check.name for check in checks}
+    assert {
+        "config:release_profile",
+        "config:release_profile_deployment",
+        "runtime:release_profile",
+        "runtime:persistence",
+        "runtime:model_limitation_reported",
+        "runtime:model_capability:forecastops",
+        "models:registry_refused",
+    } <= names
+    # The full model assertions are replaced, never silently passed ...
+    assert "runtime:model_bindings" not in names
+    assert not any(name.startswith("models:forecastops:") for name in names)
+    # ... and the dev-only administration journey is not a core-ops prerequisite.
+    assert not any(
+        name.startswith(("session:", "admin:", "config:dev_admin")) for name in names
+    )
+    assert "dev_admin" not in report
+    assert report["release_profile"] == {
+        "name": "core-ops",
+        "model_readiness_claimed": False,
+        "full_product_acceptance_claimed": False,
+    }
+    assert report["full_acceptance"]["status"] == "NOT_ADMITTED"
+
+
+def test_core_ops_needs_no_dev_admin_inputs() -> None:
+    cfg = core_ops_config(
+        "production",
+        dev_admin_username="",
+        dev_admin_password="",
+        dev_admin_denied_role="",
+        bootstrap_admin_username="",
+        bootstrap_admin_password="",
+    )
+    _, report = base.run_gate(core_ops_api("production"), cfg=cfg)
+
+    assert report["ok"] is True, report["blockers"]
+
+
+@pytest.mark.parametrize("deployment", ["", "qa", "development"])
+def test_core_ops_outside_its_environments_is_refused_before_any_request(
+    deployment: str,
+) -> None:
+    _, report = gate.evaluate_gate(
+        core_ops_config(deployment),
+        http=NoRequests(),
+        worker_driver=base.FakeWorkerDriver(),
+        correlation_id=base.CORRELATION_ID,
+        now=base.NOW,
+        web_http=NoRequests(),
+    )
+
+    assert blockers(report)["config:release_profile_deployment"] == "release-profile"
+
+
+def test_full_profile_still_rejects_the_core_ops_runtime_in_production() -> None:
+    readiness = missing_model_readiness("full")
+    readiness["details"]["deploymentMode"] = "production"
+    api = api_routes(**{"anon GET /readiness": base.response(200, readiness)})
+
+    _, report = base.run_gate(api, cfg=base.disabled_config(expected_deployment="production"))
+
+    found = blockers(report)
+    assert found["runtime:model_bindings"] == "mlflow"
+    assert found["models:registry"] == "mlflow"
+
+
+@pytest.mark.parametrize(
+    ("runtime_profile", "configured"),
+    [
+        ({"name": "full", "valid": True, "modelReadinessClaimed": True}, "core-ops"),
+        ({"name": "core-ops", "valid": True, "modelReadinessClaimed": False}, "full"),
+        ({"name": "dev-admin", "valid": True, "modelReadinessClaimed": False}, "core-ops"),
+        ({"name": "core-ops", "valid": True, "modelReadinessClaimed": False}, "dev-admin"),
+        ({"name": "core-ops", "valid": True, "modelReadinessClaimed": True}, "core-ops"),
+        ({"name": "core-ops", "valid": False, "modelReadinessClaimed": False}, "core-ops"),
+        (None, "core-ops"),
+    ],
+)
+def test_a_runtime_profile_that_is_not_the_admitted_core_ops_blocks(
+    runtime_profile: dict | None, configured: str
+) -> None:
+    readiness = missing_model_readiness("core-ops")
+    if runtime_profile is None:
+        readiness["details"].pop("releaseProfile")
+    else:
+        readiness["details"]["releaseProfile"] = {**runtime_profile, "error": None}
+    api = api_routes(**{"anon GET /readiness": base.response(200, readiness)})
+    cfg = {
+        "core-ops": core_ops_config(),
+        "full": base.disabled_config(),
+        "dev-admin": dev_admin_config(),
+    }[configured]
+
+    _, report, _ = run_dev_admin(api=api, cfg=cfg)
+
+    assert blockers(report)["runtime:release_profile"] == "release-profile"
+
+
+@pytest.mark.parametrize(
+    ("mutate", "check"),
+    [
+        (lambda m: m.update(autoSeeded=True), "runtime:model_limitation_reported"),
+        (lambda m: m.update(error=None), "runtime:model_limitation_reported"),
+        (lambda m: m.update(blockingReasons=[]), "runtime:model_limitation_reported"),
+        (lambda m: m.update(mode="mlflow-production"), "runtime:model_limitation_reported"),
+        (
+            lambda m: m["capabilities"]["forecastops"].update(reasonCode=None),
+            "runtime:model_capability:forecastops",
+        ),
+        (
+            lambda m: m["capabilities"]["avm"].update(available=True),
+            "runtime:model_capability:avm",
+        ),
+    ],
+)
+def test_a_manufactured_model_state_blocks_core_ops(mutate, check: str) -> None:
+    api = core_ops_api("staging")
+    readiness = api["anon GET /readiness"].payload
+    mutate(readiness["details"]["models"])
+
+    _, report = base.run_gate(api, cfg=core_ops_config("staging"))
+
+    assert blockers(report)[check] == "mlflow"
+
+
+@pytest.mark.parametrize(
+    "registry",
+    [
+        base.response(200, base.models_payload()),
+        base.response(200, {"items": [], "count": 0}),
+    ],
+)
+def test_a_registry_that_does_not_refuse_blocks_core_ops(registry: Any) -> None:
+    api = core_ops_api("production", **{"GET /api/v1/learninghub/models": registry})
+
+    _, report = base.run_gate(api, cfg=core_ops_config("production"))
+
+    assert blockers(report)["models:registry_refused"] == "mlflow"
+
+
+def test_core_ops_with_verified_models_is_held_to_the_full_model_assertions() -> None:
+    readiness = deepcopy(base.disabled_readiness_payload())
+    readiness["details"]["releaseProfile"] = {
+        "name": "core-ops",
+        "valid": True,
+        "modelReadinessClaimed": False,
+        "error": None,
+    }
+    api = api_routes(
+        **{
+            "anon GET /readiness": base.response(200, readiness),
+            "GET /api/v1/learninghub/models": base.response(200, {"items": [], "count": 0}),
+        }
+    )
+
+    _, report = base.run_gate(api, cfg=core_ops_config())
+
+    assert "models:forecastops:production_alias" in blockers(report)
+
+
+def test_failed_postgresql_blocks_core_ops_like_full() -> None:
+    api = core_ops_api("production")
+    persistence = api["anon GET /readiness"].payload["details"]["persistence"]
+    persistence["durable"] = False
+
+    _, report = base.run_gate(api, cfg=core_ops_config("production"))
+
+    assert blockers(report)["runtime:persistence"] == "postgresql"
+
+
+def test_core_ops_full_acceptance_is_not_admitted_even_with_a_receipt() -> None:
+    result = gate.evaluate_full_acceptance(
+        core_ops_config("production"),
+        runtime_ok=True,
+        receipt={"journeys": {}},
+    )
+
+    assert result["status"] == "NOT_ADMITTED"
+    assert set(result["journeys"].values()) == {"NOT_ADMITTED"}
+
+
+@pytest.mark.parametrize("deployment", ["dev", "staging", "production"])
+def test_the_real_runtime_serves_core_ops_with_missing_models_truthfully(
+    monkeypatch: pytest.MonkeyPatch, deployment: str
+) -> None:
+    status, body = _real_readiness(
+        monkeypatch,
+        ODP_REQUIRE_LIVE_DATA="true",
+        ODP_DEPLOY_ENV=deployment,
+        ODP_EXTERNAL_PROVIDER_MODE="disabled",
+        ODP_RELEASE_PROFILE="core-ops",
+    )
+
+    details = body["details"]
+    assert details["releaseProfile"] == {
+        "name": "core-ops",
+        "valid": True,
+        "modelReadinessClaimed": False,
+        "error": None,
+    }
+    limitation: list[Any] = []
+    gate._check_model_limitation(details["models"], checks=limitation)
+    assert all(check.ok for check in limitation), [c for c in limitation if not c.ok]
+
+
+def test_the_real_runtime_fails_readiness_on_core_ops_outside_its_environments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    status, body = _real_readiness(
+        monkeypatch, ODP_DEPLOY_ENV="qa", ODP_RELEASE_PROFILE="core-ops"
+    )
+
+    assert status == 503
+    assert body["details"]["releaseProfile"]["valid"] is False
+    assert body["details"]["releaseProfile"]["modelReadinessClaimed"] is False

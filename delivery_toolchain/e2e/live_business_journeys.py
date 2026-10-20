@@ -113,7 +113,12 @@ RECEIPT_ENV = "ODP_LIVE_BUSINESS_JOURNEY_RECEIPT"
 
 RELEASE_PROFILE_FULL = "full"
 RELEASE_PROFILE_DEV_ADMIN = "dev-admin"
-KNOWN_RELEASE_PROFILES = frozenset({RELEASE_PROFILE_FULL, RELEASE_PROFILE_DEV_ADMIN})
+# ODP-CORE-OPS-RELEASE-PROFILE-001: known so a core-ops manifest binds and is
+# then reported NOT_ADMITTED (it claims no model readiness), never unknown.
+RELEASE_PROFILE_CORE_OPS = "core-ops"
+KNOWN_RELEASE_PROFILES = frozenset(
+    {RELEASE_PROFILE_FULL, RELEASE_PROFILE_DEV_ADMIN, RELEASE_PROFILE_CORE_OPS}
+)
 
 STATUS_PASSED = "PASSED"
 STATUS_FAILED = "FAILED"
@@ -170,7 +175,8 @@ DEPENDENCY_ACTIONS: Mapping[str, str] = {
     ),
     "release-profile": (
         "Full business acceptance needs a release admitted under the full profile; a "
-        "dev-admin manifest is never upgraded by the caller's ODP_RELEASE_PROFILE."
+        "dev-admin or core-ops manifest is never upgraded by the caller's "
+        "ODP_RELEASE_PROFILE."
     ),
     "scope-authorization": (
         "Provide the journey scope authorization bound to this exact release SHA and "

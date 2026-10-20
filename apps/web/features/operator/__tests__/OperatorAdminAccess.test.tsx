@@ -194,8 +194,27 @@ describe("OperatorAdminConsole", () => {
     expect(notice).toHaveTextContent("ForecastOps");
   });
 
-  it.each(["full", "dev-admin"] as const)("keeps truthful model-ready messaging for %s", profile => {
-    stubAuthenticatedFetch( vi.fn().mockResolvedValue(json(401, {})));
+  it("shows core-ops as live core operations with models not yet ready, never as full acceptance", async () => {
+    stubAuthenticatedFetch(vi.fn(async () => json(200, { users: [adminUser], roles: [], events: [] })));
+    render(<OperatorAdminConsole releaseStatus={{
+      profile: "core-ops", models: "limited", unavailableServices: ["ForecastOps"],
+    }} />);
+
+    expect(await screen.findByTestId(`user-row-${adminUser.subject_id}`)).toBeInTheDocument();
+    const notice = screen.getByTestId("operator-release-notice");
+    expect(notice).toHaveTextContent("core-ops：核心營運功能");
+    expect(notice).toHaveTextContent("已上線");
+    expect(notice).toHaveTextContent("不宣稱模型功能就緒");
+    expect(notice).toHaveTextContent("不代表完整產品或模型驗收");
+    expect(notice).toHaveTextContent("正式模型綁定尚未就緒");
+    expect(notice).toHaveTextContent("ForecastOps");
+    expect(notice).not.toHaveTextContent("無法確認發布範圍");
+    expect(notice).not.toHaveTextContent("完整發布範圍");
+    expect(notice).not.toHaveTextContent("僅限 dev");
+  });
+
+  it.each(["full", "dev-admin", "core-ops"] as const)("keeps truthful model-ready messaging for %s", profile => {
+    stubAuthenticatedFetch(vi.fn().mockResolvedValue(json(401, {})));
     render(<OperatorAdminConsole releaseStatus={{ profile, models: "ready", unavailableServices: ["AVM"] }} />);
     const notice = screen.getByTestId("operator-release-notice");
     expect(notice).toHaveTextContent("正式模型綁定已就緒");

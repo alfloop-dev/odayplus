@@ -94,6 +94,16 @@ locals {
   worker_job_name    = "${local.name_prefix}-worker"
   scheduler_job_name = "${local.name_prefix}-scheduler"
 
+  # ODP-CORE-OPS-STAGING-LIVE-GATE-001: the staging smoke principal for the
+  # live E2E gate is this release's own runtime service account. The API
+  # trusts it only through the principal map below (keyed by the account's
+  # numeric id, created and destroyed with this release) for this
+  # release-bound audience. No password, secret or IAM binding is added, and
+  # no dev smoke/dev-admin input is read. Pinned in staging_lifecycle.py
+  # (STAGING_SMOKE_TOKEN_AUDIENCE_PREFIX, STAGING_SMOKE_ROLES).
+  smoke_token_audience = "urn:odp:staging-smoke:${local.release_label}"
+  smoke_roles          = ["operations_manager", "model_owner", "data_owner"]
+
   # Immutable creation and expiration timestamps (ensures applies do not refresh TTL).
   # created_at is deliberately a required input. Terraform cannot safely invent
   # a creation time here: doing so would make a later, otherwise idempotent
@@ -585,6 +595,10 @@ resource "google_cloud_run_v2_service" "staging_api" {
         value = "staging"
       }
       env {
+        name  = "ODP_RELEASE_PROFILE"
+        value = var.release_profile
+      }
+      env {
         name  = "ODP_TENANT_ID"
         value = local.tenant_id
       }
@@ -635,6 +649,29 @@ resource "google_cloud_run_v2_service" "staging_api" {
       env {
         name  = "ODP_JOBS_DLQ_TOPIC"
         value = google_pubsub_topic.staging_jobs_dlq.id
+      }
+      # Service-identity auth for the release-scoped smoke principal only
+      # (same issuer/JWKS defaults as the root stack's service_auth_*).
+      env {
+        name  = "ODP_AUTH_SERVICE_ISSUER"
+        value = "https://accounts.google.com"
+      }
+      env {
+        name  = "ODP_AUTH_SERVICE_JWKS_URI"
+        value = "https://www.googleapis.com/oauth2/v3/certs"
+      }
+      env {
+        name  = "ODP_AUTH_SERVICE_AUDIENCES"
+        value = local.smoke_token_audience
+      }
+      env {
+        name = "ODP_AUTH_PRINCIPAL_MAP"
+        value = jsonencode({
+          (google_service_account.staging_runtime.unique_id) = {
+            roles     = local.smoke_roles
+            tenant_id = local.tenant_id
+          }
+        })
       }
       env {
         name = "ODAY_DATABASE_URL"
@@ -752,6 +789,10 @@ resource "google_cloud_run_v2_service" "staging_web" {
       env {
         name  = "ODP_DEPLOY_ENV"
         value = "staging"
+      }
+      env {
+        name  = "ODP_RELEASE_PROFILE"
+        value = var.release_profile
       }
       env {
         name  = "ODP_TENANT_ID"
@@ -893,6 +934,10 @@ resource "google_cloud_run_v2_job" "staging_migration" {
           value = "staging"
         }
         env {
+          name  = "ODP_RELEASE_PROFILE"
+          value = var.release_profile
+        }
+        env {
           name  = "ODP_TENANT_ID"
           value = local.tenant_id
         }
@@ -994,6 +1039,10 @@ resource "google_cloud_run_v2_job" "staging_worker" {
           value = "staging"
         }
         env {
+          name  = "ODP_RELEASE_PROFILE"
+          value = var.release_profile
+        }
+        env {
           name  = "ODP_TENANT_ID"
           value = local.tenant_id
         }
@@ -1093,6 +1142,10 @@ resource "google_cloud_run_v2_job" "staging_scheduler" {
         env {
           name  = "ODP_DEPLOY_ENV"
           value = "staging"
+        }
+        env {
+          name  = "ODP_RELEASE_PROFILE"
+          value = var.release_profile
         }
         env {
           name  = "ODP_TENANT_ID"

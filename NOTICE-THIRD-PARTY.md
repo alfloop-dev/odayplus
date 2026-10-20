@@ -91,7 +91,7 @@ Retain NOTICE; state significant changes if modified.
 - `tzdata` 2026.2 (pypi)
 - `utilsforecast` 0.2.16 (pypi)
 - `watchdog` 6.0.0 (pypi)
-- `yarl` 1.24.5 (pypi)
+- `yarl` 1.25.1 (pypi)
 
 ### CC-BY-4.0
 
@@ -240,7 +240,7 @@ File-level copyleft: source of any modified MPL file must be offered.
 - `tzdata` 2026.2 (pypi)
 - `utilsforecast` 0.2.16 (pypi)
 - `watchdog` 6.0.0 (pypi)
-- `yarl` 1.24.5 (pypi)
+- `yarl` 1.25.1 (pypi)
 
 ### Apache-2.0 AND LGPL-3.0-or-later AND MIT (1)
 
@@ -248,7 +248,7 @@ File-level copyleft: source of any modified MPL file must be offered.
 
 ### Apache-2.0 AND MIT (1)
 
-- `aiohttp` 3.14.3 (pypi)
+- `aiohttp` 3.14.4 (pypi)
 
 ### Apache-2.0 OR BSD-2-Clause (1)
 

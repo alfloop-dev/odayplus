@@ -1,8 +1,10 @@
 import React from "react";
 import styles from "./operator.module.css";
 
+export type OperatorReleaseProfile = "full" | "dev-admin" | "core-ops";
+
 export type OperatorReleaseStatus = {
-  profile: "full" | "dev-admin" | null;
+  profile: OperatorReleaseProfile | null;
   models: "ready" | "limited" | "unknown";
   unavailableServices: string[];
 };
@@ -15,6 +17,8 @@ export function OperatorReleaseNotice({ status }: { status: OperatorReleaseStatu
       <p>
         {status.profile === "dev-admin"
           ? "dev-admin：僅限 dev 管理後台驗收，不代表完整產品、模型就緒或 production 發布驗收。"
+          : status.profile === "core-ops"
+            ? "core-ops：核心營運功能（登入、權限、租戶隔離、稽核）已上線；本發布範圍不宣稱模型功能就緒，模型功能以下方實際狀態為準，不代表完整產品或模型驗收。"
           : status.profile === "full"
             ? "full：完整發布範圍；本頁狀態不代表完整產品或 production 發布驗收通過。"
             : "無法確認發布範圍；請檢查部署設定。"}

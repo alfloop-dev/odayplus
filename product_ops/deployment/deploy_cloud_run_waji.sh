@@ -98,8 +98,20 @@ case "${ODP_RELEASE_PROFILE}" in
     : "${ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE:?Error: the dev-admin profile requires ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE (an operator role the account does not hold).}"
     export ODP_DEV_ADMIN_USERNAME ODP_DEV_ADMIN_PASSWORD
     ;;
+  core-ops)
+    # ODP-CORE-OPS-RELEASE-PROFILE-001: core operations ahead of trained models,
+    # admissible to every environment. It takes none of dev-admin's sign-in
+    # inputs; the live gate holds it to the missing-model refusal scope.
+    case "${ODP_DEPLOY_ENV}" in
+      dev|staging|production) ;;
+      *)
+        echo "Error: release profile 'core-ops' may only deploy to dev, staging or production, not '${ODP_DEPLOY_ENV}'." >&2
+        exit 1
+        ;;
+    esac
+    ;;
   *)
-    echo "Error: unknown release profile '${ODP_RELEASE_PROFILE}'; expected full or dev-admin." >&2
+    echo "Error: unknown release profile '${ODP_RELEASE_PROFILE}'; expected full, dev-admin or core-ops." >&2
     exit 1
     ;;
 esac
@@ -995,7 +1007,7 @@ payload = {
     "ODAY_ENV": os.environ["ODP_DEPLOY_ENV"],
     "ODP_DEPLOY_ENV": os.environ["ODP_DEPLOY_ENV"],
     "ODAY_RELEASE_SHA": os.environ["ODAY_RELEASE_SHA"],
-    # Normalised to full|dev-admin at the top of this script; the default only
+    # Normalised to full|dev-admin|core-ops at the top of this script; the default only
     # matters when this serializer is exercised on its own.
     "ODP_RELEASE_PROFILE": os.environ.get("ODP_RELEASE_PROFILE", "full"),
     # Same admitted MANIFEST_DIGEST export as the API; never infer Web identity
