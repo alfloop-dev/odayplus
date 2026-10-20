@@ -38,9 +38,14 @@ def live_data_required(environment: Mapping[str, str] = os.environ) -> bool:
 #: pinned here and held to the manifest by the release profile tests.
 RELEASE_PROFILE_FULL = "full"
 RELEASE_PROFILE_DEV_ADMIN = "dev-admin"
+#: ODP-CORE-OPS-RELEASE-PROFILE-001: core operations (login, RBAC, tenant
+#: isolation, audit, PostgreSQL) ship ahead of trained models in every
+#: environment; like dev-admin it claims no model readiness.
+RELEASE_PROFILE_CORE_OPS = "core-ops"
 _RELEASE_PROFILE_DEPLOYMENTS: dict[str, frozenset[str] | None] = {
     RELEASE_PROFILE_FULL: None,
     RELEASE_PROFILE_DEV_ADMIN: frozenset({"dev"}),
+    RELEASE_PROFILE_CORE_OPS: frozenset({"dev", "staging", "production"}),
 }
 
 
@@ -77,6 +82,7 @@ def release_profile(environment: Mapping[str, str] = os.environ) -> dict[str, ob
 
 
 __all__ = [
+    "RELEASE_PROFILE_CORE_OPS",
     "RELEASE_PROFILE_DEV_ADMIN",
     "RELEASE_PROFILE_FULL",
     "deployment_mode",

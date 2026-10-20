@@ -105,7 +105,7 @@ def _binding(profile: str) -> ReleaseBinding:
     return ReleaseBinding(SHA, DIGEST, profile, "")
 
 
-@pytest.mark.parametrize("profile", ["full", "dev-admin"])
+@pytest.mark.parametrize("profile", ["full", "dev-admin", "core-ops"])
 def test_normal_serializers_bind_exact_admitted_identity(tmp_path: Path, profile: str) -> None:
     api, web = _serialize(tmp_path, profile)
     for payload in (api, web):
@@ -118,7 +118,7 @@ def test_normal_serializers_bind_exact_admitted_identity(tmp_path: Path, profile
     assert release_identity_failures(_readback(api, web), _binding(profile), include_web=True) == []
 
 
-@pytest.mark.parametrize("profile", ["full", "dev-admin"])
+@pytest.mark.parametrize("profile", ["full", "dev-admin", "core-ops"])
 @pytest.mark.parametrize("digest", [None, "", "sha256:" + "d" * 64, "not-a-digest"])
 def test_missing_or_wrong_export_is_not_replaced_or_accepted(
     tmp_path: Path, profile: str, digest: str | None,
@@ -133,7 +133,7 @@ def test_missing_or_wrong_export_is_not_replaced_or_accepted(
     }
 
 
-@pytest.mark.parametrize("profile", ["full", "dev-admin"])
+@pytest.mark.parametrize("profile", ["full", "dev-admin", "core-ops"])
 @pytest.mark.parametrize("side", ["api", "web"])
 @pytest.mark.parametrize("metadata", ["manifest_digest", "release_sha", "release_profile"])
 @pytest.mark.parametrize("missing", [False, True])

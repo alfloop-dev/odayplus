@@ -123,6 +123,76 @@ IMMUTABLE_RELEASE_IDENTITY_FIELDS: tuple[str, ...] = (
 )
 
 
+# ODP-CORE-OPS-RELEASE-PROFILE-001: the admitted release profiles an ephemeral
+# staging runtime may serve. Mirrors the release_manifest profiles whose
+# admissible environments include staging (pinned, not imported; bound by
+# tests/release/test_release_profile.py). Staging used to set no
+# ODP_RELEASE_PROFILE at all, so every staging runtime defaulted to ``full`` and
+# claimed model readiness whatever manifest it was rehearsing.
+STAGING_RELEASE_PROFILES: tuple[str, ...] = ("full", "core-ops")
+#: Profiles that claim production model readiness (as in the live E2E gate).
+MODEL_READINESS_CLAIMING_PROFILES: frozenset[str] = frozenset({"full"})
+MODEL_BINDINGS_UNVERIFIED_REASON = "PRODUCTION_MODEL_BINDINGS_UNVERIFIED"
+
+
+def staging_release_profile_errors(
+    payload: Mapping[str, Any], *, expected_profile: str
+) -> list[str]:
+    """Check the staging ``/readiness`` payload against the admitted profile.
+
+    The runtime must report exactly the admitted profile, valid, claiming model
+    readiness only for ``full``. A profile that claims no model readiness and
+    whose runtime does not report verified production bindings must report the
+    missing models truthfully (the live gate's ``runtime:model_limitation_reported``
+    contract): no seeded models, no ``mlflow-production`` mode, a composition
+    error and the ``PRODUCTION_MODEL_BINDINGS_UNVERIFIED`` blocking reason.
+    Anything missing or malformed is an error; nothing is assumed.
+    """
+
+    errors: list[str] = []
+    if expected_profile not in STAGING_RELEASE_PROFILES:
+        return [f"admitted release profile {expected_profile!r} may not run in staging"]
+    details = payload.get("details")
+    details = details if isinstance(details, Mapping) else {}
+    if payload.get("status") != "ok":
+        errors.append(f"readiness status is {payload.get('status')!r}, not 'ok'")
+    if details.get("deploymentMode") != "staging":
+        errors.append(f"runtime deploymentMode is {details.get('deploymentMode')!r}, not 'staging'")
+    profile = details.get("releaseProfile")
+    profile = profile if isinstance(profile, Mapping) else {}
+    claims_models = expected_profile in MODEL_READINESS_CLAIMING_PROFILES
+    if not (
+        profile.get("name") == expected_profile
+        and profile.get("valid") is True
+        and profile.get("modelReadinessClaimed") is claims_models
+    ):
+        errors.append(
+            "runtime:release_profile: "
+            f"admitted={expected_profile} runtime={profile.get('name') or '<missing>'} "
+            f"valid={profile.get('valid')} "
+            f"modelReadinessClaimed={profile.get('modelReadinessClaimed')}"
+        )
+    models = details.get("models")
+    models = models if isinstance(models, Mapping) else {}
+    if not claims_models and models.get("productionBindingsReady") is not True:
+        reasons = models.get("blockingReasons")
+        reasons = reasons if isinstance(reasons, list) else []
+        if not (
+            models.get("productionBindingsReady") is False
+            and models.get("autoSeeded") is False
+            and models.get("mode") != "mlflow-production"
+            and bool(str(models.get("error") or "").strip())
+            and MODEL_BINDINGS_UNVERIFIED_REASON in reasons
+        ):
+            errors.append(
+                "runtime:model_limitation_reported: missing production models are not "
+                f"reported truthfully (mode={models.get('mode')!r} "
+                f"ready={models.get('productionBindingsReady')!r} "
+                f"autoSeeded={models.get('autoSeeded')!r} blockingReasons={reasons})"
+            )
+    return errors
+
+
 class ReleaseIdentityConflict(RuntimeError):
     """Create was refused against existing release state, which stays untouched."""
 
@@ -190,6 +260,9 @@ class StagingConfig:
     created_at: str = ""
     owner_task_id: str = ""
     additional_labels: dict[str, str] = dataclasses.field(default_factory=dict)
+    # The admitted manifest's release profile; written into the runtime env so
+    # the staging runtime reports the scope it is actually rehearsing.
+    release_profile: str = "full"
 
     def to_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
@@ -503,6 +576,12 @@ def validate_staging_config(config: StagingConfig, now: datetime | None = None) 
             f"Invalid candidate_sha: {config.candidate_sha!r}. Must be a 40-character lowercase hex SHA."
         )
 
+    if config.release_profile not in STAGING_RELEASE_PROFILES:
+        errors.append(
+            f"Invalid release_profile: {config.release_profile!r}. Staging runs only "
+            f"{list(STAGING_RELEASE_PROFILES)}."
+        )
+
     if not SHA256_DIGEST_PATTERN.fullmatch(config.manifest_digest):
         errors.append(
             f"Invalid manifest_digest: {config.manifest_digest!r}. Must match sha256:<64 hex>."
@@ -609,6 +688,7 @@ def generate_tfvars(
         "ttl_hours": config.ttl_hours,
         "created_at": format_timestamp(target_created_dt),
         "owner_task_id": config.owner_task_id,
+        "release_profile": config.release_profile,
         "cloud_sql_instance_name": config.cloud_sql_instance_name,
         "cloud_sql_connection_name": config.cloud_sql_connection_name,
         "network_name": config.network_name,
@@ -2868,6 +2948,19 @@ def make_live_rehearsal_executor(
             raise RuntimeError("release-scoped version readback does not match candidate_sha")
         return {"success": True, "endpoint": f"{audience}{path}", "status": "verified"}
 
+    def release_profile_readback(context: Mapping[str, Any]) -> dict[str, Any]:
+        """Fail closed unless the runtime serves the admitted profile truthfully.
+
+        A 503 readiness (for example an invalid profile) raises in the read.
+        """
+
+        expected = str(context.get("release_profile") or "")
+        payload = _live_json_get(f"{api_uri}/readiness", token_for(api_uri))
+        problems = staging_release_profile_errors(payload, expected_profile=expected)
+        if problems:
+            raise RuntimeError("staging release profile readback failed: " + "; ".join(problems))
+        return {"name": expected, "verified": True}
+
     def execute(stage_name: str, _context: Mapping[str, Any]) -> Mapping[str, Any]:
         ensure_release_identities_exist()
         if stage_name == "db_expand_migration":
@@ -2879,7 +2972,8 @@ def make_live_rehearsal_executor(
             execute_service("staging_web_service_name", "staging_web_image", "Web")
             endpoint("/platform/health")
             endpoint("/platform/version")
-            return endpoint("/operator", web=True)
+            profile_proof = release_profile_readback(_context)
+            return {**endpoint("/operator", web=True), "release_profile": profile_proof}
         if stage_name == "worker_idempotency":
             return execute_job("staging_worker_job_name", "staging_worker_image", "worker")
         if stage_name == "scheduler_oneshot":
@@ -3103,6 +3197,7 @@ def verify_ephemeral_staging(
     operator_identity: str = "",
     lifecycle_outputs: Mapping[str, Any] | None = None,
     remote_state_verified: bool = False,
+    release_profile: str = "",
 ) -> StagingLifecycleReceipt:
     """Execute the 9-stage rehearsal verification on ephemeral staging resources.
 
@@ -3176,6 +3271,11 @@ def verify_ephemeral_staging(
             errors.append(
                 "Non-dry-run staging verification requires the authoritative live stage executor."
             )
+        if release_profile not in STAGING_RELEASE_PROFILES:
+            errors.append(
+                "Live staging verification requires the admitted manifest's release profile "
+                f"({list(STAGING_RELEASE_PROFILES)}); got {release_profile!r}."
+            )
 
     # Identity boundary: staging smoke proof must use release-scoped least-privilege identity,
     # and must not impersonate dev smoke operator.
@@ -3204,6 +3304,7 @@ def verify_ephemeral_staging(
             "scheduler_job": names["scheduler_job"],
             "dry_run": dry_run,
             "lifecycle_outputs": dict(lifecycle_outputs) if lifecycle_outputs else {},
+            "release_profile": release_profile,
         }
 
         for stage_name in REHEARSAL_STAGE_NAMES:
@@ -3242,6 +3343,7 @@ def verify_ephemeral_staging(
                             "rehearsal_revision",
                             "health_readback",
                             "rollback_targets",
+                            "release_profile",
                         ):
                             if key in stage_result:
                                 stage_proof[key] = stage_result[key]
@@ -4273,6 +4375,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     create_p.add_argument("--ttl-hours", type=int, default=DEFAULT_TTL_HOURS, help="TTL in hours")
     create_p.add_argument("--created-at", default="", help="Creation timestamp ISO")
     create_p.add_argument("--owner-task-id", required=True, help="Owner Task ID")
+    create_p.add_argument(
+        "--release-profile",
+        required=True,
+        choices=STAGING_RELEASE_PROFILES,
+        help="Release profile of the admitted manifest (written to the runtime env)",
+    )
     create_p.add_argument("--dry-run", action="store_true", help="Perform dry-run planning only")
     create_p.add_argument("--tfvars-out", help="Path to write tfvars JSON")
     create_p.add_argument("--cloud-sql-connection-name", default="", help="Cloud SQL connection name")
@@ -4299,6 +4407,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     verify_p.add_argument("--scheduler-image", default="", help="Scheduler image reference with @sha256")
     verify_p.add_argument("--dry-run", action="store_true", help="Perform dry-run verification")
     verify_p.add_argument("--operator-identity", default="", help="Optional operator identity to assert least privilege")
+    verify_p.add_argument(
+        "--release-profile",
+        required=True,
+        choices=STAGING_RELEASE_PROFILES,
+        help="Release profile of the admitted manifest; the runtime must report it",
+    )
     verify_p.add_argument(
         "--outputs-file",
         help="Validated, secret-free Terraform output handoff from create",
@@ -4417,6 +4531,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             web_image=args.web_image,
             worker_image=args.worker_image,
             scheduler_image=args.scheduler_image,
+            release_profile=args.release_profile,
             ttl_hours=args.ttl_hours,
             created_at=created_at_to_use,
             owner_task_id=args.owner_task_id,
@@ -4555,6 +4670,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             lifecycle_outputs=lifecycle_outputs,
             remote_state_verified=remote_state_verified,
             receipt_path=getattr(args, "receipt", None),
+            release_profile=args.release_profile,
         )
         print(json.dumps(receipt.to_dict(), indent=2))
         return 0 if receipt.success else 1

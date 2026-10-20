@@ -912,6 +912,14 @@ def test_staging_lifecycle_invocations_gated_on_staging_environment() -> None:
     assert "${RELEASE_RECEIPT_DIR}/staging-rehearsal-receipt.json" in verify_run
     assert "--dry-run" not in verify_run, "Staging verify must execute live without --dry-run"
 
+    # ODP-CORE-OPS-RELEASE-PROFILE-001: staging runs and verifies the admitted
+    # manifest's profile, never a dispatch input and never an implicit full.
+    assert '--release-profile "${ODP_RELEASE_PROFILE}"' in create_run
+    assert '--release-profile "${ODP_RELEASE_PROFILE}"' in verify_run
+    deploy_profile = parsed["jobs"]["deploy"]["env"]["ODP_RELEASE_PROFILE"]
+    assert "needs.admission.outputs.release_profile" in deploy_profile
+    assert "inputs.release_profile" not in deploy_profile
+
 
 def test_staging_hold_on_failure_invoked_on_error() -> None:
     """Staging deploy failure triggers staging_lifecycle.py hold to retain resources for debugging."""

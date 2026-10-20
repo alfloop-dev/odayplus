@@ -295,6 +295,7 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
             "scheduler_image": "asia-east1-docker.pkg.dev/test/repo/scheduler@sha256:" + "0" * 64,
             "ttl_hours": 24,
             "owner_task_id": "ODP_TASK_001",
+            "release_profile": "core-ops",
             "tenant_id": "custom_tenant",
             "cloud_sql_instance_name": "test-db",
             "cloud_sql_connection_name": "test:asia-east1:test-db",

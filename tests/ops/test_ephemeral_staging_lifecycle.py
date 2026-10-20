@@ -1334,6 +1334,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
                 "--worker-image", self.valid_config.worker_image,
                 "--scheduler-image", self.valid_config.scheduler_image,
                 "--owner-task-id", "ODP-EPHEMERAL-STAGING-IAC-001",
+                "--release-profile", "full",
                 "--state-dir", str(tmp_path),
                 "--dry-run",
             ]
@@ -1893,6 +1894,7 @@ class UnverifiableReleaseStateTests(unittest.TestCase):
                 "--worker-image", self.config.worker_image,
                 "--scheduler-image", self.config.scheduler_image,
                 "--owner-task-id", "ODP-EPHEMERAL-STAGING-IAC-001",
+                "--release-profile", "full",
                 "--state-dir", str(state_root),
                 "--dry-run",
             ])
@@ -2984,6 +2986,210 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
         self.assertTrue(receipt.remediation_required)
         self.assertTrue(any("worker_idempotency failed" in err for err in receipt.errors))
 
+    # ODP-CORE-OPS-RELEASE-PROFILE-001: staging must serve and verify the
+    # admitted profile; a model-less runtime defaulting to full fails closed.
+
+    @staticmethod
+    def _readiness(profile: str = "core-ops", *, ready: bool = False) -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "details": {
+                "deploymentMode": "staging",
+                "requireLiveData": True,
+                "releaseProfile": {
+                    "name": profile,
+                    "valid": True,
+                    "modelReadinessClaimed": profile == "full",
+                    "error": None,
+                },
+                "models": {
+                    "mode": "mlflow-production" if ready else "mlflow-production-unverified",
+                    "productionBindingsReady": ready,
+                    "autoSeeded": False,
+                    "error": None if ready else "forecastops: MLFLOW_TRACKING_URI_REQUIRED",
+                    "blockingReasons": [] if ready else ["PRODUCTION_MODEL_BINDINGS_UNVERIFIED"],
+                },
+            },
+        }
+
+    def test_staging_release_profile_check_accepts_truthful_runtimes(self) -> None:
+        from product_ops.deployment.staging_lifecycle import staging_release_profile_errors
+
+        self.assertEqual(
+            staging_release_profile_errors(self._readiness(), expected_profile="core-ops"), []
+        )
+        # core-ops with genuinely verified bindings is not forced to claim absence.
+        self.assertEqual(
+            staging_release_profile_errors(
+                self._readiness(ready=True), expected_profile="core-ops"
+            ),
+            [],
+        )
+        self.assertEqual(
+            staging_release_profile_errors(
+                self._readiness("full", ready=True), expected_profile="full"
+            ),
+            [],
+        )
+
+    def test_staging_release_profile_check_refuses_the_default_full_lie(self) -> None:
+        from product_ops.deployment.staging_lifecycle import staging_release_profile_errors
+
+        # The pre-fix staging runtime: no ODP_RELEASE_PROFILE, so full/claimed
+        # while the admitted manifest is core-ops and no model exists.
+        errors = staging_release_profile_errors(
+            self._readiness("full"), expected_profile="core-ops"
+        )
+        self.assertTrue(any(e.startswith("runtime:release_profile") for e in errors), errors)
+
+    def test_staging_release_profile_check_refuses_mismatches_and_manufactured_models(
+        self,
+    ) -> None:
+        from product_ops.deployment.staging_lifecycle import staging_release_profile_errors
+
+        cases: list[tuple[str, Any, str]] = [
+            ("claim", lambda d: d["releaseProfile"].update(modelReadinessClaimed=True),
+             "runtime:release_profile"),
+            ("invalid", lambda d: d["releaseProfile"].update(valid=False), "runtime:release_profile"),
+            ("missing", lambda d: d.pop("releaseProfile"), "runtime:release_profile"),
+            ("seeded", lambda d: d["models"].update(autoSeeded=True),
+             "runtime:model_limitation_reported"),
+            ("no-reason", lambda d: d["models"].update(blockingReasons=[]),
+             "runtime:model_limitation_reported"),
+            ("no-error", lambda d: d["models"].update(error=None),
+             "runtime:model_limitation_reported"),
+            ("prod-mode", lambda d: d["models"].update(mode="mlflow-production"),
+             "runtime:model_limitation_reported"),
+            ("no-models", lambda d: d.pop("models"), "runtime:model_limitation_reported"),
+            ("deployment", lambda d: d.update(deploymentMode="production"), "deploymentMode"),
+        ]
+        for name, mutate, fragment in cases:
+            with self.subTest(name):
+                payload = self._readiness()
+                mutate(payload["details"])
+                errors = staging_release_profile_errors(payload, expected_profile="core-ops")
+                self.assertTrue(any(fragment in e for e in errors), errors)
+
+        payload = self._readiness()
+        payload["status"] = "degraded"
+        self.assertTrue(staging_release_profile_errors(payload, expected_profile="core-ops"))
+        for expected in ("dev-admin", "", "bogus"):
+            with self.subTest(expected=expected):
+                self.assertTrue(
+                    staging_release_profile_errors(self._readiness(), expected_profile=expected)
+                )
+
+    def _smoke_with_readiness(self, readiness: dict[str, Any], expected: str) -> Any:
+        from unittest.mock import patch
+
+        from product_ops.deployment.staging_lifecycle import make_live_rehearsal_executor
+
+        outputs = self._valid_outputs()
+
+        def describe(kind: str, name: str, **_kwargs: Any) -> dict[str, Any]:
+            image = outputs["staging_api_image" if "api" in name else "staging_web_image"]
+            return {"spec": {"template": {"containers": [{"image": image}],
+                                          "vpcAccess": {"egress": "ALL_TRAFFIC"}}}}
+
+        def json_get(url: str, _token: str, **_kwargs: Any) -> dict[str, Any]:
+            if url.endswith("/readiness"):
+                return readiness
+            if url.endswith("/platform/version"):
+                return {"status": "ok", "release_sha": outputs["resource_labels"]["candidate_sha"]}
+            return {"status": "ok"}
+
+        with patch(
+            "product_ops.deployment.staging_lifecycle._live_gcloud",
+            side_effect=lambda argv, **kwargs: argv[3] if argv[0] == "iam" else "",
+        ), patch(
+            "product_ops.deployment.staging_lifecycle._live_cloud_run_description",
+            side_effect=describe,
+        ), patch(
+            "product_ops.deployment.staging_lifecycle._live_identity_token",
+            return_value="token",
+        ), patch(
+            "product_ops.deployment.staging_lifecycle._live_json_get", side_effect=json_get
+        ):
+            executor = make_live_rehearsal_executor(
+                outputs,
+                project_id=self.project_id,
+                region="asia-east1",
+                operator_identity=outputs["staging_runtime_service_account"],
+            )
+            return executor("api_web_authenticated_smoke", {"release_profile": expected})
+
+    def test_live_smoke_stage_verifies_the_admitted_profile(self) -> None:
+        result = self._smoke_with_readiness(self._readiness(), "core-ops")
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["release_profile"], {"name": "core-ops", "verified": True})
+
+    def test_live_smoke_stage_fails_closed_on_a_runtime_defaulting_to_full(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "runtime:release_profile"):
+            self._smoke_with_readiness(self._readiness("full"), "core-ops")
+        with self.assertRaisesRegex(RuntimeError, "may not run in staging"):
+            self._smoke_with_readiness(self._readiness(), "")
+
+    def test_live_verify_requires_the_admitted_release_profile(self) -> None:
+        from product_ops.deployment.staging_lifecycle import verify_ephemeral_staging
+
+        outputs = self._valid_outputs()
+        for profile in ("", "dev-admin"):
+            with self.subTest(profile=profile):
+                receipt = verify_ephemeral_staging(
+                    release_id=self.release_id,
+                    candidate_sha=self.candidate_sha,
+                    manifest_digest=self.manifest_digest,
+                    project_id=self.project_id,
+                    operator_identity=outputs["staging_runtime_service_account"],
+                    lifecycle_outputs=outputs,
+                    stage_executor=lambda _stage, _context: {"success": True},
+                    now=self.now,
+                    release_profile=profile,
+                )
+                self.assertFalse(receipt.success)
+                self.assertTrue(
+                    any("admitted manifest's release profile" in e for e in receipt.errors)
+                )
+
+    def test_generated_tfvars_carry_the_admitted_profile_into_the_module(self) -> None:
+        from product_ops.deployment.staging_lifecycle import (
+            StagingConfig,
+            generate_tfvars,
+            validate_staging_config,
+            validate_tfvars_against_module,
+        )
+
+        base = dict(
+            release_id=self.release_id,
+            candidate_sha=self.candidate_sha,
+            manifest_digest=self.manifest_digest,
+            project_id=self.project_id,
+            owner_task_id="ODP-CORE-OPS-RELEASE-PROFILE-001",
+            kms_key_id="projects/p/locations/asia-east1/keyRings/staging/cryptoKeys/release",
+            deployer_service_account_email="deployer@oday-staging-proj.iam.gserviceaccount.com",
+            created_at="2026-08-27T06:00:00Z",
+        )
+        module = Path(__file__).resolve().parents[2] / "infra/terraform/modules/ephemeral_staging"
+        tfvars = generate_tfvars(StagingConfig(**base, release_profile="core-ops"), now=self.now)
+        self.assertEqual(tfvars["release_profile"], "core-ops")
+        self.assertEqual(validate_tfvars_against_module(tfvars, module), [])
+        missing = {key: value for key, value in tfvars.items() if key != "release_profile"}
+        self.assertTrue(
+            any("release_profile" in e for e in validate_tfvars_against_module(missing, module))
+        )
+        for profile in ("dev-admin", "", "Core-Ops"):
+            with self.subTest(profile=profile):
+                errors = validate_staging_config(
+                    StagingConfig(**base, release_profile=profile), now=self.now
+                )
+                self.assertTrue(any("release_profile" in e for e in errors), errors)
+        main_tf = (module / "main.tf").read_text(encoding="utf-8")
+        self.assertEqual(
+            main_tf.count('name  = "ODP_RELEASE_PROFILE"'),
+            main_tf.count('name  = "ODP_DEPLOY_ENV"'),
+        )
+
     def test_verify_ephemeral_staging_dev_identity_rejection(self) -> None:
         from product_ops.deployment.staging_lifecycle import verify_ephemeral_staging
 
@@ -3055,6 +3261,7 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
                 "--worker-image", "asia-east1-docker.pkg.dev/proj/repo/worker@sha256:" + "e" * 64,
                 "--scheduler-image", "asia-east1-docker.pkg.dev/proj/repo/scheduler@sha256:" + "f" * 64,
                 "--owner-task-id", "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+                "--release-profile", "core-ops",
                 "--kms-key-id", "projects/oday-staging-proj/locations/asia-east1/keyRings/staging/cryptoKeys/release",
                 "--deployer-service-account-email", "deployer@oday-staging-proj.iam.gserviceaccount.com",
                 "--dry-run",
@@ -3074,6 +3281,7 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
                 "--project-id", self.project_id,
                 "--worker-image", "asia-east1-docker.pkg.dev/proj/repo/worker@sha256:" + "e" * 64,
                 "--scheduler-image", "asia-east1-docker.pkg.dev/proj/repo/scheduler@sha256:" + "f" * 64,
+                "--release-profile", "core-ops",
                 "--dry-run",
                 "--receipt", str(verify_receipt),
             ])

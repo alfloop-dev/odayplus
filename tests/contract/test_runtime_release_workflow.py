@@ -298,6 +298,9 @@ def _workflow_bundle(environment: str, admitted_profile: str, secret: str, phase
     ("deploy", "full", False),
     ("auto", "dev-admin", True),
     ("auto", "full", False),
+    # ODP-CORE-OPS-RELEASE-PROFILE-001: dev-admin credentials never become a
+    # core-ops prerequisite, even with a populated dev secret.
+    ("deploy", "core-ops", False),
 ])
 def test_bundle_scope_uses_effective_manual_or_automatic_admitted_profile(
     phase: str, profile: str, injected: bool,
@@ -313,7 +316,7 @@ def test_bundle_scope_uses_effective_manual_or_automatic_admitted_profile(
 
 
 @pytest.mark.parametrize("environment", ["staging", "production"])
-@pytest.mark.parametrize("profile", ["dev-admin", "full"])
+@pytest.mark.parametrize("profile", ["dev-admin", "full", "core-ops"])
 def test_bundle_never_reaches_non_dev_deploys(environment: str, profile: str) -> None:
     env = _deploy_step_env(environment, "deploy", profile, "populated-secret")
     assert env is not None and env["ODP_DEV_ADMIN_CREDENTIAL_BUNDLE"] == ""

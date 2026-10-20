@@ -585,6 +585,10 @@ resource "google_cloud_run_v2_service" "staging_api" {
         value = "staging"
       }
       env {
+        name  = "ODP_RELEASE_PROFILE"
+        value = var.release_profile
+      }
+      env {
         name  = "ODP_TENANT_ID"
         value = local.tenant_id
       }
@@ -754,6 +758,10 @@ resource "google_cloud_run_v2_service" "staging_web" {
         value = "staging"
       }
       env {
+        name  = "ODP_RELEASE_PROFILE"
+        value = var.release_profile
+      }
+      env {
         name  = "ODP_TENANT_ID"
         value = local.tenant_id
       }
@@ -893,6 +901,10 @@ resource "google_cloud_run_v2_job" "staging_migration" {
           value = "staging"
         }
         env {
+          name  = "ODP_RELEASE_PROFILE"
+          value = var.release_profile
+        }
+        env {
           name  = "ODP_TENANT_ID"
           value = local.tenant_id
         }
@@ -994,6 +1006,10 @@ resource "google_cloud_run_v2_job" "staging_worker" {
           value = "staging"
         }
         env {
+          name  = "ODP_RELEASE_PROFILE"
+          value = var.release_profile
+        }
+        env {
           name  = "ODP_TENANT_ID"
           value = local.tenant_id
         }
@@ -1093,6 +1109,10 @@ resource "google_cloud_run_v2_job" "staging_scheduler" {
         env {
           name  = "ODP_DEPLOY_ENV"
           value = "staging"
+        }
+        env {
+          name  = "ODP_RELEASE_PROFILE"
+          value = var.release_profile
         }
         env {
           name  = "ODP_TENANT_ID"
