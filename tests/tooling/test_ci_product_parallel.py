@@ -265,17 +265,13 @@ def test_ci_workflow_retains_main_database_report_after_failure(ci_workflow: dic
     assert ".odp_data/ci/database-contracts.xml" in artifact["with"]["path"].splitlines()
 
 
-def test_native_sql_diagnostics_are_scoped_to_the_main_database_step(ci_workflow: dict[str, Any]) -> None:
+def test_required_ci_keeps_native_sql_diagnostics_opt_in(ci_workflow: dict[str, Any]) -> None:
     key = "ODP_NATIVE_SQL_PROFILE"
     assert key not in ci_workflow.get("env", {})
-    owners = []
-    for name, job in ci_workflow["jobs"].items():
+    for job in ci_workflow["jobs"].values():
         assert key not in job.get("env", {})
         for step in job.get("steps", []):
-            if key in step.get("env", {}):
-                assert step["env"][key] == "1"
-                owners.append((name, step["name"]))
-    assert owners == [("product-db", "Test database contracts, migrations and schema gates")]
+            assert key not in step.get("env", {})
     artifact = next(step for step in ci_workflow["jobs"]["product-db"]["steps"]
                     if step.get("uses", "").startswith("actions/upload-artifact@"))
     assert artifact["if"] == "always()"

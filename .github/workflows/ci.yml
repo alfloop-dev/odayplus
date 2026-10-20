@@ -280,8 +280,8 @@ jobs:
       - name: Test database contracts, migrations and schema gates
         env:
           PYTEST_ADDOPTS: --junitxml=.odp_data/ci/database-contracts.xml
-          ODP_NATIVE_SQL_PROFILE: "1"
         run: |
+          # Qualify the original product path; SQL profiling remains opt-in.
           # Preserve the first failure and JUnit report before the job deadline.
           # A successful invocation still executes the complete original selection.
           uv run pytest -m "requires_live_env and not requires_postgis" \
