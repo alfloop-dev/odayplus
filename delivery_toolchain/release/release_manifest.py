@@ -1570,6 +1570,13 @@ def initial_release_verification_errors(
             f"{label}.kind must be {INITIAL_RELEASE_VERIFICATION_KIND!r}; "
             f"got {receipt.get('kind')!r}"
         )
+    admissible = initial_release_admissible_environments(recovery.get("target_environment"))
+    if environment not in admissible:
+        errors.append(
+            f"{label} cannot admit a record sealed for "
+            f"{recovery.get('target_environment')!r} into {environment!r}; it is "
+            f"admissible only into {list(admissible)}"
+        )
     if receipt.get("environment") != environment:
         errors.append(
             f"{label}.environment is {receipt.get('environment')!r}, but this "

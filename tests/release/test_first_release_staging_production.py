@@ -573,6 +573,25 @@ def test_a_staging_readback_that_drifted_from_the_seal_is_refused(
     assert any("does not match the readback sealed" in error for error in errors)
 
 
+def test_the_freshness_window_is_ten_minutes_in_literal_seconds(
+    staging_manifest: dict,
+) -> None:
+    """Pinned with literals: widening the constant must fail this test, not move it."""
+
+    def errors_at(age_seconds: int) -> list[str]:
+        receipt = admission_receipt(
+            staging_manifest, "production",
+            observed_at=NOW - timedelta(seconds=age_seconds),
+        )
+        return initial_release_verification_errors(
+            receipt, manifest=staging_manifest, environment="production", now=NOW
+        )
+
+    assert errors_at(600) == []
+    assert any("is stale" in error for error in errors_at(601))
+    assert any("is stale" in error for error in errors_at(24 * 3600))
+
+
 def test_the_freshness_window_is_inclusive_at_its_edge(staging_manifest: dict) -> None:
     edge = NOW - timedelta(seconds=INITIAL_RELEASE_ADMISSION_READBACK_MAX_AGE_SECONDS)
     receipt = admission_receipt(staging_manifest, "production", observed_at=edge)
@@ -817,6 +836,61 @@ def test_every_refusal_leaves_the_production_lease_unspent(
 
     assert code != 0
     assert result["admitted"] is False
+    assert store.get(lease["lease_id"])["state"] == STATE_ISSUED
+
+
+def test_a_dev_sealed_first_release_is_refused_by_production_admission(
+    tmp_path: Path,
+) -> None:
+    """Even with a valid production readback, a dev seal never admits production."""
+
+    manifest = first_release(
+        initial_release_readback=readback("dev"), target_environment="dev",
+        release_profile="full",
+    )
+    code, result, lease, store = _admit(
+        tmp_path, manifest, environment="production",
+        receipt=_fresh(manifest, "production"),
+    )
+
+    assert code != 0
+    assert any("admissible only into ['dev']" in e for e in result["errors"])
+    assert store.get(lease["lease_id"])["state"] == STATE_ISSUED
+
+
+def test_the_readback_guard_alone_refuses_a_dev_seal_in_production() -> None:
+    """Defence in depth: the receipt check does not lean on the caller's env binding."""
+
+    manifest = first_release(
+        initial_release_readback=readback("dev"), target_environment="dev",
+        release_profile="full",
+    )
+    errors = initial_release_verification_errors(
+        admission_receipt(manifest, "production"),
+        manifest=manifest, environment="production", now=NOW,
+    )
+    assert any("admissible only into ['dev']" in e for e in errors)
+
+
+def test_the_env_bound_manifest_check_alone_refuses_a_dev_seal_in_production(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The verifier binds validate_release_admission to --environment by itself."""
+
+    manifest = first_release(
+        initial_release_readback=readback("dev"), target_environment="dev",
+        release_profile="full",
+    )
+    monkeypatch.setattr(
+        check_runtime_admission, "initial_release_verification_errors",
+        lambda *args, **kwargs: [],
+    )
+    code, result, lease, store = _admit(
+        tmp_path, manifest, environment="production", receipt=None
+    )
+
+    assert code != 0
+    assert any("admissible only into ['dev']" in e for e in result["errors"])
     assert store.get(lease["lease_id"])["state"] == STATE_ISSUED
 
 
