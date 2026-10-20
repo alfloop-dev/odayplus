@@ -8,6 +8,75 @@ import pytest
 from shared.domain.events import CONSUMER_MODE, DomainEvent, validate_event
 
 
+def _identity_event(version=1):
+    tenant, case = str(uuid4()), str(uuid4())
+    payload = {"match_decision_id": str(uuid4()), "match_case_id": case,
+        "decision_type": "DUPLICATE", "status": "APPROVED",
+        "proposer_subject_id": str(uuid4()) if version == 1 else None, "reviewer_subject_id": None}
+    if version == 2:
+        payload["proposer_service_principal"] = "native-intake-identity"
+    return DomainEvent(event_type="match.decided", event_version=version,
+        producer="identity_resolution_service", tenant_id=tenant, aggregate_type="match_case",
+        aggregate_id=case, aggregate_version=2, partition_key=f"{tenant}:{case}",
+        correlation_id=str(uuid4()), schema_ref=f"#/payloads/MatchDecidedV{version}", payload=payload)
+
+
+@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize("mode", ["producer", CONSUMER_MODE])
+def test_human_v1_and_truthful_service_v2_use_the_same_versioned_identity_event(version, mode):
+    assert validate_event(_identity_event(version), mode=mode) == []
+
+
+@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize("mode", ["producer", CONSUMER_MODE])
+def test_optional_schema_ref_can_be_omitted_without_changing_the_versioned_payload_contract(version, mode):
+    event = _identity_event(version).to_dict()
+    del event["schema_ref"]
+    assert validate_event(event, mode=mode) == []
+
+
+@pytest.mark.parametrize("mode", ["producer", CONSUMER_MODE])
+def test_omitting_optional_schema_ref_does_not_admit_a_service_payload_as_human_v1(mode):
+    event = _identity_event(2).to_dict()
+    del event["schema_ref"]
+    event["event_version"] = 1
+    assert validate_event(event, mode=mode)
+
+
+@pytest.mark.parametrize("mode", ["producer", CONSUMER_MODE])
+@pytest.mark.parametrize("field,value", [("event_version", 999), ("event_version", True),
+    ("schema_ref", "#/payloads/MatchDecidedV2"), ("producer", "matcher_service"),
+    ("aggregate_type", "listing")])
+def test_identity_event_cannot_select_unknown_version_or_forged_catalog_metadata(mode, field, value):
+    event = _identity_event().to_dict()
+    event[field] = value
+    assert validate_event(event, mode=mode)
+
+
+@pytest.mark.parametrize("mode", ["producer", CONSUMER_MODE])
+@pytest.mark.parametrize("field,value", [("proposer_subject_id", "HUMAN"),
+    ("reviewer_subject_id", "HUMAN"), ("proposer_service_principal", "matcher_service"),
+    ("decision_type", "CREATE"), ("proposer_service_principal", None)])
+def test_service_identity_event_cannot_invent_human_approval_or_another_service(mode, field, value):
+    event = _identity_event(2)
+    event.payload[field] = str(uuid4()) if value == "HUMAN" else value
+    assert validate_event(event, mode=mode)
+
+
+@pytest.mark.parametrize("mode", ["producer", CONSUMER_MODE])
+def test_service_identity_event_cannot_be_labeled_as_the_human_v1_contract(mode):
+    event = _identity_event(2).to_dict()
+    event.update(event_version=1, schema_ref="#/payloads/MatchDecidedV1")
+    assert validate_event(event, mode=mode)
+
+
+def test_service_v2_keeps_existing_unknown_optional_field_consumer_compatibility():
+    event = _identity_event(2)
+    event.payload["future_optional_display_label"] = "engineering fixture only"
+    assert validate_event(event)
+    assert validate_event(event, mode=CONSUMER_MODE) == []
+
+
 @pytest.fixture
 def snapshot_event():
     def create(event_type, producer, changes):

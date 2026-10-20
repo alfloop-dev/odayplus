@@ -18,7 +18,11 @@ from apps.api.oday_api.security.dependencies import principal_from_headers
 from modules.external_data.security.assisted_listing_retrieval import (
     contains_sensitive_submission_material,
 )
-from modules.listing.application.intake_authorization import authorize_intake_action
+from modules.listing.application.intake_authorization import (
+    authorize_intake_action,
+    mask_intake,
+    native_intake_authorization_resource,
+)
 from modules.listing.application.native_intake_assisted_entry_input import (
     NativeAssistedEntryCommand,
 )
@@ -45,7 +49,7 @@ from modules.listing.application.native_intake_source_policy_recheck import (
 from modules.listing.application.native_intake_submission_validation import (
     validate_native_intake_url,
 )
-from modules.listing.domain.intake_states import IntakeStage
+from modules.listing.domain.intake_states import IntakeStage, ListingState
 from shared.audit.backlog import CanonicalAuditBacklog
 from shared.auth import Role
 from shared.jobs.queue import JobFenceRejectedError
@@ -126,6 +130,29 @@ class CanonicalIntakeSummary(BaseModel):
     submitted_at: datetime
     correlation_id: UUID
     scope: NativeIntakeScope
+
+
+class CanonicalPersistedListingField(BaseModel):
+    field_path: str
+    classification: str | None = None
+    effective: str | int | float | bool | None = None
+    masked: bool = False
+    mask_reason_code: Literal["FIELD_MASKED"] | None = None
+
+
+class CanonicalIntakeResolution(BaseModel):
+    listing_id: UUID
+    listing_version: int = Field(ge=1)
+    lifecycle_state: ListingState
+    current_revision_id: UUID | None
+    property_id_at_creation: UUID
+    effective_property_id: UUID
+    property_version: int = Field(ge=1)
+    fields: list[CanonicalPersistedListingField] = Field(default_factory=list, max_length=100)
+
+
+class CanonicalIntakeDetail(CanonicalIntakeSummary):
+    resolution: CanonicalIntakeResolution | None = None
 
 
 class CancelCanonicalIntakeAuthorizationWaitRequest(BaseModel):
@@ -285,9 +312,9 @@ def create_canonical_intakes_router(store) -> APIRouter:
         except (ValueError, RuntimeError) as exc:
             raise HTTPException(503, "CANONICAL_INTAKE_STORAGE_UNAVAILABLE") from exc
 
-    def authorize(request, principal, row, action="view"):
+    def authorize(request, principal, repo, row, action="view", *, listing_context=None):
         authorize_intake_action(principal, action,
-            resource={**row, "submitter": row.get("submitter_subject_id")},
+            resource=native_intake_authorization_resource(row, graph=repo.graph, listing_context=listing_context),
             audit_log=getattr(request.app.state, "audit_log", None),
             correlation_id=request.headers.get("x-correlation-id"))
 
@@ -327,7 +354,7 @@ def create_canonical_intakes_router(store) -> APIRouter:
                                  state=processing_state.value if processing_state else None,
                                  before=position, limit=page_size + 1)
                 for row in rows:
-                    authorize(request, principal, row)
+                    authorize(request, principal, repo, row)
                 selected = rows[:page_size]
                 next_cursor = None
                 if len(rows) > page_size:
@@ -339,15 +366,53 @@ def create_canonical_intakes_router(store) -> APIRouter:
                                   for row in selected], "next_cursor": next_cursor}
 
     @router.get("/canonical-intakes/{intake_id}", operation_id="getCanonicalIntake",
-                response_model=CanonicalIntakeSummary, responses=errors)
+                response_model=CanonicalIntakeDetail, responses=errors)
     def get(intake_id: UUID, request: Request, response: Response):
         with _http_errors():
             principal, repo = context(request)
             with repo.graph.transaction(principal.tenant_id):
                 row = repo.get(principal.tenant_id, str(intake_id))
-                authorize(request, principal, row)
+                authorize(request, principal, repo, row)
+                resolution = None
+                if row["resolved_listing_id"] is not None:
+                    listing = repo.graph._one("SELECT * FROM expansion.listings WHERE tenant_id=? AND listing_id=?",
+                        (principal.tenant_id, row["resolved_listing_id"]))
+                    resolved = repo.graph.resolve_listing(principal.tenant_id, listing["listing_id"])
+                    prop = repo.graph._one("SELECT * FROM identity.properties WHERE tenant_id=? AND property_id=?",
+                        (principal.tenant_id, resolved["effective_property_id"]))
+                    # Intake ownership grants no access to a resolved Listing
+                    # or a subsequently merged Property outside current scope.
+                    authorize(request, principal, repo, listing, listing_context=(resolved, prop))
+                    authorize(request, principal, repo, prop)
+                    fields = []
+                    if listing["current_revision_id"] is not None:
+                        revision = repo.graph._one("SELECT effective_values,parser_run_id,source_snapshot_id "
+                            "FROM expansion.listing_revisions WHERE tenant_id=? AND listing_id=? AND listing_revision_id=?",
+                            (principal.tenant_id, listing["listing_id"], listing["current_revision_id"]))
+                        values = revision["effective_values"]
+                        values = json.loads(values) if isinstance(values, str) else values
+                        if not isinstance(values, dict) or len(values) > 100:
+                            raise HTTPException(409, "CANONICAL_LISTING_FIELDS_UNAVAILABLE")
+                        classifications = {}
+                        for item in repo.engine.query("SELECT field_path,field_classification FROM intake.human_corrections "
+                                "WHERE tenant_id=? AND listing_id=? AND parser_run_id=? AND source_snapshot_id=? "
+                                "AND status='APPLIED' ORDER BY field_path",
+                                (principal.tenant_id, listing["listing_id"], revision["parser_run_id"], revision["source_snapshot_id"])):
+                            classifications.setdefault(item["field_path"], []).append(item["field_classification"])
+                        # Values come only from the actual current revision.
+                        # Missing/ambiguous classification stays unknown; the
+                        # shared mask denies it even for highest clearance.
+                        fields = mask_intake(principal, {"fields": [
+                            {"field_path": path, "effective": value,
+                             "classification": classifications[path][0] if len(classifications.get(path, [])) == 1 else None}
+                            for path, value in sorted(values.items())]})["fields"]
+                    resolution = {"listing_id": listing["listing_id"], "listing_version": listing["version"],
+                        "lifecycle_state": listing["lifecycle_state"], "current_revision_id": listing["current_revision_id"],
+                        "property_id_at_creation": listing["property_id"], "effective_property_id": prop["property_id"],
+                        "property_version": prop["version"], "fields": fields}
                 response.headers["ETag"] = f'W/"{row["version"]}"'
-                return {**row, "scope": {key: row[key] for key in NativeIntakeScope.model_fields}}
+                response.headers["Cache-Control"] = "no-store"
+                return {**row, "scope": {key: row[key] for key in NativeIntakeScope.model_fields}, "resolution": resolution}
 
     @router.post("/canonical-intakes", operation_id="submitCanonicalIntake", status_code=201,
                  response_model=CanonicalIntakeReceipt, responses=errors)
@@ -364,14 +429,14 @@ def create_canonical_intakes_router(store) -> APIRouter:
             with repo.graph.transaction(tenant):
                 store.refresh(tenant)
                 with store.transaction():
-                    authorize(request, principal, {"scope": {"tenant_id": tenant, **scope}},
+                    authorize(request, principal, repo, {"scope": {"tenant_id": tenant, **scope}},
                               "submit_url" if body.intake_method == "URL" else "submit_manual")
                     prior = store.replays.get(replay_key)
                     if prior is not None:
                         if prior[0] != digest:
                             raise HTTPException(409, "IDEMPOTENCY_KEY_REUSED")
                         result = prior[1]
-                        authorize(request, principal, repo.get(tenant, result["intake_id"]))
+                        authorize(request, principal, repo, repo.get(tenant, result["intake_id"]))
                         response.headers["Idempotency-Replayed"] = "true"
                     else:
                         CanonicalAuditBacklog(repo.engine).require_available(tenant)
@@ -401,7 +466,7 @@ def create_canonical_intakes_router(store) -> APIRouter:
             with repo.graph.transaction(tenant):
                 store.refresh(tenant)
                 with store.transaction():
-                    authorize(request, principal, repo.get(tenant, str(intake_id)), "cancel")
+                    authorize(request, principal, repo, repo.get(tenant, str(intake_id)), "cancel")
                     repo.cancellation_context(principal, str(intake_id))
                     prior = store.replays.get(replay_key)
                     if prior is not None:

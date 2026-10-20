@@ -352,6 +352,7 @@ export type CanonicalIdentityPlanningContext = {
   candidate_sites: IdentityPlanningCandidate[];
   intake_id: string;
   intake_version: number;
+  listing_input?: CanonicalListingInputReference | null;
   listings: IdentityPlanningListing[];
   match_case_id: string;
   match_case_version: number;
@@ -376,7 +377,7 @@ export type CanonicalIdentityReceipt = {
 /** CanonicalIdentitySummary */
 export type CanonicalIdentitySummary = {
   decision_id: string;
-  decision_type: "MERGE" | "SPLIT";
+  decision_type: "MERGE" | "SPLIT" | "CREATE" | "REVISE" | "DUPLICATE";
   intake_id: string;
   intake_version: number;
   job_id: string | null;
@@ -384,8 +385,9 @@ export type CanonicalIdentitySummary = {
   job_version: number | null;
   match_case_id: string;
   match_case_version: number;
-  plan: MergePlan | SplitPlan;
-  proposer_subject_id: string;
+  plan: MergePlan | SplitPlan | ListingPlan | ExactIdentityPlan;
+  proposer_service_principal?: "native-intake-identity" | null;
+  proposer_subject_id: string | null;
   reviewer_subject_id: string | null;
   status: "DRAFT" | "PENDING_REVIEW" | "APPROVED" | "REJECTED" | "EXECUTING" | "EXECUTED" | "FAILED" | "REVERSAL_PENDING" | "REVERSED" | "SUPERSEDED";
   version: number;
@@ -431,6 +433,20 @@ export type CanonicalIntakeCommandWithdrawalReceipt = {
   version: number;
 };
 
+/** CanonicalIntakeDetail */
+export type CanonicalIntakeDetail = {
+  correlation_id: string;
+  intake_id: string;
+  intake_method: "URL" | "MANUAL" | "CSV" | "APPROVED_FEED" | "OPERATOR_SNAPSHOT";
+  processing_state: IntakeStage;
+  resolution?: CanonicalIntakeResolution | null;
+  scope: NativeIntakeScope;
+  submitted_at: string;
+  submitter_subject_id: string;
+  tenant_id: string;
+  version: number;
+};
+
 /** CanonicalIntakePage */
 export type CanonicalIntakePage = {
   items: CanonicalIntakeSummary[];
@@ -448,6 +464,18 @@ export type CanonicalIntakeReceipt = {
   submitted_at: string;
   transition_id: string;
   version: number;
+};
+
+/** CanonicalIntakeResolution */
+export type CanonicalIntakeResolution = {
+  current_revision_id: string | null;
+  effective_property_id: string;
+  fields?: CanonicalPersistedListingField[];
+  lifecycle_state: ListingState;
+  listing_id: string;
+  listing_version: number;
+  property_id_at_creation: string;
+  property_version: number;
 };
 
 /** CanonicalIntakeSourcePolicyRecheckReceipt */
@@ -473,6 +501,62 @@ export type CanonicalIntakeSummary = {
   submitter_subject_id: string;
   tenant_id: string;
   version: number;
+};
+
+/** CanonicalListingInputField */
+export type CanonicalListingInputField = {
+  classification: string;
+  corrected: string | number | null;
+  correction_id: string;
+  field_path: string;
+  identity_affecting: boolean;
+  mask_reason_code?: "FIELD_MASKED" | null;
+  masked?: boolean;
+  normalized: string | number | null;
+  parsed: string | number | null;
+  proposed_by: string;
+  status: "PROPOSED" | "APPLIED" | "REJECTED" | "SUPERSEDED" | "REVERSED";
+  version: number;
+};
+
+/** CanonicalListingInputReference */
+export type CanonicalListingInputReference = {
+  fields: CanonicalListingInputField[];
+  manual_entry_valid_until: string;
+  normalized_payload_sha256: string;
+  original_input_sha256: string;
+  parser_job_id: string;
+  parser_run_id: string;
+  parser_run_version: number;
+  proposed_correction_ids: string[];
+  source_snapshot_id: string;
+};
+
+/** CanonicalMatchCasePropertyOption */
+export type CanonicalMatchCasePropertyOption = {
+  address_masked: boolean;
+  /** Typed Property normalized address (INTERNAL); masked by the existing field policy. */
+  normalized_address: string | null;
+  property_id: string;
+  region_id: string | null;
+  version: number;
+};
+
+/** CanonicalMatchCasePropertyPage */
+export type CanonicalMatchCasePropertyPage = {
+  intake_id: string;
+  intake_version: number;
+  items: CanonicalMatchCasePropertyOption[];
+  next_cursor: string | null;
+};
+
+/** CanonicalPersistedListingField */
+export type CanonicalPersistedListingField = {
+  classification?: string | null;
+  effective?: string | number | boolean | null;
+  field_path: string;
+  mask_reason_code?: "FIELD_MASKED" | null;
+  masked?: boolean;
 };
 
 /** ClosePayload */
@@ -599,9 +683,12 @@ export type CreateActionPayload = {
 
 /** CreateMatchCaseRequest */
 export type CreateMatchCaseRequest = {
+  /** Explicitly append audited manual associations to this pending review case; original matching evidence is retained. */
+  append_to_case?: ManualMatchCaseContextReference | null;
   candidates: MatchEvidenceCandidate[];
   confidence: number | string;
   contradictory_signals: Record<string, unknown>[];
+  outcome?: "NEW" | "REVISION" | "POSSIBLE_MATCH";
   reason: string;
   risk_acknowledged: true;
   supporting_signals: Record<string, unknown>[];
@@ -663,6 +750,14 @@ export type DqTriagePayload = {
   action: string;
   actor?: string | null;
   rationale: string;
+};
+
+/** DuplicateProposal */
+export type DuplicateProposal = {
+  decision_type: "DUPLICATE";
+  plan: ListingPlan;
+  reason: string;
+  risk_acknowledged: true;
 };
 
 /** EligibilityPayload */
@@ -794,6 +889,24 @@ export type EvidenceRetentionPurgePayload = {
   correlation_id?: string | null;
   reason: string;
   role: string;
+};
+
+/** ExactIdentityAuthority */
+export type ExactIdentityAuthority = {
+  identity_policy_sha256: string;
+  policy_version_id: string;
+  proposal_audit_event_id: string;
+};
+
+/** ExactIdentityPlan */
+export type ExactIdentityPlan = {
+  candidate_reassignment_plan: CandidateDispositionRequest[];
+  exact_authority: ExactIdentityAuthority;
+  expected_edge_versions: Record<string, number>;
+  expected_intake_version: number;
+  expected_listing_versions: Record<string, number>;
+  expected_property_versions: Record<string, number>;
+  input_binding: ListingInputBinding;
 };
 
 /** ExecutePayload */
@@ -1258,11 +1371,43 @@ export type JobRetryPayload = {
 /** JobStatus */
 export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "PARTIAL";
 
+/** ListingConfirmation */
+export type ListingConfirmation = {
+  decision_type: "CREATE" | "REVISE";
+  plan: ListingPlan;
+  reason: string;
+  risk_acknowledged: true;
+};
+
 /** ListingImportPayload */
 export type ListingImportPayload = {
   records?: Record<string, unknown>[];
   source_id?: string | null;
 };
+
+/** ListingInputBinding */
+export type ListingInputBinding = {
+  expected_correction_versions: Record<string, number>;
+  normalized_payload_sha256: string;
+  original_input_sha256: string;
+  parser_job_id: string;
+  parser_run_id: string;
+  parser_run_version: number;
+  source_snapshot_id: string;
+};
+
+/** ListingPlan */
+export type ListingPlan = {
+  candidate_reassignment_plan: CandidateDispositionRequest[];
+  expected_edge_versions: Record<string, number>;
+  expected_intake_version: number;
+  expected_listing_versions: Record<string, number>;
+  expected_property_versions: Record<string, number>;
+  input_binding: ListingInputBinding;
+};
+
+/** ListingState */
+export type ListingState = "ACTIVE" | "REMOVED" | "EXPIRED" | "STALE" | "QUARANTINED" | "ARCHIVED";
 
 /** ManualIntakeRow */
 export type ManualIntakeRow = {
@@ -1276,10 +1421,17 @@ export type ManualIntakeRow = {
   source_listing_id?: string | null;
 };
 
+/** ManualMatchCaseContextReference */
+export type ManualMatchCaseContextReference = {
+  match_case_id: string;
+  version: number;
+};
+
 /** MatchCandidateSummary */
 export type MatchCandidateSummary = {
   confidence: string;
   listing_id: string | null;
+  manual_context_version?: number | null;
   match_candidate_id: string;
   observed_listing_version: number | null;
   observed_property_version: number | null;
@@ -1295,13 +1447,14 @@ export type MatchCaseReceipt = {
   intake_id: string;
   intake_version: number;
   match_case_id: string;
-  status: "PENDING_REVIEW";
+  status: "PROPOSED" | "PENDING_REVIEW";
   version: number;
 };
 
 /** MatchCaseSummary */
 export type MatchCaseSummary = {
   candidates: MatchCandidateSummary[];
+  identity_decision_ids?: string[];
   intake_id: string;
   intake_version: number;
   match_case_id: string;
@@ -2630,6 +2783,7 @@ export const API_PATHS = {
   "/api/v1/intakes/{intake_id}/assignment": ["PUT"],
   "/api/v1/intakes/{intake_id}/corrections": ["POST"],
   "/api/v1/intakes/{intake_id}/match-case": ["GET", "POST"],
+  "/api/v1/intakes/{intake_id}/match-case/property-options": ["GET"],
   "/api/v1/intakes/{intake_id}/promotion-decision": ["GET"],
   "/api/v1/intakes/{intake_id}/promotion-requests": ["POST"],
   "/api/v1/interventions": ["GET", "POST"],

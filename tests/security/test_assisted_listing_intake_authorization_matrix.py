@@ -313,6 +313,25 @@ def test_residency_compliance() -> None:
     assert "RESIDENCY_DENIED" in str(excinfo.value)
 
 
+@pytest.mark.parametrize("classification", [None, "UNRECOGNIZED", "CREDENTIAL", "RESTRICTED"])
+def test_canonical_field_mask_requires_known_classification_even_at_highest_clearance(classification):
+    from modules.listing.application.intake_authorization import mask_intake
+    from shared.auth import Principal, Scope
+
+    principal = Principal(subject_id="synthetic-high-clearance",
+        scope=Scope(tenant_id="tenant-a", clearance=DataClassification.HIGHLY_RESTRICTED))
+    original = {"fields": [{"field_path": "synthetic", "classification": classification,
+        "parsed": "private-parser-value", "normalized": "private-normalized-value",
+        "corrected": "private-correction-value", "effective": "actual-saved-value"}]}
+    field = mask_intake(principal, original)["fields"][0]
+    if classification == "RESTRICTED":
+        assert field["effective"] == "actual-saved-value"
+    else:
+        assert all(field[key] is None for key in ("parsed", "normalized", "corrected", "effective"))
+        assert field["masked"] and field["mask_reason_code"] == "FIELD_MASKED"
+    assert original["fields"][0]["effective"] == "actual-saved-value"
+
+
 def test_data_classification_masking() -> None:
     from modules.listing.application.intake_authorization import mask_intake
     from shared.auth import Principal, Scope

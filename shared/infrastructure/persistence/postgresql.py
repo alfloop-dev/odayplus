@@ -205,8 +205,9 @@ class PostgresEngine:
             return
 
         with self._pool.connection() as connection:
-            with connection.transaction():
+            with connection.transaction() as root_transaction:
                 self._local.connection = connection
+                self._local.root_transaction = root_transaction
                 self._local.depth = 1
                 try:
                     connection.execute(
@@ -215,6 +216,7 @@ class PostgresEngine:
                     yield self
                 finally:
                     self._local.connection = None
+                    self._local.root_transaction = None
                     self._local.depth = 0
 
     def execute(

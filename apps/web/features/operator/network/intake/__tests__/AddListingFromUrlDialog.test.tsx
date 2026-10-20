@@ -1,6 +1,6 @@
 import React from "react";
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AddListingFromUrlDialog } from "../AddListingFromUrlDialog";
 import type { IntakeApiError } from "../intakeClient";
@@ -53,7 +53,7 @@ describe("AddListingFromUrlDialog", () => {
     expect(screen.getByTestId("intake-add-error")).toHaveTextContent("請確認網址格式");
   });
 
-  it("triggers onSubmit with valid URL and selected heat zone", () => {
+  it("triggers onSubmit with valid URL and selected heat zone", async () => {
     render(
       <AddListingFromUrlDialog
         busy={false}
@@ -69,7 +69,7 @@ describe("AddListingFromUrlDialog", () => {
     const submitBtn = screen.getByTestId("intake-submit-button");
 
     fireEvent.change(input, { target: { value: "https://www.591.com.tw/rent-detail-1234567.html" } });
-    fireEvent.click(submitBtn);
+    await act(async () => { fireEvent.click(submitBtn); });
 
     expect(mockOnSubmit).toHaveBeenCalledWith({
       url: "https://www.591.com.tw/rent-detail-1234567.html",
@@ -99,7 +99,7 @@ describe("AddListingFromUrlDialog", () => {
     expect(submitBtn).toHaveTextContent("送出中…（防止重複送出）");
   });
 
-  it("locks rapid repeated submissions before the parent busy state updates", () => {
+  it("locks rapid repeated submissions before the parent busy state updates", async () => {
     let resolveSubmit: (() => void) | undefined;
     const pendingSubmit = vi.fn(
       () => new Promise<void>((resolve) => {
@@ -125,7 +125,7 @@ describe("AddListingFromUrlDialog", () => {
 
     expect(pendingSubmit).toHaveBeenCalledTimes(1);
     expect(submitButton).toBeDisabled();
-    resolveSubmit?.();
+    await act(async () => resolveSubmit?.());
   });
 
   it("leaves source policy authority with the server", () => {

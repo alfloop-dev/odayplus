@@ -21,6 +21,43 @@ from tests.integration.test_canonical_identity_proposals_postgresql import _merg
 pytestmark = pytest.mark.requires_live_env
 
 
+@pytest.mark.parametrize("service", [False, True])
+def test_existing_match_event_publisher_persists_human_v1_and_service_v2_without_fake_actors(canonical_graph, service):
+    """Publisher/storage contract only; synthetic rows grant no execution authority."""
+    from shared.domain.events import CONSUMER_MODE, validate_event
+
+    graph, ids, _, _ = canonical_graph
+    with graph.transaction(ids["tenant"]):
+        decision_id = ids["decision"]
+        if service:
+            decision_id = str(uuid4())
+            graph.engine.execute("INSERT INTO identity.match_decisions (match_decision_id,tenant_id,match_case_id,"
+                "decision_type,status,proposer_subject_id,proposer_service_principal,reason,before_graph,after_graph) "
+                "VALUES (?,?,?,'DUPLICATE','APPROVED',NULL,'native-intake-identity',"
+                "'SYNTHETIC_PUBLISHER_ONLY_NOT_AUTHORITY','{}'::jsonb,'{}'::jsonb)",
+                (decision_id, ids["tenant"], ids["case"]))
+        decision = graph._one("SELECT * FROM identity.match_decisions WHERE tenant_id=? AND match_decision_id=?",
+            (ids["tenant"], decision_id))
+        case, intake = graph._case(ids["tenant"], ids["case"])
+        at = graph.engine.query_one("SELECT clock_timestamp() AS now")["now"]
+        graph._match_event(ids["tenant"], decision, status=decision["status"], case_version=case["version"],
+            correlation_id=intake["correlation_id"], at=at)
+        stored = graph._one("SELECT payload FROM workflow.outbox_events WHERE tenant_id=? AND event_type='match.decided' "
+            "AND payload->'payload'->>'match_decision_id'=?", (ids["tenant"], decision_id))["payload"]
+        assert stored["event_version"] == (2 if service else 1)
+        assert stored["schema_ref"] == ("#/payloads/MatchDecidedV2" if service else "#/payloads/MatchDecidedV1")
+        # Original proposer belongs in payload; execution ownership is
+        # recorded by the existing execution audit, not inferred here.
+        assert stored["actor_ref"] is None
+        assert stored["payload"]["proposer_subject_id"] == (None if service else decision["proposer_subject_id"])
+        if service:
+            assert stored["payload"]["proposer_service_principal"] == "native-intake-identity"
+            assert stored["payload"]["reviewer_subject_id"] is None
+        else:
+            assert "proposer_service_principal" not in stored["payload"]
+        assert validate_event(stored) == validate_event(stored, mode=CONSUMER_MODE) == []
+
+
 @pytest.fixture
 def identity_api(canonical_graph, monkeypatch):
     from fastapi import FastAPI
@@ -63,7 +100,19 @@ def _proposal(case, api, *, plan=None):
     created = client.post(f"/api/v1/intakes/{intake}/match-case", json=_http_command(case),
         headers=_headers(17, "synthetic-native-http-case-001"))
     assert created.status_code == 201, created.text
-    body = {"decision_type": "MERGE", "plan": plan or _merge(case), "risk_acknowledged": True,
+    if plan is None:
+        observed = client.get(f'/api/v1/match-cases/{created.json()["match_case_id"]}/identity-context',
+            params={"include_listing_input": "false"})
+        assert observed.status_code == 200, observed.text
+        view = observed.json()
+        assert view.get("listing_input") is None and view["match_case_version"] == created.json()["version"]
+        _, ids, _, _ = case
+        plan = {"source_property_ids": [ids["source"]], "target_property_id": ids["target"],
+            "expected_property_versions": {row["property_id"]: row["version"] for row in view["properties"]},
+            "expected_listing_versions": {row["listing_id"]: row["version"] for row in view["listings"]},
+            "expected_edge_versions": {row["edge_id"]: row["edge_version"] for row in view["source_identity_edges"]
+                if row["property_id"] == ids["source"]}, "candidate_reassignment_plan": []}
+    body = {"decision_type": "MERGE", "plan": plan, "risk_acknowledged": True,
             "reason": "Explicit synthetic proposal; review native source and target identity"}
     path = f'/api/v1/match-cases/{created.json()["match_case_id"]}/identity-decisions'
     audit_count = len(client.app.state.audit_log.list_events())
@@ -157,12 +206,17 @@ def test_native_split_http_preserves_explicit_partitions_through_independent_rev
     created = client.post(f"/api/v1/intakes/{intake}/match-case", json=evidence,
         headers=_headers(17, "synthetic-native-http-split-case"))
     assert created.status_code == 201, created.text
+    observed = client.get(f'/api/v1/match-cases/{created.json()["match_case_id"]}/identity-context',
+        params={"include_listing_input": "false"})
+    assert observed.status_code == 200 and observed.json().get("listing_input") is None, observed.text
+    view = observed.json()
     plan = {"source_property_id": ids["source"], "partitions": [
         {"target_property_id": ids["target"], "source_identity_edge_ids": [ids["edge"]]},
         {"target_property_id": ids["split_target"], "source_identity_edge_ids": [edge]},
-    ], "expected_property_versions": {ids["source"]: 7, ids["target"]: 11, ids["split_target"]: 3},
-        "expected_listing_versions": {ids["listing"]: 13, listing: 19},
-        "expected_edge_versions": {ids["edge"]: 5, edge: 9}, "candidate_reassignment_plan": []}
+    ], "expected_property_versions": {row["property_id"]: row["version"] for row in view["properties"]},
+        "expected_listing_versions": {row["listing_id"]: row["version"] for row in view["listings"]},
+        "expected_edge_versions": {row["edge_id"]: row["edge_version"] for row in view["source_identity_edges"]
+            if row["property_id"] == ids["source"]}, "candidate_reassignment_plan": []}
     proposed = client.post(f'/api/v1/match-cases/{created.json()["match_case_id"]}/identity-decisions',
         json={"decision_type": "SPLIT", "plan": plan, "risk_acknowledged": True,
               "reason": "Explicit synthetic split with two separately observed physical properties"},

@@ -32,8 +32,8 @@ class NativeAssistedEntryJobProof:
     def __init__(self, graph):
         self.graph, self.engine, self.queue = graph, graph.engine, graph.queue
 
-    def admission(self, job, *, before):
-        receipt, _, _ = self._read(job, before=before, with_request=False)
+    def admission(self, job, *, before, _history_rows=None):
+        receipt, _, _ = self._read(job, before=before, with_request=False, _history_rows=_history_rows)
         return receipt
 
     def admission_with_request(self, job, *, before):
@@ -45,7 +45,11 @@ class NativeAssistedEntryJobProof:
         """
         return self._read(job, before=before, with_request=True)
 
-    def _read(self, job, *, before, with_request):
+    def _read(self, job, *, before, with_request, _history_rows=None):
+        from modules.listing.application.native_intake_assisted_entry_history_rows import (
+            history_physical,
+        )
+
         payload = _object(job["payload"])
         tenant, request_id = job["tenant_id"], payload["request_id"]
         reader = NativeAssistedEntryRequestProof(self.graph)
@@ -54,9 +58,12 @@ class NativeAssistedEntryJobProof:
             request, parent = reader.read_with_parent(tenant, payload["intake_id"], request_id, before=before)
             original = request.event
         else:
-            original, _ = reader.envelope(tenant, payload["intake_id"], request_id, before=before)
-        before()
-        delivery = self.queue.get(job["job_id"])
+            original, _ = reader.envelope(tenant, payload["intake_id"], request_id, before=before,
+                _history_rows=_history_rows)
+        closed, delivery = history_physical(_history_rows, job)
+        if not closed:
+            before()
+            delivery = self.queue.get(job["job_id"])
         receipt = _object(payload.get("admission_receipt"))
         generation = payload.get("delivery_generation")
         physical = delivery.payload if delivery else None
@@ -83,19 +90,25 @@ class NativeAssistedEntryJobProof:
                 or type(receipt["admitted_intake_version"]) is not int
                 or receipt["admitted_intake_version"] != payload["expected_intake_version"]):
             raise NativeAssistedEntryConflict("NATIVE_ASSISTED_JOB_ADMISSION_CONFLICT")
-        before()
-        audit = self.engine.query_one("SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
-            "AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_principal=? "
-            "AND actor_role='SVC_INTAKE' AND action='intake.assisted_entry_admitted.v1' AND result='SUCCEEDED' "
-            "AND causation_id=? AND correlation_id=?", (tenant, receipt["audit_event_id"], payload["intake_id"],
-                JOB_TYPE, request_id, job["correlation_id"]))
+        if _history_rows is None:
+            before()
+            audit = self.engine.query_one("SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
+                "AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_principal=? "
+                "AND actor_role='SVC_INTAKE' AND action='intake.assisted_entry_admitted.v1' AND result='SUCCEEDED' "
+                "AND causation_id=? AND correlation_id=?", (tenant, receipt["audit_event_id"], payload["intake_id"],
+                    JOB_TYPE, request_id, job["correlation_id"]))
+        else:
+            audit = _history_rows.audit("admission", tenant_id=tenant, audit_event_id=receipt["audit_event_id"],
+                resource_type="intake", resource_id=payload["intake_id"], actor_subject_id=None,
+                service_principal=JOB_TYPE, actor_role="SVC_INTAKE", action="intake.assisted_entry_admitted.v1",
+                result="SUCCEEDED", causation_id=request_id, correlation_id=job["correlation_id"])
         if audit is None or not audited_value_matches(_object(audit["after_value"]),
                 {**receipt, "native_assisted_provenance": assisted_job_provenance(payload)}):
             raise NativeAssistedEntryConflict("NATIVE_ASSISTED_JOB_ADMISSION_AUDIT_CONFLICT")
         before()
         return receipt, request, parent
 
-    def acceptance(self, job, *, before):
+    def acceptance(self, job, *, before, _history_rows=None):
         """Read the immutable accepted attempt; it grants no present access."""
         payload = _object(job["payload"])
         receipt = _object(payload.get("acceptance_receipt"))
@@ -123,13 +136,19 @@ class NativeAssistedEntryJobProof:
         for value in (payload.get("accepted_source_sha256"), payload.get("accepted_document_sha256"), authority["scope_sha256"]):
             if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
                 raise NativeAssistedEntryConflict("NATIVE_ASSISTED_ACCEPTANCE_HASH_REJECTED")
-        before()
-        audit = self.engine.query_one("SELECT after_value,before_value,occurred_at FROM audit.audit_events "
-            "WHERE tenant_id=? AND audit_event_id=? AND resource_type='intake' AND resource_id=? "
-            "AND actor_subject_id IS NULL AND service_principal=? AND actor_role='SVC_INTAKE' "
-            "AND action='intake.assisted_entry_attempt_accepted.v1' AND result='SUCCEEDED' "
-            "AND causation_id=? AND correlation_id=?", (job["tenant_id"], receipt["audit_event_id"],
-                payload["intake_id"], JOB_TYPE, payload["request_id"], job["correlation_id"]))
+        if _history_rows is None:
+            before()
+            audit = self.engine.query_one("SELECT after_value,before_value,occurred_at FROM audit.audit_events "
+                "WHERE tenant_id=? AND audit_event_id=? AND resource_type='intake' AND resource_id=? "
+                "AND actor_subject_id IS NULL AND service_principal=? AND actor_role='SVC_INTAKE' "
+                "AND action='intake.assisted_entry_attempt_accepted.v1' AND result='SUCCEEDED' "
+                "AND causation_id=? AND correlation_id=?", (job["tenant_id"], receipt["audit_event_id"],
+                    payload["intake_id"], JOB_TYPE, payload["request_id"], job["correlation_id"]))
+        else:
+            audit = _history_rows.audit("acceptance", tenant_id=job["tenant_id"], audit_event_id=receipt["audit_event_id"],
+                resource_type="intake", resource_id=payload["intake_id"], actor_subject_id=None,
+                service_principal=JOB_TYPE, actor_role="SVC_INTAKE", action="intake.assisted_entry_attempt_accepted.v1",
+                result="SUCCEEDED", causation_id=payload["request_id"], correlation_id=job["correlation_id"])
         expected = {**receipt, "status": "RUNNING", "intake_mutated": False,
             "native_assisted_provenance": assisted_job_provenance(payload),
             "acceptance": {key: payload[key] for key in ("accepted_source_sha256", "accepted_source_version",

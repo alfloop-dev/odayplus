@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import re
 
+from modules.listing.application.native_intake_producer_reads import _native_producer_noop
 from modules.listing.application.native_intake_source_policy import (
     NativeIntakeSourcePolicyOwner,
     _json,
@@ -94,7 +95,7 @@ class NativeHistoricalRecheckProof:
             raise NativeIntakeSourcePolicyRecheckConflict("NATIVE_RECHECK_ADMISSION_AUDIT_CONFLICT")
         return receipt
 
-    def _committed_result(self, delivery, tenant, generation, *, before=lambda: None):
+    def _committed_result(self, delivery, tenant, generation, *, before=_native_producer_noop):
         before()
         job = self.engine.query_one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?", (tenant, delivery.job_id))
         if job is None or job["status"] != "SUCCEEDED":
@@ -212,7 +213,7 @@ class _HistoricalSourcePolicyOwner(NativeIntakeSourcePolicyOwner):
     """
 
     def _event(self, tenant, event_id, *, before=None):
-        before = before or (lambda: None)
+        before = before if before is not None else _native_producer_noop
         view = self._producer_reads(before)
         row = view._one("SELECT payload FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?",
                         (tenant, _uuid(event_id)))

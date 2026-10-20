@@ -13,6 +13,9 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from modules.listing.domain.identity_graph import IdentityConflictError
+from shared.infrastructure.persistence.identity_decisions_sql import (
+    CanonicalIdentityDecisionRepository,
+)
 from shared.jobs.queue import JobFenceRejectedError, JobRecord, JobStatus
 
 
@@ -76,30 +79,33 @@ class IdentityExecutionService:
                 (tenant, decision_id),
             )
             case, intake = self.graph._case(tenant, decision["match_case_id"])
-            if (decision["status"] != "APPROVED" or case["status"] != "APPROVED"
-                    or decision["decision_type"] not in {"MERGE", "SPLIT"}
-                    or not decision["reviewer_subject_id"] or decision["reviewed_at"] is None
-                    or decision["reviewer_subject_id"] == decision["proposer_subject_id"]
-                    or not decision["risk_acknowledged"]):
+            if decision["status"] != "APPROVED" or case["status"] != "APPROVED":
                 raise IdentityConflictError("IDENTITY_DECISION_NOT_APPROVED")
+            decisions = CanonicalIdentityDecisionRepository(self.graph)
+            decisions.require_approval(tenant, decision)
             plan = decision["after_graph"]["plan"]
             payload = job["payload"]
             if (payload.get("decision_version") != decision["version"]
                     or payload.get("match_case_version") != case["version"]
                     or payload.get("plan_sha256") != hashlib.sha256(_json(plan).encode()).hexdigest()):
                 raise JobFenceRejectedError("IDENTITY_ACCEPTANCE_BINDING_REJECTED")
-            self.graph._resources(tenant, plan, intake)
-            sources = plan["source_property_ids"] if decision["decision_type"] == "MERGE" else [plan["source_property_id"]]
-            self.graph._edges(tenant, sources, plan["expected_edge_versions"])
-            candidates = self.engine.query(
-                "SELECT candidate_site_id,version FROM expansion.candidate_sites WHERE tenant_id=? "
-                "AND property_id=ANY(?::uuid[]) ORDER BY candidate_site_id FOR UPDATE", (tenant, sources),
-            )
-            candidate_plan = plan["candidate_reassignment_plan"]
-            if (len({c["candidate_site_id"] for c in candidate_plan}) != len(candidate_plan)
-                    or {c["candidate_site_id"]: c["expected_version"] for c in candidate_plan}
-                    != {c["candidate_site_id"]: c["version"] for c in candidates}):
-                raise IdentityConflictError("CANDIDATE_VERSION_CONFLICT")
+            if decision["decision_type"] in {"CREATE", "REVISE", "DUPLICATE"}:
+                decisions._snapshot(tenant, case, intake, decision["decision_type"], plan,
+                    confirmation_actor_id=decision["proposer_subject_id"], reviewer_actor_id=decision["reviewer_subject_id"],
+                    reason=decision["reason"])
+            else:
+                self.graph._resources(tenant, plan, intake)
+                sources = plan["source_property_ids"] if decision["decision_type"] == "MERGE" else [plan["source_property_id"]]
+                self.graph._edges(tenant, sources, plan["expected_edge_versions"])
+                candidates = self.engine.query(
+                    "SELECT candidate_site_id,version FROM expansion.candidate_sites WHERE tenant_id=? "
+                    "AND property_id=ANY(?::uuid[]) ORDER BY candidate_site_id FOR UPDATE", (tenant, sources),
+                )
+                candidate_plan = plan["candidate_reassignment_plan"]
+                if (len({c["candidate_site_id"] for c in candidate_plan}) != len(candidate_plan)
+                        or {c["candidate_site_id"]: c["expected_version"] for c in candidate_plan}
+                        != {c["candidate_site_id"]: c["version"] for c in candidates}):
+                    raise IdentityConflictError("CANDIDATE_VERSION_CONFLICT")
             fence = job["fence_token"] + 1
             payload = {**payload, "decision_version": decision["version"] + 1,
                        "match_case_version": case["version"] + 1,
@@ -179,10 +185,16 @@ class IdentityExecutionService:
         fence = self.begin(tenant, decision_id, delivery)
         try:
             return self.graph.execute(tenant, decision_id, delivery, business_fence=fence)
-        except Exception:
+        except Exception as pending_error:
             # A lost/expired fence may prevent failure settlement; such an
             # attempt belongs to reconciliation, never to this stale worker.
-            self.fail(tenant, decision_id, delivery, business_fence=fence)
+            try:
+                self.fail(tenant, decision_id, delivery, business_fence=fence)
+            except Exception as settlement_error:
+                pending_error.add_note(
+                    f"Identity failure settlement also raised {type(settlement_error).__name__}; "
+                    "the attempt requires reconciliation."
+                )
             raise
 
 

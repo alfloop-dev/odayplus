@@ -98,22 +98,33 @@ class IdentityJobAdmission:
         self.decisions = CanonicalIdentityDecisionRepository(graph)
         self.auth = IdentityDeliveryAuthenticator(self.engine)
 
-    def enqueue(self, tenant: str, decision_id: str, *, expected_version: int, actor_id: str) -> dict:
+    def enqueue(self, tenant: str, decision_id: str, *, expected_version: int, actor_id: str, before=None) -> dict:
         policy = identity_execution_policy()
-        UUID(actor_id)
+        if actor_id != "native-intake-identity":
+            UUID(actor_id)
         with self.graph.transaction(tenant):
+            if before is not None:
+                before()
             decision = self.graph._one("SELECT * FROM identity.match_decisions WHERE tenant_id=? "
                 "AND match_decision_id=? FOR UPDATE", (tenant, decision_id))
             case, intake = self.graph._case(tenant, decision["match_case_id"])
+            service = decision.get("proposer_service_principal") is not None
+            if service != (actor_id == "native-intake-identity"):
+                raise PermissionError("IDENTITY_ADMISSION_ACTOR_KIND_CONFLICT")
+            if decision["decision_type"] == "DUPLICATE" and not service and actor_id != decision["reviewer_subject_id"]:
+                raise PermissionError("IDENTITY_ADMISSION_REVIEWER_REQUIRED")
             if (decision["version"] != expected_version or decision["status"] != "APPROVED"
-                    or case["status"] != "APPROVED" or not decision["risk_acknowledged"]
-                    or not decision["reviewed_at"] or not decision["reviewer_subject_id"]
-                    or decision["reviewer_subject_id"] == decision["proposer_subject_id"]
+                    or case["status"] != "APPROVED"
                     or decision["after_graph"].get("match_case_version") != case["version"]
                     or decision["after_graph"].get("intake_version") != intake["version"]):
                 raise IdentityConflictError("IDENTITY_ADMISSION_REVIEW_BINDING_CONFLICT")
+            self.decisions.require_approval(tenant, decision, error_code="IDENTITY_ADMISSION_REVIEW_BINDING_CONFLICT")
             plan = canonical_identity_plan(decision["decision_type"], decision["after_graph"]["plan"])
-            self.decisions._snapshot(tenant, case, intake, decision["decision_type"], plan)
+            self.decisions._snapshot(tenant, case, intake, decision["decision_type"], plan,
+                confirmation_actor_id=decision["proposer_subject_id"], reviewer_actor_id=decision["reviewer_subject_id"],
+                reason=decision["reason"], before=before)
+            if before is not None:
+                before()
             prior = self.engine.query_one("SELECT job_id FROM workflow.jobs WHERE tenant_id=? AND job_type=? "
                 "AND idempotency_key=?", (tenant, IDENTITY_JOB_TYPE, decision_id))
             if prior is not None:
@@ -126,6 +137,8 @@ class IdentityJobAdmission:
                 "plan_sha256": hashlib.sha256(json.dumps(plan, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
                 "policy": policy, "delivery_generation": 1,
                 "attempt_token_sha256": hashlib.sha256(token.encode()).hexdigest(), "admitted_by": actor_id}
+            if before is not None:
+                before()
             self.engine.execute("INSERT INTO workflow.jobs (job_id,tenant_id,job_type,aggregate_type,aggregate_id,status,"
                 "checkpoint,attempt,max_attempts,fence_token,timeout_at,payload,correlation_id,idempotency_key) "
                 "VALUES (?,?,?,'identity_decision',?,'QUEUED','APPROVED',0,?,1,?,?::jsonb,?,?)",
@@ -135,6 +148,8 @@ class IdentityJobAdmission:
                 {"job_id": job_id, "tenant_id": tenant, "attempt_token": token},
                 idempotency_key="identity-execution:"+tenant+":"+decision_id, job_id=job_id),
                 correlation_id=intake["correlation_id"])
+            if before is not None:
+                before()
             if not created or delivery.job_id != job_id:
                 raise IdentityConflictError("IDENTITY_DELIVERY_RESERVATION_CONFLICT")
             self.engine.execute("UPDATE durable_jobs SET max_retries=? WHERE job_id=?", (policy["max_attempts"], job_id))
@@ -142,8 +157,9 @@ class IdentityJobAdmission:
             receipt = {"decision_id": decision_id, "status": "APPROVED", "version": decision["version"],
                 "job_id": job_id, "job_status": "QUEUED", "audit_event_id": audit_id,
                 "correlation_id": intake["correlation_id"], "timeout_at": deadline}
-            self.decisions._audit(tenant, intake, actor_id, decision_id, None, receipt,
-                "identity.execution_requested.v1", decision["reason"], at, audit_id=audit_id)
+            self.decisions._audit(tenant, intake, None if service else actor_id, decision_id, None, receipt,
+                "identity.execution_requested.v1", decision["reason"], at, audit_id=audit_id,
+                service_principal="native-intake-identity" if service else None)
             return receipt
 
     def _owned(self, delivery):

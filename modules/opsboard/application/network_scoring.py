@@ -839,6 +839,7 @@ class NetworkScoringService:
         return {
             "id": candidate.candidate_site_id,
             "listingId": listing.listing_id,
+            "canonicalSiteStatus": getattr(candidate, "site_status", None),
             "heatZoneId": heat_zone_id,
             "title": normalized_address or candidate.candidate_site_id,
             "zoneLabel": address.district or heat_zone_id,
@@ -1077,7 +1078,10 @@ class NetworkScoringService:
             model_version = scorecard["modelVersion"] if scorecard else None
             if not isinstance(model_version, str) or not model_version.strip():
                 model_version = None
-        if scorecard is not None:
+        if self._require_canonical:
+            persisted_status = candidate.get("canonicalSiteStatus")
+            stage = persisted_status if isinstance(persisted_status, str) and persisted_status.strip() else "unknown"
+        elif scorecard is not None:
             stage = "rejected" if scorecard["recommendation"] == "REJECT" else "evaluated"
             if candidate.get("reviewId") and scorecard["recommendation"] != "REJECT":
                 stage = "pendingreview"
@@ -1105,6 +1109,8 @@ class NetworkScoringService:
         }
         if "currentAdmission" in candidate:
             result["currentAdmission"] = _copy(candidate["currentAdmission"])
+        if self._require_canonical:
+            result["canonicalSiteStatus"] = persisted_status if stage != "unknown" else None
         if "readEvidence" in candidate:
             result["readEvidence"] = _copy(candidate["readEvidence"])
             if read_principal is not None:

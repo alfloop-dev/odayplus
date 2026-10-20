@@ -77,11 +77,13 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("exact report-aware workflow context", () => {
-  it("joins the current generation canonical review for the exact second candidate and report", async () => {
+  it("keeps an exact review link readable without treating legacy approval envelopes as a verified human workflow", async () => {
     nav.search = "ws=network&tab=review&candidate=second";
     const fetchMock = reads(200, () => json(canonicalReviews()));
     render(<NetworkFindAreasWorkspace activeRoleId="expansion-manager" />);
-    await waitFor(() => expect(screen.getByTestId("network-step-review")).toHaveAttribute("data-state", "current"));
+    await screen.findByTestId("review-card-review-second");
+    await waitFor(() => expect(screen.getByTestId("network-step-review")).toHaveAttribute("data-state", "blocked"));
+    expect(screen.getByTestId("network-step-review")).toHaveTextContent("人工流程未核驗");
     expect(screen.getByTestId("network-step-review")).toHaveAttribute("title", expect.stringContaining("review-second"));
     expect(screen.getByTestId("review-btn-go-review-second")).toBeEnabled();
     expect(screen.queryByTestId("review-btn-go-review-first")).not.toBeInTheDocument();

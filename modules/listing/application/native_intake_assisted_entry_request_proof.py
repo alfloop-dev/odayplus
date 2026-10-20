@@ -85,11 +85,12 @@ class NativeAssistedEntryRequestProof:
         self.graph, self.engine = graph, graph.engine
         self.source = NativeAssistedEntrySourceProof(graph)
 
-    def envelope(self, tenant: str, intake_id: str, request_id: str, *, before) -> tuple[dict, dict]:
-        event, audit, _ = self._envelope_with_parent(tenant, intake_id, request_id, before=before)
+    def envelope(self, tenant: str, intake_id: str, request_id: str, *, before, _history_rows=None) -> tuple[dict, dict]:
+        event, audit, _ = self._envelope_with_parent(tenant, intake_id, request_id, before=before,
+            _history_rows=_history_rows)
         return event, audit
 
-    def _envelope_with_parent(self, tenant: str, intake_id: str, request_id: str, *, before):
+    def _envelope_with_parent(self, tenant: str, intake_id: str, request_id: str, *, before, _history_rows=None):
         """Authenticate origin even if its old actor/source/config was revoked.
 
         The caller must separately authorize its current action against the
@@ -97,16 +98,23 @@ class NativeAssistedEntryRequestProof:
         """
         for value in (tenant, intake_id, request_id):
             native_intake_uuid(value)
-        before()
-        if self.engine.query_one("SHOW transaction_isolation")["transaction_isolation"] != "serializable":
-            _reject()
-        before()
-        if self.engine.query_one("SELECT current_setting('app.tenant_id',true) AS tenant")["tenant"] != tenant:
-            _reject()
-        before()
-        row = self.graph._one("SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_id=? "
-            "AND aggregate_type='intake_assisted_entry' AND payload->'payload'->>'intake_id'=?",
-            (tenant, request_id, intake_id))
+        if _history_rows is None:
+            before()
+            if self.engine.query_one("SHOW transaction_isolation")["transaction_isolation"] != "serializable":
+                _reject()
+            before()
+            if self.engine.query_one("SELECT current_setting('app.tenant_id',true) AS tenant")["tenant"] != tenant:
+                _reject()
+            before()
+            row = self.graph._one("SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_id=? "
+                "AND aggregate_type='intake_assisted_entry' AND payload->'payload'->>'intake_id'=?",
+                (tenant, request_id, intake_id))
+        else:
+            _history_rows.root(tenant)
+            row = _history_rows.event("request", tenant_id=tenant, event_id=request_id,
+                aggregate_type="intake_assisted_entry")
+            if row is None or _object(_object(row["payload"]).get("payload")).get("intake_id") != intake_id:
+                _reject()
         event = _object(row["payload"])
         data = _object(event.get("payload"))
         if (validate_event(event) or row["event_type"] != REQUEST_EVENT or event.get("event_type") != REQUEST_EVENT
@@ -134,13 +142,19 @@ class NativeAssistedEntryRequestProof:
             _reject()
         for value in [data["requested_by"], *ids]:
             native_intake_uuid(value)
-        before()
-        audit = self.engine.query_one("SELECT after_value,reason,actor_role FROM audit.audit_events "
-            "WHERE tenant_id=? AND audit_event_id=? AND resource_type='intake' AND resource_id=? "
-            "AND action='intake.assisted_entry_requested.v1' AND result='SUCCEEDED' "
-            "AND actor_subject_id=? AND service_principal IS NULL AND correlation_id=? AND causation_id=?",
-            (tenant, request_audit_id(request_id), intake_id, data["requested_by"], row["correlation_id"],
-             data["source_policy_event_id"]))
+        if _history_rows is None:
+            before()
+            audit = self.engine.query_one("SELECT after_value,reason,actor_role FROM audit.audit_events "
+                "WHERE tenant_id=? AND audit_event_id=? AND resource_type='intake' AND resource_id=? "
+                "AND action='intake.assisted_entry_requested.v1' AND result='SUCCEEDED' "
+                "AND actor_subject_id=? AND service_principal IS NULL AND correlation_id=? AND causation_id=?",
+                (tenant, request_audit_id(request_id), intake_id, data["requested_by"], row["correlation_id"],
+                 data["source_policy_event_id"]))
+        else:
+            audit = _history_rows.audit("request", tenant_id=tenant, audit_event_id=request_audit_id(request_id),
+                resource_type="intake", resource_id=intake_id, action=REQUEST_ACTION, result="SUCCEEDED",
+                actor_subject_id=data["requested_by"], service_principal=None, correlation_id=row["correlation_id"],
+                causation_id=data["source_policy_event_id"])
         expected = {**request_receipt(event), "native_assisted_request_provenance": data}
         if (audit is None or audit["actor_role"] not in _HUMAN_ROLES
                 or not audited_value_matches(_object(audit["after_value"]), expected)):

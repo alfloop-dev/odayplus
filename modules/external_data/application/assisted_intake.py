@@ -4,7 +4,7 @@ This module owns the *source-facing* half of the assisted intake workflow:
 URL normalization, source identification, the access-policy gate, test-only
 fixture replay, field parsing/normalization, and entity matching. It holds no
 queue, no decisions, and no audit trail — those belong to the Operator Console
-service (``modules.opsboard.application.network_intake``) that composes this.
+service (``modules.opsboard.application.network_listings``) that composes this.
 
 Deliberate boundaries (ODP-EXT-002-R5-ADDENDUM):
 
@@ -756,6 +756,23 @@ def effective_fields(fields: dict[str, dict[str, Any]]) -> dict[str, Any]:
     return resolved
 
 
+def missing_assisted_entry_fields(values: dict[str, Any]) -> list[str]:
+    """Return required fields still missing before assisted intake can match."""
+    missing: list[str] = []
+    for field_name in ASSISTED_ENTRY_REQUIRED_FIELDS:
+        value = values.get(field_name)
+        if value in (None, ""):
+            missing.append(field_name)
+            continue
+        if field_name in ("rent", "areaPing"):
+            try:
+                if float(value) <= 0:
+                    missing.append(field_name)
+            except (ValueError, TypeError):
+                missing.append(field_name)
+    return missing
+
+
 @dataclass(frozen=True)
 class MatchSignal:
     """One named matching signal and whether the two records agree on it."""
@@ -783,6 +800,12 @@ class MatchResult:
     target_listing_id: str | None
     signals: tuple[MatchSignal, ...]
     summary: str
+    candidate_listing_ids: tuple[str, ...] = ()
+
+    @property
+    def intake_stage(self) -> str:
+        """Route the recommendation to review or readiness for a decision."""
+        return "NEEDS_REVIEW" if self.outcome == "POSSIBLE_MATCH" else "READY"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -811,17 +834,32 @@ def match_listing(
     1. **Identity** — same provider *and* (canonical URL or stable provider
        listing id). The content fingerprint then separates an unchanged
        re-submission (``EXACT_DUPLICATE``) from a changed one (``REVISION``);
-       a rent change alone is a revision, never a new entity.
+       a rent change alone is a revision, never a new entity. Conflicting
+       identity targets require review before either automatic verdict.
     2. **Entity similarity** — no identity match, so score the named signals.
        At or above the threshold the record is ``POSSIBLE_MATCH`` and stops for
        a human. There is no auto-merge tier: nothing merges without a decision.
     """
 
-    identity_target = _find_identity_match(
+    identity_matches = _find_identity_matches(
         values=values, canonical_url=canonical_url, source_id=source_id, listings=listings
     )
-    if identity_target is not None:
-        listing, signals = identity_target
+    if len(identity_matches) > 1:
+        ordered = sorted(identity_matches, key=lambda item: item[0]["id"])
+        candidate_ids = tuple(item[0]["id"] for item in ordered)
+        return MatchResult(
+            outcome="POSSIBLE_MATCH",
+            confidence=1.0,
+            target_listing_id=candidate_ids[0],
+            signals=(MatchSignal(
+                key="sourceIdentityAmbiguous", label="來源識別衝突", agrees=False,
+                detail="來源識別對應多筆物件：" + "、".join(candidate_ids),
+            ),),
+            summary="來源網址或來源編號對應多筆物件，需人工判定。",
+            candidate_listing_ids=candidate_ids,
+        )
+    if identity_matches:
+        listing, signals = identity_matches[0]
         if listing.get("contentFingerprint") == fingerprint:
             return MatchResult(
                 outcome="EXACT_DUPLICATE",
@@ -873,34 +911,24 @@ def match_listing(
     )
 
 
-def _find_identity_match(
+def _find_identity_matches(
     *,
     values: dict[str, Any],
     canonical_url: str,
     source_id: str,
     listings: list[dict[str, Any]],
-) -> tuple[dict[str, Any], tuple[MatchSignal, ...]] | None:
+) -> list[tuple[dict[str, Any], tuple[MatchSignal, ...]]]:
+    if not source_id:
+        return []
     provider_id = str(values.get("providerListingId", "")).strip()
+    matches = []
     for listing in listings:
-        lst_source_id = listing.get("sourceId")
-        # Allow matching synthetic test submissions against the seeded SRC-591 listing L-2024
-        match_source = (lst_source_id == source_id) or (
-            source_id == "SRC-SYNTHETIC" and lst_source_id == "SRC-591"
-        )
-        if not match_source:
+        if listing.get("sourceId") != source_id:
             continue
 
         lst_provider_id = listing.get("sourceListingId", "")
-        id_match = False
-        if provider_id == lst_provider_id:
-            id_match = True
-        elif source_id == "SRC-SYNTHETIC" and lst_source_id == "SRC-591":
-            # Map synthetic provider listing ID (e.g. "synthetic-2024") to s591 provider listing ID (e.g. "s591-2024")
-            if provider_id.replace("synthetic-", "") == lst_provider_id.replace("s591-", ""):
-                id_match = True
-
         url_hit = bool(canonical_url) and listing.get("canonicalUrl") == canonical_url
-        id_hit = bool(provider_id) and id_match
+        id_hit = bool(provider_id) and provider_id == lst_provider_id
         if not (url_hit or id_hit):
             continue
 
@@ -922,8 +950,8 @@ def _find_identity_match(
                 detail=canonical_url if url_hit else "canonical URL 不同",
             ),
         )
-        return listing, signals
-    return None
+        matches.append((listing, signals))
+    return matches
 
 
 def _entity_score(
@@ -1032,6 +1060,7 @@ __all__ = [
     "effective_fields",
     "fixture_replay_allowed",
     "match_listing",
+    "missing_assisted_entry_fields",
     "normalize_address",
     "normalize_floor",
     "normalize_url",

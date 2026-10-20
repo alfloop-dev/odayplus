@@ -51,7 +51,7 @@ def _case(case, *, candidates=None):
     command = _command(case)
     if candidates is not None:
         command["candidates"] = candidates
-    return CanonicalMatchCaseRepository(graph).create_review_case(ids["tenant"], intake_id, **command)
+    return CanonicalMatchCaseRepository(graph).create_case(ids["tenant"], intake_id, **command)
 
 
 def _merge(case):

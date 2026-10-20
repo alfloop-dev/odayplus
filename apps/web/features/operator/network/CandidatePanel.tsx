@@ -436,10 +436,16 @@ function GateDetail({
   );
 }
 
+
 function nativeStageLabel(read?: CandidateNativeWorkflowRead): string {
   const labels = { needdata: "缺資料／退回", ready: "資料齊備", scoring: "評分中", evaluated: "已保存報告", pendingreview: "審核中",
     approved: "已核准", rejected: "未通過", onhold: "暫停（WAIT）" };
-  return read?.stage && read.availability === "recorded" ? labels[read.stage] : "流程未核驗";
+  if (read?.stage && read.availability === "recorded") return labels[read.stage];
+  if (read?.scoreJob?.availability === "recorded") {
+    if (["FAILED", "DEAD_LETTER"].includes(read.scoreJob.status ?? "")) return "評分工作失敗";
+    if (read.scoreJob.status === "CANCELLED") return "評分工作已取消";
+  }
+  return read?.lifecycle === "SCORING_FAILED" ? "候選點評分失敗" : "流程未核驗";
 }
 
 function ToneBadge({ children, tone }: { children: ReactNode; tone: "good" | "watch" | "risk" }) {

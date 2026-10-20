@@ -17,6 +17,11 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from modules.external_data.application.native_intake_process_lifecycle import (
+    _native_process_run_scope,
+    _note_native_process,
+)
+
 MAX_INPUT = 750_000
 MAX_OUTPUT = 750_000
 MAX_STDERR = 65_536
@@ -60,6 +65,54 @@ def _kill_and_reap(process) -> None:
     raise NativeIOUnreaped("NATIVE_IO_CHILD_UNREAPED")
 
 
+def _cleanup_owned_io(process, read_fd, write_fd, *, body_error: BaseException | None,
+                      _invocation=None) -> None:
+    # Reaping must not depend on successful FD/stream closes. Keep the
+    # existing wait and process-group absence proof, including its limits.
+    unreaped = None
+    if isinstance(body_error, NativeIOUnreaped):
+        _note_native_process(_invocation, "UNPROVED")
+    if process is not None:
+        try:
+            _kill_and_reap(process)
+        except NativeIOUnreaped as error:
+            _note_native_process(_invocation, "UNPROVED")
+            unreaped = error
+        except BaseException:
+            _note_native_process(_invocation, "UNPROVED")
+            unreaped = NativeIOUnreaped("NATIVE_IO_CHILD_UNREAPED")
+        else:
+            # Capture the existing wait/group-absence proof before any close
+            # error can mask it. The run scope seals only after full unwind.
+            _note_native_process(_invocation, "REAPED")
+
+    close_error = None
+    for descriptor in (read_fd, write_fd):
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except BaseException as error:
+                if close_error is None:
+                    close_error = error
+    if process is not None:
+        for stream in (process.stdin, process.stdout, process.stderr):
+            if stream is not None:
+                try:
+                    stream.close()
+                except BaseException as error:
+                    if close_error is None:
+                        close_error = error
+
+    if unreaped is not None:
+        raise unreaped from None
+    # A known body rejection (including an interruption) survives a close
+    # failure only after the owned reap helper completed successfully.
+    if body_error is None and close_error is not None:
+        if isinstance(close_error, Exception):
+            raise NativeIORejected("NATIVE_IO_CHILD_FAILED") from None
+        raise close_error
+
+
 class NativeIntakeProcessRunner:
     def _command(self, credential_fd: int | None) -> list[str]:
         # This fixed entrypoint/isolated interpreter cannot be selected by a
@@ -71,6 +124,16 @@ class NativeIntakeProcessRunner:
 
     def run(self, request: dict, *, deadline: float, guard: Callable[[], None],
             credential: str | None = None) -> dict:
+        with _native_process_run_scope() as invocation:
+            try:
+                return NativeIntakeProcessRunner._run_owned(self, request, deadline=deadline,
+                    guard=guard, credential=credential, _invocation=invocation)
+            except NativeIOUnreaped:
+                _note_native_process(invocation, "UNPROVED")
+                raise
+
+    def _run_owned(self, request: dict, *, deadline: float, guard: Callable[[], None],
+                   credential: str | None, _invocation) -> dict:
         start = time.monotonic()
         if (type(deadline) not in {int, float} or not math.isfinite(deadline)
                 or not start < deadline <= start + MAX_SECONDS):
@@ -94,15 +157,22 @@ class NativeIntakeProcessRunner:
             raise NativeIORejected("NATIVE_IO_LENGTH_REJECTED")
         read_fd = write_fd = None
         process = None
+        body_error = None
         try:
             if token is not None:
                 read_fd, write_fd = os.pipe()
-            process = subprocess.Popen(self._command(read_fd), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            command = self._command(read_fd)
+            # Command construction is still prelaunch. Once the Popen call is
+            # entered, no returned handle is an unknown outcome, not no launch.
+            _note_native_process(_invocation, "SPAWN_ENTERED")
+            process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, env={"LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PYTHONUNBUFFERED": "1"},
                 close_fds=True, pass_fds=() if read_fd is None else (read_fd,), start_new_session=True)
             if read_fd is not None:
-                os.close(read_fd)
-                read_fd = None
+                # A failed close may already have released/reused the FD.
+                # Relinquish the numeric handle before attempting it once.
+                descriptor, read_fd = read_fd, None
+                os.close(descriptor)
             with selectors.DefaultSelector() as selector:
                 streams = {"stdin": process.stdin, "out": process.stdout, "err": process.stderr}
                 writes = {process.stdin.fileno(): memoryview(payload)}
@@ -132,8 +202,8 @@ class NativeIntakeProcessRunner:
                                 if name == "stdin":
                                     process.stdin.close()
                                 else:
-                                    os.close(write_fd)
                                     write_fd = None
+                                    os.close(descriptor)
                             continue
                         try:
                             data = os.read(descriptor, 65_536)
@@ -177,17 +247,15 @@ class NativeIntakeProcessRunner:
                         or (reply["status"] is not None and (type(reply["status"]) is not int or not 100 <= reply["status"] <= 599))):
                     raise NativeIORejected("NATIVE_IO_PROTOCOL_REJECTED")
                 raise NativeIORejected(reply["code"], status=reply["status"])
-        except NativeIORejected:
+        except NativeIORejected as error:
+            body_error = error
             raise
         except Exception:
-            raise NativeIORejected("NATIVE_IO_CHILD_FAILED") from None
+            body_error = NativeIORejected("NATIVE_IO_CHILD_FAILED")
+            raise body_error from None
+        except BaseException as error:
+            body_error = error
+            raise
         finally:
-            if read_fd is not None:
-                os.close(read_fd)
-            if write_fd is not None:
-                os.close(write_fd)
-            if process is not None:
-                for stream in (process.stdin, process.stdout, process.stderr):
-                    if stream is not None:
-                        stream.close()
-                _kill_and_reap(process)
+            _cleanup_owned_io(process, read_fd, write_fd, body_error=body_error,
+                              _invocation=_invocation)

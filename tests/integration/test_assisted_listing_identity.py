@@ -123,6 +123,11 @@ def canonical_graph(intake_db, tmp_path):
         "expected_edge_versions": {ids["edge"]: 5}, "candidate_reassignment_plan": [],
     }
     with intake_db.connect() as conn:
+        # Full-production-schema consumers retain the real Core tenant FK;
+        # the older focused Intake fixture has no Core schema at all.
+        if conn.execute("SELECT to_regclass('core.tenants')").fetchone()[0] is not None:
+            conn.execute("INSERT INTO core.tenants (tenant_id,tenant_name,status) VALUES (%s,'Synthetic identity fixture','active')",
+                (ids["tenant"],))
         conn.execute(
             "INSERT INTO intake.source_registry (source_id,display_name,canonicalization_rule_version,"
             "retrieval_mode,policy_owner_subject_id) VALUES ('synthetic-feed','Synthetic only','1',"
@@ -226,6 +231,14 @@ def test_native_merge_commits_real_versions_lineage_audit_and_outbox(canonical_g
     resolved = repo.resolve_listing(ids["tenant"], ids["listing"])
     assert resolved["listing_version"] == 13 and resolved["property_id_at_creation"] == ids["source"]
     assert resolved["effective_property_id"] == ids["target"]
+    roots = repo.resolve_properties(ids["tenant"], [ids["source"], ids["target"], ids["split_target"]])
+    assert roots[ids["source"]]["redirect_path"] == [ids["source"], ids["target"]]
+    assert roots[ids["source"]]["effective_property_id"] == resolved["effective_property_id"]
+    assert roots[ids["source"]]["current_property_version"] == roots[ids["target"]]["current_property_version"] == 12
+    assert roots[ids["split_target"]]["effective_property_id"] == ids["split_target"]
+    assert repo.resolve_properties(ids["tenant"], [ids["source"]], as_of=historic)[ids["source"]]["effective_property_id"] == ids["source"]
+    with pytest.raises(IdentityNotFoundError):
+        repo.resolve_properties(str(uuid4()), [ids["source"]])
     assert repo.resolve_listing(ids["tenant"], ids["listing"], as_of=historic)["effective_property_id"] == ids["source"]
     with db.connect() as conn:
         edges = conn.execute("SELECT effective_to,supersedes_edge_id,edge_version FROM identity.source_identity_edges ORDER BY edge_version").fetchall()

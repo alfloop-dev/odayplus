@@ -2148,15 +2148,7 @@ export function NetworkFindAreasWorkspace({
     && scoringWorkflowProvenance === "canonical" && scoringLoadState === "ready" ? scoringSnapshot : null,
     NETWORK_OPERATOR_HEADERS, JSON.stringify([navigationContextKey, navigationLocationKey]),
     navigationContext.current.generation, `${scoreExecution?.executionRequestId}:${scoreExecution?.actualVersion}`, reloadScoringSnapshot);
-  const workflowProjection = projectCandidateWorkflow({
-    selection: { id: workflowCandidateId, invalid: isCandidateWorkflowTab(activeTab) && !overrideApplies && urlCandidateSelection.invalid },
-    currentGeneration: navigationContext.current.generation,
-    network: { snapshot: networkSnapshot, status: networkLoadState, generation: networkNavigationGeneration },
-    scoring: { snapshot: scoringSnapshot, status: fixturesAllowed && scoringWorkflowProvenance === "unknown" ? "error" : scoringLoadState, generation: scoringNavigationGeneration },
-    // Use only the admitted review read from the current access generation.
-    reviews: { snapshot: reviewsSnapshot, status: reviewsLoadState, generation: reviewsNavigationGeneration },
-    jobs: scoreJobRead,
-  });
+
   // Both snapshots are masked to the current access generation above. A prior
   // fixture read cannot survive a role/tenant change or a failed current read.
   const useFixtureWorkflow = fixturesAllowed && scoringWorkflowProvenance === "fixture"
@@ -2168,6 +2160,16 @@ export function NetworkFindAreasWorkspace({
     scoring: { snapshot: scoringSnapshot, status: scoringWorkflowProvenance === "canonical" ? scoringLoadState : "error", generation: scoringNavigationGeneration },
     reviews: { snapshot: reviewsSnapshot, status: reviewsLoadState, generation: reviewsNavigationGeneration },
     jobs: scoreJobRead,
+  });
+  const workflowProjection = projectCandidateWorkflow({
+    selection: { id: workflowCandidateId, invalid: isCandidateWorkflowTab(activeTab) && !overrideApplies && urlCandidateSelection.invalid },
+    currentGeneration: navigationContext.current.generation,
+    network: { snapshot: networkSnapshot, status: networkLoadState, generation: networkNavigationGeneration },
+    scoring: { snapshot: scoringSnapshot, status: fixturesAllowed && scoringWorkflowProvenance === "unknown" ? "error" : scoringLoadState, generation: scoringNavigationGeneration },
+    // Use only the admitted review read from the current access generation.
+    reviews: { snapshot: reviewsSnapshot, status: reviewsLoadState, generation: reviewsNavigationGeneration },
+    jobs: scoreJobRead,
+    nativeWorkflow: workflowCandidateId ? nativeWorkflow?.[workflowCandidateId] : undefined,
   });
   const submissionCandidates = canOfferReviewSubmission(activeRoleId)
     ? reviewSubmissionOffers(networkSnapshot, scoringSnapshot, reviewsSnapshot, nativeWorkflow) : {};
@@ -2348,7 +2350,7 @@ export function NetworkFindAreasWorkspace({
         tabCounts={tabCounts}
         tabs={networkTabs}
       >
-        {!useFixtureWorkflow && <CandidateWorkflowFacts value={workflowProjection} />}
+        {!useFixtureWorkflow && <CandidateWorkflowFacts read={workflowProjection.candidateId ? nativeWorkflow?.[workflowProjection.candidateId] : undefined} />}
         {activeTabGateState ? (
           <OperatorDataUnavailableGate
             detail={activeTabGateDetail}

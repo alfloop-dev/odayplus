@@ -20,6 +20,7 @@ EXPECTED_MIGRATION_FILES = {
     "infra/db/migrations/assisted_listing_intake/002_consistency.sql",
     "infra/db/migrations/assisted_listing_intake/003_promotion_state.sql",
     "infra/db/migrations/assisted_listing_intake/004_tenant_rls_lineage.sql",
+    "infra/db/migrations/assisted_listing_intake/005_decision_service_actor.sql",
     "infra/db/migrations/assisted_listing_intake/README.md",
     "infra/db/migrations/assisted_listing_intake/downgrade.sql",
 }

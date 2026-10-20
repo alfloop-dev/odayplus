@@ -165,9 +165,11 @@ class NativeIntakeAssistedEntryRuntime:
             except (PermissionError, NativeAssistedEntryUnavailable) as cleanup_error:
                 return self.settlement.negative(delivery, cleanup_error,
                     business_fence=leases.business_fence, leases=leases)
-            except (NativeIORejected, NativeAssistedSnapshotProofRejected, JobFenceRejectedError, NativeAssistedEntryConflict):
+            except (NativeIORejected, NativeAssistedSnapshotProofRejected, JobFenceRejectedError,
+                    NativeAssistedEntryConflict, NativeRetrievalQuotaExceeded):
                 # The durable journal retains the actual unresolved cleanup.
-                # Neither a deletion nor a slot release is inferred here.
+                # A refused cleanup admission must not replace the original
+                # business error. No deletion or slot release is inferred.
                 pass
         if can_retry and retryable(error):
             try:

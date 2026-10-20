@@ -154,6 +154,8 @@ class CanonicalIntakeAuditSink:
                 after_value=after,
                 reason=result.get("reason"),
                 reason_code=result.get("reason_code"),
+                source_snapshot_id=result.get("source_snapshot_id"),
+                parser_run_id=result.get("parser_run_id"),
             )
             persisted = self.writer.append(fact)
             self.delivery.enqueue(persisted)

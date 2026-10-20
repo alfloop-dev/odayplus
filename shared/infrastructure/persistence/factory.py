@@ -119,7 +119,7 @@ class PersistenceBundle:
                 registry_repository=self.learninghub_repository, engine=self.engine)
         return SiteScoreExecutionService(ScoreExecutionJobRepository(self, model_admission=admission))
 
-    def canonical_identity_graph(self) -> Any:
+    def canonical_identity_graph(self, *, identity_service_boundary=None) -> Any:
         """Use native canonical rows with the configured Intake audit policy."""
         from modules.listing.application.identity_delivery import IdentityDeliveryAuthenticator
         from shared.infrastructure.persistence.identity_graph_sql import (
@@ -130,6 +130,7 @@ class PersistenceBundle:
             self.engine, self.job_queue,
             getattr(self.assisted_intake_store, "_canonical_audit_sink", None),
             delivery_authenticator=IdentityDeliveryAuthenticator(self.engine),
+            identity_service_boundary=identity_service_boundary,
         )
 
     def canonical_intakes(self) -> Any:
@@ -144,10 +145,10 @@ class PersistenceBundle:
 
         return NativeIntakeStartOwner(self.canonical_identity_graph())
 
-    def canonical_intake_identity(self) -> Any:
+    def canonical_intake_identity(self, *, identity_service_boundary=None) -> Any:
         from modules.listing.application.native_intake_identity import NativeIntakeIdentityOwner
 
-        return NativeIntakeIdentityOwner(self.canonical_identity_graph())
+        return NativeIntakeIdentityOwner(self.canonical_identity_graph(identity_service_boundary=identity_service_boundary))
 
     def canonical_intake_source_policy(self) -> Any:
         from modules.listing.application.native_intake_source_policy import (
@@ -168,19 +169,46 @@ class PersistenceBundle:
 
         return NativeIntakeRetrievalOwner(self.canonical_identity_graph())
 
-    def canonical_intake_assisted_entry(self) -> Any:
+    def canonical_intake_assisted_entry(self, *, snapshot_transport_factory: Any = None) -> Any:
         from modules.listing.application.native_intake_assisted_entry import (
             NativeIntakeAssistedEntryOwner,
         )
 
-        return NativeIntakeAssistedEntryOwner(self.canonical_identity_graph())
+        return NativeIntakeAssistedEntryOwner(self.canonical_identity_graph(), snapshot_transport_factory=snapshot_transport_factory)
+
+    def canonical_intake_parser(self, *, storage_factory: Any = None, parser_process_factory: Any = None) -> Any:
+        from modules.external_data.application.native_parser_artifacts import (
+            NativeParserArtifactRejected,
+            NativeParserArtifactUnavailable,
+        )
+        from modules.external_data.application.native_parser_deployments import (
+            NativeParserDeploymentConfigurationRejected,
+            native_parser_deployments,
+        )
+        from modules.listing.application.native_intake_parser import NativeIntakeParserOwner
+
+        registry, configuration_error, artifact_error = None, None, None
+        try:
+            registry = native_parser_deployments().build_registry()
+        except NativeParserDeploymentConfigurationRejected as error:
+            # Historical replay and owned negative settlement must remain
+            # available. Positive boundaries raise this distinct bounded code;
+            # invalid startup data is never silently treated as absence.
+            configuration_error = str(error)
+        except NativeParserArtifactRejected:
+            artifact_error = "REJECTED"
+        except NativeParserArtifactUnavailable:
+            artifact_error = "UNAVAILABLE"
+        return NativeIntakeParserOwner(self.canonical_identity_graph(), artifact_registry=registry,
+            deployment_configuration_error=configuration_error, artifact_startup_error=artifact_error,
+            storage_factory=storage_factory, parser_process_factory=parser_process_factory)
 
     def canonical_match_cases(self) -> Any:
         from shared.infrastructure.persistence.identity_cases_sql import (
             CanonicalMatchCaseRepository,
         )
 
-        return CanonicalMatchCaseRepository(self.canonical_identity_graph())
+        return CanonicalMatchCaseRepository(self.canonical_identity_graph(), replay_store=self.assisted_intake_store)
 
     def canonical_identity_decisions(self) -> Any:
         from shared.infrastructure.persistence.identity_decisions_sql import (

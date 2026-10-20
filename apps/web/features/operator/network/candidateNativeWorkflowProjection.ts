@@ -3,7 +3,7 @@ import { inspectReviewsReadProjection } from "./networkReviewProjection";
 import { hasApprovedReviewHistory } from "./networkReviewRounds";
 import { hasCurrentPendingSubmissionHistory } from "./networkPendingReviewHistory";
 import type { NetworkReviewsSnapshot, ReviewItem } from "./networkReviewTypes";
-import type { CandidateNativeWorkflowRead, CandidateNativeWorkflowReads, CandidateReviewReadTarget, NetworkScoringSnapshot } from "./networkScoringTypes";
+import type { CandidateNativeWorkflowRead, CandidateNativeWorkflowReads, CandidateReviewDecisionRead, CandidateReviewReadTarget, NetworkScoringSnapshot } from "./networkScoringTypes";
 import type { WorkflowRead } from "./networkWorkflowProjection";
 import { candidateScoreJob, pendingScoreJob, type CandidateScoreJobsRead } from "./candidateScoreJobs";
 
@@ -41,7 +41,11 @@ export function projectCandidateNativeWorkflow(input: Input): CandidateNativeWor
   for (const candidate of scoring.candidates) {
     if (!readObject(candidate) || !readId(candidate.id)) continue;
     const result: CandidateNativeWorkflowRead = { candidateId: candidate.id, stage: null, availability: "unavailable",
-      lifecycle: null, reason: messages.read, review: null };
+      lifecycle: null, reason: messages.read, review: null,
+      dataReadiness: { availability: "unavailable", state: null, passed: null, reason: messages.read },
+      scoreReport: { availability: "unavailable", reportId: null, reportVersion: null, sitescoreRunId: null, modelVersion: null, reason: messages.read },
+      reviewDecision: { availability: "unavailable", decisionId: null, decisionVersion: null, status: null, networkAction: null,
+        approvalId: null, reportId: null, reportVersion: null, reason: messages.graph } };
     output[candidate.id] = result;
     if (!validReads || !network) continue;
     const candidates = network.candidates?.filter((row) => readObject(row) && row.id === candidate.id) ?? [];
@@ -55,14 +59,32 @@ export function projectCandidateNativeWorkflow(input: Input): CandidateNativeWor
     result.lifecycle = typeof raw.canonicalSiteStatus === "string" ? raw.canonicalSiteStatus
       : typeof raw.status === "string" ? raw.status : null;
     result.scoreJob = candidateScoreJob(input.jobs, input.currentGeneration, candidate.id, candidate.listingId) ?? undefined;
-    if (!validReviews || !reviews) { result.reason = messages.graph; continue; }
+    const coherentGate = ["ready", "warn", "geo", "hard", "needdata"].includes(candidate.gate.state)
+      && candidate.gate.passed === ["ready", "warn"].includes(candidate.gate.state)
+      && (candidate.gate.passed ? candidate.gate.missing.length === 0 : candidate.gate.missing.length > 0);
+    result.dataReadiness = coherentGate
+      ? { availability: "recorded", state: candidate.gate.state, passed: candidate.gate.passed,
+        reason: "目前資料完整度；評分授權與工作結果另外核驗。" }
+      : { availability: "conflict", state: null, passed: null, reason: "資料 Gate 的狀態、通過旗標與必要缺件不一致。" };
     const reports = scoring.scorecards.filter((row) => row.id === candidate.id);
     const latest = reports.length === 1 && readId(reports[0].reportId) && version(reports[0].reportVersion)
       && readId(reports[0].sitescoreRunId) && readId(reports[0].modelVersion) ? reports[0] : null;
     if (reports.length > 1 || reports.length === 1 && !latest
       || latest && scoring.scorecards.filter((row) => row.reportId === latest.reportId).length !== 1) {
-      Object.assign(result, { availability: "conflict", reason: "最新報告身分尚未唯一核驗；保留候選點記錄，不推算流程。" }); continue;
+      const reason = "最新報告身分尚未唯一核驗；保留候選點記錄，不推算流程。";
+      result.scoreReport = { ...result.scoreReport!, availability: "conflict", reason };
+      Object.assign(result, { availability: "conflict", reason }); continue;
     }
+    result.scoreReport = latest
+      ? { availability: "recorded", reportId: latest.reportId!, reportVersion: latest.reportVersion!,
+        sitescoreRunId: latest.sitescoreRunId!, modelVersion: latest.modelVersion!, reason: "已保存報告；不代表目前工作成功或人工核准。" }
+      : { ...result.scoreReport!, availability: "absent", reason: "本次授權讀取沒有此候選點的保存報告。" };
+    if (candidate.canonicalSiteStatus !== undefined && candidate.canonicalSiteStatus !== result.lifecycle) {
+      Object.assign(result, { availability: "conflict", reason: "候選點與評分讀取的持久狀態不一致，請重新讀取。" }); continue;
+    }
+    // These reads have independent permissions. A review denial cannot erase
+    // an already authorized Gate, job receipt or immutable report identity.
+    if (!validReviews || !reviews) { result.reason = messages.graph; continue; }
     const ownReviews = reviews.reviews.filter((row) => row.candidateId === candidate.id);
     const target = (row: ReviewItem): CandidateReviewReadTarget => ({ candidateId: candidate.id,
       listingId: candidate.listingId!, reviewId: row.id, reportId: row.reportId!, reportVersion: row.reportVersion!,
@@ -79,6 +101,19 @@ export function projectCandidateNativeWorkflow(input: Input): CandidateNativeWor
           || latest.modelVersion === row.modelVersion && latest.datasetSnapshotId === row.datasetSnapshotId)
         && approval?.recordSource === "persisted" && readId(approval.id) && approval.id !== row.id;
     };
+    // Mapping only: callers retain the existing strict graph/metadata checks.
+    const reviewRecord = (row: ReviewItem): CandidateReviewDecisionRead => {
+      const decision = reviews.decisions?.find((record) => record.decision_id === row.id);
+      if (!decision || !version(decision.version) || !readId(decision.approval_id)) return result.reviewDecision!;
+      return { availability: "recorded", decisionId: row.id, decisionVersion: decision.version,
+        status: decision.decision_status, networkAction: decision.network_action ?? null,
+        approvalId: decision.approval_id, reportId: row.reportId!, reportVersion: row.reportVersion!,
+        reason: "確切 Decision／Approval 與凍結報告；決策紀錄不等同候選點已核准。" };
+    };
+    if (!ownReviews.length && raw.reviewId == null && raw.reviewWorkflow == null && raw.reviewSubmission == null) {
+      result.reviewDecision = { ...result.reviewDecision!, availability: "absent", reason: "本次授權讀取沒有此候選點的審核紀錄。" };
+    } else if (ownReviews.length === 1 && persisted(ownReviews[0]) && raw.reviewWorkflow == null && raw.reviewSubmission == null
+      && (raw.reviewId == null || raw.reviewId === ownReviews[0].id)) result.reviewDecision = reviewRecord(ownReviews[0]);
     const submission = raw.reviewSubmission;
     if (submission !== undefined && submission !== null) {
       const row = hasCandidateReviewSubmission(submission) ? ownReviews.find((review) => review.id === submission.decisionId) : undefined;
@@ -104,7 +139,7 @@ export function projectCandidateNativeWorkflow(input: Input): CandidateNativeWor
           && !(newRound && ["approved", "opened"].includes(String(result.lifecycle)))) {
         Object.assign(result, { availability: "conflict", reason: messages.conflict }); continue;
       }
-      Object.assign(result, { availability: "recorded", stage: "pendingreview", review: target(row),
+      Object.assign(result, { availability: "recorded", stage: "pendingreview", review: target(row), reviewDecision: reviewRecord(row),
         reason: (newRound ? `原${result.lifecycle === "opened" ? "已開店" : "已核准"}狀態保留；新版報告本輪待審。` : "")
           + `已核對實際待審 Decision、獨立 Approval 與凍結報告 v${row.reportVersion}；最新報告 v${latest.reportVersion} 另行保存。` });
       continue;
@@ -139,7 +174,7 @@ export function projectCandidateNativeWorkflow(input: Input): CandidateNativeWor
         || metadata.conditions !== decision.conditions || !same(metadata.requiredData, decision.required_data)) {
         Object.assign(result, { availability: "conflict", reason: messages.conflict }); continue;
       }
-      Object.assign(result, { availability: "recorded", stage, review: target(row),
+      Object.assign(result, { availability: "recorded", stage, review: target(row), reviewDecision: reviewRecord(row),
         reason: `已核對人工 ${action} 決策與凍結報告 v${row.reportVersion}；候選點原始狀態 ${result.lifecycle}。`
           + (action === "RETURN" ? ` 需補資料：${decision.required_data!.join("、")}。` : "")
           + (action === "WAIT" ? ` 通過條件：${decision.conditions}。` : "") });
@@ -153,7 +188,7 @@ export function projectCandidateNativeWorkflow(input: Input): CandidateNativeWor
         || ["approved", "opened", "rejected"].includes(String(result.lifecycle))) {
         Object.assign(result, { availability: "conflict", reason: messages.conflict }); continue;
       }
-      Object.assign(result, { availability: "recorded", stage: "pendingreview", review: target(row),
+      Object.assign(result, { availability: "recorded", stage: "pendingreview", review: target(row), reviewDecision: reviewRecord(row),
         reason: "已核對唯一待審 Decision、獨立 Approval 與目前凍結報告；尚未寫入人工終局候選點指標。" }); continue;
     }
     if (ownReviews.length || raw.reviewId != null || ["approved", "opened", "rejected"].includes(String(result.lifecycle))) {
@@ -162,6 +197,9 @@ export function projectCandidateNativeWorkflow(input: Input): CandidateNativeWor
     if (["SCORING_QUEUED", "SCORING_FAILED"].includes(String(result.lifecycle))) {
       if (result.scoreJob?.availability !== "recorded") {
         result.reason = `候選點記錄為 ${result.lifecycle}；${result.scoreJob?.reason ?? "目前工作回條尚未確認"}，已保存報告不代表當次成功。`; continue;
+      }
+      if (result.scoreJob.status === "SUCCEEDED") {
+        Object.assign(result, { availability: "conflict", reason: `候選點仍記錄為 ${result.lifecycle}，工作回條卻記錄成功；請重新讀取，不以歷史報告覆蓋此差異。` }); continue;
       }
     }
     if (result.scoreJob && pendingScoreJob(result.scoreJob)) {
@@ -174,8 +212,7 @@ export function projectCandidateNativeWorkflow(input: Input): CandidateNativeWor
     // Actual _gate produces passed=true only with ready/warn and no required
     // missing fields. Supplementary otherMissing remains legal for warn.
     // This checks recorded Gate coherence, independently of model admission.
-    if (!latest && candidate.gate.passed && (!["ready", "warn"].includes(candidate.gate.state)
-      || candidate.gate.missing.length !== 0)) {
+    if (!latest && result.dataReadiness.availability === "conflict") {
       Object.assign(result, { availability: "conflict", reason: "資料 Gate 的狀態、通過旗標與必要缺件不一致，尚未確認資料齊備。" }); continue;
     }
     Object.assign(result, { availability: "recorded", stage: latest ? "evaluated" : candidate.gate.passed ? "ready" : "needdata",

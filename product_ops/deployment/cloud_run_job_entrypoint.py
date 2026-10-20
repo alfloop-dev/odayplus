@@ -20,7 +20,10 @@ from typing import Any
 
 from apps.api.server import bootstrap_runtime, build_scheduler, build_worker
 from apps.cli.oday_cli.ops import OpsPlanError, build_migration_run
-from apps.scheduler.oday_scheduler.main import SchedulerTenantConfigurationError
+from apps.scheduler.oday_scheduler.main import (
+    SchedulerNativeIntakeHandoffError,
+    SchedulerTenantConfigurationError,
+)
 from shared.jobs.queue import JobRecord, JobStatus
 
 EXIT_FAILED = 1
@@ -265,8 +268,11 @@ def run_scheduler() -> int:
     tracking_queue = TrackingJobQueue(bundle.job_queue)
     scheduler = build_scheduler(replace(bundle, job_queue=tracking_queue))
     before = tracking_queue.count_active_jobs()
+    native_failure = False
     try:
         scheduler.run_once()
+    except SchedulerNativeIntakeHandoffError:
+        native_failure = True
     except SchedulerTenantConfigurationError as exc:
         _emit_receipt(
             "scheduler",
@@ -279,6 +285,13 @@ def run_scheduler() -> int:
         )
         return EXIT_FAILED
     after = tracking_queue.count_active_jobs()
+    native = scheduler.last_native_handoff
+
+    if native_failure:
+        _emit_receipt("scheduler", "failed", reason=SchedulerNativeIntakeHandoffError.code,
+            error_class="SchedulerNativeIntakeHandoffError", native_intake=native,
+            active_jobs_before=before, active_jobs_after=after, jobs_enqueued=len(tracking_queue.enqueued))
+        return EXIT_FAILED
 
     if tracking_queue.enqueue_errors:
         exc = tracking_queue.enqueue_errors[-1]
@@ -289,18 +302,20 @@ def run_scheduler() -> int:
             error_class=type(exc).__name__,
             active_jobs_before=before,
             active_jobs_after=after,
+            native_intake=native,
         )
         return EXIT_FAILED
 
     if not tracking_queue.enqueued:
-        if not scheduler.recurring_job_types():
+        if native.get("configured") or not scheduler.recurring_job_types():
             _emit_receipt(
                 "scheduler",
                 "succeeded",
-                reason="external_fetch_decommissioned",
+                reason="native_intake_handoff" if native.get("configured") else "external_fetch_decommissioned",
                 active_jobs_before=before,
                 active_jobs_after=after,
                 jobs_enqueued=0,
+                native_intake=native,
             )
             return 0
         _emit_receipt(
@@ -340,6 +355,8 @@ def run_scheduler() -> int:
         created=created,
         active_jobs_before=before,
         active_jobs_after=after,
+        jobs_enqueued=len(tracking_queue.enqueued),
+        native_intake=native,
     )
     return 0
 

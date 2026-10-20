@@ -172,7 +172,7 @@ def test_planning_read_does_not_bypass_current_case_intake_or_hold_state(canonic
 
 
 @pytest.mark.parametrize("resource", ["parent", "property", "listing", "candidate"])
-def test_any_unreadable_native_resource_refuses_the_entire_context(canonical_graph, identity_api, resource):
+def test_native_context_requires_actual_property_region_for_every_resource(canonical_graph, identity_api, resource):
     _, ids, _, db = canonical_graph
     if resource == "candidate":
         candidates = tuple(MatchCandidateEvidence(ids[key], version, Decimal("0.5"), {"synthetic": True})
@@ -191,8 +191,16 @@ def test_any_unreadable_native_resource_refuses_the_entire_context(canonical_gra
     caller["principal"] = replace(caller["principal"], scope=Scope(tenant_id=ids["tenant"], region_ids=frozenset({region})))
     before = _state(canonical_graph)
     response = identity_api[0].get(_path(case))
-    assert response.status_code == 403, response.text
-    assert "properties" not in response.json() and _state(canonical_graph) == before
+    # Listing and CandidateSite have no region column of their own. Their
+    # actual graph/bound Property supplies it; the Intake never supplies it.
+    if resource in {"listing", "candidate"}:
+        assert response.status_code == 200, response.text
+        assert response.json()["properties"]
+        assert response.json()["candidate_sites" if resource == "candidate" else "listings"]
+    else:
+        assert response.status_code == 403, response.text
+        assert "properties" not in response.json()
+    assert _state(canonical_graph) == before
 
 
 @pytest.mark.parametrize("collection", ["anchors", "listings", "edges", "candidates"])
@@ -227,8 +235,23 @@ def test_historical_anchor_listing_outside_direct_closure_still_requires_its_own
     with db.connect() as conn:
         conn.execute("UPDATE intake.intakes SET region_id=%s WHERE intake_id=%s", (region, case["intake_id"]))
         conn.execute("UPDATE identity.properties SET region_id=%s WHERE tenant_id=%s", (region, ids["tenant"]))
+        conn.execute("UPDATE identity.properties SET region_id=%s WHERE property_id=%s", (str(uuid4()), ids["source"]))
     caller = identity_api[1]
     caller["principal"] = replace(caller["principal"], scope=Scope(tenant_id=ids["tenant"], region_ids=frozenset({region})))
+    before = _state(canonical_graph)
+    audit = identity_api[0].app.state.audit_log
+    audit_count = len(audit.list_events())
+    response = identity_api[0].get(_path(case))
+    assert response.status_code == 200, response.text
+    assert response.json()["listings"] == []
+    assert any(row["listing_id"] == ids["listing"] and row["effective_property_id"] == ids["target"]
+               for row in response.json()["anchors"])
+    # The Listing is outside the direct closure, but still has a distinct
+    # authorization event. Its original parent cannot supply current region.
+    assert f"listing/{ids['listing']}" in {event.resource for event in audit.list_events()[audit_count:]}
+    assert _state(canonical_graph) == before
+    with db.connect() as conn:
+        conn.execute("UPDATE identity.properties SET region_id=%s WHERE property_id=%s", (str(uuid4()), ids["target"]))
     before = _state(canonical_graph)
     response = identity_api[0].get(_path(case))
     assert response.status_code == 403, response.text

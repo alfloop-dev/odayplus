@@ -142,6 +142,39 @@ def test_each_candidate_uses_own_latest_committed_model_without_inference_or_sco
     assert service.snapshot()["auditEvents"] == []
 
 
+@pytest.mark.parametrize(("site_status", "recommendation"), [
+    ("SCORING_FAILED", SiteScoreRecommendation.GO),
+    ("SCORING_QUEUED", SiteScoreRecommendation.REJECT),
+    ("approved", SiteScoreRecommendation.REJECT),
+    ("opened", SiteScoreRecommendation.GO),
+    (None, SiteScoreRecommendation.GO),
+])
+def test_canonical_http_preserves_persisted_lifecycle_independently_of_model_outcome(tmp_path, site_status, recommendation):
+    engine = SqliteEngine(tmp_path / "synthetic-candidate-state.sqlite3")
+    try:
+        scoped = TenantScopedDocumentStore(SqliteDocumentStore(engine), TENANT)
+        listings, reports = DurableListingRepository(scoped), DurableSiteScoreRepository(scoped)
+        draft = _draft("candidate-state")
+        listings.save_candidate(replace(draft, candidate_site=replace(draft.candidate_site, site_status=site_status)))
+        report = reports.save_report(replace(_report("candidate-state", "actual-committed-model"), recommendation=recommendation))
+        before = engine.query("SELECT collection,doc_id,seq,data FROM durable_documents ORDER BY collection,doc_id")
+        runtime = ReadOnlyRuntime()
+        service = _service(listings, reports, runtime)
+        with _client(lambda: service) as client:
+            response = client.get("/network-scoring")
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["source"] == "canonical"
+        assert body["candidates"][0]["canonicalSiteStatus"] == site_status
+        assert body["candidates"][0]["stage"] == (site_status or "unknown")
+        assert body["scorecards"][0]["reportId"] == report.report_id
+        assert body["scorecards"][0]["recommendation"] == recommendation.value
+        assert runtime.calls == 0
+        assert engine.query("SELECT collection,doc_id,seq,data FROM durable_documents ORDER BY collection,doc_id") == before
+    finally:
+        engine.close()
+
+
 def test_missing_own_report_does_not_borrow_cached_or_other_candidate_model():
     reports = InMemorySiteScoreRepository()
     reports.save_report(_report("candidate-A", "other-candidate-model"))

@@ -30,6 +30,19 @@ _IDENTITY_READS = frozenset({
 })
 
 
+def _check_pure_boundary(before):
+    # Normal client-side cursor construction/fetches issue no SQL. Keep the
+    # same original deadline without a redundant database roundtrip. Unknown
+    # callbacks retain their complete behavior, including any extra checks.
+    from modules.listing.application.native_intake_pending_commands import NativeIntakeCommandBudget
+
+    if (isinstance(before, NativeIntakeCommandBudget)
+            and type(before).__call__ is NativeIntakeCommandBudget.__call__):
+        before.check_in_memory()
+    else:
+        before()
+
+
 class _ReadCursor:
     __slots__ = ("_cursor", "_before")
 
@@ -43,11 +56,11 @@ class _ReadCursor:
         self._cursor.execute(sql, params)
 
     def fetchone(self):
-        self._before()
+        _check_pure_boundary(self._before)
         return self._cursor.fetchone()
 
     def fetchall(self):
-        self._before()
+        _check_pure_boundary(self._before)
         return self._cursor.fetchall()
 
 
@@ -59,10 +72,33 @@ class _ReadConnection:
 
     @contextmanager
     def cursor(self):
-        self._before()
+        _check_pure_boundary(self._before)
         # A cursor context closes only this cursor, never its connection.
         with self._connection.cursor() as cursor:
             yield _ReadCursor(cursor, self._before)
+
+
+def current_native_identity_store(engine, tenant_id: str, *, before: Callable[[], None]) -> SqlIdentityStore:
+    """Lend the existing three read-only identity queries inside this SQL root."""
+    if (getattr(engine, "dialect", None) != "postgresql"
+            or (connection := getattr(getattr(engine, "_local", None), "connection", None)) is None):
+        raise NativeIntakeRequesterAuthorityUnavailable("NATIVE_RECHECK_CURRENT_TRANSACTION_REQUIRED")
+    before()
+    root = engine.query_one("SELECT current_setting('transaction_isolation') AS isolation, "
+        "current_setting('app.tenant_id',true) AS tenant")
+    if root["isolation"] != "serializable":
+        raise NativeIntakeRequesterAuthorityUnavailable("NATIVE_RECHECK_SERIALIZABLE_REQUIRED")
+    tenant = root["tenant"]
+    if tenant != tenant_id:
+        raise PermissionError("NATIVE_RECHECK_TRANSACTION_TENANT_CONFLICT")
+    @contextmanager
+    def borrowed_connection():
+        if getattr(engine._local, "connection", None) is not connection:
+            raise NativeIntakeRequesterAuthorityUnavailable("NATIVE_RECHECK_CURRENT_TRANSACTION_UNAVAILABLE")
+        _check_pure_boundary(before)
+        yield _ReadConnection(connection, before)
+
+    return SqlIdentityStore(borrowed_connection)
 
 
 def _current_native_requester_profile(engine, subject_id: str, intake: dict, *,
@@ -73,16 +109,7 @@ def _current_native_requester_profile(engine, subject_id: str, intake: dict, *,
     Scope. The caller owns a SERIALIZABLE root and its deadline. The returned
     principal describes this accepted action; it grants no future source use.
     """
-    if (getattr(engine, "dialect", None) != "postgresql"
-            or (connection := getattr(getattr(engine, "_local", None), "connection", None)) is None):
-        raise NativeIntakeRequesterAuthorityUnavailable("NATIVE_RECHECK_CURRENT_TRANSACTION_REQUIRED")
-    before()
-    if engine.query_one("SHOW transaction_isolation")["transaction_isolation"] != "serializable":
-        raise NativeIntakeRequesterAuthorityUnavailable("NATIVE_RECHECK_SERIALIZABLE_REQUIRED")
-    before()
-    tenant = engine.query_one("SELECT current_setting('app.tenant_id',true) AS tenant")["tenant"]
-    if tenant != intake["tenant_id"]:
-        raise PermissionError("NATIVE_RECHECK_TRANSACTION_TENANT_CONFLICT")
+    identities = current_native_identity_store(engine, intake["tenant_id"], before=before)
     try:
         account_id = UUID(subject_id)
         if not account_id.int or str(account_id) != subject_id:
@@ -90,14 +117,6 @@ def _current_native_requester_profile(engine, subject_id: str, intake: dict, *,
     except (TypeError, ValueError, AttributeError):
         raise PermissionError("NATIVE_RECHECK_REQUESTER_INVALID") from None
 
-    @contextmanager
-    def borrowed_connection():
-        if getattr(engine._local, "connection", None) is not connection:
-            raise NativeIntakeRequesterAuthorityUnavailable("NATIVE_RECHECK_CURRENT_TRANSACTION_UNAVAILABLE")
-        before()
-        yield _ReadConnection(connection, before)
-
-    identities = SqlIdentityStore(borrowed_connection)
     account = identities.find_account_by_id(account_id)
     if account is None or not account.is_active or str(account.tenant_id) != intake["tenant_id"]:
         raise PermissionError("NATIVE_RECHECK_REQUESTER_INACTIVE_OR_FOREIGN")
@@ -149,6 +168,27 @@ def current_native_assisted_principal(engine, subject_id: str, intake: dict, *,
         is_identity_affecting=True, risk_summary=risk_summary, risk_acknowledged=risk_acknowledged)
     if not principal.scope.permits_module("listing"):
         raise PermissionError("NATIVE_ASSISTED_REQUESTER_MODULE_DENIED")
+    return principal
+
+
+def current_native_identity_principal(engine, subject_id: str, intake: dict, *,
+                                      action: str, risk_summary: str, risk_acknowledged: bool,
+                                      before: Callable[[], None]) -> Principal:
+    """Apply the existing identity permission to the same fresh SQL profile.
+
+    Proposal is not approval. The decision owner separately checks the actual
+    reviewer's role and separation; a rejection grants no positive action.
+    """
+    if (action not in {"decide", "reject_identity"} or type(risk_acknowledged) is not bool
+            or not isinstance(risk_summary, str) or not 3 <= len(risk_summary.strip()) <= 4000):
+        raise ValueError("NATIVE_IDENTITY_REASON_REQUIRED")
+    principal = _current_native_requester_profile(engine, subject_id, intake, before=before)
+    resource = {**intake, "id": intake["intake_id"], "url": None, "submitter": intake["submitter_subject_id"]}
+    authorize_intake_action(principal, "view", resource=resource)
+    authorize_intake_action(principal, action, resource=resource,
+        risk_summary=risk_summary, risk_acknowledged=risk_acknowledged)
+    if not principal.scope.permits_module("listing"):
+        raise PermissionError("NATIVE_IDENTITY_REQUESTER_MODULE_DENIED")
     return principal
 
 

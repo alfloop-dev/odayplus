@@ -1815,6 +1815,16 @@
             "title": "Intake Version",
             "type": "integer"
           },
+          "listing_input": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CanonicalListingInputReference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "listings": {
             "items": {
               "$ref": "#/components/schemas/IdentityPlanningListing"
@@ -1976,7 +1986,10 @@
           "decision_type": {
             "enum": [
               "MERGE",
-              "SPLIT"
+              "SPLIT",
+              "CREATE",
+              "REVISE",
+              "DUPLICATE"
             ],
             "title": "Decision Type",
             "type": "string"
@@ -2052,14 +2065,39 @@
               },
               {
                 "$ref": "#/components/schemas/SplitPlan"
+              },
+              {
+                "$ref": "#/components/schemas/ListingPlan"
+              },
+              {
+                "$ref": "#/components/schemas/ExactIdentityPlan"
               }
             ],
             "title": "Plan"
           },
+          "proposer_service_principal": {
+            "anyOf": [
+              {
+                "const": "native-intake-identity",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposer Service Principal"
+          },
           "proposer_subject_id": {
-            "format": "uuid",
-            "title": "Proposer Subject Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposer Subject Id"
           },
           "reviewer_subject_id": {
             "anyOf": [
@@ -2321,6 +2359,80 @@
         "title": "CanonicalIntakeCommandWithdrawalReceipt",
         "type": "object"
       },
+      "CanonicalIntakeDetail": {
+        "properties": {
+          "correlation_id": {
+            "format": "uuid",
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "intake_method": {
+            "enum": [
+              "URL",
+              "MANUAL",
+              "CSV",
+              "APPROVED_FEED",
+              "OPERATOR_SNAPSHOT"
+            ],
+            "title": "Intake Method",
+            "type": "string"
+          },
+          "processing_state": {
+            "$ref": "#/components/schemas/IntakeStage"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CanonicalIntakeResolution"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scope": {
+            "$ref": "#/components/schemas/NativeIntakeScope"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "title": "Submitted At",
+            "type": "string"
+          },
+          "submitter_subject_id": {
+            "format": "uuid",
+            "title": "Submitter Subject Id",
+            "type": "string"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "intake_id",
+          "tenant_id",
+          "submitter_subject_id",
+          "intake_method",
+          "processing_state",
+          "version",
+          "submitted_at",
+          "correlation_id",
+          "scope"
+        ],
+        "title": "CanonicalIntakeDetail",
+        "type": "object"
+      },
       "CanonicalIntakePage": {
         "properties": {
           "items": {
@@ -2412,6 +2524,69 @@
           "outbox_event_id"
         ],
         "title": "CanonicalIntakeReceipt",
+        "type": "object"
+      },
+      "CanonicalIntakeResolution": {
+        "properties": {
+          "current_revision_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Revision Id"
+          },
+          "effective_property_id": {
+            "format": "uuid",
+            "title": "Effective Property Id",
+            "type": "string"
+          },
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/CanonicalPersistedListingField"
+            },
+            "maxItems": 100,
+            "title": "Fields",
+            "type": "array"
+          },
+          "lifecycle_state": {
+            "$ref": "#/components/schemas/ListingState"
+          },
+          "listing_id": {
+            "format": "uuid",
+            "title": "Listing Id",
+            "type": "string"
+          },
+          "listing_version": {
+            "minimum": 1.0,
+            "title": "Listing Version",
+            "type": "integer"
+          },
+          "property_id_at_creation": {
+            "format": "uuid",
+            "title": "Property Id At Creation",
+            "type": "string"
+          },
+          "property_version": {
+            "minimum": 1.0,
+            "title": "Property Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "listing_id",
+          "listing_version",
+          "lifecycle_state",
+          "current_revision_id",
+          "property_id_at_creation",
+          "effective_property_id",
+          "property_version"
+        ],
+        "title": "CanonicalIntakeResolution",
         "type": "object"
       },
       "CanonicalIntakeSourcePolicyRecheckReceipt": {
@@ -2532,6 +2707,352 @@
           "scope"
         ],
         "title": "CanonicalIntakeSummary",
+        "type": "object"
+      },
+      "CanonicalListingInputField": {
+        "properties": {
+          "classification": {
+            "title": "Classification",
+            "type": "string"
+          },
+          "corrected": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrected"
+          },
+          "correction_id": {
+            "format": "uuid",
+            "title": "Correction Id",
+            "type": "string"
+          },
+          "field_path": {
+            "title": "Field Path",
+            "type": "string"
+          },
+          "identity_affecting": {
+            "title": "Identity Affecting",
+            "type": "boolean"
+          },
+          "mask_reason_code": {
+            "anyOf": [
+              {
+                "const": "FIELD_MASKED",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mask Reason Code"
+          },
+          "masked": {
+            "default": false,
+            "title": "Masked",
+            "type": "boolean"
+          },
+          "normalized": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Normalized"
+          },
+          "parsed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parsed"
+          },
+          "proposed_by": {
+            "format": "uuid",
+            "title": "Proposed By",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "PROPOSED",
+              "APPLIED",
+              "REJECTED",
+              "SUPERSEDED",
+              "REVERSED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "correction_id",
+          "field_path",
+          "classification",
+          "status",
+          "version",
+          "identity_affecting",
+          "proposed_by",
+          "parsed",
+          "normalized",
+          "corrected"
+        ],
+        "title": "CanonicalListingInputField",
+        "type": "object"
+      },
+      "CanonicalListingInputReference": {
+        "properties": {
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/CanonicalListingInputField"
+            },
+            "maxItems": 100,
+            "title": "Fields",
+            "type": "array"
+          },
+          "manual_entry_valid_until": {
+            "format": "date-time",
+            "title": "Manual Entry Valid Until",
+            "type": "string"
+          },
+          "normalized_payload_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Normalized Payload Sha256",
+            "type": "string"
+          },
+          "original_input_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Original Input Sha256",
+            "type": "string"
+          },
+          "parser_job_id": {
+            "format": "uuid",
+            "title": "Parser Job Id",
+            "type": "string"
+          },
+          "parser_run_id": {
+            "format": "uuid",
+            "title": "Parser Run Id",
+            "type": "string"
+          },
+          "parser_run_version": {
+            "minimum": 1.0,
+            "title": "Parser Run Version",
+            "type": "integer"
+          },
+          "proposed_correction_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Proposed Correction Ids",
+            "type": "array"
+          },
+          "source_snapshot_id": {
+            "format": "uuid",
+            "title": "Source Snapshot Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "parser_job_id",
+          "parser_run_id",
+          "parser_run_version",
+          "source_snapshot_id",
+          "original_input_sha256",
+          "normalized_payload_sha256",
+          "proposed_correction_ids",
+          "manual_entry_valid_until",
+          "fields"
+        ],
+        "title": "CanonicalListingInputReference",
+        "type": "object"
+      },
+      "CanonicalMatchCasePropertyOption": {
+        "properties": {
+          "address_masked": {
+            "title": "Address Masked",
+            "type": "boolean"
+          },
+          "normalized_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Typed Property normalized address (INTERNAL); masked by the existing field policy.",
+            "title": "Normalized Address"
+          },
+          "property_id": {
+            "format": "uuid",
+            "title": "Property Id",
+            "type": "string"
+          },
+          "region_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region Id"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "property_id",
+          "version",
+          "region_id",
+          "normalized_address",
+          "address_masked"
+        ],
+        "title": "CanonicalMatchCasePropertyOption",
+        "type": "object"
+      },
+      "CanonicalMatchCasePropertyPage": {
+        "properties": {
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "intake_version": {
+            "minimum": 1.0,
+            "title": "Intake Version",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CanonicalMatchCasePropertyOption"
+            },
+            "maxItems": 25,
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "intake_id",
+          "intake_version",
+          "items",
+          "next_cursor"
+        ],
+        "title": "CanonicalMatchCasePropertyPage",
+        "type": "object"
+      },
+      "CanonicalPersistedListingField": {
+        "properties": {
+          "classification": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Classification"
+          },
+          "effective": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective"
+          },
+          "field_path": {
+            "title": "Field Path",
+            "type": "string"
+          },
+          "mask_reason_code": {
+            "anyOf": [
+              {
+                "const": "FIELD_MASKED",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mask Reason Code"
+          },
+          "masked": {
+            "default": false,
+            "title": "Masked",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "field_path"
+        ],
+        "title": "CanonicalPersistedListingField",
         "type": "object"
       },
       "ClosePayload": {
@@ -3150,12 +3671,22 @@
       "CreateMatchCaseRequest": {
         "additionalProperties": false,
         "properties": {
+          "append_to_case": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManualMatchCaseContextReference"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Explicitly append audited manual associations to this pending review case; original matching evidence is retained."
+          },
           "candidates": {
             "items": {
               "$ref": "#/components/schemas/MatchEvidenceCandidate"
             },
             "maxItems": 100,
-            "minItems": 1,
             "title": "Candidates",
             "type": "array"
           },
@@ -3181,6 +3712,16 @@
             "maxItems": 100,
             "title": "Contradictory Signals",
             "type": "array"
+          },
+          "outcome": {
+            "default": "POSSIBLE_MATCH",
+            "enum": [
+              "NEW",
+              "REVISION",
+              "POSSIBLE_MATCH"
+            ],
+            "title": "Outcome",
+            "type": "string"
           },
           "reason": {
             "maxLength": 4000,
@@ -3501,6 +4042,38 @@
           "rationale"
         ],
         "title": "DqTriagePayload",
+        "type": "object"
+      },
+      "DuplicateProposal": {
+        "additionalProperties": false,
+        "properties": {
+          "decision_type": {
+            "const": "DUPLICATE",
+            "title": "Decision Type",
+            "type": "string"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/ListingPlan"
+          },
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 20,
+            "title": "Reason",
+            "type": "string"
+          },
+          "risk_acknowledged": {
+            "const": true,
+            "title": "Risk Acknowledged",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reason",
+          "risk_acknowledged",
+          "decision_type",
+          "plan"
+        ],
+        "title": "DuplicateProposal",
         "type": "object"
       },
       "EligibilityPayload": {
@@ -4049,6 +4622,93 @@
           "as_of"
         ],
         "title": "EvidenceRetentionPurgePayload",
+        "type": "object"
+      },
+      "ExactIdentityAuthority": {
+        "additionalProperties": false,
+        "properties": {
+          "identity_policy_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Identity Policy Sha256",
+            "type": "string"
+          },
+          "policy_version_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Policy Version Id",
+            "type": "string"
+          },
+          "proposal_audit_event_id": {
+            "format": "uuid",
+            "title": "Proposal Audit Event Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy_version_id",
+          "identity_policy_sha256",
+          "proposal_audit_event_id"
+        ],
+        "title": "ExactIdentityAuthority",
+        "type": "object"
+      },
+      "ExactIdentityPlan": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_reassignment_plan": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateDispositionRequest"
+            },
+            "maxItems": 1000,
+            "title": "Candidate Reassignment Plan",
+            "type": "array"
+          },
+          "exact_authority": {
+            "$ref": "#/components/schemas/ExactIdentityAuthority"
+          },
+          "expected_edge_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Edge Versions",
+            "type": "object"
+          },
+          "expected_intake_version": {
+            "minimum": 1.0,
+            "title": "Expected Intake Version",
+            "type": "integer"
+          },
+          "expected_listing_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Listing Versions",
+            "type": "object"
+          },
+          "expected_property_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Property Versions",
+            "type": "object"
+          },
+          "input_binding": {
+            "$ref": "#/components/schemas/ListingInputBinding"
+          }
+        },
+        "required": [
+          "expected_property_versions",
+          "expected_listing_versions",
+          "expected_edge_versions",
+          "candidate_reassignment_plan",
+          "expected_intake_version",
+          "input_binding",
+          "exact_authority"
+        ],
+        "title": "ExactIdentityPlan",
         "type": "object"
       },
       "ExecutePayload": {
@@ -6287,6 +6947,41 @@
         "title": "JobStatus",
         "type": "string"
       },
+      "ListingConfirmation": {
+        "additionalProperties": false,
+        "properties": {
+          "decision_type": {
+            "enum": [
+              "CREATE",
+              "REVISE"
+            ],
+            "title": "Decision Type",
+            "type": "string"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/ListingPlan"
+          },
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          },
+          "risk_acknowledged": {
+            "const": true,
+            "title": "Risk Acknowledged",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reason",
+          "risk_acknowledged",
+          "decision_type",
+          "plan"
+        ],
+        "title": "ListingConfirmation",
+        "type": "object"
+      },
       "ListingImportPayload": {
         "properties": {
           "records": {
@@ -6311,6 +7006,127 @@
         },
         "title": "ListingImportPayload",
         "type": "object"
+      },
+      "ListingInputBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_correction_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Correction Versions",
+            "type": "object"
+          },
+          "normalized_payload_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Normalized Payload Sha256",
+            "type": "string"
+          },
+          "original_input_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Original Input Sha256",
+            "type": "string"
+          },
+          "parser_job_id": {
+            "format": "uuid",
+            "title": "Parser Job Id",
+            "type": "string"
+          },
+          "parser_run_id": {
+            "format": "uuid",
+            "title": "Parser Run Id",
+            "type": "string"
+          },
+          "parser_run_version": {
+            "minimum": 1.0,
+            "title": "Parser Run Version",
+            "type": "integer"
+          },
+          "source_snapshot_id": {
+            "format": "uuid",
+            "title": "Source Snapshot Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "parser_job_id",
+          "parser_run_id",
+          "parser_run_version",
+          "source_snapshot_id",
+          "original_input_sha256",
+          "normalized_payload_sha256",
+          "expected_correction_versions"
+        ],
+        "title": "ListingInputBinding",
+        "type": "object"
+      },
+      "ListingPlan": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_reassignment_plan": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateDispositionRequest"
+            },
+            "maxItems": 1000,
+            "title": "Candidate Reassignment Plan",
+            "type": "array"
+          },
+          "expected_edge_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Edge Versions",
+            "type": "object"
+          },
+          "expected_intake_version": {
+            "minimum": 1.0,
+            "title": "Expected Intake Version",
+            "type": "integer"
+          },
+          "expected_listing_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Listing Versions",
+            "type": "object"
+          },
+          "expected_property_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Property Versions",
+            "type": "object"
+          },
+          "input_binding": {
+            "$ref": "#/components/schemas/ListingInputBinding"
+          }
+        },
+        "required": [
+          "expected_property_versions",
+          "expected_listing_versions",
+          "expected_edge_versions",
+          "candidate_reassignment_plan",
+          "expected_intake_version",
+          "input_binding"
+        ],
+        "title": "ListingPlan",
+        "type": "object"
+      },
+      "ListingState": {
+        "enum": [
+          "ACTIVE",
+          "REMOVED",
+          "EXPIRED",
+          "STALE",
+          "QUARANTINED",
+          "ARCHIVED"
+        ],
+        "title": "ListingState",
+        "type": "string"
       },
       "ManualIntakeRow": {
         "properties": {
@@ -6393,6 +7209,27 @@
         "title": "ManualIntakeRow",
         "type": "object"
       },
+      "ManualMatchCaseContextReference": {
+        "additionalProperties": false,
+        "properties": {
+          "match_case_id": {
+            "format": "uuid",
+            "title": "Match Case Id",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "match_case_id",
+          "version"
+        ],
+        "title": "ManualMatchCaseContextReference",
+        "type": "object"
+      },
       "MatchCandidateSummary": {
         "properties": {
           "confidence": {
@@ -6411,6 +7248,18 @@
               }
             ],
             "title": "Listing Id"
+          },
+          "manual_context_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manual Context Version"
           },
           "match_candidate_id": {
             "format": "uuid",
@@ -6503,7 +7352,10 @@
             "type": "string"
           },
           "status": {
-            "const": "PENDING_REVIEW",
+            "enum": [
+              "PROPOSED",
+              "PENDING_REVIEW"
+            ],
             "title": "Status",
             "type": "string"
           },
@@ -6532,6 +7384,15 @@
               "$ref": "#/components/schemas/MatchCandidateSummary"
             },
             "title": "Candidates",
+            "type": "array"
+          },
+          "identity_decision_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Identity Decision Ids",
             "type": "array"
           },
           "intake_id": {
@@ -18404,7 +19265,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CanonicalIntakeSummary"
+                  "$ref": "#/components/schemas/CanonicalIntakeDetail"
                 }
               }
             },
@@ -25326,6 +26187,84 @@
           }
         },
         "summary": "Create",
+        "tags": [
+          "assisted-listing-intake",
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/intakes/{intake_id}/match-case/property-options": {
+      "get": {
+        "operationId": "listCanonicalMatchCaseProperties",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intake_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Intake Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 25,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalMatchCasePropertyPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor or resource scope denied"
+          },
+          "404": {
+            "description": "Canonical Intake, case or candidate identity not found"
+          },
+          "409": {
+            "description": "Native version, custody or idempotency conflict"
+          },
+          "503": {
+            "description": "Canonical storage or audit unavailable"
+          }
+        },
+        "summary": "Property Options",
         "tags": [
           "assisted-listing-intake",
           "assisted-listing-intake"
@@ -32678,6 +33617,16 @@
               "title": "Match Case Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "include_listing_input",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Listing Input",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -32759,7 +33708,10 @@
               "schema": {
                 "discriminator": {
                   "mapping": {
+                    "CREATE": "#/components/schemas/ListingConfirmation",
+                    "DUPLICATE": "#/components/schemas/DuplicateProposal",
                     "MERGE": "#/components/schemas/MergeProposal",
+                    "REVISE": "#/components/schemas/ListingConfirmation",
                     "SPLIT": "#/components/schemas/SplitProposal"
                   },
                   "propertyName": "decision_type"
@@ -32770,6 +33722,12 @@
                   },
                   {
                     "$ref": "#/components/schemas/SplitProposal"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ListingConfirmation"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DuplicateProposal"
                   }
                 ],
                 "title": "Body"

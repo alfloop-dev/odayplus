@@ -59,21 +59,52 @@ def test_native_preaccept_version_conflict_leaves_approved_and_no_attempt(canoni
         assert conn.execute("SELECT status FROM identity.match_decisions").fetchone()[0] == "APPROVED"
 
 
-def test_native_executing_failure_records_failed_after_full_graph_rollback(canonical_graph, monkeypatch):
+@pytest.mark.parametrize("settlement", ["succeeds", "stale_physical", "expired_business"])
+def test_native_executing_failure_records_failed_after_full_graph_rollback(canonical_graph, monkeypatch, settlement):
     service = _queued(canonical_graph)
     repo, ids, delivery, db = canonical_graph
     before = _native_snapshot(canonical_graph)
 
+    graph_error = RuntimeError("Synthetic graph failure after source edges were written")
+
     def fail_after_edge_writes(*args):
-        raise RuntimeError("Synthetic graph failure after source edges were written")
+        raise graph_error
+
+    if settlement != "succeeds":
+        original_fail = service.fail
+
+        def lose_authority_before_failure_settlement(*args, **kwargs):
+            # The execution transaction has rolled back before settlement.
+            # Change actual SQL authority; do not manufacture a fail receipt.
+            with db.connect() as conn:
+                if settlement == "stale_physical":
+                    conn.execute("UPDATE odp_runtime.durable_jobs SET fence_token=fence_token+1")
+                else:
+                    conn.execute("UPDATE workflow.jobs SET lease_expires_at=clock_timestamp()-interval '1 second'")
+            return original_fail(*args, **kwargs)
+
+        monkeypatch.setattr(service, "fail", lose_authority_before_failure_settlement)
 
     monkeypatch.setattr(repo, "_redirect", fail_after_edge_writes)
-    with pytest.raises(RuntimeError, match="Synthetic graph failure"):
+    with pytest.raises(RuntimeError, match="Synthetic graph failure") as observed:
         service.run(delivery)
+    assert observed.value is graph_error
     after = _native_snapshot(canonical_graph)
     for table in ("identity.properties", "identity.source_identity_edges", "identity.property_redirects", "expansion.candidate_sites"):
         assert after[table] == before[table]
     with db.connect() as conn:
+        if settlement != "succeeds":
+            assert conn.execute("SELECT status FROM identity.match_decisions").fetchone()[0] == "EXECUTING"
+            assert conn.execute("SELECT status FROM identity.match_cases").fetchone()[0] == "EXECUTING"
+            assert conn.execute("SELECT status,attempt,last_error->>'reason_code' FROM workflow.jobs").fetchone() == (
+                "RUNNING", 1, None,
+            )
+            assert conn.execute("SELECT event_type FROM workflow.outbox_events ORDER BY aggregate_version").fetchall() == [
+                ("match.decided",),
+            ]
+            assert any("reconciliation" in note for note in graph_error.__notes__)
+            assert repo.audit_sink.writer.verify_chain(ids["tenant"]).ok
+            return
         assert conn.execute("SELECT status FROM identity.match_decisions").fetchone()[0] == "FAILED"
         assert conn.execute("SELECT status FROM identity.match_cases").fetchone()[0] == "FAILED"
         assert conn.execute("SELECT status,attempt,last_error->>'reason_code' FROM workflow.jobs").fetchone() == (

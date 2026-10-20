@@ -10,6 +10,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from modules.listing.domain.identity_graph import IdentityConflictError
 from shared.audit import build_security_event
 from shared.auth import (
     AccessRequest,
@@ -152,6 +153,40 @@ def intake_resource_in_scope(principal: Principal, resource: dict[str, Any]) -> 
         checks[axis](_resource_scope_value(resource, keys))
         for axis, keys in _SCOPE_AXIS_KEYS
     )
+
+
+def native_intake_authorization_resource(row: dict[str, Any], *, graph: Any,
+        listing_context: tuple[dict[str, Any], dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Project a native target into the existing Intake permission matrix.
+
+    The native routers share this representation, including the Intake
+    discriminator and concrete target ID used by security audit and waivers.
+    Listing region follows its actual effective Property; CandidateSite region
+    follows its explicitly bound Property, without silently reassigning it.
+    Other scope axes are never borrowed from the Intake or the caller.
+    """
+    resource = {**row, "submitter": row.get("submitter_subject_id"),
+        "id": next((row[name] for name in ("intake_id", "candidate_site_id", "listing_id", "property_id")
+                    if name in row), None)}
+    if "intake_id" in row:
+        resource["url"] = None
+    elif "listing_id" in row:
+        if listing_context is None:
+            resolved = graph.resolve_listing(row["tenant_id"], row["listing_id"])
+            prop = graph._one("SELECT * FROM identity.properties WHERE tenant_id=? AND property_id=?",
+                (row["tenant_id"], resolved["effective_property_id"]))
+        else:
+            resolved, prop = listing_context
+        if (resolved["listing_id"] != row["listing_id"] or resolved["listing_version"] != row["version"]
+                or prop["tenant_id"] != row["tenant_id"] or prop["property_id"] != resolved["effective_property_id"]
+                or prop["version"] != resolved["current_property_version"]):
+            raise IdentityConflictError("NATIVE_AUTHORIZATION_RESOURCE_CHANGED")
+        resource["region_id"] = prop["region_id"]
+    elif "candidate_site_id" in row:
+        prop = graph._one("SELECT * FROM identity.properties WHERE tenant_id=? AND property_id=?",
+            (row["tenant_id"], row["property_id"]))
+        resource["region_id"] = prop["region_id"]
+    return resource
 
 
 def authorize_intake_action(
@@ -548,9 +583,6 @@ def mask_listing(principal: Principal, listing: dict[str, Any]) -> dict[str, Any
 def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
     """Mask fields based on principal clearance and field classification."""
     clearance = principal.scope.clearance if principal.authenticated else DataClassification.PUBLIC
-    if clearance >= DataClassification.HIGHLY_RESTRICTED:
-        return intake
-
     masked = intake.copy()
 
     # Mask the canonical v1 FieldValue collection according to each field's
@@ -565,7 +597,7 @@ def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
                 continue
 
             field_info_copy = field_info.copy()
-            raw_classification = field_info_copy.get("classification", "RESTRICTED")
+            raw_classification = field_info_copy.get("classification")
             try:
                 if isinstance(raw_classification, DataClassification):
                     field_class = raw_classification
@@ -574,9 +606,9 @@ def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
             except (KeyError, AttributeError):
                 # Unknown classifications fail closed so a schema drift cannot
                 # disclose values before policy support is deployed.
-                field_class = DataClassification.HIGHLY_RESTRICTED
+                field_class = None
 
-            if clearance < field_class:
+            if field_class is None or clearance < field_class:
                 for value_key in ("parsed", "normalized", "corrected", "effective"):
                     field_info_copy[value_key] = None
                 field_info_copy["masked"] = True

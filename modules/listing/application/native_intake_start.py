@@ -19,6 +19,12 @@ from modules.listing.application.native_intake_job_runtime import (
     set_native_intake_sql_budget,
     sign_native_intake_attempt,
 )
+from modules.listing.application.native_intake_producer_reads import native_terminal_pair
+from modules.listing.application.native_intake_terminal_evidence import native_terminal_evidence
+from modules.listing.application.native_intake_terminal_ticket import (
+    NativeIntakeTerminalTicketConflict,
+    verify_native_intake_terminal_ticket,
+)
 from modules.listing.domain.intake_states import (
     Actor,
     IntakeAggregate,
@@ -297,12 +303,24 @@ class NativeIntakeStartOwner:
 
     def _committed_result(self, delivery, tenant: str, generation: int) -> dict | None:
         """A terminal receipt is evidence of the old command, never a new grant."""
-        current = self.queue.get(delivery.job_id)
-        job = self.engine.query_one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
-                                    (tenant, delivery.job_id))
+        terminal_rows = native_terminal_evidence(self.graph, tenant, delivery.job_id)
+        pair = (terminal_rows.pair() if terminal_rows is not None
+                else native_terminal_pair(self.graph, tenant, delivery.job_id))
+        if pair is None:
+            current = self.queue.get(delivery.job_id)
+            job = self.engine.query_one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
+                                        (tenant, delivery.job_id))
+        else:
+            current, job = pair
         if job is None or job["status"] != "SUCCEEDED":
             return None
         payload, result = _object(job["payload"]), _object(job["result"])
+        try:
+            verify_native_intake_terminal_ticket(delivery, tenant=tenant, generation=generation,
+                job_type=NATIVE_INTAKE_START_JOB_TYPE,
+                attempt_token_sha256=payload.get("attempt_token_sha256"))
+        except NativeIntakeTerminalTicketConflict:
+            raise JobFenceRejectedError("NATIVE_START_TERMINAL_RECEIPT_CONFLICT") from None
         if (current is None or current.status != JobStatus.SUCCEEDED
                 or current.job_type != NATIVE_INTAKE_START_JOB_TYPE or current.payload != delivery.payload
                 or job["job_type"] != NATIVE_INTAKE_START_JOB_TYPE or job["aggregate_type"] != "intake"
@@ -319,23 +337,57 @@ class NativeIntakeStartOwner:
                 or type(payload.get("intake_version")) is not int
                 or result.get("version") != payload["intake_version"] + 1
                 or type(result.get("version")) is not int
-                or not self.engine.query_one("SELECT transition_id FROM intake.intake_stage_transitions "
+                or not (terminal_rows.transition({
+                           'tenant_id': tenant,
+                           'transition_id': result.get("transition_id"),
+                           'intake_id': job["aggregate_id"],
+                           'job_id': delivery.job_id,
+                           'from_state': 'SUBMITTED',
+                           'to_state': 'CHECKING_IDENTITY',
+                           'resulting_version': result.get("version"),
+                           'expected_version': payload["intake_version"],
+                           'actor_subject_id': None,
+                           'service_principal': NATIVE_INTAKE_START_JOB_TYPE,
+                           'permission': 'intake.process',
+                           'causation_id': payload.get("event_id"),
+                           'correlation_id': job["correlation_id"],
+                       }) if terminal_rows is not None else self.engine.query_one("SELECT transition_id FROM intake.intake_stage_transitions "
                     "WHERE tenant_id=? AND transition_id=? AND intake_id=? AND job_id=? "
                     "AND from_state='SUBMITTED' AND to_state='CHECKING_IDENTITY' AND resulting_version=? "
                     "AND expected_version=? AND actor_subject_id IS NULL AND service_principal=? "
                     "AND permission='intake.process' AND causation_id=? AND correlation_id=?",
                     (tenant, result.get("transition_id"), job["aggregate_id"], delivery.job_id, result.get("version"),
-                     payload["intake_version"], NATIVE_INTAKE_START_JOB_TYPE, payload.get("event_id"), job["correlation_id"]))):
+                     payload["intake_version"], NATIVE_INTAKE_START_JOB_TYPE, payload.get("event_id"), job["correlation_id"])))):
             raise JobFenceRejectedError("NATIVE_START_TERMINAL_RECEIPT_CONFLICT")
-        audit = self.engine.query_one("SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
+        audit = (terminal_rows.result_audit({
+                    'tenant_id': tenant,
+                    'audit_event_id': result["audit_event_id"],
+                    'resource_type': 'intake',
+                    'resource_id': job["aggregate_id"],
+                    'actor_subject_id': None,
+                    'service_principal': NATIVE_INTAKE_START_JOB_TYPE,
+                    'actor_role': 'SVC_INTAKE',
+                    'action': 'intake.identity_check_started.v1',
+                    'result': 'SUCCEEDED',
+                    'causation_id': payload["event_id"],
+                    'correlation_id': job["correlation_id"],
+                }) if terminal_rows is not None else self.engine.query_one("SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
             "AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_principal=? "
             "AND actor_role='SVC_INTAKE' AND action='intake.identity_check_started.v1' AND result='SUCCEEDED' "
             "AND causation_id=? AND correlation_id=?", (tenant, result["audit_event_id"], job["aggregate_id"],
-                NATIVE_INTAKE_START_JOB_TYPE, payload["event_id"], job["correlation_id"]))
-        outbox = self.engine.query_one("SELECT payload FROM workflow.outbox_events WHERE tenant_id=? AND event_id=? "
+                NATIVE_INTAKE_START_JOB_TYPE, payload["event_id"], job["correlation_id"])))
+        outbox = (terminal_rows.outbox({
+                     'tenant_id': tenant,
+                     'event_id': result["outbox_event_id"],
+                     'event_type': 'intake.state_changed',
+                     'aggregate_type': 'intake',
+                     'aggregate_id': job["aggregate_id"],
+                     'aggregate_version': result["version"],
+                     'correlation_id': job["correlation_id"],
+                 }) if terminal_rows is not None else self.engine.query_one("SELECT payload FROM workflow.outbox_events WHERE tenant_id=? AND event_id=? "
             "AND event_type='intake.state_changed' AND aggregate_type='intake' AND aggregate_id=? "
             "AND aggregate_version=? AND correlation_id=?", (tenant, result["outbox_event_id"],
-                job["aggregate_id"], result["version"], job["correlation_id"]))
+                job["aggregate_id"], result["version"], job["correlation_id"])))
         if audit is None or outbox is None:
             raise JobFenceRejectedError("NATIVE_START_TERMINAL_EVIDENCE_MISSING")
         snapshot, event = _object(audit["after_value"]), _object(outbox["payload"])
@@ -355,6 +407,8 @@ class NativeIntakeStartOwner:
                 or event["payload"].get("to_state") != "CHECKING_IDENTITY"
                 or event["payload"].get("version") != result["version"]):
             raise JobFenceRejectedError("NATIVE_START_TERMINAL_EVIDENCE_CONFLICT")
+        if terminal_rows is not None:
+            terminal_rows.finish()
         return result
 
     @staticmethod

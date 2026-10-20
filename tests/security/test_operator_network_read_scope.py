@@ -254,7 +254,7 @@ def test_cross_zone_merge_hides_excluded_source_from_target_visible_scope(tmp_pa
     target = rows["L-2024"]
     assert target["mergedSourceListingIds"] == []
     assert target["mergeReason"] is None and target["mergedAt"] is None
-    assert target["sourceEvidence"] == ["EV-L-2024-RAW-591", "EV-L-2024-GEOCODE", "EV-L-2024-BROKER-CALL"]
+    assert target["sourceEvidence"] == ["EV-L-2024-RAW-SYNTHETIC", "EV-L-2024-GEOCODE", "EV-L-2024-BROKER-CALL"]
     assert "L-2029" not in response.text and MERGE_REASON not in response.text
 
 
@@ -277,7 +277,7 @@ def test_listing_fields_outside_the_contract_and_foreign_evidence_are_withheld()
     seed["listings"].append(lookalike)
     rows["L-2024"].update({
         # Intake decisions and merges append other objects' refs to the target.
-        "sourceEvidence": ["EV-L-2024-RAW-591", "EV-IN-9-DUPLICATE", "EV-IN-8-REVISION",
+        "sourceEvidence": ["EV-L-2024-RAW-SYNTHETIC", "EV-IN-9-DUPLICATE", "EV-IN-8-REVISION",
                            "EV-L-2024-X-RAW", "broker note on L-2025", {"ref": "L-2025"}],
         "brokerNote": "Also see L-2025",
         "mergedSourceListingIds": "L-2025",
@@ -299,7 +299,7 @@ def test_listing_fields_outside_the_contract_and_foreign_evidence_are_withheld()
     response = TestClient(app).get("/network-listings", headers={**HEADERS, "X-Heat-Zone-Ids": "HZ-01"})
     assert response.status_code == 200, response.text
     target = next(row for row in response.json()["listings"] if row["id"] == "L-2024")
-    assert target["sourceEvidence"] == ["EV-L-2024-RAW-591", "EV-IN-8-REVISION"]
+    assert target["sourceEvidence"] == ["EV-L-2024-RAW-SYNTHETIC", "EV-IN-8-REVISION"]
     assert "brokerNote" not in target
     assert target["mergedSourceListingIds"] == [] and target["mergeReason"] is None
     assert target["duplicateOfId"] is None and target["candidateId"] is None

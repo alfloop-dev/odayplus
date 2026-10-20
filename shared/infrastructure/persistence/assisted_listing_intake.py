@@ -2,14 +2,14 @@
 
 This module is the programmatic surface over the ordered PostgreSQL 16 migration
 under ``infra/db/migrations/assisted_listing_intake/``. That directory holds the
-four approved contract DDL artifacts (baseline + three consistency/state/RLS
-patches) from ODP-SD-INTAKE-001, copied byte-for-byte so the production migration
-never drifts from the reviewed contract, plus a structural downgrade boundary.
+versioned contract DDL artifacts, copied byte-for-byte so the production
+migration never drifts from its declared contract, plus a structural downgrade
+boundary. The original four-artifact receipt is preserved on forward upgrade.
 
-Migration helpers read SQL and compute traceability checksums; applying their
-SQL is the caller's responsibility. Native snapshot metadata access borrows the
-caller's current engine and transaction. Neither surface imports a database
-driver or opens, commits or closes a connection.
+Migration metadata helpers read SQL and compute traceability checksums. The
+explicit database upgrade opens its own migration connection. Native snapshot
+metadata access borrows the caller's current engine and transaction; it never
+opens, commits or closes a connection.
 
 Contract references:
 - docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql
@@ -55,6 +55,10 @@ _UPGRADE_STEPS: tuple[tuple[str, str], ...] = (
     (
         "004_tenant_rls_lineage.sql",
         "ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0004_TENANT_RLS_LINEAGE_PATCH.sql",
+    ),
+    (
+        "005_decision_service_actor.sql",
+        "ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0005_DECISION_SERVICE_ACTOR_PATCH.sql",
     ),
 )
 DOWNGRADE_FILE = "downgrade.sql"
@@ -264,7 +268,7 @@ class MigrationStep:
 
 @dataclass(frozen=True)
 class MigrationApplyResult:
-    """Receipt for applying and validating the complete 001-004 stack."""
+    """Receipt for applying and validating the complete ordered stack."""
 
     manifest_sha256: str
     steps: tuple[str, ...]
@@ -570,7 +574,7 @@ def apply_upgrade(execute: Callable[[str], object]) -> None:
 
 
 def validate_required_tables(engine: Any) -> None:
-    """Fail closed unless every approved 001-004 relation is installed."""
+    """Fail closed unless every declared Intake relation is installed."""
 
     missing: list[str] = []
     for relation in ALL_TABLES:
@@ -615,7 +619,11 @@ def apply_upgrade_to_database(database_url: str) -> MigrationApplyResult:
     except ImportError as exc:  # pragma: no cover - runtime dependency contract
         raise AssistedIntakeSchemaError("Assisted Intake migration requires psycopg") from exc
 
-    expected_manifest = manifest_checksum()
+    steps = migration_steps()
+    statements = upgrade_statements()
+    prefixes = ((4, "001-004"), (len(steps), "001-005"))
+    expected_manifests = {name: manifest_checksum(steps[:count]) for count, name in prefixes}
+    expected_manifest = expected_manifests["001-005"]
     try:
         with psycopg.connect(
             _psycopg_url(database_url),
@@ -638,21 +646,21 @@ def apply_upgrade_to_database(database_url: str) -> MigrationApplyResult:
                       )
                     """
                 )
-                applied = connection.execute(
+                rows = connection.execute(
                     """
-                    SELECT manifest_sha256
+                    SELECT migration_name, manifest_sha256
                     FROM odp_runtime.assisted_intake_schema_migrations
-                    WHERE migration_name = '001-004'
+                    ORDER BY migration_name
                     FOR UPDATE
                     """
-                ).fetchone()
-                if applied is not None:
-                    if applied["manifest_sha256"] != expected_manifest:
-                        raise AssistedIntakeSchemaError(
-                            "Installed Assisted Intake schema manifest does not "
-                            "match the reviewed 001-004 stack"
-                        )
-                else:
+                ).fetchall()
+                applied = {row["migration_name"]: row["manifest_sha256"] for row in rows}
+                if (any(expected_manifests.get(name) != digest for name, digest in applied.items())
+                        or ("001-005" in applied and "001-004" not in applied)):
+                    raise AssistedIntakeSchemaError(
+                        "Installed Assisted Intake schema manifest does not match the declared ordered stack"
+                    )
+                if not applied:
                     shared_tables = {
                         relation
                         for relation in _CANONICAL_SHARED_TABLES
@@ -664,7 +672,25 @@ def apply_upgrade_to_database(database_url: str) -> MigrationApplyResult:
                     }
                     if shared_tables:
                         connection.execute(_read(CANONICAL_COMPATIBILITY_PATH))
-                    for _name, sql in upgrade_statements():
+                installed_count = 0
+                for count, marker in prefixes:
+                    if marker in applied:
+                        if marker == "001-005":
+                            present = connection.execute(
+                                "SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid="
+                                "to_regclass('identity.match_decisions') AND attname="
+                                "'proposer_service_principal' AND NOT attisdropped) AS present"
+                            ).fetchone()["present"]
+                            if not present:
+                                raise AssistedIntakeSchemaError(
+                                    "Recorded decision service actor schema is missing; repair is not an upgrade"
+                                )
+                            # The additive migration's own replay validates
+                            # its exact actor constraint/function/trigger.
+                            connection.execute(_without_transaction_control(statements[count - 1][1]))
+                        installed_count = count
+                        continue
+                    for _name, sql in statements[installed_count:count]:
                         connection.execute(_without_transaction_control(sql))
                     connection.execute(
                         """
@@ -673,10 +699,11 @@ def apply_upgrade_to_database(database_url: str) -> MigrationApplyResult:
                             migration_name,
                             manifest_sha256
                           )
-                        VALUES ('001-004', %s)
+                        VALUES (%s, %s)
                         """,
-                        (expected_manifest,),
+                        (marker, expected_manifests[marker]),
                     )
+                    installed_count = count
 
             missing: list[str] = []
             for relation in ALL_TABLES:
@@ -695,7 +722,7 @@ def apply_upgrade_to_database(database_url: str) -> MigrationApplyResult:
         raise
     except Exception as exc:
         raise AssistedIntakeSchemaError(
-            "Unable to apply the Assisted Listing Intake 001-004 schema stack"
+            "Unable to apply the Assisted Listing Intake 001-005 schema stack"
         ) from exc
 
     return MigrationApplyResult(
@@ -787,3 +814,28 @@ class NativeIntakeSnapshotMetadataRepository:
     def required_for_intake(self, tenant: str, snapshot: str, intake: str) -> dict:
         return self.graph._one("SELECT * FROM intake.source_snapshots WHERE tenant_id=? AND source_snapshot_id=? "
             "AND intake_id=?", (tenant, snapshot, intake))
+
+    @staticmethod
+    def _selected_parameters(tenant: str, snapshots: list[str], row_limit: int) -> tuple:
+        if (type(snapshots) is not list or type(row_limit) is not int or row_limit < 1
+                or len(snapshots) >= row_limit):
+            raise ValueError("NATIVE_SNAPSHOT_METADATA_SELECTION_BOUND_REQUIRED")
+        return tenant, snapshots, row_limit
+
+    def selected_sizes(self, tenant: str, snapshots: list[str], row_limit: int) -> list[dict]:
+        """Size only exact referenced metadata before the caller fetches cells.
+
+        The caller owns the current tenant authority, whole-read byte budget
+        and original SQL root/clock. A guarded graph keeps those checks around
+        this fixed parameterized read. No provider object or raw body is read.
+        """
+        params = self._selected_parameters(tenant, snapshots, row_limit)
+        return self.engine.query("SELECT source_snapshot_id AS id,octet_length(to_jsonb(t)::text) AS bytes "
+            "FROM intake.source_snapshots t WHERE tenant_id=? AND source_snapshot_id=ANY(?::uuid[]) "
+            "ORDER BY source_snapshot_id LIMIT ?", params)
+
+    def selected_metadata(self, tenant: str, snapshots: list[str], row_limit: int) -> list[dict]:
+        """Read selected existing metadata after the caller's size preflight."""
+        params = self._selected_parameters(tenant, snapshots, row_limit)
+        return self.engine.query("SELECT * FROM intake.source_snapshots WHERE tenant_id=? "
+            "AND source_snapshot_id=ANY(?::uuid[]) ORDER BY source_snapshot_id LIMIT ? FOR SHARE", params)

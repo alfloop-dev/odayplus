@@ -1,20 +1,30 @@
-import type { CandidateWorkflowProjection } from "./networkWorkflowProjection";
+import type { CandidateNativeWorkflowRead } from "./networkScoringTypes";
 import styles from "../networkFindAreas.module.css";
 
-/** Four independent observations. A saved report never overwrites a failed or denied job read. */
-export function CandidateWorkflowFacts({ value }: { value: CandidateWorkflowProjection }) {
-  if (!value.candidateId) return null;
-  const job = value.currentJob;
-  const availability = { unverified: "未核驗", unavailable: "未取得", denied: "不可讀", conflict: "紀錄不一致", recorded: "已記錄" };
-  return <dl className={styles.candidateWorkflowFacts} aria-label="候選點流程紀錄" data-testid="candidate-workflow-facts">
-    <div><dt>資料完整度</dt><dd data-testid="workflow-data-readiness">{value.dataReadiness
-      ? `${value.dataReadiness.state} · ${value.dataReadiness.okCount}/${value.dataReadiness.totalCount}` : "尚未確認"}</dd></div>
-    <div><dt>評分工作</dt><dd data-testid="workflow-score-job">{job?.availability === "recorded"
-      ? `${job.jobId} · ${job.status}${job.deliveryState ? ` / ${job.deliveryState}` : ""} · v${job.version}`
-      : job ? `${availability[job.availability]} · ${job.reason}` : "尚未確認目前授權的工作紀錄"}</dd></div>
-    <div><dt>保存報告</dt><dd data-testid="workflow-score-report">{value.report
-      ? `${value.report.reportId} v${value.report.reportVersion} · ${value.report.sitescoreRunId} · ${value.report.modelVersion}` : "尚無可核對的保存報告"}</dd></div>
-    <div><dt>本報告人審</dt><dd data-testid="workflow-review-decision">{value.reviewDecision
-      ? `${value.reviewDecision.id} · ${value.reviewDecision.status} · ${value.reviewDecision.reportId} v${value.reviewDecision.reportVersion}` : "尚無可核對的當代人審紀錄"}</dd></div>
+/** Render only the shared, authorized native projection; no second state derivation. */
+export function CandidateWorkflowFacts({ read }: { read?: CandidateNativeWorkflowRead }) {
+  if (!read) return null;
+  const candidateId = read.candidateId;
+  const data = read?.dataReadiness, job = read?.scoreJob, report = read?.scoreReport, review = read?.reviewDecision;
+  const unavailable = (state?: string) => state === "conflict" ? "讀取不一致" : "尚未核驗";
+  const reviewAction = !review?.networkAction ? "候選點人工結果另行核驗"
+    : read?.review?.reviewId === review.decisionId
+      ? `${read.review.relation === "historical" ? "歷史" : ""}人工 ${review.networkAction}`
+      : `紀錄動作 ${review.networkAction}（候選點關聯尚未核驗）`;
+  const values = [
+    ["data", "資料完整度", data?.availability === "recorded" ? data.passed ? "資料齊備" : "需補資料" : unavailable(data?.availability), data?.reason],
+    ["job", "評分工作", job?.availability === "recorded"
+      ? `${job.status} ${job.deliveryState ?? ""} · ${job.jobId} · 版本 ${job.version ?? "未提供"}`
+      : job?.availability === "denied" ? "無權查看工作" : unavailable(job?.availability), job?.reason],
+    ["report", "保存報告", report?.availability === "recorded" ? `${report.reportId} v${report.reportVersion} · ${report.sitescoreRunId} · ${report.modelVersion}`
+      : report?.availability === "absent" ? "本次讀取無保存報告" : unavailable(report?.availability), report?.reason],
+    ["review", "人工審核", review?.availability === "recorded"
+      ? `${review.status} · ${reviewAction} · ${review.decisionId} v${review.decisionVersion} · 凍結報告 ${review.reportId} v${review.reportVersion}`
+      : review?.availability === "absent" ? "本次讀取無審核紀錄" : unavailable(review?.availability), review?.reason],
+  ];
+  return <dl className={styles.candidateWorkflowFacts} aria-label="候選點流程紀錄" data-testid="candidate-workflow-facts" data-candidate-id={candidateId}>
+    {values.map(([key, label, value, reason]) => <div key={key} data-testid={`candidate-state-${key}-${candidateId}`}>
+      <dt>{label}</dt><dd title={reason}>{value}</dd>
+    </div>)}
   </dl>;
 }

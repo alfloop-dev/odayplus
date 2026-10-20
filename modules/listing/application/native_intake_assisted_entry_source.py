@@ -14,6 +14,7 @@ from modules.listing.application.native_intake_assisted_entry_policy import (
     NativeAssistedEntryConflict,
 )
 from modules.listing.application.native_intake_job_runtime import native_intake_uuid
+from modules.listing.application.native_intake_producer_discovery import native_producer_discovery
 from modules.listing.application.native_intake_retrieval_policy import canonical_sha256
 from modules.listing.application.native_intake_source_policy import NativeIntakeSourcePolicyOwner
 from modules.listing.application.native_intake_source_policy_recheck_history import (
@@ -61,7 +62,9 @@ class NativeAssistedEntrySourceProof:
         # The bounded read-only view covers recursive original identity OR
         # bounded recheck proof, including every SQL/queue read it performs.
         parent = HistoricalSourcePolicyProof(self.source._producer_reads(before))
-        row = parent.graph._one("SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?", (tenant, event_id))
+        discovery = native_producer_discovery(parent.graph, tenant, event_id)
+        row = (discovery.event() if discovery is not None else parent.graph._one(
+            "SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?", (tenant, event_id)))
         event = _object(row["payload"])
         if (validate_event(event) or row["event_type"] != "intake.state_changed"
                 or row["event_version"] != 1 or event.get("event_type") != row["event_type"]
@@ -82,12 +85,14 @@ class NativeAssistedEntrySourceProof:
                 or event["payload"].get("to_state") != "AWAITING_ASSISTED_ENTRY"
                 or event["payload"].get("version") != event["aggregate_version"]):
             raise NativeAssistedEntryConflict("NATIVE_ASSISTED_SOURCE_PARENT_EVENT_REJECTED")
-        transition = parent.graph._one("SELECT job_id FROM intake.intake_stage_transitions "
+        transition = (discovery.transition(tenant, event["payload"]["transition_id"], row["aggregate_id"])
+            if discovery is not None else parent.graph._one("SELECT job_id FROM intake.intake_stage_transitions "
             "WHERE tenant_id=? AND transition_id=? AND intake_id=?",
-            (tenant, event["payload"]["transition_id"], row["aggregate_id"]))
-        business = parent.graph._one("SELECT payload FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
-                                     (tenant, transition["job_id"]))
-        delivery = parent.queue.get(transition["job_id"])
+            (tenant, event["payload"]["transition_id"], row["aggregate_id"])))
+        business = (discovery.business(tenant, transition["job_id"]) if discovery is not None else parent.graph._one(
+            "SELECT payload FROM workflow.jobs WHERE tenant_id=? AND job_id=?", (tenant, transition["job_id"])))
+        delivery = (discovery.delivery(transition["job_id"]) if discovery is not None
+                    else parent.queue.get(transition["job_id"]))
         payload = _object(business["payload"])
         proof, produced = parent.committed_with_producer(delivery, tenant, payload.get("delivery_generation"),
             producer_event_id=payload["event_id"]) if delivery else (None, None)
@@ -101,6 +106,8 @@ class NativeAssistedEntrySourceProof:
             raise NativeAssistedEntryConflict("NATIVE_ASSISTED_SOURCE_RECHECK_BINDING_REJECTED")
         root = producer.get("root_identity_event_id", payload["event_id"])
         native_intake_uuid(root)
+        if discovery is not None:
+            discovery.finish()
         return NativeAssistedSourceParent(tenant, event_id, canonical_sha256(event), row["aggregate_id"],
             row["aggregate_version"], payload["input_sha256"], proof["policy_decision"]["source_id"],
             proof["policy_decision"]["effective_policy"], root, row["correlation_id"])

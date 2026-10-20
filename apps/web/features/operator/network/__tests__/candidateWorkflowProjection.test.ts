@@ -132,7 +132,13 @@ describe("exact authorized workflow read projection", () => {
       { id: "current-review", candidateId: "second", reportId: "report-second", reportVersion: 3, canonicalDecisionStatus: "PENDING_REVIEW" },
     ];
     const result = projectCandidateWorkflow(value);
-    expect(result.reviewId).toBe("current-review"); expect(step(result, "review").state).toBe("current");
+    expect(result.reviewId).toBe("current-review"); expect(step(result, "review").state).toBe("blocked");
+    const verified = projectCandidateWorkflow({ ...value, nativeWorkflow: {
+      candidateId: "second", availability: "recorded", stage: "pendingreview", lifecycle: "scored", reason: "Shared strict graph verified",
+      review: { candidateId: "second", listingId: "listing-second", reviewId: "current-review", reportId: "report-second", reportVersion: 3,
+        latestReportId: "report-second", latestReportVersion: 3, relation: "current", generation: 4 },
+    } });
+    expect(step(verified, "review").state).toBe("current");
   });
 
   it.each(["DRAFT", "SYSTEM_RECOMMENDED", "PENDING_REVIEW", "APPROVED", "REJECTED"])("preserves documented canonical decision %s", (status) => {
@@ -140,6 +146,7 @@ describe("exact authorized workflow read projection", () => {
     const result = projectCandidateWorkflow(value);
     expect(result.reviewId).toBe("current");
     expect(step(result, "review").summary).toContain(status);
+    expect(step(result, "review").state).toBe("blocked");
     expect(result.reviewReason).toBe("exact_report_decision_available");
   });
 

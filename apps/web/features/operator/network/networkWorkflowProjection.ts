@@ -1,7 +1,7 @@
 import type { ExpansionStep } from "./ExpansionStepper";
 import { readId, readObject } from "./networkReadValidation";
 import { candidateScoreJob, type CandidateScoreJobRead, type CandidateScoreJobsRead } from "./candidateScoreJobs";
-import type { CurrentScoreAdmission, ScoringGate } from "./networkScoringTypes";
+import type { CandidateNativeWorkflowRead, CurrentScoreAdmission, ScoringGate } from "./networkScoringTypes";
 
 // These are read identities, not new domain states or scoring/admission rules.
 export type WorkflowRead<T> = {
@@ -43,9 +43,7 @@ export type CandidateWorkflowProjection = {
   report: CommittedWorkflowReport | null;
   reviewId: string | null;
   reviewReason: string;
-  dataReadiness: ScoringGate | null;
   currentJob: CandidateScoreJobRead | null;
-  reviewDecision: { id: string; status: string; reportId: string; reportVersion: number } | null;
   executionAdmission: "unknown" | "blocked" | "verified";
 };
 
@@ -95,13 +93,14 @@ export function projectCandidateWorkflow(input: {
   scoring: WorkflowRead<WorkflowScoringSnapshot>;
   reviews: WorkflowRead<WorkflowReviewSnapshot>;
   jobs?: CandidateScoreJobsRead;
+  nativeWorkflow?: CandidateNativeWorkflowRead;
 }): CandidateWorkflowProjection {
   const initialNotice = input.selection.invalid ? "候選點連結包含不一致或空白的選取值，請重新選取。" : "請選取候選點以查看對應物件與已保存報告；區域與物件頁籤仍可瀏覽。";
   const result: CandidateWorkflowProjection = {
     steps: neutralSteps(initialNotice), notice: initialNotice, nextAction: "請選取候選點以查看流程",
     reason: input.selection.invalid ? "invalid_selection" : "selection_required",
     candidateId: null, listingId: null, report: null, reviewId: null, reviewReason: "report_unavailable",
-    dataReadiness: null, currentJob: null, reviewDecision: null, executionAdmission: "unknown",
+    currentJob: null, executionAdmission: "unknown",
   };
   if (input.selection.invalid || !input.selection.id) return result;
   const unavailable = readProblem(input.network, input.currentGeneration, "network")
@@ -133,7 +132,6 @@ export function projectCandidateWorkflow(input: {
   }
   result.candidateId = id;
   result.listingId = listingId;
-  result.dataReadiness = scoringRows[0].gate ?? null;
   result.currentJob = candidateScoreJob(input.jobs, input.currentGeneration, id, listingId);
   const admission = scoringRows[0].currentAdmission;
   if (admission?.candidateId === id && admission.listingId === listingId) {
@@ -179,7 +177,7 @@ export function projectCandidateWorkflow(input: {
     && candidate.datasetSnapshotId !== report.datasetSnapshotId;
   result.notice = candidate.status === "SCORING_FAILED"
     ? "候選點目前記錄為評分失敗；先前已保存報告仍可查閱，不代表目前工作成功或可以重試。"
-    : "已保存的 SiteScore 報告可查閱；目前工作狀態、模型受理與再評分資格尚未提供。";
+    : "已保存的 SiteScore 報告可查閱；工作結果、人工決策與再評分資格分列核驗。";
   if (snapshotDiffers) result.notice += " 報告與候選點的資料快照不同，保留歷史報告，不推算目前資料已完成評分。";
   result.nextAction = "查閱已保存的 SiteScore 報告";
   result.steps[3] = { ...result.steps[3], state: "completed", entityId: id, stateLabel: `已保存報告 · ${id}`,
@@ -200,12 +198,20 @@ export function projectCandidateWorkflow(input: {
       const status = review.canonicalDecisionStatus;
       if (["DRAFT", "SYSTEM_RECOMMENDED", "PENDING_REVIEW", "APPROVED", "REJECTED"].includes(status ?? "")) {
         result.reviewId = review.id;
-        result.reviewDecision = { id: review.id, status: status!, reportId: report.reportId!, reportVersion: report.reportVersion! };
         result.reviewReason = "exact_report_decision_available";
+        const native = input.nativeWorkflow;
+        const verified = native?.candidateId === id && native.availability === "recorded"
+          && native.review?.reviewId === review.id && native.review.relation === "current"
+          && native.review.candidateId === id && native.review.listingId === listingId
+          && native.review.generation === input.currentGeneration
+          && native.review.reportId === report.reportId && native.review.reportVersion === report.reportVersion;
         result.steps[5] = { ...result.steps[5], entityId: review.id,
-          state: status === "APPROVED" || status === "REJECTED" ? "completed" : status === "PENDING_REVIEW" ? "current" : "blocked",
-          stateLabel: status === "APPROVED" ? "此報告已核准" : status === "REJECTED" ? "此報告已駁回" : `此報告決策：${status}`,
-          summary: `人審 ${review.id} 對應目前報告 ${report.reportId} v${report.reportVersion}，記錄狀態 ${status}；不代表其他版本或模型受理資格。` };
+          state: verified && ["approved", "rejected"].includes(native.stage ?? "") ? "completed"
+            : verified && native.stage === "pendingreview" ? "current" : "blocked",
+          stateLabel: verified ? native.stage === "pendingreview" ? "此報告待審"
+            : native.reviewDecision?.networkAction ? `人工 ${native.reviewDecision.networkAction}` : "人工關聯已核對" : "人工流程未核驗",
+          summary: `人審 ${review.id} 對應目前報告 ${report.reportId} v${report.reportVersion}，記錄狀態 ${status}。`
+            + (verified ? native.reason : "尚無已核驗的候選點人工關聯；不由通用狀態推算人工核准。") };
       } else result.reviewReason = "review_status_unverified";
     } else if (input.reviews.snapshot!.reviews.some((row) => row.candidateId === id)) result.reviewReason = "review_report_mismatch";
   }

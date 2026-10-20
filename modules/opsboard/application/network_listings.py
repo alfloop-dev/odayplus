@@ -42,6 +42,7 @@ from datetime import UTC, datetime
 from functools import wraps
 from typing import Any, Protocol
 
+from modules.external_data.application.assisted_intake import missing_assisted_entry_fields
 from modules.listing.application.intake_authorization import (
     LEGAL_HOLD_FIELDS,
     recorded_legal_hold_state,
@@ -287,34 +288,6 @@ def _first_present(data: dict[str, Any], *keys: str) -> Any:
     return None
 
 
-def _missing_assisted_entry_fields(values: dict[str, Any]) -> list[str]:
-    """Which mandatory assisted-entry fields ``values`` still does not supply.
-
-    Matching may only run once every mandatory field carries a real value, so a
-    blank or non-positive ``rent``/``areaPing`` counts as missing rather than
-    being coerced to ``0`` -- a zero rent would otherwise present an incomplete
-    submission as a complete one.
-    """
-
-    from modules.external_data.application.assisted_intake import (
-        ASSISTED_ENTRY_REQUIRED_FIELDS,
-    )
-
-    missing: list[str] = []
-    for field_name in ASSISTED_ENTRY_REQUIRED_FIELDS:
-        value = values.get(field_name)
-        if value in (None, ""):
-            missing.append(field_name)
-            continue
-        if field_name in ("rent", "areaPing"):
-            try:
-                if float(value) <= 0:
-                    missing.append(field_name)
-            except (ValueError, TypeError):
-                missing.append(field_name)
-    return missing
-
-
 def _optional_number(value: Any, cast: Any) -> Any:
     """Cast a point-in-time feature, keeping ``None`` as an explicit gap.
 
@@ -380,6 +353,13 @@ def _seed_state(*, tenant_id: str = "tenant-a") -> dict[str, Any]:
         ],
         "listingSources": [
             {
+                "id": "SRC-SYNTHETIC",
+                "name": "Synthetic intake fixture",
+                "status": "connected",
+                "complianceNote": "Non-production fixture for same-source intake and revision scenarios.",
+                "lastSyncedAt": "2026-07-14T06:10:00Z",
+            },
+            {
                 "id": "SRC-591",
                 "name": "591 licensed broker intake",
                 "status": "connected",
@@ -398,8 +378,8 @@ def _seed_state(*, tenant_id: str = "tenant-a") -> dict[str, Any]:
             {
                 "id": "L-2024",
                 "tenantId": "tenant-a",
-                "sourceId": "SRC-591",
-                "sourceListingId": "s591-2024",
+                "sourceId": "SRC-SYNTHETIC",
+                "sourceListingId": "synthetic-2024",
                 "heatZoneId": "HZ-01",
                 "address": "台北市信義區松仁路 96 號 1F",
                 "status": "new",
@@ -411,7 +391,7 @@ def _seed_state(*, tenant_id: str = "tenant-a") -> dict[str, Any]:
                 "hardRuleFailures": [],
                 "hardRuleSummary": "3/3 pass: area, floor, permitted use",
                 "sourceEvidence": [
-                    "EV-L-2024-RAW-591",
+                    "EV-L-2024-RAW-SYNTHETIC",
                     "EV-L-2024-GEOCODE",
                     "EV-L-2024-BROKER-CALL",
                 ],
@@ -1878,25 +1858,7 @@ class NetworkListingService:
 
                     effective_vals = effective_fields(intake["parsedFields"])
 
-                    from modules.external_data.application.assisted_intake import (
-                        ASSISTED_ENTRY_REQUIRED_FIELDS,
-                    )
-                    has_all_required = True
-                    for rf in ASSISTED_ENTRY_REQUIRED_FIELDS:
-                        val = effective_vals.get(rf)
-                        if val in (None, ""):
-                            has_all_required = False
-                            break
-                        if rf in ("rent", "areaPing"):
-                            try:
-                                if float(val) <= 0:
-                                    has_all_required = False
-                                    break
-                            except (ValueError, TypeError):
-                                has_all_required = False
-                                break
-
-                    if has_all_required:
+                    if not missing_assisted_entry_fields(effective_vals):
                         intake["stage"] = "MATCHING"
                         fingerprint = content_fingerprint(effective_vals)
 
@@ -1908,10 +1870,7 @@ class NetworkListingService:
                             listings=self._get_match_listings(),
                         )
                         intake["matchResult"] = match_res.to_dict()
-                        if match_res.outcome == "POSSIBLE_MATCH":
-                            intake["stage"] = "NEEDS_REVIEW"
-                        else:
-                            intake["stage"] = "READY"
+                        intake["stage"] = match_res.intake_stage
                     else:
                         intake["stage"] = "AWAITING_ASSISTED_ENTRY"
                 else:
@@ -2052,7 +2011,7 @@ class NetworkListingService:
 
         effective_vals = effective_fields(intake["parsedFields"])
 
-        if not _missing_assisted_entry_fields(effective_vals):
+        if not missing_assisted_entry_fields(effective_vals):
             fingerprint = content_fingerprint(effective_vals)
             match_res = match_listing(
                 values=effective_vals,
@@ -2062,10 +2021,7 @@ class NetworkListingService:
                 listings=self._get_match_listings(),
             )
             intake["matchResult"] = match_res.to_dict()
-            if match_res.outcome == "POSSIBLE_MATCH":
-                intake["stage"] = "NEEDS_REVIEW"
-            else:
-                intake["stage"] = "READY"
+            intake["stage"] = match_res.intake_stage
         else:
             intake["stage"] = "AWAITING_ASSISTED_ENTRY"
 
@@ -2250,7 +2206,7 @@ class NetworkListingService:
         intake["updatedAt"] = now
 
         effective_vals = effective_fields(parsed_fields)
-        missing = _missing_assisted_entry_fields(effective_vals)
+        missing = missing_assisted_entry_fields(effective_vals)
         if missing:
             intake["stage"] = "AWAITING_ASSISTED_ENTRY"
             intake["matchResult"] = None
@@ -2268,9 +2224,7 @@ class NetworkListingService:
             )
             intake["contentFingerprint"] = fingerprint
             intake["matchResult"] = match_res.to_dict()
-            intake["stage"] = (
-                "NEEDS_REVIEW" if match_res.outcome == "POSSIBLE_MATCH" else "READY"
-            )
+            intake["stage"] = match_res.intake_stage
 
         # A deterministic audit id keeps a replay from growing a second entry
         # for the same batch member.
@@ -2357,7 +2311,7 @@ class NetworkListingService:
         effect_summary = f"Manual decision '{action}' recorded for intake {intake_id}."
 
         if action == "create":
-            missing = _missing_assisted_entry_fields(effective_vals)
+            missing = missing_assisted_entry_fields(effective_vals)
             address = effective_vals.get("address")
             if not isinstance(address, str) or not address.strip():
                 missing.append("address")
@@ -2748,25 +2702,7 @@ class NetworkListingService:
 
             effective_vals = effective_fields(intake["parsedFields"])
 
-            from modules.external_data.application.assisted_intake import (
-                ASSISTED_ENTRY_REQUIRED_FIELDS,
-            )
-            has_all_required = True
-            for rf in ASSISTED_ENTRY_REQUIRED_FIELDS:
-                val = effective_vals.get(rf)
-                if val in (None, ""):
-                    has_all_required = False
-                    break
-                if rf in ("rent", "areaPing"):
-                    try:
-                        if float(val) <= 0:
-                            has_all_required = False
-                            break
-                    except (ValueError, TypeError):
-                        has_all_required = False
-                        break
-
-            if has_all_required:
+            if not missing_assisted_entry_fields(effective_vals):
                 intake["stage"] = "MATCHING"
                 fingerprint = content_fingerprint(effective_vals)
 
@@ -2778,10 +2714,7 @@ class NetworkListingService:
                     listings=self._get_match_listings(),
                 )
                 intake["matchResult"] = match_res.to_dict()
-                if match_res.outcome == "POSSIBLE_MATCH":
-                    intake["stage"] = "NEEDS_REVIEW"
-                else:
-                    intake["stage"] = "READY"
+                intake["stage"] = match_res.intake_stage
             else:
                 intake["stage"] = "AWAITING_ASSISTED_ENTRY"
         else:

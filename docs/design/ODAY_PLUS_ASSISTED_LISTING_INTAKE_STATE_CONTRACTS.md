@@ -81,10 +81,10 @@ stateDiagram-v2
 | `PARSING` | `MATCHING` | Parser worker / `parser.execute` | Active parser release, schema compatible, required output valid | Parser run ID + snapshot ID | Parser run/output lineage; `parser.run_completed.v1`, `intake.matching_started.v1` | `FAILED` or `NEEDS_REVIEW` | Reopenable |
 | `PARSING` | `NEEDS_REVIEW` | Parser worker / `intake.route_review` | Partial output or confidence below field threshold | Parser run ID | Field confidence warnings; `intake.review_required.v1` | None | Reopenable |
 | `PARSING` | `FAILED` | Parser worker / `job.fail` | Non-retryable parser defect or retry exhaustion | Job fence | Error/checkpoint; `intake.processing_failed.v1` | None | Reopenable |
-| `MATCHING` | `READY` | Matcher or reviewer / `identity.decide` | Outcome NEW, EXACT_DUPLICATE, or unambiguous REVISION; persistence transaction committed | Match case version; decision idempotency | Match case/decision; `match.decided.v1`, `intake.resolved.v1` | `NEEDS_REVIEW` on conflict | Terminal |
+| `MATCHING` | `READY` | Established identity-resolution service or independent executor after authorized human confirmation | Unambiguous EXACT_DUPLICATE follows the established service flow; NEW/REVISION require the existing UI confirmation and a committed executor transaction; matcher proposal alone cannot resolve the Intake | Match case version; existing confirmation/execution idempotency | Match evidence, confirmation and execution receipts; existing audit/outbox contract | `NEEDS_REVIEW` on conflict | Terminal |
 | `MATCHING` | `NEEDS_REVIEW` | Matcher / `identity.review` | `POSSIBLE_MATCH` or contradictory evidence | Match case ID/version | Candidates/evidence; `match.review_required.v1` | None | Reopenable |
 | `MATCHING` | `QUARANTINED` | Matcher/steward / `intake.quarantine` | Invalid/unsafe identity evidence | Match case version | Reason/evidence; `intake.quarantined.v1` | Fail closed | Reopenable |
-| `NEEDS_REVIEW` | `READY` | Expansion manager or data steward / `identity.decide` | Authorized explicit human decision; second actor where required | If-Match + decision idempotency | Decision before/after/reason; `match.decided.v1`, `intake.resolved.v1` | `409 REVIEW_CONFLICT` | Terminal |
+| `NEEDS_REVIEW` | `READY` | Expansion manager or data steward; independent executor after verified human confirmation / `identity.decide` | Authorized explicit human decision; second actor where required; current source/account authority and observed candidate/resource versions | If-Match + decision idempotency + observed versions | Decision before/after/reason; actual prior state retained; `match.decided.v1`, `intake.resolved.v1` | `409 REVIEW_CONFLICT` | Terminal |
 | `NEEDS_REVIEW` | `QUARANTINED` | Manager/steward / `intake.quarantine` | Quarantine reason selected | If-Match + idempotency | Decision reason; `intake.quarantined.v1` | No optimistic update | Reopenable |
 | `QUARANTINED` | `CHECKING_SOURCE_POLICY` | Data steward / `intake.reopen` | Policy defect corrected or approval renewed | If-Match + second review for high risk | Reopen reason/policy; `intake.reopened.v1` | Remain quarantined | Reopenable |
 | `QUARANTINED` | `NEEDS_REVIEW` | Data steward / `intake.reopen` | Data defect correctable; evidence preserved | If-Match | Reopen reason; `intake.reopened.v1` | Remain quarantined | Reopenable |
@@ -183,6 +183,8 @@ stateDiagram-v2
     EXECUTING --> EXECUTED: serializable graph transaction committed
     EXECUTING --> FAILED: transaction rolled back
     EXECUTED --> REVERSAL_PENDING: unmerge/reversal requested
+    EXECUTED --> APPROVED: fresh human Intake confirmation after proven graph repair
+    EXECUTED --> PENDING_REVIEW: fresh human duplicate proposal after proven graph repair
     REVERSAL_PENDING --> REVERSED: compensating graph transaction committed
     REVERSAL_PENDING --> REJECTED
     FAILED --> PENDING_REVIEW: retry authorized
@@ -199,10 +201,25 @@ stateDiagram-v2
 | `PENDING_REVIEW` | `REJECTED` | Reviewer / `identity.decide` | Reason required | If-Match | Decision; `match.rejected.v1` | Conflict leaves pending | Terminal |
 | `APPROVED` | `EXECUTING` | Identity service / `identity.execute` | Decision not expired/reversed; all target versions match | Decision ID as idempotency key | Execution plan; `identity.execution_started.v1` | Return approved for retry | Reopenable |
 | `EXECUTING` | `EXECUTED` | Identity service / `identity.execute` | Serializable transaction closes prior edges, creates effective edges/redirects, updates resolution indexes, writes audit/outbox | Row locks + aggregate versions | Edge/redirect receipts; `identity.resolution_changed.v1` | Full SQL rollback | Reopenable via reversal |
+| `EXECUTED` | `APPROVED` or `PENDING_REVIEW` | Fresh authorized human / existing Intake confirmation | Case is POSSIBLE_MATCH; original Intake remains NEEDS_REVIEW and unresolved; current case version proves a completed independently reviewed MERGE/SPLIT via its execution job, immutable audit and match.decided event; unchanged original parser evidence and current source/field/resource authority verified | Current case If-Match + new confirmation key | New CREATE/REVISE approval or independently reviewed DUPLICATE proposal through the same executor; original graph decision stays EXECUTED | Conflict leaves prior execution and Intake unchanged | Case continuation only; never reopens the prior decision |
 | `EXECUTING` | `FAILED` | Identity service / `identity.execute` | Transaction/dependency failure | Attempt token | Failure receipt; `identity.execution_failed.v1` | No partial graph visible | Reopenable |
 | `EXECUTED` | `REVERSAL_PENDING` | Steward/manager / `identity.unmerge` | Original decision/evidence available; no unresolved dependent mutation; reason/risk ack | Graph version + reversal key | Reversal plan; `identity.reversal_requested.v1` | `409 DEPENDENCY_CONFLICT` | Reopenable |
 | `REVERSAL_PENDING` | `REVERSED` | Independent reviewer + identity service / `identity.unmerge` | Second actor approval; cycle-free replacement graph | Serializable transaction + fencing | Superseding edges/redirect closure; `identity.resolution_reversed.v1` | Full rollback; remain pending | Terminal |
 | `FAILED` | `PENDING_REVIEW` | Data steward / `identity.retry` | Root cause resolved | If-Match + replay key | Retry receipt; `identity.execution_retry_requested.v1` | Remain failed | Reopenable |
+
+A pending POSSIBLE_MATCH/QUARANTINED case may receive explicit human context
+before any formal decision exists. This is a versioned evidence append through
+the existing case owner and permission boundary, without a state transition.
+The original outcome, confidence, proposer, signals, candidate IDs/ranks and
+evidence are preserved. New candidates carry their observed target versions,
+human confidence and added-at case version. `append_to_case` binds the exact
+case ID/version; the command also binds the Intake version, current scope,
+reason, acknowledgement and idempotency key. Candidate append, case version,
+`match.manual_context_added.v1` canonical audit/delivery and receipt are one
+transaction. Any accepted/proposed decision prevents amendment. A fresh read
+supplies the complete extended context to the original planning/review/executor.
+
+NEW and REVISION reuse the existing authorized UI confirmation and independent persistence executor. They are matching outcomes, not new MERGE/SPLIT decision types. The matcher owns proposals only; it cannot approve its own proposal, write effective Listing/Property identity, or make an Intake READY from a proposal. The unambiguous EXACT_DUPLICATE exception belongs to the established resolution service. These requirements describe the intended flow and do not attest that the unfinished native matcher is wired or enabled.
 
 ## 5. Assignment and SLA
 
@@ -257,6 +274,31 @@ stateDiagram-v2
 High-impact decisions (`MERGE`, `SPLIT`, `UNMERGE`, identity-affecting correction, quarantine release, promotion, purge, legal-hold release) require proposer/reviewer segregation. Self-review returns `403 SELF_REVIEW_DENIED`. Emergency administration may only restore availability, never approve a business outcome; it requires incident ID, two-person authorization, 24-hour expiry, and retrospective governance review.
 
 ## 7. Candidate promotion and SiteScore saga
+
+Canonical reads keep CandidateSite's persisted lifecycle separate from data
+readiness, score jobs, immutable reports and human decisions. The SiteScore
+read API exposes the actual `canonicalSiteStatus`; its canonical `stage` is
+that recorded value, or explicit `unknown`, never a model GO/REJECT or a report
+existence flag. Reads do not rewrite the stored lifecycle.
+
+The existing candidate workflow projection joins the already-authorized
+candidate, scoring, job and review reads for the same access generation and
+exact candidate/Listing/report identities. It exposes `dataReadiness`,
+`scoreJob`, `scoreReport` and `reviewDecision` independently. A review denial
+does not erase an otherwise authorized Gate, job receipt or saved report.
+Report availability is historical evidence, not current job success; generic
+APPROVED is not a human GO. Human outcome display retains the existing strict
+Decision/independent Approval/frozen-report proof. That verified human outcome
+takes precedence in the primary workflow display; otherwise an active or
+failed job, a saved report and current data readiness remain distinct facts.
+Unknown, denied and conflicting reads cannot supply a successful state, a
+retry permission or a missing producer. Conflicting lifecycle/job reads require
+a fresh read; they do not overwrite either persisted record.
+
+The existing `CandidateWorkflowFacts` renders these shared observations once.
+Candidate details do not add a second state summary. The navigation stepper
+uses the same verified native human relation for progress; an exact review-row
+link alone permits navigation, not a claim of human approval or pending review.
 
 ```mermaid
 stateDiagram-v2

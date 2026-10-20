@@ -8,10 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 from collections.abc import Callable
 from datetime import datetime, timedelta
-from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4, uuid5
 
@@ -22,12 +20,23 @@ from modules.listing.application.native_intake_job_runtime import (
     set_native_intake_sql_budget,
     sign_native_intake_attempt,
 )
+from modules.listing.application.native_intake_producer_discovery import native_producer_discovery
+from modules.listing.application.native_intake_producer_reads import (
+    _native_producer_noop,
+    native_terminal_pair,
+    producer_read_view,
+)
 from modules.listing.application.native_intake_source_policy_rules import (
     POLICY_RULE_SOURCE_SHA256,
     POLICY_RULE_VERSION,
     NativeSourcePolicyRuleUnavailable,
     evaluate_native_source_policy,
     source_policy_snapshot_json,
+)
+from modules.listing.application.native_intake_terminal_evidence import native_terminal_evidence
+from modules.listing.application.native_intake_terminal_ticket import (
+    NativeIntakeTerminalTicketConflict,
+    verify_native_intake_terminal_ticket,
 )
 from modules.listing.application.native_intake_url_identity import (
     NATIVE_URL_RULE_SOURCE_SHA256,
@@ -145,31 +154,23 @@ class NativeIntakeSourcePolicyOwner:
     def _producer_reads(self, before: Callable[[], None]):
         # Narrow, per-call read views retain this thread's real SQL transaction.
         # They never replace shared engine/queue methods or expose mutations.
-        def read(method, sql, params=()):
-            if not sql.lstrip().upper().startswith("SELECT ") or "FOR UPDATE" in sql.upper():
-                raise NativeIntakeSourcePolicyConflict("NATIVE_SOURCE_POLICY_PRODUCER_READ_ONLY_REQUIRED")
-            before()
-            return method(sql, params)
-
-        def get(job_id):
-            before()
-            return self.queue.get(job_id)
-
-        return SimpleNamespace(
-            engine=SimpleNamespace(dialect="postgresql",
-                query=lambda sql, params=(): read(self.engine.query, sql, params),
-                query_one=lambda sql, params=(): read(self.engine.query_one, sql, params)),
-            queue=SimpleNamespace(get=get),
-            _one=lambda sql, params: read(self.graph._one, sql, params),
-        )
+        return producer_read_view(self.graph, before, NativeIntakeSourcePolicyConflict)
 
     def _admission_budget(self, deadline: datetime) -> None:
-        remaining = math.floor((deadline - self._clock()).total_seconds() * 1000) - 1
-        if remaining < 1:
+        if (getattr(self.engine, "dialect", None) != "postgresql"
+                or getattr(getattr(self.engine, "_local", None), "connection", None) is None):
+            raise NativeIntakeSourcePolicyUnavailable("NATIVE_SOURCE_POLICY_CURRENT_SQL_ROOT_REQUIRED")
+        # Sample the database clock once and install both remaining local
+        # timeouts in that same statement. An expired bound changes neither.
+        observed = self.engine.query_one("WITH observed AS MATERIALIZED ("
+            "SELECT clock_timestamp() AS observed_at), remaining AS MATERIALIZED ("
+            "SELECT floor(EXTRACT(EPOCH FROM (?::timestamptz-observed_at))*1000)::bigint-1 AS ms "
+            "FROM observed) SELECT ms AS remaining_ms, "
+            "CASE WHEN ms>=1 THEN set_config('statement_timeout',ms::text||'ms',true) END AS statement_timeout, "
+            "CASE WHEN ms>=1 THEN set_config('lock_timeout',ms::text||'ms',true) END AS lock_timeout "
+            "FROM remaining", (deadline.isoformat(),))
+        if observed["remaining_ms"] < 1:
             raise NativeIntakeSourcePolicyConflict("NATIVE_SOURCE_POLICY_ADMISSION_DEADLINE_EXPIRED")
-        value = str(remaining) + "ms"
-        self.engine.query_one("SELECT set_config('statement_timeout',?,true), "
-            "set_config('lock_timeout',?,true)", (value, value))
 
     @staticmethod
     def _occurrence(intake_id: str, event_id: str) -> str:
@@ -192,15 +193,19 @@ class NativeIntakeSourcePolicyOwner:
             raise NativeIntakeSourcePolicyConflict("NATIVE_SOURCE_POLICY_TARGET_UNSUPPORTED") from error
 
     def _event(self, tenant: str, event_id: str, *, before: Callable[[], None] | None = None) -> tuple[dict, dict, str, dict]:
-        view = self._producer_reads(before or (lambda: None))
-        row = view._one("SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?", (tenant, _uuid(event_id)))
+        view = self._producer_reads(before if before is not None else _native_producer_noop)
+        discovery = native_producer_discovery(view, tenant, _uuid(event_id))
+        row = (discovery.event() if discovery is not None else view._one(
+            "SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?", (tenant, _uuid(event_id))))
         event = _object(row["payload"])
         if event.get("actor_ref") == "native-intake-source-policy-recheck":
             from modules.listing.application.native_intake_source_policy_recheck import (
                 NativeIntakeSourcePolicyRecheckOwner,
             )
 
-            return NativeIntakeSourcePolicyRecheckOwner(view)._source_producer(tenant, event_id, before or (lambda: None))
+            if discovery is not None:
+                discovery.finish()
+            return NativeIntakeSourcePolicyRecheckOwner(view)._source_producer(tenant, event_id, before if before is not None else _native_producer_noop)
         if (validate_event(event) or row["event_type"] != "intake.state_changed"
                 or event.get("event_type") != row["event_type"]
                 or event.get("producer") != "listing_intake_service"
@@ -222,16 +227,20 @@ class NativeIntakeSourcePolicyOwner:
                 or type(event["payload"].get("version")) is not int
                 or event["payload"]["version"] != event["aggregate_version"]):
             raise NativeIntakeSourcePolicyConflict("NATIVE_SOURCE_POLICY_PRODUCER_EVENT_CONFLICT")
-        transition = view._one("SELECT job_id FROM intake.intake_stage_transitions "
+        transition = (discovery.transition(tenant, _uuid(event["payload"]["transition_id"]), row["aggregate_id"])
+            if discovery is not None else view._one("SELECT job_id FROM intake.intake_stage_transitions "
             "WHERE tenant_id=? AND transition_id=? AND intake_id=?", (tenant,
-                _uuid(event["payload"]["transition_id"]), row["aggregate_id"]))
-        producer_job = view._one("SELECT payload FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
-                                 (tenant, transition["job_id"]))
+                _uuid(event["payload"]["transition_id"]), row["aggregate_id"])))
+        producer_job = (discovery.business(tenant, transition["job_id"]) if discovery is not None else view._one(
+            "SELECT payload FROM workflow.jobs WHERE tenant_id=? AND job_id=?", (tenant, transition["job_id"])))
         payload = _object(producer_job["payload"])
-        delivery = view.queue.get(transition["job_id"])
+        delivery = (discovery.delivery(transition["job_id"]) if discovery is not None
+                    else view.queue.get(transition["job_id"]))
         prior = NativeIntakeIdentityOwner(view)._committed_result(delivery, tenant, payload.get("delivery_generation")) if delivery else None
         if prior is None or prior["outbox_event_id"] != event_id or prior["processing_state"] != "CHECKING_SOURCE_POLICY":
             raise NativeIntakeSourcePolicyConflict("NATIVE_SOURCE_POLICY_PRODUCER_PROOF_MISSING")
+        if discovery is not None:
+            discovery.finish()
         return row, event, hashlib.sha256(_json(event).encode()).hexdigest(), {"result": prior, "payload": payload}
 
 
@@ -309,8 +318,14 @@ class NativeIntakeSourcePolicyOwner:
         with self.graph.transaction(tenant):
             entry = self._clock()
             bound = entry + timedelta(milliseconds=ADMISSION_BUDGET_MILLISECONDS)
-            def before():
-                self._admission_budget(bound)
+            from modules.listing.application.native_intake_source_policy_budget import (
+                NativeSourcePolicyAdmissionBudget,
+            )
+
+            # Retain the exact existing SQL deadline and its first timeout
+            # guard. The typed reader shares only the remaining root time.
+            self._admission_budget(bound)
+            before = NativeSourcePolicyAdmissionBudget(self, sql_deadline=bound)
             before()
             self._schema()
             _, event, event_hash, producer = self._event(tenant, event_id, before=before)
@@ -383,7 +398,7 @@ class NativeIntakeSourcePolicyOwner:
             return receipt
 
 
-    def _admission_receipt(self, job: dict, payload: dict) -> dict:
+    def _admission_receipt(self, job: dict, payload: dict, *, terminal_rows=None) -> dict:
         receipt = _object(payload.get("admission_receipt"))
         if (set(receipt) != {"job_id", "intake_id", "admitted_intake_version", "job_status_at_admission",
                              "timeout_at", "policy_started_event_id", "audit_event_id"}
@@ -394,11 +409,23 @@ class NativeIntakeSourcePolicyOwner:
                 or receipt.get("policy_started_event_id") != payload["event_id"]
                 or _time(receipt["timeout_at"]) != _time(job["timeout_at"])):
             raise NativeIntakeSourcePolicyConflict("NATIVE_SOURCE_POLICY_ADMISSION_RECEIPT_CONFLICT")
-        audit = self.engine.query_one("SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
+        audit = (terminal_rows.admission_audit({
+                    'tenant_id': job["tenant_id"],
+                    'audit_event_id': receipt["audit_event_id"],
+                    'resource_type': 'intake',
+                    'resource_id': job["aggregate_id"],
+                    'actor_subject_id': None,
+                    'service_principal': NATIVE_INTAKE_SOURCE_POLICY_JOB_TYPE,
+                    'actor_role': 'SVC_INTAKE',
+                    'action': 'intake.source_policy_evaluation_requested.v1',
+                    'result': 'SUCCEEDED',
+                    'causation_id': payload["event_id"],
+                    'correlation_id': job["correlation_id"],
+                }) if terminal_rows is not None else self.engine.query_one("SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
             "AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_principal=? "
             "AND actor_role='SVC_INTAKE' AND action='intake.source_policy_evaluation_requested.v1' AND result='SUCCEEDED' "
             "AND causation_id=? AND correlation_id=?", (job["tenant_id"], receipt["audit_event_id"], job["aggregate_id"],
-                NATIVE_INTAKE_SOURCE_POLICY_JOB_TYPE, payload["event_id"], job["correlation_id"]))
+                NATIVE_INTAKE_SOURCE_POLICY_JOB_TYPE, payload["event_id"], job["correlation_id"])))
         if audit is None:
             raise NativeIntakeSourcePolicyConflict("NATIVE_SOURCE_POLICY_ADMISSION_AUDIT_MISSING")
         snapshot = _object(audit["after_value"])
@@ -474,12 +501,24 @@ class NativeIntakeSourcePolicyOwner:
         return current, job, payload
 
     def _committed_result(self, delivery, tenant: str, generation: int) -> dict | None:
-        current = self.queue.get(delivery.job_id)
-        job = self.engine.query_one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
-                                    (tenant, delivery.job_id))
+        terminal_rows = native_terminal_evidence(self.graph, tenant, delivery.job_id)
+        pair = (terminal_rows.pair() if terminal_rows is not None
+                else native_terminal_pair(self.graph, tenant, delivery.job_id))
+        if pair is None:
+            current = self.queue.get(delivery.job_id)
+            job = self.engine.query_one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
+                                        (tenant, delivery.job_id))
+        else:
+            current, job = pair
         if job is None or job["status"] != "SUCCEEDED":
             return None
         payload, result = _object(job["payload"]), _object(job["result"])
+        try:
+            verify_native_intake_terminal_ticket(delivery, tenant=tenant, generation=generation,
+                job_type=NATIVE_INTAKE_SOURCE_POLICY_JOB_TYPE,
+                attempt_token_sha256=payload.get("attempt_token_sha256"))
+        except NativeIntakeTerminalTicketConflict:
+            raise JobFenceRejectedError("NATIVE_SOURCE_POLICY_TERMINAL_RECEIPT_CONFLICT") from None
         target = result.get("processing_state")
         if target not in {"RETRIEVING", "AWAITING_ASSISTED_ENTRY", "AWAITING_SOURCE_AUTHORIZATION", "QUARANTINED"}:
             raise JobFenceRejectedError("NATIVE_SOURCE_POLICY_TERMINAL_STATE_CONFLICT")
@@ -511,25 +550,61 @@ class NativeIntakeSourcePolicyOwner:
                 or proof["accepted_business_fence"] != job["fence_token"]
                 or type(proof.get("accepted_attempt")) is not int or proof["accepted_attempt"] != job["attempt"]):
             raise JobFenceRejectedError("NATIVE_SOURCE_POLICY_TERMINAL_RECEIPT_CONFLICT")
-        self._admission_receipt(job, payload)
-        if not self.engine.query_one("SELECT transition_id FROM intake.intake_stage_transitions "
+        self._admission_receipt(job, payload, terminal_rows=terminal_rows)
+        if not (terminal_rows.transition({
+                   'tenant_id': tenant,
+                   'transition_id': result["transition_id"],
+                   'intake_id': job["aggregate_id"],
+                   'job_id': delivery.job_id,
+                   'from_state': 'CHECKING_SOURCE_POLICY',
+                   'to_state': target,
+                   'resulting_version': result["version"],
+                   'expected_version': payload["intake_version"],
+                   'actor_subject_id': None,
+                   'service_principal': NATIVE_INTAKE_SOURCE_POLICY_JOB_TYPE,
+                   'permission': permission,
+                   'source_policy_version': proof["source_version"],
+                   'reason_code': proof["reason_code"],
+                   'causation_id': payload["event_id"],
+                   'correlation_id': job["correlation_id"],
+               }) if terminal_rows is not None else self.engine.query_one("SELECT transition_id FROM intake.intake_stage_transitions "
             "WHERE tenant_id=? AND transition_id=? AND intake_id=? AND job_id=? "
             "AND from_state='CHECKING_SOURCE_POLICY' AND to_state=? AND resulting_version=? "
             "AND expected_version=? AND actor_subject_id IS NULL AND service_principal=? "
             "AND permission=? AND source_policy_version=? AND reason_code=? AND causation_id=? AND correlation_id=?",
             (tenant, result["transition_id"], job["aggregate_id"], delivery.job_id, target,
              result["version"], payload["intake_version"], NATIVE_INTAKE_SOURCE_POLICY_JOB_TYPE,
-             permission, proof["source_version"], proof["reason_code"], payload["event_id"], job["correlation_id"])):
+             permission, proof["source_version"], proof["reason_code"], payload["event_id"], job["correlation_id"]))):
             raise JobFenceRejectedError("NATIVE_SOURCE_POLICY_TERMINAL_TRANSITION_CONFLICT")
-        audit = self.engine.query_one("SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
+        audit = (terminal_rows.result_audit({
+                    'tenant_id': tenant,
+                    'audit_event_id': result["audit_event_id"],
+                    'resource_type': 'intake',
+                    'resource_id': job["aggregate_id"],
+                    'actor_subject_id': None,
+                    'service_principal': NATIVE_INTAKE_SOURCE_POLICY_JOB_TYPE,
+                    'actor_role': 'SVC_INTAKE',
+                    'action': action,
+                    'result': 'SUCCEEDED',
+                    'causation_id': payload["event_id"],
+                    'correlation_id': job["correlation_id"],
+                }) if terminal_rows is not None else self.engine.query_one("SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
             "AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_principal=? "
             "AND actor_role='SVC_INTAKE' AND action=? AND result='SUCCEEDED' AND causation_id=? AND correlation_id=?",
             (tenant, result["audit_event_id"], job["aggregate_id"], NATIVE_INTAKE_SOURCE_POLICY_JOB_TYPE,
-             action, payload["event_id"], job["correlation_id"]))
-        outbox = self.engine.query_one("SELECT payload FROM workflow.outbox_events WHERE tenant_id=? AND event_id=? "
+             action, payload["event_id"], job["correlation_id"])))
+        outbox = (terminal_rows.outbox({
+                     'tenant_id': tenant,
+                     'event_id': result["outbox_event_id"],
+                     'event_type': 'intake.state_changed',
+                     'aggregate_type': 'intake',
+                     'aggregate_id': job["aggregate_id"],
+                     'aggregate_version': result["version"],
+                     'correlation_id': job["correlation_id"],
+                 }) if terminal_rows is not None else self.engine.query_one("SELECT payload FROM workflow.outbox_events WHERE tenant_id=? AND event_id=? "
             "AND event_type='intake.state_changed' AND aggregate_type='intake' AND aggregate_id=? "
             "AND aggregate_version=? AND correlation_id=?", (tenant, result["outbox_event_id"],
-                job["aggregate_id"], result["version"], job["correlation_id"]))
+                job["aggregate_id"], result["version"], job["correlation_id"])))
         if audit is None or outbox is None:
             raise JobFenceRejectedError("NATIVE_SOURCE_POLICY_TERMINAL_EVIDENCE_MISSING")
         snapshot, event = _object(audit["after_value"]), _object(outbox["payload"])
@@ -556,6 +631,8 @@ class NativeIntakeSourcePolicyOwner:
         _, _, digest, _ = self._event(tenant, payload["event_id"])
         if digest != payload["event_sha256"]:
             raise JobFenceRejectedError("NATIVE_SOURCE_POLICY_ORIGINAL_EVENT_CHANGED")
+        if terminal_rows is not None:
+            terminal_rows.finish()
         return result
 
     @staticmethod

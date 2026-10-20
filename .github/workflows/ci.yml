@@ -251,11 +251,15 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
-      - name: Install dependencies
-        run: uv sync
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
 
-      - name: Prepare local config
-        run: make bootstrap
+      # The database selection also owns the native browser-to-SQL cases.
+      # Reuse the shared Python/Node/Chromium bootstrap for those cases.
+      - name: Install product E2E dependencies
+        run: make product-e2e-bootstrap
 
       - name: Test official real-estate outcomes on PostgreSQL 16
         run: uv run pytest tests/integration/test_official_real_estate_postgresql.py

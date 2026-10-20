@@ -27,6 +27,9 @@ rules:
       - intake.source_authorization_required.v1
       - intake.quarantined.v1
       - intake.parsing_started.v1
+      - intake.parser_admitted.v1
+      - intake.parser_attempt_accepted.v1
+      - intake.parser_retry_prepared.v1
       - intake.processing_failed.v1
       - intake.assisted_entry_completed.v1
       - intake.matching_started.v1
@@ -50,6 +53,18 @@ rules:
     rule: These strings are audit action codes unless an event_type with the same semantic phase is explicitly cataloged below.
 
 catalog_additions:
+  - event_type: match.decided
+    event_version: 2
+    producer: identity_resolution_service
+    transaction_owner: identity.match_decisions
+    aggregate_type: match_case
+    partition_key: tenant_id:match_case_id
+    ordering_scope: one_match_case
+    schema_ref: '#/payloads/MatchDecidedV2'
+    sensitive_fields: []
+    consumers: [listing_service, operator_console_projection, audit_projection, analytics_ingestion]
+    retention_days: 14
+
   - event_type: intake.assisted_entry_requested
     event_version: 1
     producer: listing_intake_service
@@ -279,6 +294,20 @@ catalog_additions:
     retention_days: 30
 
 payloads:
+  MatchDecidedV2:
+    type: object
+    additionalProperties: false
+    required: [match_decision_id, match_case_id, decision_type, status, proposer_subject_id, proposer_service_principal, reviewer_subject_id]
+    properties:
+      match_decision_id: {type: string, format: uuid}
+      match_case_id: {type: string, format: uuid}
+      decision_type: {type: string, enum: [DUPLICATE]}
+      status: {type: string, enum: [PENDING_REVIEW, APPROVED, REJECTED, EXECUTING, EXECUTED, FAILED, REVERSAL_PENDING, REVERSED, SUPERSEDED]}
+      proposer_subject_id: {type: 'null'}
+      proposer_service_principal: {type: string, enum: [native-intake-identity]}
+      reviewer_subject_id: {type: 'null'}
+      reason_code: {type: [string, 'null']}
+
   IntakeAssistedEntryRequestedV1:
     type: object
     additionalProperties: false

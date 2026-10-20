@@ -847,9 +847,10 @@ def handle_store_ops_materialize(job: JobRecord, persistence: PersistenceBundle)
 
 
 def handle_identity_execution(job: JobRecord, persistence: PersistenceBundle) -> None:
+    from apps.api.oday_api.security.dependencies import default_boundary
     from modules.listing.application.identity_delivery import run_identity_delivery
 
-    run_identity_delivery(job, persistence.canonical_identity_graph())
+    run_identity_delivery(job, persistence.canonical_identity_graph(identity_service_boundary=default_boundary))
 
 
 def handle_native_intake_start(job: JobRecord, persistence: PersistenceBundle) -> None:
@@ -888,6 +889,12 @@ def handle_native_intake_assisted_entry(job: JobRecord, persistence: Persistence
     )
 
     run_native_intake_assisted_entry_delivery(job, persistence.canonical_intake_assisted_entry())
+
+
+def handle_native_intake_parser(job: JobRecord, persistence: PersistenceBundle) -> None:
+    from modules.listing.application.native_intake_parser import run_native_intake_parser_delivery
+
+    run_native_intake_parser_delivery(job, persistence.canonical_intake_parser())
 
 
 def handle_native_intake_source_policy(job: JobRecord, persistence: PersistenceBundle) -> None:
@@ -938,6 +945,7 @@ def build_default_registry() -> JobRegistry:
     registry.register("native-intake-source-policy-recheck", handle_native_intake_source_policy_recheck)
     registry.register("native-intake-retrieval", handle_native_intake_retrieval)
     registry.register("native-intake-assisted-entry", handle_native_intake_assisted_entry)
+    registry.register("native-intake-parser", handle_native_intake_parser)
     return registry
 
 

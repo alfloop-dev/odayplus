@@ -18,6 +18,7 @@ from modules.listing.application.native_intake_job_runtime import (
     load_native_intake_policy,
     sign_native_intake_attempt,
 )
+from modules.listing.application.native_intake_producer_reads import _native_producer_noop
 from modules.listing.application.native_intake_requester_authority import (
     current_native_recheck_principal,
 )
@@ -422,7 +423,7 @@ class NativeIntakeSourcePolicyRecheckOwner:
             lambda: self.source._budget(current.lease_expires_at if settlement else job["timeout_at"], current.lease_expires_at))
         return current, job, payload
 
-    def _committed_result(self, delivery, tenant, generation, *, before=lambda: None):
+    def _committed_result(self, delivery, tenant, generation, *, before=_native_producer_noop):
         before()
         job = self.engine.query_one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?", (tenant, delivery.job_id))
         if job is None or job["status"] != "SUCCEEDED":

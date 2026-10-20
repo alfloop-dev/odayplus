@@ -10,6 +10,10 @@ from datetime import timedelta
 from modules.external_data.application.native_assisted_snapshot_transport import (
     native_assisted_snapshot_object_key,
 )
+from modules.listing.application.native_intake_assisted_entry_history_rows import (
+    history_physical,
+    read_success_history_rows,
+)
 from modules.listing.application.native_intake_assisted_entry_input import (
     IDENTITY_FIELDS,
     NativeAssistedEntryCommand,
@@ -50,11 +54,17 @@ class NativeAssistedEntryHistory:
         self.graph, self.engine, self.queue = graph, graph.engine, graph.queue
 
     def committed_result(self, delivery, tenant, generation, *, before):
+        proven = self.committed_result_with_command(delivery, tenant, generation, before=before)
+        return None if proven is None else proven[0]
+
+    def committed_result_with_command(self, delivery, tenant, generation, *, before):
         """Authenticate success, including after later independent review.
 
         No current configuration, key, source permission or human role is
         consulted. This result never permits storage IO or an Intake write.
-        The caller owns its bounded SERIALIZABLE tenant root.
+        The caller owns its bounded SERIALIZABLE tenant root. Return the
+        command already checked by this complete proof, without caching it
+        or requiring a second query for the same immutable proposal values.
         """
         before()
         job = self.engine.query_one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
@@ -62,11 +72,14 @@ class NativeAssistedEntryHistory:
         if job is None or job["status"] != "SUCCEEDED":
             return None
         payload, result = _object(job["payload"]), _object(job["result"])
+        rows = read_success_history_rows(self.graph, job, payload, result, before)
         proof = NativeAssistedEntryJobProof(self.graph)
-        proof.admission(job, before=before)
-        acceptance = proof.acceptance(job, before=before)
-        before()
-        physical = self.queue.get(job["job_id"])
+        proof.admission(job, before=before, _history_rows=rows)
+        acceptance = proof.acceptance(job, before=before, _history_rows=rows)
+        closed, physical = history_physical(rows, job)
+        if not closed:
+            before()
+            physical = self.queue.get(job["job_id"])
         keys = {"job_id", "request_id", "intake_id", "processing_state", "version", "transition_id", "audit_event_id",
             "outbox_event_id", "correlation_id", "source_snapshot_id", "snapshot_created_event_id", "requested_by",
             "human_role", "accepted_delivery_fence", "accepted_business_fence", "accepted_attempt", "accepted_worker",
@@ -99,12 +112,18 @@ class NativeAssistedEntryHistory:
             (tenant, result["transition_id"], payload["intake_id"], job["job_id"], payload["requested_by"],
                 payload["expected_intake_version"], result["version"], payload["request_id"], payload["request_id"],
                 job["correlation_id"], result["source_snapshot_id"]))
-        before()
-        audit = self.engine.query_one("SELECT * FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
-            "AND resource_type='intake' AND resource_id=? AND actor_subject_id=? AND service_principal IS NULL "
-            "AND actor_role=? AND action='intake.assisted_entry_completed.v1' AND result='SUCCEEDED' "
-            "AND causation_id=? AND correlation_id=?", (tenant, result["audit_event_id"], payload["intake_id"],
-                payload["requested_by"], result["human_role"], payload["request_id"], job["correlation_id"]))
+        if rows is None:
+            before()
+            audit = self.engine.query_one("SELECT * FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
+                "AND resource_type='intake' AND resource_id=? AND actor_subject_id=? AND service_principal IS NULL "
+                "AND actor_role=? AND action='intake.assisted_entry_completed.v1' AND result='SUCCEEDED' "
+                "AND causation_id=? AND correlation_id=?", (tenant, result["audit_event_id"], payload["intake_id"],
+                    payload["requested_by"], result["human_role"], payload["request_id"], job["correlation_id"]))
+        else:
+            audit = rows.audit("completion", tenant_id=tenant, audit_event_id=result["audit_event_id"],
+                resource_type="intake", resource_id=payload["intake_id"], actor_subject_id=payload["requested_by"],
+                service_principal=None, actor_role=result["human_role"], action="intake.assisted_entry_completed.v1",
+                result="SUCCEEDED", causation_id=payload["request_id"], correlation_id=job["correlation_id"])
         if transition is None or audit is None:
             _reject()
         at = _time(audit["occurred_at"])
@@ -125,9 +144,12 @@ class NativeAssistedEntryHistory:
             _reject()
         snapshot = self._snapshot(job, payload, result, at, before)
         command = self._corrections(tenant, payload, result, snapshot, before)
-        before()
-        request_audit = self.engine.query_one("SELECT reason FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=?",
-            (tenant, request_audit_id(payload["request_id"])))
+        if rows is None:
+            before()
+            request_audit = self.engine.query_one("SELECT reason FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=?",
+                (tenant, request_audit_id(payload["request_id"])))
+        else:
+            request_audit = rows.request_reason()
         if (request_audit is None or request_audit["reason"] != command.reason
                 or audit["reason"] != command.reason or transition["reason_text"] != command.reason):
             _reject()
@@ -136,13 +158,15 @@ class NativeAssistedEntryHistory:
         self._event(job, result["outbox_event_id"], at, before, event_type="intake.state_changed",
             producer="listing_intake_service", aggregate_type="intake", aggregate_id=payload["intake_id"],
             version=result["version"], actor=payload["requested_by"], schema="IntakeStateChangedV1", data=changed,
-            sensitive=[])
+            sensitive=[], _history_rows=rows, _history_role="state")
         self._event(job, result["snapshot_created_event_id"], at, before, event_type="snapshot.manual_entry_created",
             producer="assisted_entry_service", aggregate_type="source_snapshot", aggregate_id=result["source_snapshot_id"],
             version=1, actor=JOB_TYPE, schema="SnapshotCreatedV1", data=snapshot_payload(snapshot),
-            sensitive=["payload.object_uri"])
+            sensitive=["payload.object_uri"], _history_rows=rows, _history_role="snapshot")
         before()
-        return result
+        if rows is not None:
+            rows.finish()
+        return result, command
 
     def _snapshot(self, job, payload, result, at, before):
         proof = _object(result["native_snapshot_proof"])
@@ -236,9 +260,14 @@ class NativeAssistedEntryHistory:
         return command
 
     def _event(self, job, event_id, at, before, *, event_type, producer, aggregate_type, aggregate_id, version,
-               actor, schema, data, sensitive):
-        before()
-        row = self.graph._one("SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?", (job["tenant_id"], event_id))
+               actor, schema, data, sensitive, _history_rows=None, _history_role=None):
+        if _history_rows is None:
+            before()
+            row = self.graph._one("SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?", (job["tenant_id"], event_id))
+        else:
+            row = _history_rows.event(_history_role, tenant_id=job["tenant_id"], event_id=event_id)
+            if row is None:
+                _reject()
         event = _object(row["payload"])
         expected = {"event_id": event_id, "event_type": event_type, "event_version": 1, "producer": producer,
             "tenant_id": job["tenant_id"], "aggregate_type": aggregate_type, "aggregate_id": aggregate_id,

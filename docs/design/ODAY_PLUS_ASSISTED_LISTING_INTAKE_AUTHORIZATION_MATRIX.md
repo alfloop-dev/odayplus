@@ -82,6 +82,7 @@ Legend: `A` allowed within scope; `O` only own/assigned resource; `R` read-only;
 | Intake submit CSV/feed | A, max assigned scope | A | A | — | — | — | SVC_INTAKE |
 | Record source-authorization wait / `intake.await_source_authorization` | — | — | — | — | — | — | SVC_INTAKE after current scoped policy evaluation; grants no source access |
 | Request source-policy recheck / `recheck_source_policy` | — | — | Current SQL DATA_OWNER + native scope/listing/CONFIDENTIAL | — | — | — | Separate signed worker verifies current requester, then policy service re-evaluates source; no source approval |
+| Approve service matching and source-data use | — | — | Current SQL DATA_OWNER with existing role and explicit resource/source scope checks | — | — | — | Service consumes an actual current approval; service authentication or a job token is not approval |
 | Intake cancel | O before decision execution | A before execution | A for governance defect | — | — | — | SVC_INTAKE executes approved command |
 | Intake reopen from failed | O if retryable | A | A | R | — | — | authorized worker/replay service |
 | Intake reopen quarantine | — | `2P` | `2P` | R | `2P` when privacy cause | — | SVC_INTAKE executes approved decision |
@@ -91,7 +92,7 @@ Legend: `A` allowed within scope; `O` only own/assigned resource; `R` read-only;
 | Snapshot metadata view | O | A | A | R | R | — | relevant worker |
 | Snapshot content view | purpose-bound, assigned, redacted | purpose-bound | purpose-bound | purpose-bound R | A restricted | — | retrieval/parser only |
 | Match case view | O | A | A | R | R | — | SVC_MATCHER |
-| Decide NEW/REVISION/DUPLICATE | propose | A | A if data-quality case | R | — | — | matcher cannot decide human cases |
+| Decide NEW/REVISION/DUPLICATE | propose | A; human DUPLICATE requires independent review | A if data-quality case | R | — | — | NEW/REVISION: existing UI human confirmation then independent executor; human DUPLICATE: actual separate proposer/reviewer and existing executor without field application; unambiguous EXACT_DUPLICATE: established service flow; matcher proposes only |
 | Quarantine/reject | propose | A | A | R | A if privacy | — | execution service only |
 | Merge | — | `2P` | `2P` | R | review if restricted | — | SVC identity executor after approval |
 | Split | — | `2P` | `2P` | R | review if restricted | — | SVC identity executor after approval |
@@ -118,6 +119,7 @@ Legend: `A` allowed within scope; `O` only own/assigned resource; `R` read-only;
 | Ordinary correction | `AWAITING_ASSISTED_ENTRY`, `NEEDS_REVIEW`, `READY` before promotion | medium | proposer; reviewer if material field | `If-Match`, reason for address/rent/area/identity | `WORKFLOW_STATE_DENIED` |
 | Identity-affecting correction | `NEEDS_REVIEW` | high | proposer + independent manager/steward | before/after, snapshot/parser lineage, risk acknowledgement | `SECOND_ACTOR_REQUIRED` |
 | Merge/split/unmerge | Match decision `PENDING_REVIEW` or executed decision reversal | critical | proposer + independent reviewer | reason >=20 chars, graph plan, dependency/cycle check | `SECOND_ACTOR_REQUIRED` |
+| Human DUPLICATE | POSSIBLE_MATCH in `NEEDS_REVIEW`, decision `PENDING_REVIEW` | high | proposer + independent manager; steward approval requires a governed data-quality case | current SQL actors/scopes, selected candidate/input/resource versions, immutable review audit; no field/fact application and no borrowed service authority | `SECOND_ACTOR_REQUIRED` |
 | Quarantine release | Intake/listing `QUARANTINED` | high | steward/manager + independent reviewer | root cause resolved, source policy current | `QUARANTINE_RELEASE_DENIED` |
 | Candidate promotion | Intake `READY`, listing `ACTIVE`, no active candidate duplicate | high | staff proposer + manager approver; manager proposer needs another manager | gate snapshot hash, listing/property versions | `PROMOTION_APPROVAL_REQUIRED` |
 | Export confidential | any readable state | high | requester + independent governance approver | purpose, scope, field mask, expiry, watermark | `EXPORT_APPROVAL_REQUIRED` |

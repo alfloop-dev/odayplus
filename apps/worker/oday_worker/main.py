@@ -185,6 +185,7 @@ class ODayWorker:
         canonical_native_source_policy_recheck_job = job.job_type == "native-intake-source-policy-recheck"
         canonical_native_retrieval_job = job.job_type == "native-intake-retrieval"
         canonical_native_assisted_entry_job = job.job_type == "native-intake-assisted-entry"
+        canonical_native_parser_job = job.job_type == "native-intake-parser"
         native_sql_command = (
             (canonical_native_start_job or canonical_native_identity_job or canonical_native_source_policy_job
              or canonical_native_source_policy_recheck_job)
@@ -193,7 +194,7 @@ class ODayWorker:
         canonical_transaction_owned_job = (
             canonical_score_job or canonical_identity_job or canonical_native_start_job
             or canonical_native_identity_job or canonical_native_source_policy_job or canonical_native_source_policy_recheck_job
-            or canonical_native_retrieval_job or canonical_native_assisted_entry_job
+            or canonical_native_retrieval_job or canonical_native_assisted_entry_job or canonical_native_parser_job
         )
         score_owner = ScoreExecutionJobRepository if job.job_type == SITESCORE_EXECUTION_JOB_TYPE else IntakeScoreJobRepository
 
@@ -262,7 +263,7 @@ class ODayWorker:
                     # checks the actual 45s lease during command/settlement;
                     # no renewal runs concurrently with that root.
                     native_intake_heartbeat(job.job_id, expected_version=job.version, fence_token=job.fence_token)
-                elif not (canonical_native_retrieval_job or canonical_native_assisted_entry_job):
+                elif not (canonical_native_retrieval_job or canonical_native_assisted_entry_job or canonical_native_parser_job):
                     heartbeat.start()
                 self.execute_job(job)
                 current_version, heartbeat_failure = heartbeat.stop()
@@ -301,7 +302,8 @@ class ODayWorker:
                         )
                     else:
                         self._record_stale_worker(
-                            job, heartbeat_failure or JobFenceRejectedError(
+                            job, JobFenceRejectedError("NATIVE_PARSER_OUTCOME_UNRESOLVED") if canonical_native_parser_job
+                            else heartbeat_failure or JobFenceRejectedError(
                                 "Canonical score handler did not commit a terminal or retry checkpoint"
                             ),
                         )
@@ -349,7 +351,20 @@ class ODayWorker:
             except Exception as exc:
                 current_version, heartbeat_failure = heartbeat.stop()
                 duration = time.monotonic() - start_time
-                latest_job = self.job_queue.get(job.job_id)
+                try:
+                    latest_job = self.job_queue.get(job.job_id)
+                except Exception as observation_error:
+                    if not canonical_native_parser_job:
+                        raise
+                    # An unavailable outcome read is no success, failure or
+                    # retry grant. Preserve the domain's recoverable state and
+                    # emit no driver details or input values.
+                    self.telemetry.logger.error(
+                        f"Native parser job {job.job_id} outcome is unresolved",
+                        correlation_id=job.correlation_id, actor="worker", resource=f"job/{job.job_type}",
+                        action="execute", result="unresolved", error_code=type(observation_error).__name__,
+                    )
+                    return True
                 if latest_job and latest_job.status in (
                     JobStatus.CANCELLED,
                     JobStatus.SUCCEEDED,
@@ -370,7 +385,8 @@ class ODayWorker:
                 ):
                     self._record_stale_worker(job, JobFenceRejectedError("Job execution ownership changed"))
                 elif heartbeat_failure is not None:
-                    self._record_stale_worker(job, heartbeat_failure)
+                    self._record_stale_worker(job, JobFenceRejectedError("NATIVE_PARSER_OUTCOME_UNRESOLVED")
+                        if canonical_native_parser_job else heartbeat_failure)
                 else:
                     # Record metrics
                     self.telemetry.metrics.observe(
@@ -383,7 +399,8 @@ class ODayWorker:
                         labels={"job_type": job.job_type, "error_class": type(exc).__name__},
                     )
                     self.telemetry.logger.error(
-                        f"Job {job.job_id} failed: {exc}",
+                        (f"Job {job.job_id} failed ({type(exc).__name__})" if canonical_native_parser_job
+                            else f"Job {job.job_id} failed: {exc}"),
                         correlation_id=job.correlation_id,
                         actor="worker",
                         resource=f"job/{job.job_type}",

@@ -148,6 +148,7 @@ class TransitionContext:
     purpose: str | None = None
     current_time: datetime = field(default_factory=lambda: datetime.now(UTC))
     source_policy_recheck_verified: bool = False
+    identity_confirmation_verified: bool = False
 
 
 # Aggregates
@@ -374,21 +375,17 @@ class IntakeStateMachine(BaseStateMachine):
                         DenialCode.ROLE_DENIED,
                         f"Role {role} is not authorized to resolve identity."
                     )
-            elif source == IntakeStage.MATCHING:
-                if role not in {PrincipalRole.SVC_MATCHER, PrincipalRole.DATA_STEWARD, PrincipalRole.EXPANSION_MANAGER, PrincipalRole.EMERGENCY_ADMIN}:
+            elif source in {IntakeStage.MATCHING, IntakeStage.NEEDS_REVIEW}:
+                # Matcher proposals do not confirm a human case. The existing
+                # service-owned exact-identity transition is handled above.
+                confirmed_executor = role == PrincipalRole.SVC_INTAKE and context.identity_confirmation_verified is True
+                if not confirmed_executor and role not in {PrincipalRole.DATA_STEWARD, PrincipalRole.EXPANSION_MANAGER, PrincipalRole.EMERGENCY_ADMIN}:
                     raise DomainValidationError(
                         DenialCode.ROLE_DENIED,
                         f"Role {role} is not authorized to resolve match to READY."
                     )
-            elif source == IntakeStage.NEEDS_REVIEW:
-                # Needs independent review if high-risk or segregation rule applies
-                if role not in {PrincipalRole.EXPANSION_MANAGER, PrincipalRole.DATA_STEWARD, PrincipalRole.EMERGENCY_ADMIN}:
-                    raise DomainValidationError(
-                        DenialCode.ROLE_DENIED,
-                        f"Role {role} is not authorized to decide review to READY."
-                    )
                 # Proposer-reviewer segregation
-                if entity.owner_id and context.actor.actor_id == entity.owner_id:
+                if source == IntakeStage.NEEDS_REVIEW and entity.owner_id and context.actor.actor_id == entity.owner_id:
                     raise DomainValidationError(
                         DenialCode.SELF_REVIEW_DENIED,
                         "Proposer cannot approve own submission."
@@ -605,18 +602,26 @@ class IdentityDecisionStateMachine(BaseStateMachine):
         role = context.actor.role
 
         if target == IdentityGraphState.APPROVED:
-            if source == IdentityGraphState.PROPOSED:
-                if role not in {PrincipalRole.SVC_MATCHER, PrincipalRole.DATA_STEWARD, PrincipalRole.EMERGENCY_ADMIN}:
-                    raise DomainValidationError(DenialCode.ROLE_DENIED, "Only system or steward can approve exact matches.")
+            routine = entity.decision_type in {"CREATE", "REVISE"}
+            if routine:
+                # A routine confirmation records this manager's own decision.
+                # It is not a second signature on a MERGE/SPLIT proposal.
+                # Steward-only data-quality confirmation needs an explicitly
+                # governed case; an ordinary NEW/REVISION is not that grant.
+                if role != PrincipalRole.EXPANSION_MANAGER:
+                    raise DomainValidationError(DenialCode.ROLE_DENIED, "Routine confirmation requires a manager.")
+            elif source == IdentityGraphState.PROPOSED:
+                if role not in {PrincipalRole.DATA_STEWARD, PrincipalRole.EMERGENCY_ADMIN}:
+                    raise DomainValidationError(DenialCode.ROLE_DENIED, "Matcher proposals require independent approval.")
             elif source == IdentityGraphState.PENDING_REVIEW:
                 if role not in {PrincipalRole.EXPANSION_MANAGER, PrincipalRole.DATA_STEWARD, PrincipalRole.EMERGENCY_ADMIN}:
                     raise DomainValidationError(DenialCode.ROLE_DENIED, "Approval requires manager or steward.")
-                # Proposer / Reviewer segregation
-                if entity.proposer_id and context.actor.actor_id == entity.proposer_id:
-                    raise DomainValidationError(
-                        DenialCode.SELF_REVIEW_DENIED,
-                        "Proposer cannot approve own identity decision."
-                    )
+            # Skipping PENDING_REVIEW cannot bypass proposer/reviewer separation.
+            if not routine and entity.proposer_id and context.actor.actor_id == entity.proposer_id:
+                raise DomainValidationError(
+                    DenialCode.SELF_REVIEW_DENIED,
+                    "Proposer cannot approve own identity decision."
+                )
 
         elif target == IdentityGraphState.PENDING_REVIEW:
             if source == IdentityGraphState.PROPOSED:

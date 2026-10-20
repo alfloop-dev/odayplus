@@ -203,6 +203,6 @@ def test_submitted_intake_cannot_bypass_processing_to_create_a_match_case(canoni
     assert created.status_code == 201, created.text
     before = snapshot(canonical_graph)
     with pytest.raises(IdentityConflictError, match="INTAKE_NOT_AWAITING_IDENTITY_REVIEW"):
-        CanonicalMatchCaseRepository(graph).create_review_case(ids["tenant"], created.json()["intake_id"],
+        CanonicalMatchCaseRepository(graph).create_case(ids["tenant"], created.json()["intake_id"],
             **_command(canonical_graph, expected_intake_version=1, actor_id=ids["reviewer"]))
     assert snapshot(canonical_graph) == before

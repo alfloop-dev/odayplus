@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import UTC, datetime
 
 import pytest
@@ -138,6 +139,99 @@ def test_intake_staff_ownership_on_cancellation(staff_actor: Actor) -> None:
 
 
 # --- Unit Tests for Listing Lifecycle ---
+
+
+@pytest.mark.parametrize("outcome", ["NEW", "REVISION"])
+def test_matcher_cannot_complete_its_own_intake_proposal(outcome):
+    entity = IntakeAggregate(
+        id="local-proposal", tenant_id="tenant-a", stage=IntakeStage.MATCHING,
+        version=7, created_by="submitter", source_id="source-a",
+        evidence={"match_outcome": outcome},
+    )
+    before = deepcopy(entity)
+    context = TransitionContext(
+        actor=Actor("matcher", PrincipalRole.SVC_MATCHER, "tenant-a"), version_before=7,
+    )
+    with pytest.raises(DomainValidationError) as error:
+        IntakeStateMachine.transition(entity, IntakeStage.READY, context)
+    assert error.value.code == DenialCode.ROLE_DENIED
+    assert entity == before
+
+
+def test_established_exact_identity_service_transition_remains_available(sys_actor):
+    entity = IntakeAggregate(
+        id="local-exact", tenant_id="tenant-a", stage=IntakeStage.CHECKING_IDENTITY,
+        version=2, created_by="submitter", source_id="source-a",
+    )
+    IntakeStateMachine.transition(entity, IntakeStage.READY,
+        TransitionContext(actor=sys_actor, version_before=2))
+    assert entity.stage == IntakeStage.READY
+    assert entity.version == 3
+
+
+@pytest.mark.parametrize("role", [PrincipalRole.SVC_INTAKE, PrincipalRole.SVC_MATCHER])
+@pytest.mark.parametrize("verified", [False, True])
+@pytest.mark.parametrize("stage", [IntakeStage.MATCHING, IntakeStage.NEEDS_REVIEW])
+def test_matching_ready_requires_the_independent_executor_confirmation_proof(role, verified, stage):
+    entity = IntakeAggregate("intake", "tenant-a", stage, 5, "human", "source")
+    context = TransitionContext(actor=Actor("service", role, "tenant-a"), version_before=5,
+        identity_confirmation_verified=verified)
+    if role == PrincipalRole.SVC_INTAKE and verified:
+        IntakeStateMachine.transition(entity, IntakeStage.READY, context)
+        assert entity.stage == IntakeStage.READY and entity.version == 6
+    else:
+        before = deepcopy(entity)
+        with pytest.raises(DomainValidationError) as error:
+            IntakeStateMachine.transition(entity, IntakeStage.READY, context)
+        assert error.value.code == DenialCode.ROLE_DENIED and entity == before
+
+
+def test_matcher_cannot_approve_a_proposed_identity_case():
+    entity = IdentityDecisionAggregate(
+        id="local-case", tenant_id="tenant-a", status=IdentityGraphState.PROPOSED,
+        version=3, proposer_id="matcher", decision_type="MERGE",
+    )
+    before = deepcopy(entity)
+    with pytest.raises(DomainValidationError) as error:
+        IdentityDecisionStateMachine.transition(entity, IdentityGraphState.APPROVED,
+            TransitionContext(actor=Actor("matcher", PrincipalRole.SVC_MATCHER, "tenant-a"),
+                version_before=3))
+    assert error.value.code == DenialCode.ROLE_DENIED
+    assert entity == before
+
+
+@pytest.mark.parametrize("source", [IdentityGraphState.PROPOSED, IdentityGraphState.PENDING_REVIEW])
+def test_identity_approval_cannot_skip_independence_by_omitting_pending_review(source, steward_actor):
+    entity = IdentityDecisionAggregate(
+        id="local-case", tenant_id="tenant-a", status=source, version=3,
+        proposer_id=steward_actor.actor_id, decision_type="MERGE",
+    )
+    before = deepcopy(entity)
+    with pytest.raises(DomainValidationError) as error:
+        IdentityDecisionStateMachine.transition(entity, IdentityGraphState.APPROVED,
+            TransitionContext(actor=steward_actor, version_before=3))
+    assert error.value.code == DenialCode.SELF_REVIEW_DENIED
+    assert entity == before
+
+
+@pytest.mark.parametrize("kind", ["CREATE", "REVISE"])
+@pytest.mark.parametrize("role", [PrincipalRole.EXPANSION_MANAGER, PrincipalRole.EXPANSION_STAFF,
+    PrincipalRole.SVC_MATCHER, PrincipalRole.SVC_INTAKE, PrincipalRole.DATA_STEWARD])
+def test_routine_confirmation_uses_manager_authority_without_inventing_a_second_signature(kind, role):
+    actor = Actor("actual-human", role, "tenant-a")
+    entity = IdentityDecisionAggregate("case", "tenant-a", IdentityGraphState.PROPOSED, 1,
+        proposer_id=actor.actor_id, decision_type=kind)
+    before = deepcopy(entity)
+    if role == PrincipalRole.EXPANSION_MANAGER:
+        IdentityDecisionStateMachine.transition(entity, IdentityGraphState.APPROVED,
+            TransitionContext(actor=actor, version_before=1))
+        assert entity.status == IdentityGraphState.APPROVED and entity.version == 2
+    else:
+        with pytest.raises(DomainValidationError) as error:
+            IdentityDecisionStateMachine.transition(entity, IdentityGraphState.APPROVED,
+                TransitionContext(actor=actor, version_before=1))
+        assert error.value.code == DenialCode.ROLE_DENIED
+        assert entity == before
 
 
 def test_listing_archived_is_terminal(steward_actor: Actor) -> None:

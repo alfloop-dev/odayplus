@@ -70,6 +70,8 @@ def _claim_from_independent_process(
     worker_id: str,
     start_event,
     result_queue,
+    ready_event,
+    start_timeout: float,
 ) -> None:
     engine = PostgresEngine(
         database_url,
@@ -79,7 +81,10 @@ def _claim_from_independent_process(
         validate_schema=False,
     )
     try:
-        start_event.wait(timeout=10)
+        assert engine.query_one("SELECT 1 AS ready") == {"ready": 1}
+        ready_event.set()
+        # Only the parent releases the claim race after every process is ready.
+        assert start_event.wait(timeout=start_timeout), "Parent did not release the PostgreSQL claim race"
         claimed = DurableJobQueue(engine).claim_next(worker_id=worker_id)
         result_queue.put(
             None
@@ -180,8 +185,9 @@ def test_postgresql_document_audit_and_job_contracts() -> None:
             engine.close()
 
 
-def test_postgresql_claim_is_atomic_across_worker_processes() -> None:
-    database_url = os.environ["INTAKE_TEST_DATABASE_URL"]
+def test_postgresql_claim_is_atomic_across_worker_processes(intake_blank_db: Any) -> None:
+    # claim_next owns a database-wide queue; unrelated tests must not add work.
+    database_url = intake_blank_db.url()
     engine = PostgresEngine(database_url, validate_schema=False)
     queue = DurableJobQueue(engine)
     job_type = f"postgres.claim.{uuid4()}"
@@ -198,16 +204,21 @@ def test_postgresql_claim_is_atomic_across_worker_processes() -> None:
     context = get_context("spawn")
     start_event = context.Event()
     result_queue = context.Queue()
+    ready_events = [context.Event() for _ in range(4)]
     processes = [
         context.Process(
             target=_claim_from_independent_process,
-            args=(database_url, f"worker-{index}", start_event, result_queue),
+            args=(database_url, f"worker-{index}", start_event, result_queue, ready_event,
+                  20 * len(ready_events)),
         )
-        for index in range(4)
+        for index, ready_event in enumerate(ready_events)
     ]
     try:
-        for process in processes:
+        # Spawn imports the persistence/ML stack. Bound startup separately,
+        # then retain the original 20-second limit for the actual claim race.
+        for process, ready_event in zip(processes, ready_events, strict=True):
             process.start()
+            assert ready_event.wait(timeout=20), "PostgreSQL claim worker did not become ready"
         start_event.set()
         results = [result_queue.get(timeout=20) for _ in processes]
         for process in processes:

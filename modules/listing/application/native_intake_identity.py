@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import NAMESPACE_DNS, UUID, uuid4, uuid5
@@ -18,7 +19,14 @@ from modules.listing.application.native_intake_job_runtime import (
     set_native_intake_sql_budget,
     sign_native_intake_attempt,
 )
+from modules.listing.application.native_intake_producer_discovery import native_producer_discovery
+from modules.listing.application.native_intake_producer_reads import native_terminal_pair
 from modules.listing.application.native_intake_start import NativeIntakeStartOwner
+from modules.listing.application.native_intake_terminal_evidence import native_terminal_evidence
+from modules.listing.application.native_intake_terminal_ticket import (
+    NativeIntakeTerminalTicketConflict,
+    verify_native_intake_terminal_ticket,
+)
 from modules.listing.application.native_intake_url_identity import (
     NATIVE_URL_RULE_SOURCE_SHA256,
     NATIVE_URL_RULE_VERSION,
@@ -126,8 +134,9 @@ class NativeIntakeIdentityOwner:
         }, {key: intake[key] for key in ("tenant_id", "brand_id", "region_id", "assigned_area_id", "heat_zone_id")})
 
     def _event(self, tenant: str, event_id: str) -> tuple[dict, dict, str]:
-        row = self.graph._one("SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?",
-                              (tenant, _uuid(event_id)))
+        discovery = native_producer_discovery(self.graph, tenant, _uuid(event_id))
+        row = (discovery.event() if discovery is not None else self.graph._one(
+            "SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?", (tenant, _uuid(event_id))))
         event = _object(row["payload"])
         if (validate_event(event) or row["event_type"] != "intake.state_changed"
                 or event.get("event_type") != row["event_type"]
@@ -150,18 +159,22 @@ class NativeIntakeIdentityOwner:
                 or type(event["payload"].get("version")) is not int
                 or event["payload"]["version"] != event["aggregate_version"]):
             raise NativeIntakeIdentityConflict("NATIVE_IDENTITY_START_EVENT_CONFLICT")
-        transition = self.graph._one("SELECT job_id FROM intake.intake_stage_transitions "
+        transition = (discovery.transition(tenant, _uuid(event["payload"]["transition_id"]), row["aggregate_id"])
+            if discovery is not None else self.graph._one("SELECT job_id FROM intake.intake_stage_transitions "
             "WHERE tenant_id=? AND transition_id=? AND intake_id=?", (tenant,
-                _uuid(event["payload"]["transition_id"]), row["aggregate_id"]))
-        start_job = self.graph._one("SELECT payload FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
-                                    (tenant, transition["job_id"]))
+                _uuid(event["payload"]["transition_id"]), row["aggregate_id"])))
+        start_job = (discovery.business(tenant, transition["job_id"]) if discovery is not None else self.graph._one(
+            "SELECT payload FROM workflow.jobs WHERE tenant_id=? AND job_id=?", (tenant, transition["job_id"])))
         generation = _object(start_job["payload"]).get("delivery_generation")
-        delivery = self.queue.get(transition["job_id"])
+        delivery = (discovery.delivery(transition["job_id"]) if discovery is not None
+                    else self.queue.get(transition["job_id"]))
         # Verify the producer's immutable terminal proof. This is historical
         # evidence validation, not a new native-start capability or key grant.
         prior = NativeIntakeStartOwner(self.graph)._committed_result(delivery, tenant, generation) if delivery else None
         if prior is None or prior["outbox_event_id"] != event_id:
             raise NativeIntakeIdentityConflict("NATIVE_IDENTITY_START_PROOF_MISSING")
+        if discovery is not None:
+            discovery.finish()
         return row, event, hashlib.sha256(_json(event).encode()).hexdigest()
 
     def _input_binding(self, intake: dict, event: dict, expected_version: int, *, pending: bool) -> None:
@@ -265,7 +278,7 @@ class NativeIntakeIdentityOwner:
                         audit_id=audit_id, causation=event_id)
             return receipt
 
-    def _admission_receipt(self, job: dict, payload: dict) -> dict:
+    def _admission_receipt(self, job: dict, payload: dict, *, terminal_rows=None) -> dict:
         receipt = _object(payload.get("admission_receipt"))
         if (set(receipt) != {"job_id", "intake_id", "admitted_intake_version", "job_status_at_admission",
                              "timeout_at", "identity_started_event_id", "audit_event_id"}
@@ -276,11 +289,23 @@ class NativeIntakeIdentityOwner:
                 or receipt.get("identity_started_event_id") != payload["event_id"]
                 or _time(receipt["timeout_at"]) != _time(job["timeout_at"])):
             raise NativeIntakeIdentityConflict("NATIVE_IDENTITY_ADMISSION_RECEIPT_CONFLICT")
-        audit = self.engine.query_one("SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
+        audit = (terminal_rows.admission_audit({
+                    'tenant_id': job["tenant_id"],
+                    'audit_event_id': receipt["audit_event_id"],
+                    'resource_type': 'intake',
+                    'resource_id': job["aggregate_id"],
+                    'actor_subject_id': None,
+                    'service_principal': NATIVE_INTAKE_IDENTITY_JOB_TYPE,
+                    'actor_role': 'SVC_INTAKE',
+                    'action': 'intake.identity_resolution_requested.v1',
+                    'result': 'SUCCEEDED',
+                    'causation_id': payload["event_id"],
+                    'correlation_id': job["correlation_id"],
+                }) if terminal_rows is not None else self.engine.query_one("SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
             "AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_principal=? "
             "AND actor_role='SVC_INTAKE' AND action='intake.identity_resolution_requested.v1' AND result='SUCCEEDED' "
             "AND causation_id=? AND correlation_id=?", (job["tenant_id"], receipt["audit_event_id"], job["aggregate_id"],
-                NATIVE_INTAKE_IDENTITY_JOB_TYPE, payload["event_id"], job["correlation_id"]))
+                NATIVE_INTAKE_IDENTITY_JOB_TYPE, payload["event_id"], job["correlation_id"])))
         if audit is None:
             raise NativeIntakeIdentityConflict("NATIVE_IDENTITY_ADMISSION_AUDIT_MISSING")
         snapshot = _object(audit["after_value"])
@@ -349,12 +374,24 @@ class NativeIntakeIdentityOwner:
         return current, job, payload
 
     def _committed_result(self, delivery, tenant: str, generation: int) -> dict | None:
-        current = self.queue.get(delivery.job_id)
-        job = self.engine.query_one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
-                                    (tenant, delivery.job_id))
+        terminal_rows = native_terminal_evidence(self.graph, tenant, delivery.job_id)
+        pair = (terminal_rows.pair() if terminal_rows is not None
+                else native_terminal_pair(self.graph, tenant, delivery.job_id))
+        if pair is None:
+            current = self.queue.get(delivery.job_id)
+            job = self.engine.query_one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
+                                        (tenant, delivery.job_id))
+        else:
+            current, job = pair
         if job is None or job["status"] != "SUCCEEDED":
             return None
         payload, result = _object(job["payload"]), _object(job["result"])
+        try:
+            verify_native_intake_terminal_ticket(delivery, tenant=tenant, generation=generation,
+                job_type=NATIVE_INTAKE_IDENTITY_JOB_TYPE,
+                attempt_token_sha256=payload.get("attempt_token_sha256"))
+        except NativeIntakeTerminalTicketConflict:
+            raise JobFenceRejectedError("NATIVE_IDENTITY_TERMINAL_RECEIPT_CONFLICT") from None
         target = result.get("processing_state")
         if target not in {"READY", "CHECKING_SOURCE_POLICY"}:
             raise JobFenceRejectedError("NATIVE_IDENTITY_TERMINAL_STATE_CONFLICT")
@@ -386,25 +423,60 @@ class NativeIntakeIdentityOwner:
                 or proof["accepted_business_fence"] != job["fence_token"]
                 or type(proof.get("accepted_attempt")) is not int or proof["accepted_attempt"] != job["attempt"]):
             raise JobFenceRejectedError("NATIVE_IDENTITY_TERMINAL_RECEIPT_CONFLICT")
-        self._admission_receipt(job, payload)
-        if not self.engine.query_one("SELECT transition_id FROM intake.intake_stage_transitions "
+        self._admission_receipt(job, payload, terminal_rows=terminal_rows)
+        if not (terminal_rows.transition({
+                   'tenant_id': tenant,
+                   'transition_id': result["transition_id"],
+                   'intake_id': job["aggregate_id"],
+                   'job_id': delivery.job_id,
+                   'from_state': 'CHECKING_IDENTITY',
+                   'to_state': target,
+                   'resulting_version': result["version"],
+                   'expected_version': payload["intake_version"],
+                   'actor_subject_id': None,
+                   'service_principal': NATIVE_INTAKE_IDENTITY_JOB_TYPE,
+                   'permission': permission,
+                   'source_policy_version': proof["source_version"],
+                   'causation_id': payload["event_id"],
+                   'correlation_id': job["correlation_id"],
+               }) if terminal_rows is not None else self.engine.query_one("SELECT transition_id FROM intake.intake_stage_transitions "
             "WHERE tenant_id=? AND transition_id=? AND intake_id=? AND job_id=? "
             "AND from_state='CHECKING_IDENTITY' AND to_state=? AND resulting_version=? "
             "AND expected_version=? AND actor_subject_id IS NULL AND service_principal=? "
             "AND permission=? AND source_policy_version=? AND causation_id=? AND correlation_id=?",
             (tenant, result["transition_id"], job["aggregate_id"], delivery.job_id, target,
              result["version"], payload["intake_version"], NATIVE_INTAKE_IDENTITY_JOB_TYPE,
-             permission, proof["source_version"], payload["event_id"], job["correlation_id"])):
+             permission, proof["source_version"], payload["event_id"], job["correlation_id"]))):
             raise JobFenceRejectedError("NATIVE_IDENTITY_TERMINAL_TRANSITION_CONFLICT")
-        audit = self.engine.query_one("SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
+        audit = (terminal_rows.result_audit({
+                    'tenant_id': tenant,
+                    'audit_event_id': result["audit_event_id"],
+                    'resource_type': 'intake',
+                    'resource_id': job["aggregate_id"],
+                    'actor_subject_id': None,
+                    'service_principal': NATIVE_INTAKE_IDENTITY_JOB_TYPE,
+                    'actor_role': 'SVC_INTAKE',
+                    'action': action,
+                    'result': 'SUCCEEDED',
+                    'causation_id': payload["event_id"],
+                    'correlation_id': job["correlation_id"],
+                }) if terminal_rows is not None else self.engine.query_one("SELECT after_value FROM audit.audit_events WHERE tenant_id=? AND audit_event_id=? "
             "AND resource_type='intake' AND resource_id=? AND actor_subject_id IS NULL AND service_principal=? "
             "AND actor_role='SVC_INTAKE' AND action=? AND result='SUCCEEDED' AND causation_id=? AND correlation_id=?",
             (tenant, result["audit_event_id"], job["aggregate_id"], NATIVE_INTAKE_IDENTITY_JOB_TYPE,
-             action, payload["event_id"], job["correlation_id"]))
-        outbox = self.engine.query_one("SELECT payload FROM workflow.outbox_events WHERE tenant_id=? AND event_id=? "
+             action, payload["event_id"], job["correlation_id"])))
+        outbox = (terminal_rows.outbox({
+                     'tenant_id': tenant,
+                     'event_id': result["outbox_event_id"],
+                     'event_type': 'intake.state_changed',
+                     'aggregate_type': 'intake',
+                     'aggregate_id': job["aggregate_id"],
+                     'aggregate_version': result["version"],
+                     'correlation_id': job["correlation_id"],
+                 }) if terminal_rows is not None else self.engine.query_one("SELECT payload FROM workflow.outbox_events WHERE tenant_id=? AND event_id=? "
             "AND event_type='intake.state_changed' AND aggregate_type='intake' AND aggregate_id=? "
             "AND aggregate_version=? AND correlation_id=?", (tenant, result["outbox_event_id"],
-                job["aggregate_id"], result["version"], job["correlation_id"]))
+                job["aggregate_id"], result["version"], job["correlation_id"])))
         if audit is None or outbox is None:
             raise JobFenceRejectedError("NATIVE_IDENTITY_TERMINAL_EVIDENCE_MISSING")
         snapshot, event = _object(audit["after_value"]), _object(outbox["payload"])
@@ -431,6 +503,8 @@ class NativeIntakeIdentityOwner:
         _, _, digest = self._event(tenant, payload["event_id"])
         if digest != payload["event_sha256"]:
             raise JobFenceRejectedError("NATIVE_IDENTITY_ORIGINAL_EVENT_CHANGED")
+        if terminal_rows is not None:
+            terminal_rows.finish()
         return result
 
     @staticmethod
@@ -454,53 +528,201 @@ class NativeIntakeIdentityOwner:
         except (ValueError, TypeError, KeyError, AttributeError):
             return False
 
-    def _resolve(self, intake: dict, job: dict, current) -> tuple[dict, Any, str, str | None, dict]:
-        if intake["intake_method"] != "URL":
-            raise NativeIntakeIdentityConflict("NATIVE_IDENTITY_METHOD_UNSUPPORTED")
-        identity = normalize_native_intake_url(intake["original_url"])
-        tenant = intake["tenant_id"]
+    def _verified_matching_service(self, tenant):
+        """Use the existing boundary; a job HMAC never grants source use."""
+        from modules.opsboard.auth import Credentials
 
-        def query(sql, args=()):
-            self._budget(job["timeout_at"], current.lease_expires_at)
-            return self.engine.query(sql, args)
+        policy = native_intake_identity_policy()
+        self._partition(policy, tenant)
+        provider = self.graph.identity_service_boundary
+        boundary = provider() if callable(provider) else None
+        if boundary is None:
+            raise PermissionError("NATIVE_EXACT_AUTHENTICATION_BOUNDARY_REQUIRED")
+        verified = boundary.authenticate(Credentials(bearer_token=os.environ.get("ODP_NATIVE_INTAKE_IDENTITY_BEARER_TOKEN")))
+        if (not verified.authenticated or verified.token_type != "service"
+                or verified.principal.subject_id != "service:" + NATIVE_INTAKE_IDENTITY_JOB_TYPE
+                or verified.principal.tenant_id != tenant):
+            raise PermissionError("NATIVE_EXACT_VERIFIED_IDENTITY_SERVICE_REQUIRED")
+        return verified.principal, hashlib.sha256(_json(policy).encode()).hexdigest()
 
-        # Registry rows are GLOBAL. Count all host matches before checking
-        # their rule version; an unsupported second source is still ambiguous.
-        sources = query("SELECT s.* FROM intake.source_registry s WHERE EXISTS "
-            "(SELECT 1 FROM unnest(s.allowed_hosts) AS h(host) WHERE lower(h.host)=?) "
-            "ORDER BY s.source_id LIMIT 2 FOR SHARE", (identity.source_host,))
-        if len(sources) != 1 or sources[0]["canonicalization_rule_version"] != NATIVE_URL_RULE_VERSION:
-            raise NativeIntakeIdentityConflict("NATIVE_IDENTITY_SOURCE_UNSUPPORTED_OR_AMBIGUOUS")
-        source = sources[0]
-        hosts = source["allowed_hosts"]
-        if isinstance(hosts, str):
-            hosts = json.loads(hosts)
-        if not isinstance(hosts, list) or not 1 <= len(hosts) <= 64:
-            raise NativeIntakeIdentityConflict("NATIVE_IDENTITY_REGISTRY_HOST_BOUND_UNSUPPORTED")
-        for host in hosts:
-            if not isinstance(host, str) or normalize_native_intake_url("https://" + host).source_host != host.lower():
-                raise NativeIntakeIdentityConflict("NATIVE_IDENTITY_REGISTRY_HOST_UNSUPPORTED")
-        at = self._clock()
-        proof = {"source_id": source["source_id"], "source_version": source["version"],
-                 "source_host": identity.source_host, "canonical_url_sha256": identity.canonical_url_sha256,
-                 "normalization_rule_version": identity.rule_version,
-                 "normalization_rule_source_sha256": identity.rule_source_sha256,
-                 "checked_at": at.isoformat(), "outcome": "SOURCE_POLICY_REQUIRED",
-                 "reason": "REUSE_POLICY_DENIED", "valid_until": None}
-        if not self._source_reusable(source, at):
-            return source, identity, "CHECKING_SOURCE_POLICY", None, proof
-        # Native properties represent region, but not brand/area/heat-zone.
-        # A service tenant partition is not a substitute for that resource proof.
+    def exact_snapshot(self, tenant, case, intake, *, policy_version_id, plan=None, before=None):
+        """Reprove a service proposal using the original matcher and exact graph owner."""
+        from modules.listing.application.native_intake_parser_prerequisites import (
+            NativeParserCommandBudget,
+            NativeParserSQLClock,
+        )
+        from shared.infrastructure.persistence.identity_cases_sql import (
+            CanonicalMatchCaseRepository,
+        )
+
+        principal, identity_policy_hash = self._verified_matching_service(tenant)
+        clock = NativeParserSQLClock(self.engine)
+        before = before or NativeParserCommandBudget(clock)
+        before()
+        if (case["outcome"] != "EXACT_DUPLICATE" or float(case["confidence"]) != 1
+                or intake["processing_state"] != "MATCHING" or intake["deleted_at"]
+                or intake["resolved_listing_id"] is not None):
+            raise NativeIntakeIdentityConflict("NATIVE_EXACT_CASE_REQUIRED")
+        self.graph._no_hold(tenant, "intake", intake["intake_id"], held=intake["legal_hold"])
+        cases = CanonicalMatchCaseRepository(self.graph)
+        policy, owner_scope = cases._matching_authority(tenant, intake, principal, policy_version_id, before, clock._clock())
+        evaluated = cases._evaluate_parser_match(tenant, intake, policy, owner_scope, principal, before=before)
+        matched, source = evaluated["matched"], evaluated["source"]
+        before()
+        anchors = self.engine.query("SELECT * FROM identity.match_candidates WHERE tenant_id=? AND match_case_id=? ORDER BY rank",
+            (tenant, case["match_case_id"]))
+        if (matched.outcome != "EXACT_DUPLICATE" or len(anchors) != 1
+                or matched.target_listing_id != anchors[0]["listing_id"]):
+            raise NativeIntakeIdentityConflict("NATIVE_EXACT_CURRENT_MATCH_CONFLICT")
+        candidate = evaluated["candidates"][0]
+        evidence = _object(anchors[0]["evidence"])
+        if (anchors[0]["property_id"] != candidate.property_id
+                or evidence.get("property_version") != candidate.property_version
+                or evidence.get("listing_version") != candidate.listing_version):
+            raise NativeIntakeIdentityConflict("NATIVE_EXACT_CANDIDATE_VERSION_CONFLICT")
+        signals = json.loads(case["supporting_signals"]) if isinstance(case["supporting_signals"], str) else case["supporting_signals"]
+        if (len(signals) != 1 or signals[0].get("kind") != "NATIVE_SHARED_MATCHER_PROPOSAL"
+                or signals[0].get("policy_version_id") != policy_version_id
+                or any(signals[0].get(name) != source[name] for name in
+                    ("parser_job_id", "parser_run_id", "original_input_sha256", "normalized_payload_sha256"))
+                or case["proposed_by"] not in policy.parameters["service_subjects"]):
+            raise NativeIntakeIdentityConflict("NATIVE_EXACT_PROPOSAL_BINDING_CONFLICT")
+        before()
+        audits = self.engine.query("SELECT audit_event_id FROM audit.audit_events WHERE tenant_id=? "
+            "AND resource_type='match_case' AND resource_id=? AND action='match.case_created.v1' "
+            "AND actor_subject_id IS NULL AND service_principal=? AND result='SUCCEEDED' LIMIT 2",
+            (tenant, case["match_case_id"], case["proposed_by"]))
+        if len(audits) != 1:
+            raise NativeIntakeIdentityConflict("NATIVE_EXACT_PROPOSAL_AUDIT_REQUIRED")
+        audit = self.graph.audit_sink.writer.get_event(tenant, audits[0]["audit_event_id"])
+        proposed = audit["after_value"]
+        if (proposed.get("match_case_id") != case["match_case_id"] or proposed.get("intake_id") != intake["intake_id"]
+                or proposed.get("outcome") != "EXACT_DUPLICATE" or proposed.get("status") != "PROPOSED"
+                or proposed.get("version") != 1 or proposed.get("confidence") != 1
+                or proposed.get("candidate_ids") != [r["match_candidate_id"] for r in anchors]
+                or audit["correlation_id"] != intake["correlation_id"]):
+            raise NativeIntakeIdentityConflict("NATIVE_EXACT_PROPOSAL_AUDIT_CONFLICT")
+        listing = evaluated["listings"][candidate.listing_id]
+        provider_id = evaluated["values"].get("providerListingId")
+        if provider_id and listing["source_listing_id"] and provider_id.strip() != listing["source_listing_id"]:
+            raise NativeIntakeIdentityConflict("NATIVE_EXACT_SOURCE_KEY_CONTRADICTION")
+        before()
+        registry = self.graph._one("SELECT * FROM intake.source_registry WHERE source_id=? FOR SHARE", (intake["source_id"],))
+        until = _time(source["manual_entry_valid_until"])
+        if policy.effective_to is not None:
+            until = min(until, policy.effective_to)
+
+        def query(statement, args=()):
+            before()
+            return self.engine.query(statement, args)
+
+        proof = self._existing_target(intake, registry, listing, {}, at=clock._clock(), valid_until=until,
+            query=query, reason="EXACT_SHARED_MATCHER_AND_GRAPH")
+        for property_id in proof["property_versions"]:
+            before()
+            self.graph._no_hold(tenant, "property", property_id)
+        binding = {name: source[name] for name in ("parser_job_id", "parser_run_id", "parser_run_version",
+            "source_snapshot_id", "original_input_sha256", "normalized_payload_sha256")}
+        binding["expected_correction_versions"] = {r["correction_id"]: r["version"] for r in source["fields"]}
+        current_plan = {"expected_property_versions": proof["property_versions"],
+            "expected_listing_versions": {listing["listing_id"]: listing["version"]},
+            "expected_edge_versions": proof["edge_versions"], "candidate_reassignment_plan": [],
+            "expected_intake_version": intake["version"], "input_binding": binding,
+            "exact_authority": {"policy_version_id": policy_version_id, "identity_policy_sha256": identity_policy_hash,
+                "proposal_audit_event_id": audits[0]["audit_event_id"]}}
+        if plan is not None and plan != current_plan:
+            raise NativeIntakeIdentityConflict("NATIVE_EXACT_INPUT_OR_AUTHORITY_VERSION_CONFLICT")
+        before()
+        if clock._clock() >= _time(proof["valid_until"]):
+            raise NativeIntakeIdentityConflict("NATIVE_EXACT_EVIDENCE_EXPIRED")
+        before.check_in_memory()
+        selected = {name: listing[name] for name in ("listing_id", "tenant_id", "source_id", "source_listing_id",
+            "canonical_url_sha256", "property_id", "version", "current_revision_id", "lifecycle_state", "legal_hold")}
+        return {"plan": current_plan, "listings": [selected],
+            "properties": [{"property_id": candidate.property_id, "version": candidate.property_version}],
+            "source_edges": [], "field_proposals": [], "match_case_version": case["version"],
+            "intake_version": intake["version"], "manual_entry_valid_until": proof["valid_until"],
+            "exact_graph": proof, "service_subject_id": principal.subject_id}
+
+    def confirm_exact_case(self, tenant, case_id, *, expected_case_version, policy_version_id, replay_store):
+        """Approve and admit exact service work atomically through the existing owners."""
+        from modules.listing.application.identity_delivery import IdentityJobAdmission
+        from modules.listing.application.native_intake_parser_prerequisites import (
+            NativeParserCommandBudget,
+            NativeParserSQLClock,
+        )
+        from shared.infrastructure.persistence.identity_cases_sql import (
+            CanonicalMatchCaseRepository,
+        )
+        from shared.infrastructure.persistence.identity_decisions_sql import (
+            CanonicalIdentityDecisionRepository,
+        )
+
+        _uuid(case_id)
+        if type(expected_case_version) is not int or expected_case_version < 1:
+            raise ValueError("The observed case version is required")
+        if replay_store is None or getattr(replay_store, "_engine", None) is not self.engine:
+            raise NativeIntakeIdentityConflict("NATIVE_EXACT_EXISTING_REPLAY_STORE_REQUIRED")
+        principal, policy_hash = self._verified_matching_service(tenant)
+        key = f"{tenant}:{principal.subject_id}:nativeExactIdentity:{case_id}:{expected_case_version}"
+        digest = hashlib.sha256(_json({"policy_version_id": policy_version_id, "identity_policy_sha256": policy_hash}).encode()).hexdigest()
+        with self.graph.transaction(tenant):
+            replay_store.refresh(tenant)
+            with replay_store.transaction():
+                clock = NativeParserSQLClock(self.engine)
+                before = NativeParserCommandBudget(clock)
+                before()
+                case, intake = self.graph._case(tenant, case_id)
+                CanonicalMatchCaseRepository(self.graph)._matching_authority(
+                    tenant, intake, principal, policy_version_id, before, clock._clock())
+                previous = replay_store.replays.get(key)
+                if previous is not None:
+                    if previous[0] != digest:
+                        raise NativeIntakeIdentityConflict("IDEMPOTENCY_KEY_REUSED")
+                    return dict(previous[1])
+                if case["status"] != "PROPOSED" or case["version"] != expected_case_version:
+                    raise NativeIntakeIdentityConflict("NATIVE_EXACT_CASE_VERSION_CONFLICT")
+                decisions = CanonicalIdentityDecisionRepository(self.graph)
+                approval = decisions.approve_exact(tenant, case_id, expected_case_version=expected_case_version,
+                    policy_version_id=policy_version_id, before=before)
+                receipt = IdentityJobAdmission(self.graph).enqueue(tenant, approval["decision_id"],
+                    expected_version=approval["version"], actor_id=NATIVE_INTAKE_IDENTITY_JOB_TYPE, before=before)
+                before()
+                replay_store.replays[key] = (digest, receipt, 201)
+                replay_store.flush()
+                before()
+                if self._verified_matching_service(tenant)[1] != policy_hash:
+                    raise NativeIntakeIdentityConflict("NATIVE_EXACT_SERVICE_POLICY_CHANGED")
+                if clock._clock() >= _time(approval["source_input_valid_until"]):
+                    raise NativeIntakeIdentityConflict("NATIVE_EXACT_EVIDENCE_EXPIRED")
+                before.check_in_memory()
+                return receipt
+
+    def confirm_exact_partition(self, tenant, *, source_id, policy_version_id, replay_store, limit):
+        self._verified_matching_service(tenant)
+        if type(limit) is not int or not 1 <= limit <= 100 or not source_id:
+            raise ValueError("An explicit source partition and bounded limit are required")
+        with self.graph.transaction(tenant):
+            rows = self.engine.query("SELECT c.match_case_id,c.version FROM identity.match_cases c JOIN intake.intakes i "
+                "ON i.tenant_id=c.tenant_id AND i.intake_id=c.intake_id WHERE c.tenant_id=? AND i.source_id=? "
+                "AND c.status='PROPOSED' AND c.outcome='EXACT_DUPLICATE' AND i.processing_state='MATCHING' "
+                "AND i.deleted_at IS NULL ORDER BY c.created_at,c.match_case_id LIMIT ?", (tenant, source_id, limit))
+        for row in rows:
+            yield self.confirm_exact_case(tenant, row["match_case_id"], expected_case_version=row["version"],
+                policy_version_id=policy_version_id, replay_store=replay_store)
+
+    @staticmethod
+    def _native_scope(intake):
         if any(intake[key] is not None for key in ("brand_id", "assigned_area_id", "heat_zone_id")):
             raise NativeIntakeIdentityConflict("NATIVE_IDENTITY_SCOPE_UNREPRESENTABLE")
-        listings = query("SELECT * FROM expansion.listings WHERE tenant_id=? AND source_id=? "
-            "AND canonical_url_sha256=? ORDER BY listing_id LIMIT 2",
-            (tenant, source["source_id"], identity.canonical_url_sha256))
-        if not listings:
-            return source, identity, "CHECKING_SOURCE_POLICY", None, {**proof, "reason": "EXACT_URL_ABSENT"}
-        if len(listings) != 1 or listings[0]["lifecycle_state"] != "ACTIVE" or listings[0]["archived_at"] is not None:
+
+    def _existing_target(self, intake, source, peek, proof, *, at, valid_until, query,
+                         reason="EXACT_CANONICAL_URL"):
+        """The established identity service's edge/redirect proof, shared by both phases."""
+        tenant = intake["tenant_id"]
+        self._native_scope(intake)
+        if peek["lifecycle_state"] != "ACTIVE" or peek["archived_at"] is not None:
             raise NativeIntakeIdentityConflict("NATIVE_IDENTITY_EXISTING_LISTING_CONTRADICTORY")
-        peek = listings[0]
         edge_sql = ("SELECT * FROM identity.source_identity_edges WHERE tenant_id=? "
             "AND (listing_id=? OR (source_id=? AND source_entity_id=?)) "
             "AND (effective_to IS NULL OR effective_to>?::timestamptz) ORDER BY edge_id LIMIT 17")
@@ -569,14 +791,64 @@ class NativeIntakeIdentityOwner:
             raise NativeIntakeIdentityConflict("NATIVE_IDENTITY_REGION_DENIED")
         # A future-dated edge/redirect or an expiring current edge must not
         # become a different graph while this short command is being accepted.
-        bounds = [_time(source["review_expires_at"])]
+        bounds = [_time(valid_until)]
         bounds += [_time(row["effective_from"]) for row in edges + redirects if _time(row["effective_from"]) > at]
         bounds += [_time(row["effective_to"]) for row in active_edges if row["effective_to"] is not None]
-        proof.update(outcome="EXACT_EXISTING", reason="EXACT_CANONICAL_URL", valid_until=min(bounds).isoformat(),
+        proof.update(outcome="EXACT_EXISTING", reason=reason, valid_until=min(bounds).isoformat(),
             listing_id=peek["listing_id"], listing_version=peek["version"], effective_property_id=effective_id,
             property_versions={key: props[key]["version"] for key in sorted(props)},
             edge_versions={row["edge_id"]: row["edge_version"] for row in edges},
             redirect_versions={row["redirect_id"]: row["version"] for row in redirects})
+        return proof
+
+    def _resolve(self, intake: dict, job: dict, current) -> tuple[dict, Any, str, str | None, dict]:
+        if intake["intake_method"] != "URL":
+            raise NativeIntakeIdentityConflict("NATIVE_IDENTITY_METHOD_UNSUPPORTED")
+        identity = normalize_native_intake_url(intake["original_url"])
+        tenant = intake["tenant_id"]
+
+        def query(sql, args=()):
+            self._budget(job["timeout_at"], current.lease_expires_at)
+            return self.engine.query(sql, args)
+
+        # Registry rows are GLOBAL. Count all host matches before checking
+        # their rule version; an unsupported second source is still ambiguous.
+        sources = query("SELECT s.* FROM intake.source_registry s WHERE EXISTS "
+            "(SELECT 1 FROM unnest(s.allowed_hosts) AS h(host) WHERE lower(h.host)=?) "
+            "ORDER BY s.source_id LIMIT 2 FOR SHARE", (identity.source_host,))
+        if len(sources) != 1 or sources[0]["canonicalization_rule_version"] != NATIVE_URL_RULE_VERSION:
+            raise NativeIntakeIdentityConflict("NATIVE_IDENTITY_SOURCE_UNSUPPORTED_OR_AMBIGUOUS")
+        source = sources[0]
+        hosts = source["allowed_hosts"]
+        if isinstance(hosts, str):
+            hosts = json.loads(hosts)
+        if not isinstance(hosts, list) or not 1 <= len(hosts) <= 64:
+            raise NativeIntakeIdentityConflict("NATIVE_IDENTITY_REGISTRY_HOST_BOUND_UNSUPPORTED")
+        for host in hosts:
+            if not isinstance(host, str) or normalize_native_intake_url("https://" + host).source_host != host.lower():
+                raise NativeIntakeIdentityConflict("NATIVE_IDENTITY_REGISTRY_HOST_UNSUPPORTED")
+        at = self._clock()
+        proof = {"source_id": source["source_id"], "source_version": source["version"],
+                 "source_host": identity.source_host, "canonical_url_sha256": identity.canonical_url_sha256,
+                 "normalization_rule_version": identity.rule_version,
+                 "normalization_rule_source_sha256": identity.rule_source_sha256,
+                 "checked_at": at.isoformat(), "outcome": "SOURCE_POLICY_REQUIRED",
+                 "reason": "REUSE_POLICY_DENIED", "valid_until": None}
+        if not self._source_reusable(source, at):
+            return source, identity, "CHECKING_SOURCE_POLICY", None, proof
+        # Native properties represent region, but not brand/area/heat-zone.
+        # A service tenant partition is not a substitute for that resource proof.
+        self._native_scope(intake)
+        listings = query("SELECT * FROM expansion.listings WHERE tenant_id=? AND source_id=? "
+            "AND canonical_url_sha256=? ORDER BY listing_id LIMIT 2",
+            (tenant, source["source_id"], identity.canonical_url_sha256))
+        if not listings:
+            return source, identity, "CHECKING_SOURCE_POLICY", None, {**proof, "reason": "EXACT_URL_ABSENT"}
+        if len(listings) != 1:
+            raise NativeIntakeIdentityConflict("NATIVE_IDENTITY_EXISTING_LISTING_CONTRADICTORY")
+        peek = listings[0]
+        proof = self._existing_target(intake, source, peek, proof, at=at,
+            valid_until=source["review_expires_at"], query=query)
         return source, identity, "READY", peek["listing_id"], proof
 
     def execute(self, delivery) -> dict:
