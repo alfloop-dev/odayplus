@@ -1145,3 +1145,197 @@ def test_ancillary_fixed_costs_increase_all_mature_breakeven_metrics():
     assert actual.metrics.breakeven_monthly_revenue > original.metrics.breakeven_monthly_revenue
     assert actual.metrics.breakeven_turns_per_day > original.metrics.breakeven_turns_per_day
     assert actual.metrics.breakeven_capacity_utilization > original.metrics.breakeven_capacity_utilization
+
+
+# Synthetic regression assumptions only: no supplier prices, approved fitout
+# useful life/residual, production G2 admission or actual ledger is implied.
+@pytest.mark.parametrize("ratio", [0.0, 0.25, 1.0])
+@pytest.mark.parametrize("lease,life,horizon", [(2, 5, 4), (5, 2, 4), (5, 5, 3)])
+@pytest.mark.parametrize("override", [None, 0.0, 9600.0])
+def test_fitout_residual_uses_effective_cost_same_amortization_and_single_terminal(
+    ratio, lease, life, horizon, override,
+):
+    spec = _capital_asset_format()
+    spec = replace(spec,
+        fitout_spec=replace(spec.fitout_spec, fitout_useful_life_months=life),
+        tax_spec=replace(spec.tax_spec, corporate_tax_rate=0.0))
+    params = SiteOperatingParameters(monthly_base_rent=1234, area_ping=25,
+        lease_term_months=lease)
+    base_input = SimulationInput(format_spec=spec, operating_params=params,
+        horizon_months=horizon, custom_fitout_capex=override)
+    simulator = SiteEconomicsSimulator()
+    baseline = simulator.simulate(base_input)
+    changed_spec = replace(spec, residual_spec=replace(spec.residual_spec,
+        fitout_salvage_ratio=ratio))
+    actual = simulator.simulate(replace(base_input, format_spec=changed_spec))
+    cost = spec.fitout_spec.compute_total_fitout(params.area_ping) if override is None else override
+    residual = cost * ratio
+    months = min(lease, life)
+
+    assert spec.residual_spec.fitout_salvage_ratio == 0.0
+    assert actual.metrics.total_initial_capex == spec.total_equipment_capex + cost
+    for field in ("total_initial_capex", "total_initial_cash_outlay", "equity_investment",
+                  "debt_financed", "average_monthly_revenue", "average_monthly_ebitda",
+                  "average_ebitda_margin", "breakeven_monthly_revenue",
+                  "breakeven_turns_per_day", "breakeven_capacity_utilization"):
+        assert getattr(actual.metrics, field) == getattr(baseline.metrics, field)
+    assert actual.unlevered_cash_flows[0] == baseline.unlevered_cash_flows[0]
+    assert actual.levered_cash_flows[0] == baseline.levered_cash_flows[0]
+    if ratio == 0.0:
+        assert actual.monthly_schedule == baseline.monthly_schedule
+        assert actual.metrics == baseline.metrics
+        assert actual.unlevered_cash_flows == baseline.unlevered_cash_flows
+        assert actual.levered_cash_flows == baseline.levered_cash_flows
+
+    for a, b in zip(actual.monthly_schedule, baseline.monthly_schedule, strict=True):
+        assert b.fitout_amortization == pytest.approx(round(cost / months, 2) if b.month <= months else 0)
+        assert a.fitout_amortization == pytest.approx(
+            round((cost - residual) / months, 2) if a.month <= months else 0)
+        for field in ("total_cycles_count", "gross_revenue", "rent_expense", "utilities_expense",
+                      "maintenance_expense", "store_operations_expense", "total_opex", "ebitda",
+                      "equipment_depreciation", "interest_expense", "loan_principal_payment",
+                      "total_debt_service", "remaining_loan_principal", "terminal_deposit_return",
+                      "terminal_decommissioning_outflow", "terminal_loan_payoff"):
+            assert getattr(a, field) == getattr(b, field)
+        assert a.ebit - b.ebit == pytest.approx(b.fitout_amortization - a.fitout_amortization, abs=0.02)
+        # Amortization changes EBIT, never a second operating cash charge.
+        assert a.tax_expense == b.tax_expense == 0
+        assert a.unlevered_operating_cash_flow == b.unlevered_operating_cash_flow == a.ebitda
+        assert a.levered_operating_cash_flow == b.levered_operating_cash_flow
+        assert a.levered_operating_cash_flow == pytest.approx(a.ebitda - a.total_debt_service, abs=0.02)
+        expected_exit_delta = residual if a.month == horizon else 0
+        assert a.is_terminal == (a.month == horizon)
+        assert a.terminal_salvage_inflow - b.terminal_salvage_inflow == pytest.approx(expected_exit_delta)
+        assert a.net_unlevered_cash_flow - b.net_unlevered_cash_flow == pytest.approx(expected_exit_delta)
+        assert a.net_levered_cash_flow - b.net_levered_cash_flow == pytest.approx(expected_exit_delta)
+    # Equipment and ancillary residuals still appear exactly once alongside fitout.
+    equipment_residual = (spec.machine_mix.total_residual_value
+        + sum(asset.total_residual_value for asset in spec.capital_assets))
+    assert sum(row.terminal_salvage_inflow for row in actual.monthly_schedule) == pytest.approx(
+        equipment_residual + residual)
+    assert actual.unlevered_cash_flows[1:-1] == baseline.unlevered_cash_flows[1:-1]
+    assert actual.levered_cash_flows[1:-1] == baseline.levered_cash_flows[1:-1]
+    assert actual.unlevered_cash_flows[-1] - baseline.unlevered_cash_flows[-1] == pytest.approx(residual)
+    assert actual.levered_cash_flows[-1] - baseline.levered_cash_flows[-1] == pytest.approx(residual)
+
+
+@pytest.mark.parametrize("ratio", [float("nan"), float("inf"), -float("inf"),
+    -0.01, 1.01, "0.25", None, True, False, complex(0.25, 0), [], 10**400])
+def test_fitout_residual_direct_dataclass_requires_finite_numeric_fraction(ratio):
+    spec = synthetic_g2_format()
+    spec = replace(spec, residual_spec=replace(spec.residual_spec, fitout_salvage_ratio=ratio))
+    with pytest.raises(ValueError, match="fitout_salvage_ratio must be a finite numeric fraction between 0 and 1"):
+        SiteEconomicsSimulator().simulate(SimulationInput(format_spec=spec,
+            operating_params=SiteOperatingParameters(monthly_base_rent=0, area_ping=25)))
+
+
+@pytest.mark.parametrize("ratio", [0, 1, -0.0])
+def test_fitout_residual_numeric_fraction_endpoints_are_accepted(ratio):
+    spec = synthetic_g2_format()
+    spec = replace(spec, residual_spec=replace(spec.residual_spec, fitout_salvage_ratio=ratio))
+    result = SiteEconomicsSimulator().simulate(SimulationInput(format_spec=spec,
+        operating_params=SiteOperatingParameters(monthly_base_rent=0, area_ping=25),
+        custom_fitout_capex=6000, horizon_months=1))
+    assert result.monthly_schedule[0].fitout_amortization == 100 * (1 - ratio)
+    assert result.monthly_schedule[0].terminal_salvage_inflow == spec.machine_mix.total_residual_value + 6000 * ratio
+
+
+def test_fitout_residual_changes_tax_not_a_second_cash_deduction(record_testsuite_property):
+    spec = legacy_arithmetic_format()
+    spec = replace(spec, fitout_spec=replace(spec.fitout_spec, fitout_useful_life_months=2))
+    base_input = SimulationInput(format_spec=spec,
+        operating_params=SiteOperatingParameters(monthly_base_rent=0, area_ping=25,
+            lease_term_months=3), horizon_months=4, custom_fitout_capex=6000,
+        demand_multiplier=2.0)
+    simulator = SiteEconomicsSimulator()
+    baseline = simulator.simulate(base_input)
+    actual = simulator.simulate(replace(base_input, format_spec=replace(spec,
+        residual_spec=replace(spec.residual_spec, fitout_salvage_ratio=0.5))))
+    for a, b in zip(actual.monthly_schedule, baseline.monthly_schedule, strict=True):
+        assert b.taxable_income > 0 and b.ebit > 0  # No NOL obscures this control.
+        tax_delta = 300 if a.month <= 2 else 0
+        assert a.tax_expense - b.tax_expense == pytest.approx(tax_delta, abs=0.02)
+        assert a.ebit - b.ebit == (1500 if a.month <= 2 else 0)
+        assert a.ebitda == b.ebitda
+        assert a.unlevered_operating_cash_flow - b.unlevered_operating_cash_flow == pytest.approx(-tax_delta, abs=0.02)
+        assert a.levered_operating_cash_flow - b.levered_operating_cash_flow == pytest.approx(-tax_delta, abs=0.02)
+        exit_delta = 3000 if a.is_terminal else 0
+        assert a.net_unlevered_cash_flow - b.net_unlevered_cash_flow == pytest.approx(exit_delta - tax_delta, abs=0.02)
+        assert a.net_levered_cash_flow - b.net_levered_cash_flow == pytest.approx(exit_delta - tax_delta, abs=0.02)
+    assert actual.metrics.levered_npv == round(compute_npv(actual.levered_cash_flows, 0.08), 2)
+    assert actual.metrics.unlevered_npv == round(compute_npv(actual.unlevered_cash_flows, 0.08), 2)
+    record_testsuite_property("fitout_tax_proof", {
+        "baseline": [row.to_dict() for row in baseline.monthly_schedule],
+        "nonzero": [row.to_dict() for row in actual.monthly_schedule],
+        "baseline_metrics": baseline.metrics.to_dict(), "nonzero_metrics": actual.metrics.to_dict(),
+        "baseline_unlevered": baseline.unlevered_cash_flows, "nonzero_unlevered": actual.unlevered_cash_flows,
+        "baseline_levered": baseline.levered_cash_flows, "nonzero_levered": actual.levered_cash_flows})
+
+
+@pytest.mark.parametrize("entry", ["direct", "market_context"])
+@pytest.mark.parametrize("override", [None, 9600.0])
+def test_fitout_nonzero_roundtrip_reaches_actual_four_service_scenarios(
+    entry, override, record_testsuite_property,
+):
+    from modules.site_economics.application.context_inputs import content_sha256
+
+    spec = _capital_asset_format()
+    spec = replace(spec, format_version="2.1.0-fitout-engineering",
+        fitout_spec=replace(spec.fitout_spec, fitout_useful_life_months=5),
+        residual_spec=replace(spec.residual_spec, version="1.1.0-engineering", fitout_salvage_ratio=0.25))
+    raw = spec.to_dict()
+    assert raw["residual_spec"]["fitout_salvage_ratio"] == 0.25
+    assert TargetFormatSpec.from_dict(raw) == spec
+    registry = TargetFormatRegistry()
+    registry.register(TargetFormatSpec.from_dict(raw))
+    with pytest.raises(ValueError, match="TARGET_FORMAT_IMMUTABLE_VERSION"):
+        registry.register(replace(spec, residual_spec=replace(spec.residual_spec, fitout_salvage_ratio=0.5)))
+    results = []
+
+    class ObserveActualSimulator(SiteEconomicsSimulator):
+        def simulate(self, value):
+            result = super().simulate(value)
+            results.append(result)
+            return result
+
+    service = SiteEconomicsService(registry=registry, simulator=ObserveActualSimulator())
+    overrides = SimulationOverrides(custom_fitout_capex=override, lease_term_months=2)
+    if entry == "direct":
+        doc = service.evaluate_site("synthetic-fitout", 25, 1234,
+            overrides=overrides, horizon_months=4)
+    else:
+        context = {"context_id": "synthetic-fitout-context", "identity": {"site_id": "synthetic-fitout"},
+            "listing": {"status": "available", "average_area_ping": 25, "median_asking_rent_per_ping": 49.36},
+            "demand": {"status": "available", "total_population": 15000, "density_per_sq_km": 8000},
+            "competitor": {"status": "available", "active_competitors": 0, "competitor_density_per_sq_km": 0}}
+        doc = service.evaluate_site_market_context(context, overrides=overrides, horizon_months=4)
+    assert len(results) == 4
+    assert set(doc.scenarios) == {"base", "optimistic", "pessimistic", "stress_test"}
+    cost = spec.fitout_spec.compute_total_fitout(25) if override is None else override
+    assert doc.assumptions.total_fitout_capex == cost
+    assert doc.assumptions.lease_term_months == 2
+    assert doc.metadata["target_format_snapshot"] == raw
+    assert doc.metadata["target_format_sha256"] == content_sha256(raw)
+    assert doc.metadata["production_admission"] == "not_established_by_simulation"
+    assert doc.metadata["format_configuration_policy"] == "oday-g2-six-combo-v1"
+    assert doc.engine_version == "site-economics-simulator-v1.2.0"
+    assert doc.contract_version == "1.0.0"
+    for name, result in zip(("base", "optimistic", "pessimistic", "stress_test"), results, strict=True):
+        assert result.simulation_input.format_spec == spec
+        assert result.simulation_input.custom_fitout_capex == override
+        assert result.simulation_input.operating_params.lease_term_months == 2
+        assert [row.fitout_amortization for row in result.monthly_schedule] == [cost * 0.75 / 2] * 2 + [0, 0]
+        assert [row.terminal_salvage_inflow for row in result.monthly_schedule] == [0, 0, 0,
+            spec.machine_mix.total_residual_value + sum(asset.total_residual_value for asset in spec.capital_assets) + cost * 0.25]
+        assert doc.scenarios[name].levered_npv == result.metrics.levered_npv
+        assert doc.scenarios[name].unlevered_npv == result.metrics.unlevered_npv
+        assert doc.scenarios[name].average_monthly_ebitda == result.metrics.average_monthly_ebitda
+    validate_site_economics_document(doc)
+    restored = SiteEconomicsDocument.from_json(doc.to_json())
+    assert restored.to_dict() == doc.to_dict()
+    assert TargetFormatSpec.from_dict(restored.metadata["target_format_snapshot"]) == spec
+    record_testsuite_property(f"fitout_service_proof_{entry}_{override}", {
+        "document": doc.to_dict(), "scenarios": [{"metrics": result.metrics.to_dict(),
+            "monthly_schedule": [row.to_dict() for row in result.monthly_schedule],
+            "unlevered_cash_flows": result.unlevered_cash_flows,
+            "levered_cash_flows": result.levered_cash_flows} for result in results]})

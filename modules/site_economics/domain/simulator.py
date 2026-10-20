@@ -377,11 +377,20 @@ class SiteEconomicsSimulator:
                                     / asset.useful_life_months, asset.useful_life_months))
             total_equipment_salvage += asset.total_residual_value
 
+        fitout_salvage_ratio = format_spec.residual_spec.fitout_salvage_ratio
+        if (
+            type(fitout_salvage_ratio) not in (int, float)
+            or not 0.0 <= fitout_salvage_ratio <= 1.0
+            or not math.isfinite(fitout_salvage_ratio)
+        ):
+            raise ValueError("fitout_salvage_ratio must be a finite numeric fraction between 0 and 1")
+        total_fitout_salvage = fitout_capex * fitout_salvage_ratio
         fitout_amort_months = min(
             params.lease_term_months, format_spec.fitout_spec.fitout_useful_life_months
         )
         monthly_fitout_amortization = (
-            fitout_capex / fitout_amort_months if fitout_amort_months > 0 else 0.0
+            (fitout_capex - total_fitout_salvage) / fitout_amort_months
+            if fitout_amort_months > 0 else 0.0
         )
 
         # 4. Month-by-month Schedule Simulation
@@ -547,7 +556,7 @@ class SiteEconomicsSimulator:
             terminal_decomm = 0.0
             terminal_loan_payoff = 0.0
             if is_terminal:
-                terminal_salvage = total_equipment_salvage
+                terminal_salvage = total_equipment_salvage + total_fitout_salvage
                 if format_spec.residual_spec.recover_lease_deposit:
                     terminal_deposit = deposit_amount
                 terminal_decomm = format_spec.residual_spec.decommissioning_and_reinstatement_cost
