@@ -335,22 +335,31 @@ def test_governed_disabled_capability_readiness_consistency(
 
 
 @pytest.mark.requires_live_env
-def test_operator_live_provenance_real_postgresql_integration(monkeypatch: Any) -> None:
-    """Real PostgreSQL 16 runtime verification (runs when live database environment is present)."""
-    db_url = "postgresql://oday_app:super-secret@127.0.0.1:5432/oday_plus"
+def test_operator_live_provenance_real_postgresql_integration(
+    intake_blank_db, monkeypatch: Any,
+) -> None:
+    """Build the actual factory on migrated scratch PG; no deployment readiness claim."""
+    from shared.infrastructure.persistence.assisted_listing_intake import apply_upgrade_to_database
+    from tests.integration.test_intake_registry_calendar_postgresql import _upgrade
+
+    _upgrade(intake_blank_db, "head")
+    db_url = intake_blank_db.url()
+    apply_upgrade_to_database(db_url)
     monkeypatch.setenv("ODAY_DATABASE_URL", db_url)
     monkeypatch.setenv("ODP_PERSISTENCE", "postgresql")
     monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
 
-    try:
-        engine = PostgresEngine(db_url, validate_schema=False)
-        engine.query("SELECT 1")
-    except Exception:
-        pytest.skip("Real PostgreSQL database not reachable on 127.0.0.1:5432")
-
     bundle = build_persistence(mode="postgresql")
-    assert bundle.mode == "postgresql"
-    assert bundle.engine.is_production is True
+    try:
+        assert bundle.mode == "postgresql"
+        assert isinstance(bundle.engine, PostgresEngine)
+        assert bundle.engine.is_production is True
+        assert (
+            bundle.engine.query_one("SELECT current_database() AS name")["name"]
+            == intake_blank_db.dbname
+        )
+    finally:
+        bundle.engine.close()
 
 
 def test_durable_tenant_scoped_ingestion_runs_latest_per_provider_deduplication(

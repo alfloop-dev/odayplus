@@ -263,6 +263,28 @@ jobs:
       - name: Install product E2E dependencies
         run: make product-e2e-bootstrap
 
+      - name: Provide owned PostgreSQL authority and evidence directories to existing SQL fixtures
+        run: |
+          uv run python - <<'PYTHON'
+          import os
+          from pathlib import Path
+
+          temporary = Path(os.environ["RUNNER_TEMP"])
+          authority = temporary / "odp-product-postgresql-admin-dsn"
+          with os.fdopen(os.open(authority, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as stream:
+              stream.write(os.environ["INTAKE_TEST_DATABASE_URL"] + "\n")
+          with open(os.environ["GITHUB_ENV"], "a") as stream:
+              for name in ("ODP_SUBMIT_AUTHOR_ADMIN_DSN_FILE", "ODP_NATIVE_SCOPE_ADMIN_DSN_FILE"):
+                  stream.write(f"{name}={authority}\n")
+              for name, folder in (
+                  ("ODP_NEW_REPORT_ROUNDS_EVIDENCE_DIR", "odp-new-report-rounds"),
+                  ("ODP_NATIVE_VERSION_EVIDENCE_DIR", "odp-native-version"),
+              ):
+                  evidence = Path(".odp_data/ci") / folder
+                  evidence.mkdir(mode=0o700, parents=True)
+                  stream.write(f"{name}={evidence.resolve()}\n")
+          PYTHON
+
       - name: Test official real-estate outcomes on PostgreSQL 16
         run: uv run pytest tests/integration/test_official_real_estate_postgresql.py
 
@@ -326,6 +348,8 @@ jobs:
             .odp_data/ci/native-intake-command-profile.jsonl
             .odp_data/ci/current-model-admission.xml
             .odp_data/ci/delete-propagation.xml
+            .odp_data/ci/odp-new-report-rounds/
+            .odp_data/ci/odp-native-version/
           if-no-files-found: error
 
   product-api-contract:

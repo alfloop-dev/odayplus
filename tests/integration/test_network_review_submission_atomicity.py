@@ -382,6 +382,7 @@ def submit_author_pg(monkeypatch):
     server = IntakePgServer(psycopg=psycopg, admin_params=admin)
     with server.connect("postgres") as connection:
         connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+        oid = connection.execute("SELECT oid FROM pg_database WHERE datname=%s", (name,)).fetchone()[0]
     database = IntakeDatabase(server=server, dbname=name)
     bundle = None
     try:
@@ -403,14 +404,11 @@ def submit_author_pg(monkeypatch):
     finally:
         if bundle is not None:
             bundle.engine.close()
-        # Drop only the exact new owned prefix; do not terminate/reset any
-        # other database's clients or use fixture's generic database allocator.
+        # Drop only the exact new database after every owned engine has closed.
         assert name.startswith("odp_submit_author_")
         with server.connect("postgres") as connection:
-            connection.execute(
-                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=%s AND pid<>pg_backend_pid()",
-                (name,),
-            )
+            assert connection.execute("SELECT oid FROM pg_database WHERE datname=%s", (name,)).fetchone() == (oid,)
+            # Ordinary DROP enforces quiescence after backend shutdown settles.
             connection.execute(sql.SQL("DROP DATABASE {}").format(sql.Identifier(name)))
 
 
