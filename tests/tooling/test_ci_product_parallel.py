@@ -254,7 +254,7 @@ def test_ci_workflow_pytest_addopts_are_reporting_only(ci_workflow: dict[str, An
     assert pytest_addopts_reporting_errors(ci_workflow) == []
 
 
-def test_ci_workflow_retains_main_database_report_after_failure(ci_workflow: dict[str, Any]) -> None:
+def test_ci_workflow_retains_main_database_report_after_failure(ci_workflow: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     steps = ci_workflow["jobs"]["product-db"]["steps"]
     database = next(step for step in steps if step.get("name") == "Test database contracts, migrations and schema gates")
     assert database["env"]["PYTEST_ADDOPTS"] == "--junitxml=.odp_data/ci/database-contracts.xml"
@@ -263,6 +263,31 @@ def test_ci_workflow_retains_main_database_report_after_failure(ci_workflow: dic
     assert artifact.get("if") == "always()"
     assert artifact["with"]["if-no-files-found"] == "error"
     assert ".odp_data/ci/database-contracts.xml" in artifact["with"]["path"].splitlines()
+    verification = next(step for step in steps if step.get("name") == "Test model admission and delete propagation against PostgreSQL")
+    code = verification["run"].split("uv run python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    reports = [
+        ".odp_data/ci/database-contracts.xml",
+        ".odp_data/ci/current-model-admission.xml",
+        ".odp_data/ci/delete-propagation.xml",
+    ]
+    monkeypatch.chdir(tmp_path)
+    passed = "<testsuite><testcase /></testsuite>"
+    for report in reports:
+        target = Path(report)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(passed)
+    # Exercise the existing common guard with synthetic reporting controls.
+    # This validates the CI gate, not execution of any SQL business scenario.
+    exec(compile(code, "ci-native-sql-evidence", "exec"), {})
+    for report in reports:
+        for outcome in ("skipped", "failure", "error"):
+            Path(report).write_text(f"<testsuite><testcase><{outcome} /></testcase></testsuite>")
+            with pytest.raises(SystemExit, match=outcome):
+                exec(compile(code, "ci-native-sql-evidence", "exec"), {})
+        Path(report).write_text("<testsuite />")
+        with pytest.raises(SystemExit, match="did not execute"):
+            exec(compile(code, "ci-native-sql-evidence", "exec"), {})
+        Path(report).write_text(passed)
 
 
 def test_required_ci_keeps_native_sql_diagnostics_opt_in(ci_workflow: dict[str, Any]) -> None:

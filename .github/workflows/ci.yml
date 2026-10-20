@@ -329,6 +329,7 @@ jobs:
           import xml.etree.ElementTree as ET
 
           for path in (
+              ".odp_data/ci/database-contracts.xml",
               ".odp_data/ci/current-model-admission.xml",
               ".odp_data/ci/delete-propagation.xml",
           ):
