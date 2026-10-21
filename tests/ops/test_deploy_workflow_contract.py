@@ -1244,6 +1244,109 @@ def test_deploy_script_uses_digest_refs_for_every_cloud_run_target() -> None:
     assert "deploy-by-digest requires immutable image reference" in script
 
 
+@pytest.mark.parametrize("deploy_environment", ["prod", "production", "dev"])
+@pytest.mark.parametrize(
+    ("deploy_by_digest", "skip_build", "image_override", "image_error"),
+    [
+        pytest.param(None, False, None, None, id="unset-mode"),
+        pytest.param("false", False, None, None, id="false-mode"),
+        pytest.param(None, True, None, None, id="skip-build-with-tags"),
+        pytest.param("true", False, None, None, id="four-digests"),
+        pytest.param(
+            "true", False, ("API_IMAGE", None),
+            "API_IMAGE is required for deploy-by-digest", id="missing-image",
+        ),
+        pytest.param(
+            "true", True, ("SCHEDULER_IMAGE", "registry.invalid/scheduler:mutable"),
+            "deploy-by-digest requires immutable image reference", id="mutable-image",
+        ),
+    ],
+)
+def test_deploy_script_production_refuses_the_tag_build_path(
+    tmp_path: Path,
+    deploy_environment: str,
+    deploy_by_digest: str | None,
+    skip_build: bool,
+    image_override: tuple[str, str | None] | None,
+    image_error: str | None,
+) -> None:
+    # Run the complete existing shell, as the deployment config-gate tests do.
+    # Only its preflight stub succeeds. Stop at the first subsequent mktemp,
+    # after the real mode/image branch but before any build or cloud command.
+    trace = tmp_path / "deployment-tool-calls.txt"
+    for command in ("python3", "uv", "gcloud", "docker", "mktemp"):
+        stub = tmp_path / command
+        stub.write_text(
+            '#!/bin/sh\n'
+            f'printf "%s\\n" "{command}" >> "$DEPLOY_GUARD_TOOL_TRACE"\n'
+            f'exit {0 if command == "uv" else 97}\n',
+            encoding="utf-8",
+        )
+        stub.chmod(0o755)
+
+    # Do not inherit credentials, mode flags or shell startup hooks from the
+    # test runner; every executable reachable through PATH is a recording stub.
+    env = {
+        "PATH": str(tmp_path),
+        "DEPLOY_GUARD_TOOL_TRACE": str(trace),
+        "ODP_DEPLOY_ENV": deploy_environment,
+        "ODAY_RELEASE_SHA": "a" * 40,
+        "ODP_RELEASE_PROFILE": "full",
+        "API_SERVICE": "oday-api",
+        "WEB_SERVICE": "oday-web",
+        "MIGRATION_JOB": "oday-migrate",
+        "WORKER_JOB": "oday-worker",
+        "SCHEDULER_JOB": "oday-scheduler",
+        "WORKER_SCHEDULE_NAME": "oday-worker-trigger",
+        "SCHEDULER_SCHEDULE_NAME": "oday-scheduler-trigger",
+        "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT": "scheduler@example.test",
+        "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT": "smoke@example.test",
+        "ODP_WORKER_CRON": "*/5 * * * *",
+        "ODP_SCHEDULER_CRON": "0 * * * *",
+        "ODP_SCHEDULER_TIME_ZONE": "Asia/Taipei",
+        "ODP_FORECAST_ENGINE": "statsforecast",
+        "ODP_FORECAST_MODEL": "seasonal_naive",
+        "ODP_TENANT_ID": "tenant-test",
+        "ODP_AUTH_MODE": "local",
+        "ODP_PROD_DEPLOY_URL": "https://web.example.test",
+        "ODP_PROD_API_URL": "https://api.example.test",
+        "GCP_PROJECT": "project-under-test",
+        "GCP_REGION": "asia-east1",
+        "GCP_AR_REPO": "runtime",
+    }
+    for name in ("API_IMAGE", "WEB_IMAGE", "WORKER_IMAGE", "SCHEDULER_IMAGE"):
+        image = f"registry.invalid/{name.lower()}"
+        suffix = "@sha256:" + "b" * 64 if deploy_by_digest == "true" else ":mutable"
+        env[name] = image + suffix
+    if deploy_by_digest is not None:
+        env["ODP_DEPLOY_BY_DIGEST"] = deploy_by_digest
+    if skip_build:
+        env["ODP_SKIP_BUILD"] = "true"
+    if image_override is not None:
+        name, value = image_override
+        if value is None:
+            env.pop(name)
+        else:
+            env[name] = value
+
+    result = subprocess.run(
+        ["/bin/bash", str(DEPLOY_SCRIPT)],
+        cwd=ROOT, env=env, capture_output=True, text=True, check=False, timeout=10,
+    )
+    expected_error = image_error
+    if deploy_environment in {"prod", "production"} and deploy_by_digest != "true":
+        expected_error = "production deployment requires ODP_DEPLOY_BY_DIGEST=true"
+    calls = trace.read_text(encoding="utf-8").splitlines()
+    if expected_error is not None:
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert expected_error in result.stderr
+        assert calls == ["uv"]
+    else:
+        assert result.returncode == 97, result.stdout + result.stderr
+        assert "Deployment details:" in result.stdout
+        assert calls == ["uv", "mktemp"]
+
+
 def test_deploy_script_applies_optional_vpc_network_args_to_every_cloud_run_target() -> None:
     """Every service/job must share the release entrypoint's VPC binding."""
     script = _deploy_script_text()

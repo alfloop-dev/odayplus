@@ -316,6 +316,12 @@ if [ "${ODP_DEPLOY_BY_DIGEST:-false}" = "true" ]; then
     fi
   done
 else
+  case "${ODP_DEPLOY_ENV}" in
+    prod|production)
+      echo "Error: production deployment requires ODP_DEPLOY_BY_DIGEST=true and immutable image references." >&2
+      exit 1
+      ;;
+  esac
   IMAGE_TAG="${IMAGE_TAG:-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}}"
   API_IMAGE="${REPO_PATH}/${API_SERVICE}:${IMAGE_TAG}"
   WEB_IMAGE="${REPO_PATH}/${WEB_SERVICE}:${IMAGE_TAG}"
