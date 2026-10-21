@@ -47,9 +47,12 @@ except ImportError:
     SiteMarketContextDocument = Any  # type: ignore[misc,assignment]
 
 
-def _format_metadata(spec: TargetFormatSpec) -> dict[str, Any]:
+def _format_metadata(
+    spec: TargetFormatSpec, operating_params: SiteOperatingParameters
+) -> dict[str, Any]:
     snapshot = spec.to_dict()
     metadata = {"target_format_snapshot": snapshot,
+        "operating_parameters_snapshot": operating_params.to_dict(),
         "target_format_sha256": content_sha256(snapshot),
         "format_configuration_policy": "oday-g2-six-combo-v1" if spec.format_code.upper() == "ODAY_G2" else "explicit-generic-format-v1",
         "production_admission": "not_established_by_simulation"}
@@ -76,6 +79,7 @@ class SimulationOverrides:
     cannibalization_discount: float | None = None
     custom_equipment_capex: float | None = None
     custom_fitout_capex: float | None = None
+    insurance_annual_cost: float | None = None
 
 
 class SiteEconomicsService:
@@ -124,6 +128,14 @@ class SiteEconomicsService:
         format_spec = self.registry.get(eff_format_code, eff_format_version)
         require_oday_g2_configuration(format_spec)
 
+        operating_overrides = {}
+        origins = {}
+        if overrides and overrides.insurance_annual_cost is not None:
+            operating_overrides["insurance_annual_cost"] = numeric_input(
+                overrides.insurance_annual_cost, "overrides.insurance_annual_cost"
+            )
+            origins["insurance_annual_cost"] = "explicit_simulation_assumption"
+
         operating_params = SiteOperatingParameters(
             monthly_base_rent=eff_rent,
             area_ping=eff_area,
@@ -132,6 +144,7 @@ class SiteEconomicsService:
                 if overrides and overrides.lease_term_months is not None
                 else 60
             ),
+            **operating_overrides,
         )
 
         sim_input = SimulationInput(
@@ -185,7 +198,10 @@ class SiteEconomicsService:
             monthly_schedule=base_res.monthly_schedule,
             scenarios=scenarios,
             engine_version=ENGINE_VERSION,
-            metadata=_format_metadata(format_spec),
+            metadata={
+                **_format_metadata(format_spec, operating_params),
+                **({"input_origins": origins} if origins else {}),
+            },
         )
 
     def evaluate_site_market_context(
@@ -255,6 +271,11 @@ class SiteEconomicsService:
         explicit("debt_ratio", maximum=1)
         explicit("cannibalization_discount", maximum=1)
         explicit("lease_term_months", exclusive=True, integer=True)
+        insurance_annual_cost = explicit("insurance_annual_cost")
+        operating_overrides = (
+            {"insurance_annual_cost": insurance_annual_cost}
+            if insurance_annual_cost is not None else {}
+        )
 
         eff_format_code = (
             overrides.format_code
@@ -276,6 +297,7 @@ class SiteEconomicsService:
                 if overrides and overrides.lease_term_months is not None
                 else 60
             ),
+            **operating_overrides,
         )
 
         sim_input = SimulationInput(
@@ -324,7 +346,7 @@ class SiteEconomicsService:
             scenarios=scenarios,
             engine_version=ENGINE_VERSION,
             metadata={
-                **_format_metadata(format_spec),
+                **_format_metadata(format_spec, operating_params),
                 "input_policy_version": INPUT_POLICY_VERSION,
                 "input_origins": origins,
                 "source_market_context_document_id": snapshot.document_id,

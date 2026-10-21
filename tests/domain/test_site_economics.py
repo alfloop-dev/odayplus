@@ -1339,3 +1339,542 @@ def test_fitout_nonzero_roundtrip_reaches_actual_four_service_scenarios(
             "monthly_schedule": [row.to_dict() for row in result.monthly_schedule],
             "unlevered_cash_flows": result.unlevered_cash_flows,
             "levered_cash_flows": result.levered_cash_flows} for result in results]})
+
+
+# Insurance inputs below are synthetic engineering assumptions only. They do
+# not allocate the accepted supplier bundle or establish an approved G2 value.
+def test_insurance_override_is_optional_and_appended_without_positional_reordering():
+    from dataclasses import fields
+
+    original_names = (
+        "format_code", "format_version", "monthly_rent", "area_ping",
+        "lease_term_months", "annual_discount_rate", "debt_ratio",
+        "annual_interest_rate", "demand_multiplier", "competitor_discount",
+        "cannibalization_discount", "custom_equipment_capex", "custom_fitout_capex",
+    )
+    assert tuple(field.name for field in fields(SimulationOverrides)) == (
+        *original_names, "insurance_annual_cost")
+    values = ("ODAY_G2", "2.0.0-engineering", 1234, 25, 36, 0.09,
+        0.4, 0.02, 1.2, 0.1, 0.05, 1500000, 800000)
+    old_positional = SimulationOverrides(*values)
+    assert tuple(getattr(old_positional, name) for name in original_names) == values
+    assert old_positional.insurance_annual_cost is None
+
+
+@pytest.mark.parametrize("entry", ["direct", "market_context"])
+@pytest.mark.parametrize("insurance", ["omitted", None, 0, 3456.25])
+def test_insurance_service_snapshot_origin_roundtrip_and_four_real_simulations(
+    entry, insurance, record_testsuite_property,
+):
+    import json
+
+    from modules.site_economics.application.context_inputs import content_sha256
+
+    registry = synthetic_g2_registry()
+    expected_format = synthetic_g2_format()
+    results = []
+
+    class ObserveActualSimulator(SiteEconomicsSimulator):
+        def simulate(self, value):
+            result = super().simulate(value)
+            results.append(result)
+            return result
+
+    service = SiteEconomicsService(registry=registry, simulator=ObserveActualSimulator())
+    overrides = None if insurance == "omitted" else SimulationOverrides(insurance_annual_cost=insurance)
+    context = {"context_id": "synthetic-insurance-context", "tenant_id": "synthetic-tenant",
+        "identity": {"site_id": "synthetic-insurance"},
+        "listing": {"status": "available", "average_area_ping": 25, "median_asking_rent_per_ping": 49.36},
+        "demand": {"status": "available", "total_population": 15000, "density_per_sq_km": 8000},
+        "competitor": {"status": "available", "active_competitors": 0, "competitor_density_per_sq_km": 0}}
+    envelope = {"document_id": "synthetic-insurance-context-document",
+        "tenant_id": "synthetic-tenant", "contexts": [context]}
+    before_context = json.dumps(envelope, sort_keys=True)
+    if entry == "direct":
+        doc = service.evaluate_site("synthetic-insurance", 25, 1234,
+            tenant_id="synthetic-tenant", overrides=overrides, horizon_months=4)
+    else:
+        doc = service.evaluate_site_market_context(envelope, tenant_id="synthetic-tenant",
+            site_id="synthetic-insurance", overrides=overrides, horizon_months=4)
+    explicit = insurance not in ("omitted", None)
+    # Only the existing model default defines generic omission behavior. This
+    # retained 20k is not a user-approved insurance cost or coverage assumption.
+    generic_default = SiteOperatingParameters(monthly_base_rent=1234, area_ping=25)
+    assert generic_default.insurance_annual_cost == 20_000
+    expected_insurance = insurance if explicit else generic_default.insurance_annual_cost
+    assert len(results) == 4
+    assert tuple(doc.scenarios) == ("base", "optimistic", "pessimistic", "stress_test")
+    assert doc.site_id == "synthetic-insurance" and doc.tenant_id == "synthetic-tenant"
+    assert doc.format_code == "ODAY_G2" and doc.format_version == expected_format.format_version
+    assert doc.assumptions.area_ping == 25 and doc.assumptions.monthly_base_rent == 1234
+    assert doc.metadata["target_format_snapshot"] == expected_format.to_dict()
+    assert doc.metadata["target_format_sha256"] == content_sha256(expected_format.to_dict())
+    assert "insurance_annual_cost" not in doc.assumptions.to_dict()
+    assert "insurance_annual_cost" not in doc.metadata["target_format_snapshot"]
+    assert doc.metadata["production_admission"] == "not_established_by_simulation"
+    assert doc.metadata["format_configuration_policy"] == "oday-g2-six-combo-v1"
+    assert doc.contract_version == "1.0.0" and doc.engine_version == "site-economics-simulator-v1.2.0"
+    expected_origins = {"insurance_annual_cost": "explicit_simulation_assumption"} if explicit else {}
+    if entry == "market_context":
+        expected_origins.update({"area_ping": "listing.average_area_ping",
+            "monthly_rent": "listing.median_asking_rent_per_ping * area_ping",
+            "demand_multiplier": "demand.total_population + demand.density_per_sq_km",
+            "competitor_discount": "competitor.active_competitors + competitor.competitor_density_per_sq_km"})
+        assert doc.source_market_context_id == context["context_id"]
+        assert doc.source_market_context_sha256 == content_sha256(context)
+        assert doc.metadata["source_market_context_document_id"] == envelope["document_id"]
+        assert doc.metadata["source_market_context_document_sha256"] == content_sha256(envelope)
+        assert doc.metadata["context_tenant_declared"] is True
+        assert doc.metadata["derived_demand_mult"] == 1 and doc.metadata["derived_comp_discount"] == 0
+    else:
+        assert doc.source_market_context_id is None and doc.source_market_context_sha256 is None
+        if not explicit:
+            assert "input_origins" not in doc.metadata
+    assert doc.metadata.get("input_origins", {}) == expected_origins
+    assert json.dumps(envelope, sort_keys=True) == before_context
+    params = results[0].simulation_input.operating_params
+    assert doc.metadata["operating_parameters_snapshot"] == params.to_dict()
+    assert doc.metadata["operating_parameters_snapshot"]["insurance_annual_cost"] == expected_insurance
+    for name, result in zip(doc.scenarios, results, strict=True):
+        assert result.simulation_input.operating_params is params
+        assert result.simulation_input.operating_params.insurance_annual_cost == expected_insurance
+        assert result.simulation_input.format_spec == expected_format
+        assert doc.scenarios[name].average_monthly_ebitda == result.metrics.average_monthly_ebitda
+        assert doc.scenarios[name].levered_npv == result.metrics.levered_npv
+        assert doc.scenarios[name].unlevered_npv == result.metrics.unlevered_npv
+        assert len(result.monthly_schedule) == 4
+    assert doc.metrics == results[0].metrics and doc.monthly_schedule == results[0].monthly_schedule
+    validate_site_economics_document(doc)
+    restored = SiteEconomicsDocument.from_json(doc.to_json())
+    validate_site_economics_document(json.loads(doc.to_json()))
+    assert restored.to_dict() == doc.to_dict() and restored.digest == doc.digest
+    record_testsuite_property(f"insurance_document_{entry}_{insurance}", json.dumps({
+        "document": doc.to_dict(), "actual_simulations": [{
+            "operating_params": result.simulation_input.operating_params.to_dict(),
+            "metrics": result.metrics.to_dict(),
+            "monthly_schedule": [row.to_dict() for row in result.monthly_schedule],
+            "unlevered_cash_flows": result.unlevered_cash_flows,
+            "levered_cash_flows": result.levered_cash_flows} for result in results]}, sort_keys=True))
+    # A mutable document metadata dict must not be the live model's storage.
+    doc.metadata["operating_parameters_snapshot"]["insurance_annual_cost"] = -1
+    assert params.insurance_annual_cost == expected_insurance
+    assert restored.metadata["operating_parameters_snapshot"]["insurance_annual_cost"] == expected_insurance
+
+
+@pytest.mark.parametrize("entry", ["direct", "market_context"])
+@pytest.mark.parametrize("lower_insurance", [0, 3456.25])
+@pytest.mark.parametrize("tax_rate", [0.0, 0.2])
+def test_insurance_annual_delta_changes_opex_once_not_capital_or_demand(
+    entry, lower_insurance, tax_rate, record_testsuite_property,
+):
+    import json
+
+    from modules.site_economics.application.context_inputs import content_sha256
+
+    spec = synthetic_g2_format()
+    spec = replace(spec, format_version="2.1.0-insurance-engineering",
+        tax_spec=replace(spec.tax_spec, corporate_tax_rate=tax_rate))
+    registry = synthetic_g2_registry()
+    registry.register(spec)
+    results = []
+
+    class ObserveActualSimulator(SiteEconomicsSimulator):
+        def simulate(self, value):
+            result = super().simulate(value)
+            results.append(result)
+            return result
+
+    service = SiteEconomicsService(registry=registry, simulator=ObserveActualSimulator())
+    context = {"context_id": "synthetic-insurance-pair-context", "identity": {"site_id": "synthetic-insurance-pair"},
+        "listing": {"status": "available", "average_area_ping": 25, "median_asking_rent_per_ping": 49.36},
+        "demand": {"status": "available", "total_population": 15000, "density_per_sq_km": 8000},
+        "competitor": {"status": "available", "active_competitors": 0, "competitor_density_per_sq_km": 0}}
+    common = SimulationOverrides(format_code="ODAY_G2", format_version=spec.format_version,
+        area_ping=25, monthly_rent=1234, lease_term_months=24, annual_discount_rate=0.09,
+        debt_ratio=0.4, annual_interest_rate=0.02, demand_multiplier=1.2,
+        competitor_discount=0.1, cannibalization_discount=0.05,
+        custom_equipment_capex=1_500_000, custom_fitout_capex=800_000)
+    docs = []
+    for insurance in (lower_insurance, lower_insurance + 12000):
+        overrides = replace(common, insurance_annual_cost=insurance)
+        if entry == "direct":
+            doc = service.evaluate_site("synthetic-insurance-pair", 99, 999,
+                tenant_id="synthetic-tenant", overrides=overrides, horizon_months=36)
+        else:
+            doc = service.evaluate_site_market_context(context, tenant_id="synthetic-tenant",
+                overrides=overrides, horizon_months=36)
+        docs.append(doc)
+        validate_site_economics_document(doc)
+        assert SiteEconomicsDocument.from_json(doc.to_json()).to_dict() == doc.to_dict()
+        assert doc.assumptions.area_ping == common.area_ping
+        assert doc.assumptions.monthly_base_rent == common.monthly_rent
+        assert doc.assumptions.lease_term_months == common.lease_term_months
+        assert doc.annual_discount_rate == common.annual_discount_rate
+        assert doc.metadata["target_format_snapshot"] == spec.to_dict()
+        assert doc.metadata["target_format_sha256"] == content_sha256(spec.to_dict())
+        if entry == "market_context":
+            assert doc.source_market_context_sha256 == content_sha256(context)
+            assert doc.source_market_context_id == context["context_id"]
+    assert len(results) == 8
+    assert docs[0].assumptions == docs[1].assumptions
+    for name, baseline, actual in zip(docs[0].scenarios, results[:4], results[4:], strict=True):
+        a_input, b_input = actual.simulation_input, baseline.simulation_input
+        assert a_input == replace(b_input, operating_params=replace(b_input.operating_params,
+            insurance_annual_cost=lower_insurance + 12000))
+        assert a_input.custom_equipment_capex == common.custom_equipment_capex
+        assert a_input.custom_fitout_capex == common.custom_fitout_capex
+        assert a_input.custom_debt_ratio == common.debt_ratio
+        assert a_input.annual_discount_rate == common.annual_discount_rate
+        assert a_input.cannibalization_discount == common.cannibalization_discount
+        assert a_input.operating_params.lease_term_months == common.lease_term_months
+        assert a_input.custom_interest_rate == pytest.approx(common.annual_interest_rate + (0.015 if name == "stress_test" else 0))
+        assert a_input.demand_multiplier == pytest.approx(common.demand_multiplier * {
+            "base": 1, "optimistic": 1.15, "pessimistic": 0.8, "stress_test": 0.7}[name])
+        assert a_input.custom_rent_amount == pytest.approx(common.monthly_rent * {
+            "base": 1, "optimistic": 0.9, "pessimistic": 1, "stress_test": 1.15}[name])
+        assert docs[1].scenarios[name].average_monthly_ebitda - docs[0].scenarios[name].average_monthly_ebitda == pytest.approx(-1000)
+        for field in ("total_initial_capex", "total_initial_cash_outlay", "equity_investment",
+                      "debt_financed", "average_monthly_revenue"):
+            assert getattr(actual.metrics, field) == getattr(baseline.metrics, field)
+        assert actual.metrics.average_monthly_ebitda - baseline.metrics.average_monthly_ebitda == pytest.approx(-1000)
+        assert actual.metrics.breakeven_monthly_revenue > baseline.metrics.breakeven_monthly_revenue
+        assert actual.metrics.breakeven_turns_per_day > baseline.metrics.breakeven_turns_per_day
+        assert actual.metrics.breakeven_capacity_utilization > baseline.metrics.breakeven_capacity_utilization
+        assert actual.unlevered_cash_flows[0] == baseline.unlevered_cash_flows[0]
+        assert actual.levered_cash_flows[0] == baseline.levered_cash_flows[0]
+        for a, b in zip(actual.monthly_schedule, baseline.monthly_schedule, strict=True):
+            for field in ("month", "year", "calendar_month", "is_terminal", "ramp_multiplier",
+                          "seasonality_multiplier", "total_cycles_count", "gross_revenue", "rent_expense",
+                          "utilities_expense", "maintenance_expense", "equipment_depreciation",
+                          "fitout_amortization", "interest_expense", "loan_principal_payment",
+                          "total_debt_service", "remaining_loan_principal", "terminal_salvage_inflow",
+                          "terminal_deposit_return", "terminal_decommissioning_outflow", "terminal_loan_payoff"):
+                assert getattr(a, field) == getattr(b, field)
+            assert a.store_operations_expense - b.store_operations_expense == pytest.approx(1000)
+            assert a.total_opex - b.total_opex == pytest.approx(1000)
+            assert a.ebitda - b.ebitda == pytest.approx(-1000)
+            assert a.ebit - b.ebit == pytest.approx(-1000)
+            assert a.levered_operating_cash_flow - b.levered_operating_cash_flow == pytest.approx(
+                -1000 - (a.tax_expense - b.tax_expense), abs=0.02)
+            assert a.net_levered_cash_flow - b.net_levered_cash_flow == pytest.approx(
+                a.levered_operating_cash_flow - b.levered_operating_cash_flow, abs=0.02)
+            assert a.net_unlevered_cash_flow - b.net_unlevered_cash_flow == pytest.approx(
+                a.unlevered_operating_cash_flow - b.unlevered_operating_cash_flow, abs=0.02)
+            if tax_rate == 0:
+                assert a.tax_expense == b.tax_expense == 0
+                assert a.unlevered_operating_cash_flow - b.unlevered_operating_cash_flow == pytest.approx(-1000)
+                assert a.net_unlevered_cash_flow - b.net_unlevered_cash_flow == pytest.approx(-1000)
+                assert a.net_levered_cash_flow - b.net_levered_cash_flow == pytest.approx(-1000)
+        if tax_rate == 0:
+            assert [a - b for a, b in zip(actual.unlevered_cash_flows, baseline.unlevered_cash_flows, strict=True)] == pytest.approx([0] + [-1000] * 36)
+            assert [a - b for a, b in zip(actual.levered_cash_flows, baseline.levered_cash_flows, strict=True)] == pytest.approx([0] + [-1000] * 36)
+    record_testsuite_property(f"insurance_delta_{entry}_{lower_insurance}_{tax_rate}", json.dumps({
+        "documents": [doc.to_dict() for doc in docs], "actual_simulations": [{
+            "operating_params": result.simulation_input.operating_params.to_dict(),
+            "metrics": result.metrics.to_dict(), "schedule": [row.to_dict() for row in result.monthly_schedule],
+            "unlevered_cash_flows": result.unlevered_cash_flows,
+            "levered_cash_flows": result.levered_cash_flows} for result in results]}, sort_keys=True))
+
+
+@pytest.mark.parametrize("entry", ["direct", "market_context"])
+@pytest.mark.parametrize("insurance", [True, False, "0", -1, float("nan"), float("inf"), -float("inf"), 10**400])
+def test_insurance_rejects_non_numeric_negative_nonfinite_and_overflow_before_simulation(entry, insurance):
+    from modules.site_economics.application.context_inputs import SiteEconomicsInputError
+
+    inputs = []
+
+    class ObserveActualSimulator(SiteEconomicsSimulator):
+        def simulate(self, value):
+            inputs.append(value)
+            return super().simulate(value)
+
+    service = SiteEconomicsService(registry=synthetic_g2_registry(), simulator=ObserveActualSimulator())
+    overrides = SimulationOverrides(insurance_annual_cost=insurance)
+    with pytest.raises(SiteEconomicsInputError) as error:
+        if entry == "direct":
+            service.evaluate_site("synthetic-insurance-invalid", 25, 0, overrides=overrides)
+        else:
+            context = {"context_id": "synthetic-insurance-invalid-context", "identity": {"site_id": "synthetic-insurance-invalid"},
+                "listing": {"status": "available", "average_area_ping": 25, "median_asking_rent_per_ping": 0},
+                "demand": {"status": "available", "total_population": 15000, "density_per_sq_km": 8000},
+                "competitor": {"status": "available", "active_competitors": 0, "competitor_density_per_sq_km": 0}}
+            service.evaluate_site_market_context(context, overrides=overrides)
+    assert error.value.field == "overrides.insurance_annual_cost"
+    assert error.value.code == ("SITE_ECONOMICS_INPUT_REQUIRED" if type(insurance) in (bool, str) else "SITE_ECONOMICS_INPUT_INVALID")
+    assert inputs == []
+
+
+@pytest.mark.parametrize("entry", ["direct", "market_context"])
+def test_explicit_insurance_does_not_bypass_original_g2_guard(entry):
+    service = SiteEconomicsService()
+    overrides = SimulationOverrides(insurance_annual_cost=0)
+    with pytest.raises(ValueError, match="ODAY_G2_CONFIGURATION_REQUIRED"):
+        if entry == "direct":
+            service.evaluate_site("synthetic-insurance-guard", 25, 0, overrides=overrides)
+        else:
+            service.evaluate_site_market_context({"context_id": "synthetic-insurance-guard-context",
+                "identity": {"site_id": "synthetic-insurance-guard"},
+                "listing": {"average_area_ping": 25, "median_asking_rent_per_ping": 0},
+                "demand": {"total_population": 15000, "density_per_sq_km": 8000},
+                "competitor": {"active_competitors": 0, "competitor_density_per_sq_km": 0}}, overrides=overrides)
+
+
+@pytest.mark.parametrize("mismatch", ["site", "tenant", "source_number"])
+def test_explicit_insurance_preserves_context_identity_tenant_and_observation_checks(mismatch):
+    from modules.site_economics.application.context_inputs import SiteEconomicsInputError
+
+    context = {"context_id": "synthetic-insurance-scope-context", "tenant_id": "synthetic-tenant",
+        "identity": {"site_id": "synthetic-insurance-scope"},
+        "listing": {"average_area_ping": 25, "median_asking_rent_per_ping": 0},
+        "demand": {"total_population": 15000, "density_per_sq_km": 8000},
+        "competitor": {"active_competitors": 0, "competitor_density_per_sq_km": 0}}
+    if mismatch == "source_number":
+        context["listing"]["average_area_ping"] = True
+    service = SiteEconomicsService(registry=synthetic_g2_registry())
+    with pytest.raises(SiteEconomicsInputError) as error:
+        service.evaluate_site_market_context(context,
+            tenant_id="wrong-tenant" if mismatch == "tenant" else "synthetic-tenant",
+            site_id="wrong-site" if mismatch == "site" else "synthetic-insurance-scope",
+            overrides=SimulationOverrides(insurance_annual_cost=0))
+    assert error.value.code == ("SITE_ECONOMICS_INPUT_REQUIRED" if mismatch == "source_number" else "SITE_ECONOMICS_CONTEXT_SCOPE_MISMATCH")
+
+
+@pytest.mark.parametrize("entry", ["direct", "market_context"])
+@pytest.mark.parametrize("debt", [0, 1])
+def test_integer_numeric_roundtrip_through_real_service_and_all_four_results(
+    entry, debt, record_testsuite_property,
+):
+    import hashlib
+    import json
+
+    from modules.site_economics.application.context_inputs import content_sha256
+
+    # Integer source facts intentionally stay integer-encoded in the raw format
+    # snapshot. This is not a change to the shared fixture or a business policy.
+    spec = synthetic_g2_format()
+    spec = replace(spec, format_version="2.2.0-numeric-engineering",
+        tax_spec=replace(spec.tax_spec, corporate_tax_rate=0),
+        residual_spec=replace(spec.residual_spec, equipment_salvage_ratio=0))
+    registry = synthetic_g2_registry()
+    registry.register(spec)
+    format_json = json.dumps(spec.to_dict(), sort_keys=True)
+    context = {"context_id": "synthetic-numeric-context", "tenant_id": "synthetic-tenant",
+        "identity": {"site_id": "synthetic-numeric", "metadata": {"integer": 7, "flag": True}},
+        "listing": {"average_area_ping": 25, "median_asking_rent_per_ping": 50},
+        "demand": {"total_population": 15000, "density_per_sq_km": 8000},
+        "competitor": {"active_competitors": 0, "competitor_density_per_sq_km": 0}}
+    envelope = {"document_id": "synthetic-numeric-envelope", "tenant_id": "synthetic-tenant",
+        "contexts": [context], "metadata": {"integer": 9, "flag": False}}
+    context_json = json.dumps(envelope, sort_keys=True)
+    results = []
+
+    class ObserveActualSimulator(SiteEconomicsSimulator):
+        def simulate(self, value):
+            result = super().simulate(value)
+            results.append(result)
+            return result
+
+    service = SiteEconomicsService(registry=registry, simulator=ObserveActualSimulator())
+    documents = []
+    for numeric_type in (int, float):
+        overrides = SimulationOverrides(
+            custom_equipment_capex=numeric_type(1500000), custom_fitout_capex=numeric_type(800000),
+            debt_ratio=numeric_type(debt), annual_interest_rate=numeric_type(0),
+            annual_discount_rate=numeric_type(0), demand_multiplier=numeric_type(1),
+            competitor_discount=numeric_type(0), cannibalization_discount=numeric_type(0),
+            insurance_annual_cost=numeric_type(0), lease_term_months=2)
+        if entry == "direct":
+            doc = service.evaluate_site("synthetic-numeric", numeric_type(25), numeric_type(1250),
+                tenant_id="synthetic-tenant", overrides=overrides, horizon_months=4)
+        else:
+            # Explicit integers exercise the context override path, while the
+            # original integer-valued observations remain content-bound as-is.
+            overrides = replace(overrides, area_ping=numeric_type(25), monthly_rent=numeric_type(1250))
+            doc = service.evaluate_site_market_context(envelope, tenant_id="synthetic-tenant",
+                site_id="synthetic-numeric", overrides=overrides, horizon_months=4)
+        documents.append(doc)
+        encoded = doc.to_json()
+        restored = SiteEconomicsDocument.from_json(encoded)
+        validate_site_economics_document(doc)
+        validate_site_economics_document(json.loads(encoded))
+        assert restored.to_json() == encoded
+        assert restored.digest == doc.digest == hashlib.sha256(
+            json.dumps(doc.to_dict(), sort_keys=True).encode()).hexdigest()
+        assert restored.to_dict() == doc.to_dict()
+        assert doc.site_id == "synthetic-numeric" and doc.tenant_id == "synthetic-tenant"
+        assert doc.format_code == "ODAY_G2" and doc.format_version == spec.format_version
+        assert doc.metadata["target_format_sha256"] == content_sha256(spec.to_dict())
+        assert json.dumps(doc.metadata["target_format_snapshot"], sort_keys=True) == format_json
+        assert type(doc.metadata["target_format_snapshot"]["tax_spec"]["corporate_tax_rate"]) is int
+        assert doc.metadata["production_admission"] == "not_established_by_simulation"
+        if entry == "market_context":
+            assert doc.source_market_context_id == context["context_id"]
+            assert doc.source_market_context_sha256 == content_sha256(context)
+            assert doc.metadata["source_market_context_document_sha256"] == content_sha256(envelope)
+            assert doc.metadata["source_market_context_document_id"] == envelope["document_id"]
+            assert doc.metadata["context_tenant_declared"] is True
+            assert all(origin == "explicit_simulation_assumption" for origin in doc.metadata["input_origins"].values())
+        else:
+            assert doc.source_market_context_id is None and doc.source_market_context_sha256 is None
+        assert restored.metadata == doc.metadata
+        assert json.dumps(restored.metadata, sort_keys=True) == json.dumps(doc.metadata, sort_keys=True)
+    assert len(results) == 8
+    integer_doc, float_doc = documents
+    assert type(integer_doc.assumptions.total_equipment_capex) is int
+    assert type(integer_doc.assumptions.total_fitout_capex) is int
+    assert type(integer_doc.metrics.total_initial_capex) is int
+    assert type(integer_doc.monthly_schedule[-1].terminal_deposit_return) is int
+    assert type(integer_doc.to_dict()["metrics"]["total_initial_capex"]) is float
+    assert type(integer_doc.to_dict()["monthly_schedule"][-1]["terminal_deposit_return"]) is float
+    # Metadata is deliberately outside the corrected output fields, even when
+    # it contains the same rent/area amounts as the typed assumptions.
+    assert type(integer_doc.metadata["operating_parameters_snapshot"]["monthly_base_rent"]) is int
+    assert type(integer_doc.metadata["operating_parameters_snapshot"]["area_ping"]) is int
+    assert type(integer_doc.metadata["operating_parameters_snapshot"]["lease_term_months"]) is int
+    assert json.dumps(integer_doc.metadata["target_format_snapshot"], sort_keys=True) == format_json
+    assert integer_doc.metrics.total_initial_capex == 2300000
+    assert integer_doc.monthly_schedule[-1].terminal_deposit_return == 2500
+    assert json.dumps(envelope, sort_keys=True) == context_json
+    assert json.dumps(registry.get("ODAY_G2", spec.format_version).to_dict(), sort_keys=True) == format_json
+    assert tuple(integer_doc.scenarios) == ("base", "optimistic", "pessimistic", "stress_test")
+    for name, integer_result, float_result in zip(integer_doc.scenarios, results[:4], results[4:], strict=True):
+        sim_input = integer_result.simulation_input
+        assert sim_input.operating_params is results[0].simulation_input.operating_params
+        assert sim_input.format_spec == spec
+        assert sim_input.custom_equipment_capex == 1500000 and sim_input.custom_fitout_capex == 800000
+        assert sim_input.custom_debt_ratio == debt and sim_input.annual_discount_rate == 0
+        assert sim_input.custom_interest_rate == (0.015 if name == "stress_test" else 0)
+        assert sim_input.operating_params.insurance_annual_cost == 0
+        assert integer_result.monthly_schedule == float_result.monthly_schedule
+        assert integer_result.unlevered_cash_flows == float_result.unlevered_cash_flows
+        assert integer_result.levered_cash_flows == float_result.levered_cash_flows
+        assert integer_result.metrics == float_result.metrics
+        assert integer_result.decision == float_result.decision
+        assert integer_doc.scenarios[name].levered_npv == integer_result.metrics.levered_npv
+        assert integer_doc.scenarios[name].average_monthly_ebitda == integer_result.metrics.average_monthly_ebitda
+        # Exercise canonical serialization of every actual scenario result,
+        # not just the root document's base schedule.
+        scenario_doc = replace(integer_doc, metrics=integer_result.metrics, decision=integer_result.decision,
+            monthly_schedule=integer_result.monthly_schedule)
+        assert SiteEconomicsDocument.from_json(scenario_doc.to_json()).to_json() == scenario_doc.to_json()
+        assert SiteEconomicsDocument.from_json(scenario_doc.to_json()).digest == scenario_doc.digest
+        assert json.dumps(integer_result.metrics.to_dict(), sort_keys=True) == json.dumps(float_result.metrics.to_dict(), sort_keys=True)
+        assert json.dumps([row.to_dict() for row in integer_result.monthly_schedule], sort_keys=True) == json.dumps(
+            [row.to_dict() for row in float_result.monthly_schedule], sort_keys=True)
+        if debt == 0:
+            assert integer_result.metrics.min_dscr is None and integer_result.metrics.average_dscr is None
+        else:
+            assert integer_result.metrics.simple_payback.payback_months == 0
+    # Ignore only per-call identity/time and intentionally verbatim metadata in
+    # this int-vs-float numerical control, not the financial outputs themselves.
+    control = replace(float_doc, document_id=integer_doc.document_id, evaluated_at=integer_doc.evaluated_at,
+        metadata=integer_doc.metadata)
+    assert control.to_json() == integer_doc.to_json() and control.digest == integer_doc.digest
+    record_testsuite_property(f"numeric_service_{entry}_{debt}", json.dumps({
+        "documents": [doc.to_dict() for doc in documents], "actual_simulations": [{
+            "metrics": result.metrics.to_dict(), "decision": result.decision.to_dict(),
+            "schedule": [row.to_dict() for row in result.monthly_schedule],
+            "operating_params": result.simulation_input.operating_params.to_dict(),
+            "unlevered_cash_flows": result.unlevered_cash_flows,
+            "levered_cash_flows": result.levered_cash_flows} for result in results]}, sort_keys=True))
+
+
+@pytest.mark.parametrize("optional", [None, 0, 7])
+def test_declared_numeric_output_contract_preserves_raw_metadata_and_typed_boundaries(optional):
+    import hashlib
+    import json
+    from copy import deepcopy
+
+    from modules.site_economics.infrastructure.durable import _validate_typed
+
+    # Supplemental representation control, not an alternate financial result:
+    # populate every declared float field with a legal integer. Real service
+    # calculations are independently exercised above and by all retained R1 tests.
+    doc = SiteEconomicsService(registry=synthetic_g2_registry()).evaluate_site(
+        "synthetic-numeric-contract", 25, 1250, tenant_id="synthetic-tenant", horizon_months=1)
+    assumption_numbers = dict.fromkeys(("monthly_base_rent", "area_ping", "total_equipment_capex",
+        "total_fitout_capex", "total_initial_cash_outlay", "debt_ratio", "annual_interest_rate",
+        "corporate_tax_rate", "equipment_salvage_ratio", "demand_multiplier", "competitor_discount",
+        "cannibalization_discount"), 0)
+    monthly_numbers = dict.fromkeys(("ramp_multiplier", "seasonality_multiplier", "total_cycles_count",
+        "gross_revenue", "rent_expense", "utilities_expense", "maintenance_expense", "store_operations_expense",
+        "total_opex", "ebitda", "equipment_depreciation", "fitout_amortization", "ebit", "interest_expense",
+        "taxable_income", "tax_expense", "net_income", "loan_principal_payment", "total_debt_service",
+        "remaining_loan_principal", "unlevered_operating_cash_flow", "levered_operating_cash_flow",
+        "terminal_salvage_inflow", "terminal_deposit_return", "terminal_decommissioning_outflow",
+        "terminal_loan_payoff", "net_unlevered_cash_flow", "net_levered_cash_flow", "cumulative_unlevered_cash_flow",
+        "cumulative_levered_cash_flow", "cumulative_discounted_unlevered_cf", "cumulative_discounted_levered_cf"), 0)
+    metric_numbers = dict.fromkeys(("annual_discount_rate", "total_initial_capex", "total_initial_cash_outlay",
+        "equity_investment", "debt_financed", "unlevered_npv", "levered_npv", "average_monthly_revenue",
+        "average_monthly_ebitda", "average_ebitda_margin", "average_monthly_net_income", "average_net_margin",
+        "total_cumulative_levered_cash_flow", "total_cumulative_unlevered_cash_flow", "breakeven_monthly_revenue",
+        "breakeven_turns_per_day", "breakeven_capacity_utilization", "roic_annualized",
+        "cash_on_cash_return_annualized", "profitability_index"), 0)
+    metric_optionals = dict.fromkeys(("unlevered_irr", "levered_irr", "min_dscr", "average_dscr"), optional)
+    scenario_numbers = dict.fromkeys(("demand_multiplier", "competitor_discount", "monthly_rent",
+        "levered_npv", "unlevered_npv", "average_monthly_ebitda"), 0)
+    scenario_optionals = dict.fromkeys(("levered_irr", "simple_payback_months"), optional)
+    payback = replace(doc.metrics.simple_payback, payback_months=optional)
+    document = replace(doc, annual_discount_rate=0,
+        assumptions=replace(doc.assumptions, **assumption_numbers),
+        monthly_schedule=(replace(doc.monthly_schedule[0], **monthly_numbers),),
+        metrics=replace(doc.metrics, **metric_numbers, **metric_optionals,
+            simple_payback=payback, discounted_payback=payback),
+        decision=replace(doc.decision, confidence_score=0),
+        scenarios={name: replace(value, **scenario_numbers, **scenario_optionals) for name, value in doc.scenarios.items()},
+        metadata={**doc.metadata, "raw": {"amount": 25, "flag": True, "nullable": None,
+            "sequence": [0, 1, False], "nested": {"rate": 0}}})
+    _validate_typed(document, SiteEconomicsDocument)
+    wire = document.to_dict()
+    assert type(wire["annual_discount_rate"]) is float
+    for section, keys in ((wire["assumptions"], assumption_numbers), (wire["monthly_schedule"][0], monthly_numbers),
+                          (wire["metrics"], metric_numbers), (wire["decision"], {"confidence_score": 0})):
+        assert all(type(section[key]) is float for key in keys)
+    for section, keys in ((wire["metrics"], metric_optionals), (wire["metrics"]["simple_payback"], {"payback_months": optional}),
+                          (wire["metrics"]["discounted_payback"], {"payback_months": optional})):
+        assert all(section[key] is None if optional is None else type(section[key]) is float for key in keys)
+    for scenario in wire["scenarios"].values():
+        assert all(type(scenario[key]) is float for key in scenario_numbers)
+        assert all(scenario[key] is None if optional is None else type(scenario[key]) is float for key in scenario_optionals)
+        assert type(scenario["is_payback_censored"]) is bool
+    assert type(wire["horizon_months"]) is int and type(wire["metrics"]["horizon_months"]) is int
+    assert type(wire["monthly_schedule"][0]["is_terminal"]) is bool
+    assert all(type(wire["monthly_schedule"][0][key]) is int for key in ("month", "year", "calendar_month"))
+    assert all(type(wire["assumptions"][key]) is int for key in (
+        "loan_term_months", "lease_term_months", "lease_deposit_months", "rent_free_months"))
+    assert type(wire["metrics"]["simple_payback"]["is_censored"]) is bool
+    assert wire["metrics"]["simple_payback"]["censoring_type"] == payback.censoring_type.value
+    assert type(wire["metrics"]["simple_payback"]["horizon_months"]) is int
+    assert wire["decision"]["recommendation"] == document.decision.recommendation.value
+    assert wire["decision"]["reasons"] == list(document.decision.reasons)
+    assert wire["metadata"] == document.metadata
+    assert json.dumps(wire["metadata"], sort_keys=True) == json.dumps(document.metadata, sort_keys=True)
+    assert type(wire["metadata"]["raw"]["amount"]) is int
+    encoded = document.to_json()
+    restored = SiteEconomicsDocument.from_json(encoded)
+    validate_site_economics_document(restored)
+    assert restored.to_json() == encoded and restored.digest == document.digest
+    assert document.digest == hashlib.sha256(json.dumps(wire, sort_keys=True).encode()).hexdigest()
+    # Historical raw bytes/digests are evidence, never rewritten or repinned.
+    # A corrected typed representation can legitimately have a DIFFERENT hash.
+    raw = deepcopy(wire)
+    raw["annual_discount_rate"] = 0
+    raw["metrics"]["total_initial_capex"] = 0
+    raw["monthly_schedule"][0]["terminal_deposit_return"] = 0
+    raw_json = json.dumps(raw, sort_keys=True)
+    raw_digest = hashlib.sha256(raw_json.encode()).hexdigest()
+    read = SiteEconomicsDocument.from_json(raw_json)
+    assert raw_digest != read.digest
+    assert read.digest == document.digest
+    assert json.dumps(raw, sort_keys=True) == raw_json
+    assert read.metadata == raw["metadata"] and read.metadata["target_format_sha256"] == doc.metadata["target_format_sha256"]
+    # Output conversion must not weaken the pre-existing typed trust boundary.
+    for invalid in (True, "0", float("inf")):
+        with pytest.raises(ValueError):
+            _validate_typed(replace(document, annual_discount_rate=invalid), SiteEconomicsDocument)
+        with pytest.raises(ValueError):
+            _validate_typed(replace(document, decision=replace(document.decision, confidence_score=invalid)), SiteEconomicsDocument)
+        with pytest.raises(ValueError):
+            _validate_typed(replace(document, monthly_schedule=(replace(document.monthly_schedule[0], gross_revenue=invalid),)), SiteEconomicsDocument)
+    with pytest.raises(ValueError):
+        _validate_typed(replace(document, horizon_months=True), SiteEconomicsDocument)
