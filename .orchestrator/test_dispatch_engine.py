@@ -257,24 +257,56 @@ class PausedOwnerFailoverPreferenceTests(unittest.TestCase):
         )
         self.assertEqual((reassignment or {}).get("new_owner"), "Codex2")
 
+    @staticmethod
+    def _submitted_review(*authors: str, submitted_by: str = "Claude", **overrides: Any) -> dict[str, Any]:
+        """A review whose submission carries validated source-author provenance."""
+        head = "a" * 40
+        task = {
+            "id": "T-2",
+            "status": "review",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "task_class": "implementation",
+            "review_submission": {
+                "pr_number": 12,
+                "branch": "task/T-2",
+                "base_branch": "dev",
+                "remote_sha": head,
+                "source_head": head,
+                "source_base": "b" * 40,
+                "source_authors": list(authors),
+                "submitted_by": submitted_by,
+            },
+        }
+        task.update(overrides)
+        return {"tasks": [task]}
+
     def test_reviewer_failover_order_is_unchanged(self) -> None:
         """The reviewer branch is not an implementation-owner decision."""
-        status = {
-            "tasks": [
-                {
-                    "id": "T-2",
-                    "status": "review",
-                    "owner": "Claude",
-                    "reviewer": "Codex",
-                    "task_class": "implementation",
-                }
-            ]
-        }
-        reassignment = self._run(self._config(), self._paused_codex_state(), status)
+        reassignment = self._run(self._config(), self._paused_codex_state(), self._submitted_review("Claude"))
         self.assertIsNotNone(reassignment)
         self.assertEqual(reassignment["new_reviewer"], "Codex2")
         self.assertEqual(reassignment["new_owner"], "Claude")
 
+    def test_reviewer_failover_excludes_every_source_pool(self) -> None:
+        """Codex2 is next in order, but it wrote part of the range."""
+        reassignment = self._run(
+            self._config(), self._paused_codex_state(), self._submitted_review("Claude", "Codex2")
+        )
+        self.assertIsNotNone(reassignment)
+        self.assertEqual(reassignment["new_reviewer"], "AgyB")
+        self.assertEqual(reassignment["new_owner"], "Claude")
+
+    def test_reviewer_failover_refuses_missing_or_unknown_source(self) -> None:
+        """Without validated source evidence no replacement is independent."""
+        missing = self._submitted_review("Claude")
+        missing["tasks"][0].pop("review_submission")
+        unknown = self._submitted_review("Codex-Root")
+        stale = self._submitted_review("Claude")
+        stale["tasks"][0]["review_submission"]["source_head"] = "c" * 40
+        for label, status in (("missing", missing), ("unknown", unknown), ("stale", stale)):
+            with self.subTest(label=label):
+                self.assertIsNone(self._run(self._config(), self._paused_codex_state(), status))
 
 if __name__ == "__main__":
     unittest.main()

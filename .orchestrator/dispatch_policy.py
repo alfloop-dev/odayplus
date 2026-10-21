@@ -182,20 +182,40 @@ class ReviewSourceIdentity(NamedTuple):
         return not self.submitter or normalize_agent_id(self.submitter) == normalize_agent_id(owner or "")
 
 
+def _registered_actor_id(config: dict[str, Any], name: str) -> str:
+    """The configured agent id a recorded actor name refers to, or empty.
+
+    A name is registered when it is an agent id, or the configured display name
+    of exactly one logical (non-slot) agent. Anything else -- including a label
+    that merely resembles a registered one -- is unknown, not guessed.
+    """
+    agents = config.get("agents", {}) or {}
+    agent_id = normalize_agent_id(name)
+    if agent_id and isinstance(agents.get(agent_id), dict):
+        return agent_id
+    wanted = str(name or "").strip().casefold()
+    if not wanted:
+        return ""
+    matches = [
+        str(key)
+        for key, agent in agents.items()
+        if isinstance(agent, dict)
+        and not str(agent.get("dispatch_slot_for") or agent.get("dispatch_slot_for_pool") or "").strip()
+        and str(agent.get("display_name") or agent.get("name") or "").strip().casefold() == wanted
+    ]
+    return normalize_agent_id(matches[0]) if len(matches) == 1 else ""
+
+
 def _registered_actor_pool(config: dict[str, Any], name: str) -> str:
     """The account pool of a registered agent, or empty for an unknown name.
 
     `agent_account_pool_id` answers for any string -- an unregistered label
     falls through to a provider group spelled like the label itself, which is
-    always "independent" of every real pool. Membership in the configured
-    agents is therefore checked first, so an unknown actor is unresolvable
-    rather than conveniently foreign.
+    always "independent" of every real pool. Registration is therefore checked
+    first, so an unknown actor is unresolvable rather than conveniently foreign.
     """
-    agent_id = normalize_agent_id(name)
-    agent = (config.get("agents", {}) or {}).get(agent_id)
-    if not agent_id or not isinstance(agent, dict):
-        return ""
-    return agent_account_pool_id(config, agent_id)
+    agent_id = _registered_actor_id(config, name)
+    return agent_account_pool_id(config, agent_id) if agent_id else ""
 
 
 def task_review_source_identity(config: dict[str, Any], task: dict[str, Any] | None) -> ReviewSourceIdentity:
@@ -270,7 +290,7 @@ def task_review_source_identity(config: dict[str, Any], task: dict[str, Any] | N
             return identity._replace(
                 error=f"{role} {name!r} is not a registered agent with an account pool"
             )
-        agents.add(normalize_agent_id(name))
+        agents.update({normalize_agent_id(name), _registered_actor_id(config, name)})
         pools.add(pool)
     return identity._replace(agents=frozenset(agents), pools=frozenset(pools))
 
@@ -291,8 +311,8 @@ def review_source_block_reason(
         return identity.error
     if is_human_gate_agent(reviewer):
         return None
-    reviewer_id = normalize_agent_id(reviewer or "")
-    if reviewer_id in identity.agents:
+    reviewer_ids = {normalize_agent_id(reviewer or ""), _registered_actor_id(config, reviewer or "")}
+    if reviewer_ids & identity.agents:
         return f"reviewer {reviewer} is itself a source author, submitter or owner of the submitted work"
     pool = _registered_actor_pool(config, reviewer or "")
     if not pool:

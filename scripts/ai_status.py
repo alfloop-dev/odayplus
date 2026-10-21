@@ -6905,38 +6905,31 @@ def review_submission_source_evidence(identity: Any) -> dict[str, Any]:
     }
 
 
-def review_source_independence_block_reason(
-    task: dict[str, Any],
-    reviewer: str | None,
-    head: str,
-) -> str | None:
-    """Re-derive the submitted work's authors from Git and ask the source rule.
+def immutable_review_source_authors(task: dict[str, Any], head: str) -> tuple[list[str], str | None]:
+    """Re-derive the submitted range's source authors from Git, or say why not.
 
     The board's `review_submission` is a record anyone with write access to
     the status file could edit, so an approval does not take its
     `source_authors` on trust. The recorded base must be in the integration
     history -- otherwise it could be moved up to hide earlier commits -- and
-    the range from it to the exact approved head is scanned again with the
-    same delivery-identity scanner submission used. The recorded authors must
-    be exactly what that scan finds, and then the reviewer is judged by the
-    one `dispatch_policy` rule every dispatch path uses.
+    the range from it to the exact head is scanned again with the same
+    delivery-identity scanner submission used. The recorded authors must be
+    exactly what that scan finds.
     """
-    from dispatch_policy import review_source_block_reason
-
     task_id = str(task.get("id") or "").strip()
     submission = task.get("review_submission")
     if not isinstance(submission, dict) or not submission:
-        return "the task has no review submission naming its source authors"
+        return [], "the task has no review submission naming its source authors"
     head = str(head or "").strip().lower()
     source_base = str(submission.get("source_base") or "").strip().lower()
     source_head = str(submission.get("source_head") or "").strip().lower()
     recorded = submission.get("source_authors")
     if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", source_base):
-        return "the review submission does not bind its source authors to a validated base"
+        return [], "the review submission does not bind its source authors to a validated base"
     if not head or source_head != head:
-        return "the recorded source authors are not bound to the head being approved"
+        return [], "the recorded source authors are not bound to the head being approved"
     if not isinstance(recorded, list) or not recorded:
-        return "the review submission names no immutable source authors"
+        return [], "the review submission names no immutable source authors"
 
     runtime_config = status_runtime_config()
     repository_id = task_repository_id(runtime_config, task) or "pantheon"
@@ -6946,7 +6939,7 @@ def review_source_independence_block_reason(
     if not git_command_succeeds(["rev-parse", "--verify", target_ref], cwd=repo_root):
         target_ref = base_branch
     if not git_command_succeeds(["merge-base", "--is-ancestor", source_base, target_ref], cwd=repo_root):
-        return f"the recorded source base {source_base[:12]} is not in {target_ref} history"
+        return [], f"the recorded source base {source_base[:12]} is not in {target_ref} history"
     identity = inspect_delivery_identity(
         repo_root,
         task_id=task_id,
@@ -6956,15 +6949,35 @@ def review_source_independence_block_reason(
         actual_branch=str(submission.get("branch") or "").strip() or None,
     )
     if identity.errors:
-        return "the submitted range fails delivery identity: " + "; ".join(identity.errors)
+        return [], "the submitted range fails delivery identity: " + "; ".join(identity.errors)
     actual = list(identity.source_agents)
     if [str(author).strip() for author in recorded] != actual:
-        return (
+        return [], (
             f"the recorded source authors {recorded!r} are not the immutable Git authors {actual!r} "
             f"of {source_base[:12]}..{head[:12]}"
         )
-    verified = dict(task)
-    verified["review_submission"] = {**submission, "source_authors": actual}
+    return actual, None
+
+
+def review_source_independence_block_reason(
+    task: dict[str, Any],
+    reviewer: str | None,
+    head: str,
+) -> str | None:
+    """Judge a reviewer signature against the Git-derived authors of `head`.
+
+    The authors come from `immutable_review_source_authors`, never from the
+    record alone; the judgement is the one `dispatch_policy` rule every
+    dispatch path uses, so the approval cannot admit a reviewer the queue
+    would refuse.
+    """
+    from dispatch_policy import review_source_block_reason
+
+    authors, error = immutable_review_source_authors(task, head)
+    if error:
+        return error
+    submission = task.get("review_submission") or {}
+    verified = {**task, "review_submission": {**submission, "source_authors": authors}}
     return review_source_block_reason(merged_orchestrator_config(), verified, reviewer)
 
 

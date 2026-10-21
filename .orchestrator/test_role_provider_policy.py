@@ -39,11 +39,14 @@ from dispatch_policy import (
     ROLE_HELPER,
     ROLE_OWNER,
     ROLE_REVIEWER,
+    ReviewSourceIdentity,
     allowed_role_provider_ids,
     dispatch_reason_role,
+    review_source_block_reason,
     role_provider_block_reason,
     role_provider_policy_error,
     role_provider_policy_settings,
+    task_review_source_identity,
 )
 
 #: The policy this fleet is being configured with, and the exact shape
@@ -192,6 +195,23 @@ UNCLASSIFIED_TASK = {"id": "T-3", "status": "todo"}
 #: pick the wrong lane: the excluded provider is offered first every time.
 REVIEWER_POOL = ["Antigravity", "Claude", "Codex", "Codex2"]
 OWNER_POOL = ["Codex", "Antigravity", "Claude"]
+
+SOURCE_HEAD = "e" * 40
+SOURCE_BASE = "b" * 40
+
+
+def _source_submission(*authors: str, submitted_by: str, **extra: Any) -> dict[str, Any]:
+    """A review submission carrying validated source provenance for its range."""
+    submission: dict[str, Any] = {
+        "pr_number": 1221,
+        "remote_sha": SOURCE_HEAD,
+        "source_head": SOURCE_HEAD,
+        "source_base": SOURCE_BASE,
+        "source_authors": list(authors),
+        "submitted_by": submitted_by,
+    }
+    submission.update(extra)
+    return submission
 
 
 # --------------------------------------------------------------------------- #
@@ -1026,7 +1046,10 @@ def _run_repair(config: dict[str, Any], task: dict[str, Any], *, pin_author: boo
         ),
     ]
     if not pin_author:
-        patches.append(mock.patch.object(supervisor, "task_submitted_author", lambda *a: ""))
+        patches.append(
+            mock.patch.object(supervisor, "task_review_source_identity", lambda *a: ReviewSourceIdentity())
+        )
+        patches.append(mock.patch.object(supervisor, "review_source_block_reason", lambda *a: None))
     for patch in patches:
         patch.start()
     try:
@@ -1061,7 +1084,7 @@ def test_repair_does_not_launder_a_submitted_codex_author_into_a_self_review(
     policy at every step.
     """
     config = build_config()
-    assert supervisor.task_submitted_author(config, dict(task)) == "Codex"
+    assert supervisor.task_review_source_identity(config, dict(task)).pins_owner("Codex")
 
     # The defect, reproduced: unpin the author and the owner is rewritten off the
     # account that actually wrote the branch.
@@ -1113,9 +1136,11 @@ def test_the_authors_pool_stays_excluded_even_after_the_owner_already_moved() ->
         id="T-LAUNDERED",
         owner="Claude",
         reviewer="Antigravity",
-        review_submission={"pr_number": 1221, "head": "e" * 40, "submitted_by": "Codex"},
+        review_submission=_source_submission("Codex", submitted_by="Codex"),
     )
-    assert supervisor.task_submitted_author(config, laundered) == "Codex"
+    source = supervisor.task_review_source_identity(config, laundered)
+    assert source.error is None and author_pool in source.pools
+    assert not source.pins_owner("Claude")
     # The reviewer is policy-excluded, so the repair pass does have a reviewer to
     # replace, and every Codex lane is a legitimate answer to the reviewer rule.
     with mock.patch.object(
@@ -1141,7 +1166,7 @@ def test_an_unsubmitted_task_is_still_repaired_normally() -> None:
         "owner": "Codex",
         "reviewer": "Codex2",
     }
-    assert supervisor.task_submitted_author(config, live) == ""
+    assert not supervisor.task_review_source_identity(config, live).submitted
     assert (
         worker_failure_policy.first_viable_agent(
             config,
@@ -1745,11 +1770,9 @@ def test_reassign_unavailable_reviewers_excludes_submitted_author_and_pool() -> 
                 "owner": "Claude",
                 "reviewer": "Codex2",
                 "task_class": "implementation",
-                "review_submission": {
-                    "submitted_by": "Codex",
-                    "pr_number": 100,
-                    "branch": "task/T-AUTH-POOL",
-                },
+                "review_submission": _source_submission(
+                    "Codex", submitted_by="Codex", pr_number=100, branch="task/T-AUTH-POOL"
+                ),
             }
         ]
     }
@@ -1781,11 +1804,9 @@ def test_reassign_unavailable_reviewers_picks_independent_pool_over_author_pool(
                 "owner": "Claude",
                 "reviewer": "Codex2",
                 "task_class": "implementation",
-                "review_submission": {
-                    "submitted_by": "Codex",
-                    "pr_number": 100,
-                    "branch": "task/T-AUTH-POOL-2",
-                },
+                "review_submission": _source_submission(
+                    "Codex", submitted_by="Codex", pr_number=100, branch="task/T-AUTH-POOL-2"
+                ),
             }
         ]
     }
@@ -1820,10 +1841,7 @@ def test_worker_failure_reviewer_fallback_excludes_submitted_author_and_pool() -
                 "owner": "Claude",
                 "reviewer": "Codex",  # invalid: same pool as author
                 "task_class": "implementation",
-                "review_submission": {
-                    "submitted_by": "Codex",
-                    "pr_number": 101,
-                },
+                "review_submission": _source_submission("Codex", submitted_by="Codex", pr_number=101),
             }
         ]
     }
@@ -1891,7 +1909,10 @@ def test_worker_failure_on_frozen_task_enforces_candidate_policy() -> None:
                 "owner": "Claude",
                 "reviewer": "Codex",
                 "task_class": "implementation",
-                "approved_head": "abc1234",
+                "approved_head": SOURCE_HEAD,
+                # An approved head always carries the submission it approved;
+                # without it the carried reviewer could not be re-validated.
+                "review_submission": _source_submission("Claude", submitted_by="Claude"),
             }
         ]
     }
@@ -2004,3 +2025,203 @@ def test_ghost_provider_without_config_entry_fails_closed_and_not_known() -> Non
     assert "ghost_provider" in error
     assert "names provider(s) not configured in this fleet" in error
 
+
+
+# --------------------------------------------------------------------------- #
+# Source-author review independence
+# --------------------------------------------------------------------------- #
+
+
+def _finalized_by_claude(*authors: str, **overrides: Any) -> dict[str, Any]:
+    """The shape that motivated the rule.
+
+    Codex wrote the commits; Claude only merged a base and ran the finalizer, so
+    Claude is the genuine owner and submitter. Codex is still the author.
+    """
+    task: dict[str, Any] = {
+        "id": "T-SOURCE",
+        "status": "review",
+        "task_class": "implementation",
+        "priority": "P2",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "review_submission": _source_submission(*(authors or ("Codex",)), submitted_by="Claude"),
+    }
+    task.update(overrides)
+    return task
+
+
+def test_the_finalizer_does_not_stand_in_for_the_source_author() -> None:
+    """Excluding only the submitter's pool frees the author's pool to review itself."""
+    config = _pool_alias_config()
+    task = _finalized_by_claude("Codex")
+
+    source = task_review_source_identity(config, task)
+    assert source.error is None
+    assert source.submitter == "Claude"
+    assert source.source_authors == ("Codex",)
+    assert source.pools == frozenset({"codex_bjoe", "claude_main"})
+
+    assert "is itself a source author" in str(review_source_block_reason(config, task, "Codex"))
+    # An alias over the author's credential is the same reviewer.
+    assert "codex_bjoe" in str(review_source_block_reason(config, task, "Codex3"))
+    # The finalizer's own pool stays excluded as well.
+    assert review_source_block_reason(config, task, "Claude2") is not None
+    assert review_source_block_reason(config, task, "Codex2") is None
+
+
+def test_every_pool_of_a_multi_author_range_is_excluded() -> None:
+    """No one author is "the" author; a complete independent reviewer still exists."""
+    config = build_config()
+    task = _finalized_by_claude("Codex", "Antigravity")
+
+    source = task_review_source_identity(config, task)
+    assert source.pools == frozenset({"codex_bjoe", "agy_main", "claude_main"})
+    for reviewer in ("Codex", "Antigravity", "Antigravity2", "Claude", "Claude2"):
+        assert review_source_block_reason(config, task, reviewer) is not None, reviewer
+    assert review_source_block_reason(config, task, "Codex2") is None
+
+    # Reordering the range changes nothing: neither the first nor the last
+    # author is privileged.
+    reordered = _finalized_by_claude("Antigravity", "Codex")
+    assert task_review_source_identity(config, reordered).pools == source.pools
+    assert review_source_block_reason(config, reordered, "Codex") is not None
+
+
+@pytest.mark.parametrize(
+    ("submission_patch", "expected"),
+    [
+        ({"source_authors": ["Codex-Root"]}, "'Codex-Root' is not a registered agent"),
+        ({"source_authors": ["Codex", "Codex-Root"]}, "'Codex-Root' is not a registered agent"),
+        ({"source_authors": []}, "names no immutable source authors"),
+        ({"source_authors": ["Codex", ""]}, "names no immutable source authors"),
+        ({"source_authors": None}, "names no immutable source authors"),
+        ({"submitted_by": ""}, "does not record its genuine submitter"),
+        ({"submitted_by": "Claude-Root"}, "submitter 'Claude-Root' is not a registered agent"),
+        ({"source_head": "f" * 40}, "not bound to the submitted head"),
+        ({"source_head": None}, "not bound to the submitted head"),
+        ({"source_base": "dev"}, "not bound to a validated base"),
+    ],
+)
+def test_unresolvable_source_evidence_admits_no_reviewer(
+    submission_patch: dict[str, Any], expected: str
+) -> None:
+    """Unknown, missing or unbound provenance fails closed for every reviewer.
+
+    In particular the unregistered `Codex-Root` label is not guessed to be
+    `Codex`, and it is not "foreign" to every pool either -- the raw pool
+    resolver would answer `codex_root` for it, which matches nothing and would
+    therefore look independent of everyone.
+    """
+    config = build_config()
+    task = _finalized_by_claude("Codex")
+    task["review_submission"].update(submission_patch)
+
+    source = task_review_source_identity(config, task)
+    assert source.submitted
+    assert expected in str(source.error)
+    for reviewer in ("Codex", "Codex2", "Antigravity"):
+        assert review_source_block_reason(config, task, reviewer) == source.error
+
+
+def test_review_without_submission_is_unresolved_and_unsubmitted_work_is_unconstrained() -> None:
+    config = build_config()
+    in_review = {"id": "T-NOSUB", "status": "review", "owner": "Claude", "reviewer": "Codex2"}
+    source = task_review_source_identity(config, in_review)
+    assert source.submitted and source.error
+    assert source.pins_owner("Claude")
+    assert review_source_block_reason(config, in_review, "Codex2") is not None
+
+    todo = dict(in_review, status="todo")
+    assert task_review_source_identity(config, todo) == ReviewSourceIdentity()
+    assert review_source_block_reason(config, todo, "Codex2") is None
+
+
+def test_normalizer_replaces_a_same_source_reviewer_and_keeps_the_finalizer() -> None:
+    """Owner and reviewer are independent; reviewer and author are not."""
+    config = _pool_alias_config()
+    task = _finalized_by_claude("Codex")
+    assert supervisor.review_is_independent(config, "Claude", "Codex")
+    issues = supervisor.task_assignment_integrity_issues(config, {}, dict(task))
+    assert "reviewer_shares_source_account_pool" in issues
+
+    with mock.patch.object(
+        supervisor,
+        "get_agent_reassignment_candidates",
+        lambda *a, **k: ["Codex3", "Codex", "Codex2"],
+    ):
+        changes = _run_repair(config, task, pin_author=True)
+    assert changes == [("Claude", "Codex2")], changes
+
+
+def test_normalizer_does_not_repair_a_review_whose_source_is_unknown() -> None:
+    config = build_config()
+    task = _finalized_by_claude("Codex-Root")
+    issues = supervisor.task_assignment_integrity_issues(config, {}, dict(task))
+    assert any(issue.startswith("review_source_unresolved:") for issue in issues), issues
+
+    with mock.patch.object(
+        supervisor, "get_agent_reassignment_candidates", lambda *a, **k: ["Codex2", "Codex"]
+    ):
+        assert _run_repair(config, task, pin_author=True) == []
+
+
+def test_reviewer_failover_skips_the_author_pool_alias_for_a_finalized_branch() -> None:
+    config = _pool_alias_config()
+    config["account_pools"]["codex_lupin"]["state"] = "paused"
+    config["account_pools"]["codex_charlie"] = {"enabled": True, "max_concurrent": 1}
+    config["agents"]["codex4"] = {
+        "display_name": "Codex4",
+        "account_pool": "codex_charlie",
+        "provider": "codex",
+        "adapter": "codex",
+    }
+    task = _finalized_by_claude("Codex", reviewer="Codex2")
+    status: dict[str, Any] = {"tasks": [task]}
+    state: dict[str, Any] = {"active_workers": {}, "outstanding_deliveries": {}}
+    with (
+        mock.patch("supervisor.persist_task_reassignment", return_value=True),
+        mock.patch("supervisor.write_activity_log"),
+    ):
+        changed = dispatch_engine.reassign_unavailable_reviewers(config, state, status)
+    assert changed is True
+    assert status["tasks"][0]["reviewer"] == "Codex4"
+
+    unknown = _finalized_by_claude("Codex-Root", reviewer="Codex2")
+    status = {"tasks": [unknown]}
+    with mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist:
+        assert dispatch_engine.reassign_unavailable_reviewers(config, state, status) is False
+    persist.assert_not_called()
+
+
+def test_worker_failure_reviewer_failover_excludes_every_source_pool_and_refuses_unknown() -> None:
+    config = _pool_alias_config()
+    config["account_pools"]["codex_charlie"] = {"enabled": True, "max_concurrent": 1}
+    config["agents"]["codex4"] = {
+        "display_name": "Codex4",
+        "account_pool": "codex_charlie",
+        "provider": "codex",
+        "adapter": "codex",
+    }
+    worker = {"task_id": "T-SOURCE", "agent_id": "codex2", "retry_count": 2}
+    for authors, expected in ((("Codex",), "Codex4"), (("Codex-Root",), None)):
+        task = _finalized_by_claude(*authors, reviewer="Codex2")
+        with (
+            mock.patch("supervisor.load_status", return_value={"tasks": [task]}),
+            mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist,
+            mock.patch("supervisor.write_activity_log"),
+            mock.patch.object(
+                supervisor,
+                "get_agent_reassignment_candidates",
+                lambda *a, **k: ["Codex", "Codex3", "Codex4"],
+            ),
+        ):
+            reassigned = worker_failure_policy.maybe_reassign_task_after_worker_failure(
+                config, {}, worker, "terminal error", terminal=True
+            )
+        assert reassigned == expected, authors
+        if expected is None:
+            persist.assert_not_called()
+        else:
+            assert persist.call_args.kwargs["new_owner"] == "Claude"
+            assert persist.call_args.kwargs["new_reviewer"] == expected

@@ -631,6 +631,34 @@ def test_worktree_with_materialized_context_seed_recovers_immediately(tmp_path: 
     )
 
 
+#: The validated base a review submission's source provenance is bound to.
+SOURCE_BASE_SHA = "5" * 40
+
+
+def _source_evidence(head: str, *authors: str, submitted_by: str | None = None) -> dict:
+    """The source-author provenance `submit_review` records for a validated range."""
+    authors = authors or ("Claude",)
+    return {
+        "source_head": head,
+        "source_base": SOURCE_BASE_SHA,
+        "source_authors": list(authors),
+        "submitted_by": submitted_by or authors[0],
+    }
+
+
+def _register_ci_failure_actors(cfg: dict) -> dict:
+    """The `_failed_ci_review_task` actors, as registered agents of their own pools."""
+    cfg["agents"].setdefault(
+        "antigravity",
+        {"id": "antigravity", "display_name": "Antigravity", "provider": "antigravity"},
+    )
+    cfg["agents"].setdefault(
+        "codex2",
+        {"id": "codex2", "display_name": "Codex2", "provider": "codex", "account_pool": "codex2"},
+    )
+    return cfg
+
+
 def _base_test_config() -> dict:
     return {
         "paths": {
@@ -1536,6 +1564,7 @@ def test_stale_wake_for_review_ready_skipped_when_task_approved_or_merge_routed(
             "branch": "task/TASK-WAKE-001",
             "base_branch": "dev",
             "remote_sha": "a" * 40,
+            **_source_evidence("a" * 40, "Claude"),
         },
         "depends_on": [],
     }
@@ -1606,6 +1635,7 @@ def test_pr1175_reproduction_prior_queued_route_does_not_block_repaired_new_head
             "branch": "task/ODP-TEST-PR1175-001",
             "base_branch": "dev",
             "remote_sha": new_head,
+            **_source_evidence(new_head, "Claude"),
         },
         "merge_route": {
             "head": stale_head,
@@ -1691,6 +1721,7 @@ def test_merge_route_without_head_or_malformed_fails_closed() -> None:
             "branch": "task/ODP-TEST-MALFORMED-ROUTE-001",
             "base_branch": "dev",
             "remote_sha": new_head,
+            **_source_evidence(new_head, "Claude"),
         },
         "depends_on": [],
         "last_update": "2026-09-05T00:53:14Z",
@@ -1831,6 +1862,81 @@ def test_reconcile_runtime_on_boot_completes_stale_review_event_when_approved_or
     assert record["skip_reason"] == "stale_dispatch_event"
 
 
+def test_review_queue_refuses_a_reviewer_from_the_source_authors_pool() -> None:
+    """Codex wrote it, Claude finalized it: Codex is not the reviewer.
+
+    The owner/reviewer check sees two different accounts and passes, so the
+    queue reaches Codex unless readiness also asks who wrote the range. The
+    same task with an independent registered Codex2 is dispatched normally,
+    and missing, unknown or stale source evidence dispatches no one.
+    """
+    cfg = _register_ci_failure_actors(_base_test_config())
+    head = "a" * 40
+    task = {
+        "id": "TASK-SOURCE-REV-001",
+        "priority": "P1",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "review_submission": {
+            "pr_number": 101,
+            "branch": "task/TASK-SOURCE-REV-001",
+            "base_branch": "dev",
+            "remote_sha": head,
+            **_source_evidence(head, "Codex", submitted_by="Claude"),
+        },
+        "depends_on": [],
+    }
+    status = {"tasks": [task]}
+    state = {"workers": {}, "queue": {"events": {}}}
+    queued_events: list[dict] = []
+    probes = (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=head),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+    )
+
+    with probes[0], probes[1]:
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is False
+        assert supervisor.dispatch_priority_for_task(cfg, task, "Codex", task_map={task["id"]: task}) is None
+
+    with (
+        probes[0],
+        probes[1],
+        mock.patch.object(supervisor, "load_status", return_value=status),
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+        mock.patch.object(supervisor, "persist_task_reassignment", return_value=False),
+        mock.patch.object(supervisor, "write_activity_log"),
+        mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+        mock.patch.object(
+            supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
+        ),
+    ):
+        supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex"])
+    assert [evt for evt in queued_events if evt.get("target_agent") == "Codex"] == []
+
+    independent = dict(task, reviewer="Codex2")
+    with probes[0], probes[1]:
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, independent, "Codex2") is True
+
+    submission = independent["review_submission"]
+    for patch in (
+        {"source_authors": ["Codex-Root"]},
+        {"source_authors": []},
+        {"source_head": "b" * 40},
+        {"submitted_by": ""},
+    ):
+        forged = dict(independent, review_submission={**submission, **patch})
+        with probes[0], probes[1]:
+            assert dispatch_engine.is_task_review_dispatch_eligible(cfg, forged, "Codex2") is False, patch
+    legacy = dict(
+        independent,
+        review_submission={k: v for k, v in submission.items() if not k.startswith("source_")},
+    )
+    with probes[0], probes[1]:
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, legacy, "Codex2") is False
+
+
 def test_genuine_review_state_dispatches_reviewer() -> None:
     cfg = _base_test_config()
     task = {
@@ -1844,6 +1950,7 @@ def test_genuine_review_state_dispatches_reviewer() -> None:
             "branch": "task/TASK-GENUINE-REV-001",
             "base_branch": "dev",
             "remote_sha": "a" * 40,
+            **_source_evidence("a" * 40, "Claude"),
         },
         "depends_on": [],
         "last_update": "2026-08-20T10:00:00Z",
@@ -2130,6 +2237,7 @@ def test_stale_wake_for_review_ready_skipped_when_ci_is_pending_or_failed() -> N
             "branch": "task/TASK-WAKE-CI-001",
             "base_branch": "dev",
             "remote_sha": "8" * 40,
+            **_source_evidence("8" * 40, "Claude"),
         },
         "depends_on": [],
     }
@@ -2179,6 +2287,7 @@ def test_review_dispatch_eligible_when_task_review_gate_pending_but_other_ci_gre
             "branch": "task/TASK-REV-GATE-PENDING-001",
             "base_branch": "dev",
             "remote_sha": "7" * 40,
+            **_source_evidence("7" * 40, "Claude"),
         },
         "depends_on": [],
         "last_update": "2026-08-20T10:00:00Z",
@@ -2255,6 +2364,7 @@ def test_review_dispatch_eligible_for_merged_submission_with_deleted_remote_bran
             "branch": "task/TASK-MERGED-DEL-001",
             "base_branch": "dev",
             "remote_sha": "a" * 40,
+            **_source_evidence("a" * 40, "Claude"),
             "merged_at": "2026-09-13T06:53:45Z",
             "merge_commit": "b" * 40,
             "ci_status": "success",
@@ -2307,6 +2417,7 @@ def test_review_dispatch_eligible_for_merged_submission_with_retained_remote_bra
             "branch": "task/TASK-MERGED-RET-001",
             "base_branch": "dev",
             "remote_sha": "a" * 40,
+            **_source_evidence("a" * 40, "Claude"),
             "merged_at": "2026-09-13T06:53:45Z",
             "merge_commit": "b" * 40,
             "ci_status": "success",
@@ -3446,7 +3557,7 @@ def test_ci_failure_dispatch_ready_tasks_recovers_failed_ci_review_without_revie
 
 def test_ci_failure_recovery_then_success_reaches_review_dispatch() -> None:
     """When a task is resubmitted and CI succeeds, reviewer is dispatch eligible."""
-    cfg = _base_test_config()
+    cfg = _register_ci_failure_actors(_base_test_config())
     fixed_head = "c3d4e5f6" * 5
     task = _failed_ci_review_task(
         review_submission={
@@ -3454,6 +3565,7 @@ def test_ci_failure_recovery_then_success_reaches_review_dispatch() -> None:
             "branch": f"task/{FAILED_CI_TASK_ID}",
             "base_branch": "dev",
             "remote_sha": fixed_head,
+            **_source_evidence(fixed_head, "Antigravity"),
             "pr_url": f"https://github.com/{FAILED_CI_REPO}/pull/1282",
         }
     )
@@ -3578,7 +3690,7 @@ def test_ci_failure_full_lifecycle_dispatcher_to_resubmission_to_review(tmp_path
     """Full lifecycle: CI failure -> recovery to in_progress -> owner dispatch -> resubmission -> review dispatch."""
     import github_bus
 
-    cfg = _base_test_config()
+    cfg = _register_ci_failure_actors(_base_test_config())
     cfg["agents"]["antigravity"] = {
         "id": "antigravity",
         "display_name": "Antigravity",
@@ -3673,6 +3785,7 @@ def test_ci_failure_full_lifecycle_dispatcher_to_resubmission_to_review(tmp_path
         "branch": f"task/{task_id}",
         "base_branch": "dev",
         "remote_sha": fixed_head,
+        **_source_evidence(fixed_head, "Antigravity"),
         "pr_url": f"https://github.com/{FAILED_CI_REPO}/pull/1282",
     }
     disk1["_status_write_revision"] = "rev-3"
@@ -3932,7 +4045,7 @@ def _review_task(task_id: str, priority: str, *, head: str = PREEMPT_REVIEW_HEAD
         "reviewer": "Codex2",
         "priority": priority,
         "depends_on": [],
-        "review_submission": {"pr_number": 4100, "remote_sha": head},
+        "review_submission": {"pr_number": 4100, "remote_sha": head, **_source_evidence(head, "Claude")},
     }
     task.update(extra)
     return task
@@ -4190,6 +4303,7 @@ def test_diagnostic_cas_two_pending_two_green_revision_changing_dispatch(tmp_pat
             "branch": "task/PENDING-001",
             "base_branch": "dev",
             "remote_sha": "aaaa1111" * 5,
+            **_source_evidence("aaaa1111" * 5, "Claude"),
             "pr_url": "https://github.com/alfloop-dev/odayplus/pull/101",
         },
     }
@@ -4206,6 +4320,7 @@ def test_diagnostic_cas_two_pending_two_green_revision_changing_dispatch(tmp_pat
             "branch": "task/PENDING-002",
             "base_branch": "dev",
             "remote_sha": "aaaa2222" * 5,
+            **_source_evidence("aaaa2222" * 5, "Claude"),
             "pr_url": "https://github.com/alfloop-dev/odayplus/pull/102",
         },
     }
@@ -4222,6 +4337,7 @@ def test_diagnostic_cas_two_pending_two_green_revision_changing_dispatch(tmp_pat
             "branch": "task/GREEN-001",
             "base_branch": "dev",
             "remote_sha": "bbbb1111" * 5,
+            **_source_evidence("bbbb1111" * 5, "Claude"),
             "pr_url": "https://github.com/alfloop-dev/odayplus/pull/201",
         },
     }
@@ -4238,6 +4354,7 @@ def test_diagnostic_cas_two_pending_two_green_revision_changing_dispatch(tmp_pat
             "branch": "task/GREEN-002",
             "base_branch": "dev",
             "remote_sha": "bbbb2222" * 5,
+            **_source_evidence("bbbb2222" * 5, "Claude"),
             "pr_url": "https://github.com/alfloop-dev/odayplus/pull/202",
         },
     }
@@ -4390,6 +4507,7 @@ def test_diagnostic_cas_external_writer_race_preserves_data_and_dispatches_ready
             "branch": "task/PENDING-RACE-001",
             "base_branch": "dev",
             "remote_sha": "cccc1111" * 5,
+            **_source_evidence("cccc1111" * 5, "Claude"),
             "pr_url": "https://github.com/alfloop-dev/odayplus/pull/301",
         },
     }
@@ -4430,6 +4548,7 @@ def test_diagnostic_cas_external_writer_race_preserves_data_and_dispatches_ready
                     "branch": "task/CONCURRENT-READY-001",
                     "base_branch": "dev",
                     "remote_sha": "dddd2222" * 5,
+                    **_source_evidence("dddd2222" * 5, "Claude"),
                     "pr_url": "https://github.com/alfloop-dev/odayplus/pull/302",
                 },
             })
@@ -5019,6 +5138,7 @@ def test_diagnostic_cas_cross_agent_after_advisory_snapshot_refresh(tmp_path: Pa
             "review_submission": {
                 "pr_number": pr_number, "branch": "task/" + task_id, "base_branch": "dev",
                 "remote_sha": head, "pr_url": f"https://github.com/alfloop-dev/odayplus/pull/{pr_number}",
+                **_source_evidence(head, "Claude"),
             },
         })
     canonical.write_text(json.dumps({"_status_write_revision": "initial", "tasks": tasks, "handoffs": []}), encoding="utf-8")
@@ -5097,7 +5217,7 @@ def test_exhausted_helper_budget_does_not_starve_exact_head_green_review(tmp_pat
         "tasks": [
             {"id": "P0-HELPER", "priority": "P0", "status": "todo", "owner": "Claude", "reviewer": "Codex", "depends_on": []},
             {"id": "P1-GREEN-REVIEW", "priority": "P1", "status": "review", "owner": "Claude", "reviewer": "Antigravity7", "depends_on": [],
-             "review_submission": {"remote_sha": sha, "pr_number": 999, "branch": "task/P1-GREEN-REVIEW", "base_branch": "dev"},
+             "review_submission": {"remote_sha": sha, **_source_evidence(sha, "Claude"), "pr_number": 999, "branch": "task/P1-GREEN-REVIEW", "base_branch": "dev"},
              "repository": "alfloop-dev/odayplus"},
         ],
         "handoffs": [],
