@@ -104,7 +104,11 @@ class DataPlatformDocumentNotFoundError(DataPlatformClientError):
 
 
 class DataPlatformValidationError(DataPlatformClientError):
-    """Raised when data returned by the data platform fails schema validation."""
+    """Raised when platform data fails schema validation.
+
+    Public context must stay independent of unvalidated payloads and decoder
+    values: parsing can fail before the product envelope is tenant-checked.
+    """
 
     def __init__(self, message: str, *, details: Mapping[str, Any] | None = None) -> None:
         super().__init__(message, code="contract_validation_error", details=details)
@@ -550,8 +554,8 @@ class DataPlatformClient:
             )
         except Exception as err:
             raise DataPlatformValidationError(
-                f"Failed to parse SiteMarketContextDocument: {err}",
-                details={"contract_id": "emgi.site-market-context.v1", "raw": raw},
+                "Failed to parse SiteMarketContextDocument",
+                details={"contract_id": "emgi.site-market-context.v1"},
             ) from err
 
     def get_site_market_context(
@@ -638,8 +642,8 @@ class DataPlatformClient:
             )
         except Exception as err:
             raise DataPlatformValidationError(
-                f"Failed to parse MarketCellProfileDocument: {err}",
-                details={"contract_id": "emgi.market-cell-profile.v1", "raw": raw},
+                "Failed to parse MarketCellProfileDocument",
+                details={"contract_id": "emgi.market-cell-profile.v1"},
             ) from err
 
     def get_market_cell_profile(
@@ -724,8 +728,8 @@ class DataPlatformClient:
             return CatchmentProfileDocument.from_dict(raw)
         except Exception as err:
             raise DataPlatformValidationError(
-                f"Failed to parse CatchmentProfileDocument: {err}",
-                details={"contract_id": "emgi.catchment-profile.v1", "raw": raw},
+                "Failed to parse CatchmentProfileDocument",
+                details={"contract_id": "emgi.catchment-profile.v1"},
             ) from err
 
     def get_catchment_profile(
@@ -807,8 +811,8 @@ class DataPlatformClient:
             return PropertyObservationDocument.from_dict(raw)
         except Exception as err:
             raise DataPlatformValidationError(
-                f"Failed to parse PropertyObservationDocument: {err}",
-                details={"contract_id": "emgi.property-observation.v1", "raw": raw},
+                "Failed to parse PropertyObservationDocument",
+                details={"contract_id": "emgi.property-observation.v1"},
             ) from err
 
     def get_property_entity(
@@ -854,7 +858,7 @@ class DataPlatformClient:
             return EMGIPlatformFoundationConfig.from_dict(raw)
         except Exception as err:
             raise DataPlatformValidationError(
-                f"Failed to parse EMGIPlatformFoundationConfig: {err}"
+                "Failed to parse EMGIPlatformFoundationConfig"
             ) from err
 
     def get_store_reference(self, store_id: str) -> StoreReference:
@@ -870,7 +874,7 @@ class DataPlatformClient:
         try:
             return StoreReference.from_dict(raw)
         except Exception as err:
-            raise DataPlatformValidationError(f"Failed to parse StoreReference: {err}") from err
+            raise DataPlatformValidationError("Failed to parse StoreReference") from err
 
     def get_store_day_coverage(self, store_id: str, date_key: str) -> StoreDayCoverage:
         """Retrieve StoreDayCoverage for (store_id, date_key)."""
@@ -888,7 +892,7 @@ class DataPlatformClient:
         try:
             return StoreDayCoverage.from_dict(raw)
         except Exception as err:
-            raise DataPlatformValidationError(f"Failed to parse StoreDayCoverage: {err}") from err
+            raise DataPlatformValidationError("Failed to parse StoreDayCoverage") from err
 
     def get_store_daily_performance(self, store_id: str, date_key: str) -> StoreDailyPerformance:
         """Retrieve StoreDailyPerformance for (store_id, date_key)."""
@@ -907,7 +911,7 @@ class DataPlatformClient:
             return StoreDailyPerformance.from_dict(raw)
         except Exception as err:
             raise DataPlatformValidationError(
-                f"Failed to parse StoreDailyPerformance: {err}"
+                "Failed to parse StoreDailyPerformance"
             ) from err
 
     def get_operational_start_observation(self, store_id: str) -> OperationalStartObservation:
@@ -927,7 +931,7 @@ class DataPlatformClient:
             return OperationalStartObservation.from_dict(raw)
         except Exception as err:
             raise DataPlatformValidationError(
-                f"Failed to parse OperationalStartObservation: {err}"
+                "Failed to parse OperationalStartObservation"
             ) from err
 
 
