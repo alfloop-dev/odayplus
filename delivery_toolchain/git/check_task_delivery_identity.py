@@ -5,6 +5,13 @@ Every non-merge commit between the integration base and delivery head must
 carry the requested task id and valid owner/reviewer trailers.  Callers may
 also bind the delivery to an expected branch.  This prevents a reused branch
 or a correct-looking HEAD from hiding older commits for another task.
+
+The same scan is also the record of who wrote the delivery. Each non-merge
+commit names its source actor in its ``LLM-Agent`` trailer, and the set of
+those actors is what an independent reviewer has to be independent of -- not
+whoever later merged a base into the branch or submitted the PR. The scan
+reports them exactly as written; resolving a name to a registered account is
+the caller's job, so an unknown label stays visible instead of being guessed.
 """
 
 from __future__ import annotations
@@ -12,12 +19,13 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 try:
-    from .check_commit_trailers import validate_message
+    from .check_commit_trailers import parse_trailers, validate_message
 except ImportError:  # Direct script execution from task_finalize.sh.
-    from check_commit_trailers import validate_message
+    from check_commit_trailers import parse_trailers, validate_message
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -48,7 +56,27 @@ def resolve_base_ref(repo: Path, base: str) -> str:
     raise ValueError(f"integration base {base!r} does not resolve to a commit")
 
 
-def validate_delivery_identity(
+@dataclass(frozen=True)
+class DeliveryIdentity:
+    """What one immutable ``base..head`` delivery range proves.
+
+    ``source_agents`` is only meaningful when ``errors`` is empty: a range that
+    failed validation has not established who wrote it.
+    """
+
+    errors: list[str] = field(default_factory=list)
+    base_sha: str = ""
+    head_sha: str = ""
+    #: ``(commit sha, LLM-Agent)`` for every non-merge commit, oldest first.
+    commits: tuple[tuple[str, str], ...] = ()
+
+    @property
+    def source_agents(self) -> tuple[str, ...]:
+        """Every distinct source actor of the range, in first-commit order."""
+        return tuple(dict.fromkeys(agent for _sha, agent in self.commits if agent))
+
+
+def inspect_delivery_identity(
     repo: Path,
     *,
     task_id: str,
@@ -56,13 +84,13 @@ def validate_delivery_identity(
     head: str,
     expected_branch: str | None = None,
     actual_branch: str | None = None,
-) -> list[str]:
-    """Return delivery identity violations; empty means the range is coherent."""
+) -> DeliveryIdentity:
+    """Validate the delivery range and report the source actor of every commit."""
     errors: list[str] = []
     repo = repo.resolve()
     task_id = task_id.strip()
     if not task_id:
-        return ["task id is empty"]
+        return DeliveryIdentity(errors=["task id is empty"])
     if expected_branch and actual_branch and expected_branch != actual_branch:
         errors.append(
             f"branch {actual_branch!r} does not match recorded task branch {expected_branch!r}"
@@ -70,15 +98,21 @@ def validate_delivery_identity(
 
     try:
         base_ref = resolve_base_ref(repo, base)
-        _git(repo, "rev-parse", "--verify", f"{head}^{{commit}}")
+        base_sha = _git(repo, "rev-parse", "--verify", f"{base_ref}^{{commit}}")
+        head_sha = _git(repo, "rev-parse", "--verify", f"{head}^{{commit}}")
         commits_text = _git(repo, "rev-list", "--reverse", "--no-merges", f"{base_ref}..{head}")
     except ValueError as exc:
-        return [*errors, str(exc)]
+        return DeliveryIdentity(errors=[*errors, str(exc)])
 
     commits = [line for line in commits_text.splitlines() if line]
     if not commits:
-        return [*errors, f"delivery range {base_ref}..{head} contains no non-merge commits"]
+        return DeliveryIdentity(
+            errors=[*errors, f"delivery range {base_ref}..{head} contains no non-merge commits"],
+            base_sha=base_sha,
+            head_sha=head_sha,
+        )
 
+    sources: list[tuple[str, str]] = []
     for commit in commits:
         try:
             message = _git(repo, "show", "-s", "--format=%B", commit)
@@ -92,7 +126,33 @@ def validate_delivery_identity(
             require_subject_length_limit=False,
         )
         errors.extend(f"commit {commit[:12]}: {violation}" for violation in violations)
-    return errors
+        sources.append((commit, parse_trailers(message).get("llm-agent", "").strip()))
+    return DeliveryIdentity(
+        errors=errors,
+        base_sha=base_sha,
+        head_sha=head_sha,
+        commits=tuple(sources),
+    )
+
+
+def validate_delivery_identity(
+    repo: Path,
+    *,
+    task_id: str,
+    base: str,
+    head: str,
+    expected_branch: str | None = None,
+    actual_branch: str | None = None,
+) -> list[str]:
+    """Return delivery identity violations; empty means the range is coherent."""
+    return inspect_delivery_identity(
+        repo,
+        task_id=task_id,
+        base=base,
+        head=head,
+        expected_branch=expected_branch,
+        actual_branch=actual_branch,
+    ).errors
 
 
 def main(argv: list[str] | None = None) -> int:

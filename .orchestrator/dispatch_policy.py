@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
+import re
+from typing import Any, NamedTuple
 
 from common import normalize_agent_id
 from provider_runtime import provider_config, provider_config_entry
@@ -132,46 +133,176 @@ def task_closeout_is_frozen(config: dict[str, Any], task: dict[str, Any] | None)
 #: should build something and has become a claim about who already did.
 DEFAULT_SUBMITTED_AUTHOR_STATUSES = ("review", "review_approved")
 
+_SHA_RE = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 
-def task_submitted_author(config: dict[str, Any], task: dict[str, Any] | None) -> str:
-    """The agent whose already-submitted work this task record attests to.
 
-    Empty when nothing has been submitted yet. Once a branch is in review the
-    owner names the author of the commits under review, and the review is only
-    independent as long as that name survives. Rewriting it -- for any reason,
-    including a newly enabled provider policy -- does not merely relabel the
-    record: the replacement's account pool becomes the pool the reviewer search
-    excludes, which frees the original author's own pool to review its own
-    commits. So the author is read once, here, and every path that could
-    reassign an actor consults it rather than deciding for itself.
+def is_human_gate_agent(agent_name: str | None) -> bool:
+    """Whether a name is a human gate rather than an automated account.
+
+    The leaf implementation; `worker_failure_policy` imports it for the
+    supervisor scope, so the source rule below and every selector agree on
+    which names have no account pool by design.
+    """
+    name = str(agent_name or "").strip().casefold()
+    if not name:
+        return False
+    return name in {"human/ops", "human", "ops"} or name.startswith("human/")
+
+
+class ReviewSourceIdentity(NamedTuple):
+    """Who a review of this task has to be independent of.
+
+    `submitted` says whether already-submitted work fixes these actors at all.
+    `submitter` is the genuine `submitted_by` -- the finalizer, which is not
+    necessarily anyone who wrote a commit -- and is what pins the owner field.
+    `source_authors` are the immutable `LLM-Agent` actors of the submitted
+    range exactly as recorded. `agents` and `pools` are every one of those,
+    plus the submitter and the current owner, resolved through the registered
+    agent/account-pool configuration. `error` is set when any of that cannot be
+    established, and then no reviewer is independent.
+    """
+
+    submitted: bool = False
+    submitter: str = ""
+    source_authors: tuple[str, ...] = ()
+    agents: frozenset[str] = frozenset()
+    pools: frozenset[str] = frozenset()
+    error: str | None = None
+
+    def pins_owner(self, owner: str | None) -> bool:
+        """Whether the owner field is the finalizer of submitted work.
+
+        The owner that submitted -- or a submitted record that does not say who
+        did -- is not a slot the reconciler may re-fill: replacing it would
+        relabel the finalizer of a pinned head, and a missing submitter is not
+        evidence that someone else did it.
+        """
+        if not self.submitted:
+            return False
+        return not self.submitter or normalize_agent_id(self.submitter) == normalize_agent_id(owner or "")
+
+
+def _registered_actor_pool(config: dict[str, Any], name: str) -> str:
+    """The account pool of a registered agent, or empty for an unknown name.
+
+    `agent_account_pool_id` answers for any string -- an unregistered label
+    falls through to a provider group spelled like the label itself, which is
+    always "independent" of every real pool. Membership in the configured
+    agents is therefore checked first, so an unknown actor is unresolvable
+    rather than conveniently foreign.
+    """
+    agent_id = normalize_agent_id(name)
+    agent = (config.get("agents", {}) or {}).get(agent_id)
+    if not agent_id or not isinstance(agent, dict):
+        return ""
+    return agent_account_pool_id(config, agent_id)
+
+
+def task_review_source_identity(config: dict[str, Any], task: dict[str, Any] | None) -> ReviewSourceIdentity:
+    """The single source-author/account-pool rule for reviewer independence.
+
+    A review is independent of the work, not of a label. The work is the
+    immutable non-merge range `review_submission` was validated against, whose
+    commits each name their source actor; the account that merged a base into
+    the branch and ran the finalizer is a different fact, recorded separately
+    as `submitted_by`. Both matter, and so does the current owner: a reviewer
+    must share no account pool with any of them. Reading only the submitter --
+    or only one author of a multi-author range -- frees every other source
+    pool to review its own commits.
 
     A reopen returns the task to `in_progress` while `review_submission` and
     `approved_head` stay on the record, so status alone is not enough: the
-    submission evidence is checked too, and it is read in preference to the
-    owner field because it is the only part of the record an owner rewrite
-    cannot erase.
+    submission evidence is read whenever it exists. A record in review or
+    frozen without that evidence, or whose evidence is unbound, incomplete or
+    names an actor that is not a registered agent, has not established who
+    wrote it, and the answer is an error rather than a fallback to the owner.
     """
     if not isinstance(task, dict):
-        return ""
+        return ReviewSourceIdentity()
     owner = str(task.get("owner") or "").strip()
     submission = task.get("review_submission")
-    if isinstance(submission, dict) and submission:
-        # The recorded submitter outranks the owner field: it is the one name
-        # that still identifies the author after the owner has been rewritten,
-        # which is exactly the state this has to keep working in. Records written
-        # before it was captured fall back to the owner.
-        return str(submission.get("submitted_by") or "").strip() or owner
-    if not owner:
-        return ""
-    if task_closeout_is_frozen(config, task):
-        return owner
-    statuses = normalized_status_set(
-        ready_dispatch_settings(config).get("review_statuses"), list(DEFAULT_REVIEW_STATUSES)
+    if not (isinstance(submission, dict) and submission):
+        if not owner:
+            return ReviewSourceIdentity()
+        statuses = normalized_status_set(
+            ready_dispatch_settings(config).get("review_statuses"), list(DEFAULT_REVIEW_STATUSES)
+        )
+        statuses.update(DEFAULT_SUBMITTED_AUTHOR_STATUSES)
+        if not task_closeout_is_frozen(config, task) and str(task.get("status") or "").strip().lower() not in statuses:
+            return ReviewSourceIdentity()
+        return ReviewSourceIdentity(
+            submitted=True,
+            error="the task is in review without a validated review submission naming its source authors",
+        )
+
+    submitter = str(submission.get("submitted_by") or "").strip()
+    raw_authors = submission.get("source_authors")
+    authors = (
+        tuple(str(author).strip() for author in raw_authors)
+        if isinstance(raw_authors, (list, tuple))
+        else ()
     )
-    statuses.update(DEFAULT_SUBMITTED_AUTHOR_STATUSES)
-    if str(task.get("status") or "").strip().lower() in statuses:
-        return owner
-    return ""
+    identity = ReviewSourceIdentity(submitted=True, submitter=submitter, source_authors=authors)
+    remote_sha = str(submission.get("remote_sha") or "").strip().lower()
+    source_head = str(submission.get("source_head") or "").strip().lower()
+    source_base = str(submission.get("source_base") or "").strip().lower()
+    if not submitter:
+        return identity._replace(error="the review submission does not record its genuine submitter")
+    if not authors or any(not author for author in authors):
+        return identity._replace(error="the review submission names no immutable source authors")
+    if not _SHA_RE.fullmatch(source_head) or source_head != remote_sha:
+        return identity._replace(error="the recorded source authors are not bound to the submitted head")
+    if not _SHA_RE.fullmatch(source_base):
+        return identity._replace(error="the recorded source authors are not bound to a validated base")
+
+    agents: set[str] = set()
+    pools: set[str] = set()
+    actors = [("source author", author) for author in authors]
+    actors.append(("submitter", submitter))
+    if owner:
+        actors.append(("owner", owner))
+    for role, name in actors:
+        if role != "source author" and is_human_gate_agent(name):
+            agents.add(normalize_agent_id(name))
+            continue
+        pool = _registered_actor_pool(config, name)
+        if not pool:
+            return identity._replace(
+                error=f"{role} {name!r} is not a registered agent with an account pool"
+            )
+        agents.add(normalize_agent_id(name))
+        pools.add(pool)
+    return identity._replace(agents=frozenset(agents), pools=frozenset(pools))
+
+
+def review_source_block_reason(
+    config: dict[str, Any], task: dict[str, Any] | None, reviewer: str | None
+) -> str | None:
+    """Why `reviewer` may not review this task's submitted work, or None.
+
+    The one question every reviewer path asks -- the normalizer, failover,
+    dispatch readiness and the canonical approval -- so that none of them can
+    admit a reviewer another would refuse.
+    """
+    identity = task_review_source_identity(config, task)
+    if not identity.submitted:
+        return None
+    if identity.error:
+        return identity.error
+    if is_human_gate_agent(reviewer):
+        return None
+    reviewer_id = normalize_agent_id(reviewer or "")
+    if reviewer_id in identity.agents:
+        return f"reviewer {reviewer} is itself a source author, submitter or owner of the submitted work"
+    pool = _registered_actor_pool(config, reviewer or "")
+    if not pool:
+        return f"reviewer {reviewer!r} is not a registered agent with an account pool"
+    if pool in identity.pools:
+        return (
+            f"reviewer {reviewer} shares account pool {pool} with a source author, "
+            "submitter or owner of the submitted work"
+        )
+    return None
 
 
 def dispatch_reason_role(reason: str | None) -> str | None:
