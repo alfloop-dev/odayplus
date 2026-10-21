@@ -16,6 +16,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import dispatch_engine
+import dispatch_policy
 import pytest
 import status_transition
 import supervisor
@@ -633,6 +634,26 @@ def test_worktree_with_materialized_context_seed_recovers_immediately(tmp_path: 
 
 #: The validated base a review submission's source provenance is bound to.
 SOURCE_BASE_SHA = "5" * 40
+
+#: The real Git reader behind the source-author rule. Tests about the rule
+#: itself restore it and run against a real synthetic repository.
+_READ_SOURCE_AUTHORS_FROM_GIT = dispatch_policy.immutable_review_source_authors
+
+
+def _git_finds_the_recorded_authors(_config: dict, _task: dict, submission: dict) -> tuple:
+    """Stand-in for the Git reader only, for tests about the queue's other gates.
+
+    Their heads are synthetic SHAs with no repository behind them. The rest of
+    the source-author rule -- binding to the submitted head and base,
+    registration and every account pool -- still judges each dispatch.
+    """
+    return tuple(str(author).strip() for author in submission.get("source_authors") or ()), None
+
+
+@pytest.fixture(autouse=True)
+def _synthetic_heads_have_their_recorded_authors():
+    with mock.patch.object(dispatch_policy, "immutable_review_source_authors", _git_finds_the_recorded_authors):
+        yield
 
 
 def _source_evidence(head: str, *authors: str, submitted_by: str | None = None) -> dict:
@@ -1862,79 +1883,151 @@ def test_reconcile_runtime_on_boot_completes_stale_review_event_when_approved_or
     assert record["skip_reason"] == "stale_dispatch_event"
 
 
-def test_review_queue_refuses_a_reviewer_from_the_source_authors_pool() -> None:
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-c", "commit.gpgsign=false", *args], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _real_source_range(repo: Path, task_id: str, *authors: str, finalizer: str) -> tuple[str, str]:
+    """Write a real range: `authors` commit, `dev` advances, `finalizer` merges it back.
+
+    Returns the validated base and the submitted head, as `submit_review`
+    resolves them.
+    """
+    repo.mkdir(parents=True)
+    _git(repo, "init", "-q", "-b", "dev")
+    _git(repo, "config", "user.email", "worker@pantheon.local")
+    _git(repo, "config", "user.name", "Worker")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "bootstrap")
+    _git(repo, "checkout", "-q", "-b", f"task/{task_id}")
+    for index, author in enumerate(authors):
+        reviewer = "Codex2" if author != "Codex2" else "Claude"
+        _git(
+            repo, "commit", "-q", "--allow-empty", "-m",
+            f"{task_id}: change {index}\n\nLLM-Agent: {author}\nTask-ID: {task_id}\nReviewer: {reviewer}\n",
+        )
+    _git(repo, "checkout", "-q", "dev")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "OTHER-1: unrelated dev work")
+    _git(repo, "update-ref", "refs/remotes/origin/dev", "dev")
+    _git(repo, "checkout", "-q", f"task/{task_id}")
+    _git(repo, "merge", "--no-ff", "-q", "-m", f"Merge dev\n\nLLM-Agent: {finalizer}\n", "dev")
+    return _git(repo, "rev-parse", "dev"), _git(repo, "rev-parse", "HEAD")
+
+
+def test_review_queue_refuses_a_reviewer_from_the_source_authors_pool(tmp_path: Path) -> None:
     """Codex wrote it, Claude finalized it: Codex is not the reviewer.
 
     The owner/reviewer check sees two different accounts and passes, so the
-    queue reaches Codex unless readiness also asks who wrote the range. The
-    same task with an independent registered Codex2 is dispatched normally,
-    and missing, unknown or stale source evidence dispatches no one.
+    queue reaches Codex unless readiness also asks who wrote the range -- and
+    asks Git, not the record: rewriting the recorded authors over the same
+    real head, base and remote to another registered actor is refused before
+    any queue selection. The same task with an independent registered Codex2
+    is dispatched normally with every original gate, and missing, unknown or
+    stale source evidence dispatches no one.
     """
     cfg = _register_ci_failure_actors(_base_test_config())
-    head = "a" * 40
+    repo = tmp_path / "source-git"
+    task_id = "TASK-SOURCE-REV-001"
+    base, head = _real_source_range(repo, task_id, "Codex", finalizer="Claude")
+    cfg["coordination"] = {"repositories": {"pantheon": {"local_path": str(repo)}}}
+    cfg["branch_workflow"] = {"dev_branch": "dev"}
     task = {
-        "id": "TASK-SOURCE-REV-001",
+        "id": task_id,
         "priority": "P1",
         "status": "review",
         "owner": "Claude",
         "reviewer": "Codex",
         "review_submission": {
             "pr_number": 101,
-            "branch": "task/TASK-SOURCE-REV-001",
+            "branch": f"task/{task_id}",
             "base_branch": "dev",
             "remote_sha": head,
-            **_source_evidence(head, "Codex", submitted_by="Claude"),
+            "source_head": head,
+            "source_base": base,
+            "source_authors": ["Codex"],
+            "submitted_by": "Claude",
         },
         "depends_on": [],
     }
-    status = {"tasks": [task]}
     state = {"workers": {}, "queue": {"events": {}}}
     queued_events: list[dict] = []
-    probes = (
-        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=head),
-        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
-    )
 
-    with probes[0], probes[1]:
-        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is False
-        assert supervisor.dispatch_priority_for_task(cfg, task, "Codex", task_map={task["id"]: task}) is None
+    def probes(sha: str = head, ci: str = "success") -> ExitStack:
+        stack = ExitStack()
+        stack.enter_context(mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=sha))
+        stack.enter_context(
+            mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", ci))
+        )
+        return stack
 
-    with (
-        probes[0],
-        probes[1],
-        mock.patch.object(supervisor, "load_status", return_value=status),
-        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
-        mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
-        mock.patch.object(supervisor, "persist_task_reassignment", return_value=False),
-        mock.patch.object(supervisor, "write_activity_log"),
-        mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
-        mock.patch.object(
-            supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
-        ),
-    ):
-        supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex"])
-    assert [evt for evt in queued_events if evt.get("target_agent") == "Codex"] == []
+    def dispatch(record: dict, agent_id: str) -> list[dict]:
+        queued_events.clear()
+        with (
+            probes(),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [record]}),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=False),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(
+                supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
+            ),
+        ):
+            supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=[agent_id])
+        return [evt for evt in queued_events if evt.get("task_id") == task_id]
 
-    independent = dict(task, reviewer="Codex2")
-    with probes[0], probes[1]:
-        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, independent, "Codex2") is True
+    with mock.patch.object(dispatch_policy, "immutable_review_source_authors", _READ_SOURCE_AUTHORS_FROM_GIT):
+        with probes():
+            assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is False
+            assert supervisor.dispatch_priority_for_task(cfg, task, "Codex", task_map={task_id: task}) is None
+        assert dispatch(task, "codex") == []
 
-    submission = independent["review_submission"]
-    for patch in (
-        {"source_authors": ["Codex-Root"]},
-        {"source_authors": []},
-        {"source_head": "b" * 40},
-        {"submitted_by": ""},
-    ):
-        forged = dict(independent, review_submission={**submission, **patch})
-        with probes[0], probes[1]:
-            assert dispatch_engine.is_task_review_dispatch_eligible(cfg, forged, "Codex2") is False, patch
-    legacy = dict(
-        independent,
-        review_submission={k: v for k, v in submission.items() if not k.startswith("source_")},
-    )
-    with probes[0], probes[1]:
-        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, legacy, "Codex2") is False
+        # The 7fcb queue boundary: only `source_authors` is rewritten, to a
+        # registered actor whose pool Codex does not share.
+        rewritten = json.loads(json.dumps(task))
+        rewritten["review_submission"]["source_authors"] = ["Antigravity"]
+        assert "are not the immutable Git authors ['Codex']" in str(
+            dispatch_policy.review_source_block_reason(cfg, rewritten, "Codex")
+        )
+        with probes():
+            assert dispatch_engine.is_task_review_dispatch_eligible(cfg, rewritten, "Codex") is False
+            assert supervisor.dispatch_priority_for_task(cfg, rewritten, "Codex", task_map={task_id: rewritten}) is None
+        assert dispatch(rewritten, "codex") == []
+
+        independent = dict(task, reviewer="Codex2")
+        with probes():
+            assert dispatch_engine.is_task_review_dispatch_eligible(cfg, independent, "Codex2") is True
+            assert (
+                supervisor.dispatch_priority_for_task(cfg, independent, "Codex2", task_map={task_id: independent})
+                == 0
+            )
+        assert [evt.get("target_agent") for evt in dispatch(independent, "codex2")] == ["Codex2"]
+        # Every original exact-head and CI gate still applies to it.
+        with probes(ci="pending"):
+            assert dispatch_engine.is_task_review_dispatch_eligible(cfg, independent, "Codex2") is False
+        with probes(sha="d" * 40):
+            assert dispatch_engine.is_task_review_dispatch_eligible(cfg, independent, "Codex2") is False
+
+        submission = independent["review_submission"]
+        for patch in (
+            {"source_authors": ["Claude"]},
+            {"source_authors": ["Codex-Root"]},
+            {"source_authors": []},
+            {"source_head": "b" * 40},
+            {"source_base": head},
+            {"submitted_by": ""},
+        ):
+            forged = dict(independent, review_submission={**submission, **patch})
+            with probes():
+                assert dispatch_engine.is_task_review_dispatch_eligible(cfg, forged, "Codex2") is False, patch
+        legacy = dict(
+            independent,
+            review_submission={k: v for k, v in submission.items() if not k.startswith("source_")},
+        )
+        with probes():
+            assert dispatch_engine.is_task_review_dispatch_eligible(cfg, legacy, "Codex2") is False
 
 
 def test_genuine_review_state_dispatches_reviewer() -> None:

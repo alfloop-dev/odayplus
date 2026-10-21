@@ -20,6 +20,7 @@ import dispatch_engine
 import github_bus
 import github_cloud_relay
 import github_reconciliation
+from check_task_delivery_identity import inspect_delivery_identity
 from common import load_jsonl
 from github_command_parser import GitHubCommand
 
@@ -3731,7 +3732,76 @@ class MergeGroupReconciliationTests(unittest.TestCase):
             self.bus_state.get("tasks", {}).get("ODP-TEST-MG-001", {}),
         )
 
+    def _bind_real_source_range(self) -> None:
+        """Back the approved PR head with a real synthetic range and registered actors.
+
+        Codex writes the task commit, `dev` advances, and Codex's finalizer
+        merges it back; the PR head is that merge, never the merge-group head
+        GitHub builds on top of the queue base. The submission's source
+        provenance is produced exactly as `submit_review` produces it -- the
+        delivery-identity scanner over the validated range, recorded by
+        `review_submission_source_evidence` -- and the reviewer Claude2 is a
+        registered agent in a pool of its own, so the source-author rule reads
+        the range from Git and finds it genuinely independent.
+        """
+        tmp = tempfile.TemporaryDirectory(prefix="test-mg-source-")
+        self.addCleanup(tmp.cleanup)
+        repo = Path(tmp.name) / "source-git"
+        repo.mkdir()
+        task_id = self.task["id"]
+        branch = self.task["review_submission"]["branch"]
+
+        def git(*args: str) -> str:
+            return subprocess.run(
+                ["git", "-c", "commit.gpgsign=false", *args], cwd=repo, check=True, capture_output=True, text=True
+            ).stdout.strip()
+
+        git("init", "-q", "-b", "dev")
+        git("config", "user.email", "worker@pantheon.local")
+        git("config", "user.name", "Worker")
+        git("commit", "-q", "--allow-empty", "-m", "bootstrap")
+        git("checkout", "-q", "-b", branch)
+        git(
+            "commit", "-q", "--allow-empty", "-m",
+            f"{task_id}: merge group change\n\nLLM-Agent: Codex\nTask-ID: {task_id}\nReviewer: Claude2\n",
+        )
+        git("checkout", "-q", "dev")
+        git("commit", "-q", "--allow-empty", "-m", "OTHER-001: unrelated dev work")
+        git("update-ref", "refs/remotes/origin/dev", "dev")
+        git("checkout", "-q", branch)
+        git("merge", "--no-ff", "-q", "-m", f"Merge dev into {branch}\n\nLLM-Agent: Codex\n", "dev")
+        head = git("rev-parse", "HEAD")
+
+        identity = inspect_delivery_identity(
+            repo, task_id=task_id, base="dev", head=head, expected_branch=branch, actual_branch=branch
+        )
+        self.assertEqual(identity.errors, [])
+        self.APPROVED_HEAD = head
+        self.assertNotEqual(head, self.GROUP_HEAD_OLD)
+        self.task["branch"] = branch
+        self.task["approved_head"] = head
+        self.task["review_submission"].update(
+            {
+                "remote_sha": head,
+                **ai_status.review_submission_source_evidence(identity),
+                "submitted_by": "Codex",
+            }
+        )
+        self.default_pr_node["headRefOid"] = head
+        self.config.update(
+            {
+                "coordination": {"repositories": {"pantheon": {"local_path": str(repo)}}},
+                "branch_workflow": {"dev_branch": "dev"},
+                "agents": {
+                    "codex": {"display_name": "Codex", "provider": "codex", "account_pool": "codex_bjoe"},
+                    "claude2": {"display_name": "Claude2", "provider": "claude", "account_pool": "claude_two"},
+                },
+            }
+        )
+
     def test_reconcile_merge_group_failure_normalize_handoffs_preserves_reviewer_recovery(self) -> None:
+        self._bind_real_source_range()
+        self.assertEqual(self.task["review_submission"]["source_authors"], ["Codex"])
         run_fixture = self._failure_run(id=31321422749)
 
         with (

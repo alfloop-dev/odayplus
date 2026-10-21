@@ -73,11 +73,15 @@ from classify_change_review_scope import classify_paths
 from common import (
     classify_reopen_reason,
 )
+from dispatch_policy import (
+    delivery_merge_target_branch,
+    task_branch_name,
+    task_explicit_branch,
+)
 from multi_repo_registry import (
     cross_repo_delivery_requirements,
     repository_local_path,
     repository_slug,
-    resolve_repository,
     resolve_task_repository,
     task_artifact_repository_ids,
     task_repository_id,
@@ -2357,16 +2361,6 @@ def classify_push_status(ahead: int, behind: int) -> str:
     return "diverged"
 
 
-def delivery_merge_target_branch(config: dict[str, Any], repository_id: str) -> str:
-    if repository_id == "pantheon":
-        branch = str((config.get("branch_workflow") or {}).get("dev_branch") or "").strip()
-        if branch:
-            return branch
-    repo = resolve_repository(config, repository_id)
-    branch = str(repo.get("default_branch") or "").strip()
-    return branch or "main"
-
-
 PR_PROVENANCE_JSON_FIELDS = (
     "number,state,mergeStateStatus,mergedAt,mergeCommit,autoMergeRequest,url,"
     "headRefOid,headRefName,baseRefName,statusCheckRollup"
@@ -2521,41 +2515,6 @@ _TASK_SHA_CACHE: dict[str, tuple[float, str | None]] = {}
 def clear_ai_status_caches() -> None:
     _CI_STATUS_CACHE.clear()
     _TASK_SHA_CACHE.clear()
-
-
-_UNUSABLE_BRANCH_CHARS = re.compile(r"[\s~^:?*\[\\]")
-
-
-def task_explicit_branch(
-    task: dict[str, Any] | None = None,
-    branch: str | None = None,
-) -> str | None:
-    """The branch explicitly recorded on the task, or None if absent/invalid.
-
-    Reuses the validity rules from ``task_branch_name`` (rejecting whitespace,
-    git ref metacharacters, and empty strings) without falling back to the
-    derived ``task/<id>`` default name.
-    """
-    candidate = branch if branch is not None else (task or {}).get("branch")
-    recorded = str(candidate or "").strip()
-    if recorded and not _UNUSABLE_BRANCH_CHARS.search(recorded) and ".." not in recorded:
-        return recorded
-    return None
-
-
-def task_branch_name(task: dict[str, Any] | None, task_id: str | None = None) -> str:
-    """The task's branch as recorded, falling back to the derived name.
-
-    Building `task/<id>` unconditionally invented a branch for every task
-    reimported from an existing GitHub PR, whose branch does not follow that
-    convention. Looking a task up by an invented ref finds nothing, and the
-    caller reads that as missing work rather than as a wrong question.
-    """
-    explicit = task_explicit_branch(task)
-    if explicit:
-        return explicit
-    resolved_id = str(task_id or (task or {}).get("id") or "").strip()
-    return f"task/{resolved_id}"
 
 
 def task_pr_lookup_scope(task_id: str) -> tuple[Path, list[str], int | None]:
@@ -6905,80 +6864,21 @@ def review_submission_source_evidence(identity: Any) -> dict[str, Any]:
     }
 
 
-def immutable_review_source_authors(task: dict[str, Any], head: str) -> tuple[list[str], str | None]:
-    """Re-derive the submitted range's source authors from Git, or say why not.
-
-    The board's `review_submission` is a record anyone with write access to
-    the status file could edit, so an approval does not take its
-    `source_authors` on trust. The recorded base must be in the integration
-    history -- otherwise it could be moved up to hide earlier commits -- and
-    the range from it to the exact head is scanned again with the same
-    delivery-identity scanner submission used. The recorded authors must be
-    exactly what that scan finds.
-    """
-    task_id = str(task.get("id") or "").strip()
-    submission = task.get("review_submission")
-    if not isinstance(submission, dict) or not submission:
-        return [], "the task has no review submission naming its source authors"
-    head = str(head or "").strip().lower()
-    source_base = str(submission.get("source_base") or "").strip().lower()
-    source_head = str(submission.get("source_head") or "").strip().lower()
-    recorded = submission.get("source_authors")
-    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", source_base):
-        return [], "the review submission does not bind its source authors to a validated base"
-    if not head or source_head != head:
-        return [], "the recorded source authors are not bound to the head being approved"
-    if not isinstance(recorded, list) or not recorded:
-        return [], "the review submission names no immutable source authors"
-
-    runtime_config = status_runtime_config()
-    repository_id = task_repository_id(runtime_config, task) or "pantheon"
-    repo_root = repository_local_path(runtime_config, repository_id) or ROOT
-    base_branch = delivery_merge_target_branch(runtime_config, repository_id)
-    target_ref = f"origin/{base_branch}"
-    if not git_command_succeeds(["rev-parse", "--verify", target_ref], cwd=repo_root):
-        target_ref = base_branch
-    if not git_command_succeeds(["merge-base", "--is-ancestor", source_base, target_ref], cwd=repo_root):
-        return [], f"the recorded source base {source_base[:12]} is not in {target_ref} history"
-    identity = inspect_delivery_identity(
-        repo_root,
-        task_id=task_id,
-        base=source_base,
-        head=head,
-        expected_branch=task_branch_name(task, task_id),
-        actual_branch=str(submission.get("branch") or "").strip() or None,
-    )
-    if identity.errors:
-        return [], "the submitted range fails delivery identity: " + "; ".join(identity.errors)
-    actual = list(identity.source_agents)
-    if [str(author).strip() for author in recorded] != actual:
-        return [], (
-            f"the recorded source authors {recorded!r} are not the immutable Git authors {actual!r} "
-            f"of {source_base[:12]}..{head[:12]}"
-        )
-    return actual, None
-
-
 def review_source_independence_block_reason(
     task: dict[str, Any],
     reviewer: str | None,
     head: str,
 ) -> str | None:
-    """Judge a reviewer signature against the Git-derived authors of `head`.
+    """Judge a reviewer signature on `head` by the one `dispatch_policy` rule.
 
-    The authors come from `immutable_review_source_authors`, never from the
-    record alone; the judgement is the one `dispatch_policy` rule every
-    dispatch path uses, so the approval cannot admit a reviewer the queue
-    would refuse.
+    That rule re-reads the submitted range's authors from Git rather than from
+    the board's record, exactly as every dispatch path does, so the approval
+    cannot admit a reviewer the queue would refuse -- nor the queue one the
+    approval would.
     """
     from dispatch_policy import review_source_block_reason
 
-    authors, error = immutable_review_source_authors(task, head)
-    if error:
-        return error
-    submission = task.get("review_submission") or {}
-    verified = {**task, "review_submission": {**submission, "source_authors": authors}}
-    return review_source_block_reason(merged_orchestrator_config(), verified, reviewer)
+    return review_source_block_reason(merged_orchestrator_config(), task, reviewer, head=head)
 
 
 def review_submission_for_task(

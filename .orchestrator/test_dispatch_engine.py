@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -257,10 +258,38 @@ class PausedOwnerFailoverPreferenceTests(unittest.TestCase):
         )
         self.assertEqual((reassignment or {}).get("new_owner"), "Codex2")
 
-    @staticmethod
-    def _submitted_review(*authors: str, submitted_by: str = "Claude", **overrides: Any) -> dict[str, Any]:
-        """A review whose submission carries validated source-author provenance."""
-        head = "a" * 40
+    def _git(self, *args: str) -> str:
+        return subprocess.run(
+            ["git", "-c", "commit.gpgsign=false", *args],
+            cwd=self.root, check=True, capture_output=True, text=True,
+        ).stdout.strip()
+
+    def _submitted_review(self, *authors: str, submitted_by: str = "Claude", **overrides: Any) -> dict[str, Any]:
+        """A review over a real synthetic range, with the provenance `submit_review` records.
+
+        The config's status root is this checkout, so the registry's own
+        `pantheon` repository is the repository the range is written to: each
+        of `authors` commits on the task branch, then `submitted_by` merges an
+        advanced `dev` back in as the finalizer's base advance.
+        """
+        if not (self.root / ".git").exists():
+            self._git("init", "-q", "-b", "dev")
+            self._git("config", "user.email", "worker@pantheon.local")
+            self._git("config", "user.name", "Worker")
+            self._git("commit", "-q", "--allow-empty", "-m", "bootstrap")
+        self._git("checkout", "-q", "-B", "task/T-2", "dev")
+        for index, author in enumerate(authors):
+            reviewer = "Claude" if author != "Claude" else "Codex2"
+            self._git(
+                "commit", "-q", "--allow-empty", "-m",
+                f"T-2: change {index}\n\nLLM-Agent: {author}\nTask-ID: T-2\nReviewer: {reviewer}\n",
+            )
+        self._git("checkout", "-q", "dev")
+        self._git("commit", "-q", "--allow-empty", "-m", "OTHER-1: unrelated dev work")
+        self._git("update-ref", "refs/remotes/origin/dev", "dev")
+        self._git("checkout", "-q", "task/T-2")
+        self._git("merge", "--no-ff", "-q", "-m", f"Merge dev into task/T-2\n\nLLM-Agent: {submitted_by}\n", "dev")
+        head = self._git("rev-parse", "HEAD")
         task = {
             "id": "T-2",
             "status": "review",
@@ -273,7 +302,7 @@ class PausedOwnerFailoverPreferenceTests(unittest.TestCase):
                 "base_branch": "dev",
                 "remote_sha": head,
                 "source_head": head,
-                "source_base": "b" * 40,
+                "source_base": self._git("rev-parse", "dev"),
                 "source_authors": list(authors),
                 "submitted_by": submitted_by,
             },
@@ -304,7 +333,17 @@ class PausedOwnerFailoverPreferenceTests(unittest.TestCase):
         unknown = self._submitted_review("Codex-Root")
         stale = self._submitted_review("Claude")
         stale["tasks"][0]["review_submission"]["source_head"] = "c" * 40
-        for label, status in (("missing", missing), ("unknown", unknown), ("stale", stale)):
+        # Same real head, base and remote; Codex2 wrote part of the range, but
+        # the record is rewritten to leave it out. Read from the record, Codex2
+        # would be the next independent reviewer.
+        rewritten = self._submitted_review("Claude", "Codex2")
+        rewritten["tasks"][0]["review_submission"]["source_authors"] = ["Claude"]
+        for label, status in (
+            ("missing", missing),
+            ("unknown", unknown),
+            ("stale", stale),
+            ("rewritten", rewritten),
+        ):
             with self.subTest(label=label):
                 self.assertIsNone(self._run(self._config(), self._paused_codex_state(), status))
 

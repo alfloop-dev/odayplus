@@ -35,13 +35,35 @@ os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
 
 import ai_status
 import common
+import dispatch_policy
 import github_bus
+import pytest
 import runtime_state
 import supervisor
 import task_archive
 import watch_events
 import worker_failure_policy
 import worker_workspace
+
+#: The real Git reader behind the source-author rule. Tests about the rule
+#: itself restore it and run against a real synthetic repository.
+_READ_SOURCE_AUTHORS_FROM_GIT = dispatch_policy.immutable_review_source_authors
+
+
+def _git_finds_the_recorded_authors(_config: Any, _task: Any, submission: dict[str, Any]) -> tuple[Any, None]:
+    """Stand-in for the Git reader only, for tests about the Supervisor's other gates.
+
+    Their heads are synthetic SHAs with no repository behind them. The rest of
+    the source-author rule -- binding to the submitted (or approved) head and
+    base, registration and every account pool -- still judges each path.
+    """
+    return tuple(str(author).strip() for author in submission.get("source_authors") or ()), None
+
+
+@pytest.fixture(autouse=True)
+def _synthetic_heads_have_their_recorded_authors():
+    with mock.patch.object(dispatch_policy, "immutable_review_source_authors", _git_finds_the_recorded_authors):
+        yield
 
 
 def tearDownModule() -> None:
@@ -9757,6 +9779,46 @@ def _bound_review_submission(*authors: str, submitted_by: str, head: str = "a" *
     }
 
 
+def _real_review_submission(repo: Path, task_id: str, *authors: str, submitted_by: str) -> dict[str, Any]:
+    """A review submission over a real synthetic range, as `submit_review` records it.
+
+    Each of `authors` commits on the task branch; `dev` then advances and
+    `submitted_by` merges it back -- the finalizer's base advance, which is not
+    a source commit.
+    """
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", "-c", "commit.gpgsign=false", *args], cwd=repo, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    repo.mkdir(parents=True)
+    git("init", "-q", "-b", "dev")
+    git("config", "user.email", "worker@pantheon.local")
+    git("config", "user.name", "Worker")
+    git("commit", "-q", "--allow-empty", "-m", "bootstrap")
+    git("checkout", "-q", "-b", f"task/{task_id}")
+    for index, author in enumerate(authors):
+        reviewer = "Claude" if author != "Claude" else "Grok"
+        git(
+            "commit", "-q", "--allow-empty", "-m",
+            f"{task_id}: change {index}\n\nLLM-Agent: {author}\nTask-ID: {task_id}\nReviewer: {reviewer}\n",
+        )
+    git("checkout", "-q", "dev")
+    git("commit", "-q", "--allow-empty", "-m", "OTHER-1: unrelated dev work")
+    git("update-ref", "refs/remotes/origin/dev", "dev")
+    git("checkout", "-q", f"task/{task_id}")
+    git("merge", "--no-ff", "-q", "-m", f"Merge dev\n\nLLM-Agent: {submitted_by}\n", "dev")
+    head = git("rev-parse", "HEAD")
+    return {
+        "pr_number": 7,
+        "remote_sha": head,
+        "source_head": head,
+        "source_base": git("rev-parse", "dev"),
+        "source_authors": list(authors),
+        "submitted_by": submitted_by,
+    }
+
+
 class WorkerReassignmentTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = {
@@ -9819,8 +9881,22 @@ class WorkerReassignmentTests(unittest.TestCase):
         write_activity_log.assert_called_once()
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "task_reassigned")
 
+    def _bind_real_source_repo(self) -> Path:
+        tmp = tempfile.TemporaryDirectory(prefix="test-source-author-")
+        self.addCleanup(tmp.cleanup)
+        repo = Path(tmp.name) / "source-git"
+        self.config["coordination"] = {"repositories": {"pantheon": {"local_path": str(repo)}}}
+        self.config["branch_workflow"] = {"dev_branch": "dev"}
+        real_reader = mock.patch.object(
+            dispatch_policy, "immutable_review_source_authors", _READ_SOURCE_AUTHORS_FROM_GIT
+        )
+        real_reader.start()
+        self.addCleanup(real_reader.stop)
+        return repo
+
     def test_review_failover_skips_the_source_author_behind_a_different_finalizer(self) -> None:
         """Codex wrote the range and Claude finalized it: Codex is not next."""
+        repo = self._bind_real_source_repo()
         worker = {"task_id": "P3-001", "agent_id": "gemini", "retry_count": 1, "run_id": "gemini-run-1"}
         status = {
             "tasks": [
@@ -9829,7 +9905,7 @@ class WorkerReassignmentTests(unittest.TestCase):
                     "status": "review",
                     "owner": "Claude",
                     "reviewer": "Gemini",
-                    "review_submission": _bound_review_submission("Codex", submitted_by="Claude"),
+                    "review_submission": _real_review_submission(repo, "P3-001", "Codex", submitted_by="Claude"),
                 }
             ]
         }
@@ -9844,11 +9920,17 @@ class WorkerReassignmentTests(unittest.TestCase):
 
     def test_review_failover_refuses_a_review_without_source_provenance(self) -> None:
         """A review that cannot say who wrote it has no independent reviewer."""
+        repo = self._bind_real_source_repo()
         worker = {"task_id": "P3-001", "agent_id": "gemini", "retry_count": 1, "run_id": "gemini-run-1"}
+        genuine = _real_review_submission(repo, "P3-001", "Codex", submitted_by="Claude")
         for label, submission in (
             ("missing", None),
-            ("unknown", _bound_review_submission("Codex-Root", submitted_by="Claude")),
-            ("empty", _bound_review_submission(submitted_by="Claude")),
+            ("unknown", {**genuine, "source_authors": ["Codex-Root"]}),
+            ("empty", {**genuine, "source_authors": []}),
+            # Same real head, base and remote: only the recorded author is
+            # rewritten, to a registered actor, which would leave Codex next.
+            ("rewritten", {**genuine, "source_authors": ["Grok"]}),
+            ("stale base", {**genuine, "source_base": genuine["source_head"]}),
         ):
             task = {"id": "P3-001", "status": "review", "owner": "Claude", "reviewer": "Gemini"}
             if submission is not None:
@@ -15165,23 +15247,12 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         ai_status.STATUS_FILE.write_text("{}", encoding="utf-8")
         ai_status.LOG_FILE.write_text("", encoding="utf-8")
         ai_status.clear_ai_status_caches()
-        # These tests are about the head freeze. The Git scan that re-derives
-        # the submitted range's authors is replaced by one that agrees with the
-        # record, so the source-author rule itself still runs on every approval
-        # and restore here; its Git re-derivation is exercised against real
-        # synthetic repositories in scripts/test_ai_status.py.
-        source_scan = unittest.mock.patch(
-            "ai_status.immutable_review_source_authors", side_effect=self._git_agrees_with_record
-        )
-        source_scan.start()
-        self.addCleanup(source_scan.stop)
-
-    @staticmethod
-    def _git_agrees_with_record(task: dict[str, Any], head: str) -> tuple[list[str], str | None]:
-        submission = task.get("review_submission") or {}
-        if not submission.get("source_head") or submission.get("source_head") != head:
-            return [], "the recorded source authors are not bound to the head being approved"
-        return list(submission.get("source_authors") or []), None
+        # These tests are about the head freeze. Their synthetic heads go
+        # through the module's stand-in Git reader, so the source-author rule
+        # itself -- including binding to the head being approved -- still runs
+        # on every approval and restore here; its Git re-derivation is
+        # exercised against real synthetic repositories in
+        # scripts/test_ai_status.py.
 
     @staticmethod
     def _sourced(head: str, author: str = "Antigravity4", **extra: Any) -> dict[str, Any]:

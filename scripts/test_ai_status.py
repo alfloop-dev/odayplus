@@ -35,7 +35,9 @@ if "ai_status" not in sys.modules:
     os.environ["PANTHEON_CONFIG_PATH"] = str(_TEST_CONFIG)
 try:
     import ai_status
+    import dispatch_policy
     import multi_repo_registry
+    import pytest
     import task_archive
     from check_task_delivery_identity import DeliveryIdentity
 finally:
@@ -248,12 +250,27 @@ def clean_delivery_scan(*authors: str):
     return scan
 
 
-def git_agrees_with_record(task: dict[str, Any], head: str) -> tuple[list[str], str | None]:
-    """Stand-in for the approval-time Git rescan that finds what was recorded."""
-    submission = task.get("review_submission") or {}
-    if not submission.get("source_head") or submission.get("source_head") != head:
-        return [], "the recorded source authors are not bound to the head being approved"
-    return list(submission.get("source_authors") or []), None
+#: The real Git reader behind the source-author rule.
+#: SourceAuthorReviewIndependenceTests restores it and runs every path against
+#: real synthetic repositories.
+READ_SOURCE_AUTHORS_FROM_GIT = dispatch_policy.immutable_review_source_authors
+
+
+def git_finds_the_recorded_authors(_config: Any, _task: Any, submission: dict[str, Any]) -> tuple[Any, None]:
+    """Stand-in for the Git reader only, for tests about the workflow's other gates.
+
+    Their heads are synthetic SHAs with no repository behind them. The rest of
+    the source-author rule -- binding to the submitted and approved head and
+    base, registration and every account pool -- still judges each submission,
+    approval and restore.
+    """
+    return tuple(str(author).strip() for author in submission.get("source_authors") or ()), None
+
+
+@pytest.fixture(autouse=True)
+def _synthetic_heads_have_their_recorded_authors():
+    with mock.patch.object(dispatch_policy, "immutable_review_source_authors", git_finds_the_recorded_authors):
+        yield
 
 
 def bound_source(head: str, *authors: str, submitted_by: str | None = None) -> dict[str, Any]:
@@ -312,16 +329,9 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             "workload": {},
             "workload_summary": {},
         }
-        # These tests are about the review workflow's other gates. The Git
-        # rescan behind the source-author rule is replaced by one that finds
-        # what the submission recorded, so the rule itself still judges every
-        # approval here; SourceAuthorReviewIndependenceTests runs it against
-        # real synthetic repositories.
-        source_scan = mock.patch.object(
-            ai_status, "immutable_review_source_authors", side_effect=git_agrees_with_record
-        )
-        source_scan.start()
-        self.addCleanup(source_scan.stop)
+        # These tests are about the review workflow's other gates; their
+        # synthetic heads go through the module's stand-in Git reader, and
+        # SourceAuthorReviewIndependenceTests runs the real one.
 
     def test_approve_creates_owner_finalize_handoff(self) -> None:
         # resolve_task_sha is pinned so the approval freezes a known head:
@@ -2474,6 +2484,10 @@ class SourceAuthorReviewIndependenceTests(unittest.TestCase):
         head = head or self.head
         return [
             mock.patch.dict(os.environ, {"AI_NAME": actor}, clear=False),
+            # The real Git reader, run against this synthetic checkout by the
+            # same rule every dispatch path uses.
+            mock.patch.object(dispatch_policy, "immutable_review_source_authors", READ_SOURCE_AUTHORS_FROM_GIT),
+            mock.patch.object(dispatch_policy, "repository_local_path", return_value=self.repo),
             mock.patch.object(ai_status, "status_runtime_config", return_value={}),
             mock.patch.object(ai_status, "task_repository_id", return_value="pantheon"),
             mock.patch.object(ai_status, "repository_local_path", return_value=self.repo),
@@ -2559,7 +2573,7 @@ class SourceAuthorReviewIndependenceTests(unittest.TestCase):
         submission["source_head"] = self.codex_commit
         self.task["reviewer"] = "Codex2"
         self.assert_refused_without_mutation(
-            "Codex2", ai_status.command_approve, [self.TASK_ID, "LGTM"], r"not bound to the head being approved"
+            "Codex2", ai_status.command_approve, [self.TASK_ID, "LGTM"], r"not bound to the submitted head"
         )
         for field in ("source_head", "source_base", "source_authors"):
             submission.pop(field, None)
@@ -6910,7 +6924,6 @@ class StatusCheckEmissionTests(unittest.TestCase):
         mock_changed = mock.Mock(returncode=0, stdout=f"{remote_sha}\trefs/heads/task/{task_id}\n")
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False), \
              mock.patch("subprocess.run", return_value=mock_changed), \
-             mock.patch.object(ai_status, "immutable_review_source_authors", side_effect=git_agrees_with_record), \
              mock.patch.object(ai_status, "task_pr_ci_status", return_value=("OPEN", "success")):
             ai_status.command_approve(state_approve, [task_id, "Approved new head"])
             task = ai_status.get_task(state_approve, task_id)

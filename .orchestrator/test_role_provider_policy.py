@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -196,17 +197,83 @@ UNCLASSIFIED_TASK = {"id": "T-3", "status": "todo"}
 REVIEWER_POOL = ["Antigravity", "Claude", "Codex", "Codex2"]
 OWNER_POOL = ["Codex", "Antigravity", "Claude"]
 
-SOURCE_HEAD = "e" * 40
-SOURCE_BASE = "b" * 40
+#: The per-test synthetic repository `_source_submission` writes ranges into.
+_SOURCE_GIT: dict[str, Path] = {}
 
 
-def _source_submission(*authors: str, submitted_by: str, **extra: Any) -> dict[str, Any]:
-    """A review submission carrying validated source provenance for its range."""
+@pytest.fixture(autouse=True)
+def _source_git_root(tmp_path: Path) -> Any:
+    _SOURCE_GIT["root"] = tmp_path / "source-git"
+    yield
+    _SOURCE_GIT.clear()
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-c", "commit.gpgsign=false", *args], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _source_repo() -> Path:
+    """A real local repository with a `dev` integration branch and `origin/dev`."""
+    repo = _SOURCE_GIT["root"]
+    if not (repo / ".git").exists():
+        repo.mkdir(parents=True)
+        _git(repo, "init", "-q", "-b", "dev")
+        _git(repo, "config", "user.email", "worker@pantheon.local")
+        _git(repo, "config", "user.name", "Worker")
+        (repo / "base.txt").write_text("base\n", encoding="utf-8")
+        _git(repo, "add", "base.txt")
+        _git(repo, "commit", "-q", "-m", "bootstrap")
+        _git(repo, "update-ref", "refs/remotes/origin/dev", "dev")
+    return repo
+
+
+def _source_commit(repo: Path, task_id: str, agent: str, label: str) -> str:
+    reviewer = "Claude" if agent == "Codex2" else "Codex2"
+    (repo / f"{label}.txt").write_text(label + "\n", encoding="utf-8")
+    _git(repo, "add", f"{label}.txt")
+    _git(
+        repo, "commit", "-q", "-m",
+        f"{task_id}: {label}\n\nLLM-Agent: {agent}\nTask-ID: {task_id}\nReviewer: {reviewer}\n",
+    )
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def _source_submission(
+    config: dict[str, Any], task_id: str, *authors: str, submitted_by: str, **extra: Any
+) -> dict[str, Any]:
+    """A review submission for a real synthetic range, as `submit_review` records it.
+
+    Each of `authors` commits on the task branch, `dev` then advances, and the
+    branch takes it back in a merge -- the finalizer's base advance, which is
+    not a source commit. The submission records the resolved base and head and
+    the authors exactly as the scanner finds them, and `config` is bound to the
+    repository so the common rule reads the same range from Git.
+    """
+    repo = _source_repo()
+    repositories = config.setdefault("coordination", {}).setdefault("repositories", {})
+    repositories.setdefault("pantheon", {})["local_path"] = str(repo)
+    config.setdefault("branch_workflow", {})["dev_branch"] = "dev"
+    serial = len(_git(repo, "rev-list", "--all").splitlines())
+    _git(repo, "checkout", "-q", "-b", f"work/{task_id}-{serial}", "dev")
+    for index, author in enumerate(authors):
+        _source_commit(repo, task_id, author, f"{task_id}-{serial}-{index}")
+    _git(repo, "checkout", "-q", "dev")
+    (repo / f"dev-{serial}.txt").write_text("dev\n", encoding="utf-8")
+    _git(repo, "add", f"dev-{serial}.txt")
+    _git(repo, "commit", "-q", "-m", f"OTHER-{serial}: unrelated dev work")
+    _git(repo, "update-ref", "refs/remotes/origin/dev", "dev")
+    base = _git(repo, "rev-parse", "dev")
+    _git(repo, "checkout", "-q", f"work/{task_id}-{serial}")
+    _git(repo, "merge", "--no-ff", "-q", "-m", f"Merge dev into task/{task_id}\n\nLLM-Agent: {submitted_by}\n", "dev")
+    head = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "dev")
     submission: dict[str, Any] = {
         "pr_number": 1221,
-        "remote_sha": SOURCE_HEAD,
-        "source_head": SOURCE_HEAD,
-        "source_base": SOURCE_BASE,
+        "remote_sha": head,
+        "source_head": head,
+        "source_base": base,
         "source_authors": list(authors),
         "submitted_by": submitted_by,
     }
@@ -1136,7 +1203,7 @@ def test_the_authors_pool_stays_excluded_even_after_the_owner_already_moved() ->
         id="T-LAUNDERED",
         owner="Claude",
         reviewer="Antigravity",
-        review_submission=_source_submission("Codex", submitted_by="Codex"),
+        review_submission=_source_submission(config, "T-LAUNDERED", "Codex", submitted_by="Codex"),
     )
     source = supervisor.task_review_source_identity(config, laundered)
     assert source.error is None and author_pool in source.pools
@@ -1771,7 +1838,7 @@ def test_reassign_unavailable_reviewers_excludes_submitted_author_and_pool() -> 
                 "reviewer": "Codex2",
                 "task_class": "implementation",
                 "review_submission": _source_submission(
-                    "Codex", submitted_by="Codex", pr_number=100, branch="task/T-AUTH-POOL"
+                    config, "T-AUTH-POOL", "Codex", submitted_by="Codex", pr_number=100, branch="task/T-AUTH-POOL"
                 ),
             }
         ]
@@ -1805,7 +1872,7 @@ def test_reassign_unavailable_reviewers_picks_independent_pool_over_author_pool(
                 "reviewer": "Codex2",
                 "task_class": "implementation",
                 "review_submission": _source_submission(
-                    "Codex", submitted_by="Codex", pr_number=100, branch="task/T-AUTH-POOL-2"
+                    config, "T-AUTH-POOL-2", "Codex", submitted_by="Codex", pr_number=100, branch="task/T-AUTH-POOL-2"
                 ),
             }
         ]
@@ -1841,7 +1908,9 @@ def test_worker_failure_reviewer_fallback_excludes_submitted_author_and_pool() -
                 "owner": "Claude",
                 "reviewer": "Codex",  # invalid: same pool as author
                 "task_class": "implementation",
-                "review_submission": _source_submission("Codex", submitted_by="Codex", pr_number=101),
+                "review_submission": _source_submission(
+                    config, "T-FAIL-AUTH", "Codex", submitted_by="Codex", pr_number=101
+                ),
             }
         ]
     }
@@ -1895,6 +1964,7 @@ def test_worker_failure_on_frozen_task_enforces_candidate_policy() -> None:
     Counterexample for F2/F5: Recovery selects an eligible owner (Claude2), not an ineligible one.
     """
     config = build_config()
+    submission = _source_submission(config, "T-FROZEN-FAIL", "Claude", submitted_by="Claude")
     state: dict[str, Any] = {}
     worker: dict[str, Any] = {
         "task_id": "T-FROZEN-FAIL",
@@ -1909,10 +1979,10 @@ def test_worker_failure_on_frozen_task_enforces_candidate_policy() -> None:
                 "owner": "Claude",
                 "reviewer": "Codex",
                 "task_class": "implementation",
-                "approved_head": SOURCE_HEAD,
+                "approved_head": submission["source_head"],
                 # An approved head always carries the submission it approved;
                 # without it the carried reviewer could not be re-validated.
-                "review_submission": _source_submission("Claude", submitted_by="Claude"),
+                "review_submission": submission,
             }
         ]
     }
@@ -2032,8 +2102,8 @@ def test_ghost_provider_without_config_entry_fails_closed_and_not_known() -> Non
 # --------------------------------------------------------------------------- #
 
 
-def _finalized_by_claude(*authors: str, **overrides: Any) -> dict[str, Any]:
-    """The shape that motivated the rule.
+def _finalized_by_claude(config: dict[str, Any], *authors: str, **overrides: Any) -> dict[str, Any]:
+    """The shape that motivated the rule, over a real synthetic Git range.
 
     Codex wrote the commits; Claude only merged a base and ran the finalizer, so
     Claude is the genuine owner and submitter. Codex is still the author.
@@ -2045,7 +2115,9 @@ def _finalized_by_claude(*authors: str, **overrides: Any) -> dict[str, Any]:
         "priority": "P2",
         "owner": "Claude",
         "reviewer": "Codex",
-        "review_submission": _source_submission(*(authors or ("Codex",)), submitted_by="Claude"),
+        "review_submission": _source_submission(
+            config, "T-SOURCE", *(authors or ("Codex",)), submitted_by="Claude"
+        ),
     }
     task.update(overrides)
     return task
@@ -2054,7 +2126,7 @@ def _finalized_by_claude(*authors: str, **overrides: Any) -> dict[str, Any]:
 def test_the_finalizer_does_not_stand_in_for_the_source_author() -> None:
     """Excluding only the submitter's pool frees the author's pool to review itself."""
     config = _pool_alias_config()
-    task = _finalized_by_claude("Codex")
+    task = _finalized_by_claude(config, "Codex")
 
     source = task_review_source_identity(config, task)
     assert source.error is None
@@ -2073,7 +2145,7 @@ def test_the_finalizer_does_not_stand_in_for_the_source_author() -> None:
 def test_every_pool_of_a_multi_author_range_is_excluded() -> None:
     """No one author is "the" author; a complete independent reviewer still exists."""
     config = build_config()
-    task = _finalized_by_claude("Codex", "Antigravity")
+    task = _finalized_by_claude(config, "Codex", "Antigravity")
 
     source = task_review_source_identity(config, task)
     assert source.pools == frozenset({"codex_bjoe", "agy_main", "claude_main"})
@@ -2083,7 +2155,7 @@ def test_every_pool_of_a_multi_author_range_is_excluded() -> None:
 
     # Reordering the range changes nothing: neither the first nor the last
     # author is privileged.
-    reordered = _finalized_by_claude("Antigravity", "Codex")
+    reordered = _finalized_by_claude(config, "Antigravity", "Codex")
     assert task_review_source_identity(config, reordered).pools == source.pools
     assert review_source_block_reason(config, reordered, "Codex") is not None
 
@@ -2091,8 +2163,12 @@ def test_every_pool_of_a_multi_author_range_is_excluded() -> None:
 @pytest.mark.parametrize(
     ("submission_patch", "expected"),
     [
-        ({"source_authors": ["Codex-Root"]}, "'Codex-Root' is not a registered agent"),
-        ({"source_authors": ["Codex", "Codex-Root"]}, "'Codex-Root' is not a registered agent"),
+        # Rewriting the recorded authors -- to a registered actor or not -- is
+        # refused against the range's actual immutable Git authorship.
+        ({"source_authors": ["Claude"]}, "are not the immutable Git authors ['Codex']"),
+        ({"source_authors": ["Antigravity"]}, "are not the immutable Git authors ['Codex']"),
+        ({"source_authors": ["Codex-Root"]}, "are not the immutable Git authors ['Codex']"),
+        ({"source_authors": ["Codex", "Codex-Root"]}, "are not the immutable Git authors ['Codex']"),
         ({"source_authors": []}, "names no immutable source authors"),
         ({"source_authors": ["Codex", ""]}, "names no immutable source authors"),
         ({"source_authors": None}, "names no immutable source authors"),
@@ -2101,6 +2177,10 @@ def test_every_pool_of_a_multi_author_range_is_excluded() -> None:
         ({"source_head": "f" * 40}, "not bound to the submitted head"),
         ({"source_head": None}, "not bound to the submitted head"),
         ({"source_base": "dev"}, "not bound to a validated base"),
+        # A head and remote that agree with each other but name no commit of
+        # this repository bind nothing.
+        ({"source_head": "f" * 40, "remote_sha": "f" * 40}, "fails delivery identity"),
+        ({"source_base": "c" * 40}, "is not in origin/dev history"),
     ],
 )
 def test_unresolvable_source_evidence_admits_no_reviewer(
@@ -2108,13 +2188,12 @@ def test_unresolvable_source_evidence_admits_no_reviewer(
 ) -> None:
     """Unknown, missing or unbound provenance fails closed for every reviewer.
 
-    In particular the unregistered `Codex-Root` label is not guessed to be
-    `Codex`, and it is not "foreign" to every pool either -- the raw pool
-    resolver would answer `codex_root` for it, which matches nothing and would
-    therefore look independent of everyone.
+    The range itself is real and Codex-authored, so each refusal is caused by
+    the patched field alone. A submitter label that is not registered is not
+    guessed to be an existing agent either.
     """
     config = build_config()
-    task = _finalized_by_claude("Codex")
+    task = _finalized_by_claude(config, "Codex")
     task["review_submission"].update(submission_patch)
 
     source = task_review_source_identity(config, task)
@@ -2140,7 +2219,7 @@ def test_review_without_submission_is_unresolved_and_unsubmitted_work_is_unconst
 def test_normalizer_replaces_a_same_source_reviewer_and_keeps_the_finalizer() -> None:
     """Owner and reviewer are independent; reviewer and author are not."""
     config = _pool_alias_config()
-    task = _finalized_by_claude("Codex")
+    task = _finalized_by_claude(config, "Codex")
     assert supervisor.review_is_independent(config, "Claude", "Codex")
     issues = supervisor.task_assignment_integrity_issues(config, {}, dict(task))
     assert "reviewer_shares_source_account_pool" in issues
@@ -2156,7 +2235,7 @@ def test_normalizer_replaces_a_same_source_reviewer_and_keeps_the_finalizer() ->
 
 def test_normalizer_does_not_repair_a_review_whose_source_is_unknown() -> None:
     config = build_config()
-    task = _finalized_by_claude("Codex-Root")
+    task = _finalized_by_claude(config, "Codex-Root")
     issues = supervisor.task_assignment_integrity_issues(config, {}, dict(task))
     assert any(issue.startswith("review_source_unresolved:") for issue in issues), issues
 
@@ -2176,7 +2255,7 @@ def test_reviewer_failover_skips_the_author_pool_alias_for_a_finalized_branch() 
         "provider": "codex",
         "adapter": "codex",
     }
-    task = _finalized_by_claude("Codex", reviewer="Codex2")
+    task = _finalized_by_claude(config, "Codex", reviewer="Codex2")
     status: dict[str, Any] = {"tasks": [task]}
     state: dict[str, Any] = {"active_workers": {}, "outstanding_deliveries": {}}
     with (
@@ -2187,7 +2266,7 @@ def test_reviewer_failover_skips_the_author_pool_alias_for_a_finalized_branch() 
     assert changed is True
     assert status["tasks"][0]["reviewer"] == "Codex4"
 
-    unknown = _finalized_by_claude("Codex-Root", reviewer="Codex2")
+    unknown = _finalized_by_claude(config, "Codex-Root", reviewer="Codex2")
     status = {"tasks": [unknown]}
     with mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist:
         assert dispatch_engine.reassign_unavailable_reviewers(config, state, status) is False
@@ -2205,7 +2284,7 @@ def test_worker_failure_reviewer_failover_excludes_every_source_pool_and_refuses
     }
     worker = {"task_id": "T-SOURCE", "agent_id": "codex2", "retry_count": 2}
     for authors, expected in ((("Codex",), "Codex4"), (("Codex-Root",), None)):
-        task = _finalized_by_claude(*authors, reviewer="Codex2")
+        task = _finalized_by_claude(config, *authors, reviewer="Codex2")
         with (
             mock.patch("supervisor.load_status", return_value={"tasks": [task]}),
             mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist,
@@ -2225,3 +2304,61 @@ def test_worker_failure_reviewer_failover_excludes_every_source_pool_and_refuses
         else:
             assert persist.call_args.kwargs["new_owner"] == "Claude"
             assert persist.call_args.kwargs["new_reviewer"] == expected
+
+
+def test_a_rewritten_source_record_is_refused_before_any_queue_selects_a_reviewer() -> None:
+    """The queue boundary does not take `source_authors` on trust.
+
+    Same real head, base and remote, genuine finalizer and owner; only the
+    recorded authors are rewritten from the actual Codex to another registered
+    actor. Read from the record, Codex would then look independent of every
+    excluded pool. The normalizer, the unavailable-reviewer failover and the
+    worker-failure failover all ask the one rule, which reads the range from
+    Git, so none of them may select Codex -- or anyone -- against that record.
+    """
+    config = _pool_alias_config()
+    genuine = _finalized_by_claude(config, "Codex")
+    assert "reviewer_shares_source_account_pool" in supervisor.task_assignment_integrity_issues(
+        config, {}, dict(genuine)
+    )
+
+    forged = json.loads(json.dumps(genuine))
+    forged["review_submission"]["source_authors"] = ["Antigravity"]
+    for field in ("source_head", "source_base", "remote_sha", "submitted_by"):
+        assert forged["review_submission"][field] == genuine["review_submission"][field]
+    source = task_review_source_identity(config, forged)
+    assert "are not the immutable Git authors ['Codex']" in str(source.error)
+    assert not source.pools
+    for reviewer in ("Codex", "Codex3", "Codex2"):
+        assert review_source_block_reason(config, forged, reviewer) == source.error
+
+    issues = supervisor.task_assignment_integrity_issues(config, {}, dict(forged))
+    assert any(issue.startswith("review_source_unresolved:") for issue in issues), issues
+    with mock.patch.object(
+        supervisor, "get_agent_reassignment_candidates", lambda *a, **k: ["Codex", "Codex3", "Codex2"]
+    ):
+        assert _run_repair(config, forged, pin_author=True) == []
+
+    config["account_pools"]["codex_lupin"]["state"] = "paused"
+    unavailable = dict(forged, reviewer="Codex2")
+    state: dict[str, Any] = {"active_workers": {}, "outstanding_deliveries": {}}
+    with mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist:
+        assert dispatch_engine.reassign_unavailable_reviewers(config, state, {"tasks": [unavailable]}) is False
+    persist.assert_not_called()
+
+    worker = {"task_id": "T-SOURCE", "agent_id": "codex2", "retry_count": 2}
+    with (
+        mock.patch("supervisor.load_status", return_value={"tasks": [unavailable]}),
+        mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist,
+        mock.patch("supervisor.write_activity_log"),
+        mock.patch.object(
+            supervisor, "get_agent_reassignment_candidates", lambda *a, **k: ["Codex", "Codex3"]
+        ),
+    ):
+        assert (
+            worker_failure_policy.maybe_reassign_task_after_worker_failure(
+                config, {}, worker, "terminal error", terminal=True
+            )
+            is None
+        )
+    persist.assert_not_called()

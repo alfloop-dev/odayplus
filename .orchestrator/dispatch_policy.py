@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
+from pathlib import Path
 from typing import Any, NamedTuple
 
 from common import normalize_agent_id
+from multi_repo_registry import repository_local_path, resolve_repository, task_repository_id
 from provider_runtime import provider_config, provider_config_entry
 
 REASON_REVIEW_READY = "review_ready_dispatch"
@@ -218,7 +222,131 @@ def _registered_actor_pool(config: dict[str, Any], name: str) -> str:
     return agent_account_pool_id(config, agent_id) if agent_id else ""
 
 
-def task_review_source_identity(config: dict[str, Any], task: dict[str, Any] | None) -> ReviewSourceIdentity:
+def delivery_merge_target_branch(config: dict[str, Any], repository_id: str) -> str:
+    if repository_id == "pantheon":
+        branch = str((config.get("branch_workflow") or {}).get("dev_branch") or "").strip()
+        if branch:
+            return branch
+    repo = resolve_repository(config, repository_id)
+    branch = str(repo.get("default_branch") or "").strip()
+    return branch or "main"
+
+
+_UNUSABLE_BRANCH_CHARS = re.compile(r"[\s~^:?*\[\\]")
+
+
+def task_explicit_branch(
+    task: dict[str, Any] | None = None,
+    branch: str | None = None,
+) -> str | None:
+    """The branch explicitly recorded on the task, or None if absent/invalid.
+
+    Reuses the validity rules from ``task_branch_name`` (rejecting whitespace,
+    git ref metacharacters, and empty strings) without falling back to the
+    derived ``task/<id>`` default name.
+    """
+    candidate = branch if branch is not None else (task or {}).get("branch")
+    recorded = str(candidate or "").strip()
+    if recorded and not _UNUSABLE_BRANCH_CHARS.search(recorded) and ".." not in recorded:
+        return recorded
+    return None
+
+
+def task_branch_name(task: dict[str, Any] | None, task_id: str | None = None) -> str:
+    """The task's branch as recorded, falling back to the derived name.
+
+    Building `task/<id>` unconditionally invented a branch for every task
+    reimported from an existing GitHub PR, whose branch does not follow that
+    convention. Looking a task up by an invented ref finds nothing, and the
+    caller reads that as missing work rather than as a wrong question.
+    """
+    explicit = task_explicit_branch(task)
+    if explicit:
+        return explicit
+    resolved_id = str(task_id or (task or {}).get("id") or "").strip()
+    return f"task/{resolved_id}"
+
+
+def _git_succeeds(repo_root: Path, *args: str) -> bool:
+    try:
+        proc = subprocess.run(["git", *args], cwd=repo_root, capture_output=True, text=True, check=False)
+    except OSError:
+        return False
+    return proc.returncode == 0
+
+
+def _inspect_delivery_identity(repo_root: Path, **kwargs: Any) -> Any:
+    """The delivery-identity scanner `submit_review` validates a range with."""
+    git_dir = Path(__file__).resolve().parents[1] / "delivery_toolchain" / "git"
+    if str(git_dir) not in sys.path:
+        sys.path.insert(0, str(git_dir))
+    from check_task_delivery_identity import inspect_delivery_identity
+
+    return inspect_delivery_identity(repo_root, **kwargs)
+
+
+#: Ranges whose Git authorship has already been established. Commits are
+#: immutable and a base that is in the integration history stays there, so a
+#: positive answer cannot go stale; a refusal is not cached and is asked again.
+_IMMUTABLE_SOURCE_AUTHORS: dict[tuple[str, ...], tuple[str, ...]] = {}
+
+
+def immutable_review_source_authors(
+    config: dict[str, Any], task: dict[str, Any], submission: dict[str, Any]
+) -> tuple[tuple[str, ...], str | None]:
+    """Re-derive the submitted range's source authors from Git, or say why not.
+
+    The board's `review_submission` is a record anyone with write access to the
+    status file could edit, so no reviewer path takes its `source_authors` on
+    trust -- not the approval, and not the queue that decides which reviewer is
+    dispatched in the first place. The recorded base must be in the
+    integration history -- otherwise it could be moved up to hide earlier
+    commits -- and the range from it to the recorded head is scanned again
+    with the same delivery-identity scanner submission used. The recorded
+    authors must be exactly what that scan finds.
+    """
+    task_id = str(task.get("id") or "").strip()
+    source_base = str(submission.get("source_base") or "").strip().lower()
+    source_head = str(submission.get("source_head") or "").strip().lower()
+    repository_id = task_repository_id(config, task) or "pantheon"
+    repo_root = repository_local_path(config, repository_id)
+    if repo_root is None or not repo_root.exists():
+        return (), f"no local checkout of {repository_id} to read the submitted range's authorship from"
+    base_branch = delivery_merge_target_branch(config, repository_id)
+    expected_branch = task_branch_name(task, task_id)
+    actual_branch = str(submission.get("branch") or "").strip() or None
+    key = (str(repo_root), base_branch, task_id, source_base, source_head, expected_branch, actual_branch or "")
+    actual = _IMMUTABLE_SOURCE_AUTHORS.get(key)
+    if actual is None:
+        target_ref = f"origin/{base_branch}"
+        if not _git_succeeds(repo_root, "rev-parse", "--verify", "--quiet", f"{target_ref}^{{commit}}"):
+            target_ref = base_branch
+        if not _git_succeeds(repo_root, "merge-base", "--is-ancestor", source_base, target_ref):
+            return (), f"the recorded source base {source_base[:12]} is not in {target_ref} history"
+        scan = _inspect_delivery_identity(
+            repo_root,
+            task_id=task_id,
+            base=source_base,
+            head=source_head,
+            expected_branch=expected_branch,
+            actual_branch=actual_branch,
+        )
+        if scan.errors:
+            return (), "the submitted range fails delivery identity: " + "; ".join(scan.errors)
+        actual = tuple(scan.source_agents)
+        _IMMUTABLE_SOURCE_AUTHORS[key] = actual
+    recorded = tuple(str(author).strip() for author in submission.get("source_authors") or ())
+    if recorded != actual:
+        return (), (
+            f"the recorded source authors {list(recorded)!r} are not the immutable Git authors "
+            f"{list(actual)!r} of {source_base[:12]}..{source_head[:12]}"
+        )
+    return actual, None
+
+
+def task_review_source_identity(
+    config: dict[str, Any], task: dict[str, Any] | None, head: str | None = None
+) -> ReviewSourceIdentity:
     """The single source-author/account-pool rule for reviewer independence.
 
     A review is independent of the work, not of a label. The work is the
@@ -236,6 +364,12 @@ def task_review_source_identity(config: dict[str, Any], task: dict[str, Any] | N
     frozen without that evidence, or whose evidence is unbound, incomplete or
     names an actor that is not a registered agent, has not established who
     wrote it, and the answer is an error rather than a fallback to the owner.
+
+    The authors are read from Git, through `immutable_review_source_authors`,
+    every time this is asked: a recorded list that differs from the range it
+    claims to describe is refused here, before any queue selects a reviewer
+    against it. `head`, when given, is the exact head being signed, and the
+    provenance has to be bound to it as well.
     """
     if not isinstance(task, dict):
         return ReviewSourceIdentity()
@@ -274,6 +408,11 @@ def task_review_source_identity(config: dict[str, Any], task: dict[str, Any] | N
         return identity._replace(error="the recorded source authors are not bound to the submitted head")
     if not _SHA_RE.fullmatch(source_base):
         return identity._replace(error="the recorded source authors are not bound to a validated base")
+    if head is not None and source_head != str(head or "").strip().lower():
+        return identity._replace(error="the recorded source authors are not bound to the head being approved")
+    authors, git_error = immutable_review_source_authors(config, task, submission)
+    if git_error:
+        return identity._replace(error=git_error)
 
     agents: set[str] = set()
     pools: set[str] = set()
@@ -296,7 +435,7 @@ def task_review_source_identity(config: dict[str, Any], task: dict[str, Any] | N
 
 
 def review_source_block_reason(
-    config: dict[str, Any], task: dict[str, Any] | None, reviewer: str | None
+    config: dict[str, Any], task: dict[str, Any] | None, reviewer: str | None, head: str | None = None
 ) -> str | None:
     """Why `reviewer` may not review this task's submitted work, or None.
 
@@ -304,7 +443,7 @@ def review_source_block_reason(
     dispatch readiness and the canonical approval -- so that none of them can
     admit a reviewer another would refuse.
     """
-    identity = task_review_source_identity(config, task)
+    identity = task_review_source_identity(config, task, head)
     if not identity.submitted:
         return None
     if identity.error:
