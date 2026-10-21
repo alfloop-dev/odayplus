@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom/vitest";
+import { Profiler } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OperatorConsole, operatorBootstrapRetryPolicy } from "../OperatorConsole";
@@ -166,6 +167,64 @@ describe("OperatorConsole production data gate", () => {
     expect(await screen.findByTestId(`granted-${workspace}-workspace`)).toBeInTheDocument();
     expect(window.sessionStorage.getItem("oday.operator.workspace")).toBe(workspace);
     expect(window.sessionStorage.getItem("oday.operator.role")).toBe(roleId);
+  });
+
+  it.each([
+    ["the first commit", ["today", "store"], "store"],
+    ["the bootstrap commit", ["today", "store"], "store"],
+    ["the first commit", ["today"], "today"],
+  ] as const)("keeps Store Ops selected at %s only while bootstrap grants %j", async (moment, granted, expected) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    window.history.replaceState({}, "", "/operator");
+    const navigation = {
+      ...liveEnvelope.navigation,
+      roles: [{ ...liveEnvelope.navigation.roles[0], allowedWorkspaces: granted }],
+      workspaces: [
+        ...liveEnvelope.navigation.workspaces,
+        { id: "store", label: "門市營運", shortLabel: "Store", description: "Store Ops", allowed: true },
+      ],
+      allowedWorkspaces: granted,
+    };
+    let resolveBootstrap!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { resolveBootstrap = resolve; })));
+    const workspaceWrites: string[] = [];
+    const setItem = window.sessionStorage.setItem.bind(window.sessionStorage);
+    vi.spyOn(window.sessionStorage, "setItem").mockImplementation((key, value) => {
+      if (key === "oday.operator.workspace") workspaceWrites.push(value);
+      setItem(key, value);
+    });
+    // Click at the first moment a browser can deliver input after the commit
+    // (the static persona offers Store Ops before bootstrap), as the
+    // production-built E2E did when the verified bootstrap committed.
+    let writesBeforeClick = -1;
+    const clickStoreOpsAfterCommit = () => {
+      if (writesBeforeClick >= 0) return;
+      if (moment === "the bootstrap commit" && !screen.queryByText("Live unresolved")) return;
+      const storeOps = screen.queryByRole("button", { name: /門市營運/ });
+      if (!storeOps) return;
+      writesBeforeClick = workspaceWrites.length;
+      storeOps.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    };
+    render(
+      <Profiler id="operator-console" onRender={clickStoreOpsAfterCommit}>
+        <OperatorConsole searchParams={{}} />
+      </Profiler>,
+    );
+    resolveBootstrap(new Response(JSON.stringify({ ...liveEnvelope, navigation }), { status: 200 }));
+    if (expected === "store") {
+      expect(await screen.findByTestId("granted-store-workspace")).toBeInTheDocument();
+      expect(screen.queryByText("Live unresolved")).not.toBeInTheDocument();
+      expect(window.location.search).toBe("?ws=store&tab=overview");
+      expect(window.sessionStorage.getItem("oday.operator.workspace")).toBe("store");
+      // No synchronization may write back the workspace it saw before the click.
+      expect(workspaceWrites.slice(writesBeforeClick)).not.toContain("today");
+    } else {
+      // A selection the verified grants do not include still fails closed.
+      expect(await screen.findByText("Live unresolved")).toBeInTheDocument();
+      expect(screen.queryByTestId("granted-store-workspace")).toBeNull();
+      await waitFor(() => expect(window.sessionStorage.getItem("oday.operator.workspace")).toBe("today"));
+    }
+    expect(writesBeforeClick).toBeGreaterThanOrEqual(0);
   });
 
   it("blocks seed shell data instead of rendering a workspace fixture", async () => {
