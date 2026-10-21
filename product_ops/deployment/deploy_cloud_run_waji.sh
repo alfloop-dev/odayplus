@@ -1278,6 +1278,10 @@ except Exception:
     sys.exit("Error: PROVISIONING_FOREGROUND_GATE_REFUSED")
 PY
 else
+FULL_ACCEPTANCE_ARGS=()
+if [ "${ODP_RELEASE_PROFILE:-full}" = "full" ]; then
+  FULL_ACCEPTANCE_ARGS=(--require-full-acceptance)
+fi
 run_locked_python delivery_toolchain/e2e/check_live_e2e_gate.py \
   --api-url "${LIVE_E2E_API_URL}" \
   --web-url "${LIVE_E2E_WEB_URL}" \
@@ -1288,6 +1292,7 @@ run_locked_python delivery_toolchain/e2e/check_live_e2e_gate.py \
   --gcp-project "${GCP_PROJECT}" \
   --worker-deadline-seconds "${ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS:-600}" \
   --release-profile "${ODP_RELEASE_PROFILE:-full}" \
+  "${FULL_ACCEPTANCE_ARGS[@]}" \
   --output "${LIVE_E2E_REPORT}"
 fi
 
