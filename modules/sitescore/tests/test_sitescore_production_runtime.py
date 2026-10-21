@@ -31,7 +31,8 @@ from shared.infrastructure.persistence import (
     SqliteEngine,
 )
 
-NOW = datetime(2026, 7, 24, 12, 0, tzinfo=UTC)
+# Capture once so fixtures stay fresh and replay uses identical timestamps.
+NOW = datetime.now(UTC)
 
 
 class RecordingRuntime:
