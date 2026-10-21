@@ -2030,6 +2030,76 @@ def test_review_queue_refuses_a_reviewer_from_the_source_authors_pool(tmp_path: 
             assert dispatch_engine.is_task_review_dispatch_eligible(cfg, legacy, "Codex2") is False
 
 
+def test_review_queue_reads_a_full_sha_base_as_that_commit_on_a_cold_cache(tmp_path: Path) -> None:
+    """A ref spelled `origin/<base sha>` cannot shrink the range the queue reads.
+
+    Codex writes the change, Claude merges a base and adds its own finalizer
+    commit. A ref named after the recorded base is pointed at the merge, so
+    read as a branch the range holds only Claude's commit -- and a record that
+    drops Codex would match it. Base, head, remote and finalizer are genuine,
+    and nothing has scanned the range before the queue asks.
+    """
+    cfg = _register_ci_failure_actors(_base_test_config())
+    repo = tmp_path / "source-git"
+    task_id = "TASK-SOURCE-REV-002"
+    base, merged = _real_source_range(repo, task_id, "Codex", finalizer="Claude")
+    _git(
+        repo, "commit", "-q", "--allow-empty", "-m",
+        f"{task_id}: finalizer change\n\nLLM-Agent: Claude\nTask-ID: {task_id}\nReviewer: Codex2\n",
+    )
+    head = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "update-ref", f"refs/remotes/origin/{base}", merged)
+    assert _git(repo, "rev-parse", f"origin/{base}") == merged
+    assert not [key for key in dispatch_policy._IMMUTABLE_SOURCE_AUTHORS if key[0] == str(repo)]
+    cfg["coordination"] = {"repositories": {"pantheon": {"local_path": str(repo)}}}
+    cfg["branch_workflow"] = {"dev_branch": "dev"}
+    genuine = {
+        "pr_number": 102,
+        "branch": f"task/{task_id}",
+        "base_branch": "dev",
+        "remote_sha": head,
+        "source_head": head,
+        "source_base": base,
+        "source_authors": ["Codex", "Claude"],
+        "submitted_by": "Claude",
+    }
+    forged = {
+        "id": task_id,
+        "priority": "P1",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "review_submission": dict(genuine, source_authors=["Claude"]),
+        "depends_on": [],
+    }
+
+    def probes() -> ExitStack:
+        stack = ExitStack()
+        stack.enter_context(mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=head))
+        stack.enter_context(
+            mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success"))
+        )
+        return stack
+
+    with mock.patch.object(dispatch_policy, "immutable_review_source_authors", _READ_SOURCE_AUTHORS_FROM_GIT):
+        assert "are not the immutable Git authors ['Codex', 'Claude']" in str(
+            dispatch_policy.review_source_block_reason(cfg, forged, "Codex")
+        )
+        with probes():
+            assert dispatch_engine.is_task_review_dispatch_eligible(cfg, forged, "Codex") is False
+            assert supervisor.dispatch_priority_for_task(cfg, forged, "Codex", task_map={task_id: forged}) is None
+        assert ("Claude",) not in dispatch_policy._IMMUTABLE_SOURCE_AUTHORS.values()
+
+        independent = dict(forged, reviewer="Codex2", review_submission=genuine)
+        with probes():
+            assert dispatch_engine.is_task_review_dispatch_eligible(cfg, independent, "Codex") is False
+            assert dispatch_engine.is_task_review_dispatch_eligible(cfg, independent, "Codex2") is True
+            assert (
+                supervisor.dispatch_priority_for_task(cfg, independent, "Codex2", task_map={task_id: independent})
+                == 0
+            )
+
+
 def test_genuine_review_state_dispatches_reviewer() -> None:
     cfg = _base_test_config()
     task = {

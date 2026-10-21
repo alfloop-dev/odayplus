@@ -241,3 +241,47 @@ def test_an_empty_range_reports_no_authors_and_an_error(tmp_path: Path) -> None:
 
     assert report.source_agents == ()
     assert any("contains no non-merge commits" in error for error in report.errors)
+
+
+def test_a_full_sha_base_is_the_commit_it_names_not_a_ref_of_that_spelling(tmp_path: Path) -> None:
+    """``origin/<sha>`` is a branch anyone can create; ``<sha>`` is immutable.
+
+    Codex writes ``C`` on base ``B`` and Claude writes ``D``. A ref spelled
+    ``origin/<B>`` pointed at ``C`` would, if preferred, shrink the scanned
+    range to ``C..D`` and drop Codex from the authors. A branch name keeps its
+    remote-first reading.
+    """
+    repo = repository(tmp_path)
+    base = git(repo, "rev-parse", "HEAD")
+    codex = commit(repo, "TASK-ONE: source change", "TASK-ONE", agent="Codex")
+    head = commit(repo, "TASK-ONE: finalizer change", "TASK-ONE", agent="Claude")
+    git(repo, "update-ref", f"refs/remotes/origin/{base}", codex)
+    assert git(repo, "rev-parse", f"origin/{base}") == codex
+
+    report = inspect_delivery_identity(repo, task_id="TASK-ONE", base=base, head=head)
+
+    assert report.errors == []
+    assert report.base_sha == base
+    assert report.head_sha == head
+    assert report.source_agents == ("Codex", "Claude")
+    assert [sha for sha, _agent in report.commits] == [codex, head]
+
+    # The branch spelling still prefers the remote integration ref.
+    git(repo, "update-ref", "refs/remotes/origin/dev", codex)
+    by_branch = inspect_delivery_identity(repo, task_id="TASK-ONE", base="dev", head=head)
+    assert by_branch.base_sha == codex
+    assert by_branch.source_agents == ("Claude",)
+
+
+def test_a_full_sha_base_that_is_not_a_local_commit_is_not_read_as_a_ref(tmp_path: Path) -> None:
+    """A missing immutable base fails; it does not fall back to a same-named ref."""
+    repo = repository(tmp_path)
+    codex = commit(repo, "TASK-ONE: source change", "TASK-ONE", agent="Codex")
+    head = commit(repo, "TASK-ONE: finalizer change", "TASK-ONE", agent="Claude")
+    missing = "f" * 40
+    git(repo, "update-ref", f"refs/remotes/origin/{missing}", codex)
+
+    report = inspect_delivery_identity(repo, task_id="TASK-ONE", base=missing, head=head)
+
+    assert report.source_agents == ()
+    assert any("does not resolve to a commit" in error for error in report.errors), report.errors

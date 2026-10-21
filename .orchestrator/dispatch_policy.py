@@ -333,6 +333,16 @@ def immutable_review_source_authors(
         )
         if scan.errors:
             return (), "the submitted range fails delivery identity: " + "; ".join(scan.errors)
+        # The authors are only those of the recorded range if the scan read
+        # that range: a base or head that resolved to some other commit scanned
+        # other commits, and its authors are not an answer to cache.
+        scanned_base = str(scan.base_sha or "").strip().lower()
+        scanned_head = str(scan.head_sha or "").strip().lower()
+        if (scanned_base, scanned_head) != (source_base, source_head):
+            return (), (
+                f"the delivery scan read {scanned_base[:12]}..{scanned_head[:12]}, not the recorded "
+                f"range {source_base[:12]}..{source_head[:12]}"
+            )
         actual = tuple(scan.source_agents)
         _IMMUTABLE_SOURCE_AUTHORS[key] = actual
     recorded = tuple(str(author).strip() for author in submission.get("source_authors") or ())

@@ -2581,6 +2581,43 @@ class SourceAuthorReviewIndependenceTests(unittest.TestCase):
             "Codex2", ai_status.command_approve, [self.TASK_ID, "LGTM"], r"source authors"
         )
 
+    def test_a_sha_named_ref_cannot_move_the_recorded_base_before_approval(self) -> None:
+        """On a cold cache, the recorded base is the commit it names.
+
+        Claude adds a finalizer commit `D` on top of the merged head `M`, and a
+        ref spelled `origin/<base>` is pointed at `M`. Read through that ref,
+        the range would be `M..D`, Claude its only author, and a record that
+        drops Codex would match it. Nothing about the base, head, remote or
+        finalizer is changed, and no earlier scan has answered for the range.
+        """
+        finalizer_head = self.commit("final.txt", f"{self.TASK_ID}: finalizer change", "Claude")
+        self.run_as("Claude", ai_status.command_submit_review, [self.TASK_ID, "4242", "Ready"], head=finalizer_head)
+        submission = self.task["review_submission"]
+        self.assertEqual(submission["source_authors"], ["Codex", "Claude"])
+        base = submission["source_base"]
+        self.git("update-ref", f"refs/remotes/origin/{base}", self.head)
+        self.assertEqual(self.git("rev-parse", f"origin/{base}"), self.head)
+
+        with mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+            submission["source_authors"] = ["Claude"]
+            before = json.loads(json.dumps(self.state))
+            with self.assertRaisesRegex(SystemExit, r"not the immutable Git authors \['Codex', 'Claude'\]"):
+                self.run_as("Codex", ai_status.command_approve, [self.TASK_ID, "LGTM"], head=finalizer_head)
+            self.assertEqual(self.state, before)
+            self.assertNotIn(("Claude",), dispatch_policy._IMMUTABLE_SOURCE_AUTHORS.values())
+
+        with mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+            submission["source_authors"] = ["Codex", "Claude"]
+            before = json.loads(json.dumps(self.state))
+            with self.assertRaisesRegex(SystemExit, r"reviewer Codex is itself a source author"):
+                self.run_as("Codex", ai_status.command_approve, [self.TASK_ID, "LGTM"], head=finalizer_head)
+            self.assertEqual(self.state, before)
+            self.task["reviewer"] = "Codex2"
+            self.run_as("Codex2", ai_status.command_approve, [self.TASK_ID, "Independent review"], head=finalizer_head)
+        self.assertEqual(self.task["status"], "review_approved")
+        self.assertEqual(self.task["approved_head"], finalizer_head)
+        self.assertEqual(self.task["owner"], "Claude")
+
     def test_unknown_or_conflicting_source_author_is_refused_at_submission(self) -> None:
         root_head = self.commit("root.txt", f"{self.TASK_ID}: root change", "Codex-Root")
         before = json.loads(json.dumps(self.state))

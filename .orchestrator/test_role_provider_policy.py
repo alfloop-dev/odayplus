@@ -2306,6 +2306,126 @@ def test_worker_failure_reviewer_failover_excludes_every_source_pool_and_refuses
             assert persist.call_args.kwargs["new_reviewer"] == expected
 
 
+def _sha_shadowed_submission(config: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    """A genuine Codex-then-Claude range whose base SHA is also a ref name.
+
+    `B` is the integration base, Codex writes `C` on it and Claude -- the
+    finalizer -- writes `D` on top. A ref spelled `origin/<B>` is then pointed
+    at `C`. Nothing recorded changes; the only question is whether `B` is read
+    as the commit it names or as the branch that happens to share its spelling.
+    """
+    repo = _source_repo()
+    repositories = config.setdefault("coordination", {}).setdefault("repositories", {})
+    repositories.setdefault("pantheon", {})["local_path"] = str(repo)
+    config.setdefault("branch_workflow", {})["dev_branch"] = "dev"
+    base = _git(repo, "rev-parse", "dev")
+    _git(repo, "checkout", "-q", "-b", "work/T-SOURCE-shadow", "dev")
+    codex = _source_commit(repo, "T-SOURCE", "Codex", "T-SOURCE-shadow-codex")
+    head = _source_commit(repo, "T-SOURCE", "Claude", "T-SOURCE-shadow-claude")
+    _git(repo, "checkout", "-q", "dev")
+    _git(repo, "update-ref", f"refs/remotes/origin/{base}", codex)
+    submission = {
+        "pr_number": 1221,
+        "remote_sha": head,
+        "source_head": head,
+        "source_base": base,
+        "source_authors": ["Codex", "Claude"],
+        "submitted_by": "Claude",
+    }
+    return submission, {"repo": str(repo), "base": base, "codex": codex, "head": head}
+
+
+def test_a_sha_named_ref_cannot_move_the_recorded_base_on_a_cold_cache() -> None:
+    """The recorded base is the commit it names, not a branch of that spelling.
+
+    Same genuine base, head, remote and Claude finalizer; the record only drops
+    Codex from its authors. Nothing has asked about this range before, so no
+    earlier genuine scan can have answered for it. Had `origin/<B>` been read
+    as the base, the range would be `C..D`, its only author Claude, and the
+    forged record would match it -- admitting Codex to review its own commit.
+    """
+    import dispatch_policy
+
+    config = _pool_alias_config()
+    genuine, shape = _sha_shadowed_submission(config)
+    repo = Path(shape["repo"])
+    assert _git(repo, "rev-parse", f"origin/{shape['base']}") == shape["codex"]
+    assert not [key for key in dispatch_policy._IMMUTABLE_SOURCE_AUTHORS if key[0] == shape["repo"]]
+
+    forged = {
+        "id": "T-SOURCE",
+        "status": "review",
+        "task_class": "implementation",
+        "priority": "P2",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "review_submission": dict(genuine, source_authors=["Claude"]),
+    }
+    source = task_review_source_identity(config, forged)
+    assert "are not the immutable Git authors ['Codex', 'Claude']" in str(source.error)
+    assert not source.pools
+    for reviewer in ("Codex", "Codex3", "Codex2"):
+        assert review_source_block_reason(config, forged, reviewer) == source.error
+    issues = supervisor.task_assignment_integrity_issues(config, {}, dict(forged))
+    assert any(issue.startswith("review_source_unresolved:") for issue in issues), issues
+    with mock.patch.object(
+        supervisor, "get_agent_reassignment_candidates", lambda *a, **k: ["Codex", "Codex3", "Codex2"]
+    ):
+        assert _run_repair(config, forged, pin_author=True) == []
+    config["account_pools"]["codex_lupin"]["state"] = "paused"
+    unavailable = dict(forged, reviewer="Codex2")
+    state: dict[str, Any] = {"active_workers": {}, "outstanding_deliveries": {}}
+    with mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist:
+        assert dispatch_engine.reassign_unavailable_reviewers(config, state, {"tasks": [unavailable]}) is False
+    persist.assert_not_called()
+    config["account_pools"]["codex_lupin"]["state"] = "active"
+
+    # The genuine record of the same range: every source pool is excluded and
+    # an independent registered reviewer still passes.
+    task = dict(forged, review_submission=genuine)
+    assert task_review_source_identity(config, task).pools == frozenset({"codex_bjoe", "claude_main"})
+    assert "is itself a source author" in str(review_source_block_reason(config, task, "Codex"))
+    assert "codex_bjoe" in str(review_source_block_reason(config, task, "Codex3"))
+    assert review_source_block_reason(config, task, "Codex2") is None
+
+
+def test_authors_of_a_scan_that_read_another_range_are_neither_used_nor_cached() -> None:
+    """The scan has to have read the recorded range before its authors count.
+
+    The counterfactual reads the base through the SHA-named ref, as the
+    resolver once did, with the real scanner over the real repository. The
+    scan itself is clean and finds exactly the forged author -- only the range
+    it reports gives it away, and that is refused before anything is cached.
+    """
+    import dispatch_policy
+
+    config = _pool_alias_config()
+    genuine, shape = _sha_shadowed_submission(config)
+    forged = {
+        "id": "T-SOURCE",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "review_submission": dict(genuine, source_authors=["Claude"]),
+    }
+    real_scan = dispatch_policy._inspect_delivery_identity
+
+    def through_the_shadow(repo_root: Path, **kwargs: Any) -> Any:
+        return real_scan(repo_root, **{**kwargs, "base": f"origin/{kwargs['base']}"})
+
+    with mock.patch.object(dispatch_policy, "_inspect_delivery_identity", through_the_shadow):
+        shadowed = through_the_shadow(
+            Path(shape["repo"]), task_id="T-SOURCE", base=shape["base"], head=shape["head"]
+        )
+        assert shadowed.errors == []
+        assert shadowed.source_agents == ("Claude",)
+        assert shadowed.base_sha == shape["codex"]
+        source = task_review_source_identity(config, forged)
+        assert "not the recorded range" in str(source.error)
+        assert review_source_block_reason(config, forged, "Codex") == source.error
+        assert not [key for key in dispatch_policy._IMMUTABLE_SOURCE_AUTHORS if key[0] == shape["repo"]]
+
+
 def test_a_rewritten_source_record_is_refused_before_any_queue_selects_a_reviewer() -> None:
     """The queue boundary does not take `source_authors` on trust.
 

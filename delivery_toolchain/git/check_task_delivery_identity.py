@@ -17,6 +17,7 @@ the caller's job, so an unknown label stays visible instead of being guessed.
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -42,10 +43,20 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+#: A complete object name. It names one immutable commit, never a branch.
+_FULL_OID = re.compile(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}")
+
+
 def resolve_base_ref(repo: Path, base: str) -> str:
-    """Prefer the remote integration ref while retaining offline compatibility."""
+    """Prefer the remote integration ref while retaining offline compatibility.
+
+    A branch name such as ``dev`` is read as ``origin/dev`` when that exists.
+    A complete object name is not a branch: it is the commit it names, and
+    reading it as ``origin/<sha>`` would let anyone who can create a ref of
+    that spelling move the base of an immutable range somewhere else.
+    """
     candidates = [base]
-    if not base.startswith(("origin/", "refs/")):
+    if not _FULL_OID.fullmatch(base) and not base.startswith(("origin/", "refs/")):
         candidates.insert(0, f"origin/{base}")
     for candidate in candidates:
         try:
@@ -100,7 +111,13 @@ def inspect_delivery_identity(
         base_ref = resolve_base_ref(repo, base)
         base_sha = _git(repo, "rev-parse", "--verify", f"{base_ref}^{{commit}}")
         head_sha = _git(repo, "rev-parse", "--verify", f"{head}^{{commit}}")
-        commits_text = _git(repo, "rev-list", "--reverse", "--no-merges", f"{base_ref}..{head}")
+        if _FULL_OID.fullmatch(base) and base_sha.lower() != base.lower():
+            raise ValueError(f"integration base {base[:12]} resolved to a different commit {base_sha[:12]}")
+        if _FULL_OID.fullmatch(head) and head_sha.lower() != head.lower():
+            raise ValueError(f"delivery head {head[:12]} resolved to a different commit {head_sha[:12]}")
+        # The range is listed between the resolved commits, not the names, so
+        # it is exactly the range ``base_sha``/``head_sha`` report.
+        commits_text = _git(repo, "rev-list", "--reverse", "--no-merges", f"{base_sha}..{head_sha}")
     except ValueError as exc:
         return DeliveryIdentity(errors=[*errors, str(exc)])
 
