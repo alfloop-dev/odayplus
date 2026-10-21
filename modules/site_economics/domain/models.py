@@ -221,6 +221,8 @@ class CapitalAssetKind(StrEnum):
     PAYMENT_SYSTEM = "PAYMENT_SYSTEM"
     KIOSK = "KIOSK"
     VENDING = "VENDING"
+    CAMERA_SYSTEM = "CAMERA_SYSTEM"
+    FURNITURE = "FURNITURE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,7 +293,7 @@ class CapitalAssetSpec:
         try:
             kind = CapitalAssetKind(data["asset_kind"])
         except ValueError as exc:
-            raise ValueError("CAPITAL_ASSET_INVALID: only payment systems, kiosks and vending capital assets are supported") from exc
+            raise ValueError("CAPITAL_ASSET_INVALID: declare a supported nonproductive capital asset kind") from exc
         return cls(**{**data, "asset_kind": kind})
 
     def to_dict(self) -> dict[str, Any]:

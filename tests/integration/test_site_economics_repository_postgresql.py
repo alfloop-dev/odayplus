@@ -266,3 +266,59 @@ def test_ancillary_costs_and_full_snapshot_survive_independent_postgresql_owner(
     loaded.metadata["target_format_snapshot"]["capital_assets"][0]["unit_capex"] = 999
     assert reader.get_by_document_id(document.document_id) == document
     assert writer.get_by_document_id(document.document_id) == document
+
+
+def test_camera_furniture_snapshot_hash_and_boundaries_survive_independent_postgresql_owner(owners):
+    from modules.site_economics import (
+        CapitalAssetKind,
+        CapitalAssetSpec,
+        SiteEconomicsDocument,
+        TargetFormatRegistry,
+        TargetFormatSpec,
+    )
+    from modules.site_economics.application.context_inputs import content_sha256
+    from tests.site_economics_fixtures import synthetic_g2_format
+
+    # Arbitrary engineering inputs, never a quote, approved lifetime/residual,
+    # insurance-bundle allocation or registration of an actual production G2.
+    assets = (
+        CapitalAssetSpec(asset_id="SYNTHETIC-PG-CAMERA", asset_kind=CapitalAssetKind.CAMERA_SYSTEM,
+            version="1.0.0-engineering", quantity=2, unit_capex=1200, useful_life_months=2,
+            residual_value_ratio=0.25, monthly_fixed_operating_cost=7),
+        CapitalAssetSpec(asset_id="SYNTHETIC-PG-FURNITURE", asset_kind=CapitalAssetKind.FURNITURE,
+            version="1.0.0-engineering", quantity=3, unit_capex=800, useful_life_months=3,
+            residual_value_ratio=0.5, monthly_fixed_operating_cost=11),
+    )
+    documents, (writer, reader) = owners
+    spec = replace(synthetic_g2_format(), format_version="2.3.0-camera-furniture-engineering",
+        capital_assets=assets)
+    registry = TargetFormatRegistry()
+    registry.register(spec)
+    document = SiteEconomicsService(registry=registry).evaluate_site(
+        site_id="synthetic-camera-furniture-pg", area_ping=25, monthly_rent=0,
+        tenant_id=documents[0].tenant_id, horizon_months=4)
+    expected_hash = content_sha256(spec.to_dict())
+    expected_digest = document.digest
+    writer.save(document)
+    loaded = reader.get_by_document_id(document.document_id)
+    assert loaded == document and loaded.digest == expected_digest
+    assert loaded.assumptions.total_equipment_capex == spec.machine_mix.total_equipment_capex + 4800
+    assert loaded.metadata["target_format_snapshot"]["capital_assets"] == [asset.to_dict() for asset in assets]
+    assert loaded.metadata["target_format_sha256"] == expected_hash
+    assert TargetFormatSpec.from_dict(loaded.metadata["target_format_snapshot"]) == spec
+    assert loaded.metadata["production_admission"] == "not_established_by_simulation"
+    assert SiteEconomicsDocument.from_json(loaded.to_json()).digest == expected_digest
+    reader.save(loaded)  # Same payload remains an idempotent immutable replay.
+    assert reader.list_by_site_id(document.site_id) == [document]
+    loaded.metadata["target_format_snapshot"]["capital_assets"][1]["unit_capex"] = 999
+    with pytest.raises(SiteEconomicsPersistenceError, match="IMMUTABLE_ID_CONFLICT"):
+        reader.save(loaded)
+    assert writer.get_by_document_id(document.document_id).digest == expected_digest
+    assert reader.get_by_document_id(document.document_id) == document
+    foreign = DurableSiteEconomicsRepository(TenantScopedDocumentStore(
+        PostgresDocumentStore(documents[1].engine), str(uuid4())))
+    assert foreign.get_by_document_id(document.document_id) is None
+    assert foreign.list_by_site_id(document.site_id) == []
+    with pytest.raises(SiteEconomicsPersistenceError, match="DOCUMENT_INVALID"):
+        foreign.save(document)
+    assert reader.get_latest_by_site_id(document.site_id).digest == expected_digest

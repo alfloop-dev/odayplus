@@ -1878,3 +1878,157 @@ def test_declared_numeric_output_contract_preserves_raw_metadata_and_typed_bound
             _validate_typed(replace(document, monthly_schedule=(replace(document.monthly_schedule[0], gross_revenue=invalid),)), SiteEconomicsDocument)
     with pytest.raises(ValueError):
         _validate_typed(replace(document, horizon_months=True), SiteEconomicsDocument)
+
+
+# Camera/furniture values are deliberately synthetic engineering assumptions.
+# Enum support supplies no supplier prices, useful-life policy, insurance-bundle
+# allocation or production G2 admission; the original validation remains shared.
+@pytest.mark.parametrize("kind", ["CAMERA_SYSTEM", "FURNITURE"])
+def test_camera_furniture_use_original_exact_asset_fields_and_typed_validation(kind):
+    from modules.site_economics import CapitalAssetKind, CapitalAssetSpec
+
+    payload = dict(_synthetic_capital_asset_payload(),
+        asset_id=f"SYNTHETIC-{kind}", asset_kind=kind)
+    asset = CapitalAssetSpec.from_dict(payload)
+    assert asset.asset_kind is CapitalAssetKind(kind)
+    assert asset.to_dict() == payload
+    assert len(asset.to_dict()) == 8
+    # Representative new-kind controls through the SAME original constructor.
+    for field, value in (("quantity", True), ("unit_capex", float("nan")),
+                         ("useful_life_months", 0), ("monthly_fixed_operating_cost", -1)):
+        with pytest.raises(ValueError, match="CAPITAL_ASSET_INVALID"):
+            CapitalAssetSpec.from_dict(dict(payload, **{field: value}))
+    incomplete = dict(payload)
+    incomplete.pop("useful_life_months")
+    with pytest.raises(ValueError, match="CAPITAL_ASSET_INVALID"):
+        CapitalAssetSpec.from_dict(incomplete)
+    for unsupported in ("OTHER", "WASHER", "UNKNOWN"):
+        with pytest.raises(ValueError, match="supported nonproductive capital asset kind"):
+            CapitalAssetSpec.from_dict(dict(payload, asset_kind=unsupported))
+    with pytest.raises(ValueError, match="CAPITAL_ASSET_INVALID"):
+        replace(asset, asset_kind=MachineClass.OTHER)
+    with pytest.raises(ValueError, match="CAPITAL_ASSET_INVALID"):
+        replace(synthetic_g2_format(), capital_assets=(asset, asset))
+    with pytest.raises(ValueError, match="CAPITAL_ASSET_INVALID"):
+        replace(synthetic_g2_format(), capital_assets=(replace(asset,
+            asset_id=WASHER_LARGE_20KG_V1.model_id),))
+
+
+@pytest.mark.parametrize("entry", ["direct", "market_context"])
+def test_camera_furniture_roundtrip_and_once_only_costs_in_actual_service_scenarios(
+    entry, record_testsuite_property,
+):
+    import json
+
+    from modules.site_economics.application.context_inputs import content_sha256
+
+    base = synthetic_g2_format()
+    base = replace(base, format_version="2.3.0-camera-furniture-engineering",
+        tax_spec=replace(base.tax_spec, corporate_tax_rate=0))
+    payloads = [dict(_synthetic_capital_asset_payload(),
+        asset_id="SYNTHETIC-CAMERA", asset_kind="CAMERA_SYSTEM", quantity=2,
+        unit_capex=1200, useful_life_months=2, residual_value_ratio=0.25,
+        monthly_fixed_operating_cost=7),
+        dict(_synthetic_capital_asset_payload(), asset_id="SYNTHETIC-FURNITURE",
+        asset_kind="FURNITURE", quantity=3, unit_capex=800, useful_life_months=3,
+        residual_value_ratio=0.5, monthly_fixed_operating_cost=11)]
+    raw = dict(base.to_dict(), capital_assets=payloads)
+    spec = TargetFormatSpec.from_dict(json.loads(json.dumps(raw)))
+    assert spec.to_dict() == raw
+    assert spec.machine_mix == base.machine_mix
+    assert spec.machine_mix.machine_counts_by_class == {"COMBO": 6}
+    registry = TargetFormatRegistry()
+    registry.register(spec)
+    registry.register(TargetFormatSpec.from_dict(raw))  # Identical replay only.
+    for index in (0, 1):
+        changed = list(spec.capital_assets)
+        changed[index] = replace(changed[index], monthly_fixed_operating_cost=99)
+        with pytest.raises(ValueError, match="TARGET_FORMAT_IMMUTABLE_VERSION"):
+            registry.register(replace(spec, capital_assets=tuple(changed)))
+    assert registry.get("ODAY_G2", spec.format_version) == spec
+
+    context = {"context_id": "synthetic-camera-furniture-context",
+        "tenant_id": "synthetic-tenant", "identity": {"site_id": "synthetic-camera-furniture"},
+        "listing": {"average_area_ping": 25, "median_asking_rent_per_ping": 0},
+        "demand": {"total_population": 15000, "density_per_sq_km": 8000},
+        "competitor": {"active_competitors": 0, "competitor_density_per_sq_km": 0}}
+    context_before = json.dumps(context, sort_keys=True)
+    documents, runs = [], []
+    # Local test registries only: no mutation of the product's global catalog.
+    for selected in (base, spec):
+        local_registry = TargetFormatRegistry()
+        local_registry.register(selected)
+        results = []
+
+        class ObserveActualSimulator(SiteEconomicsSimulator):
+            def simulate(self, value, *, observed_results=results):
+                result = super().simulate(value)
+                observed_results.append(result)
+                return result
+
+        service = SiteEconomicsService(registry=local_registry, simulator=ObserveActualSimulator())
+        overrides = SimulationOverrides(debt_ratio=0, lease_term_months=7)
+        if entry == "direct":
+            doc = service.evaluate_site("synthetic-camera-furniture", 25, 0,
+                tenant_id="synthetic-tenant", overrides=overrides, horizon_months=4)
+        else:
+            doc = service.evaluate_site_market_context(context, tenant_id="synthetic-tenant",
+                overrides=overrides, horizon_months=4)
+        assert len(results) == 4
+        assert tuple(doc.scenarios) == ("base", "optimistic", "pessimistic", "stress_test")
+        assert all(result.simulation_input.format_spec == selected for result in results)
+        assert doc.metadata["target_format_snapshot"] == selected.to_dict()
+        assert doc.metadata["target_format_sha256"] == content_sha256(selected.to_dict())
+        assert doc.metadata["production_admission"] == "not_established_by_simulation"
+        assert doc.assumptions.lease_term_months == 7
+        assert doc.engine_version == "site-economics-simulator-v1.2.0"
+        assert doc.contract_version == "1.0.0"
+        if entry == "market_context":
+            assert doc.source_market_context_sha256 == content_sha256(context)
+        validate_site_economics_document(doc)
+        restored = SiteEconomicsDocument.from_json(doc.to_json())
+        assert restored.to_json() == doc.to_json() and restored.digest == doc.digest
+        assert TargetFormatSpec.from_dict(restored.metadata["target_format_snapshot"]) == selected
+        documents.append(doc)
+        runs.append(results)
+    assert json.dumps(context, sort_keys=True) == context_before
+    assert documents[1].metadata["capital_assets_cost_policy"] == "explicit-nonlaundry-capital-v1"
+    assert documents[1].metadata["ancillary_sales_admission"] == "not_established_by_capital_costs"
+    assert documents[1].metadata["target_format_snapshot"]["capital_assets"] == payloads
+    assert documents[1].assumptions.total_equipment_capex == base.total_equipment_capex + 4800
+    for name, original, actual in zip(documents[1].scenarios, *runs, strict=True):
+        assert actual.metrics.total_initial_capex - original.metrics.total_initial_capex == 4800
+        assert actual.metrics.total_initial_cash_outlay - original.metrics.total_initial_cash_outlay == 4800
+        assert actual.metrics.average_monthly_revenue == original.metrics.average_monthly_revenue
+        assert actual.metrics.average_monthly_ebitda - original.metrics.average_monthly_ebitda == pytest.approx(-47)
+        assert [a - b for a, b in zip(actual.unlevered_cash_flows,
+            original.unlevered_cash_flows, strict=True)] == pytest.approx([-4800, -47, -47, -47, 1753])
+        assert [a - b for a, b in zip(actual.levered_cash_flows,
+            original.levered_cash_flows, strict=True)] == pytest.approx([-4800, -47, -47, -47, 1753])
+        for a, b, depreciation in zip(actual.monthly_schedule, original.monthly_schedule,
+                                     (1300, 1300, 400, 0), strict=True):
+            for field in ("total_cycles_count", "gross_revenue", "utilities_expense",
+                          "maintenance_expense", "rent_expense", "fitout_amortization"):
+                assert getattr(a, field) == getattr(b, field)
+            assert a.store_operations_expense - b.store_operations_expense == pytest.approx(47)
+            assert a.total_opex - b.total_opex == pytest.approx(47)
+            assert a.equipment_depreciation - b.equipment_depreciation == pytest.approx(depreciation, abs=0.01)
+            assert a.terminal_salvage_inflow - b.terminal_salvage_inflow == (1800 if a.is_terminal else 0)
+        assert documents[1].scenarios[name].levered_npv == actual.metrics.levered_npv
+        assert documents[1].scenarios[name].unlevered_npv == actual.metrics.unlevered_npv
+        scenario_doc = replace(documents[1], metrics=actual.metrics, decision=actual.decision,
+            monthly_schedule=actual.monthly_schedule)
+        assert SiteEconomicsDocument.from_json(scenario_doc.to_json()).digest == scenario_doc.digest
+    import sys
+
+    record_testsuite_property(f"camera_furniture_actual_flow_{entry}", json.dumps({
+        "test_source": __file__, "interpreter": sys.executable,
+        "loaded_project_sources": {name: str(module.__file__) for name, module in sys.modules.copy().items()
+            if name.startswith(("modules.", "shared.", "packages.", "solver.", "tests."))
+            and getattr(module, "__file__", None)},
+        "documents": [doc.to_dict() for doc in documents],
+        "actual_simulations": [[{"metrics": result.metrics.to_dict(),
+            "schedule": [row.to_dict() for row in result.monthly_schedule],
+            "unlevered_cash_flows": result.unlevered_cash_flows,
+            "levered_cash_flows": result.levered_cash_flows} for result in results]
+            for results in runs]}, sort_keys=True))
