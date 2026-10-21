@@ -143,7 +143,7 @@ File-level copyleft: source of any modified MPL file must be offered.
 - `lightningcss` 1.33.0 (npm)
 - `lightningcss-linux-x64-gnu` 1.33.0 (npm)
 - `lightningcss-linux-x64-musl` 1.33.0 (npm)
-- `certifi` 2026.6.17 (pypi)
+- `certifi` 2026.10.19 (pypi)
 
 ## All components by licence
 
@@ -895,7 +895,7 @@ File-level copyleft: source of any modified MPL file must be offered.
 
 ### MIT-CMU (1)
 
-- `pillow` 12.3.0 (pypi)
+- `pillow` 13.0.0 (pypi)
 
 ### MPL-2.0 (6)
 
@@ -904,7 +904,7 @@ File-level copyleft: source of any modified MPL file must be offered.
 - `lightningcss` 1.33.0 (npm)
 - `lightningcss-linux-x64-gnu` 1.33.0 (npm)
 - `lightningcss-linux-x64-musl` 1.33.0 (npm)
-- `certifi` 2026.6.17 (pypi)
+- `certifi` 2026.10.19 (pypi)
 
 ### MPL-2.0 AND (Apache-2.0 OR MIT) (1)
 

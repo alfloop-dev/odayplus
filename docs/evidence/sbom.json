@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-eaff106a234d78ffdd1640a44367ef69",
+  "serialNumber": "urn:uuid:sha256-4e0890b6713d0d8d1bb94ecc1e03afcd",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-20T10:27:17.168076+00:00",
+    "timestamp": "2026-10-21T12:43:02.134047+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,21 +16,21 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@34a1ef678e2930f3b6f7b7adb5470d5cb47fc937",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@34a1ef678e2930f3b6f7b7adb5470d5cb47fc937"
+      "purl": "pkg:generic/alfloop-dev/odayplus@26eb84cf1be5b075b77e888950df2e714ce1da31",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@26eb84cf1be5b075b77e888950df2e714ce1da31"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "34a1ef678e2930f3b6f7b7adb5470d5cb47fc937"
+        "value": "26eb84cf1be5b075b77e888950df2e714ce1da31"
       },
       {
         "name": "sbom-hash",
-        "value": "eaff106a234d78ffdd1640a44367ef694b758ea3ccd9d3c472a099dc61930c15"
+        "value": "4e0890b6713d0d8d1bb94ecc1e03afcd739728fad610b9bd51cd96d9b6109586"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:f8ed307f23bb74f0a7296a0d17cda4b4b5dd628afb62439acaebef77ad4a6449"
+        "value": "sha256:b34f60abadfe1dee84bfca19a8372c7720c5f763a917629124889d782e8ce8f0"
       },
       {
         "name": "container-base-images",
@@ -5408,10 +5408,10 @@
     },
     {
       "name": "certifi",
-      "version": "2026.6.17",
+      "version": "2026.10.19",
       "type": "library",
-      "purl": "pkg:pypi/certifi@2026.6.17",
-      "bom-ref": "pkg:pypi/certifi@2026.6.17",
+      "purl": "pkg:pypi/certifi@2026.10.19",
+      "bom-ref": "pkg:pypi/certifi@2026.10.19",
       "scope": "required",
       "licenses": [
         {
@@ -5423,11 +5423,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "024c88eeec92ca068db80f02b8b07c9cef7b9fe261d1d535abfd5abd6f6af432"
+          "content": "035c1e85572b141bf1c3a3eff0e33a8eb74917522f2559075ff8d2fea780a1ae"
         },
         {
           "alg": "SHA256",
-          "content": "2227dcbaafe0d2f59279d1762ddddc37783ed4354594f194ffc31d20f41fc3db"
+          "content": "42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b"
         }
       ],
       "supplier": {
@@ -13636,10 +13636,10 @@
     },
     {
       "name": "pillow",
-      "version": "12.3.0",
+      "version": "13.0.0",
       "type": "library",
-      "purl": "pkg:pypi/pillow@12.3.0",
-      "bom-ref": "pkg:pypi/pillow@12.3.0",
+      "purl": "pkg:pypi/pillow@13.0.0",
+      "bom-ref": "pkg:pypi/pillow@13.0.0",
       "scope": "required",
       "licenses": [
         {
@@ -13651,11 +13651,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "3b8182a766685eaa002637e28b4ec8d6b18819a0c71f579bf0dbaa5830297cce"
+          "content": "cdcd1ba258178f7356d74170c9a81ba4eab6a5d55748bc402a5a2a6fe6be3510"
         },
         {
           "alg": "SHA256",
-          "content": "ba09209fbe443b4acccebe845d8a138b89a8f4fbaeedd44953490b5315d5e965"
+          "content": "67c8d44ad89fa7eb88de5d6ef6199b1e03dd24974f85a67639fc8badb801fe79"
         }
       ],
       "supplier": {
@@ -18491,7 +18491,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@34a1ef678e2930f3b6f7b7adb5470d5cb47fc937",
+      "ref": "pkg:generic/alfloop-dev/odayplus@26eb84cf1be5b075b77e888950df2e714ce1da31",
       "dependsOn": [
         "pkg:npm/@deck.gl/core@9.3.7",
         "pkg:npm/@deck.gl/layers@9.3.7",
@@ -21214,7 +21214,7 @@
     {
       "ref": "pkg:pypi/httpcore@1.0.9",
       "dependsOn": [
-        "pkg:pypi/certifi@2026.6.17",
+        "pkg:pypi/certifi@2026.10.19",
         "pkg:pypi/h11@0.16.0"
       ]
     },
@@ -21222,7 +21222,7 @@
       "ref": "pkg:pypi/httpx@0.28.1",
       "dependsOn": [
         "pkg:pypi/anyio@4.14.2",
-        "pkg:pypi/certifi@2026.6.17",
+        "pkg:pypi/certifi@2026.10.19",
         "pkg:pypi/httpcore@1.0.9",
         "pkg:pypi/idna@3.18"
       ]
@@ -21316,7 +21316,7 @@
         "pkg:pypi/kiwisolver@1.5.0",
         "pkg:pypi/numpy@2.5.1",
         "pkg:pypi/packaging@26.2",
-        "pkg:pypi/pillow@12.3.0",
+        "pkg:pypi/pillow@13.0.0",
         "pkg:pypi/pyparsing@3.3.2",
         "pkg:pypi/python-dateutil@2.9.0.post0"
       ]
@@ -21673,13 +21673,13 @@
       "ref": "pkg:pypi/reportlab@5.0.1",
       "dependsOn": [
         "pkg:pypi/charset-normalizer@3.4.9",
-        "pkg:pypi/pillow@12.3.0"
+        "pkg:pypi/pillow@13.0.0"
       ]
     },
     {
       "ref": "pkg:pypi/requests@2.34.2",
       "dependsOn": [
-        "pkg:pypi/certifi@2026.6.17",
+        "pkg:pypi/certifi@2026.10.19",
         "pkg:pypi/charset-normalizer@3.4.9",
         "pkg:pypi/idna@3.18",
         "pkg:pypi/urllib3@2.8.0"
