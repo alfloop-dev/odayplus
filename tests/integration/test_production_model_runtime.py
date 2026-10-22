@@ -52,7 +52,9 @@ from modules.sitescore.application.reporting import SiteScoreReportService
 from modules.sitescore.domain import SITESCORE_FEATURE_VERSION, score_sites
 from product_ops.modeling.contracts import MODEL_SPECS
 
-NOW = datetime(2026, 7, 24, 10, 0, tzinfo=UTC)
+# 生產端以牆鐘檢查 feature snapshot 不得超過 SITESCORE_FEATURE_MAX_AGE（90 天），
+# 固定日期會在 90 天後讓整批測試變紅，所以改成相對牆鐘的時間點。
+NOW = datetime.now(UTC).replace(microsecond=0) - timedelta(hours=1)
 SITESCORE_MODEL_NAME = PRODUCTION_MODEL_CONTRACTS["sitescore"].model_name or ""
 
 
