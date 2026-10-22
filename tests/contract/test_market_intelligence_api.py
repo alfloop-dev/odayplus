@@ -1945,3 +1945,71 @@ def test_production_create_app_gates_only_market_intelligence_without_binding(
             assert "MARKET_INTELLIGENCE_PRODUCTION_BINDING_REQUIRED" in cells.text
     finally:
         bundle.engine.close()
+
+
+@pytest.mark.parametrize(
+    ("route", "contract_id", "fixture_name", "malformed_field"),
+    [
+        (
+            "/sites/site-taipei-001/context",
+            "emgi.site-market-context.v1",
+            "sample_site_context_payload",
+            "period_grain",
+        ),
+        (
+            "/cells/8928308280fffff",
+            "emgi.market-cell-profile.v1",
+            "sample_market_cell_payload",
+            "period_grain",
+        ),
+        ("/coverage", "emgi.coverage-surface.v1", "sample_coverage_surface_payload", "cells"),
+        ("/data-gaps/gap-rent-xinyi-01", "emgi.data-gap.v1", "sample_data_gap_payload", "gaps"),
+        (
+            "/acquisition-plans/plan-acq-001",
+            "emgi.data-acquisition-plan.v1",
+            "sample_acquisition_plan_payload",
+            "status",
+        ),
+    ],
+)
+@pytest.mark.parametrize("owner", ["same", "foreign", "missing"])
+def test_malformed_upstream_document_never_returns_unvalidated_payload(
+    request: pytest.FixtureRequest,
+    route: str,
+    contract_id: str,
+    fixture_name: str,
+    malformed_field: str,
+    owner: str,
+) -> None:
+    payload = request.getfixturevalue(fixture_name)
+    private_marker = "PRIVATE_UPSTREAM_PAYLOAD_R43"
+    parser_marker = "PRIVATE_UPSTREAM_ENUM_R43"
+    payload["metadata"] = {"private_contact": private_marker}
+    payload[malformed_field] = None if malformed_field in {"cells", "gaps"} else parser_marker
+    if owner == "missing":
+        payload.pop("tenant_id", None)
+    else:
+        payload["tenant_id"] = TENANT_ALPHA if owner == "same" else TENANT_BETA
+
+    # Reuse the existing transport that models an upstream ignoring filters.
+    transport = _ParamsIgnoringTransport()
+    transport.store_document(contract_id, payload.get("plan_id", "untrusted"), payload)
+    app = FastAPI()
+    app.include_router(
+        create_market_intelligence_router(facade=MarketDataFacade(transport=transport)),
+        prefix="/api/v1",
+    )
+    with TestClient(app) as client:
+        response = client.get("/api/v1/market-intelligence" + route, headers=HEADERS_EXPANSION_ALPHA)
+
+    if owner == "same":
+        assert response.status_code == 422
+    else:
+        assert response.status_code in (403, 404, 422)
+    assert private_marker not in response.text
+    assert parser_marker not in response.text
+    if response.status_code == 422:
+        detail = response.json()["detail"]
+        assert detail["code"] == "market_intelligence_validation_error"
+        assert detail["details"] == {"contract_id": contract_id}
+        assert TENANT_BETA not in response.text
