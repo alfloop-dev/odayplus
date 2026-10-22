@@ -24,6 +24,7 @@ import {
   type JobReceipt,
   type OdpApiClient,
   type AssignmentReceipt,
+  type AssignmentTransferTargetPage,
   type AssignmentTransferRequest,
   type AssignmentRequest,
   type PromotionDecisionReceipt,
@@ -132,9 +133,9 @@ export function toIntakeApiError(error: unknown): IntakeApiError {
     byStatus: INTAKE_ERRORS,
     fallbackPrefix: "ODP-INTAKE",
     roleDenied: ROLE_DENIED,
-    timeoutSummary: "連線逾時 — 後端未在時限內回應，本次操作未寫入。",
-    networkSummary: "無法連線至後端服務，本次操作未寫入。",
-    transportNextAction: "請確認網路連線後重試；你輸入的內容已保留。",
+    timeoutSummary: "連線逾時 — 後端未在時限內回應，操作結果尚未確認。",
+    networkSummary: "無法連線至後端服務，操作結果尚未確認。",
+    transportNextAction: "你輸入的內容已保留；請確認網路連線後查詢狀態，或使用同一 Idempotency-Key 重試。",
   });
 }
 
@@ -186,6 +187,10 @@ export const intakeApi = {
 
   get(client: OdpApiClient, intakeId: string): Promise<IntakeResult<AssistedIntake>> {
     return guard(() => client.getIntake(intakeId));
+  },
+
+  listAssignmentTransferTargets(client: OdpApiClient, assignmentId: string): Promise<IntakeResult<AssignmentTransferTargetPage>> {
+    return guard(() => client.listAssignmentTransferTargets(assignmentId));
   },
 
   getScoreJob(client: OdpApiClient, jobId: string): Promise<IntakeResult<JobReceipt>> {
@@ -251,9 +256,13 @@ export const intakeApi = {
     client: OdpApiClient,
     intakeId: string,
     actorRoleId: string,
+    options: { correlationId?: string; idempotencyKey?: string } = {},
   ): Promise<IntakeResult<AssistedIntake>> {
     return guard(() =>
-      client.retryIntake(intakeId, { actorRoleId }, { correlationId: newCorrelationId() }),
+      client.retryIntake(intakeId, { actorRoleId }, {
+        correlationId: options.correlationId ?? newCorrelationId(),
+        idempotencyKey: options.idempotencyKey ?? randomToken(),
+      }),
     );
   },
 

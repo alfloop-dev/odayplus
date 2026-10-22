@@ -322,7 +322,8 @@ def test_generated_modules_are_marked_generated(release):
         )
 
 
-def test_generated_field_survey_round_trips(release):
+def test_generated_field_survey_round_trips(consumer_roundtrip_release):
+    release = consumer_roundtrip_release
     from packages.oday_data_product_contracts_client.models.field_survey import (
         FieldSurveyDocument,
         MediaKind,
@@ -397,7 +398,8 @@ def test_generated_field_survey_round_trips(release):
     assert FieldSurveyDocument.from_dict(wire).to_dict() == wire
 
 
-def test_generated_property_observation_round_trips(release):
+def test_generated_property_observation_round_trips(consumer_roundtrip_release):
+    release = consumer_roundtrip_release
     from packages.oday_data_product_contracts_client.models.property_observation import (
         ListingStatus,
         PropertyObservationDocument,
@@ -448,7 +450,8 @@ def test_generated_property_observation_round_trips(release):
     assert PropertyObservationDocument.from_dict(wire).to_dict() == wire
 
 
-def test_generated_site_market_context_round_trips(release):
+def test_generated_site_market_context_round_trips(consumer_roundtrip_release):
+    release = consumer_roundtrip_release
     from packages.oday_data_product_contracts_client.models.site_market_context import (
         CoverageState,
         DomainStatus,
@@ -637,7 +640,8 @@ def test_generated_site_market_context_round_trips(release):
     assert SiteMarketContextDocument.from_dict(wire).to_dict() == wire
 
 
-def test_generated_catchment_profile_round_trips(release):
+def test_generated_catchment_profile_round_trips(consumer_roundtrip_release):
+    release = consumer_roundtrip_release
     from packages.oday_data_product_contracts_client.models.catchment_profile import (
         CatchmentProfileDocument,
         PeriodGrain,
@@ -739,7 +743,8 @@ def test_generated_catchment_profile_round_trips(release):
     assert CatchmentProfileDocument.from_dict(wire).to_dict() == wire
 
 
-def test_generated_coverage_surface_round_trips(release):
+def test_generated_coverage_surface_round_trips(consumer_roundtrip_release):
+    release = consumer_roundtrip_release
     from packages.oday_data_product_contracts_client.models.coverage_surface import (
         CoverageSurface,
     )
@@ -814,7 +819,8 @@ def test_generated_coverage_surface_round_trips(release):
     assert CoverageSurface.from_dict(wire).to_dict() == wire
 
 
-def test_generated_market_cell_profile_round_trips(release):
+def test_generated_market_cell_profile_round_trips(consumer_roundtrip_release):
+    release = consumer_roundtrip_release
     from packages.oday_data_product_contracts_client.models.market_cell_profile import (
         MarketCellProfileDocument,
         PeriodGrain,
@@ -920,7 +926,8 @@ def test_generated_market_cell_profile_round_trips(release):
     assert MarketCellProfileDocument.from_dict(wire).to_dict() == wire
 
 
-def test_generated_data_acquisition_plan_round_trips(release):
+def test_generated_data_acquisition_plan_round_trips(consumer_roundtrip_release):
+    release = consumer_roundtrip_release
     from packages.oday_data_product_contracts_client.models.data_acquisition_plan import (
         DataAcquisitionPlan,
         PlanStatus,

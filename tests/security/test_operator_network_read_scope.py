@@ -17,6 +17,11 @@ from modules.opsboard.application.network_listings import NetworkListingService
 from modules.opsboard.application.network_reviews import NetworkReviewService
 from modules.opsboard.application.network_scoring import NetworkScoringService
 from shared.auth import Action
+from tests.integration._operation_flag_fixtures import (
+    SITE_GO_FLAG,
+    enable_operation_flag,
+    new_operation_flags,
+)
 
 HEADERS = {
     "X-Subject-Id": "read-admin", "X-Roles": "platform_admin,operator_viewer",
@@ -120,6 +125,8 @@ def test_all_network_envelopes_apply_verified_scope_before_aggregates(header, ax
 
 def test_review_decisions_and_audit_are_scoped_with_real_producer_records():
     _, _, reviews, client = services_and_client()
+    reviews._feature_flags, reviews._job_queue = new_operation_flags()
+    enable_operation_flag(reviews._feature_flags, key=SITE_GO_FLAG, tenant_id="tenant-a")
     for review_id in ("RV-702", "RV-701"):
         reviews.decide_review(
             review_id=review_id, decision="GO", reason="Reviewed complete evidence independently",
@@ -204,7 +211,13 @@ def merged_listing_client(tmp_path):
         ))
         return service, TestClient(app)
 
-    _, writer = mount()
+    service, writer = mount()
+    # This isolated read-scope fixture deliberately merges across zones. Its
+    # recorded duplicate relation must name that intended target before the
+    # real write owner can create the durable relationship under test.
+    source = next(row for row in service._state["listings"] if row["id"] == "L-2029")
+    source["duplicateOfId"] = "L-2024"
+    service._sync_listing_to_repo("L-2029")
     merged = writer.post("/network-listings/listings/L-2029/merge", headers={
         "X-Subject-Id": "merger", "X-Roles": "expansion_user,site_reviewer",
         "X-Tenant-Id": "tenant-a", "X-Operator-Role": "expansion-manager",

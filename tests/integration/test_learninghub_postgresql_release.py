@@ -30,6 +30,7 @@ from tests.integration._learninghub_fixtures import (
     model_performance_policy_for_model,
     prepare_candidate,
 )
+from tests.integration._model_publish_flag_fixture import enable_model_publish
 
 
 class _PostgresProcessInterrupted(BaseException):
@@ -257,6 +258,7 @@ def test_postgresql16_full_mlflow_release_and_lease_fenced_recovery(
         worker_id="pg-worker-a",
         release_lease_seconds=600.0,
     )
+    enable_model_publish(service_a, tenant_id='tenant-modeling')
     service_b = LearningHubService(
         repository=repository_b,
         registry=registry_b,

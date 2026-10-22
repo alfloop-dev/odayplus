@@ -28,6 +28,7 @@ import json
 import pickle
 import threading
 from collections.abc import Callable, Iterable
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -225,6 +226,8 @@ _STATE_COLLECTIONS: dict[str, str] = {
     "slas": "assisted_intake.slas",
     "saved_views": "assisted_intake.saved_views",
     "replays": "assisted_intake.idempotency_replays",
+    "workflow_audits": "assisted_intake.workflow_audits",
+    "workflow_outbox": "assisted_intake.workflow_outbox",
 }
 
 _STATE_KEY_FIELDS: dict[str, tuple[str, ...]] = {
@@ -236,6 +239,8 @@ _STATE_KEY_FIELDS: dict[str, tuple[str, ...]] = {
     "promotions": ("promotion_decision_id",),
     "slas": ("sla_instance_id",),
     "saved_views": ("saved_view_id",),
+    "workflow_audits": ("audit_event_id",),
+    "workflow_outbox": ("event_id",),
 }
 
 
@@ -288,6 +293,22 @@ class DurableAssistedIntakeStore:
         self._store = store
         self._engine = store.engine
         self._local = threading.local()
+        self._canonical_audit_sink = None
+
+    def configure_canonical_audit(self, sink: Any) -> None:
+        if sink.writer.engine is not self._engine:
+            raise ValueError("Canonical audit must share the business transaction engine")
+        self._canonical_audit_sink = sink
+
+    def configure_audit_retention(self, provider: Any) -> None:
+        if self._canonical_audit_sink is None:
+            raise RuntimeError("Canonical Intake audit writer is not wired")
+        self._canonical_audit_sink.set_retention_provider(provider)
+
+    def canonical_audit_is_committed(self, audit: Any) -> bool:
+        return bool(self._canonical_audit_sink
+                    and audit.get("tenant_id") == self._local.tenant_id
+                    and self._canonical_audit_sink.is_committed(audit))
 
     def __getattr__(self, name: str) -> Any:
         if name not in _STATE_COLLECTIONS:
@@ -363,6 +384,20 @@ class DurableAssistedIntakeStore:
                 current[name] = dict(value)
         return current
 
+    @contextmanager
+    def transaction(self):
+        """Roll back request state as well as SQL on command/commit failure."""
+        self._current_collections()  # Require a verified tenant binding.
+        collections = deepcopy(self._local.collections)
+        baseline = deepcopy(self._local.baseline)
+        try:
+            with self._engine.lock:
+                yield
+        except BaseException:
+            self._local.collections = collections
+            self._local.baseline = baseline
+            raise
+
     def _read_locked(
         self,
         collection: str,
@@ -398,12 +433,15 @@ class DurableAssistedIntakeStore:
             for key, value in current_values.items():
                 baseline = baseline_values.get(key)
                 if key not in baseline_values or value != baseline:
+                    if name == "workflow_audits" and key in baseline_values:
+                        raise AssistedIntakePersistenceConflict("Workflow audit records are append-only")
                     changes.append((name, collection, key, baseline, value))
 
         if not changes:
             return
 
         with self._engine.lock:
+            canonical_audits = {}
             for _name, collection, key, baseline, value in sorted(changes):
                 storage_key = f"{tenant_id}:{key}"
                 persisted = self._read_locked(collection, storage_key)
@@ -411,12 +449,43 @@ class DurableAssistedIntakeStore:
                     raise AssistedIntakePersistenceConflict(
                         f"Concurrent Assisted Intake update for {collection}/{key}"
                     )
+                if _name == "workflow_audits":
+                    from shared.audit.errors import CanonicalAuditUnavailable
+                    parent = current["intakes"].get(value.get("intake_id"))
+                    if self._canonical_audit_sink is None or parent is None:
+                        raise CanonicalAuditUnavailable("Canonical audit writer/parent is unavailable")
+                    value = self._canonical_audit_sink.persist(value, parent["scope"])
+                    canonical_audits[key] = value
                 self._store.put(
                     collection,
                     storage_key,
                     self._wrap(tenant_id, key, deepcopy(value)),
                 )
-        self._local.baseline = deepcopy(current)
+            self._stage_listing_search_changes(tenant_id, changes)
+        self.workflow_audits.update(canonical_audits)
+        self._local.baseline = deepcopy(self._current_collections())
+
+    def _stage_listing_search_changes(self, tenant_id: str, changes: list) -> None:
+        from shared.infrastructure.persistence.job_queue import DurableJobQueue
+        from shared.infrastructure.persistence.listing_search_delivery import ListingSearchDelivery
+        from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
+
+        delivery = ListingSearchDelivery(
+            TenantScopedDocumentStore(self._store, tenant_id), DurableJobQueue(self._engine),
+        )
+        for name, _, _, _, value in changes:
+            if name == "saved_views":
+                delivery.stage(kind="search", value=value)
+                from modules.listing.application.saved_search import SavedListingCriteria
+                if SavedListingCriteria.from_query(value.get("query")) is not None:
+                    # Bootstrap pre-feature canonical receipts from committed
+                    # rows. These reads take no parent locks. Later receipt
+                    # commits carry their own events, so a concurrent receipt
+                    # cannot be lost between this snapshot and search commit.
+                    for receipt in self._load_collection("intakes", tenant_id).values():
+                        delivery.stage(kind="receipt", value=receipt)
+            elif name == "intakes":
+                delivery.stage(kind="receipt", value=value)
 
     # Operator network-listings repository compatibility. Keeping one state
     # owner avoids dual writes between the operator and approved v1 routers.
@@ -446,7 +515,14 @@ class DurableAssistedIntakeStore:
         listing_id: str,
         metadata: dict[str, Any],
     ) -> None:
-        self._store.put(self._LISTING_META, listing_id, metadata)
+        with self._engine.lock:
+            collection = (self._store._collection(self._LISTING_META)
+                          if hasattr(self._store, "_collection") else self._LISTING_META)
+            # This store is PostgreSQL-only. Use the reader's exact partitioned
+            # advisory key before an upsert can insert a previously absent row.
+            self._engine.query_one("SELECT pg_advisory_xact_lock(hashtextextended(?, 0)) AS locked",
+                                   (f"{collection}:{listing_id}",))
+            self._store.put(self._LISTING_META, listing_id, metadata)
 
     def get_candidate_metadata(self, candidate_id: str) -> dict[str, Any]:
         return self._store.get(self._CANDIDATE_META, candidate_id) or {}

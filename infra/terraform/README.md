@@ -8,7 +8,7 @@ memory persistence.
 
 | Resource | Production contract |
 |---|---|
-| Cloud Run API | Immutable digest, exact release SHA, IAM-only invocation, Gen2, Direct VPC egress, Cloud SQL volume, `/readiness` startup probe, `/healthz` liveness probe. |
+| Cloud Run API | Immutable digest, exact release SHA, IAM-only invocation, Gen2, Direct VPC egress, Cloud SQL volume, `/readiness` startup probe, `/liveness` liveness probe. |
 | Cloud Run Web | Immutable digest, exact release SHA, OIDC session enforcement, service-to-service identity token, private API invocation, Gen2, Direct VPC egress. |
 | Cloud SQL PostgreSQL 16 | Private IP only, `REGIONAL` HA, SSD/autoresize, PITR, 30+ backups, CMEK, encrypted connections, deletion protection. |
 | Secret Manager | Terraform-generated database URL, cursor key, and Web session secret plus references to the shared Web/API local identity signing key and environment-owned model credentials. External provider credentials and direct external data acquisition are disabled in consumer deployment. No secret payload is accepted as a variable or exposed as an output. |
@@ -16,6 +16,12 @@ memory persistence.
 | Pub/Sub | CMEK job topic, ordered subscription, bounded retry, DLQ topic/subscription, regional persistence. |
 | IAM | Separate API, worker, audit-writer, and audit-retention identities with resource-level grants. |
 | VPC | Custom regional subnet, Direct VPC egress, Private Service Access, default-deny egress firewall with restricted RFC1918 and Google API CIDR allow rules, no Cloud NAT, no Cloud SQL public IPv4. |
+
+Use `/liveness` for Cloud Run probes and external process checks. Google lists
+some paths ending in `z` as [reserved URL paths](https://docs.cloud.google.com/run/docs/known-issues#reserved-url-paths),
+which can return a frontend 404 before reaching the container. The API retains
+`/healthz` for existing local callers; `/health` remains the detailed health
+report and `/readiness` continues to enforce the runtime readiness contract.
 
 ## Production Fail-Closed Gates
 
@@ -134,7 +140,7 @@ uses the real `/readiness` gate:
 3. Confirm model secrets have enabled versions, MLflow production aliases
    are approved, and the canonical datasets exist.
 4. Run a fresh full plan, review it, and apply the saved plan.
-5. Verify `/healthz`, `/readiness`, exact `release_sha`, OIDC rejection/acceptance,
+5. Verify `/liveness`, `/readiness`, exact `release_sha`, OIDC rejection/acceptance,
    model lineage, Pub/Sub/DLQ, backup/PITR, and restore drill
    evidence before routing user traffic.
 

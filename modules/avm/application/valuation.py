@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import wraps
+from inspect import signature
 from typing import Any
 from uuid import uuid4
 
@@ -40,6 +43,10 @@ from modules.avm.infrastructure import InMemoryAVMRepository
 
 class AVMError(ValueError):
     pass
+
+
+class AVMReviewRequiredFailure(AVMError):
+    """A named valuation refusal whose REVIEW_REQUIRED state is complete."""
 
 
 @dataclass(frozen=True)
@@ -110,6 +117,30 @@ class DepreciationRollbackReceipt:
         }
 
 
+def _serialized_case_mutation(method):
+    """Keep memory behavior; durable owners lock before the first native read."""
+    method_signature = signature(method)
+
+    @wraps(method)
+    def invoke(self, *args, **kwargs):
+        arguments = method_signature.bind(self, *args, **kwargs).arguments
+        entry = getattr(self.repository, "case_transaction", None)
+        review_failure = None
+        with entry(arguments["case_id"]) if callable(entry) else nullcontext():
+            try:
+                return method(self, *args, **kwargs)
+            except AVMReviewRequiredFailure as exc:
+                if type(exc) is not AVMReviewRequiredFailure:
+                    raise
+                # Only the explicitly saved named refusal is a completed
+                # business result. Every other exception still rolls back.
+                review_failure = exc
+        if review_failure is not None:
+            raise review_failure
+
+    return invoke
+
+
 class AVMService:
     def __init__(
         self,
@@ -153,6 +184,7 @@ class AVMService:
     def get_case(self, case_id: str) -> ValuationCase | None:
         return self.repository.get_case(case_id)
 
+    @_serialized_case_mutation
     def normalize(self, case_id: str, *, actor: str, correlation_id: str) -> NormalizedMargin:
         case = self._case(case_id)
         self._require_status(
@@ -181,6 +213,7 @@ class AVMService:
         )
         return margin
 
+    @_serialized_case_mutation
     def value(
         self,
         case_id: str,
@@ -250,9 +283,7 @@ class AVMService:
                     correlation_id=correlation_id,
                 )
             )
-            if isinstance(exc, AVMError):
-                raise
-            raise AVMError(str(exc)) from exc
+            raise AVMReviewRequiredFailure(str(exc)) from exc
 
         if receipt is not None and pin is not None:
             report.execution_metadata["depreciation_rollback_receipt"] = receipt.to_dict()
@@ -270,6 +301,7 @@ class AVMService:
         )
         return report
 
+    @_serialized_case_mutation
     def approve_finance(
         self,
         case_id: str,
@@ -321,6 +353,7 @@ class AVMService:
         )
         return approved_report
 
+    @_serialized_case_mutation
     def build_dataroom(self, case_id: str, *, actor: str, correlation_id: str) -> DataRoom:
         case = self._case(case_id)
         self._require_status(
@@ -353,6 +386,7 @@ class AVMService:
         )
         return dataroom
 
+    @_serialized_case_mutation
     def export_dataroom(
         self,
         case_id: str,

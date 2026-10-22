@@ -2,6 +2,12 @@ import { describe, it, expect } from "vitest";
 import { parseUrlState, serializeUrlState } from "../urlState";
 
 describe("urlState serialization and parsing", () => {
+  it("refuses conflicting navigation targets and unknown dialogs", () => {
+    const parsed = parseUrlState("selected=IN-1&selected=IN-2&section=identity&section=audit&dialog=unknown");
+    expect(parsed.selectedId).toBeNull();
+    expect(parsed.activeSection).toBeNull();
+    expect(parsed.dialog).toBeNull();
+  });
   it("should parse from URLSearchParams", () => {
     const params = new URLSearchParams(
       "stage=NEEDS_REVIEW&outcome=POSSIBLE_MATCH&source=src1&hz=hz1&sort=submitted_at_desc&view=map&selected=IN-3011&dialog=detail&section=identity&field=address&decision=transfer&receipt=RCPT-1&compare=true"

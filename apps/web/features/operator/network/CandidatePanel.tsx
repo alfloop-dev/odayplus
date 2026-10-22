@@ -3,9 +3,20 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import styles from "../networkFindAreas.module.css";
+import type { ReviewSubmissionOffer } from "./networkReviewSubmissionTypes";
+import type { SurveyTarget } from "./surveyAssignmentClient";
 import type { CandidatePipelineRow } from "../networkFindAreasViewModel";
 import {
+  candidateGateDisplayRows,
+  candidateMatchesPipeline,
+  candidatePipelineControls,
+  type CandidatePipelineFilter,
+} from "./candidateDesignControls";
+import {
   recommendationTone,
+  type CandidateNativeWorkflowRead,
+  type CandidateNativeWorkflowReads,
+  type CandidateReviewReadTarget,
   type ScoringCandidate,
   type ScoringGate,
 } from "./networkScoringTypes";
@@ -27,7 +38,23 @@ export function CandidatePanel({
   onScoreAll,
   onToggleCompare,
   zoneScope,
+  selectedCandidateId,
+  selectionError,
+  onSelectCandidate,
+  nativeWorkflow,
+  onViewReview,
+  submissionOffers,
+  onRequestSubmission,
+  onOpenSurvey,
 }: {
+  submissionOffers?: Record<string, ReviewSubmissionOffer>;
+  onRequestSubmission?: (offer: ReviewSubmissionOffer) => void;
+  onOpenSurvey?: (target: SurveyTarget) => void;
+  nativeWorkflow?: CandidateNativeWorkflowReads;
+  onViewReview?: (target: CandidateReviewReadTarget) => void;
+  selectedCandidateId?: string | null;
+  selectionError?: string | null;
+  onSelectCandidate?: (candidateId: string) => void;
   busyCandidateId?: string | null;
   candidates: ScoringCandidate[];
   fallbackRows: CandidatePipelineRow[];
@@ -43,26 +70,39 @@ export function CandidatePanel({
     return zoneId ? allRows.filter((row) => row.heatZoneId === zoneId) : allRows;
   }, [candidates, fallbackRows, zoneId]);
   const [selectedId, setSelectedId] = useState(rows[0]?.id ?? "");
-  const [pipelineFilter, setPipelineFilter] = useState<PipelineFilter>("all");
+  const [pipelineFilter, setPipelineFilter] = useState<CandidatePipelineFilter>("all");
   const filteredRows = useMemo(
-    () => rows.filter((row) => matchesPipelineFilter(row, pipelineFilter)),
-    [pipelineFilter, rows],
+    () => rows.filter((row) => candidateMatchesPipeline(row, pipelineFilter, nativeWorkflow)),
+    [pipelineFilter, rows, nativeWorkflow],
   );
-  const selected = filteredRows.find((row) => row.id === selectedId) ?? filteredRows[0] ?? rows[0];
+  const exactSelection = selectedCandidateId !== undefined && selectedCandidateId !== null;
+  const duplicateSelection = exactSelection && candidates.filter((row) => row.id === selectedCandidateId).length > 1;
+  const selected = selectionError || duplicateSelection ? undefined : exactSelection
+    ? filteredRows.find((row) => row.id === selectedCandidateId)
+    : filteredRows.find((row) => row.id === selectedId) ?? filteredRows[0] ?? rows[0];
+  const missingSelection = selectionError ?? (duplicateSelection
+    ? "指定候選點的資料不一致，請重新確認。"
+    : exactSelection && !selected ? "指定候選點目前不在可檢視的清單中；請確認權限或篩選條件。" : null);
   const scoreable = rows.filter((row) => !row.scored && row.gate.passed);
-  const pipelineFilters: Array<{ id: PipelineFilter; label: string; count: number }> = [
-    { id: "all", label: "全部候選點", count: rows.length },
-    { id: "ready", label: "可執行評分", count: rows.filter((row) => !row.scored && row.gate.passed).length },
-    { id: "blocked", label: "缺資料", count: rows.filter((row) => !row.gate.passed).length },
-    { id: "scored", label: "已評分", count: rows.filter((row) => row.scored).length },
-    { id: "compare", label: "比較中", count: rows.filter((row) => row.inCompare).length },
-  ];
+  const pipelineFilters = candidatePipelineControls(rows, nativeWorkflow);
 
   useEffect(() => {
-    if (filteredRows.length && !filteredRows.some((row) => row.id === selectedId)) {
+    if (!exactSelection && !selectionError && filteredRows.length && !filteredRows.some((row) => row.id === selectedId)) {
       setSelectedId(filteredRows[0].id);
     }
-  }, [filteredRows, selectedId]);
+  }, [filteredRows, selectedId, exactSelection, selectionError]);
+
+  useEffect(() => {
+    setPipelineFilter("all");
+  }, [selectedCandidateId]);
+
+  if (duplicateSelection) {
+    return (
+      <div className={styles.tabPanel} data-testid="network-panel-candidates" role="tabpanel">
+        <p role="alert" data-testid="candidate-selection-unavailable">{missingSelection}</p>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -92,7 +132,8 @@ export function CandidatePanel({
           <span className={styles.muted}>{rows.length} candidates · 資料完整度 Gate 鎖評分</span>
           <button
             data-testid="candidate-score-all"
-            disabled={!onScoreAll || scoreable.length === 0}
+            disabled={nativeWorkflow !== undefined || !onScoreAll || scoreable.length === 0}
+            title={nativeWorkflow !== undefined ? "批次評分受理與完整工作狀態尚未接通；資料 Gate 不代表可執行。" : undefined}
             onClick={() => onScoreAll?.(zoneScope ? scoreable.map((row) => row.id) : undefined)}
             type="button"
           >
@@ -105,18 +146,30 @@ export function CandidatePanel({
         <div className={styles.candidateWorkspace}>
           <aside className={styles.pipelinePanel} aria-label="Candidate pipeline">
             <div className={styles.filterTitle}>PIPELINE</div>
-            <div className={styles.pipelineFilterList}>
+            <div className={styles.pipelineFilterList} data-testid="candidate-original-pipeline">
               {pipelineFilters.map((filter) => (
                 <button
                   aria-pressed={pipelineFilter === filter.id}
+                  data-testid={`candidate-pipeline-${filter.id}`}
+                  disabled={!filter.available}
                   key={filter.id}
                   onClick={() => setPipelineFilter(filter.id)}
+                  title={filter.reason ?? undefined}
                   type="button"
                 >
                   <span>{filter.label}</span>
-                  <b>{filter.count}</b>
+                  <b>{filter.count ?? "—"}</b>
                 </button>
               ))}
+            </div>
+            {pipelineFilters.some((filter) => !filter.available) ? <p className={styles.candidatePipelineNote}>
+              「—」表示流程紀錄不可得，尚無法確認數量。
+            </p> : null}
+            <div className={styles.pipelineFilterList}>
+              <button aria-pressed={pipelineFilter === "compare"} data-testid="candidate-compare-filter"
+                onClick={() => setPipelineFilter("compare")} type="button">
+                <span>比較中</span><b>{rows.filter((row) => row.inCompare).length}</b>
+              </button>
             </div>
             <div className={styles.candidateViewToggle} aria-label="Candidate view">
               <button aria-pressed="true" type="button">看板</button>
@@ -139,19 +192,19 @@ export function CandidatePanel({
                   data-testid={`candidate-row-${row.id}`}
                   data-tone={row.scored ? tone : row.gate.passed ? "watch" : "risk"}
                   key={row.id}
-                  onClick={() => setSelectedId(row.id)}
+                  onClick={() => onSelectCandidate ? onSelectCandidate(row.id) : setSelectedId(row.id)}
                 >
                   <div className={styles.candidateCardHead}>
                     <span>{row.id}</span>
                     <ToneBadge tone={row.gate.passed ? (row.scored ? tone : "watch") : "risk"}>
-                      {row.scored ? `${row.recommendation} ${row.score}` : row.gate.passed ? "可評分" : "缺資料"}
+                      {nativeWorkflow ? nativeStageLabel(nativeWorkflow[row.id]) : row.scored ? [row.recommendation, row.score].filter((value) => value !== null).join(" ") : row.gate.passed ? "可評分" : "缺資料"}
                     </ToneBadge>
                   </div>
                   <h4>{row.title}</h4>
                   <p>{row.listingId ? `來源 ${row.listingId}` : row.address}</p>
                   <div className={styles.candidateCardMeta}>
                     <span>{row.zoneLabel}</span>
-                    <span>{row.modelVersion}</span>
+                    <span>{row.modelVersion ?? (row.scored ? "模型版本未提供" : "尚無評分報告")}</span>
                   </div>
                   <div data-testid={`candidate-score-value-${row.id}`}>
                     <GateBadge gate={row.gate} candidateId={row.id} />
@@ -163,7 +216,21 @@ export function CandidatePanel({
                   </div>
                   <small className={styles.candidateSnapshot}>{row.datasetSnapshotId}</small>
                   <div className={styles.rowActions}>
-                    {!row.scored && row.gate.passed ? (
+                    {submissionOffers?.[row.id] ? <button data-testid={`candidate-submit-review-${row.id}`}
+                      disabled={isBusy || !onRequestSubmission} type="button" onClick={(event) => {
+                        event.stopPropagation(); onRequestSubmission?.(submissionOffers[row.id]);
+                      }}>{submissionOffers[row.id].newRound ? "新版報告另開審查"
+                        : submissionOffers[row.id].decisionId ? "再次送審" : "送審（SiteScore Review）"}</button> : null}
+                    {nativeWorkflow?.[row.id]?.review ? <button
+                      data-testid={`candidate-row-view-review-${row.id}`} disabled={!onViewReview || isBusy}
+                      onClick={(event) => { event.stopPropagation(); const target = nativeWorkflow[row.id].review; if (target) onViewReview?.(target); }} type="button">
+                      {nativeWorkflow[row.id].review?.relation === "historical" ? "查看歷史審核" : "查看審核"}
+                    </button> : nativeWorkflow && nativeWorkflow[row.id]?.availability !== "recorded" ? <button
+                      disabled title={nativeWorkflow[row.id]?.reason} type="button">流程尚未核驗</button>
+                      : nativeWorkflow && !row.scored && row.gate.passed ? <button
+                        data-testid={`candidate-score-${row.id}`} disabled
+                        title="初次評分受理與原始工作狀態尚未接通；資料 Gate 不代表可執行。" type="button">初次評分受理未接通</button>
+                        : !row.scored && row.gate.passed ? (
                       <button
                         data-testid={`candidate-score-${row.id}`}
                         disabled={isBusy || !onScore}
@@ -202,15 +269,16 @@ export function CandidatePanel({
 
           <aside className={`${styles.listingDetailPanel} ${styles.candidateDetailPanel}`} aria-label="資料完整度 Gate detail">
             {selected ? (
-              <GateDetail candidate={selected} onScore={onScore} busy={busyCandidateId === selected.id} />
+              <GateDetail candidate={selected} nativeWorkflow={nativeWorkflow?.[selected.id]} canonical={nativeWorkflow !== undefined}
+                onOpenSurvey={onOpenSurvey} onViewReview={onViewReview} submissionOffer={submissionOffers?.[selected.id]} onRequestSubmission={onRequestSubmission} onScore={onScore} onToggleCompare={onToggleCompare} busy={busyCandidateId === selected.id} />
             ) : (
-              <div className={styles.emptyState}>No candidate selected</div>
+              <div className={styles.emptyState} data-testid="candidate-selection-unavailable">{missingSelection ?? "No candidate selected"}</div>
             )}
           </aside>
         </div>
       ) : (
         <div className={styles.emptyState} data-testid="candidate-empty">
-          {zoneScope ? `${zoneScope.label} 尚無候選點。` : "No candidates yet"}
+          {missingSelection ?? (zoneScope ? `${zoneScope.label} 尚無候選點。` : "No candidates yet")}
         </div>
       )}
     </div>
@@ -240,33 +308,95 @@ function GateBadge({ gate, candidateId }: { gate: ScoringGate; candidateId: stri
 function GateDetail({
   candidate,
   onScore,
+  onToggleCompare,
   busy,
+  nativeWorkflow,
+  canonical,
+  onViewReview,
+  submissionOffer,
+  onRequestSubmission,
+  onOpenSurvey,
 }: {
+  submissionOffer?: ReviewSubmissionOffer;
+  onRequestSubmission?: (offer: ReviewSubmissionOffer) => void;
+  onOpenSurvey?: (target: SurveyTarget) => void;
+  nativeWorkflow?: CandidateNativeWorkflowRead;
+  canonical?: boolean;
+  onViewReview?: (target: CandidateReviewReadTarget) => void;
   candidate: ScoringCandidate;
   onScore?: (candidateId: string) => void;
+  onToggleCompare?: (candidateId: string) => void;
   busy: boolean;
 }) {
+  const displayRows = candidateGateDisplayRows(candidate);
+  const fieldText = (key: string) => displayRows.find((row) => row.key === key)?.text ?? "不可得：資料未接通";
+  const activeStage = canonical ? nativeWorkflow?.stage : (["onhold", "approved", "rejected", "pendingreview", "scoring"] as const)
+    .find((stage) => candidateMatchesPipeline(candidate, stage));
+  const reviewTarget = nativeWorkflow?.review;
+  const scoreAction = !canonical && !activeStage && !candidate.scored && candidate.gate.passed;
+  const viewReviewAction = activeStage === "pendingreview" && reviewTarget && onViewReview;
+  const submissionAction = canonical && submissionOffer && onRequestSubmission;
+  const primaryLabel = submissionAction ? (submissionOffer.newRound ? "新版報告另開審查"
+    : submissionOffer.decisionId ? "再次送審（凍結報告）" : "送審（SiteScore Review）") : activeStage === "onhold" ? "恢復處理"
+    : activeStage === "approved" ? "已核准 — 待納入展店計畫"
+      : activeStage === "rejected" ? "未通過 — 已結案"
+        : activeStage === "pendingreview" ? `查看審核 ${reviewTarget?.reviewId ?? candidate.pipelineEvidence?.pendingreview?.recordId ?? ""}`
+          : canonical && activeStage === "needdata" ? "退回／缺資料 — 補資料流程未接通"
+            : canonical && !activeStage ? "流程狀態尚未核驗"
+              : canonical && activeStage === "ready" ? "資料齊備 — 初次評分受理未接通"
+          : activeStage === "scoring" ? "SiteScore 評分中…"
+            : candidate.scored ? "送審（SiteScore Review）"
+              : candidate.gate.passed ? "執行 SiteScore"
+                : candidate.gate.state === "geo" ? "要求人工確認地址（鎖評分）"
+                  : candidate.gate.state === "hard" ? "標記不適合／退回物件"
+                    : "補資料（鎖評分）";
+  const primaryReason = submissionAction ? "填寫送審摘要並選擇審核群組；實際资格、報告版本與送審結果由正式紀錄核對。" : viewReviewAction ? "查看既有審核紀錄；核決仍由伺服器核驗實際權限與目前報告。"
+    : canonical && activeStage === "ready" ? "初次評分受理與原始工作狀態尚未接通；資料齊備不代表可執行。再評分請查閱已保存報告的 SiteScore。"
+      : canonical && nativeWorkflow ? nativeWorkflow.reason
+      : scoreAction ? "資料完整度通過；評分服務仍會核驗模型、來源與特徵時點。"
+    : "此工作流程尚未接通可核驗的操作服務。";
+  const facts = [
+    ["位置", fieldText("address")], ["Geocode", fieldText("geocode")],
+    ["租金／坪數", `${fieldText("rent")} · ${fieldText("area")}`], ["樓層", fieldText("floor")],
+    ["硬規則", fieldText("hardRule")], ["HeatZone", `${candidate.zoneLabel || "區域未提供"} · 適配量測不可得`],
+    ["距既有店", "不可得：距離量測未接通"], ["距競店", "不可得：距離量測未接通"],
+    ["POI", "不可得：POI 量測未接通"], ["仲介聯絡", fieldText("contact")], ["現勘", fieldText("visit")],
+    ["Owner／期限", "不可得：負責人與期限未接通"], ["備註", "不可得：候選點備註未接通"],
+  ];
   return (
     <>
       <div>
         <div className={styles.detailIdLine}>
           <span>{candidate.id}</span>
-          <ToneBadge tone={candidate.gate.passed ? "good" : "risk"}>資料完整度 GATE</ToneBadge>
+          <ToneBadge tone={candidate.gate.passed ? "watch" : "risk"}>{canonical ? nativeStageLabel(nativeWorkflow) : candidate.scored ? "已評分" : candidate.gate.passed ? "可評分" : "缺資料"}</ToneBadge>
         </div>
         <h3>{candidate.title}</h3>
-        <p>{candidate.address}</p>
+        <p className={styles.candidateSourceLine}>{candidate.listingId ? `↳ 來源 ${candidate.listingId}` : "來源紀錄不可得"}</p>
       </div>
+      {candidate.scored ? <div className={styles.candidateDetailScore}>SiteScore {candidate.recommendation ?? "建議未提供"}
+        {candidate.score === null ? " · 尚無數值總分" : ` ${candidate.score}`}</div> : null}
+      {canonical ? <p className={styles.muted} data-testid={`candidate-lifecycle-${candidate.id}`}>
+        候選點記錄狀態：{nativeWorkflow?.lifecycle ?? "未提供"} · {nativeWorkflow?.reason ?? "流程紀錄未核驗"}
+      </p> : null}
+      {reviewTarget ? <p className={styles.reasonNote} data-testid={`candidate-review-provenance-${candidate.id}`}>
+        人工審核 {reviewTarget.reviewId} · 凍結報告 {reviewTarget.reportId} v{reviewTarget.reportVersion}。
+        {reviewTarget.latestReportVersion !== null ? ` 最新報告 ${reviewTarget.latestReportId} v${reviewTarget.latestReportVersion}。` : " 最新報告尚未核驗。"}
+        {reviewTarget.relation === "historical" ? "保留原候選點人工狀態；這筆歷史決策未套用於最新版報告。" : "此紀錄只對應上述報告版本。"}
+      </p> : null}
+      <div className={styles.candidateGateContainer}>
+        <div className={styles.candidateGateHeader}><span>資料完整度 GATE</span><span>{candidate.gate.okCount}/{candidate.gate.totalCount} 評分資料</span></div>
       <ul className={styles.gateGrid} data-testid={`candidate-gate-checks-${candidate.id}`}>
-        {candidate.gate.checks.map((check) => (
-          <li className={styles.gateRowItem} data-state={check.state} key={check.key}>
+        {displayRows.map((check) => (
+          <li className={styles.gateRowItem} data-state={check.state} data-testid={`candidate-evidence-${check.key}`} key={check.key} title={check.provenance}>
             <span className={styles.gateMark} aria-hidden="true">
-              {check.state === "ok" ? "✓" : check.state === "warn" ? "⚠" : "✕"}
+              {check.state === "ok" ? "✓" : check.state === "warn" ? "⚠" : check.state === "fail" ? "✕" : check.state === "recorded" ? "●" : "—"}
             </span>
-            <span>{check.label}</span>
-            <small className={styles.muted}>{check.note}</small>
+            <span data-gate-label>{check.label}</span>
+            <small className={styles.muted}>{check.text}</small>
           </li>
         ))}
       </ul>
+      </div>
       {candidate.gate.blockNote ? (
         <p
           className={candidate.gate.passed ? styles.reasonNote : styles.errorText}
@@ -275,21 +405,47 @@ function GateDetail({
           Gate：{candidate.gate.blockNote}
         </p>
       ) : null}
+      <dl className={styles.candidateDetailFacts}>
+        {facts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+      </dl>
+      <div className={styles.candidateAttachmentSlot}>現勘照片／附件未接通</div>
+      <div className={styles.candidateWorkflowActions}>
       <button
         className={styles.detailPrimaryButton}
-        data-testid={`candidate-detail-score-${candidate.id}`}
-        disabled={busy || candidate.scored || !candidate.gate.passed || !onScore}
-        onClick={() => onScore?.(candidate.id)}
+        data-testid={submissionAction ? `candidate-detail-submit-review-${candidate.id}` : viewReviewAction ? `candidate-view-review-${candidate.id}` : `candidate-detail-score-${candidate.id}`}
+        disabled={busy || !(submissionAction || scoreAction && onScore || viewReviewAction)}
+        onClick={() => { if (submissionAction && submissionOffer) onRequestSubmission?.(submissionOffer); else if (viewReviewAction && reviewTarget) onViewReview?.(reviewTarget); else if (scoreAction) onScore?.(candidate.id); }}
+        title={primaryReason}
         type="button"
       >
-        {candidate.scored
-          ? `已評分 ${candidate.recommendation} ${candidate.score}`
-          : candidate.gate.passed
-            ? "執行 SiteScore"
-            : "要求人工確認地址（鎖評分）"}
+        {busy && scoreAction ? "評分中…" : primaryLabel}
       </button>
+      <p className={styles.muted}>{primaryReason}</p>
+      <div className={styles.candidateSecondaryActions}>
+        {reviewTarget && activeStage !== "pendingreview" ? <button data-testid={`candidate-view-review-${candidate.id}`}
+          disabled={!onViewReview || busy} onClick={() => onViewReview?.(reviewTarget)} type="button">
+          {reviewTarget.relation === "historical" ? "查看歷史審核" : "查看審核"}
+        </button> : null}
+        <button disabled={busy || !onOpenSurvey} title={onOpenSurvey ? "查看目前實體的已保存現勘任務並指派" : "現勘指派服務未接通"}
+          onClick={() => onOpenSurvey?.({ kind: "CANDIDATE_SITE", id: candidate.id })} type="button">指派現勘</button>
+        <button disabled title="仲介聯絡服務未接通" type="button">聯絡仲介</button>
+        <button disabled={busy || !onToggleCompare} onClick={() => onToggleCompare?.(candidate.id)} type="button">
+          {candidate.inCompare ? "移出比較" : "加入比較"}
+        </button>
+        <button disabled title="暫停與恢復服務未接通" type="button">封存（On Hold）</button>
+      </div>
+      </div>
+      <div data-testid="candidate-audit-readback"><div className={styles.filterTitle}>AUDIT</div>
+        <p className={styles.muted}>稽核紀錄未接通；尚無可核驗的操作歷程。</p>
+      </div>
     </>
   );
+}
+
+function nativeStageLabel(read?: CandidateNativeWorkflowRead): string {
+  const labels = { needdata: "缺資料／退回", ready: "資料齊備", evaluated: "已保存報告", pendingreview: "審核中",
+    approved: "已核准", rejected: "未通過", onhold: "暫停（WAIT）" };
+  return read?.stage && read.availability === "recorded" ? labels[read.stage] : "流程未核驗";
 }
 
 function ToneBadge({ children, tone }: { children: ReactNode; tone: "good" | "watch" | "risk" }) {
@@ -300,20 +456,12 @@ function ToneBadge({ children, tone }: { children: ReactNode; tone: "good" | "wa
   );
 }
 
-type PipelineFilter = "all" | "ready" | "blocked" | "scored" | "compare";
-
-function matchesPipelineFilter(candidate: ScoringCandidate, filter: PipelineFilter) {
-  if (filter === "ready") return !candidate.scored && candidate.gate.passed;
-  if (filter === "blocked") return !candidate.gate.passed;
-  if (filter === "scored") return candidate.scored;
-  if (filter === "compare") return candidate.inCompare;
-  return true;
-}
-
 // Fixture fallback: adapt a viewModel CandidatePipelineRow into the minimal
 // ScoringCandidate shape when the scoring API is unavailable.
 function fallbackToCandidate(row: CandidatePipelineRow): ScoringCandidate {
   const passed = row.missingData.length === 0;
+  const scored = row.recommendation !== null && Boolean(row.modelVersion)
+    && (row.status === "scored" || row.score !== null);
   return {
     id: row.id,
     heatZoneId: row.heatZoneId,
@@ -321,11 +469,11 @@ function fallbackToCandidate(row: CandidatePipelineRow): ScoringCandidate {
     zoneLabel: row.zoneLabel,
     address: row.address,
     modelVersion: row.modelVersion,
-    datasetSnapshotId: row.datasetSnapshotId,
+    datasetSnapshotId: row.datasetSnapshotId ?? "",
     stage: row.status,
-    scored: passed,
-    score: passed ? row.score : null,
-    recommendation: passed ? row.recommendation : null,
+    scored,
+    score: scored ? row.score : null,
+    recommendation: scored ? row.recommendation : null,
     reviewId: row.reviewId,
     inCompare: false,
     gate: buildFallbackGate(row, passed),

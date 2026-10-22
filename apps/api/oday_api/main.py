@@ -13,6 +13,7 @@ import threading
 import time
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from apps.api.oday_api.routes.heatzone import HeatZoneResultStore, create_heatzone_router
@@ -138,6 +139,8 @@ else:
         operator_live_repository: Any = None,
         address_location_repository: Any = None,
         manual_correction_repository: Any = None,
+        assisted_intake_workflow_policy: Any = None,
+        assisted_intake_audit_retention: Any = None,
         persistence: Any = None,
         external_provider_validation: Any = None,
         external_provider_connectivity_probe: Any = None,
@@ -158,7 +161,11 @@ else:
         # Defaults come from the persistence factory, including the production
         # PostgreSQL runtime. Explicit arguments still win so tests can inject
         # hand-built doubles. See ODP-PV-009.
-        from apps.api.oday_api.security.dependencies import bind_audit_log, bind_persistence
+        from apps.api.oday_api.security.dependencies import (
+            bind_audit_log,
+            bind_persistence,
+            default_boundary,
+        )
         from shared.infrastructure.persistence import build_persistence
         from shared.observability import (
             RouteTemplateResolver,
@@ -183,6 +190,14 @@ else:
         active_release_manifest_digest = os.environ.get("ODP_RELEASE_MANIFEST_DIGEST", "")
         require_live_data = live_data_required()
         domain_runtime_mode = "production" if require_live_data else "local"
+        feature_flags = getattr(bundle, "feature_flag_registry", None)
+        from shared.infrastructure.persistence.feature_flags import (
+            DurableFeatureFlagRegistry,
+            UnavailableFeatureFlagRegistry,
+        )
+        if (require_live_data and not isinstance(feature_flags, DurableFeatureFlagRegistry)
+                or feature_flags is None and getattr(bundle, "engine", None) is not None):
+            feature_flags = UnavailableFeatureFlagRegistry()
         persistence_mode = str(getattr(bundle, "mode", "unknown")).strip().lower()
         configured_persistence_mode = (
             os.environ.get("ODP_PERSISTENCE", persistence_mode).strip().lower()
@@ -314,6 +329,7 @@ else:
             audit_log=audit_log,
         )
         api = FastAPI(title="ODay Plus API", version=API_VERSION)
+        api.state.feature_flag_registry = feature_flags
         provider_probe_lock = threading.Lock()
         provider_probe_cache: tuple[float, Any] | None = None
 
@@ -668,6 +684,7 @@ else:
                 if require_live_data and request.url.path not in {
                     "/health",
                     "/healthz",
+                    "/liveness",
                     "/openapi.json",
                     "/platform/health",
                     "/platform/version",
@@ -753,9 +770,11 @@ else:
                 response.headers[CORRELATION_ID_HEADER] = context.correlation_id
                 return response
 
+        @api.get("/liveness", tags=["system"])
         @api.get("/healthz", tags=["system"])
         def healthz() -> dict[str, str]:
-            # Liveness: simply check that process is running
+            # Cloud Run reserves some paths ending in z. Use /liveness for
+            # deployed probes while retaining /healthz for existing callers.
             return {"status": "ok", "service": "oday-api"}
 
         @api.get("/readiness", tags=["system"])
@@ -1139,7 +1158,32 @@ else:
         ) -> dict[str, Any]:
             from apps.api.oday_api.security.dependencies import principal_from_headers
             from modules.listing.application.intake_authorization import authorize_intake_action
-
+            from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
+            from modules.listing.application.saved_search import LISTING_SEARCH_RECEIPT_SERVICE
+            from modules.opsboard.application.area_planning_draft_owner import (
+                AREA_PLANNING_DRAFT_RECEIPT_SERVICE,
+            )
+            from modules.sitescore.application.score_delivery import SITESCORE_EXECUTION_JOB_TYPE
+            from shared.infrastructure.persistence.listing_search_delivery import (
+                JOB_TYPE as LISTING_SEARCH_JOB_TYPE,
+            )
+            if body.job_type == AREA_PLANNING_DRAFT_RECEIPT_SERVICE + ".command-receipt":
+                raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                    {"code": "JOB_TYPE_NOT_SUPPORTED", "message": "Area planning commands require their authorized owner"})
+            if body.job_type in {LISTING_SEARCH_JOB_TYPE, LISTING_SEARCH_RECEIPT_SERVICE + ".command-receipt"}:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                    {"code": "JOB_TYPE_NOT_SUPPORTED", "message": "Listing search jobs require committed receipt/search events"})
+            if (body.idempotency_key or idempotency_key or "").startswith((
+                "listing-search-internal:", "command:v1:" + LISTING_SEARCH_RECEIPT_SERVICE + ":",
+                "command:v1:" + AREA_PLANNING_DRAFT_RECEIPT_SERVICE + ":",
+            )):
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    {"code": "RESERVED_IDEMPOTENCY_NAMESPACE"})
+            if body.job_type in {INTAKE_SITESCORE_JOB_TYPE, SITESCORE_EXECUTION_JOB_TYPE}:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    {"code": "JOB_TYPE_NOT_SUPPORTED", "message": "Score jobs require an independently reviewed promotion"},
+                )
             payload = body.payload
             idempotency_tenant_id: str | None = None
             idempotency_scope = ""
@@ -1313,8 +1357,27 @@ else:
                 "audit_event_id": audit_event.event_id,
             }
 
-        def _authorize_job_access(job: Any, request: Request) -> None:
+        def _authorize_job_access(
+            job: Any, request: Request, *, intake_action: str = "view",
+        ) -> dict[str, Any] | None:
             from apps.api.oday_api.security.dependencies import principal_from_headers
+            from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
+            from modules.listing.application.saved_search import LISTING_SEARCH_RECEIPT_SERVICE
+            from modules.opsboard.application.area_planning_draft_owner import (
+                AREA_PLANNING_DRAFT_RECEIPT_SERVICE,
+            )
+            from modules.sitescore.application.score_delivery import SITESCORE_EXECUTION_JOB_TYPE
+            from shared.infrastructure.persistence.listing_search_delivery import (
+                JOB_TYPE as LISTING_SEARCH_JOB_TYPE,
+            )
+
+            # These private delivery records have no public job read surface.
+            # Their saved-search owner rechecks the current subject and scope.
+            if job.job_type in {LISTING_SEARCH_JOB_TYPE, LISTING_SEARCH_RECEIPT_SERVICE + ".command-receipt",
+                                AREA_PLANNING_DRAFT_RECEIPT_SERVICE + ".command-receipt"}:
+                if not principal_from_headers(request.headers).authenticated:
+                    raise HTTPException(status.HTTP_401_UNAUTHORIZED, "AUTHENTICATION_REQUIRED")
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
 
             job_tenant = str(job.payload.get("tenant_id") or "").strip()
             if job.job_type == "forecast":
@@ -1332,7 +1395,136 @@ else:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="job not found",
                     )
-            elif job.job_type in ("batch-listing-intake", "assisted-listing-intake"):
+            elif job.job_type == SITESCORE_EXECUTION_JOB_TYPE:
+                from apps.api.app.routes.operator_modules.network_scoring import (
+                    execution_http_error,
+                )
+                from modules.sitescore.application.score_delivery import ScoreExecutionJobRepository
+                from modules.sitescore.application.score_execution import SiteScoreExecutionService
+                principal = principal_from_headers(request.headers)
+                if not principal.authenticated:
+                    raise HTTPException(status.HTTP_401_UNAUTHORIZED, "AUTHENTICATION_REQUIRED")
+                if not principal.tenant_id or job_tenant != principal.tenant_id:
+                    raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+                try:
+                    owner = ScoreExecutionJobRepository(bundle)
+                    with bundle.engine.lock:
+                        owner._tenant(principal.tenant_id)
+                        row = owner._row(job.job_id, principal.tenant_id)
+                        if row is None or not row["payload"].get("execution_request_id"):
+                            raise HTTPException(404, "job not found")
+                        receipt = SiteScoreExecutionService(owner).get(row["payload"]["execution_request_id"], principal=principal)
+                        if receipt is None or receipt["jobId"] != job.job_id or receipt["candidateSiteId"] != row["payload"]["candidate_site_id"]:
+                            raise HTTPException(404, "job not found")
+                        return receipt
+                except HTTPException:
+                    raise
+                except Exception as exc:
+                    raise execution_http_error(exc) from exc
+            elif job.job_type == INTAKE_SITESCORE_JOB_TYPE:
+                from modules.listing.application.intake_authorization import authorize_intake_action
+                from modules.listing.application.intake_score_delivery import (
+                    IntakeScoreJobRepository,
+                )
+                from shared.infrastructure.persistence.operator_intake_workflow import (
+                    project_operator_intake,
+                )
+
+                principal = principal_from_headers(request.headers)
+                if not principal.authenticated:
+                    raise HTTPException(status.HTTP_401_UNAUTHORIZED, "AUTHENTICATION_REQUIRED")
+                active_tenant_id = str(principal.tenant_id or "").strip()
+                if not active_tenant_id or job_tenant != active_tenant_id:
+                    raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+                store = getattr(request.app.state, "assisted_intake_store", None)
+                if store is None or getattr(store, "_engine", None) is not getattr(bundle, "engine", None):
+                    raise HTTPException(503, "SCORE_DELIVERY_UNAVAILABLE")
+                store.refresh(active_tenant_id)
+                from apps.api.app.routes.listings import _raise_score_delivery_http_error
+
+                try:
+                    score_repository = IntakeScoreJobRepository(bundle)
+                    score_job = score_repository.get_job(job.job_id, active_tenant_id)
+                except Exception as exc:
+                    _raise_score_delivery_http_error(exc)
+                    raise
+                if score_job is None:
+                    raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+                from shared.infrastructure.persistence.assisted_listing_intake import (
+                    _STATE_COLLECTIONS,
+                )
+
+                with store.transaction():
+                    bundle.engine.query_one(
+                        "SELECT pg_advisory_xact_lock(hashtextextended(?, 0)) AS locked",
+                        (f"operator-intake-submission:{active_tenant_id}",),
+                    )
+                    for name, key in (("intakes", "intake_id"), ("promotions", "promotion_decision_id")):
+                        store._read_locked(_STATE_COLLECTIONS[name], f"{active_tenant_id}:{score_job[key]}")
+                    store.refresh(active_tenant_id)
+                    try:
+                        score_job = score_repository.get_job(job.job_id, active_tenant_id)
+                    except Exception as exc:
+                        _raise_score_delivery_http_error(exc)
+                        raise
+                    if score_job is None:
+                        raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+                    intake = store.intakes.get(score_job.get("intake_id"))
+                    promotion = store.promotions.get(score_job.get("promotion_decision_id"))
+                    if (not isinstance(intake, dict) or not isinstance(promotion, dict)
+                            or intake.get("scope", {}).get("tenant_id") != active_tenant_id
+                            or intake.get("intake_id") != score_job.get("intake_id")
+                            or promotion.get("promotion_decision_id") != score_job.get("promotion_decision_id")
+                            or promotion.get("tenant_id") != active_tenant_id
+                            or promotion.get("intake_id") != score_job.get("intake_id")
+                            or promotion.get("site_score_job_id") != job.job_id
+                            or not score_job.get("candidate_site_id")
+                            or promotion.get("candidate_site_id") != score_job.get("candidate_site_id")):
+                        raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+                    projection = project_operator_intake(intake, store.assignments, store.slas)
+                    authorize_intake_action(
+                        principal, "view",
+                        resource={**projection, "scope": intake["scope"], "submitter": intake.get("submitted_by")},
+                        audit_log=audit_log, correlation_id=request.state.correlation_id,
+                    )
+                    return score_job
+
+            elif job.job_type == "assisted-listing-intake":
+                active_tenant_id = batch_intake_job_tenant(request, action="view")
+                if not job_tenant or job_tenant != active_tenant_id:
+                    raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+                from modules.listing.application.intake_authorization import authorize_intake_action
+                from shared.infrastructure.persistence.operator_intake_workflow import (
+                    project_operator_intake,
+                )
+
+                store = getattr(request.app.state, "assisted_intake_store", None)
+                if store is None:
+                    raise HTTPException(503, "INTAKE_WORKFLOW_STORE_UNAVAILABLE")
+                store.refresh(active_tenant_id)
+                intake_id = job.payload.get("intake_id")
+                canonical = store.intakes.get(intake_id) if isinstance(intake_id, str) else None
+                if (not isinstance(canonical, dict)
+                        or canonical.get("scope", {}).get("tenant_id") != active_tenant_id):
+                    raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+                # Payload IDs select the record; only canonical ownership and
+                # complete scope authorize access. Require the reverse binding.
+                intake = project_operator_intake(canonical, store.assignments, store.slas)
+                if intake.get("jobId") != job.job_id:
+                    raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+                resource = {**intake, "scope": canonical.get("scope"),
+                            "submitter": canonical.get("submitted_by")}
+                action = (
+                    "reopen_quarantine"
+                    if intake_action == "reopen_failed" and intake.get("stage") == "QUARANTINED"
+                    else intake_action
+                )
+                authorize_intake_action(
+                    principal_from_headers(request.headers), action, resource=resource,
+                    audit_log=audit_log, correlation_id=request.state.correlation_id,
+                )
+                return intake
+            elif job.job_type == "batch-listing-intake":
                 active_tenant_id = batch_intake_job_tenant(request, action="view")
                 if not job_tenant or job_tenant != active_tenant_id:
                     raise HTTPException(
@@ -1389,8 +1581,18 @@ else:
 
         def _authorized_job_response(job: Any, request: Request) -> dict[str, Any]:
             from apps.api.oday_api.security.dependencies import principal_from_headers
+            from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
+            from modules.sitescore.application.score_delivery import SITESCORE_EXECUTION_JOB_TYPE
 
-            _authorize_job_access(job, request)
+            authorized_resource = _authorize_job_access(job, request)
+            if job.job_type == SITESCORE_EXECUTION_JOB_TYPE:
+                return authorized_resource
+            if job.job_type == INTAKE_SITESCORE_JOB_TYPE:
+                from apps.api.app.routes.listings import JobReceipt, _job_receipt_payload
+
+                # Raw inference inputs and delivery tokens are not a public
+                # job receipt, even for a caller allowed to view the parent.
+                return JobReceipt(**_job_receipt_payload(authorized_resource)).model_dump(mode="json", exclude_none=True)
             res = job.to_dict()
             if "summary" in job.payload and "summary" not in res:
                 res["summary"] = job.payload["summary"]
@@ -1416,12 +1618,30 @@ else:
             request: Request,
         ) -> dict[str, Any]:
             from apps.api.oday_api.security.dependencies import principal_from_headers
+            from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
+            from modules.sitescore.application.score_delivery import SITESCORE_EXECUTION_JOB_TYPE
             from shared.auth import Action, rbac_allows
             from shared.infrastructure.persistence.job_queue import JobFenceRejectedError
 
             job = job_queue.get(job_id)
             if job is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
+            from modules.listing.application.saved_search import LISTING_SEARCH_RECEIPT_SERVICE
+            from modules.opsboard.application.area_planning_draft_owner import (
+                AREA_PLANNING_DRAFT_RECEIPT_SERVICE,
+            )
+            from shared.infrastructure.persistence.listing_search_delivery import (
+                JOB_TYPE as LISTING_SEARCH_JOB_TYPE,
+            )
+            if job.job_type in {LISTING_SEARCH_JOB_TYPE, LISTING_SEARCH_RECEIPT_SERVICE + ".command-receipt",
+                                AREA_PLANNING_DRAFT_RECEIPT_SERVICE + ".command-receipt"}:
+                _authorize_job_access(job, request)
+            if job.job_type in {INTAKE_SITESCORE_JOB_TYPE, SITESCORE_EXECUTION_JOB_TYPE}:
+                _authorize_job_access(job, request)
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    {"code": "JOB_TYPE_NOT_SUPPORTED", "message": "Use the versioned score checkpoint retry command"},
+                )
 
             # 1. Auth & Tenant Isolation & RBAC
             job_tenant = str(job.payload.get("tenant_id") or "").strip()
@@ -1447,6 +1667,84 @@ else:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="job not found",
                     )
+                if job.job_type == "assisted-listing-intake":
+                    from modules.listing.application.intake_workflow_bootstrap import (
+                        IntakeWorkflowUnavailable,
+                    )
+                    from modules.opsboard.application.network_listings import (
+                        NetworkListingConflict,
+                        NetworkListingNotFound,
+                        NetworkListingPolicyError,
+                        NetworkListingService,
+                    )
+                    from modules.opsboard.application.operator_actor import operator_actor
+                    from shared.infrastructure.persistence.assisted_listing_intake import (
+                        AssistedIntakePersistenceConflict,
+                    )
+                    from shared.infrastructure.persistence.operator_intake_workflow import (
+                        OperatorIntakeWorkflowRepository,
+                    )
+
+                    intake = _authorize_job_access(job, request, intake_action="reopen_failed")
+                    assert intake is not None
+                    # Both established scopes select the sole failed retryable
+                    # item. The shared command enforces its failure policy.
+                    retry_scope = (body.retry_scope if body else "FAILED_ONLY") or "FAILED_ONLY"
+                    if retry_scope not in ("FAILED_ONLY", "FAILED_RETRYABLE_ONLY"):
+                        raise HTTPException(422, f"Invalid retry_scope: {retry_scope}")
+                    legacy_factory = getattr(bundle, "operator_intake_repository_for_tenant", None)
+                    legacy = legacy_factory(active_tenant_id) if callable(legacy_factory) else None
+                    store = getattr(request.app.state, "assisted_intake_store", None)
+                    if legacy is None or store is None:
+                        raise HTTPException(503, "INTAKE_WORKFLOW_STORE_UNAVAILABLE")
+                    policy = (
+                        assisted_intake_workflow_policy
+                        if assisted_intake_workflow_policy is not None
+                        else getattr(bundle, "assisted_intake_workflow_policy", None)
+                    )
+                    def authorize_retry(current: dict[str, Any]) -> None:
+                        from modules.listing.application.intake_authorization import (
+                            authorize_intake_action,
+                        )
+
+                        if current.get("id") != intake["id"] or current.get("jobId") != job_id:
+                            raise HTTPException(404, "job not found")
+                        resource = {**current, "submitter": current.get("submittedBy"),
+                                    "owner": current.get("ownerSubjectId")}
+                        authorize_intake_action(
+                            principal,
+                            "reopen_quarantine" if current.get("stage") == "QUARANTINED" else "reopen_failed",
+                            resource=resource, audit_log=audit_log,
+                            correlation_id=request.state.correlation_id,
+                        )
+
+                    try:
+                        actor = operator_actor(principal)
+                        repository = OperatorIntakeWorkflowRepository(store, legacy, active_tenant_id, policy)
+                        service = NetworkListingService(
+                            intake_repository=repository, seed_fixtures=False, tenant_id=active_tenant_id,
+                        )
+                        result = service.retry_intake(
+                            intake_id=intake["id"], actor_role_id=actor.role_id,
+                            actor_name=actor.subject_id, tenant_id=actor.tenant_id,
+                            correlation_id=request.state.correlation_id,
+                            idempotency_key=request.headers.get("Idempotency-Key"), job_queue=job_queue,
+                            authorize_existing=authorize_retry,
+                        )
+                    except IntakeWorkflowUnavailable as exc:
+                        raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
+                    except PermissionError as exc:
+                        raise HTTPException(403, str(exc)) from exc
+                    except NetworkListingNotFound as exc:
+                        raise HTTPException(404, str(exc)) from exc
+                    except (NetworkListingConflict, AssistedIntakePersistenceConflict, JobFenceRejectedError) as exc:
+                        raise HTTPException(409, str(exc)) from exc
+                    except NetworkListingPolicyError as exc:
+                        raise HTTPException(422, str(exc)) from exc
+                    return {
+                        "job_id": result["jobId"], "status": "queued",
+                        "retry_scope": retry_scope, "retried_items_count": 1,
+                    }
                 from modules.listing.application.intake_authorization import authorize_intake_action
                 from shared.auth import Role
 
@@ -1670,7 +1968,6 @@ else:
             DurableAVMRepository,
             DurableListingRepository,
             DurableNetPlanRepository,
-            DurablePriceOpsRepository,
             DurableSiteScoreRepository,
             PostgresDocumentStore,
             SqliteDocumentStore,
@@ -1678,6 +1975,7 @@ else:
         from shared.infrastructure.persistence.operator_domains import (
             TenantScopedDocumentStore,
         )
+        from shared.infrastructure.persistence.postgresql import PostgresEngine
         from shared.infrastructure.persistence.repositories import (
             DurableDecisionStore,
         )
@@ -1732,14 +2030,66 @@ else:
             operator_document_store = SqliteDocumentStore(bundle.engine)
         else:
             operator_document_store = None
+        # The original native routes and Operator consumers share these exact
+        # tenant partitions. Never substitute the bundle's global repository.
+        if operator_document_store is not None:
+            def tenant_document_store(tenant_id: str) -> TenantScopedDocumentStore:
+                return TenantScopedDocumentStore(operator_document_store, tenant_id)
+
+
+            def avm_repository_for_tenant(
+                tenant_id: str,
+            ) -> DurableAVMRepository:
+                return DurableAVMRepository(tenant_document_store(tenant_id))
+
+
+            def netplan_repository_for_tenant(
+                tenant_id: str,
+            ) -> DurableNetPlanRepository:
+                return DurableNetPlanRepository(tenant_document_store(tenant_id))
+
+
+            from shared.infrastructure.persistence.operator_domains import (
+                DurableOperatorDomainStateRepository,
+            )
+            native_listing_state = DurableOperatorDomainStateRepository(operator_document_store, "network-listings")
+
+            def native_netplan_outcome_registry_for_tenant(*, repository, principal, authorize, correlation_id):
+                from shared.infrastructure.persistence.netplan_outcomes import (
+                    DurableNetPlanOutcomeRegistry,
+                )
+                # The request owner supplies its exact admitted tenant repo;
+                # no global/default partition or replacement principal exists.
+                return DurableNetPlanOutcomeRegistry(repository=repository, principal=principal,
+                    authorize=authorize, audit_log=audit_log, queue=job_queue, correlation_id=correlation_id)
+
+            def native_candidate_snapshot_for_tenant(tenant_id: str):
+                return native_listing_state.load(tenant_id) or {}
+        else:
+            avm_repository_for_tenant = None
+            netplan_repository_for_tenant = None
+            native_candidate_snapshot_for_tenant = None
+            native_netplan_outcome_registry_for_tenant = None
+
+        from modules.adlift.application.campaign import AdLiftCampaignService
+        from modules.adlift.application.campaign_authority import AdLiftCampaignBudgetAuthority
+        campaign_budget_authority = AdLiftCampaignBudgetAuthority(
+            campaigns=AdLiftCampaignService(repository=bundle.adlift_campaign_repository,
+                audit_log=audit_log, job_queue=job_queue,
+                store_repository=bundle.store_repository, brand_repository=bundle.brand_repository,
+                intervention_repository=intervention_repo),
+            interventions=intervention_repo, reports=adlift_repo,
+            flags=bundle.feature_flag_registry, boundary=default_boundary()) if bundle.is_durable else None
         interventions_workflow = intervention_workflow or InterventionWorkflow(
             repository=intervention_repo,
             audit_log=audit_log,
             label_hooks=[label_registry],
+            campaign_budget_authority=campaign_budget_authority,
         )
 
         from models.shared_ml import (
             MlflowProductionModelRuntime,
+            ProductionModelRegistryError,
             ProductionModelRuntimeError,
             seed_scoring_models,
         )
@@ -1748,6 +2098,10 @@ else:
             AVMProductionExecutor,
         )
         from modules.learninghub.infrastructure import MlflowRegistryAdapter
+        from modules.learninghub.infrastructure.mlflow_cloud_run_auth import (
+            configure_cloud_run_mlflow_auth,
+        )
+        from modules.learninghub.runtime import LearningHubRuntimeConfigurationError
         from modules.netplan.application import NetPlanProductionExecutor
         from modules.priceops.infrastructure.oss_optimizer import (
             PriceOpsProductionOptimizer,
@@ -1767,6 +2121,16 @@ else:
                 from modules.heatzone.domain import HEATZONE_FEATURE_VERSION
                 from modules.sitescore.domain import SITESCORE_FEATURE_VERSION
 
+                # Model aliases are read before the Learning Hub adapter exists.
+                # Configure the SDK's identity provider before that first read.
+                tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "")
+                try:
+                    if (urlparse(tracking_uri).hostname or "").endswith(".run.app"):
+                        configure_cloud_run_mlflow_auth(tracking_uri=tracking_uri)
+                except (LearningHubRuntimeConfigurationError, ValueError) as exc:
+                    raise ProductionModelRegistryError(
+                        "MLflow registry identity configuration is invalid"
+                    ) from exc
                 model_runtime = MlflowProductionModelRuntime.from_environment(
                     model_names=production_model_names()
                 )
@@ -1892,8 +2256,25 @@ else:
                 require_production_model=require_live_data,
             ),
         )
+        from apps.api.app.routes.market_survey_assignments import (
+            create_canonical_survey_assignment_router,
+        )
+        from modules.market_survey.infrastructure.assignment_factory import CanonicalSurveyFactory
+
+        mount_versioned(api, create_canonical_survey_assignment_router(
+            factory=CanonicalSurveyFactory(bundle, audit_log=audit_log, queue=job_queue),
+            audit_log=audit_log, boundary=default_boundary(),
+        ))
+        from modules.opsboard.audit.application.evidence_general_factory import (
+            GeneralSiteScoreExportFactory,
+        )
         mount_versioned(
-            api, create_audit_router(audit_log=audit_log, evidence_store=evidence_store)
+            api, create_audit_router(
+                audit_log=audit_log, evidence_store=evidence_store,
+                boundary=default_boundary(),
+                canonical_service_for_tenant=(GeneralSiteScoreExportFactory(bundle, audit_log=audit_log,
+                    evidence_store=evidence_store, queue=job_queue) if require_live_data else None),
+            )
         )
         mount_versioned(
             api,
@@ -1933,6 +2314,10 @@ else:
         # preserve its per-operation response set instead of adding the generic
         # platform responses to every operation.
         assisted_intake_store = getattr(bundle, "assisted_intake_store", None)
+        if assisted_intake_audit_retention is not None:
+            if assisted_intake_store is None:
+                raise RuntimeError("Audit retention override requires the PostgreSQL store")
+            assisted_intake_store.configure_audit_retention(assisted_intake_audit_retention)
         if production_persistence_supported and assisted_intake_store is None:
             raise RuntimeError("Production PostgreSQL requires a durable Assisted Intake store")
         mount_versioned(
@@ -1940,6 +2325,11 @@ else:
             create_assisted_intake_router(
                 store=assisted_intake_store,
                 audit_log=audit_log,
+                workflow_policy=(
+                    assisted_intake_workflow_policy
+                    if assisted_intake_workflow_policy is not None
+                    else getattr(bundle, "assisted_intake_workflow_policy", None)
+                ),
             ),
             exact_responses=True,
         )
@@ -1983,9 +2373,34 @@ else:
                     depreciation_version_pin=avm_dep_pin,
                 )
 
+        from apps.api.app.routes._native_request_owner import NativeRequestOwnerFactory
+        from apps.api.oday_api.security.dependencies import build_engine
+        native_boundary = default_boundary()
+        # Header-only native embedders remain the existing non-live engineering
+        # contract. Any live deployment or configured authentication boundary
+        # uses request-bound tenant owners for both old URL aliases.
+        bind_native_request_owner = require_live_data or native_boundary is not None
+        native_authz = build_engine(audit_log=audit_log)
+        native_avm_owner = NativeRequestOwnerFactory(
+            resource="avm", repository_for_tenant=avm_repository_for_tenant,
+            stores=bundle.store_repository, brands=bundle.brand_repository,
+            audit_log=audit_log, queue=job_queue, boundary=native_boundary, engine=native_authz,
+            formal=require_live_data, production_executor=avm_production_executor,
+            depreciation_version_pin=avm_dep_pin, rollback_receipt=avm_rollback_receipt,
+        ) if bind_native_request_owner else None
+        native_netplan_owner = NativeRequestOwnerFactory(
+            resource="netplan", repository_for_tenant=netplan_repository_for_tenant,
+            stores=bundle.store_repository, brands=bundle.brand_repository,
+            audit_log=audit_log, queue=job_queue, boundary=native_boundary, engine=native_authz,
+            candidate_snapshot_for_tenant=native_candidate_snapshot_for_tenant,
+            outcome_registry_for_tenant=native_netplan_outcome_registry_for_tenant,
+            formal=require_live_data,
+        ) if bind_native_request_owner else None
+
         mount_versioned(
             api,
             create_avm_router(
+                request_owner=native_avm_owner,
                 repository=avm_repo,
                 audit_log=audit_log,
                 job_queue=job_queue,
@@ -2013,7 +2428,9 @@ else:
         mount_versioned(
             api,
             create_netplan_router(
+                request_owner=native_netplan_owner,
                 repository=netplan_repo,
+                feature_flags=feature_flags, job_queue=job_queue,
                 audit_log=audit_log,
                 production_executor=netplan_production_executor,
                 approval_verifier=netplan_approval_verifier,
@@ -2024,7 +2441,12 @@ else:
         mount_versioned(
             api,
             create_learninghub_router(
+                canonical_forecast_repository=forecast_repository,
+                canonical_store_repository=bundle.store_repository,
+                canonical_policy_repository=forecast_policy_repository,
+                canonical_monitoring_boundary=native_boundary,
                 repository=learning_repo,
+                feature_flags=feature_flags, job_queue=job_queue,
                 artifact_store=model_artifacts,
                 audit_log=audit_log,
                 registry=learninghub_registry,
@@ -2035,6 +2457,8 @@ else:
             api,
             create_priceops_router(
                 repository=price_repo,
+                store_repository=bundle.store_repository if require_live_data else None,
+                brand_repository=bundle.brand_repository if require_live_data else None,
                 audit_log=audit_log,
                 job_queue=job_queue,
                 require_durable_commands=require_live_data,
@@ -2042,12 +2466,24 @@ else:
                 runtime_mode=domain_runtime_mode,
             ),
         )
+        def sitescore_report_repository_for_tenant(tenant_id: str) -> Any | None:
+            if site_repository is bundle.sitescore_repository:
+                return bundle._scoped_repository("sitescore_repository", tenant_id)
+            if getattr(site_repository, "tenant_id", None) == tenant_id:
+                return site_repository
+            return None
+
         mount_versioned(
             api,
             create_sitescore_router(
                 repository=site_repository,
+                require_canonical_report_reads=isinstance(bundle.engine, PostgresEngine),
+                sitescore_repository_for_tenant=(
+                    sitescore_report_repository_for_tenant if bundle.is_durable else None
+                ),
                 workflow=decision_workflow,
                 sitescore_decision_repository_for_tenant=sitescore_decision_store_for_tenant,
+                review_service_resolver=bundle.network_review_resolver(hooks=decision_workflow.hooks),
                 realization_hook=realization_hook,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("sitescore"),
@@ -2066,19 +2502,32 @@ else:
                 job_queue=job_queue,
                 require_durable_jobs=require_live_data,
                 runtime_mode=domain_runtime_mode,
+                campaign_budget_authority=campaign_budget_authority,
+                campaign_repository=getattr(bundle, "adlift_campaign_repository", None),
+                store_repository=bundle.store_repository,
+                brand_repository=bundle.brand_repository,
+                boundary=None if campaign_budget_authority is None else campaign_budget_authority.boundary,
             ),
         )
         mount_versioned(
             api,
             create_operator_store_ops_router(
                 repository=store_ops_repo,
+                store_repository=bundle.store_repository,
+                machine_repository=bundle.machine_repository,
+                forecastops_repository=forecast_repository,
+                delivery_job_queue=bundle.job_queue,
                 audit_log=audit_log,
+                require_live_data=require_live_data,
             ),
         )
         mount_versioned(
             api,
             create_interventions_router(
                 workflow=interventions_workflow,
+                store_repository=bundle.store_repository,
+                brand_repository=bundle.brand_repository,
+                require_object_scope=require_live_data,
                 label_registry=label_registry,
                 job_queue=job_queue,
                 require_durable_commands=require_live_data,
@@ -2096,8 +2545,6 @@ else:
         )
         if operator_document_store is not None:
 
-            def tenant_document_store(tenant_id: str) -> TenantScopedDocumentStore:
-                return TenantScopedDocumentStore(operator_document_store, tenant_id)
 
             def listing_repository_for_tenant(
                 tenant_id: str,
@@ -2114,26 +2561,24 @@ else:
             ) -> DurableDecisionStore:
                 return DurableDecisionStore(tenant_document_store(tenant_id))
 
-            def avm_repository_for_tenant(
-                tenant_id: str,
-            ) -> DurableAVMRepository:
-                return DurableAVMRepository(tenant_document_store(tenant_id))
 
-            def netplan_repository_for_tenant(
-                tenant_id: str,
-            ) -> DurableNetPlanRepository:
-                return DurableNetPlanRepository(tenant_document_store(tenant_id))
 
             def priceops_repository_for_tenant(
                 tenant_id: str,
-            ) -> DurablePriceOpsRepository:
-                return DurablePriceOpsRepository(tenant_document_store(tenant_id))
+            ) -> Any | None:
+                if not tenant_id or not tenant_id.strip():
+                    return None
+                # Native PriceOps writes the already-selected repository's base
+                # collections. Growth and Governance filter those plans by
+                # verified tenant; another document partition would hide native
+                # plans and discard canonical_exploration on PostgreSQL.
+                # Previously written tenant partitions require an explicit,
+                # conflict-checked copy before deployment; never move them on GET.
+                return price_repo
         else:
             listing_repository_for_tenant = None
             sitescore_repository_for_tenant = None
             sitescore_decision_repository_for_tenant = None
-            avm_repository_for_tenant = None
-            netplan_repository_for_tenant = None
             priceops_repository_for_tenant = None
 
         identity_user_role_service: Any | None = None
@@ -2168,14 +2613,29 @@ else:
                 audit_log=audit_log,
                 identity_user_role_service=identity_user_role_service,
                 document_store=operator_document_store,
+                feature_flags=feature_flags,
+                job_queue=job_queue,
                 listing_repository=listing_repository,
                 listing_repository_for_tenant=listing_repository_for_tenant,
                 sitescore_repository_for_tenant=sitescore_repository_for_tenant,
                 sitescore_decision_repository_for_tenant=(sitescore_decision_repository_for_tenant),
                 avm_repository_for_tenant=avm_repository_for_tenant,
                 netplan_repository_for_tenant=netplan_repository_for_tenant,
+                # Exact same candidate parent reader as the original native
+                # NetPlan owner; proposal permissions confer no native grant.
+                netplan_candidate_snapshot_for_tenant=native_candidate_snapshot_for_tenant,
                 priceops_repository_for_tenant=priceops_repository_for_tenant,
+                priceops_store_repository=bundle.store_repository if require_live_data else None,
+                priceops_brand_repository=bundle.brand_repository if require_live_data else None,
                 model_runtime=model_runtime,
+                # Composition probes may expose production flags without the
+                # factory's canonical SQL authority. Keep their reads available;
+                # fresh commands still require the actual same-engine owner.
+                score_execution_service=(
+                    bundle.score_execution_service(model_runtime=model_runtime)
+                    if bundle.is_production and isinstance(bundle.engine, PostgresEngine)
+                    else None
+                ),
                 avm_production_executor=avm_production_executor,
                 avm_depreciation_version_pin=avm_dep_pin,
                 avm_rollback_receipt=avm_rollback_receipt,
@@ -2184,7 +2644,14 @@ else:
                 netplan_approval_verifier=netplan_approval_verifier,
                 evidence_store=evidence_store,
                 intake_repository=operator_intake_repository,
+                intake_workflow_store=assisted_intake_store,
+                intake_workflow_policy=(
+                    assisted_intake_workflow_policy
+                    if assisted_intake_workflow_policy is not None
+                    else getattr(bundle, "assisted_intake_workflow_policy", None)
+                ),
                 live_repository=operator_live_repository,
+                fixture_issue_repository=store_ops_repo if not require_live_data else None,
                 require_live_data=require_live_data,
                 persistence_mode=persistence_mode,
                 provider_mode=provider_mode,
@@ -2193,10 +2660,16 @@ else:
         )
 
         from apps.api.oday_api.routes.feature_flags import create_feature_flags_router
+        from apps.api.oday_api.security.dependencies import build_engine, default_boundary
 
         mount_versioned(
             api,
-            create_feature_flags_router(audit_log=audit_log),
+            create_feature_flags_router(
+                audit_log=audit_log,
+                engine=build_engine(audit_log=audit_log, flags=feature_flags),
+                boundary=default_boundary(),
+                registry=feature_flags, queue=job_queue,
+            ),
         )
 
         api.state.audit_log = audit_log

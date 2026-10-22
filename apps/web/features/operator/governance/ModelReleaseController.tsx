@@ -1,6 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CanonicalMonitoringPanel } from "./CanonicalMonitoringPanel";
+import type { CanonicalMonitoringGuardFactory } from "./canonicalMonitoringClient";
+import { OperatorDataUnavailableGate } from "../OperatorDataUnavailableGate";
+import { operatorFixturesAllowed, toUnavailableOperatorStatus, type OperatorDataAvailability } from "../operatorDataMode";
 import styles from "../governance.module.css";
 import {
   approveModelCard,
@@ -22,17 +26,34 @@ export type ModelReleaseControllerProps = {
   roleId?: string;
   actor?: string;
   onOpenAudit?: (auditEventId: string) => void;
+  canonicalMonitoringScopeKey?: string;
+  createCanonicalMonitoringReadGuard?: CanonicalMonitoringGuardFactory;
 };
 
 export function ModelReleaseController({
   roleId = "ops-lead",
   actor = "ModelOps Engine",
   onOpenAudit,
+  canonicalMonitoringScopeKey,
+  createCanonicalMonitoringReadGuard,
 }: ModelReleaseControllerProps) {
-  const [models, setModels] = useState<ModelVersionItem[]>(fallbackLearningHubModels);
-  const [releases, setReleases] = useState<ModelReleaseDecisionItem[]>(fallbackLearningHubReleases);
-  const [selectedModelName, setSelectedModelName] = useState<string>("forecast_revenue_interval");
-  const [selectedVersion, setSelectedVersion] = useState<ModelVersionItem | null>(fallbackLearningHubModels[0]);
+  const fixturesAllowed = operatorFixturesAllowed();
+  const loadGeneration = useRef(0);
+  const currentReadContext = useRef({ roleId, fixturesAllowed, mounted: true });
+  if (currentReadContext.current.roleId !== roleId || currentReadContext.current.fixturesAllowed !== fixturesAllowed) {
+    currentReadContext.current = { roleId, fixturesAllowed, mounted: true };
+  }
+  const renderContext = currentReadContext.current;
+  const isCurrentContext = useCallback(() => currentReadContext.current === renderContext && renderContext.mounted, [renderContext]);
+  const apiReadContext = useRef<object | null>(fixturesAllowed ? renderContext : null);
+  const [models, setModels] = useState<ModelVersionItem[]>(fixturesAllowed ? fallbackLearningHubModels : []);
+  const [releases, setReleases] = useState<ModelReleaseDecisionItem[]>(fixturesAllowed ? fallbackLearningHubReleases : []);
+  const [selectedModelName, setSelectedModelName] = useState<string>(fixturesAllowed ? "forecast_revenue_interval" : "");
+  const selectedModelNameRef = useRef(selectedModelName);
+  selectedModelNameRef.current = selectedModelName;
+  const [selectedVersion, setSelectedVersion] = useState<ModelVersionItem | null>(fixturesAllowed ? fallbackLearningHubModels[0] : null);
+  const [apiLoadState, setApiLoadState] = useState<OperatorDataAvailability>(fixturesAllowed ? "fixture" : "loading");
+  const [apiLoadError, setApiLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -43,33 +64,63 @@ export function ModelReleaseController({
   // Release Controller Form State
   const [releaseType, setReleaseType] = useState<"SHADOW" | "CANARY" | "FULL" | "ROLLBACK">("FULL");
   const [releaseReason, setReleaseReason] = useState<string>("");
-  const [approvalId, setApprovalId] = useState<string>("ap-model-rel-" + Math.floor(Math.random() * 1000));
-  const [approvedBy, setApprovedBy] = useState<string>("ModelReviewBoard");
-  const [monitoringWindow, setMonitoringWindow] = useState<string>("7d");
-  const [successCriteria, setSuccessCriteria] = useState<string>("MAPE <= 0.09, Zero service errors");
-  const [failCriteria, setFailCriteria] = useState<string>("MAPE > 0.12, Latency > 300ms");
-  const [affectedModules, setAffectedModules] = useState<string>("Store Ops, Growth");
-  const [rollbackTarget, setRollbackTarget] = useState<string>("v2.0.4");
+  const [approvalId, setApprovalId] = useState<string>(fixturesAllowed ? "ap-model-rel-" + Math.floor(Math.random() * 1000) : "");
+  const [approvedBy, setApprovedBy] = useState<string>(fixturesAllowed ? "ModelReviewBoard" : "");
+  const [monitoringWindow, setMonitoringWindow] = useState<string>(fixturesAllowed ? "7d" : "");
+  const [successCriteria, setSuccessCriteria] = useState<string>(fixturesAllowed ? "MAPE <= 0.09, Zero service errors" : "");
+  const [failCriteria, setFailCriteria] = useState<string>(fixturesAllowed ? "MAPE > 0.12, Latency > 300ms" : "");
+  const [affectedModules, setAffectedModules] = useState<string>(fixturesAllowed ? "Store Ops, Growth" : "");
+  const [rollbackTarget, setRollbackTarget] = useState<string>(fixturesAllowed ? "v2.0.4" : "");
   const [submittingRelease, setSubmittingRelease] = useState<boolean>(false);
 
   // Monitor Form State
   const [monitorReleaseId, setMonitorReleaseId] = useState<string>("");
-  const [observedMetricsText, setObservedMetricsText] = useState<string>('{"mape": 0.085, "rmse": 1400.0}');
+  const [observedMetricsText, setObservedMetricsText] = useState<string>(fixturesAllowed ? '{"mape": 0.085, "rmse": 1400.0}' : "");
   const [monitorResult, setMonitorResult] = useState<ReleaseMonitorAssessment | null>(null);
 
+  const selectedRollbackTarget = rollbackTarget.trim() || (typeof selectedVersion?.rollback_target === "string" ? selectedVersion.rollback_target.trim() : "");
+
   // Load models and release history
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (keepCommandMessage = false) => {
+    if (!isCurrentContext()) return;
+    apiReadContext.current = renderContext;
+    const generation = ++loadGeneration.current;
     setLoading(true);
     setError(null);
+    setApiLoadError(null);
+    if (!fixturesAllowed) {
+      setApiLoadState("loading");
+      setActiveDrawer(null);
+      if (!keepCommandMessage) setSuccessMessage(null);
+    }
 
     const [modelsData, releasesData] = await Promise.all([
       fetchModels(roleId),
       fetchReleases(undefined, roleId),
     ]);
+    if (generation !== loadGeneration.current || !isCurrentContext()) return;
+
+    if (!fixturesAllowed && (!Array.isArray(modelsData) || !Array.isArray(releasesData))) {
+      setModels([]);
+      setReleases([]);
+      setSelectedVersion(null);
+      setApiLoadError("Learning Hub 未提供可驗證的模型與發布資料，請重試。");
+      setApiLoadState("error");
+      setLoading(false);
+      return;
+    }
+    if (!fixturesAllowed && modelsData?.length === 0) {
+      setModels([]);
+      setReleases(releasesData ?? []);
+      setSelectedVersion(null);
+      setApiLoadState("empty");
+      setLoading(false);
+      return;
+    }
 
     if (modelsData && modelsData.length > 0) {
       setModels(modelsData);
-      const match = modelsData.find((m) => m.model_name === selectedModelName) || modelsData[0];
+      const match = modelsData.find((m) => m.model_name === selectedModelNameRef.current) || modelsData[0];
       setSelectedModelName(match.model_name);
       setSelectedVersion(match);
     } else {
@@ -83,11 +134,16 @@ export function ModelReleaseController({
       setReleases(fallbackLearningHubReleases);
     }
 
+    setApiLoadState(fixturesAllowed ? "fixture" : "ready");
     setLoading(false);
-  }, [roleId, selectedModelName]);
+  }, [roleId, fixturesAllowed, isCurrentContext, renderContext]);
 
   useEffect(() => {
+    renderContext.mounted = true;
+    setSubmittingRelease(false);
+    setMonitorResult(null);
     loadData();
+    return () => { renderContext.mounted = false; loadGeneration.current += 1; };
   }, [loadData]);
 
   // Model names list
@@ -114,44 +170,48 @@ export function ModelReleaseController({
       };
     }
 
-    const valPassed = Boolean(selectedVersion.validation_run?.passed ?? true);
+    const valPassed = selectedVersion.validation_run?.passed === true;
     const card = selectedVersion.model_card;
     const cardComplete = Boolean(
-      card &&
-        card.intended_use &&
-        card.not_intended_use &&
+      card && card.is_complete !== false &&
+        [card.model_name, card.model_version, card.owner, card.intended_use,
+          card.not_intended_use, card.dataset_snapshot_id, card.validation_run_id,
+          card.feature_set_id, card.label_set_id, card.training_period,
+          card.validation_period, card.algorithm, card.baseline].every((value) => typeof value === "string" && value.trim()) &&
         card.metrics_summary &&
         Object.keys(card.metrics_summary).length > 0 &&
-        card.rollback_conditions &&
+        Array.isArray(card.rollback_conditions) &&
         card.rollback_conditions.length > 0 &&
-        card.privacy_review !== "FAILED" &&
-        card.security_review !== "FAILED"
+        (card.privacy_review === "PASSED" || card.privacy_review === "WARNING") &&
+        (card.security_review === "PASSED" || card.security_review === "WARNING")
     );
     const cardApproved = Boolean(
-      card && card.approvals && card.approvals.some((a) => a.decision === "approved")
+      card && card.is_approved !== false && Array.isArray(card.approvals) && card.approvals.some((a) => a.decision === "approved")
     );
     const targetPresent =
       releaseType === "SHADOW" ? true : Boolean(rollbackTarget || selectedVersion.rollback_target);
 
+    const revisionPresent = fixturesAllowed || (typeof selectedVersion.release_revision === "number" && Number.isInteger(selectedVersion.release_revision) && selectedVersion.release_revision >= 0);
     const reasons: string[] = [];
     if (!valPassed) reasons.push("Validation checks failed or incomplete");
     if (!cardComplete) reasons.push("Model Card incomplete or security/privacy review FAILED");
     if (!cardApproved) reasons.push("Model Card lacks required reviewer signoff");
     if (!targetPresent) reasons.push("Rollback target version is required for FULL/CANARY/ROLLBACK");
+    if (!revisionPresent) reasons.push("Release revision 未提供，無法送出發布命令");
 
     return {
       validationPassed: valPassed,
       cardComplete,
       cardApproved,
       rollbackTargetPresent: targetPresent,
-      canRelease: valPassed && cardComplete && cardApproved && targetPresent,
+      canRelease: valPassed && cardComplete && cardApproved && targetPresent && revisionPresent,
       reasons,
     };
-  }, [selectedVersion, releaseType, rollbackTarget]);
+  }, [selectedVersion, releaseType, rollbackTarget, fixturesAllowed]);
 
   // Model card approval handler
   const handleApproveCard = async (decision: "approved" | "rejected") => {
-    if (!selectedVersion) return;
+    if (!selectedVersion || !isCurrentContext()) return;
     setError(null);
     setSuccessMessage(null);
 
@@ -161,19 +221,20 @@ export function ModelReleaseController({
       decision,
       roleId,
     });
+    if (!isCurrentContext()) return;
 
     if (res.ok) {
       setSuccessMessage(`Model Card for ${selectedVersion.model_name}:${selectedVersion.version} marked as ${decision}.`);
-      loadData();
+      loadData(true);
     } else {
       setError(`Card approval failed: ${res.detail}`);
     }
   };
 
   // Submit release request handler (Non-optimistic, audit-tracked)
-  const handleRequestRelease = async (e: React.FormEvent) => {
+  const handleRequestRelease = async (e: React.FormEvent, commandType = releaseType) => {
     e.preventDefault();
-    if (!selectedVersion) return;
+    if (!selectedVersion || !isCurrentContext()) return;
     setError(null);
     setSuccessMessage(null);
 
@@ -184,39 +245,50 @@ export function ModelReleaseController({
     }
 
     // Validate segregation of duties (self-review forbidden)
-    if (approvedBy.trim().toLowerCase() === actor.trim().toLowerCase()) {
+    if (fixturesAllowed && approvedBy.trim().toLowerCase() === actor.trim().toLowerCase()) {
       setError("MODEL_RELEASE_SELF_REVIEW: 申請者與核准者不得為同一人 (Segregation of Duties).");
       return;
     }
 
+    if (commandType === "ROLLBACK" && !selectedRollbackTarget) {
+      setError("回滾目標版本未提供，無法送出回滾命令。");
+      return;
+    }
+
+    const releaseRevision = fixturesAllowed ? 1 : selectedVersion.release_revision;
+    if (typeof releaseRevision !== "number" || !Number.isInteger(releaseRevision) || releaseRevision < 0) {
+      setError("Release revision 未提供，無法送出發布命令");
+      return;
+    }
     setSubmittingRelease(true);
     const result = await requestRelease({
       model_name: selectedVersion.model_name,
       version: selectedVersion.version,
-      release_type: releaseType,
+      release_type: commandType,
       reason: releaseReason.trim(),
       approval_id: approvalId.trim(),
       approved_by: approvedBy.trim(),
-      rollback_target: rollbackTarget.trim() || selectedVersion.rollback_target,
+      rollback_target: selectedRollbackTarget || selectedVersion.rollback_target,
       monitoring_window: monitoringWindow,
       success_criteria: successCriteria.split(",").map((s) => s.trim()).filter(Boolean),
       fail_criteria: failCriteria.split(",").map((s) => s.trim()).filter(Boolean),
       affected_modules: affectedModules.split(",").map((s) => s.trim()).filter(Boolean),
-      expected_release_revision: 1,
+      expected_release_revision: releaseRevision,
       idempotency_key: `ik-rel-${Date.now()}`,
       requested_by: actor,
       roleId,
     });
 
+    if (!isCurrentContext()) return;
     setSubmittingRelease(false);
 
     if (result.ok) {
       setSuccessMessage(
-        `Release ${result.decision.release_id} (${releaseType}) completed successfully. Audit Event: ${result.decision.audit_event_id}`
+        `Release ${result.decision.release_id} (${commandType}) completed successfully. Audit Event: ${result.decision.audit_event_id}`
       );
       setActiveDrawer(null);
       setReleaseReason("");
-      loadData();
+      loadData(true);
     } else {
       setError(`Release request rejected by gate/policy: ${result.detail}`);
     }
@@ -225,8 +297,14 @@ export function ModelReleaseController({
   // Monitor release evaluation handler
   const handleMonitorRelease = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!monitorReleaseId) return;
+    if (!monitorReleaseId || !isCurrentContext()) return;
     setError(null);
+    if (!fixturesAllowed) {
+      // No structured release-monitor policy is defined by the current read
+      // contract. Validation thresholds and free-text criteria are not one.
+      setError("發布監控政策未提供，無法評估。");
+      return;
+    }
 
     let observed: Record<string, number> = {};
     try {
@@ -248,6 +326,7 @@ export function ModelReleaseController({
       evaluated_by: actor,
       roleId,
     });
+    if (!isCurrentContext()) return;
 
     if (result.ok) {
       setMonitorResult(result.assessment);
@@ -256,6 +335,104 @@ export function ModelReleaseController({
       setError(`Monitor evaluation failed: ${result.detail}`);
     }
   };
+
+  // Both drawers use the existing governance inputs; only one drawer is mounted.
+  const renderApproverField = () => (
+              <div>
+                <label htmlFor="approved-by-input" style={{ display: "block", fontSize: "12px", marginBottom: "4px" }}>
+                  Approver Principal (核准者):
+                </label>
+                <input
+                  id="approved-by-input"
+                  type="text"
+                  value={approvedBy}
+                  onChange={(e) => setApprovedBy(e.target.value)}
+                  placeholder="e.g. ModelReviewBoard (must not be requester)"
+                  style={{ width: "100%", padding: "6px", background: "#1f2937", border: "1px solid #374151", color: "#fff", borderRadius: "4px" }}
+                  required
+                />
+              </div>
+  );
+
+  const renderReleaseGovernanceFields = () => (
+    <>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px" }}>
+              <div>
+                <label htmlFor="approval-id-input" style={{ display: "block", fontSize: "12px", marginBottom: "4px" }}>Approval ID:</label>
+                <input
+                  id="approval-id-input"
+                  type="text"
+                  value={approvalId}
+                  onChange={(e) => setApprovalId(e.target.value)}
+                  style={{ width: "100%", padding: "6px", background: "#1f2937", border: "1px solid #374151", color: "#fff", borderRadius: "4px" }}
+                  required
+                />
+              </div>
+              <div>
+                <label htmlFor="monitoring-window-input" style={{ display: "block", fontSize: "12px", marginBottom: "4px" }}>Monitoring Window:</label>
+                <input
+                  id="monitoring-window-input"
+                  type="text"
+                  value={monitoringWindow}
+                  onChange={(e) => setMonitoringWindow(e.target.value)}
+                  style={{ width: "100%", padding: "6px", background: "#1f2937", border: "1px solid #374151", color: "#fff", borderRadius: "4px" }}
+                  required
+                />
+              </div>
+              <div>
+                <label htmlFor="rollback-target-input" style={{ display: "block", fontSize: "12px", marginBottom: "4px" }}>Rollback Target Version:</label>
+                <input
+                  id="rollback-target-input"
+                  type="text"
+                  value={rollbackTarget}
+                  onChange={(e) => setRollbackTarget(e.target.value)}
+                  placeholder="e.g. v2.0.4"
+                  style={{ width: "100%", padding: "6px", background: "#1f2937", border: "1px solid #374151", color: "#fff", borderRadius: "4px" }}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+              <div>
+                <label htmlFor="success-criteria-input" style={{ display: "block", fontSize: "12px", marginBottom: "4px" }}>Success Criteria:</label>
+                <input
+                  id="success-criteria-input"
+                  type="text"
+                  value={successCriteria}
+                  onChange={(e) => setSuccessCriteria(e.target.value)}
+                  style={{ width: "100%", padding: "6px", background: "#1f2937", border: "1px solid #374151", color: "#fff", borderRadius: "4px" }}
+                />
+              </div>
+              <div>
+                <label htmlFor="fail-criteria-input" style={{ display: "block", fontSize: "12px", marginBottom: "4px" }}>Fail Criteria:</label>
+                <input
+                  id="fail-criteria-input"
+                  type="text"
+                  value={failCriteria}
+                  onChange={(e) => setFailCriteria(e.target.value)}
+                  style={{ width: "100%", padding: "6px", background: "#1f2937", border: "1px solid #374151", color: "#fff", borderRadius: "4px" }}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label htmlFor="affected-modules-input" style={{ display: "block", fontSize: "12px", marginBottom: "4px" }}>
+                Affected Modules (Blast Radius 影響領域):
+              </label>
+              <input
+                id="affected-modules-input"
+                type="text"
+                value={affectedModules}
+                onChange={(e) => setAffectedModules(e.target.value)}
+                style={{ width: "100%", padding: "6px", background: "#1f2937", border: "1px solid #374151", color: "#fff", borderRadius: "4px" }}
+              />
+            </div>
+    </>
+  );
+
+  if (!fixturesAllowed && (apiReadContext.current !== renderContext || apiLoadState !== "ready")) {
+    return <OperatorDataUnavailableGate detail={apiLoadError} onRetry={() => loadData()} status={apiReadContext.current !== renderContext ? "loading" : toUnavailableOperatorStatus(apiLoadState)} />;
+  }
 
   return (
     <div className={styles.workspace} data-testid="model-release-controller">
@@ -269,8 +446,8 @@ export function ModelReleaseController({
           </p>
         </div>
         <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-          <span style={{ fontSize: "12px", opacity: 0.8 }}>Actor: <strong>{actor}</strong></span>
-          <button className={styles.secondaryButton} onClick={loadData} disabled={loading}>
+          <span style={{ fontSize: "12px", opacity: 0.8 }}>Actor: <strong>{fixturesAllowed ? actor : "由伺服器驗證的帳號"}</strong></span>
+          <button className={styles.secondaryButton} onClick={() => loadData()} disabled={loading}>
             {loading ? "載入中..." : "重新整理"}
           </button>
         </div>
@@ -387,17 +564,17 @@ export function ModelReleaseController({
                       ))}
                     </td>
                     <td style={{ padding: "8px" }}>
-                      <span style={{ fontWeight: 600, color: card?.risk_level === "R4" || card?.risk_level === "R3" ? "#f87171" : "#34d399" }}>
-                        {card?.risk_level || "R2"}
+                      <span style={{ fontWeight: 600, color: !card?.risk_level && !fixturesAllowed ? "#9ca3af" : card?.risk_level === "R4" || card?.risk_level === "R3" ? "#f87171" : "#34d399" }}>
+                        {card?.risk_level || (fixturesAllowed ? "R2" : "未提供")}
                       </span>
                     </td>
                     <td style={{ padding: "8px" }}>
                       {val ? (
-                        val.passed ? (
+                        val.passed === true ? (
                           <span style={{ color: "#34d399", fontSize: "12px", fontWeight: 600 }}>✓ Passed</span>
-                        ) : (
+                        ) : val.passed === false ? (
                           <span style={{ color: "#f87171", fontSize: "12px", fontWeight: 600 }}>✗ Failed</span>
-                        )
+                        ) : <span style={{ color: "#9ca3af", fontSize: "12px" }}>未提供</span>
                       ) : (
                         <span style={{ color: "#9ca3af", fontSize: "12px" }}>未對比</span>
                       )}
@@ -405,7 +582,7 @@ export function ModelReleaseController({
                     <td style={{ padding: "8px", fontSize: "12px" }}>
                       {card ? (
                         <span>
-                          {card.is_complete ? "✓ 完整" : "⚠ 未完"} / {card.approvals?.some((a) => a.decision === "approved") ? "✓ 已簽核" : "待簽核"}
+                          {card.is_complete ? "✓ 完整" : "⚠ 未完"} / {card.is_approved !== false && card.approvals?.some((a) => a.decision === "approved") ? "✓ 已簽核" : "待簽核"}
                         </span>
                       ) : (
                         "缺卡"
@@ -459,6 +636,7 @@ export function ModelReleaseController({
           </h3>
           <p style={{ fontSize: "12px", color: "#9ca3af", marginBottom: "12px" }}>
             對應 selected version: <strong>{selectedVersion?.version}</strong>
+            {!fixturesAllowed ? <> · Release revision: <strong>{selectedVersion?.release_revision ?? "未提供"}</strong></> : null}
           </p>
 
           <ul style={{ listStyle: "none", padding: 0, margin: 0, fontSize: "13px" }}>
@@ -472,7 +650,7 @@ export function ModelReleaseController({
               <span style={{ color: releaseGateChecklist.cardComplete ? "#34d399" : "#f87171", fontWeight: "bold" }}>
                 {releaseGateChecklist.cardComplete ? "✓" : "✗"}
               </span>
-              <span>2. Model Card Complete (卡片完整)</span>
+              <span>2. Model Card Complete (卡片完整){selectedVersion?.model_card?.privacy_review === "WARNING" || selectedVersion?.model_card?.security_review === "WARNING" ? "（Privacy/Security WARNING）" : ""}</span>
             </li>
             <li style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
               <span style={{ color: releaseGateChecklist.cardApproved ? "#34d399" : "#f87171", fontWeight: "bold" }}>
@@ -546,8 +724,8 @@ export function ModelReleaseController({
             <div>
               <p><strong>Dataset Snapshot:</strong> {selectedVersion.model_card.dataset_snapshot_id}</p>
               <p><strong>Training Period:</strong> {selectedVersion.model_card.training_period}</p>
-              <p><strong>Privacy Review:</strong> {selectedVersion.model_card.privacy_review}</p>
-              <p><strong>Security Review:</strong> {selectedVersion.model_card.security_review}</p>
+              <p><strong>Privacy Review:</strong> {selectedVersion.model_card.privacy_review || "未提供"}</p>
+              <p><strong>Security Review:</strong> {selectedVersion.model_card.security_review || "未提供"}</p>
               <p><strong>Explainability:</strong> {selectedVersion.model_card.explainability_method}</p>
             </div>
           </div>
@@ -555,7 +733,8 @@ export function ModelReleaseController({
           <div style={{ marginTop: "12px", fontSize: "13px" }}>
             <p><strong>Rollback Conditions:</strong></p>
             <ul>
-              {selectedVersion.model_card.rollback_conditions.map((cond, i) => (
+              {!selectedVersion.model_card.rollback_conditions?.length ? <li>未提供</li> : null}
+              {(selectedVersion.model_card.rollback_conditions ?? []).map((cond, i) => (
                 <li key={i}>{cond}</li>
               ))}
             </ul>
@@ -595,16 +774,14 @@ export function ModelReleaseController({
               </tr>
             </thead>
             <tbody>
-              {selectedVersion.validation_run.thresholds.map((t) => {
-                const actual = selectedVersion.validation_run?.metrics[t.metric_name] ?? 0;
-                const base = selectedVersion.validation_run?.baseline_metrics[t.metric_name] ?? actual;
-                const delta = actual - base;
-                const passed =
-                  t.max_value != null
-                    ? actual <= t.max_value
-                    : t.min_value != null
-                    ? actual >= t.min_value
-                    : true;
+              {!selectedVersion.validation_run.thresholds?.length ? <tr><td colSpan={6}>驗證門檻未提供</td></tr> : null}
+              {(selectedVersion.validation_run.thresholds ?? []).map((t) => {
+                const actual = selectedVersion.validation_run?.metrics?.[t.metric_name] ?? null;
+                const base = selectedVersion.validation_run?.baseline_metrics?.[t.metric_name] ?? null;
+                const delta = actual !== null && base !== null ? actual - base : null;
+                const passed = actual === null ? null
+                  : t.max_value != null ? actual <= t.max_value
+                  : t.min_value != null ? actual >= t.min_value : null;
 
                 return (
                   <tr key={t.metric_name} style={{ borderBottom: "1px solid #1f2937" }}>
@@ -612,13 +789,13 @@ export function ModelReleaseController({
                     <td style={{ padding: "6px" }}>
                       {t.max_value != null ? `<= ${t.max_value}` : t.min_value != null ? `>= ${t.min_value}` : "—"}
                     </td>
-                    <td style={{ padding: "6px" }}>{actual}</td>
-                    <td style={{ padding: "6px" }}>{base}</td>
-                    <td style={{ padding: "6px", color: delta <= 0 ? "#34d399" : "#f87171" }}>
-                      {delta > 0 ? `+${delta.toFixed(4)}` : delta.toFixed(4)}
+                    <td style={{ padding: "6px" }}>{actual ?? "未提供"}</td>
+                    <td style={{ padding: "6px" }}>{base ?? "未提供"}</td>
+                    <td style={{ padding: "6px", color: delta === null ? "#9ca3af" : delta <= 0 ? "#34d399" : "#f87171" }}>
+                      {delta === null ? "未提供" : delta > 0 ? `+${delta.toFixed(4)}` : delta.toFixed(4)}
                     </td>
-                    <td style={{ padding: "6px", fontWeight: 600, color: passed ? "#34d399" : "#f87171" }}>
-                      {passed ? "PASSED" : "FAILED"}
+                    <td style={{ padding: "6px", fontWeight: 600, color: passed === null ? "#9ca3af" : passed ? "#34d399" : "#f87171" }}>
+                      {passed === null ? "未判讀" : passed ? "PASSED" : "FAILED"}
                     </td>
                   </tr>
                 );
@@ -658,20 +835,7 @@ export function ModelReleaseController({
                 </select>
               </div>
 
-              <div>
-                <label htmlFor="approved-by-input" style={{ display: "block", fontSize: "12px", marginBottom: "4px" }}>
-                  Approver Principal (核准者):
-                </label>
-                <input
-                  id="approved-by-input"
-                  type="text"
-                  value={approvedBy}
-                  onChange={(e) => setApprovedBy(e.target.value)}
-                  placeholder="e.g. ModelReviewBoard (must not be requester)"
-                  style={{ width: "100%", padding: "6px", background: "#1f2937", border: "1px solid #374151", color: "#fff", borderRadius: "4px" }}
-                  required
-                />
-              </div>
+              {renderApproverField()}
             </div>
 
             <div>
@@ -689,77 +853,7 @@ export function ModelReleaseController({
               />
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px" }}>
-              <div>
-                <label htmlFor="approval-id-input" style={{ display: "block", fontSize: "12px", marginBottom: "4px" }}>Approval ID:</label>
-                <input
-                  id="approval-id-input"
-                  type="text"
-                  value={approvalId}
-                  onChange={(e) => setApprovalId(e.target.value)}
-                  style={{ width: "100%", padding: "6px", background: "#1f2937", border: "1px solid #374151", color: "#fff", borderRadius: "4px" }}
-                  required
-                />
-              </div>
-              <div>
-                <label htmlFor="monitoring-window-input" style={{ display: "block", fontSize: "12px", marginBottom: "4px" }}>Monitoring Window:</label>
-                <input
-                  id="monitoring-window-input"
-                  type="text"
-                  value={monitoringWindow}
-                  onChange={(e) => setMonitoringWindow(e.target.value)}
-                  style={{ width: "100%", padding: "6px", background: "#1f2937", border: "1px solid #374151", color: "#fff", borderRadius: "4px" }}
-                  required
-                />
-              </div>
-              <div>
-                <label htmlFor="rollback-target-input" style={{ display: "block", fontSize: "12px", marginBottom: "4px" }}>Rollback Target Version:</label>
-                <input
-                  id="rollback-target-input"
-                  type="text"
-                  value={rollbackTarget}
-                  onChange={(e) => setRollbackTarget(e.target.value)}
-                  placeholder="e.g. v2.0.4"
-                  style={{ width: "100%", padding: "6px", background: "#1f2937", border: "1px solid #374151", color: "#fff", borderRadius: "4px" }}
-                />
-              </div>
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-              <div>
-                <label htmlFor="success-criteria-input" style={{ display: "block", fontSize: "12px", marginBottom: "4px" }}>Success Criteria:</label>
-                <input
-                  id="success-criteria-input"
-                  type="text"
-                  value={successCriteria}
-                  onChange={(e) => setSuccessCriteria(e.target.value)}
-                  style={{ width: "100%", padding: "6px", background: "#1f2937", border: "1px solid #374151", color: "#fff", borderRadius: "4px" }}
-                />
-              </div>
-              <div>
-                <label htmlFor="fail-criteria-input" style={{ display: "block", fontSize: "12px", marginBottom: "4px" }}>Fail Criteria:</label>
-                <input
-                  id="fail-criteria-input"
-                  type="text"
-                  value={failCriteria}
-                  onChange={(e) => setFailCriteria(e.target.value)}
-                  style={{ width: "100%", padding: "6px", background: "#1f2937", border: "1px solid #374151", color: "#fff", borderRadius: "4px" }}
-                />
-              </div>
-            </div>
-
-            <div>
-              <label htmlFor="affected-modules-input" style={{ display: "block", fontSize: "12px", marginBottom: "4px" }}>
-                Affected Modules (Blast Radius 影響領域):
-              </label>
-              <input
-                id="affected-modules-input"
-                type="text"
-                value={affectedModules}
-                onChange={(e) => setAffectedModules(e.target.value)}
-                style={{ width: "100%", padding: "6px", background: "#1f2937", border: "1px solid #374151", color: "#fff", borderRadius: "4px" }}
-              />
-            </div>
+            {renderReleaseGovernanceFields()}
 
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px", marginTop: "12px" }}>
               <button type="button" className={styles.secondaryButton} onClick={() => setActiveDrawer(null)}>
@@ -791,12 +885,12 @@ export function ModelReleaseController({
             </div>
             <div>
               <h4 style={{ fontSize: "13px", color: "#34d399" }}>回滾目標版本 (Rollback Target)</h4>
-              <p style={{ fontSize: "14px", fontWeight: 600 }}>{rollbackTarget || selectedVersion.rollback_target || "無指定"}</p>
+              <p style={{ fontSize: "14px", fontWeight: 600 }}>{selectedRollbackTarget || "無指定"}</p>
               <p style={{ fontSize: "12px", color: "#9ca3af" }}>Target Stage after Rollback: production & champion</p>
             </div>
           </div>
 
-          <form onSubmit={(e) => { setReleaseType("ROLLBACK"); handleRequestRelease(e); }}>
+          <form onSubmit={(e) => handleRequestRelease(e, "ROLLBACK")} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
             <label htmlFor="rollback-reason-input" style={{ display: "block", fontSize: "12px", marginBottom: "4px" }}>
               Rollback Audit Reason (回滾理由，≥10字):
             </label>
@@ -809,7 +903,10 @@ export function ModelReleaseController({
               style={{ width: "100%", padding: "6px", background: "#1f2937", border: "1px solid #374151", color: "#fff", borderRadius: "4px", marginBottom: "12px" }}
               required
             />
-            <button type="submit" className={styles.primaryButton} style={{ background: "#dc2626", borderColor: "#b91c1c" }} disabled={submittingRelease}>
+            {renderApproverField()}
+            {renderReleaseGovernanceFields()}
+            {!selectedRollbackTarget ? <p role="status">回滾目標版本未提供，無法送出回滾命令。</p> : null}
+            <button type="submit" className={styles.primaryButton} style={{ background: "#dc2626", borderColor: "#b91c1c" }} disabled={submittingRelease || !selectedRollbackTarget}>
               {submittingRelease ? "執行中..." : "確認執行緊急回滾 (Execute Rollback)"}
             </button>
           </form>
@@ -886,18 +983,34 @@ export function ModelReleaseController({
             <button className={styles.secondaryButton} onClick={() => setActiveDrawer(null)}>關閉</button>
           </div>
 
+          {!fixturesAllowed && createCanonicalMonitoringReadGuard ? (
+            <CanonicalMonitoringPanel key={`${canonicalMonitoringScopeKey ?? "unbound"}:${roleId}:${monitorReleaseId}`}
+              releaseId={monitorReleaseId} roleId={roleId} scopeKey={canonicalMonitoringScopeKey}
+              createAuthenticatedReadGuard={createCanonicalMonitoringReadGuard} />
+          ) : <>
+          {!fixturesAllowed ? (
+            <div>
+              <p role="status">發布監控政策未提供，無法評估。驗證門檻不等同發布監控政策。</p>
+              <p>監控窗：{releases.find((release) => release.release_id === monitorReleaseId)?.monitoring_window || "未提供"}</p>
+              <p>失敗條件：{(() => {
+                const criteria = releases.find((release) => release.release_id === monitorReleaseId)?.fail_criteria;
+                return Array.isArray(criteria) && criteria.length > 0 ? criteria.join("、") : "未提供";
+              })()}</p>
+            </div>
+          ) : null}
           <form onSubmit={handleMonitorRelease}>
             <label htmlFor="observed-metrics-input" style={{ display: "block", fontSize: "12px", marginBottom: "4px" }}>
               Observed Metrics (JSON format):
             </label>
             <textarea
               id="observed-metrics-input"
+              disabled={!fixturesAllowed}
               value={observedMetricsText}
               onChange={(e) => setObservedMetricsText(e.target.value)}
               rows={3}
               style={{ width: "100%", padding: "6px", background: "#1f2937", border: "1px solid #374151", color: "#fff", borderRadius: "4px", marginBottom: "12px" }}
             />
-            <button type="submit" className={styles.primaryButton}>
+            <button type="submit" className={styles.primaryButton} disabled={!fixturesAllowed}>
               Evaluated Guardrails (POST /monitor)
             </button>
           </form>
@@ -909,6 +1022,7 @@ export function ModelReleaseController({
               <p><strong>Audit Event:</strong> {monitorResult.audit_event_id}</p>
             </div>
           ) : null}
+          </>}
         </div>
       ) : null}
     </div>

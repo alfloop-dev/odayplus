@@ -33,6 +33,7 @@ from tests.integration._learninghub_fixtures import (
     dataset_rows,
     prepare_candidate,
 )
+from tests.integration._model_publish_flag_fixture import enable_model_publish
 
 
 def _setup_service(repo=None):
@@ -167,6 +168,7 @@ def test_evaluate_backtest_with_decision_policy_thresholds():
 
 def test_full_and_canary_release_succeed_with_valid_backtest_receipt():
     service, repo = _setup_service()
+    enable_model_publish(service, tenant_id='tenant-modeling')
     candidate = prepare_candidate(service, "1.0.0")
 
     # FULL release succeeds
@@ -480,6 +482,7 @@ def test_passing_backtest_cannot_bypass_model_card_and_approval_gates():
 
 def test_shadow_and_rollback_release_behavior():
     service, repo = _setup_service()
+    enable_model_publish(service, tenant_id='tenant-modeling')
     v1 = prepare_candidate(service, "1.0.0")
 
     # Shadow release

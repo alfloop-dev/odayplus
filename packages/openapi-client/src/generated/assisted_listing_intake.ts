@@ -257,6 +257,8 @@ export type MergeRequest = {
 };
 
 export type PromotionDecisionReceipt = {
+  /** Target code persisted with this decision, verbatim; null for historical receipts without one. */
+  target_format_code?: string | null;
   promotion_decision_id: string;
   intake_id: string;
   listing_id: string;

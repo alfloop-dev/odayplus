@@ -130,7 +130,7 @@ REQUIRED_TOKENS = {
         "cloud_sql_instance",
         'mount_path = "/cloudsql"',
         'path = "/readiness"',
-        'path = "/healthz"',
+        'path = "/liveness"',
         "secret_key_ref",
         'egress = "ALL_TRAFFIC"',
         "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER",

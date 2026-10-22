@@ -170,12 +170,15 @@ function newCorrelationId(): string {
 
 async function apiFetch<T>(
   path: string,
-  options: RequestInit & { correlationId?: string; roleId?: string } = {},
+  options: RequestInit & { correlationId?: string; roleId?: string; timeoutMs?: number } = {},
 ): Promise<{ ok: true; status: number; data: T } | { ok: false; status: number; data: null }> {
-  const { correlationId, roleId, ...fetchOptions } = options;
+  const { correlationId, roleId, timeoutMs, ...fetchOptions } = options;
+  const controller = timeoutMs ? new AbortController() : undefined;
+  const timeout = timeoutMs ? setTimeout(() => controller?.abort(), timeoutMs) : undefined;
   try {
     const res = await fetch(`${GOVERNANCE_API_BASE}${path}`, {
       ...fetchOptions,
+      signal: controller?.signal ?? fetchOptions.signal,
       headers: {
         "Content-Type": "application/json",
         "X-Correlation-Id": correlationId ?? newCorrelationId(),
@@ -189,6 +192,8 @@ async function apiFetch<T>(
     return { ok: true, status: res.status, data: (await res.json()) as T };
   } catch {
     return { ok: false, status: 0, data: null };
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
   }
 }
 
@@ -242,15 +247,19 @@ export async function submitGovernanceDecision(params: {
   role?: string;
   actorName?: string;
   roleId?: string;
+  idempotencyKey?: string;
 }): Promise<GovernanceDecisionResult> {
-  const headers: Record<string, string> = { "Idempotency-Key": newIdempotencyKey() };
+  const headers: Record<string, string> = { "Idempotency-Key": params.idempotencyKey ?? newIdempotencyKey() };
   if (params.roleId) headers["X-Operator-Role"] = params.roleId;
   const result = await apiFetch<{
+    approvalId: string;
+    action: GovernanceDecisionAction;
     finalDecision: string;
     status: string;
     correlation_id?: string;
   }>("/decisions", {
     method: "POST",
+    timeoutMs: 20_000,
     headers,
     roleId: params.roleId,
     body: JSON.stringify({
@@ -261,7 +270,8 @@ export async function submitGovernanceDecision(params: {
       actorName: params.actorName,
     }),
   });
-  if (result.ok && result.data) {
+  const expected = { approve: ["approved", "Approved"], return: ["returned", "Returned"], reject: ["rejected", "Rejected"] }[params.action];
+  if (result.ok && result.data && result.data.approvalId === params.approvalId && result.data.action === params.action && result.data.status === expected[0] && result.data.finalDecision === expected[1]) {
     return {
       ok: true,
       finalDecision: result.data.finalDecision,
@@ -273,7 +283,7 @@ export async function submitGovernanceDecision(params: {
     ok: false,
     policyError: result.status === 422,
     status: result.status,
-    detail: result.status === 422 ? "退回或駁回理由需至少 10 個字" : "決策未送出（API 無法連線）",
+    detail: result.status === 422 ? "退回或駁回理由需至少 10 個字" : "尚未確認決策結果，請重試相同內容以核對。",
   };
 }
 
@@ -306,11 +316,13 @@ export async function exportEvidencePackage(params: {
   actorName?: string;
   retentionPolicy?: string;
   roleId?: string;
+  idempotencyKey?: string;
 }): Promise<EvidencePackageRecord | null> {
-  const headers: Record<string, string> = { "Idempotency-Key": newIdempotencyKey() };
+  const headers: Record<string, string> = { "Idempotency-Key": params.idempotencyKey ?? newIdempotencyKey() };
   if (params.roleId) headers["X-Operator-Role"] = params.roleId;
   const result = await apiFetch<{ package: EvidencePackageRecord }>("/evidence-package", {
     method: "POST",
+    timeoutMs: 20_000,
     headers,
     roleId: params.roleId,
     body: JSON.stringify({
@@ -325,7 +337,13 @@ export async function exportEvidencePackage(params: {
     }),
   });
   if (!result.ok || !result.data) return null;
-  return result.data.package;
+  const record = result.data.package;
+  const modules = params.modules.filter(Boolean);
+  const contents = params.contents.filter(Boolean);
+  if (!record?.id || record.scope?.dateFrom !== params.dateFrom || record.scope.dateTo !== params.dateTo || record.format !== (params.format ?? "PDF") ||
+      JSON.stringify(record.scope.modules) !== JSON.stringify(modules.length ? modules : ["全模組"]) ||
+      JSON.stringify(record.scope.contents) !== JSON.stringify(contents.length ? contents : ["Audit Trail", "Decision Log"])) return null;
+  return record;
 }
 
 /** Fetch comments attached to one canonical task, decision, or approval. */

@@ -14,6 +14,7 @@ import math
 import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from dataclasses import replace as dataclass_replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -85,6 +86,7 @@ class ModelInferenceResult:
     engine: str
     artifact_sha256: str
     model_metadata: Mapping[str, Any] = field(default_factory=dict)
+    registry_version: str | None = None
 
     def to_audit_metadata(self) -> dict[str, Any]:
         return {
@@ -93,6 +95,7 @@ class ModelInferenceResult:
             "artifact_sha256": self.artifact_sha256,
             "prediction_count": len(self.point),
             "model_metadata": dict(self.model_metadata),
+            "registry_version": self.registry_version,
         }
 
 
@@ -117,7 +120,16 @@ class _ResolvedExecutableModel:
     binding: ModelBinding
     estimator: LoadedOSSEstimator
     artifact_sha256: str
+    registry_version: str
     model_metadata: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class _CurrentModelMetadata:
+    binding: ModelBinding
+    registry_version: str
+    model_metadata: Mapping[str, Any]
+    governance: Mapping[str, str]
 
 
 class MlflowProductionModelRuntime:
@@ -149,7 +161,7 @@ class MlflowProductionModelRuntime:
         self.client = client
         self.artifact_loader = artifact_loader or _download_artifact_bytes
         self.model_names = dict(production_model_names() if model_names is None else model_names)
-        self._cache: dict[tuple[str, str, str], _ResolvedExecutableModel] = {}
+        self._cache: dict[tuple[str, str, str], LoadedOSSEstimator] = {}
 
     @classmethod
     def from_environment(
@@ -192,14 +204,37 @@ class MlflowProductionModelRuntime:
             engine=executable.estimator.spec.engine,
             artifact_sha256=executable.artifact_sha256,
             model_metadata=executable.model_metadata,
+            registry_version=executable.registry_version,
         )
 
-    def resolve(
+    def read_admission(
         self,
         *,
         service: str,
         expected_feature_schema_version: str,
-    ) -> _ResolvedExecutableModel:
+    ) -> dict[str, Any]:
+        """Read live registry authority without loading or executing an artifact."""
+        metadata = self._read_metadata(
+            service=service,
+            expected_feature_schema_version=expected_feature_schema_version,
+        )
+        evidence = metadata.binding.to_audit_metadata()
+        evidence.pop("binding_resolved_at")
+        evidence.pop("model_engine")
+        return {
+            **evidence,
+            "service": service,
+            "registry_version": metadata.registry_version,
+            "model_metadata": dict(metadata.model_metadata),
+            "governance": dict(metadata.governance),
+        }
+
+    def _read_metadata(
+        self,
+        *,
+        service: str,
+        expected_feature_schema_version: str,
+    ) -> _CurrentModelMetadata:
         model_name = self.model_names.get(service, service)
         try:
             registered = self.client.get_model_version_by_alias(
@@ -259,32 +294,6 @@ class MlflowProductionModelRuntime:
                 f"{model_name}: MLflow training run lineage is unavailable"
             ) from exc
 
-        cache_key = (model_name, str(registered.version), artifact_sha256)
-        cached = self._cache.get(cache_key)
-        if cached is not None:
-            return cached
-        try:
-            artifact_bytes = self.artifact_loader(artifact_uri, self.tracking_uri)
-        except Exception as exc:
-            raise ProductionModelArtifactError(
-                f"{model_name}: registered model artifact cannot be downloaded"
-            ) from exc
-        observed_sha256 = f"sha256:{hashlib.sha256(artifact_bytes).hexdigest()}"
-        if observed_sha256 != artifact_sha256:
-            raise ProductionModelArtifactError(
-                f"{model_name}: registered model artifact digest verification failed"
-            )
-        try:
-            estimator = load_estimator_artifact(artifact_bytes)
-        except EstimatorUnavailableError as exc:
-            raise ProductionModelArtifactError(
-                f"{model_name}: registered OSS estimator engine is unavailable"
-            ) from exc
-        except (EstimatorArtifactError, OSSEstimatorError) as exc:
-            raise ProductionModelArtifactError(
-                f"{model_name}: registered artifact is not an executable OSS estimator"
-            ) from exc
-
         model_version = ModelVersion(
             model_name=model_name,
             version=domain_version,
@@ -294,27 +303,76 @@ class MlflowProductionModelRuntime:
             label_version=label_version,
             metrics=_parse_metrics(tags.get(_tag("metrics"))),
             stage=ModelStage.PRODUCTION,
-            aliases=frozenset({ModelAlias.PRODUCTION}),
+            aliases=frozenset(
+                ModelAlias(alias) for alias in aliases if alias in ModelAlias._value2member_map_
+            ),
             run_id=source_run_id,
             git_sha=git_sha,
             approved_by=approved_by,
             approved_at=approved_at,
+            monitoring_config=model_metadata,
         )
-        binding = ModelBinding.from_model_version(
-            service,
-            model_version,
-            artifact_sha256=artifact_sha256,
-            engine=estimator.spec.engine,
-            mlflow_run_id=mlflow_run_id,
+        return _CurrentModelMetadata(
+            binding=ModelBinding.from_model_version(
+                service,
+                model_version,
+                artifact_sha256=artifact_sha256,
+                mlflow_run_id=mlflow_run_id,
+            ),
+            registry_version=str(registered.version),
+            model_metadata=model_metadata,
+            governance={
+                key.removeprefix(_TAG_PREFIX): value
+                for key, value in tags.items()
+                if key.startswith(_TAG_PREFIX)
+            },
         )
-        resolved = _ResolvedExecutableModel(
-            binding=binding,
+
+    def resolve(
+        self,
+        *,
+        service: str,
+        expected_feature_schema_version: str,
+    ) -> _ResolvedExecutableModel:
+        metadata = self._read_metadata(
+            service=service,
+            expected_feature_schema_version=expected_feature_schema_version,
+        )
+        model_name = metadata.binding.model_name
+        artifact_uri = metadata.binding.artifact_uri
+        artifact_sha256 = metadata.binding.artifact_sha256
+        cache_key = (model_name, metadata.registry_version, artifact_sha256)
+        estimator = self._cache.get(cache_key)
+        if estimator is None:
+            try:
+                artifact_bytes = self.artifact_loader(artifact_uri, self.tracking_uri)
+            except Exception as exc:
+                raise ProductionModelArtifactError(
+                    f"{model_name}: registered model artifact cannot be downloaded"
+                ) from exc
+            observed_sha256 = f"sha256:{hashlib.sha256(artifact_bytes).hexdigest()}"
+            if observed_sha256 != artifact_sha256:
+                raise ProductionModelArtifactError(
+                    f"{model_name}: registered model artifact digest verification failed"
+                )
+            try:
+                estimator = load_estimator_artifact(artifact_bytes)
+            except EstimatorUnavailableError as exc:
+                raise ProductionModelArtifactError(
+                    f"{model_name}: registered OSS estimator engine is unavailable"
+                ) from exc
+            except (EstimatorArtifactError, OSSEstimatorError) as exc:
+                raise ProductionModelArtifactError(
+                    f"{model_name}: registered artifact is not an executable OSS estimator"
+                ) from exc
+            self._cache[cache_key] = estimator
+        return _ResolvedExecutableModel(
+            binding=dataclass_replace(metadata.binding, engine=estimator.spec.engine),
             estimator=estimator,
             artifact_sha256=artifact_sha256,
-            model_metadata=model_metadata,
+            model_metadata=metadata.model_metadata,
+            registry_version=metadata.registry_version,
         )
-        self._cache[cache_key] = resolved
-        return resolved
 
 
 def production_model_execution_required() -> bool:

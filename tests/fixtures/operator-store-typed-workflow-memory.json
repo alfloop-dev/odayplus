@@ -1,0 +1,389 @@
+{
+  "schemaVersion": 1,
+  "fixtureScope": "Explicit local InMemoryStoreOpsService typed contract examples only; no SQL, native authentication, browser, media delivery, measured efficacy or human approval. Dynamic mock header/timestamp bindings are labelled adaptations, not raw native producer results.",
+  "producerSourceSHA256": {
+    "modules/opsboard/application/store_ops.py": "46965af64b5dd60eccc7de748fce2bc29f4fdcb0be7496a86db687a79ea82801",
+    "modules/opsboard/domain/store_ops_reviews.py": "701aed5992b5de66d23a8d44053579cb4c25528310ec413291669c281f5b902c",
+    "shared/audit/events.py": "9fce77ae2446a3e9ff7ac8ee9ef45a6e82c733190c12c7a3fadd941b0b26e792"
+  },
+  "initialStateSHA256": "3b4d32a7826d116174546cbb77d6b773eedc80f959c76f91ee5b13973f71e9e7",
+  "actions": {
+    "triage": {
+      "requestPayload": {
+        "severity": "critical",
+        "category": "multiSignal",
+        "evidenceStrength": "usable",
+        "decision": "accept",
+        "observationWindow": "",
+        "needEvidence": false,
+        "demoFastForward": false,
+        "notes": "Payment, review, camera, and ForecastOps signals point to a peak-hour incident."
+      },
+      "issueUpdatedAt": "2026-10-15T04:28:22.761302+00:00",
+      "status": "triaged",
+      "record": {
+        "id": "AUD-OPS-1",
+        "issueId": "ISS-1024",
+        "storeId": "ST-008",
+        "actorSubjectId": null,
+        "actorName": "營運主管",
+        "actorRoleId": "opsLead",
+        "actorEvidence": "caller_supplied",
+        "recordedAt": "2026-10-15T04:28:22.761302+00:00",
+        "correlationId": "declared-memory-e2e-triage",
+        "workflowAuditId": "AUD-OPS-1",
+        "auditEventId": "da247cd1-354b-4de4-8c20-c7e9614705d4",
+        "sourceIssueUpdatedAt": "2026-07-05T06:24:00.000Z",
+        "evidenceIds": [
+          "EV-1024-CAM",
+          "EV-1024-FOUR"
+        ],
+        "action": "triage",
+        "submission": {
+          "severity": "critical",
+          "category": "multiSignal",
+          "evidenceStrength": "usable",
+          "decision": "accept",
+          "observationWindow": "",
+          "needEvidence": false,
+          "demoFastForward": false,
+          "notes": "Payment, review, camera, and ForecastOps signals point to a peak-hour incident."
+        },
+        "clockAdvanced": false
+      },
+      "auditEvent": {
+        "id": "AUD-OPS-1",
+        "occurredAt": "2026-10-15T04:28:22.761325+00:00",
+        "actorRoleId": "opsLead",
+        "actorName": "營運主管",
+        "category": "workflow",
+        "action": "issue.triage",
+        "targetType": "issue",
+        "targetId": "ISS-1024",
+        "message": "ISS-1024 triage moved new -> triaged.",
+        "metadata": {
+          "issueId": "ISS-1024",
+          "previousStatus": "new",
+          "status": "triaged",
+          "actionType": "triage",
+          "idempotencyKey": "declared-memory-e2e-triage",
+          "workflowAuditId": "AUD-OPS-1",
+          "reviewRecordHash": "b54a0ca6070c78fcda3a12ef11952beb8be7ffa7d50c786dae470fea0f84fcf1"
+        }
+      }
+    },
+    "assign": {
+      "requestPayload": {
+        "ownerRoleId": "opsLead",
+        "ownerName": "營運主管",
+        "slaDueAt": "2026-07-05T11:00:00.000Z",
+        "handoffNote": ""
+      },
+      "issueUpdatedAt": "2026-10-15T04:28:22.763181+00:00",
+      "status": "assigned",
+      "record": {
+        "id": "AUD-OPS-2",
+        "issueId": "ISS-1024",
+        "storeId": "ST-008",
+        "actorSubjectId": null,
+        "actorName": "營運主管",
+        "actorRoleId": "opsLead",
+        "actorEvidence": "caller_supplied",
+        "recordedAt": "2026-10-15T04:28:22.763181+00:00",
+        "correlationId": "declared-memory-e2e-assign",
+        "workflowAuditId": "AUD-OPS-2",
+        "auditEventId": "94858065-81bb-4d5e-9aaa-586a8b9f72ea",
+        "sourceIssueUpdatedAt": "2026-10-15T04:28:22.761302+00:00",
+        "evidenceIds": [
+          "EV-1024-CAM",
+          "EV-1024-FOUR"
+        ],
+        "action": "assign",
+        "submission": {
+          "ownerRoleId": "opsLead",
+          "ownerName": "營運主管",
+          "slaDueAt": "2026-07-05T11:00:00.000Z",
+          "handoffNote": ""
+        },
+        "assigneeIdentityStatus": "not_verified"
+      },
+      "auditEvent": {
+        "id": "AUD-OPS-2",
+        "occurredAt": "2026-10-15T04:28:22.763197+00:00",
+        "actorRoleId": "opsLead",
+        "actorName": "營運主管",
+        "category": "workflow",
+        "action": "issue.assign",
+        "targetType": "issue",
+        "targetId": "ISS-1024",
+        "message": "ISS-1024 assign moved triaged -> assigned.",
+        "metadata": {
+          "issueId": "ISS-1024",
+          "previousStatus": "triaged",
+          "status": "assigned",
+          "actionType": "assign",
+          "idempotencyKey": "declared-memory-e2e-assign",
+          "workflowAuditId": "AUD-OPS-2",
+          "reviewRecordHash": "650b6ca65eb10672346c26bb8810c09a4c078de655a8b6e41bd2351c7238d011"
+        }
+      }
+    },
+    "actions": {
+      "requestPayload": {
+        "actionType": "cleaningCheck",
+        "title": "處理 晚間負評與清潔分數同步惡化",
+        "instructions": "",
+        "checklistItems": [],
+        "needEvidence": true,
+        "requiresApproval": false,
+        "observationWindow": ""
+      },
+      "issueUpdatedAt": "2026-10-15T04:28:22.764646+00:00",
+      "status": "inprogress",
+      "record": {
+        "id": "AUD-OPS-3",
+        "issueId": "ISS-1024",
+        "storeId": "ST-008",
+        "actorSubjectId": null,
+        "actorName": "營運主管",
+        "actorRoleId": "opsLead",
+        "actorEvidence": "caller_supplied",
+        "recordedAt": "2026-10-15T04:28:22.764646+00:00",
+        "correlationId": "declared-memory-e2e-actions",
+        "workflowAuditId": "AUD-OPS-3",
+        "auditEventId": "eb1d4385-d08c-4f85-9699-bc0637c59dac",
+        "sourceIssueUpdatedAt": "2026-10-15T04:28:22.763181+00:00",
+        "evidenceIds": [
+          "EV-1024-CAM",
+          "EV-1024-FOUR"
+        ],
+        "action": "actions",
+        "submission": {
+          "actionType": "cleaningCheck",
+          "title": "處理 晚間負評與清潔分數同步惡化",
+          "instructions": "",
+          "checklistItems": [],
+          "needEvidence": true,
+          "requiresApproval": false,
+          "observationWindow": "",
+          "remoteRestartAuditNote": null
+        },
+        "executionStatus": "not_executed",
+        "approvalRequestStatus": "not_created"
+      },
+      "auditEvent": {
+        "id": "AUD-OPS-3",
+        "occurredAt": "2026-10-15T04:28:22.764658+00:00",
+        "actorRoleId": "opsLead",
+        "actorName": "營運主管",
+        "category": "workflow",
+        "action": "issue.actions",
+        "targetType": "issue",
+        "targetId": "ISS-1024",
+        "message": "ISS-1024 actions moved assigned -> inprogress.",
+        "metadata": {
+          "issueId": "ISS-1024",
+          "previousStatus": "assigned",
+          "status": "inprogress",
+          "actionType": "actions",
+          "idempotencyKey": "declared-memory-e2e-actions",
+          "workflowAuditId": "AUD-OPS-3",
+          "reviewRecordHash": "cb9129d4e334b5201add23e66f0ebab384535c6316a3e5f3a5110781ce49e8f4"
+        }
+      }
+    },
+    "field-report": {
+      "requestPayload": {
+        "reportedBy": "營運主管",
+        "observedAt": "2026-10-15T04:28:22.764646+00:00",
+        "summary": "Counter lane cleaned and payment queue cleared.",
+        "checklistStatus": "complete",
+        "attachmentNames": []
+      },
+      "issueUpdatedAt": "2026-10-15T04:28:22.766554+00:00",
+      "status": "observing",
+      "record": {
+        "id": "AUD-OPS-4",
+        "issueId": "ISS-1024",
+        "storeId": "ST-008",
+        "actorSubjectId": null,
+        "actorName": "營運主管",
+        "actorRoleId": "opsLead",
+        "actorEvidence": "caller_supplied",
+        "recordedAt": "2026-10-15T04:28:22.766554+00:00",
+        "correlationId": "declared-memory-e2e-field-report",
+        "workflowAuditId": "AUD-OPS-4",
+        "auditEventId": "0ef21e94-6621-4dfc-aa39-052c66edba01",
+        "sourceIssueUpdatedAt": "2026-10-15T04:28:22.764646+00:00",
+        "evidenceIds": [
+          "EV-1024-CAM",
+          "EV-1024-FOUR"
+        ],
+        "action": "field-report",
+        "submission": {
+          "reportedBy": "營運主管",
+          "observedAt": "2026-10-15T04:28:22.764646+00:00",
+          "summary": "Counter lane cleaned and payment queue cleared.",
+          "checklistStatus": "complete",
+          "attachmentNames": [],
+          "blocker": null
+        },
+        "reporterIdentityStatus": "not_verified",
+        "attachmentEvidenceStatus": "not_verified"
+      },
+      "auditEvent": {
+        "id": "AUD-OPS-4",
+        "occurredAt": "2026-10-15T04:28:22.766568+00:00",
+        "actorRoleId": "opsLead",
+        "actorName": "營運主管",
+        "category": "workflow",
+        "action": "issue.field-report",
+        "targetType": "issue",
+        "targetId": "ISS-1024",
+        "message": "ISS-1024 field-report moved inprogress -> observing.",
+        "metadata": {
+          "issueId": "ISS-1024",
+          "previousStatus": "inprogress",
+          "status": "observing",
+          "actionType": "field-report",
+          "idempotencyKey": "declared-memory-e2e-field-report",
+          "workflowAuditId": "AUD-OPS-4",
+          "reviewRecordHash": "691711f4df63291685451462803bb4eb5f926e17756a3dfb2f581f3f1fedc9ea"
+        }
+      }
+    },
+    "outcome": {
+      "requestPayload": {
+        "outcome": "effective",
+        "impactSummary": "Negative review cluster stopped after field action.",
+        "evidenceSummary": "Payment queue and CS case trend returned to baseline.",
+        "closeIssue": true
+      },
+      "issueUpdatedAt": "2026-10-15T04:28:22.768669+00:00",
+      "status": "closed",
+      "record": {
+        "id": "AUD-OPS-5",
+        "issueId": "ISS-1024",
+        "storeId": "ST-008",
+        "actorSubjectId": null,
+        "actorName": "營運主管",
+        "actorRoleId": "opsLead",
+        "actorEvidence": "caller_supplied",
+        "recordedAt": "2026-10-15T04:28:22.768669+00:00",
+        "correlationId": "declared-memory-e2e-outcome",
+        "workflowAuditId": "AUD-OPS-5",
+        "auditEventId": "cb07348c-715d-4179-bb87-e5a362f0ae22",
+        "sourceIssueUpdatedAt": "2026-10-15T04:28:22.766554+00:00",
+        "evidenceIds": [
+          "EV-1024-CAM",
+          "EV-1024-FOUR"
+        ],
+        "submission": {
+          "outcome": "effective",
+          "impactSummary": "Negative review cluster stopped after field action.",
+          "evidenceSummary": "Payment queue and CS case trend returned to baseline.",
+          "closeIssue": true,
+          "followUpTarget": null,
+          "followUpAction": null
+        }
+      },
+      "auditEvent": {
+        "id": "AUD-OPS-5",
+        "occurredAt": "2026-10-15T04:28:22.768684+00:00",
+        "actorRoleId": "opsLead",
+        "actorName": "營運主管",
+        "category": "workflow",
+        "action": "issue.outcome",
+        "targetType": "issue",
+        "targetId": "ISS-1024",
+        "message": "ISS-1024 outcome moved observing -> closed.",
+        "metadata": {
+          "issueId": "ISS-1024",
+          "previousStatus": "observing",
+          "status": "closed",
+          "actionType": "outcome",
+          "idempotencyKey": "declared-memory-e2e-outcome",
+          "workflowAuditId": "AUD-OPS-5",
+          "reviewRecordHash": "67649ebb5bcb00c85c2bed4a3bde423d8c691c90bde2242d715e11d5c2dd6804"
+        }
+      }
+    },
+    "camera-purpose": {
+      "requestPayload": {
+        "purpose": "payment incident quality audit",
+        "cameraLocation": "台北信義 A11 櫃檯攝影機",
+        "timeWindow": "最近 30 分鐘",
+        "retentionHours": 24,
+        "privacyAcknowledged": true,
+        "auditNote": ""
+      },
+      "issueUpdatedAt": "2026-10-15T04:28:22.770924+00:00",
+      "status": "new",
+      "record": {
+        "id": "AUD-OPS-1",
+        "issueId": "ISS-1024",
+        "storeId": "ST-008",
+        "actorSubjectId": null,
+        "actorName": "營運主管",
+        "actorRoleId": "opsLead",
+        "actorEvidence": "caller_supplied",
+        "recordedAt": "2026-10-15T04:28:22.770924+00:00",
+        "correlationId": "declared-memory-e2e-camera-purpose",
+        "workflowAuditId": "AUD-OPS-1",
+        "auditEventId": "5d8ea09a-3d26-4d2e-bd48-85a84cbea290",
+        "sourceIssueUpdatedAt": "2026-07-05T06:24:00.000Z",
+        "evidenceIds": [
+          "EV-1024-CAM",
+          "EV-1024-FOUR"
+        ],
+        "action": "camera-purpose",
+        "submission": {
+          "purpose": "payment incident quality audit",
+          "cameraLocation": "台北信義 A11 櫃檯攝影機",
+          "timeWindow": "最近 30 分鐘",
+          "retentionHours": 24,
+          "privacyAcknowledged": true,
+          "auditNote": ""
+        }
+      },
+      "auditEvent": {
+        "id": "AUD-OPS-1",
+        "occurredAt": "2026-10-15T04:28:22.770931+00:00",
+        "actorRoleId": "opsLead",
+        "actorName": "營運主管",
+        "category": "evidence",
+        "action": "evidence.camera_purpose.recorded",
+        "targetType": "issue",
+        "targetId": "ISS-1024",
+        "message": "ISS-1024 camera evidence purpose recorded before access.",
+        "metadata": {
+          "issueId": "ISS-1024",
+          "evidenceId": "EV-1024-CAM",
+          "purpose": "payment incident quality audit",
+          "cameraLocation": "台北信義 A11 櫃檯攝影機",
+          "timeWindow": "最近 30 分鐘",
+          "retentionHours": 24,
+          "idempotencyKey": "declared-memory-e2e-camera-purpose",
+          "workflowAuditId": "AUD-OPS-1",
+          "reviewRecordHash": "c26a3e35c31048ede4a696317c614e28e2927dab10edec10db832a948379363f"
+        }
+      },
+      "evidenceItem": {
+        "id": "EV-1024-CAM",
+        "issueId": "ISS-1024",
+        "kind": "camera",
+        "title": "Camera event placeholder",
+        "sourceLabel": "Camera Access",
+        "summary": "Camera evidence unlocked for a recorded, audit-scoped purpose.",
+        "polarity": "neutral",
+        "confidence": 0.7,
+        "occurredAt": "2026-07-04T20:05:00.000Z",
+        "purpose": "payment incident quality audit",
+        "cameraLocation": "台北信義 A11 櫃檯攝影機",
+        "timeWindow": "最近 30 分鐘",
+        "retentionHours": 24,
+        "unlockedAt": "2026-10-15T04:28:22.770911+00:00"
+      }
+    }
+  }
+}

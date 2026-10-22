@@ -71,6 +71,6 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
 // mutate the issuer's existing cookie. All other auth/pages stay gated.
 export const config = {
   matcher: [
-    "/((?!api/v1(?:/|$)|avm(?:/|$)|login(?:/|$)|auth/callback(?:/|$)|auth/logout(?:/|$)|auth/session(?:/|$)|auth/invitations$|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)",
+    "/((?!api/v1(?:/|$)|avm(?:/|$)|login(?:/|$)|auth/callback(?:/|$)|auth/logout(?:/|$)|auth/session(?:/|$)|auth/operator-context(?:/|$)|auth/invitations$|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)",
   ],
 };

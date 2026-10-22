@@ -15,6 +15,7 @@ from modules.priceops.application.pricing import (
     PlanNotFoundError,
     PriceOpsService,
     UnavailableSimulationResultError,
+    normalize_approval_decision,
 )
 
 __all__ = [
@@ -30,5 +31,6 @@ __all__ = [
     "StandardBanditPriceExplorer",
     "UnavailableSimulationResultError",
     "authorize_exploration",
+    "normalize_approval_decision",
 ]
 

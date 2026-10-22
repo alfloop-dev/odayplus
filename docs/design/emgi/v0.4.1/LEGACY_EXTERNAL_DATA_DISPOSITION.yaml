@@ -282,6 +282,7 @@ classification:
         - "delivery_toolchain/**"
         - ".github/**"
         - ".githooks/**"
+        - "AGENTS.md"
         - "Makefile"
         - "docker-compose.yml"
         - "playwright.config.ts"
@@ -334,6 +335,7 @@ classification:
         - "package-lock.json"
         - "uv.lock"
         - ".gitignore"
+        - ".gitattributes"
         - ".dockerignore"
         - ".env.e2e.example"
       rationale: Repository configuration, dependency lockfiles, and ignore rules.

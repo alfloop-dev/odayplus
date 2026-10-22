@@ -347,6 +347,7 @@
   gap: 11px;
   box-sizing: border-box;
   min-width: 0;
+  overflow-wrap: anywhere;
   border: 1px solid #e3e8f0;
   border-radius: 12px;
   background: #ffffff;
@@ -543,18 +544,21 @@
   font-size: 13px;
 }
 
-/* 760–1159px: the detail drops below the lens rail and the map column. */
+/* Inner tray reflow is independent of the three outer Package 10 tracks. */
 @media (max-width: 1159px) {
+  .trayGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* Below breakpoint.lg only: detail follows the lens rail and map column. */
+@media (max-width: 1023px) {
   .panel {
     grid-template-columns: 180px minmax(0, 1fr);
   }
 
   .detail {
     grid-column: 1 / -1;
-  }
-
-  .trayGrid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
