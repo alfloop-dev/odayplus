@@ -158,6 +158,7 @@ Task: ODP-CORE-OPS-FIRST-RELEASE-ROLLBACK-001 · Owner: Claude2 · Reviewer: Cod
 | 一個 lineage 只能用一次 | `initial_release_lineage_errors`：讀 **production 的** Supervisor lease store，只要 production 曾為**其他** manifest 消耗過 lease 就拒絕，該 release 必須綁定 `rollback_release`。同一份 manifest 的重試不算；staging 的多次演練嘗試不算 |
 | lineage 的來源是 production store | 每個環境的 lease store 是分開的（`vars.ODP_RELEASE_LEASE_STATE_URI`：staging=`gs://odayplus-runtime-20260825-release-leases/leases`，production=`gs://odayplus-prod-20260826-release-leases/leases`），staging 的 store 永遠不會有 production 的紀錄。production admission 讀自己的 store，給它不同的 `--lineage-state-uri` 會被拒絕。staging admission 必須以 `--lineage-state-uri`（workflow 取 staging environment 的 `vars.ODP_PRODUCTION_RELEASE_LEASE_STATE_URI`）跨環境讀 production store；沒有給、給的是 staging 自己的 store、打不開、讀不到，或 store 裡有任何非 production 的 lease（表示它不是 production store），都拒絕 |
 | 紀錄要先分類才能略過 | `_lineage_record_problem`：record 與 lease 都必須是物件、`state` 屬於 `issued`／`consumed`／`revoked`（與 `release_lease.LEASE_STATES` 有 anti-drift 測試）、record 與 lease 的 `lease_id` 一致、`target_environment` 屬於 dev／staging／production，production lease 還必須有 sha256 `manifest_digest`。任一不成立就拒絕，不當成無關紀錄略過；一筆壞的紀錄不會被其他正常紀錄稀釋 |
+| 毀損的紀錄不是空歷史 | 本機目錄 lease store（`LeaseStateStore`）讀到存在但內容不是 JSON object 的 `lease-<32hex>.json`（`null`、陣列、字串、數字、布林）時拋 `LeaseStateError`，與 GCS backend 的 `_read` 一致；`list_records` 不再把 `null` 當成不存在而略過，admission 因「讀不到 production lease history」在 lease 消耗前拒絕。CAS transition 遇到同樣的紀錄也拒絕，不改寫檔案 |
 | recovery 語意依環境 | `INITIAL_RELEASE_ENVIRONMENT_RECOVERY`。dev／production：`delete-candidate-zero-traffic`（刪 service、job、scheduler trigger，維持零流量）。staging：`forensic-hold-release-scoped-namespace`（`hold-release-scoped-namespace-for-forensics`、`cleanup-release-scoped-namespace-after-ttl`），不承諾刪除也不承諾零流量。staging 封存的紀錄頂層寫 staging 自己的 hold，另以 `promotion_recovery` 寫明晉升到 production 時的刪除 candidate；兩者都在 binding digest 內。dev 紀錄沒有 `promotion_recovery`，binding digest 的計算方式與修正前相同。admission receipt 的 `recovery_method`／`recovery_actions` 必須等於 manifest 對**該 admission 環境**寫明的那一份 |
 | 只允許外部來源關閉的 release | 沿用既有規則：`external_sources_expected_enabled` 非空時 build 拒絕、`validate_manifest` 也拒絕 |
 | dev 不變 | dev 仍是 build 讀回加 admission 重讀；lineage 檢查不套用到 dev，自動 dev 路徑（`automatic_dev.py`）也沒有修改 |
@@ -174,10 +175,11 @@ Task: ODP-CORE-OPS-FIRST-RELEASE-ROLLBACK-001 · Owner: Claude2 · Reviewer: Cod
 - production 已為其他 manifest admitted 過 release（staging admission 也一樣，因為它讀的是 production store）
 - staging admission 沒有 production lineage store，或給的是 staging 自己的 store、打不開、讀不到、含非 production lease
 - lineage 紀錄無法分類：`state` 未知或缺漏、lease 是空物件、`target_environment` 是 null 或未知值、`lease_id` 不一致、production lease 沒有合法 `manifest_digest`
+- lineage store 裡有存在但不是 JSON object 的紀錄（例如內容為 `null`）
 - dev 封存的紀錄進 staging／production、staging 封存的紀錄進 dev
 - 竄改後重新封存（改 `target_environment`、改 readback 環境、宣稱有 rollback 目標、改 `release_id`、讓 staging 宣稱刪除 candidate／零流量、拿掉或改寫 `promotion_recovery`、在 dev 紀錄加上 `promotion_recovery`）仍被拒絕
 
-測試：`tests/release/test_first_release_staging_production.py`。mutation 測試分別：把讀回驗證換成 no-op；把 lineage 驗證換成 no-op；讓 staging 回到「讀自己的 store」（重現審查指出的繞過：production 已 admitted A，B 仍能進 staging 並消耗 lease）；把紀錄分類換回只檢查形狀的舊版（`state="unknown"`、未知環境會被略過）；以及把 dev 的 admission 路徑擴大到 production（此時仍被缺少 `promotion_recovery` 擋下，兩道都拿掉才會通過）。每個都證明對應的拒絕確實是由該 guard 造成的。
+測試：`tests/release/test_first_release_staging_production.py`。mutation 測試分別：把讀回驗證換成 no-op；把 lineage 驗證換成 no-op；讓 staging 回到「讀自己的 store」（重現審查指出的繞過：production 已 admitted A，B 仍能進 staging 並消耗 lease）；把紀錄分類換回只檢查形狀的舊版（`state="unknown"`、未知環境會被略過）；把 dev 的 admission 路徑擴大到 production（此時仍被缺少 `promotion_recovery` 擋下，兩道都拿掉才會通過）；以及讓目錄 store 的 `get` 回到不檢查型別的舊版（production store 內一筆 `null` 紀錄被略過，staging 與 production 的首次 release 都會被 admitted 並消耗 lease）。每個都證明對應的拒絕確實是由該 guard 造成的。
 
 ### 5.6 與政策文件的對照
 

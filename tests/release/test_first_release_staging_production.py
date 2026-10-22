@@ -52,6 +52,7 @@ from delivery_toolchain.release.release_lease import (
     LEASE_STATES,
     STATE_CONSUMED,
     STATE_ISSUED,
+    LeaseStateError,
     LeaseStateStore,
     build_lease,
     generate_keypair,
@@ -1115,6 +1116,95 @@ def test_unclassifiable_production_history_leaves_the_lease_unspent(
     assert code != 0
     assert any("has state 'unknown'" in e for e in result["errors"])
     assert store.get(lease["lease_id"])["state"] == STATE_ISSUED
+
+
+# A history record that exists but is not a JSON object is damage, not
+# absence. The directory backend used to return it as-is and list_records then
+# dropped ``null``, so a corrupted production history read as an empty one.
+NON_OBJECT_RECORDS = [None, [], ["garbage"], "garbage", 0, True]
+NON_OBJECT_IDS = ["null", "empty-list", "list", "string", "number", "bool"]
+
+
+@pytest.mark.parametrize("payload", NON_OBJECT_RECORDS, ids=NON_OBJECT_IDS)
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_the_directory_store_refuses_a_history_record_that_is_not_an_object(
+    tmp_path: Path, environment: str, payload: object
+) -> None:
+    store = LeaseStateStore(tmp_path / f"{environment}-leases")
+    lease_id = "lease-" + "0" * 32
+    (tmp_path / f"{environment}-leases" / f"{lease_id}.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+
+    with pytest.raises(LeaseStateError, match="is malformed"):
+        store.get(lease_id)
+    with pytest.raises(LeaseStateError, match="is malformed"):
+        store.list_records()
+    with pytest.raises(LeaseStateError, match="is malformed"):
+        store.find_leases_for_task(TASK_ID)
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_a_lease_record_overwritten_with_null_is_not_transitioned(
+    tmp_path: Path, environment: str
+) -> None:
+    private_pem, _ = generate_keypair()
+    lease = build_lease(
+        task_id=TASK_ID, release_id="odp-null-record", candidate_sha=SHA,
+        manifest_digest=THIS, target_environment=environment,
+        allowed_action="deploy",
+        private_key=load_pem_private_key(private_pem, password=None),
+    )
+    store = LeaseStateStore(tmp_path / "leases")
+    store.record_issued(lease)
+    path = tmp_path / "leases" / f"{lease['lease_id']}.json"
+    path.write_text("null", encoding="utf-8")
+
+    with pytest.raises(LeaseStateError, match="is malformed"):
+        store.consume(lease, consumed_by="admission")
+    assert path.read_text(encoding="utf-8") == "null"
+
+
+@pytest.mark.parametrize("payload", NON_OBJECT_RECORDS, ids=NON_OBJECT_IDS)
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_a_non_object_production_record_refuses_admission_unspent(
+    tmp_path: Path, staging_manifest: dict, environment: str, payload: object
+) -> None:
+    code, result, lease, store = _admit(
+        tmp_path, staging_manifest, environment=environment,
+        receipt=_fresh(staging_manifest, environment), production_records=[payload],
+    )
+
+    assert code != 0
+    assert result["admitted"] is False
+    assert any(
+        "cannot read production lease history" in e and "is malformed" in e
+        for e in result["errors"]
+    ), result["errors"]
+    assert store.get(lease["lease_id"])["state"] == STATE_ISSUED
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_mutation_returning_a_null_record_would_admit_over_a_corrupt_history(
+    tmp_path: Path, staging_manifest: dict, monkeypatch: pytest.MonkeyPatch,
+    environment: str,
+) -> None:
+    """Without the object check, ``null`` is skipped and the lease is spent."""
+
+    def old_get(self, lease_id):
+        path = self._path(lease_id)
+        if not path.exists():
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    monkeypatch.setattr(LeaseStateStore, "get", old_get)
+    code, result, lease, store = _admit(
+        tmp_path, staging_manifest, environment=environment,
+        receipt=_fresh(staging_manifest, environment), production_records=[None],
+    )
+
+    assert code == 0, result.get("errors")
+    assert store.get(lease["lease_id"])["state"] == STATE_CONSUMED
 
 
 def test_production_refuses_a_lineage_store_other_than_its_own(
