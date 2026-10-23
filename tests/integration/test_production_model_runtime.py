@@ -52,7 +52,9 @@ from modules.sitescore.application.reporting import SiteScoreReportService
 from modules.sitescore.domain import SITESCORE_FEATURE_VERSION, score_sites
 from product_ops.modeling.contracts import MODEL_SPECS
 
-NOW = datetime(2026, 7, 24, 10, 0, tzinfo=UTC)
+# Production rejects feature snapshots older than SITESCORE_FEATURE_MAX_AGE
+# relative to the wall clock, so a fixed date would expire after 90 days.
+NOW = datetime.now(UTC).replace(microsecond=0)
 SITESCORE_MODEL_NAME = PRODUCTION_MODEL_CONTRACTS["sitescore"].model_name or ""
 
 

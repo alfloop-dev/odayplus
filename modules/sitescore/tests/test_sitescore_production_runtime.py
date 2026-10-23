@@ -31,7 +31,9 @@ from shared.infrastructure.persistence import (
     SqliteEngine,
 )
 
-NOW = datetime(2026, 7, 24, 12, 0, tzinfo=UTC)
+# Production rejects feature snapshots older than SITESCORE_FEATURE_MAX_AGE
+# relative to the wall clock, so a fixed date would expire after 90 days.
+NOW = datetime.now(UTC).replace(microsecond=0)
 
 
 class RecordingRuntime:
