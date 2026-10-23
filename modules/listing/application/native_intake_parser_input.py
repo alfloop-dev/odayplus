@@ -56,10 +56,11 @@ class NativeParserManualInput:
     def binding(self):
         # Persist immutable bindings, never copy proposed values into logs or
         # mistake their presence for effective/applied Listing values.
+        snapshot = self.snapshot()
         return {"parent_job_id": self.parent_job_id, "parent_event_id": self.parent_event_id,
             "parent_result_sha256": self.parent_result_sha256,
-            "snapshot_sha256": canonical_sha256(self.snapshot()), "lineage": asdict(self.lineage),
-            "source_snapshot_id": self.snapshot()["source_snapshot_id"], "command_sha256": self.command().sha256}
+            "snapshot_sha256": canonical_sha256(snapshot), "lineage": asdict(self.lineage),
+            "source_snapshot_id": snapshot["source_snapshot_id"], "command_sha256": self.command().sha256}
 
     @property
     def sha256(self):
@@ -147,5 +148,5 @@ class NativeParserManualInputReader:
             risk_summary=command.risk_summary, risk_acknowledged=command.risk_acknowledged, before=before)
         human_transition_role(principal)
         source, classified = self.source.current_manual_source(intake, before=before)
-        before()
+        getattr(before, "check_in_memory", before)()
         return principal, source, classified
