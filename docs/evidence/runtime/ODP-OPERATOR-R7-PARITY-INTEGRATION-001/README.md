@@ -87,6 +87,17 @@ CI run 39812391674（head `61ae630c`）除上面的 security 外還有兩項紅�
    - 修法：只把兩個 fixture 的 `NOW` 改成「牆鐘減 1 小時」，寫法與 open PR #1565 對同兩檔的改法逐字相同，避免出現兩套做法。正式程式的時間檢查、90 天門檻、未來時間拒絕都沒改。
    - 本機：`uv run --frozen pytest modules/sitescore/tests/test_intake_score_worker.py modules/sitescore/tests/test_sitescore_production_runtime.py tests/integration/test_production_model_runtime.py tests/unit/test_candidate_score_context.py` exit 0。
 
+### 送審後的追加 commit：#1583 第二輪 CI（head `be799011`，run 39919628893）
+
+1. **product-security**：pip-audit 回報上游新公告的 CVE，dev 的 `uv.lock` 也是同樣版本，與 #1470 內容無關；open PR 中沒有人在修，所以在本分支修。
+   - `gitpython 3.1.61`（CVE-2026-114145，最小修正 3.2.1）、`graphql-core 3.2.11`（CVE-2026-75507／75508，最小修正 3.2.12）、`opentelemetry-api 1.44.0`（CVE-2026-114603，最小修正 1.45.1）。
+   - 修法：`uv lock --upgrade-package` 只升這三個，加上必須同版的 `opentelemetry-sdk`／`opentelemetry-proto` 1.45.1 與 `opentelemetry-semantic-conventions` 0.66b1；再以原 generator 重產 `NOTICE-THIRD-PARTY.md` 與 `docs/evidence/sbom.json`，兩者 `--check` 都通過。
+   - 本機 `pip_audit_gate.py`：PASS，216 個相依。
+2. **product-lint-unit**：11670 通過、1 失敗：`tests/integration/test_intervention_workflow.py::test_sqlite_adjust_revalidation_stale_window_rejected_against_competitor_assignment`（`resume_adjust.wait(10)` 逾時，adjust 回 500）。
+   - 這支測試來自 dev，本分支沒有改它。第一輪 CI（run 39812391674）同一支測試沒有失敗；本機在本分支連跑 6 次 `-k stale_window`（兩支測試）都是 12/12 通過。
+   - 判定為 CI 長時間（34 分鐘）負載下的計時 flake，本 commit 不改測試或程式，以新 head 的 CI 為準。若新 head 又在同一支紅，就不是 flake，要回頭查 #1470 對 intervention adjust 路徑的鎖序變更。
+3. **product**：只是彙整上面兩條 lane，跟著紅。
+
 dev 上沒有與 #1470 同名、已單獨合併的 task，所以沒有「以 dev 為準而丟掉 #1470 內容」的檔案。
 
 ## 本 commit tree 與「codex head merge origin/dev」的對照
