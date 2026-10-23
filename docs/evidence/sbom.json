@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-11804e4598f48ef453409ae3f103ed59",
+  "serialNumber": "urn:uuid:sha256-a61a195a16fc28344c2af62cdb4aad0e",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-22T16:17:42.855185+00:00",
+    "timestamp": "2026-10-23T14:54:39.617966+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,21 +16,21 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@61ae630c400d373c1f441c6e868554024408a740",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@61ae630c400d373c1f441c6e868554024408a740"
+      "purl": "pkg:generic/alfloop-dev/odayplus@8682f863d9ea4a0b266da23a35f495ed10e802d9",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@8682f863d9ea4a0b266da23a35f495ed10e802d9"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "61ae630c400d373c1f441c6e868554024408a740"
+        "value": "8682f863d9ea4a0b266da23a35f495ed10e802d9"
       },
       {
         "name": "sbom-hash",
-        "value": "11804e4598f48ef453409ae3f103ed5905eab3a67b4e61a485d11010b3d10e52"
+        "value": "a61a195a16fc28344c2af62cdb4aad0ea0439e3fe8e375ae1f09bb84227c60af"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:44b8f055b1576c2749bf7a4c7574ef2ddb8753c3eef337dee530e9bf548ab057"
+        "value": "sha256:5b8cf1ff5e1a5d772c23ec8f44e812e7a485c023425b68a0b60e1baf473fd680"
       },
       {
         "name": "container-base-images",
@@ -8388,10 +8388,10 @@
     },
     {
       "name": "gitpython",
-      "version": "3.1.61",
+      "version": "3.2.1",
       "type": "library",
-      "purl": "pkg:pypi/gitpython@3.1.61",
-      "bom-ref": "pkg:pypi/gitpython@3.1.61",
+      "purl": "pkg:pypi/gitpython@3.2.1",
+      "bom-ref": "pkg:pypi/gitpython@3.2.1",
       "scope": "required",
       "licenses": [
         {
@@ -8403,15 +8403,15 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "f51c24d8c0f733a195447385f5774a5dfe8767f5acfd7994a33755644c6ecc95"
+          "content": "0f1229ec5c057bdabdeeda8bda4f17bda679ab33dbccc00f24e6a480553c8613"
         },
         {
           "alg": "SHA256",
-          "content": "8ab28c9da863cdd9e7d7694ec46cf3e6c9a12d8a30a1acd3447aec11975d530c"
+          "content": "d66b0832aa8755c1a84892937282df0befb16c97e5a64aeebd68be9c5e323f53"
         }
       ],
       "supplier": {
-        "name": "Sebastian Thiel, Michael Trier"
+        "name": "Sebastian Thiel <byronimo@gmail.com>, Michael Trier <mtrier@gmail.com>"
       }
     },
     {
@@ -8885,10 +8885,10 @@
     },
     {
       "name": "graphql-core",
-      "version": "3.2.11",
+      "version": "3.2.12",
       "type": "library",
-      "purl": "pkg:pypi/graphql-core@3.2.11",
-      "bom-ref": "pkg:pypi/graphql-core@3.2.11",
+      "purl": "pkg:pypi/graphql-core@3.2.12",
+      "bom-ref": "pkg:pypi/graphql-core@3.2.12",
       "scope": "required",
       "licenses": [
         {
@@ -8900,11 +8900,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "e7e156d10beb127cab5c89ff0da71416fc73d27c484a4757d3b2d35633774802"
+          "content": "4579094d5fc8a1a59555a9b18e51b320779d9bbc63e2302c519af0c4919d9543"
         },
         {
           "alg": "SHA256",
-          "content": "0b3e35ff41e9adba53021ab0cef475eb18f57c7f53f0f2ca55567fbf3c537ea0"
+          "content": "3d8f104532070485e13caa4092c1e71cda2ba6cffd96e98f285111ee10ed1e51"
         }
       ],
       "supplier": {
@@ -12783,10 +12783,10 @@
     },
     {
       "name": "opentelemetry-api",
-      "version": "1.44.0",
+      "version": "1.45.1",
       "type": "library",
-      "purl": "pkg:pypi/opentelemetry-api@1.44.0",
-      "bom-ref": "pkg:pypi/opentelemetry-api@1.44.0",
+      "purl": "pkg:pypi/opentelemetry-api@1.45.1",
+      "bom-ref": "pkg:pypi/opentelemetry-api@1.45.1",
       "scope": "required",
       "licenses": [
         {
@@ -12798,11 +12798,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "67647e5e9566edcf421166fdf022b3537f818635daa852b289e34604dc6fb33a"
+          "content": "aa38ed19bcc084ba42782a73255b3582283eced7ad6dddbd6695189e69adfb75"
         },
         {
           "alg": "SHA256",
-          "content": "94b98c893a91b88657eaac1e3ba89618cdb85be6918196705354f34728b2cdef"
+          "content": "b31553efa588ae44bc306f863c785c5333a9ecc091248c6ee68b4b6c87fdedfb"
         }
       ],
       "supplier": {
@@ -12839,10 +12839,10 @@
     },
     {
       "name": "opentelemetry-sdk",
-      "version": "1.44.0",
+      "version": "1.45.1",
       "type": "library",
-      "purl": "pkg:pypi/opentelemetry-sdk@1.44.0",
-      "bom-ref": "pkg:pypi/opentelemetry-sdk@1.44.0",
+      "purl": "pkg:pypi/opentelemetry-sdk@1.45.1",
+      "bom-ref": "pkg:pypi/opentelemetry-sdk@1.45.1",
       "scope": "required",
       "licenses": [
         {
@@ -12854,11 +12854,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "cebe7f65dc12f26ead75c6064de12fd2a9052e5060c0272d402cfa203aae123b"
+          "content": "63d24a6ca645019a631e6a51999c73e93adcac1196ca640b8ae78a7cc4762bf3"
         },
         {
           "alg": "SHA256",
-          "content": "df081c4c6bcfdb1211e3e86140376792643128a25f8d72d1d27675936e7e96ad"
+          "content": "c604c11dc429810812348989115fa44bd558772a3d7442afc43d024f2c250ca4"
         }
       ],
       "supplier": {
@@ -12867,10 +12867,10 @@
     },
     {
       "name": "opentelemetry-semantic-conventions",
-      "version": "0.65b0",
+      "version": "0.66b1",
       "type": "library",
-      "purl": "pkg:pypi/opentelemetry-semantic-conventions@0.65b0",
-      "bom-ref": "pkg:pypi/opentelemetry-semantic-conventions@0.65b0",
+      "purl": "pkg:pypi/opentelemetry-semantic-conventions@0.66b1",
+      "bom-ref": "pkg:pypi/opentelemetry-semantic-conventions@0.66b1",
       "scope": "required",
       "licenses": [
         {
@@ -12882,11 +12882,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "f9b2b81e9d5b64f11bc952075e7e9c7fb0aab075c7fd1c46d597f1b919852d60"
+          "content": "497ca63bf383723411e8eaf60c8779e9877633c936bb641080adab59d0eb6ec8"
         },
         {
           "alg": "SHA256",
-          "content": "1cacde7b0ad306f84c5ef08c3dbe1bbaf20165bba6f8bff43b670e555a086bcb"
+          "content": "d4cddeb4315490b35213f55e2bdc9ac54bb1e4d318927475bed62b35545e581b"
         }
       ],
       "supplier": {
@@ -18608,7 +18608,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@61ae630c400d373c1f441c6e868554024408a740",
+      "ref": "pkg:generic/alfloop-dev/odayplus@8682f863d9ea4a0b266da23a35f495ed10e802d9",
       "dependsOn": [
         "pkg:npm/@deck.gl/core@9.3.7",
         "pkg:npm/@deck.gl/layers@9.3.7",
@@ -21148,7 +21148,7 @@
       "dependsOn": [
         "pkg:pypi/click@8.4.2",
         "pkg:pypi/fsspec@2026.6.0",
-        "pkg:pypi/gitpython@3.1.61",
+        "pkg:pypi/gitpython@3.2.1",
         "pkg:pypi/giturlparse@0.15.0",
         "pkg:pypi/humanize@4.16.0",
         "pkg:pypi/jsonpath-ng@1.8.0",
@@ -21237,7 +21237,7 @@
       ]
     },
     {
-      "ref": "pkg:pypi/gitpython@3.1.61",
+      "ref": "pkg:pypi/gitpython@3.2.1",
       "dependsOn": [
         "pkg:pypi/gitdb@4.0.12"
       ]
@@ -21292,7 +21292,7 @@
     {
       "ref": "pkg:pypi/graphene@3.4.3",
       "dependsOn": [
-        "pkg:pypi/graphql-core@3.2.11",
+        "pkg:pypi/graphql-core@3.2.12",
         "pkg:pypi/graphql-relay@3.2.0",
         "pkg:pypi/python-dateutil@2.9.0.post0",
         "pkg:pypi/typing-extensions@4.15.0"
@@ -21301,7 +21301,7 @@
     {
       "ref": "pkg:pypi/graphql-relay@3.2.0",
       "dependsOn": [
-        "pkg:pypi/graphql-core@3.2.11"
+        "pkg:pypi/graphql-core@3.2.12"
       ]
     },
     {
@@ -21496,11 +21496,11 @@
         "pkg:pypi/cloudpickle@3.1.2",
         "pkg:pypi/databricks-sdk@0.122.0",
         "pkg:pypi/fastapi@0.138.1",
-        "pkg:pypi/gitpython@3.1.61",
+        "pkg:pypi/gitpython@3.2.1",
         "pkg:pypi/importlib-metadata@9.0.0",
-        "pkg:pypi/opentelemetry-api@1.44.0",
+        "pkg:pypi/opentelemetry-api@1.45.1",
         "pkg:pypi/opentelemetry-proto@1.44.0",
-        "pkg:pypi/opentelemetry-sdk@1.44.0",
+        "pkg:pypi/opentelemetry-sdk@1.45.1",
         "pkg:pypi/packaging@26.2",
         "pkg:pypi/protobuf@6.33.6",
         "pkg:pypi/pydantic@2.13.4",
@@ -21518,9 +21518,9 @@
       "dependsOn": [
         "pkg:pypi/cachetools@7.1.6",
         "pkg:pypi/databricks-sdk@0.122.0",
-        "pkg:pypi/opentelemetry-api@1.44.0",
+        "pkg:pypi/opentelemetry-api@1.45.1",
         "pkg:pypi/opentelemetry-proto@1.44.0",
-        "pkg:pypi/opentelemetry-sdk@1.44.0",
+        "pkg:pypi/opentelemetry-sdk@1.45.1",
         "pkg:pypi/packaging@26.2",
         "pkg:pypi/protobuf@6.33.6",
         "pkg:pypi/pydantic@2.13.4"
@@ -21610,7 +21610,7 @@
       ]
     },
     {
-      "ref": "pkg:pypi/opentelemetry-api@1.44.0",
+      "ref": "pkg:pypi/opentelemetry-api@1.45.1",
       "dependsOn": [
         "pkg:pypi/typing-extensions@4.15.0"
       ]
@@ -21622,17 +21622,17 @@
       ]
     },
     {
-      "ref": "pkg:pypi/opentelemetry-sdk@1.44.0",
+      "ref": "pkg:pypi/opentelemetry-sdk@1.45.1",
       "dependsOn": [
-        "pkg:pypi/opentelemetry-api@1.44.0",
-        "pkg:pypi/opentelemetry-semantic-conventions@0.65b0",
+        "pkg:pypi/opentelemetry-api@1.45.1",
+        "pkg:pypi/opentelemetry-semantic-conventions@0.66b1",
         "pkg:pypi/typing-extensions@4.15.0"
       ]
     },
     {
-      "ref": "pkg:pypi/opentelemetry-semantic-conventions@0.65b0",
+      "ref": "pkg:pypi/opentelemetry-semantic-conventions@0.66b1",
       "dependsOn": [
-        "pkg:pypi/opentelemetry-api@1.44.0",
+        "pkg:pypi/opentelemetry-api@1.45.1",
         "pkg:pypi/typing-extensions@4.15.0"
       ]
     },
