@@ -65,6 +65,15 @@ dev 側的 9 檔裡，6 檔自動合併：
    - dev 那行沿用自 base 的 `影像鎖定 • 需授權` 不保留：codex 已把該處改成 tile 斷言，兩邊在 base 上的意圖都已涵蓋。
 3. **`docs/evidence/sbom.json`**：不手改。合併後以 `delivery_toolchain/security/generate_sbom.py` 重產，工作樹裝有 `node_modules`，supplier 數 536 與 codex head 相同。`--check` 通過。對 codex head 只差 6 行（dev 的相依修補）。
 
+### 送審後的追加 commit：pypdf CVE
+
+#1583 第一輪 CI 的 product-security 紅在 pip-audit：`pypdf 6.20.1 (CVE-2026-113786／GHSA-5hx5-vpf9-5wcv)`。
+
+- pypdf 由 #1470 引入（`pyproject.toml` 的 `pypdf>=6.20,<7`），dev 沒有這個套件，所以只能在本分支修。
+- 第一顆 commit 已推送，不能改寫，因此另加一顆同 task id 的 commit。
+- 修法：用 `uv lock --upgrade-package pypdf==6.21.1` 只升級 pypdf（PyPI 標示的最小修正版），再以原 generator 重產 `NOTICE-THIRD-PARTY.md` 與 `docs/evidence/sbom.json`。
+- 本機 `make dependency-audit`：PASS，216 個相依。
+
 dev 上沒有與 #1470 同名、已單獨合併的 task，所以沒有「以 dev 為準而丟掉 #1470 內容」的檔案。
 
 ## 本 commit tree 與「codex head merge origin/dev」的對照

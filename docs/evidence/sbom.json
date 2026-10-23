@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-db09ee0235cd513eab345c9b5d50aab0",
+  "serialNumber": "urn:uuid:sha256-11804e4598f48ef453409ae3f103ed59",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-22T16:01:49.454501+00:00",
+    "timestamp": "2026-10-22T16:17:42.855185+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,21 +16,21 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@1240dbe488dd69af4dc5ced67b380b1a1e421376",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@1240dbe488dd69af4dc5ced67b380b1a1e421376"
+      "purl": "pkg:generic/alfloop-dev/odayplus@61ae630c400d373c1f441c6e868554024408a740",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@61ae630c400d373c1f441c6e868554024408a740"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "1240dbe488dd69af4dc5ced67b380b1a1e421376"
+        "value": "61ae630c400d373c1f441c6e868554024408a740"
       },
       {
         "name": "sbom-hash",
-        "value": "db09ee0235cd513eab345c9b5d50aab0ed62908e7f15e2ffcfd2554140863ed9"
+        "value": "11804e4598f48ef453409ae3f103ed5905eab3a67b4e61a485d11010b3d10e52"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:95f654c734dd1ab610d30391dddfcd2621943dc18a7d953e8f346778bd8f032f"
+        "value": "sha256:44b8f055b1576c2749bf7a4c7574ef2ddb8753c3eef337dee530e9bf548ab057"
       },
       {
         "name": "container-base-images",
@@ -14773,10 +14773,10 @@
     },
     {
       "name": "pypdf",
-      "version": "6.20.1",
+      "version": "6.21.1",
       "type": "library",
-      "purl": "pkg:pypi/pypdf@6.20.1",
-      "bom-ref": "pkg:pypi/pypdf@6.20.1",
+      "purl": "pkg:pypi/pypdf@6.21.1",
+      "bom-ref": "pkg:pypi/pypdf@6.21.1",
       "scope": "optional",
       "licenses": [
         {
@@ -14788,11 +14788,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "28f5a9d2fdc2749264612d94e6a58de54c11d730d9f0cabf8ad34117c4942b45"
+          "content": "2d62c383acd6e0dff0a96322ba8b1135229343b084d73c6f6cfd947fd291afcb"
         },
         {
           "alg": "SHA256",
-          "content": "aa5a55ddcffdc5e5ab291d5decb23f6383f4e56f8e3263dc39af41fff03885ad"
+          "content": "553e2d42f5bb3bb2a785a7d3de8ef90bb7df74b5413eff5a7b4388007ea9254b"
         }
       ],
       "supplier": {
@@ -18608,7 +18608,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@1240dbe488dd69af4dc5ced67b380b1a1e421376",
+      "ref": "pkg:generic/alfloop-dev/odayplus@61ae630c400d373c1f441c6e868554024408a740",
       "dependsOn": [
         "pkg:npm/@deck.gl/core@9.3.7",
         "pkg:npm/@deck.gl/layers@9.3.7",
@@ -18653,7 +18653,7 @@
         "pkg:pypi/pymoo@0.6.2",
         "pkg:pypi/pynacl@1.6.2",
         "pkg:pypi/pyomo@6.10.1",
-        "pkg:pypi/pypdf@6.20.1",
+        "pkg:pypi/pypdf@6.21.1",
         "pkg:pypi/pytest-xdist@3.8.0",
         "pkg:pypi/pytest@9.1.1",
         "pkg:pypi/pyyaml@6.0.3",
