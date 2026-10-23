@@ -48,7 +48,7 @@ export function ComparePanel({
                     {compare!.columns.map((column) => (
                       <th key={column.id} className={column.isBest ? styles.leaderCell : undefined}>
                         <span className={styles.priorityPill} data-best={column.isBest ? "true" : undefined}>
-                          {column.priority}
+                          {column.priority ?? "尚無排名"}
                         </span>{" "}
                         {column.id} · {column.title}
                         {column.isBest ? <span className={styles.leaderMark}>▲</span> : null}
@@ -79,7 +79,7 @@ export function ComparePanel({
                 variant="primary"
                 testid="compare-primary"
                 title={compare!.recommendation.primary.title}
-                badge={`${compare!.recommendation.primary.recommendation} ${compare!.recommendation.primary.score}`}
+                badge={[compare!.recommendation.primary.recommendation, compare!.recommendation.primary.score].filter((value) => value !== null).join(" ")}
                 text={compare!.recommendation.primary.text}
                 why={compare!.recommendation.primary.why}
               />
@@ -88,7 +88,7 @@ export function ComparePanel({
                   variant="alternate"
                   testid="compare-alternate"
                   title={compare!.recommendation.alternate.title}
-                  badge={`${compare!.recommendation.alternate.recommendation} ${compare!.recommendation.alternate.score}`}
+                  badge={[compare!.recommendation.alternate.recommendation, compare!.recommendation.alternate.score].filter((value) => value !== null).join(" ")}
                   text={compare!.recommendation.alternate.text}
                 />
               ) : null}
@@ -97,7 +97,7 @@ export function ComparePanel({
                   variant="avoid"
                   testid="compare-avoid"
                   title={compare!.recommendation.avoid.title}
-                  badge={`${compare!.recommendation.avoid.recommendation} ${compare!.recommendation.avoid.score}`}
+                  badge={[compare!.recommendation.avoid.recommendation, compare!.recommendation.avoid.score].filter((value) => value !== null).join(" ")}
                   text={compare!.recommendation.avoid.text}
                 />
               ) : null}
@@ -106,7 +106,7 @@ export function ComparePanel({
                   <div key={item.id}>
                     <span>{item.priority}</span>
                     <strong>{item.title}</strong>
-                    <b>{item.score}</b>
+                    <b>{item.score ?? "—"}</b>
                   </div>
                 ))}
               </div>

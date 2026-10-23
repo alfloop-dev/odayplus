@@ -107,14 +107,14 @@ export function normalizeGovernanceApproval(value: unknown): GovernanceApproval 
   const record = asRecord(value);
   if (!record) return null;
   const id = usableText(record.id);
-  const module = usableText(record.module);
+  const moduleId = usableText(record.module);
   const title = usableText(record.title);
   const status = usableText(record.status);
-  if (!id || !module || !title || !status) return null;
+  if (!id || !moduleId || !title || !status) return null;
 
   return {
     id,
-    module,
+    module: moduleId,
     title,
     status,
     ...field("requestor", record.requestor),
@@ -147,13 +147,13 @@ export function normalizeGovernanceDecisionRow(value: unknown): GovernanceDecisi
   const record = asRecord(value);
   if (!record) return null;
   const id = usableText(record.id);
-  const module = usableText(record.module);
+  const moduleId = usableText(record.module);
   const item = usableText(record.item);
-  if (!id || !module || !item) return null;
+  if (!id || !moduleId || !item) return null;
 
   return {
     id,
-    module,
+    module: moduleId,
     item,
     ...field("systemRecommendation", record.systemRecommendation),
     ...field("finalDecision", record.finalDecision),

@@ -8,6 +8,8 @@ export function AssistedEntryForm({
   busy,
   canEdit,
   onSave,
+  native = false,
+  locked = false,
 }: {
   busy: boolean;
   canEdit: boolean;
@@ -15,9 +17,13 @@ export function AssistedEntryForm({
     fields: Record<string, string>;
     riskSummary: string;
     riskAcknowledged: boolean;
+    reason?: string;
   }) => void;
+  native?: boolean;
+  locked?: boolean;
 }) {
-  const [values, setValues] = useState({ address: "", rent: "", areaPing: "", floor: "", listingType: "" });
+  const [values, setValues] = useState({ address: "", rent: "", areaPing: "", floor: "", listingType: "", providerListingId: "", listingStatus: "" });
+  const [reason, setReason] = useState("");
   const [riskAcknowledged, setRiskAcknowledged] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const riskSummary =
@@ -28,7 +34,7 @@ export function AssistedEntryForm({
   }
 
   function handleSave() {
-    if (busy) return;
+    if (busy || !canEdit || locked) return;
     if (!values.address.trim() || !values.rent.trim() || !values.areaPing.trim()) {
       setLocalError("人工補錄需至少填寫地址、租金、坪數。");
       return;
@@ -37,11 +43,16 @@ export function AssistedEntryForm({
       setLocalError("請先確認你已了解人工補錄的風險。");
       return;
     }
+    if (native && (reason.trim().length < 3 || ![Number(values.rent), Number(values.areaPing)].every((value) => Number.isFinite(value) && value > 0))) {
+      setLocalError("請填寫至少三字的補錄原因，租金與坪數須為有效正數。");
+      return;
+    }
     setLocalError(null);
     onSave({
       fields: Object.fromEntries(Object.entries(values).filter(([, value]) => value.trim()).map(([key, value]) => [key, value.trim()])),
       riskSummary,
       riskAcknowledged,
+      ...(native ? { reason: reason.trim() } : {}),
     });
   }
 
@@ -57,6 +68,7 @@ export function AssistedEntryForm({
           ["areaPing", "坪數（必填）", "18"],
           ["floor", "樓層", "1F"],
           ["listingType", "型態／用途", "店面"],
+          ...(native ? [["providerListingId", "來源物件編號", "來源頁提供的物件編號"], ["listingStatus", "來源物件狀態", "出租中"]] as const : []),
         ] as const).map(([key, label, placeholder]) => (
           <label className={styles.fieldLabel} key={key}>
             {label}
@@ -64,7 +76,8 @@ export function AssistedEntryForm({
               aria-label={label}
               className={styles.input}
               data-testid={`assisted-${key === "areaPing" ? "area" : key === "listingType" ? "type" : key}`}
-              disabled={!canEdit}
+              disabled={!canEdit || busy || locked}
+              maxLength={key === "address" ? 512 : 128}
               onChange={(event) => update(key, event.target.value)}
               placeholder={placeholder}
               value={values[key]}
@@ -77,16 +90,18 @@ export function AssistedEntryForm({
         <input
           checked={riskAcknowledged}
           data-testid="assisted-risk-ack"
-          disabled={!canEdit}
+          disabled={!canEdit || busy || locked}
           onChange={(event) => setRiskAcknowledged(event.target.checked)}
           type="checkbox"
         />
         我已了解風險並確認補錄內容正確
       </label>
+      {native ? <label className={styles.fieldLabel}>補錄原因<textarea className={styles.textarea} value={reason}
+        disabled={!canEdit || busy || locked} maxLength={4000} onChange={(event) => setReason(event.target.value)} /></label> : null}
       {localError ? <div className={styles.errorText} data-testid="intake-assisted-error" role="alert">{localError}</div> : null}
       {!canEdit ? <div className={styles.warnNote}>{ACTION_DENIED_NOTE.correct}</div> : null}
-      <button className={styles.primaryButton} data-testid="assisted-save" disabled={!canEdit || busy} onClick={handleSave} type="button">
-        {busy ? "儲存中…" : "儲存並進入比對"}
+      <button className={styles.primaryButton} data-testid="assisted-save" disabled={!canEdit || busy || locked} onClick={handleSave} type="button">
+        {busy ? "儲存中…" : native ? "提交補錄提案" : "儲存並進入比對"}
       </button>
     </section>
   );

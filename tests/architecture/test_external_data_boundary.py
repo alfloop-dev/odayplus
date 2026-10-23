@@ -462,6 +462,56 @@ def test_blocked_capability_rejects_new_code(
     )
 
 
+@pytest.mark.parametrize(("method", "query"), [
+    ("query_one", "SELECT * FROM intake.source_snapshots WHERE source_snapshot_id=? AND tenant_id=? FOR SHARE"),
+    ("query_all", "SELECT source_snapshot_id, digest_sha256 FROM intake.source_snapshots WHERE tenant_id=?"),
+    ("query_one", "SELECT * FROM intake.source_snapshots WHERE tenant_id=? FOR KEY SHARE;"),
+])
+def test_existing_snapshot_admission_reads_do_not_create_a_raw_store(policy, method, query):
+    path = "modules/listing/application/admission_reader.py"
+    # Chinese text before the literal also pins AST byte-offset handling.
+    content = f'說明 = "既有資料查核"; row = engine.{method}({query!r}, (tenant_id,))\n'
+    report = synthetic(policy, {path: content}, ("capabilities",))
+    assert "blocked_capability:new_raw_evidence_store" not in codes(report)
+
+
+@pytest.mark.parametrize("query", [
+    "CREATE TABLE intake.source_snapshots (id text)",
+    "INSERT INTO intake.source_snapshots (id) VALUES (?)",
+    "UPDATE intake.source_snapshots SET raw_object_uri=? WHERE tenant_id=?",
+    "DELETE FROM intake.source_snapshots WHERE tenant_id=?",
+    "TRUNCATE intake.source_snapshots",
+    "COPY intake.source_snapshots FROM STDIN",
+    "ALTER TABLE intake.source_snapshots ADD COLUMN payload jsonb",
+    "DROP TABLE intake.source_snapshots",
+    "SELECT * INTO raw_copy FROM intake.source_snapshots WHERE tenant_id=?",
+    "SELECT persist_raw_payload(*) FROM intake.source_snapshots WHERE tenant_id=?",
+    "WITH written AS (DELETE FROM intake.source_snapshots RETURNING *) SELECT * FROM written",
+    "SELECT * FROM intake.source_snapshots WHERE tenant_id=?; DELETE FROM intake.source_snapshots",
+    "SELECT * FROM intake.source_snapshots WHERE tenant_id=? /* comment */; UPDATE intake.source_snapshots SET payload=?",
+])
+def test_read_method_name_does_not_hide_snapshot_writes_or_unknown_sql(policy, query):
+    path = "modules/listing/application/admission_reader.py"
+    content = f"row = engine.query_one({query!r}, (tenant_id,))\n"
+    report = synthetic(policy, {path: content}, ("capabilities",))
+    assert path in paths_for(report, "blocked_capability:new_raw_evidence_store")
+
+
+@pytest.mark.parametrize("extra", [
+    'engine.execute("INSERT INTO intake.source_snapshots (id) VALUES (?)", (value,))',
+    'class NewRawStore(ListingFeedIngestionStore): pass',
+    'query = "intake.source_snapshots"',
+    'engine.query_one(f"SELECT * FROM intake.source_snapshots WHERE tenant_id={tenant_id}")',
+    'engine.query_one("SELECT * FROM intake.source_snapshots WHERE tenant_id=" + value)',
+    'engine.execute("SELECT * FROM intake.source_snapshots WHERE tenant_id=?", (tenant_id,))',
+])
+def test_an_admission_read_does_not_exempt_other_store_references_in_the_same_file(policy, extra):
+    path = "modules/listing/application/admission_reader.py"
+    read = 'engine.query_one("SELECT * FROM intake.source_snapshots WHERE tenant_id=?", (tenant_id,))'
+    report = synthetic(policy, {path: read + "\n" + extra + "\n"}, ("capabilities",))
+    assert path in paths_for(report, "blocked_capability:new_raw_evidence_store")
+
+
 def test_importing_the_frozen_producer_packages_from_product_code_is_rejected(
     policy: Mapping[str, Any],
 ) -> None:

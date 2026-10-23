@@ -55,7 +55,6 @@ from modules.opsboard.application.store_ops_materializer import (
     empty_store_ops_state,
     materialize_store_ops_state,
 )
-from shared.audit import InMemoryAuditLog
 from shared.domain.models import Store
 from shared.infrastructure.persistence.engine import SqliteEngine
 from shared.infrastructure.persistence.factory import build_persistence
@@ -77,6 +76,13 @@ def _state_collection(tenant_id: str = TENANT_ID) -> str:
 class _PostgresDialectSqliteEngine(SqliteEngine):
     dialect = "postgresql"
 
+    def __init__(self, path: Path) -> None:
+        super().__init__(path)
+        # This suite is explicitly a SQLite mechanism double. Real PostgreSQL
+        # advisory locking is covered by test_store_ops_scoped_postgresql.
+        self._conn.create_function("hashtextextended", 2, lambda *_: 0)
+        self._conn.create_function("pg_advisory_xact_lock", 1, lambda _: None)
+
 
 class LivePostgresDocumentStore(PostgresDocumentStore):
     """The production document store class, reporting PostgreSQL, on SQLite.
@@ -90,6 +96,7 @@ class LivePostgresDocumentStore(PostgresDocumentStore):
         self.put_calls: list[str] = []
         self.fail_reads = False
         self.before_next_write: Callable[[], None] | None = None
+        self.source_stores: dict[str, list[Store]] = {}
 
     def _check_read(self) -> None:
         if self.fail_reads:
@@ -183,9 +190,11 @@ def _materialize(
     tenant_id: str = TENANT_ID,
     store_repository: FakeStoreRepository | None = None,
 ):
+    master = store_repository or FakeStoreRepository(stores or [])
+    document_store.source_stores[tenant_id] = [store for store in master.stores if store.tenant_id == tenant_id]
     return materialize_store_ops_state(
         repository=DurableStoreOpsRepository(document_store),
-        store_repository=store_repository or FakeStoreRepository(stores or []),
+        store_repository=master,
         forecastops_repository=FakeForecastOpsRepository(alerts),
         tenant_id=tenant_id,
     )
@@ -196,6 +205,8 @@ def _client(
     *,
     require_live_data: bool | None = True,
 ) -> TestClient:
+    from shared.infrastructure.persistence.audit_log import DurableAuditLog
+
     app = FastAPI()
 
     @app.middleware("http")
@@ -206,6 +217,8 @@ def _client(
     app.include_router(
         create_operator_store_ops_router(
             repository=DurableStoreOpsRepository(document_store),
+            store_repository=FakeStoreRepository([store for stores in document_store.source_stores.values() for store in stores]),
+            audit_log=DurableAuditLog(document_store.engine),
             require_live_data=require_live_data,
         ),
         prefix="/api/v1",
@@ -515,12 +528,14 @@ def test_write_gives_up_without_saving_when_state_never_settles(
 def _production_client(
     document_store: LivePostgresDocumentStore, monkeypatch: pytest.MonkeyPatch
 ) -> TestClient:
-    """Mount the router exactly as ``apps/api/oday_api/main.py`` does.
+    """Mount with the repository, canonical store master and same-engine audit.
 
     Production passes only the bundle repository and audit log; live mode comes
     from the runtime environment, and the bundle repository is the unscoped
     ``DurableStoreOpsRepository`` over ``PostgresDocumentStore``.
     """
+    from shared.infrastructure.persistence.audit_log import DurableAuditLog
+
     monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
     app = FastAPI()
 
@@ -532,7 +547,8 @@ def _production_client(
     app.include_router(
         create_operator_store_ops_router(
             repository=DurableStoreOpsRepository(document_store),
-            audit_log=InMemoryAuditLog(),
+            store_repository=FakeStoreRepository([store for stores in document_store.source_stores.values() for store in stores]),
+            audit_log=DurableAuditLog(document_store.engine),
         ),
         prefix="/api/v1",
     )
@@ -575,6 +591,11 @@ def test_tenants_never_see_or_overwrite_each_others_state(
             headers={**_headers(), "Idempotency-Key": "shared-key"},
             json={"payload": {"severity": "high"}},
         )
+        own_replay = client.post(
+            f"{BASE}/store-ops/issues/ISS-FC-alert-a/triage",
+            headers={**_headers(), "Idempotency-Key": "shared-key"},
+            json={"payload": {"severity": "high"}},
+        )
 
     assert other_before.status_code == 503
     assert other_before.json()["detail"]["message"] == (
@@ -605,12 +626,9 @@ def test_tenants_never_see_or_overwrite_each_others_state(
         .get_idempotency_result("shared-key")
         is None
     )
-    assert (
-        DurableStoreOpsRepository(document_store)
-        .for_tenant(TENANT_ID)
-        .get_idempotency_result("shared-key")
-        is not None
-    )
+    assert own_replay.status_code == 200
+    assert own_replay.json()["idempotentReplay"] is True
+    assert len(document_store.state()["auditEvents"]) == 1
 
 
 def test_production_never_reads_or_writes_an_unscoped_document(

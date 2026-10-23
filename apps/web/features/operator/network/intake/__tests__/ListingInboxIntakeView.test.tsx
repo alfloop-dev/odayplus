@@ -1,6 +1,6 @@
 import React from "react";
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssistedIntake } from "@oday-plus/openapi-client";
 import { ListingInboxIntakeView } from "../ListingInboxIntakeView";
@@ -126,6 +126,42 @@ describe("ListingInboxIntakeView", () => {
     expect(screen.getByTestId("intake-inbox-row-IN-103")).toBeDefined();
   });
 
+  it("provides separate native open and action controls without nesting interactive rows", () => {
+    render(<ListingInboxIntakeView activeRoleId="expansion-manager" busy={false} loadState="ready" onAddSubmit={mockOnAddSubmit} onOpenDetail={mockOnOpenDetail} records={mockRecords} />);
+    const row = screen.getByTestId("intake-inbox-row-IN-101");
+    expect(row).not.toHaveAttribute("role", "button");
+    expect(screen.getByRole("button", { name: "開啟收件 IN-101" })).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("intake-row-open-IN-101"));
+    expect(mockOnOpenDetail).toHaveBeenCalledExactlyOnceWith("IN-101");
+    expect(screen.getByTestId("intake-row-action-IN-101")).toBeInTheDocument();
+  });
+
+  it("uses the server total for the all view and never invents missing counts from page length", () => {
+    const props = { activeRoleId: "expansion-manager" as const, busy: false, loadState: "ready" as const,
+      onAddSubmit: mockOnAddSubmit, onOpenDetail: mockOnOpenDetail, records: mockRecords };
+    const { rerender } = render(<ListingInboxIntakeView {...props} />);
+    expect(screen.getByTestId("intake-tab-all")).toHaveTextContent(/^全部物件$/);
+    expect(screen.getByTestId("intake-tab-needsReview")).toHaveTextContent(/^需覆核$/);
+    rerender(<ListingInboxIntakeView {...props} pageData={{ items: mockRecords, total: 37, page: 1, pageSize: 10,
+      counts: { needsReview: 20, awaitingEntry: 0, processing: 7, blocked: 0, ready: 10 }, evidenceState: "complete" }} />);
+    expect(screen.getByTestId("intake-tab-all")).toHaveTextContent("全部物件 (37)");
+    expect(screen.getByTestId("intake-tab-needsReview")).toHaveTextContent("需覆核 (20)");
+    fireEvent.change(screen.getByTestId("intake-filter-source"), { target: { value: "source-specific" } });
+    expect(screen.getByTestId("intake-tab-all")).toHaveTextContent(/^全部物件$/);
+    fireEvent.change(screen.getByTestId("intake-filter-source"), { target: { value: "" } });
+    expect(screen.getByTestId("intake-tab-all")).toHaveTextContent("全部物件 (37)");
+    fireEvent.click(screen.getByTestId("intake-tab-needsReview"));
+    expect(screen.getByTestId("intake-tab-all")).toHaveTextContent(/^全部物件$/);
+  });
+
+  it("offers exactly the canonical API assignment and SLA states", () => {
+    render(<ListingInboxIntakeView activeRoleId="expansion-manager" busy={false} loadState="ready"
+      onAddSubmit={mockOnAddSubmit} onOpenDetail={mockOnOpenDetail} records={mockRecords} />);
+    const options = (id: string) => within(screen.getByTestId(id)).getAllByRole("option").map((option) => (option as HTMLOptionElement).value);
+    expect(options("intake-filter-assignment")).toEqual(["", "UNASSIGNED", "ASSIGNED", "CLAIMED", "TRANSFERRED", "ESCALATED", "COMPLETED"]);
+    expect(options("intake-filter-sla")).toEqual(["", "ON_TRACK", "DUE_SOON", "OVERDUE", "BREACHED", "PAUSED", "COMPLETED"]);
+  });
+
   it("sends saved-view filtering to the server contract", async () => {
     const onQueryChange = vi.fn();
     render(
@@ -164,6 +200,104 @@ describe("ListingInboxIntakeView", () => {
     fireEvent.change(searchInput, { target: { value: "sinyi" } });
 
     await waitFor(() => expect(onQueryChange).toHaveBeenLastCalledWith(expect.objectContaining({ search: "sinyi", page: 1 })));
+  });
+
+  it.each([
+    ["intake-filter-source", "sourceId", "source-authority", "source-authority"],
+    ["intake-filter-submitted-by", "submittedBy", "10000000-0000-4000-8000-000000000002", "10000000-0000-4000-8000-000000000002"],
+    ["intake-filter-owner", "ownerId", "10000000-0000-4000-8000-000000000003", "10000000-0000-4000-8000-000000000003"],
+    ["intake-filter-heat-zone", "heatZoneId", "HZ-EXACT", "HZ-EXACT"],
+    ["intake-filter-area", "assignedAreaId", "AREA-EXACT", "AREA-EXACT"],
+    ["intake-filter-assignment", "assignmentStatus", "CLAIMED", "CLAIMED"],
+    ["intake-filter-assignment", "assignmentStatus", "UNASSIGNED", "UNASSIGNED"],
+    ["intake-filter-sla", "slaState", "PAUSED", "PAUSED"],
+    ["intake-filter-masked", "masked", "true", true],
+    ["intake-filter-restricted", "restricted", "false", false],
+    ["intake-filter-retryable", "retryable", "false", false],
+  ])("sends the explicit %s condition and restarts server pagination", async (testId, field, value, apiValue) => {
+    window.history.replaceState(null, "", "/operator/network?page=8&selected=IN-101&section=identity");
+    const onQueryChange = vi.fn();
+    render(<ListingInboxIntakeView activeRoleId="expansion-manager" busy={false} loadState="ready"
+      onAddSubmit={mockOnAddSubmit} onOpenDetail={mockOnOpenDetail} onQueryChange={onQueryChange} records={mockRecords} />);
+    const control = screen.getByTestId(String(testId));
+    expect(control).toHaveAccessibleName();
+    fireEvent.change(control, { target: { value } });
+    const apiField = field === "heatZoneId" ? "selectedHeatZoneId" : String(field);
+    await waitFor(() => expect(onQueryChange).toHaveBeenLastCalledWith(expect.objectContaining({ [apiField]: apiValue, page: 1 })));
+    const query = new URLSearchParams(window.location.search);
+    expect(query.get(String(field))).toBe(String(value));
+    expect(query.get("selected")).toBe("IN-101");
+    expect(query.get("section")).toBe("identity");
+    // The caller supplies a server page; client-side filtering must not hide
+    // records while the authoritative response is pending.
+    expect(screen.getByTestId("intake-inbox-row-IN-102")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["intake-filter-observed-from", "observedFrom"], ["intake-filter-observed-to", "observedTo"],
+    ["intake-filter-updated-from", "updatedFrom"], ["intake-filter-updated-to", "updatedTo"],
+  ])("encodes local %s as a timezone-bearing ISO bound and clears it without inventing a timestamp", async (testId, field) => {
+    const onQueryChange = vi.fn();
+    render(<ListingInboxIntakeView activeRoleId="expansion-manager" busy={false} loadState="ready"
+      onAddSubmit={mockOnAddSubmit} onOpenDetail={mockOnOpenDetail} onQueryChange={onQueryChange} records={mockRecords} />);
+    const control = screen.getByTestId(testId!);
+    expect(control).toHaveValue("");
+    const local = "2026-10-13T08:15:30.250";
+    fireEvent.change(control, { target: { value: local } });
+    const iso = new Date(local).toISOString();
+    await waitFor(() => expect(onQueryChange).toHaveBeenLastCalledWith(expect.objectContaining({ [field!]: iso })));
+    expect(new URLSearchParams(window.location.search).get(field!)).toBe(iso);
+    fireEvent.change(control, { target: { value: "" } });
+    expect(new URLSearchParams(window.location.search).has(field!)).toBe(false);
+    expect(control).toHaveValue("");
+  });
+
+  it.each(["submittedAt", "lastObservedAt", "dueAt"])("sorts %s through the server contract and URL", async (field) => {
+    const onQueryChange = vi.fn();
+    render(<ListingInboxIntakeView activeRoleId="expansion-manager" busy={false} loadState="ready"
+      onAddSubmit={mockOnAddSubmit} onOpenDetail={mockOnOpenDetail} onQueryChange={onQueryChange} records={mockRecords} />);
+    fireEvent.click(screen.getByTestId(`intake-sort-${field}`));
+    await waitFor(() => expect(onQueryChange).toHaveBeenLastCalledWith(expect.objectContaining({ sortBy: field, sortOrder: "asc", page: 1 })));
+    fireEvent.click(screen.getByTestId(`intake-sort-${field}`));
+    await waitFor(() => expect(onQueryChange).toHaveBeenLastCalledWith(expect.objectContaining({ sortBy: field, sortOrder: "desc", page: 1 })));
+    expect(new URLSearchParams(window.location.search).get("sortBy")).toBe(field);
+  });
+
+  it("shows canonical inbox identity and timestamps without substituting capture or audit dates", () => {
+    const record = intake({ id: "IN-AUTHORITATIVE", submittedBy: "SUBJECT-SUBMITTED", ownerSubjectId: "SUBJECT-OWNER",
+      submittedAt: "2026-10-13T01:00:00Z", lastObservedAt: "2026-10-13T02:00:00Z", updatedAt: "2026-10-13T03:00:00Z",
+      dueAt: "2026-10-14T09:00:00Z", assignedAreaId: "AREA-AUTHORITATIVE", assignmentStatus: "CLAIMED",
+      intakeMethod: "APPROVED_FEED", masked: true, restricted: true,
+      capturedAt: "1999-01-01T00:00:00Z", auditEvents: [{ occurredAt: "2030-01-01T00:00:00Z" }] as AssistedIntake["auditEvents"],
+    });
+    render(<ListingInboxIntakeView activeRoleId="expansion-manager" busy={false} loadState="ready"
+      onAddSubmit={mockOnAddSubmit} onOpenDetail={mockOnOpenDetail} records={[record]} />);
+    const row = screen.getByTestId(`intake-inbox-row-${record.id}`);
+    expect(within(row).getByTestId(`intake-row-submitted-by-${record.id}`)).toHaveTextContent("SUBJECT-SUBMITTED");
+    expect(within(row).getByTestId(`intake-row-owner-${record.id}`)).toHaveTextContent("SUBJECT-OWNER");
+    for (const [suffix, date] of [["submitted-at", record.submittedAt], ["observed", record.lastObservedAt], ["updated", record.updatedAt], ["due", record.dueAt]]) {
+      expect(within(row).getByTestId(`intake-row-${suffix}-${record.id}`)).toHaveTextContent(date!);
+    }
+    expect(row).toHaveTextContent("AREA-AUTHORITATIVE");
+    expect(row).toHaveTextContent("欄位已遮蔽");
+    expect(row).toHaveTextContent("資料受限制");
+    expect(row).not.toHaveTextContent("1999-01-01");
+    expect(row).not.toHaveTextContent("2030-01-01");
+    expect(row).not.toHaveTextContent("測試擁有者");
+  });
+
+  it("marks absent projection fields unknown instead of inventing method, owner, update time or restriction", () => {
+    const record = intake({ id: "IN-UNKNOWN", sourceId: null, submitter: null, owner: null, capturedAt: "1999-01-01T00:00:00Z" });
+    render(<ListingInboxIntakeView activeRoleId="expansion-manager" busy={false} loadState="ready"
+      onAddSubmit={mockOnAddSubmit} onOpenDetail={mockOnOpenDetail} records={[record]} />);
+    const row = screen.getByTestId(`intake-inbox-row-${record.id}`);
+    expect(row).toHaveTextContent("收件方式 尚未提供");
+    expect(row).toHaveTextContent("負責人 尚未提供");
+    expect(row).toHaveTextContent("重試狀態尚未提供");
+    expect(row).toHaveTextContent("資料限制尚未提供");
+    expect(within(row).getByText("尚未提供")).toBeInTheDocument();
+    expect(within(row).getByTestId(`intake-row-updated-${record.id}`)).toHaveTextContent("更新 尚未提供");
+    expect(row).not.toHaveTextContent("1999-01-01");
   });
 
   it("toggles between list mode and map mode", () => {

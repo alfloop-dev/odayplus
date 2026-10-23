@@ -11,6 +11,17 @@ vi.mock("../DesignAlignedWorkspaces", () => ({
   DesignStoreOpsWorkspace: () => <div data-testid="granted-store-workspace" />,
 }));
 
+// Existing business assertions keep their transport premise: a current
+// canonical session precedes protected shell reads. No principal/grant is
+// derived from this unit-test response.
+function stubAuthenticatedFetch(read: typeof fetch) {
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => String(input) === "/auth/session"
+    ? Promise.resolve(process.env.NEXT_PUBLIC_PRODUCTION_MODE === "true"
+      ? new Response(JSON.stringify({ subject: "unit-shell-account", expiresAt: Math.floor(Date.now() / 1000) + 3600 }), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }) : new Response(JSON.stringify({ authenticated: false }), { status: 401, headers: { "Content-Type": "application/json" } })) : read(input, init)));
+}
+
 const productionRetryDelays = [...operatorBootstrapRetryPolicy.delaysMs];
 
 const seedEnvelope = {
@@ -133,12 +144,13 @@ describe("OperatorConsole production data gate", () => {
     window.sessionStorage.setItem("oday.operator.workspace", source === "stored" ? workspace : "today");
     const projectedRole = { ...liveEnvelope.meta.role, id: roleId, allowedWorkspaces: ["today", workspace] };
     let resolveBootstrap!: (response: Response) => void;
-    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { resolveBootstrap = resolve; })));
+    stubAuthenticatedFetch(vi.fn(() => new Promise<Response>((resolve) => { resolveBootstrap = resolve; })));
     render(<OperatorConsole searchParams={source === "query" ? { ws: workspace } : {}} />);
     expect(screen.queryByTestId(`granted-${workspace}-workspace`)).toBeNull();
     // No static-persona decision is allowed to overwrite the saved preference
     // while waiting for the principal's verified bootstrap.
     expect(window.sessionStorage.getItem("oday.operator.workspace")).toBe(source === "stored" ? workspace : "today");
+    await waitFor(() => expect(resolveBootstrap).toBeTypeOf("function"));
     resolveBootstrap(new Response(JSON.stringify({
       ...liveEnvelope,
       meta: { ...liveEnvelope.meta, role: projectedRole },
@@ -155,8 +167,10 @@ describe("OperatorConsole production data gate", () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
     const granted = ["today", workspace];
     const nextRole = { ...liveEnvelope.meta.role, id: roleId, label: `Verified ${roleId}`, allowedWorkspaces: granted };
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+    stubAuthenticatedFetch(vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => new Response(JSON.stringify({
       ...liveEnvelope,
+      meta: { ...liveEnvelope.meta, role: new Headers(init?.headers).get("x-operator-role") === roleId
+        ? nextRole : liveEnvelope.meta.role },
       navigation: { ...liveEnvelope.navigation, roles: [liveEnvelope.meta.role, nextRole], allowedWorkspaces: granted },
     }), { status: 200 })));
     render(<OperatorConsole searchParams={{ ws: workspace }} />);
@@ -167,6 +181,9 @@ describe("OperatorConsole production data gate", () => {
     expect(await screen.findByTestId(`granted-${workspace}-workspace`)).toBeInTheDocument();
     expect(window.sessionStorage.getItem("oday.operator.workspace")).toBe(workspace);
     expect(window.sessionStorage.getItem("oday.operator.role")).toBe(roleId);
+    window.history.replaceState(null, "", `/operator?ws=${workspace}`);
+    fireEvent.popState(window);
+    expect(await screen.findByTestId(`granted-${workspace}-workspace`)).toBeInTheDocument();
   });
 
   it.each([
@@ -186,7 +203,7 @@ describe("OperatorConsole production data gate", () => {
       allowedWorkspaces: granted,
     };
     let resolveBootstrap!: (response: Response) => void;
-    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { resolveBootstrap = resolve; })));
+    stubAuthenticatedFetch(vi.fn(() => new Promise<Response>((resolve) => { resolveBootstrap = resolve; })));
     const workspaceWrites: string[] = [];
     const setItem = window.sessionStorage.setItem.bind(window.sessionStorage);
     vi.spyOn(window.sessionStorage, "setItem").mockImplementation((key, value) => {
@@ -210,6 +227,7 @@ describe("OperatorConsole production data gate", () => {
         <OperatorConsole searchParams={{}} />
       </Profiler>,
     );
+    await waitFor(() => expect(resolveBootstrap).toBeTypeOf("function"));
     resolveBootstrap(new Response(JSON.stringify({ ...liveEnvelope, navigation }), { status: 200 }));
     if (expected === "store") {
       expect(await screen.findByTestId("granted-store-workspace")).toBeInTheDocument();
@@ -229,7 +247,7 @@ describe("OperatorConsole production data gate", () => {
 
   it("blocks seed shell data instead of rendering a workspace fixture", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(
       new Response(JSON.stringify(seedEnvelope), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -248,7 +266,7 @@ describe("OperatorConsole production data gate", () => {
   it("shows an error gate when bootstrap cannot be loaded", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
     const fetchMock = vi.fn().mockRejectedValue(new Error("offline"));
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<OperatorConsole searchParams={{ ws: "store" }} />);
 
@@ -271,8 +289,7 @@ describe("OperatorConsole production data gate", () => {
 
   it("leaves loading when the bootstrap BFF returns an upstream timeout", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal(
-      "fetch",
+    stubAuthenticatedFetch(
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
@@ -300,7 +317,7 @@ describe("OperatorConsole production data gate", () => {
 
   it("builds the production Today state only from a complete live API payload", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(
       new Response(JSON.stringify(liveEnvelope), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -319,7 +336,7 @@ describe("OperatorConsole production data gate", () => {
 
   it("blocks a nominally live but incomplete API payload", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(
       new Response(JSON.stringify({
         ...liveEnvelope,
         today: {
@@ -366,7 +383,7 @@ describe("OperatorConsole production data gate", () => {
       }
       return new Response(null, { status: 404 });
     });
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<OperatorConsole searchParams={{ ws: "today" }} />);
     expect(await screen.findByText("Production issue")).toBeInTheDocument();
@@ -396,7 +413,7 @@ describe("OperatorConsole production data gate", () => {
       }
       return new Response(null, { status: 404 });
     });
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<OperatorConsole searchParams={{ ws: "today" }} />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(

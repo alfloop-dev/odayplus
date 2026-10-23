@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:odayplus:native-manual-parser-fields:1",
+  "x-schema-version": "native-manual-parser-fields/1",
+  "x-required-normalized-fields": [
+    "address",
+    "rent",
+    "areaPing"
+  ],
+  "x-required-confidence-fields": [],
+  "$comment": "Confidence remains unknown and absent. The runtime derives the outcome from actual output and this attested schema; the schema grants no authority or review decision.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "parsed_payload",
+    "normalized_payload",
+    "field_confidence",
+    "validation_errors"
+  ],
+  "properties": {
+    "parsed_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "address",
+        "rent",
+        "areaPing"
+      ],
+      "properties": {
+        "address": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^\\u0000-\\u001f<>]+$"
+        },
+        "rent": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1.7976931348623157e+308
+        },
+        "areaPing": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1.7976931348623157e+308
+        },
+        "providerListingId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\u0000-\\u001f<>]+$"
+        },
+        "floor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\u0000-\\u001f<>]+$"
+        },
+        "listingType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\u0000-\\u001f<>]+$"
+        },
+        "listingStatus": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\u0000-\\u001f<>]+$"
+        }
+      }
+    },
+    "normalized_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "address": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^\\u0000-\\u001f<>]+$"
+        },
+        "rent": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1.7976931348623157e+308
+        },
+        "areaPing": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1.7976931348623157e+308
+        },
+        "providerListingId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\u0000-\\u001f<>]+$"
+        },
+        "floor": {
+          "type": "string",
+          "pattern": "^(?:B[1-9][0-9]{0,2}|0|[1-9][0-9]{0,2})$"
+        },
+        "listingType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\u0000-\\u001f<>]+$"
+        },
+        "listingStatus": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\u0000-\\u001f<>]+$"
+        }
+      }
+    },
+    "field_confidence": {
+      "type": "object",
+      "maxProperties": 0
+    },
+    "validation_errors": {
+      "type": "array",
+      "maxItems": 7,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "field_path",
+          "code"
+        ],
+        "properties": {
+          "field_path": {
+            "enum": [
+              "address",
+              "floor"
+            ]
+          },
+          "code": {
+            "enum": [
+              "ADDRESS_NOT_CANONICAL",
+              "FLOOR_NOT_CANONICAL"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

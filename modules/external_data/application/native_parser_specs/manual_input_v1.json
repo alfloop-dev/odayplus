@@ -1,0 +1,234 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:odayplus:native-assisted-manual-evidence:1",
+  "x-schema-version": "native-assisted-manual-evidence/1",
+  "$comment": "The installed provider independently checks canonical lineage, uniqueness, digests and nonblank text. This schema grants no authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "capture_method",
+    "tenant_id",
+    "intake_id",
+    "request_id",
+    "requested_by",
+    "source_id",
+    "fields_sha256",
+    "corrections"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "capture_method": {
+      "const": "MANUAL_ENTRY"
+    },
+    "tenant_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "not": {
+        "const": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    "intake_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "not": {
+        "const": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "not": {
+        "const": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    "requested_by": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "not": {
+        "const": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    "source_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\u0000-\\u001f]+$"
+    },
+    "fields_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "corrections": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 7,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "correction_id",
+          "field_path",
+          "corrected_value"
+        ],
+        "properties": {
+          "correction_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "not": {
+              "const": "00000000-0000-0000-0000-000000000000"
+            }
+          },
+          "field_path": {
+            "enum": [
+              "address",
+              "rent",
+              "areaPing",
+              "providerListingId",
+              "floor",
+              "listingType",
+              "listingStatus"
+            ]
+          },
+          "corrected_value": {}
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "field_path": {
+                  "const": "address"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "corrected_value": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "pattern": "^[^\\u0000-\\u001f<>]+$"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "field_path": {
+                  "const": "rent"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "corrected_value": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 1.7976931348623157e+308
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "field_path": {
+                  "const": "areaPing"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "corrected_value": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 1.7976931348623157e+308
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "field_path": {
+                  "const": "providerListingId"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "corrected_value": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[^\\u0000-\\u001f<>]+$"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "field_path": {
+                  "const": "floor"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "corrected_value": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[^\\u0000-\\u001f<>]+$"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "field_path": {
+                  "const": "listingType"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "corrected_value": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[^\\u0000-\\u001f<>]+$"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "field_path": {
+                  "const": "listingStatus"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "corrected_value": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[^\\u0000-\\u001f<>]+$"
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

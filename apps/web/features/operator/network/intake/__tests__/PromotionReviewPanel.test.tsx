@@ -144,6 +144,7 @@ function promo(status: PromotionStatus, overrides: Partial<PromotionDecisionRece
     promotion_decision_id: "PD-9001",
     intake_id: "IN-4001",
     listing_id: "LST-7001",
+    target_format_code: "Synthetic-Reviewed-Format",
     status,
     decision_type: "STANDARD",
     proposer_subject_id: "OP-100",
@@ -211,6 +212,7 @@ describe("PromotionReviewPanel — saga states are never compressed (acceptance 
       const badge = screen.getByTestId("promotion-status-badge");
       expect(badge.textContent).toContain(status);
       expect(badge.textContent).toContain(PROMOTION_STATUS_LABEL[status]);
+      expect(screen.queryByTestId("promotion-target-unavailable")).toBeNull();
       // The current state is a real stepper node, not a spinner.
       const step = screen.getByTestId(`promo-step-${status}`);
       expect(step.getAttribute("data-state")).not.toBe("upcoming");
@@ -247,6 +249,25 @@ describe("PromotionReviewPanel — saga states are never compressed (acceptance 
 });
 
 describe("PromotionReviewPanel — explicit request contract (acceptance 2)", () => {
+  it("never invents or preselects a target format for a new request", () => {
+    renderPanel();
+    const input = screen.getByTestId("promotion-target-format") as HTMLInputElement;
+    expect(input.tagName).toBe("INPUT");
+    expect(input.value).toBe("");
+    expect(document.body.textContent).not.toContain("FMT-STANDARD-STORE");
+    fireEvent.change(screen.getByTestId("promotion-request-reason"), { target: { value: "明確輸入店型後才可申請。" } });
+    fireEvent.click(screen.getByTestId("promotion-request-ack"));
+    expect((screen.getByTestId("promotion-request-submit") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("shows the persisted target format to the independent reviewer", () => {
+    renderPanel({ promotion: promo("PENDING_REVIEW", { target_format_code: "SYNTHETIC-EXPLICIT-TARGET" }) });
+    fireEvent.change(screen.getByTestId("promotion-review-reason"), { target: { value: "確認伺服器已保存的目標店型。" } });
+    fireEvent.click(screen.getByTestId("promotion-review-ack"));
+    fireEvent.click(screen.getByTestId("promotion-approve-btn"));
+    expect(screen.getByTestId("promotion-review-summary").textContent).toContain("SYNTHETIC-EXPLICIT-TARGET");
+  });
+
   it("keeps submit locked until reason and risk acknowledgement are provided", () => {
     const onRequestPromotion = vi.fn();
     renderPanel({ onRequestPromotion });
@@ -260,6 +281,8 @@ describe("PromotionReviewPanel — explicit request contract (acceptance 2)", ()
     expect((screen.getByTestId("promotion-request-submit") as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.click(screen.getByTestId("promotion-request-ack"));
+    expect((screen.getByTestId("promotion-request-submit") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByTestId("promotion-target-format"), { target: { value: "Synthetic-Explicit" } });
     expect((screen.getByTestId("promotion-request-submit") as HTMLButtonElement).disabled).toBe(false);
   });
 
@@ -267,7 +290,7 @@ describe("PromotionReviewPanel — explicit request contract (acceptance 2)", ()
     const onRequestPromotion = vi.fn().mockResolvedValue(undefined);
     renderPanel({ onRequestPromotion });
 
-    fireEvent.change(screen.getByTestId("promotion-target-format"), { target: { value: "FMT-MICRO-STORE" } });
+    fireEvent.change(screen.getByTestId("promotion-target-format"), { target: { value: "  Synthetic-MixedCase-9  " } });
     fireEvent.change(screen.getByTestId("promotion-request-reason"), {
       target: { value: "租金與面積皆符合門檻。" },
     });
@@ -277,7 +300,7 @@ describe("PromotionReviewPanel — explicit request contract (acceptance 2)", ()
 
     expect(onRequestPromotion).toHaveBeenCalledTimes(1);
     const input = onRequestPromotion.mock.calls[0][0];
-    expect(input.targetFormatCode).toBe("FMT-MICRO-STORE");
+    expect(input.targetFormatCode).toBe("  Synthetic-MixedCase-9  ");
     expect(input.gateSnapshotSha256).toBe(GATE_SHA);
     expect(input.ifMatch).toBe('W/"4"');
     expect(input.riskAcknowledged).toBe(true);
@@ -286,6 +309,36 @@ describe("PromotionReviewPanel — explicit request contract (acceptance 2)", ()
     // Non-optimistic: the saga state is still server-driven — no receipt, no
     // fabricated REQUESTED badge.
     expect(screen.getByTestId("promotion-status-badge").textContent).toContain("尚未提出晉升申請");
+  });
+
+  it.each(["a", "𠮷"])("matches the API 64-code-point limit without normalizing (%s)", async (character) => {
+    const onRequestPromotion = vi.fn();
+    renderPanel({ onRequestPromotion });
+    fireEvent.change(screen.getByTestId("promotion-request-reason"), { target: { value: "明確店型驗證。" } });
+    fireEvent.click(screen.getByTestId("promotion-request-ack"));
+    const input = screen.getByTestId("promotion-target-format") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: character.repeat(65) } });
+    expect((screen.getByTestId("promotion-request-submit") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(input, { target: { value: character.repeat(64) } });
+    fireEvent.click(screen.getByTestId("promotion-request-submit"));
+    await flush();
+    expect(onRequestPromotion.mock.calls[0][0].targetFormatCode).toBe(character.repeat(64));
+  });
+
+  it("retains drafts on a version refresh and clears them when switching intake", () => {
+    const { rerender } = renderPanel();
+    fireEvent.change(screen.getByTestId("promotion-target-format"), { target: { value: "Only-Intake-4001" } });
+    fireEvent.change(screen.getByTestId("promotion-request-reason"), { target: { value: "只供此收件使用。" } });
+    fireEvent.click(screen.getByTestId("promotion-request-ack"));
+    const firstKey = screen.getByTestId("promotion-request-key").textContent;
+    rerender(<PromotionReviewPanel currentOperator={manager} gateSnapshotSha256={GATE_SHA} record={{ ...readyRecord, version: 5 }} />);
+    expect((screen.getByTestId("promotion-target-format") as HTMLInputElement).value).toBe("Only-Intake-4001");
+    expect(screen.getByTestId("promotion-request-key").textContent).toBe(firstKey);
+    rerender(<PromotionReviewPanel currentOperator={manager} gateSnapshotSha256={GATE_SHA} record={{ ...readyRecord, id: "IN-4002" }} />);
+    expect((screen.getByTestId("promotion-target-format") as HTMLInputElement).value).toBe("");
+    expect((screen.getByTestId("promotion-request-reason") as HTMLTextAreaElement).value).toBe("");
+    expect((screen.getByTestId("promotion-request-ack") as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByTestId("promotion-request-key").textContent).not.toBe(firstKey);
   });
 
   it("locks the submit control while busy instead of double-sending", () => {
@@ -303,6 +356,7 @@ describe("PromotionReviewPanel — explicit request contract (acceptance 2)", ()
       .mockResolvedValueOnce(undefined);
     renderPanel({ onRequestPromotion });
 
+    fireEvent.change(screen.getByTestId("promotion-target-format"), { target: { value: "Synthetic-Explicit" } });
     fireEvent.change(screen.getByTestId("promotion-request-reason"), {
       target: { value: "第一次提交因網路失敗。" },
     });
@@ -398,6 +452,36 @@ describe("PromotionReviewPanel — independent second-actor review", () => {
     expect(input.ifMatch).toBe('W/"7"');
     expect(input.riskAcknowledged).toBe(true);
     expect(input.idempotencyKey).toBeTruthy();
+  });
+
+  it.each([undefined, null, ""])("blocks approval of a receipt without a saved format (%s) but permits rejection", async (target) => {
+    const onReviewPromotion = vi.fn();
+    renderPanel({ promotion: promo("PENDING_REVIEW", { target_format_code: target }), onReviewPromotion });
+    fireEvent.change(screen.getByTestId("promotion-review-reason"), { target: { value: "此收據未保存目標店型，駁回重送。" } });
+    fireEvent.click(screen.getByTestId("promotion-review-ack"));
+    const notices = document.body.querySelectorAll('[data-testid="promotion-target-unavailable"]');
+    expect(notices).toHaveLength(1);
+    expect(notices[0].getAttribute("role")).toBe("status");
+    expect(notices[0].textContent).toContain("尚未取得");
+    expect((screen.getByTestId("promotion-approve-btn") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByTestId("promotion-reject-btn"));
+    await flush();
+    expect(onReviewPromotion.mock.calls[0][0].decision).toBe("REJECT");
+  });
+
+  it("stops an open approval dialog if the refreshed receipt loses its target", async () => {
+    const onReviewPromotion = vi.fn();
+    const { rerender } = renderPanel({ promotion: promo("PENDING_REVIEW"), onReviewPromotion });
+    fireEvent.change(screen.getByTestId("promotion-review-reason"), { target: { value: "核對持久化店型。" } });
+    fireEvent.click(screen.getByTestId("promotion-review-ack"));
+    fireEvent.click(screen.getByTestId("promotion-approve-btn"));
+    rerender(<PromotionReviewPanel currentOperator={manager} gateSnapshotSha256={GATE_SHA}
+      promotion={promo("PENDING_REVIEW", { version: 8, target_format_code: null })}
+      record={readyRecord} onReviewPromotion={onReviewPromotion} />);
+    expect((screen.getByTestId("promotion-confirm-approve-btn") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByTestId("promotion-confirm-approve-btn"));
+    await flush();
+    expect(onReviewPromotion).not.toHaveBeenCalled();
   });
 
   it("blocks self-review: proposer sees SELF_REVIEW_DENIED and no approve/reject controls", () => {
@@ -532,14 +616,15 @@ describe("PromotionReviewPanel — lost response, receipts and conflicts (accept
     const transportError = {
       status: 0,
       code: "ODP-INTAKE-TIMEOUT",
-      summary: "連線逾時 — 後端未在時限內回應，本次操作未寫入。",
-      nextAction: "請確認網路連線後重試；你輸入的內容已保留。",
+      summary: "連線逾時 — 後端未在時限內回應，操作結果尚未確認。",
+      nextAction: "你輸入的內容已保留；請確認網路連線後查詢狀態，或使用同一 Idempotency-Key 重試。",
       correlationId: null,
       occurredAt: "2026-07-22T10:00:00Z",
       retryable: true,
     };
 
     const { rerender } = renderPanel({ onRequestPromotion, onLookupDecision });
+    fireEvent.change(screen.getByTestId("promotion-target-format"), { target: { value: "Synthetic-Explicit" } });
     fireEvent.change(screen.getByTestId("promotion-request-reason"), {
       target: { value: "提交後回應遺失。" },
     });
@@ -608,6 +693,7 @@ describe("PromotionReviewPanel — lost response, receipts and conflicts (accept
       retryable: false,
     };
     const { rerender } = renderPanel({ onRefresh });
+    fireEvent.change(screen.getByTestId("promotion-target-format"), { target: { value: "Synthetic-Explicit" } });
     fireEvent.change(screen.getByTestId("promotion-request-reason"), {
       target: { value: "衝突前輸入的理由。" },
     });
@@ -628,6 +714,7 @@ describe("PromotionReviewPanel — lost response, receipts and conflicts (accept
     expect((screen.getByTestId("promotion-request-reason") as HTMLTextAreaElement).value).toBe(
       "衝突前輸入的理由。",
     );
+    expect((screen.getByTestId("promotion-target-format") as HTMLInputElement).value).toBe("Synthetic-Explicit");
     fireEvent.click(screen.getByTestId("promotion-conflict-refresh-btn"));
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });
@@ -688,11 +775,28 @@ describe("SiteScoreJobStatus — outcome and delivery distinct, ID only from rec
     expect(screen.getByTestId("sitescore-job-correlation").textContent).toBe("CORR-9001");
   });
 
-  it("replays a failed outcome carrying a dead-letter delivery state", () => {
+  it("keeps an exhausted candidate visible without offering an unsupported budget override", () => {
     render(<SiteScoreJobStatus canReplay job={job("FAILED", { delivery_state: "DEAD_LETTER" })} onReplay={vi.fn()} />);
-    expect(screen.getByTestId("sitescore-replay-controls")).not.toBeNull();
+    expect(screen.queryByTestId("sitescore-replay-controls")).toBeNull();
     expect(screen.getByTestId("sitescore-job-state").textContent).toContain("FAILED");
     expect(screen.getByTestId("sitescore-job-state").textContent).toContain("DEAD_LETTER");
+    expect(screen.getByTestId("candidate-retained-note").textContent).toContain("已達重試上限");
+  });
+
+  it("retains a failed score candidate after the promotion has already completed", () => {
+    render(<SiteScoreJobStatus canReplay candidateSiteId="CAND-1234" job={job("FAILED")}
+      onReplay={vi.fn()} promotionStatus="COMPLETED" />);
+    expect(screen.getByTestId("candidate-retained-id").textContent).toBe("CAND-1234");
+    expect(screen.getByTestId("candidate-retained-note").textContent).toContain("評分失敗（FAILED）");
+    expect(screen.getByTestId("sitescore-replay-controls")).not.toBeNull();
+  });
+
+  it("shows a scheduled automatic retry without a failure or manual replay control", () => {
+    render(<SiteScoreJobStatus canReplay job={job("QUEUED", { delivery_state: "RETRYING" })}
+      onReplay={vi.fn()} promotionStatus="COMPLETED" />);
+    expect(screen.getByTestId("sitescore-job-state").textContent).toContain("自動重試中");
+    expect(screen.queryByTestId("candidate-retained-note")).toBeNull();
+    expect(screen.queryByTestId("sitescore-replay-controls")).toBeNull();
   });
 
   it("requires reason and risk ack before replay is enabled", () => {

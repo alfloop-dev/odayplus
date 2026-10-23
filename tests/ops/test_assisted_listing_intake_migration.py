@@ -10,8 +10,17 @@ from shared.domain.models import AddressLocation, CandidateSite, Listing
 pytestmark = pytest.mark.requires_live_env
 
 
-def test_migration_schema_upgrade_and_rollback(intake_blank_db) -> None:
-    conn = intake_blank_db.connect()
+@pytest.fixture(name="conn")
+def migration_connection(intake_blank_db):
+    """Close the caller-owned connection before its database is dropped."""
+    connection = intake_blank_db.connect()
+    try:
+        yield connection
+    finally:
+        connection.close()
+
+
+def test_migration_schema_upgrade_and_rollback(conn) -> None:
     migrator = IntakeMigrator(conn)
 
     # 1. Apply schema and verify tables are created
@@ -42,8 +51,7 @@ def test_migration_schema_upgrade_and_rollback(intake_blank_db) -> None:
     assert len(tables_after) == 0
 
 
-def test_backfill_happy_path(intake_blank_db) -> None:
-    conn = intake_blank_db.connect()
+def test_backfill_happy_path(conn) -> None:
     migrator = IntakeMigrator(conn)
     migrator.apply_schema()
 
@@ -153,8 +161,7 @@ def test_backfill_happy_path(intake_blank_db) -> None:
     assert verify_res["shadow_comparison_success"] is True
 
 
-def test_b1_property_identity_preservation_and_geocodes(intake_blank_db) -> None:
-    conn = intake_blank_db.connect()
+def test_b1_property_identity_preservation_and_geocodes(conn) -> None:
     migrator = IntakeMigrator(conn)
     migrator.apply_schema()
 
@@ -192,8 +199,7 @@ def test_b1_property_identity_preservation_and_geocodes(intake_blank_db) -> None
     assert 25.0400 in lats
 
 
-def test_b1_probe_null_coordinates_and_no_fabricated_identities(intake_blank_db) -> None:
-    conn = intake_blank_db.connect()
+def test_b1_probe_null_coordinates_and_no_fabricated_identities(conn) -> None:
     migrator = IntakeMigrator(conn)
     migrator.apply_schema()
 
@@ -227,8 +233,7 @@ def test_b1_probe_null_coordinates_and_no_fabricated_identities(intake_blank_db)
         assert not p[0].startswith("REDIRECTED_PROPERTY_")
 
 
-def test_b2_month_and_source_partition_filtering(intake_blank_db) -> None:
-    conn = intake_blank_db.connect()
+def test_b2_month_and_source_partition_filtering(conn) -> None:
     migrator = IntakeMigrator(conn)
     migrator.apply_schema()
 
@@ -268,8 +273,7 @@ def test_b2_month_and_source_partition_filtering(intake_blank_db) -> None:
     assert res_broker["counts"]["findings"] == 0
 
 
-def test_b3_shadow_comparison_count_and_checksum_proof(intake_blank_db) -> None:
-    conn = intake_blank_db.connect()
+def test_b3_shadow_comparison_count_and_checksum_proof(conn) -> None:
     migrator = IntakeMigrator(conn)
     migrator.apply_schema()
 
@@ -307,8 +311,7 @@ def test_b3_shadow_comparison_count_and_checksum_proof(intake_blank_db) -> None:
     assert verify_after["blocking_findings"] >= 1
 
 
-def test_b3_probe_shadow_proof_persistence_on_fresh_migrator(intake_blank_db) -> None:
-    conn = intake_blank_db.connect()
+def test_b3_probe_shadow_proof_persistence_on_fresh_migrator(conn) -> None:
     migrator1 = IntakeMigrator(conn)
     migrator1.apply_schema()
 
@@ -346,8 +349,7 @@ def test_b3_probe_shadow_proof_persistence_on_fresh_migrator(intake_blank_db) ->
     assert verify_res["blocking_findings"] >= 1
 
 
-def test_b4_snapshot_provenance_and_policy_preservation(intake_blank_db) -> None:
-    conn = intake_blank_db.connect()
+def test_b4_snapshot_provenance_and_policy_preservation(conn) -> None:
     migrator = IntakeMigrator(conn)
     migrator.apply_schema()
 
@@ -394,8 +396,7 @@ def test_b4_snapshot_provenance_and_policy_preservation(intake_blank_db) -> None
     assert pr_row[2] == "VALIDATED"
 
 
-def test_b5_probe_no_synthetic_intake_creation(intake_blank_db) -> None:
-    conn = intake_blank_db.connect()
+def test_b5_probe_no_synthetic_intake_creation(conn) -> None:
     migrator = IntakeMigrator(conn)
     migrator.apply_schema()
 
@@ -431,8 +432,7 @@ def test_b5_probe_no_synthetic_intake_creation(intake_blank_db) -> None:
     assert res["counts"]["findings"] >= 1
 
 
-def test_major_b_probe_complete_table_scoped_rollback(intake_blank_db) -> None:
-    conn = intake_blank_db.connect()
+def test_major_b_probe_complete_table_scoped_rollback(conn) -> None:
     migrator = IntakeMigrator(conn)
     migrator.apply_schema()
 
@@ -495,8 +495,7 @@ def test_major_b_probe_complete_table_scoped_rollback(intake_blank_db) -> None:
     assert cur.fetchone()[0] >= 1
 
 
-def test_backfill_dry_run_does_not_commit(intake_blank_db) -> None:
-    conn = intake_blank_db.connect()
+def test_backfill_dry_run_does_not_commit(conn) -> None:
     migrator = IntakeMigrator(conn)
     migrator.apply_schema()
 
@@ -530,8 +529,7 @@ def test_backfill_dry_run_does_not_commit(intake_blank_db) -> None:
     assert cur.fetchone()[0] == 0
 
 
-def test_backfill_resume_skips_existing(intake_blank_db) -> None:
-    conn = intake_blank_db.connect()
+def test_backfill_resume_skips_existing(conn) -> None:
     migrator = IntakeMigrator(conn)
     migrator.apply_schema()
 
@@ -567,9 +565,8 @@ def test_backfill_resume_skips_existing(intake_blank_db) -> None:
     assert res["counts"]["skipped_due_to_resume"] == 1
 
 
-def test_blocker3_rollback_preserves_unrelated_tenant_data(intake_blank_db) -> None:
+def test_blocker3_rollback_preserves_unrelated_tenant_data(conn) -> None:
     """Verify rollback safely preserves unrelated intakes and live audit events in the same tenant."""
-    conn = intake_blank_db.connect()
     migrator = IntakeMigrator(conn)
     migrator.apply_schema()
 
@@ -654,9 +651,8 @@ def test_blocker3_rollback_preserves_unrelated_tenant_data(intake_blank_db) -> N
     assert surviving_audits[0][1] == "LIVE_EVENT"
 
 
-def test_blocker2_month_partitioning_no_fabricated_created_at_date(intake_blank_db) -> None:
+def test_blocker2_month_partitioning_no_fabricated_created_at_date(conn) -> None:
     """Candidate draft with no legacy intake/timestamp must trigger INVALID_SCOPE when filtering by month."""
-    conn = intake_blank_db.connect()
     migrator = IntakeMigrator(conn)
     migrator.apply_schema()
 
@@ -821,9 +817,8 @@ def test_cli_fail_closed_without_database_target() -> None:
     assert "Error: No database connection target provided" in proc.stderr
 
 
-def test_blocker2_rollback_scoped_to_migration_ref(intake_blank_db) -> None:
+def test_blocker2_rollback_scoped_to_migration_ref(conn) -> None:
     """Verify rollback of MIG-REF-B does not destroy intakes or identity created by MIG-REF-A."""
-    conn = intake_blank_db.connect()
     migrator_a = IntakeMigrator(conn, migration_ref="MIG-REF-A")
     migrator_a.apply_schema()
     tenant_id = "00000000-0000-0000-0000-000000000001"
@@ -869,9 +864,8 @@ def test_blocker2_rollback_scoped_to_migration_ref(intake_blank_db) -> None:
     assert surviving_intakes[0] == ensure_uuid("IN-A-1")
 
 
-def test_blocker3_rollback_preserves_live_outbox_and_orphan_properties(intake_blank_db) -> None:
+def test_blocker3_rollback_preserves_live_outbox_and_orphan_properties(conn) -> None:
     """Verify rollback preserves pre-existing CandidateSitePromoted outbox events and orphan properties."""
-    conn = intake_blank_db.connect()
     migrator = IntakeMigrator(conn)
     migrator.apply_schema()
     tenant_id = "00000000-0000-0000-0000-000000000001"
@@ -942,9 +936,8 @@ def test_blocker3_rollback_preserves_live_outbox_and_orphan_properties(intake_bl
     assert surviving_outbox[0] == ob_live_id
 
 
-def test_blocker4_resume_then_verify_cutover_path(intake_blank_db) -> None:
+def test_blocker4_resume_then_verify_cutover_path(conn) -> None:
     """Verify interrupt -> resume -> verify cutover path yields shadow_comparison_success=True with 0 findings."""
-    conn = intake_blank_db.connect()
     migrator = IntakeMigrator(conn)
     migrator.apply_schema()
     tenant_id = "00000000-0000-0000-0000-000000000001"
@@ -992,9 +985,8 @@ def test_blocker4_resume_then_verify_cutover_path(intake_blank_db) -> None:
     assert verify_res["shadow_comparison_success"] is True
 
 
-def test_major_c_multi_partition_checksum_and_preexisting_tenant_rows(intake_blank_db) -> None:
+def test_major_c_multi_partition_checksum_and_preexisting_tenant_rows(conn) -> None:
     """Verify multi-partition backfill verifies checksums for every partition correctly."""
-    conn = intake_blank_db.connect()
     migrator = IntakeMigrator(conn)
     migrator.apply_schema()
     tenant_id = "00000000-0000-0000-0000-000000000001"
@@ -1038,7 +1030,7 @@ def test_major_c_multi_partition_checksum_and_preexisting_tenant_rows(intake_bla
     assert verify_res["shadow_comparison_success"] is True
 
 
-def test_blocker1_multi_partition_listings_and_candidates(intake_blank_db) -> None:
+def test_blocker1_multi_partition_listings_and_candidates(conn) -> None:
     """BLOCKER 1 regression: two-month partitioned cutover with listings AND candidates.
 
     Reviewer scenario (ai-activity-log.jsonl 2026-07-21T02:30:15Z):
@@ -1052,7 +1044,6 @@ def test_blocker1_multi_partition_listings_and_candidates(intake_blank_db) -> No
     (both source SRC-591), each partition saw all 2 listings, producing COUNT_MISMATCH
     (expected 1, got 2) x2 and CHECKSUM_MISMATCH x2 per entity type = 8 BLOCKING findings.
     """
-    conn = intake_blank_db.connect()
     migrator = IntakeMigrator(conn)
     migrator.apply_schema()
     tenant_id = "00000000-0000-0000-0000-000000000001"

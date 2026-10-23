@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-a99e8467d1d0d89c6c55846ac4caef29",
+  "serialNumber": "urn:uuid:sha256-5f61dcc9d58c24f0722d2aa69e217f8c",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-21T19:19:23.182075+00:00",
+    "timestamp": "2026-10-23T01:04:58.348472+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,21 +16,21 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@492dd4deb5493376aee60cc6f7a162ae88086055",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@492dd4deb5493376aee60cc6f7a162ae88086055"
+      "purl": "pkg:generic/alfloop-dev/odayplus@200ace8ef4d8680f1119b5d849eb1ea52b422652",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@200ace8ef4d8680f1119b5d849eb1ea52b422652"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "492dd4deb5493376aee60cc6f7a162ae88086055"
+        "value": "200ace8ef4d8680f1119b5d849eb1ea52b422652"
       },
       {
         "name": "sbom-hash",
-        "value": "a99e8467d1d0d89c6c55846ac4caef29d9b177e9657ef34260ddd7a7cf67c7f8"
+        "value": "5f61dcc9d58c24f0722d2aa69e217f8ce60bc6b792cda8f5937d284cb1987f20"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:09ae3951c51c5b300deb7a3a66e0f489dec94ed7811c49c812ea8bf15497a2c2"
+        "value": "sha256:67338cd07b4e2ef3a57993320983dea4bea4366f5207d732f04aabc2d5389846"
       },
       {
         "name": "container-base-images",
@@ -353,7 +353,10 @@
           "alg": "SHA-512",
           "content": "Xz4Tpyki7XyrpbUK1jR1AhdAdaXyhhY4lZ3neLodmhpuWfy2PAQN5B46sAiU4liOXGLkHypn/qU+jvfWSCYYLA=="
         }
-      ]
+      ],
+      "supplier": {
+        "name": "toyobayashi"
+      }
     },
     {
       "name": "@emnapi/wasi-threads",
@@ -911,7 +914,10 @@
           "alg": "SHA-512",
           "content": "GJ//SSXbnwSDes02umB3nDJLFcQzw8a18V8fyhqr6tV515tOEMdImjjxj1AoafMRz56F3PHgftnj1QEKSU1zkw=="
         }
-      ]
+      ],
+      "supplier": {
+        "name": "Lovell Fuller <npm@lovell.info>"
+      }
     },
     {
       "name": "@img/sharp-libvips-linuxmusl-arm64",
@@ -1079,7 +1085,10 @@
           "alg": "SHA-512",
           "content": "SxFtLTeJInhAA9Q836kux2vZNeOBQEx658qvbboZScr0wIARym3IcGmW7KpVD5sbVg0Ojy+udFQdayYIZyoNog=="
         }
-      ]
+      ],
+      "supplier": {
+        "name": "Lovell Fuller <npm@lovell.info>"
+      }
     },
     {
       "name": "@img/sharp-linuxmusl-arm64",
@@ -1140,7 +1149,10 @@
           "alg": "SHA-512",
           "content": "Ptsga1su4tQx+LLF1ECS9U6nz5kmrXKo6XVbtR48Ke3ZRxxgaWBu7IDtEe1quo8hiupwm6WFqxVlXaSf7IINGQ=="
         }
-      ]
+      ],
+      "supplier": {
+        "name": "Lovell Fuller <npm@lovell.info>"
+      }
     },
     {
       "name": "@img/sharp-webcontainers-wasm32",
@@ -1222,10 +1234,10 @@
     },
     {
       "name": "@jridgewell/sourcemap-codec",
-      "version": "1.5.5",
+      "version": "1.6.0",
       "type": "library",
-      "purl": "pkg:npm/@jridgewell/sourcemap-codec@1.5.5",
-      "bom-ref": "pkg:npm/@jridgewell/sourcemap-codec@1.5.5",
+      "purl": "pkg:npm/@jridgewell/sourcemap-codec@1.6.0",
+      "bom-ref": "pkg:npm/@jridgewell/sourcemap-codec@1.6.0",
       "scope": "optional",
       "licenses": [
         {
@@ -1237,7 +1249,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og=="
+          "content": "T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw=="
         }
       ],
       "supplier": {
@@ -1611,7 +1623,10 @@
           "alg": "SHA-512",
           "content": "6J0vZqMZvRAJKtdWJdDGHEh1YJ2ZHG08/GOur8gCArYhO8ZkM//OXqtI2AAEz4jc2G+Wq4MfcePg8qNK5TZ4Kg=="
         }
-      ]
+      ],
+      "supplier": {
+        "name": "MapLibre"
+      }
     },
     {
       "name": "@maplibre/mlt",
@@ -1790,10 +1805,10 @@
     },
     {
       "name": "@next/env",
-      "version": "15.5.25",
+      "version": "15.5.27",
       "type": "library",
-      "purl": "pkg:npm/@next/env@15.5.25",
-      "bom-ref": "pkg:npm/@next/env@15.5.25",
+      "purl": "pkg:npm/@next/env@15.5.27",
+      "bom-ref": "pkg:npm/@next/env@15.5.27",
       "scope": "required",
       "licenses": [
         {
@@ -1805,16 +1820,19 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "42h1lLr07vl4gawALP1hsgRZjHB1xYa58JfUfHwr0f7jG/zhPakh5GHkADHXOC9ZxUvlQFOPIrp7s6qX4DezPQ=="
+          "content": "WC5hvVqiuFOcRyz6gKPeJkiVvSMf3scNeAV49CdWtVqxmUlzh8UKR6YHt9yiNkh8LngtzqSlVz07/Ma3ZAzchA=="
         }
-      ]
+      ],
+      "supplier": {
+        "name": "Next.js Team <support@vercel.com>"
+      }
     },
     {
       "name": "@next/eslint-plugin-next",
-      "version": "15.5.25",
+      "version": "15.5.27-oday.1",
       "type": "library",
-      "purl": "pkg:npm/@next/eslint-plugin-next@15.5.25",
-      "bom-ref": "pkg:npm/@next/eslint-plugin-next@15.5.25",
+      "purl": "pkg:npm/@next/eslint-plugin-next@15.5.27-oday.1",
+      "bom-ref": "pkg:npm/@next/eslint-plugin-next@15.5.27-oday.1",
       "scope": "optional",
       "licenses": [
         {
@@ -1822,20 +1840,14 @@
             "id": "MIT"
           }
         }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-512",
-          "content": "dAzOqZQCAOgIq5yQpsuMBZcwxK0AtzGqHMQpxNWYLQlvf79rsP3SDwdGPNQC4ySaMSihOQXMO/VXubQ3JWW+3A=="
-        }
       ]
     },
     {
       "name": "@next/swc-darwin-arm64",
-      "version": "15.5.25",
+      "version": "15.5.27",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-darwin-arm64@15.5.25",
-      "bom-ref": "pkg:npm/@next/swc-darwin-arm64@15.5.25",
+      "purl": "pkg:npm/@next/swc-darwin-arm64@15.5.27",
+      "bom-ref": "pkg:npm/@next/swc-darwin-arm64@15.5.27",
       "scope": "required",
       "licenses": [
         {
@@ -1847,16 +1859,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "w+RR0v/QuApnWEjRGm1z6gcObKwGMb5YPA7V3bzBEVSBpMFUXprer0tS27UxjUcEnqbhL7Zuzohej79B6rYmBg=="
+          "content": "fBA9QurmK4+uj4wNhmRTuO5zMVRaBHCvp6H93zTG/5i6Yi6TewbvbesXB8YQNj8T99Cwrow87hHiFV6wL/hyMA=="
         }
       ]
     },
     {
       "name": "@next/swc-darwin-x64",
-      "version": "15.5.25",
+      "version": "15.5.27",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-darwin-x64@15.5.25",
-      "bom-ref": "pkg:npm/@next/swc-darwin-x64@15.5.25",
+      "purl": "pkg:npm/@next/swc-darwin-x64@15.5.27",
+      "bom-ref": "pkg:npm/@next/swc-darwin-x64@15.5.27",
       "scope": "required",
       "licenses": [
         {
@@ -1868,16 +1880,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "QiGGBUSakt8S1H4Lt9Ehsh6Ja87axiBnQQgysOObvCbI7iUfJnRGntF1P64S4/ijuHFnSB8KLsEddkY3nN26uw=="
+          "content": "FGZwJwry8qZNHxD/nfwrCwCHHrqx6epqItkkxbYcBQEQ2uw5S43bY83fQB5zbAsZE7TELMjoYkbhsQ4oKM7wwg=="
         }
       ]
     },
     {
       "name": "@next/swc-linux-arm64-gnu",
-      "version": "15.5.25",
+      "version": "15.5.27",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-linux-arm64-gnu@15.5.25",
-      "bom-ref": "pkg:npm/@next/swc-linux-arm64-gnu@15.5.25",
+      "purl": "pkg:npm/@next/swc-linux-arm64-gnu@15.5.27",
+      "bom-ref": "pkg:npm/@next/swc-linux-arm64-gnu@15.5.27",
       "scope": "required",
       "licenses": [
         {
@@ -1889,16 +1901,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "ehLos/66zo0d/mJCU5u96a/VDcr01aaUrX0o/i16UdInxz8qPTCDSxGtjk/Lps1sIr1RJFdiX3hxc0fxJo+cPA=="
+          "content": "GQulAaJYNF1RYuatlsw9/uzbKz4if2V7Ic9nVO+P0ljYPm4yBRTFIl6g5YkKTw40lMLbpy9edLoH44g3jSHMYA=="
         }
       ]
     },
     {
       "name": "@next/swc-linux-arm64-musl",
-      "version": "15.5.25",
+      "version": "15.5.27",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-linux-arm64-musl@15.5.25",
-      "bom-ref": "pkg:npm/@next/swc-linux-arm64-musl@15.5.25",
+      "purl": "pkg:npm/@next/swc-linux-arm64-musl@15.5.27",
+      "bom-ref": "pkg:npm/@next/swc-linux-arm64-musl@15.5.27",
       "scope": "required",
       "licenses": [
         {
@@ -1910,16 +1922,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "ZVMrqLiJ7DiChgmbkQwFtdhAnUkSH/4p7tB29QY+giATb0Q/XGHNRSKAb/B8XGDHRUaA67NepOW5W8u3ZRJBAA=="
+          "content": "URFFsUmu8Pi0/1qdnUI7tx7keZw1Mt5zHfrIX1RfDG9Nih8DYxK54WZsDJUX2ZTlii1jgotL7qcbwKnSAES6xQ=="
         }
       ]
     },
     {
       "name": "@next/swc-linux-x64-gnu",
-      "version": "15.5.25",
+      "version": "15.5.27",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-linux-x64-gnu@15.5.25",
-      "bom-ref": "pkg:npm/@next/swc-linux-x64-gnu@15.5.25",
+      "purl": "pkg:npm/@next/swc-linux-x64-gnu@15.5.27",
+      "bom-ref": "pkg:npm/@next/swc-linux-x64-gnu@15.5.27",
       "scope": "required",
       "licenses": [
         {
@@ -1931,16 +1943,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "UOewtDGkTMJTiODrEdeLZ50yGb59xCZSriNpXkfPMxRRgwDkGc7i8mLWqV5076wEdb+Ca/XN7MhJyM3CupyNyQ=="
+          "content": "aJp74z7uvU5jQhyH7lyk+4qSRcTdKbKT9NQE3jiO9kWYkoHZjKi0zzHDbCoZ+v2sJDEiJ/z58R0UlWMGWNF3HA=="
         }
       ]
     },
     {
       "name": "@next/swc-linux-x64-musl",
-      "version": "15.5.25",
+      "version": "15.5.27",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-linux-x64-musl@15.5.25",
-      "bom-ref": "pkg:npm/@next/swc-linux-x64-musl@15.5.25",
+      "purl": "pkg:npm/@next/swc-linux-x64-musl@15.5.27",
+      "bom-ref": "pkg:npm/@next/swc-linux-x64-musl@15.5.27",
       "scope": "required",
       "licenses": [
         {
@@ -1952,16 +1964,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "UBHwA8AhkCZgtRfU1aJpunuAJe/6gZv6jDESQe4p5MjTb5V0YEeJBWCdNqx15Vj3x+5jmauRfeMJSjfQj9HGFQ=="
+          "content": "ILl2bQ8MbpvyMpY8AXljb3BXs0MJSC8HXZ6QV5AWpVS7ZELqNPtrHvhUk+SNarvjvICXX8bCS287TCi+gUFVYg=="
         }
       ]
     },
     {
       "name": "@next/swc-win32-arm64-msvc",
-      "version": "15.5.25",
+      "version": "15.5.27",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-win32-arm64-msvc@15.5.25",
-      "bom-ref": "pkg:npm/@next/swc-win32-arm64-msvc@15.5.25",
+      "purl": "pkg:npm/@next/swc-win32-arm64-msvc@15.5.27",
+      "bom-ref": "pkg:npm/@next/swc-win32-arm64-msvc@15.5.27",
       "scope": "required",
       "licenses": [
         {
@@ -1973,16 +1985,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "QcFcPRr16djk5IqK5+e8O80eZfgWzIvVBXfitIq0tQ/uc+eyfdoZ0NmKc0cnbIJyfVwREapKuG97YcxWA9gcpA=="
+          "content": "1MB9Rh5y8TOPN2x7naNTJNkCZQav9c70AI7EBYXxsEewwOffC4DjjwBwKf20NBvcA+u+5jDv7nVmHxunlP2d7Q=="
         }
       ]
     },
     {
       "name": "@next/swc-win32-x64-msvc",
-      "version": "15.5.25",
+      "version": "15.5.27",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-win32-x64-msvc@15.5.25",
-      "bom-ref": "pkg:npm/@next/swc-win32-x64-msvc@15.5.25",
+      "purl": "pkg:npm/@next/swc-win32-x64-msvc@15.5.27",
+      "bom-ref": "pkg:npm/@next/swc-win32-x64-msvc@15.5.27",
       "scope": "required",
       "licenses": [
         {
@@ -1994,7 +2006,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "zREeykps3ndWr9egJgvJKqVkkDuaw6Zrrg23cYBos0ygydFkAWYU4+PaPVwXzP1eAYQJe53ShSK45iDM529BOg=="
+          "content": "XtYgpGOswgnyBWXzOEG6q9RhvnSw0CEZ0MbWqCsl5PISgt9EzvJvNW5mU5n1PsphX/lnamzxjgQXH2GUJL8nqg=="
         }
       ]
     },
@@ -3800,10 +3812,10 @@
     },
     {
       "name": "@vitest/expect",
-      "version": "4.1.10",
+      "version": "4.1.11",
       "type": "library",
-      "purl": "pkg:npm/@vitest/expect@4.1.10",
-      "bom-ref": "pkg:npm/@vitest/expect@4.1.10",
+      "purl": "pkg:npm/@vitest/expect@4.1.11",
+      "bom-ref": "pkg:npm/@vitest/expect@4.1.11",
       "scope": "optional",
       "licenses": [
         {
@@ -3815,16 +3827,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "YsCn+qAk1GWjQOWFEsEcL2gNQ0zmVmQu3T03qP6UyjhtmdtwtbuI+DASn/7iQB3HGTXkdBwGddzxPlmiql5vlA=="
+          "content": "VX2x5vNJXET47KAFzwERI+KRMtTTCSWTfSMKsW7JsUsXV4psq++e3DvZpuTDOpHcxytiDs6p2nhVb2tVDiiUYw=="
         }
       ]
     },
     {
       "name": "@vitest/mocker",
-      "version": "4.1.10",
+      "version": "4.1.11",
       "type": "library",
-      "purl": "pkg:npm/@vitest/mocker@4.1.10",
-      "bom-ref": "pkg:npm/@vitest/mocker@4.1.10",
+      "purl": "pkg:npm/@vitest/mocker@4.1.11",
+      "bom-ref": "pkg:npm/@vitest/mocker@4.1.11",
       "scope": "optional",
       "licenses": [
         {
@@ -3836,16 +3848,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "v0xaezt+DKEmKfaxg133ldzADrwLGd7Ze1MfQQTYfvs8OqZIwbxyxaYURivwV7sWy5fqn3rH5uOrSp07bp44Ow=="
+          "content": "2XJVD55d1o5AZous5CCGKS74g/riOj9odEt2bQpCVZeblHyHdnMeFl4jl0XjU21stf4mbjUkew2eXQZt65g5CQ=="
         }
       ]
     },
     {
       "name": "@vitest/pretty-format",
-      "version": "4.1.10",
+      "version": "4.1.11",
       "type": "library",
-      "purl": "pkg:npm/@vitest/pretty-format@4.1.10",
-      "bom-ref": "pkg:npm/@vitest/pretty-format@4.1.10",
+      "purl": "pkg:npm/@vitest/pretty-format@4.1.11",
+      "bom-ref": "pkg:npm/@vitest/pretty-format@4.1.11",
       "scope": "optional",
       "licenses": [
         {
@@ -3857,16 +3869,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "W1HsjSH4MXQ9YfmmhLAoIYf1HRfekQCGngeIgcei6MP5QQGWUe0gkopdZQaVCFO+JDJMrAJGwa5pRpNpvy4P8Q=="
+          "content": "yiZzPbGTS9Sr/JpFl8zHrcIkAofNbFV6k21vIgQN/cY/oxZeXhJv5sc/MBJ5jFKWmWs+oJHw0UXLZjmf931+Vw=="
         }
       ]
     },
     {
       "name": "@vitest/runner",
-      "version": "4.1.10",
+      "version": "4.1.11",
       "type": "library",
-      "purl": "pkg:npm/@vitest/runner@4.1.10",
-      "bom-ref": "pkg:npm/@vitest/runner@4.1.10",
+      "purl": "pkg:npm/@vitest/runner@4.1.11",
+      "bom-ref": "pkg:npm/@vitest/runner@4.1.11",
       "scope": "optional",
       "licenses": [
         {
@@ -3878,16 +3890,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "IKI6kpIH+LmpROplyLwBBaCfMgOZOMsygVa6BARD6ahA04VRuJSa6OaVG7kRvSEMD870Vd91rSSw0eegtWyLGg=="
+          "content": "LztvUgdwMNJMIkj3hQnnxiC2Xy1zNxq928W/xhjCLaNCzqTZOudjwbQf6v9IntZGPw132i2Lq2rgTRZHD3JHNw=="
         }
       ]
     },
     {
       "name": "@vitest/snapshot",
-      "version": "4.1.10",
+      "version": "4.1.11",
       "type": "library",
-      "purl": "pkg:npm/@vitest/snapshot@4.1.10",
-      "bom-ref": "pkg:npm/@vitest/snapshot@4.1.10",
+      "purl": "pkg:npm/@vitest/snapshot@4.1.11",
+      "bom-ref": "pkg:npm/@vitest/snapshot@4.1.11",
       "scope": "optional",
       "licenses": [
         {
@@ -3899,16 +3911,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "xRkfOT1qpTAi/Ti4Y1LtfRc3kEuqxGw59eN2jN9pRWMtS/XDevekhcFSqvQqjUNGksfjMJu3Y+oJ+4Ypn2OaJw=="
+          "content": "pN7ikn1ON7h8ee4gIAp4AzyK+zBtJPzVbqOgu5LCEh4VaJVbPQcgYQYJIMGQPXVeJJq1fnfazis7a5pFNPahog=="
         }
       ]
     },
     {
       "name": "@vitest/spy",
-      "version": "4.1.10",
+      "version": "4.1.11",
       "type": "library",
-      "purl": "pkg:npm/@vitest/spy@4.1.10",
-      "bom-ref": "pkg:npm/@vitest/spy@4.1.10",
+      "purl": "pkg:npm/@vitest/spy@4.1.11",
+      "bom-ref": "pkg:npm/@vitest/spy@4.1.11",
       "scope": "optional",
       "licenses": [
         {
@@ -3920,16 +3932,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "PLf/Ugvoq5wO/b4rwYCR1h2PSIdXz7wnkQFMiUpLdtM7l6pqVFcQIBEHyT1+l+cj7mNwAfZHzqXqDyjvOuwbDw=="
+          "content": "apNa/prQy2qCeywhnixOHPRCgGNhvg7T4Dapfl1GahLp/R+uhBm5cPyFoNVyqsNd2h1nJxL6BqqdIjiABL60YA=="
         }
       ]
     },
     {
       "name": "@vitest/utils",
-      "version": "4.1.10",
+      "version": "4.1.11",
       "type": "library",
-      "purl": "pkg:npm/@vitest/utils@4.1.10",
-      "bom-ref": "pkg:npm/@vitest/utils@4.1.10",
+      "purl": "pkg:npm/@vitest/utils@4.1.11",
+      "bom-ref": "pkg:npm/@vitest/utils@4.1.11",
       "scope": "optional",
       "licenses": [
         {
@@ -3941,7 +3953,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "fy9am/HWxbaGt/Sawrp90vt6Y6jQwf1RX77cz3uwoJwJVMli/e1IEwRPnMNJ7vKfPTwo0diXifkpPvwH9v7nGA=="
+          "content": "zTCVGpyFsGWBhllOyKlTw/vnr6D9qxsfSDyfbyZmTyjHw5N/VuvzHpHoQjm2ZJzn4RJgx5w4r7V0er69CmLgPQ=="
         }
       ]
     },
@@ -5127,10 +5139,10 @@
     },
     {
       "name": "brace-expansion",
-      "version": "1.1.18",
+      "version": "1.1.21",
       "type": "library",
-      "purl": "pkg:npm/brace-expansion@1.1.18",
-      "bom-ref": "pkg:npm/brace-expansion@1.1.18",
+      "purl": "pkg:npm/brace-expansion@1.1.21",
+      "bom-ref": "pkg:npm/brace-expansion@1.1.21",
       "scope": "optional",
       "licenses": [
         {
@@ -5142,7 +5154,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "Edep/X9fGqVNmzKBVsDYIOtD+z1tuezV70LBjdCst9Tqu76lsnvRiZ6oTic1n+/BIwX6QDGAO94PN4N2SADvtw=="
+          "content": "9zeA+KLZNNzglF2TPKRQEDyx6Yby7daAkuy8MiPzpXPsYDWi/DRM8jmwUDxokQjYqBpv5DgPiwD4h4ZZSy1Ujw=="
         }
       ],
       "supplier": {
@@ -5151,10 +5163,10 @@
     },
     {
       "name": "brace-expansion",
-      "version": "5.0.9",
+      "version": "2.1.7",
       "type": "library",
-      "purl": "pkg:npm/brace-expansion@5.0.9",
-      "bom-ref": "pkg:npm/brace-expansion@5.0.9",
+      "purl": "pkg:npm/brace-expansion@2.1.7",
+      "bom-ref": "pkg:npm/brace-expansion@2.1.7",
       "scope": "optional",
       "licenses": [
         {
@@ -5166,33 +5178,33 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg=="
-        }
-      ]
-    },
-    {
-      "name": "braces",
-      "version": "3.0.3",
-      "type": "library",
-      "purl": "pkg:npm/braces@3.0.3",
-      "bom-ref": "pkg:npm/braces@3.0.3",
-      "scope": "optional",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-512",
-          "content": "yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA=="
+          "content": "uZbew1NqdmPDTMJ8ah1y+b+9QEJrfkXFk3RcTQw3X0jW/xRUvFKsg1CfQdSYGdTbXZWExtU3J3ccxtnfw1Fi0g=="
         }
       ],
       "supplier": {
-        "name": "Jon Schlinkert (https://github.com/jonschlinkert)"
+        "name": "Julian Gruber"
       }
+    },
+    {
+      "name": "brace-expansion",
+      "version": "5.0.12",
+      "type": "library",
+      "purl": "pkg:npm/brace-expansion@5.0.12",
+      "bom-ref": "pkg:npm/brace-expansion@5.0.12",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "YovQ3rzhaLMIrDjNDMkNS01tea93qhEhG5xy8f6+R0l+dw3Ki+5sCoIoI942iuLZTHWogWktgwVDhU09iNEimQ=="
+        }
+      ]
     },
     {
       "name": "buffer-image-size",
@@ -5452,10 +5464,10 @@
     },
     {
       "name": "chai",
-      "version": "6.2.2",
+      "version": "6.3.0",
       "type": "library",
-      "purl": "pkg:npm/chai@6.2.2",
-      "bom-ref": "pkg:npm/chai@6.2.2",
+      "purl": "pkg:npm/chai@6.3.0",
+      "bom-ref": "pkg:npm/chai@6.3.0",
       "scope": "optional",
       "licenses": [
         {
@@ -5467,7 +5479,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "NUPRluOfOiTKBKvWPtSD4PhFvWCqOi0BGStNWs57X9js7XGTprSmFoz5F0tWhR4WPjNeR9jXqdC7/UpSJTnlRg=="
+          "content": "XWAtwJ6OHO+tj0EKCs0Y2UamnyOxseZWltU4x2U2wh8g4AigdjwvtUjvLP2tqkA/avxHEtzxNaqGq/YGNwckKg=="
         }
       ],
       "supplier": {
@@ -6010,10 +6022,10 @@
     },
     {
       "name": "cvxpy",
-      "version": "1.9.2",
+      "version": "1.7.5",
       "type": "library",
-      "purl": "pkg:pypi/cvxpy@1.9.2",
-      "bom-ref": "pkg:pypi/cvxpy@1.9.2",
+      "purl": "pkg:pypi/cvxpy@1.7.5",
+      "bom-ref": "pkg:pypi/cvxpy@1.7.5",
       "scope": "required",
       "licenses": [
         {
@@ -6025,11 +6037,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "b2e939f197a7081a300d5a95812fec8643fabaf23a149abf7e67ca7f89671d92"
+          "content": "4b512218001c27659e16fc914a2490038635874681032c3c3485ff1099b83f5d"
         },
         {
           "alg": "SHA256",
-          "content": "bc9082110ac7f9d9a121f4dea73936f9b65ec043af91562677478edf4962905b"
+          "content": "6c397b86ef2109b99ec10d4fb144a826af840e1111167d307c52c96719ac5f57"
         }
       ],
       "supplier": {
@@ -6725,7 +6737,10 @@
           "alg": "SHA-512",
           "content": "vnS4AVwp1KHAF13i1vp1/2D5evWy3k5u/iW/B81QVsUZtV8cv2tU0b2VNFlqvh4kYwrFMDdjPCfAmfyJW9y14Q=="
         }
-      ]
+      ],
+      "supplier": {
+        "name": "Volodymyr Agafonkin"
+      }
     },
     {
       "name": "emoji-regex",
@@ -7065,10 +7080,10 @@
     },
     {
       "name": "eslint-config-next",
-      "version": "15.5.25",
+      "version": "15.5.27",
       "type": "library",
-      "purl": "pkg:npm/eslint-config-next@15.5.25",
-      "bom-ref": "pkg:npm/eslint-config-next@15.5.25",
+      "purl": "pkg:npm/eslint-config-next@15.5.27",
+      "bom-ref": "pkg:npm/eslint-config-next@15.5.27",
       "scope": "optional",
       "licenses": [
         {
@@ -7080,7 +7095,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "hB1oClZzRO3vMAeMmBMch0FHNJ4irH74LvQWDEMHkJtG/Us9+SAsg1f5Pvcw9jz4tc8wSGnvbmF050BRAAIbBg=="
+          "content": "SlpZ5Ch1bM+GNHxahIoCy5OVgbpIHzHoGQDjHo6vEhxvYMukWYVo++AEh9RWYaIxH1i38PO7ArzSdmTruswOew=="
         }
       ]
     },
@@ -7527,30 +7542,6 @@
       }
     },
     {
-      "name": "fast-glob",
-      "version": "3.3.1",
-      "type": "library",
-      "purl": "pkg:npm/fast-glob@3.3.1",
-      "bom-ref": "pkg:npm/fast-glob@3.3.1",
-      "scope": "optional",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-512",
-          "content": "kNFPyjhh5cKjrUltxs+wFx+ZkbRaxxmZ+X0ZU31SOsxCEtP9VPgtq2teZw1DebupL5GmDaNQ6yKMMVcM41iqDg=="
-        }
-      ],
-      "supplier": {
-        "name": "Denis Malinochkin"
-      }
-    },
-    {
       "name": "fast-json-stable-stringify",
       "version": "2.1.0",
       "type": "library",
@@ -7750,30 +7741,6 @@
           "content": "d396bea984af47333ef05e50eae7eff88c84256de6112aea0ec48a233c064fe3"
         }
       ]
-    },
-    {
-      "name": "fill-range",
-      "version": "7.1.1",
-      "type": "library",
-      "purl": "pkg:npm/fill-range@7.1.1",
-      "bom-ref": "pkg:npm/fill-range@7.1.1",
-      "scope": "optional",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-512",
-          "content": "YsGpe3WHLK8ZYi4tWDg2Jy3ebRz2rXowDxnld4bkQB00cc/1Zw9AWnC0i9ztDJitivtQvaI9KaLyKrc+hBW0yg=="
-        }
-      ],
-      "supplier": {
-        "name": "Jon Schlinkert (https://github.com/jonschlinkert)"
-      }
     },
     {
       "name": "find-up",
@@ -8373,10 +8340,10 @@
     },
     {
       "name": "gitpython",
-      "version": "3.1.61",
+      "version": "3.2.1",
       "type": "library",
-      "purl": "pkg:pypi/gitpython@3.1.61",
-      "bom-ref": "pkg:pypi/gitpython@3.1.61",
+      "purl": "pkg:pypi/gitpython@3.2.1",
+      "bom-ref": "pkg:pypi/gitpython@3.2.1",
       "scope": "required",
       "licenses": [
         {
@@ -8388,15 +8355,15 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "f51c24d8c0f733a195447385f5774a5dfe8767f5acfd7994a33755644c6ecc95"
+          "content": "0f1229ec5c057bdabdeeda8bda4f17bda679ab33dbccc00f24e6a480553c8613"
         },
         {
           "alg": "SHA256",
-          "content": "8ab28c9da863cdd9e7d7694ec46cf3e6c9a12d8a30a1acd3447aec11975d530c"
+          "content": "d66b0832aa8755c1a84892937282df0befb16c97e5a64aeebd68be9c5e323f53"
         }
       ],
       "supplier": {
-        "name": "Sebastian Thiel, Michael Trier"
+        "name": "Sebastian Thiel <byronimo@gmail.com>, Michael Trier <mtrier@gmail.com>"
       }
     },
     {
@@ -8870,10 +8837,10 @@
     },
     {
       "name": "graphql-core",
-      "version": "3.2.11",
+      "version": "3.2.12",
       "type": "library",
-      "purl": "pkg:pypi/graphql-core@3.2.11",
-      "bom-ref": "pkg:pypi/graphql-core@3.2.11",
+      "purl": "pkg:pypi/graphql-core@3.2.12",
+      "bom-ref": "pkg:pypi/graphql-core@3.2.12",
       "scope": "required",
       "licenses": [
         {
@@ -8885,11 +8852,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "e7e156d10beb127cab5c89ff0da71416fc73d27c484a4757d3b2d35633774802"
+          "content": "4579094d5fc8a1a59555a9b18e51b320779d9bbc63e2302c519af0c4919d9543"
         },
         {
           "alg": "SHA256",
-          "content": "0b3e35ff41e9adba53021ab0cef475eb18f57c7f53f0f2ca55567fbf3c537ea0"
+          "content": "3d8f104532070485e13caa4092c1e71cda2ba6cffd96e98f285111ee10ed1e51"
         }
       ],
       "supplier": {
@@ -9364,10 +9331,10 @@
     },
     {
       "name": "highspy",
-      "version": "1.15.1",
+      "version": "1.12.0",
       "type": "library",
-      "purl": "pkg:pypi/highspy@1.15.1",
-      "bom-ref": "pkg:pypi/highspy@1.15.1",
+      "purl": "pkg:pypi/highspy@1.12.0",
+      "bom-ref": "pkg:pypi/highspy@1.12.0",
       "scope": "required",
       "licenses": [
         {
@@ -9379,11 +9346,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "20ed2fbf1cb64bf3044ee6632364b7e2653d93e6901e2b19fd3d5df10702e8c5"
+          "content": "91a2da2c090597e34cd2cb57a751816ca6857c8cca8b09ae4d33960fb89ad42c"
         },
         {
           "alg": "SHA256",
-          "content": "a781dc8432568ea990fcdcc8d6e4365e67aa4848ca1f99275db096645b27cae3"
+          "content": "8c8b098a57b4035d5bdbffa2a80a96232c99e4d085aa822e283e98c50a1438b8"
         }
       ],
       "supplier": {
@@ -10272,30 +10239,6 @@
       }
     },
     {
-      "name": "is-number",
-      "version": "7.0.0",
-      "type": "library",
-      "purl": "pkg:npm/is-number@7.0.0",
-      "bom-ref": "pkg:npm/is-number@7.0.0",
-      "scope": "optional",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-512",
-          "content": "41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng=="
-        }
-      ],
-      "supplier": {
-        "name": "Jon Schlinkert (https://github.com/jonschlinkert)"
-      }
-    },
-    {
       "name": "is-number-object",
       "version": "1.1.1",
       "type": "library",
@@ -10735,10 +10678,10 @@
     },
     {
       "name": "js-yaml",
-      "version": "4.3.1",
+      "version": "4.3.2",
       "type": "library",
-      "purl": "pkg:npm/js-yaml@4.3.1",
-      "bom-ref": "pkg:npm/js-yaml@4.3.1",
+      "purl": "pkg:npm/js-yaml@4.3.2",
+      "bom-ref": "pkg:npm/js-yaml@4.3.2",
       "scope": "optional",
       "licenses": [
         {
@@ -10750,7 +10693,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "CY6crGq313MX8GkwvB7tzgp99vjQxY1++5y10/BKN/GUfHqWaOGQMNZkBvqSzsZKWk/ijwHlWzzkLulsGHhjWQ=="
+          "content": "SFNOvSJ+Dgf/9An904Yx+CgSlIPCkIpao4qo51lpee25TIRejdH3rhR4EZMGoNx3/TP3O+wzWuiTFl4sqbltzA=="
         }
       ],
       "supplier": {
@@ -11867,30 +11810,6 @@
       ]
     },
     {
-      "name": "micromatch",
-      "version": "4.0.8",
-      "type": "library",
-      "purl": "pkg:npm/micromatch@4.0.8",
-      "bom-ref": "pkg:npm/micromatch@4.0.8",
-      "scope": "optional",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-512",
-          "content": "PXwfBhYu0hBCPw8Dn0E+WDYb7af3dSLVWKi3HGv84IdF4TyFoC0ysxFd0Goxw7nSv4T/PzEJQxsYsEiFCKo2BA=="
-        }
-      ],
-      "supplier": {
-        "name": "Jon Schlinkert (https://github.com/jonschlinkert)"
-      }
-    },
-    {
       "name": "min-indent",
       "version": "1.0.1",
       "type": "library",
@@ -12341,10 +12260,10 @@
     },
     {
       "name": "next",
-      "version": "15.5.25",
+      "version": "15.5.27",
       "type": "library",
-      "purl": "pkg:npm/next@15.5.25",
-      "bom-ref": "pkg:npm/next@15.5.25",
+      "purl": "pkg:npm/next@15.5.27",
+      "bom-ref": "pkg:npm/next@15.5.27",
       "scope": "required",
       "licenses": [
         {
@@ -12356,7 +12275,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "OMWNulIIqKM2ykvC2qMjIt0IoavB4UB2SCs4iXJ6z6847FvyH8jBmBWcvrF5iuhTu8Przh20Fo/aoszIdqx4PA=="
+          "content": "F82CrlPZ8GRxBH9RIIoR3qU1t5RT3dv1K8moe8SjlDEquiFipvEI13R1Om90TaUOEwShkWCMlg8+gvTNzfMhvg=="
         }
       ]
     },
@@ -12768,10 +12687,10 @@
     },
     {
       "name": "opentelemetry-api",
-      "version": "1.44.0",
+      "version": "1.45.1",
       "type": "library",
-      "purl": "pkg:pypi/opentelemetry-api@1.44.0",
-      "bom-ref": "pkg:pypi/opentelemetry-api@1.44.0",
+      "purl": "pkg:pypi/opentelemetry-api@1.45.1",
+      "bom-ref": "pkg:pypi/opentelemetry-api@1.45.1",
       "scope": "required",
       "licenses": [
         {
@@ -12783,11 +12702,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "67647e5e9566edcf421166fdf022b3537f818635daa852b289e34604dc6fb33a"
+          "content": "aa38ed19bcc084ba42782a73255b3582283eced7ad6dddbd6695189e69adfb75"
         },
         {
           "alg": "SHA256",
-          "content": "94b98c893a91b88657eaac1e3ba89618cdb85be6918196705354f34728b2cdef"
+          "content": "b31553efa588ae44bc306f863c785c5333a9ecc091248c6ee68b4b6c87fdedfb"
         }
       ],
       "supplier": {
@@ -12824,10 +12743,10 @@
     },
     {
       "name": "opentelemetry-sdk",
-      "version": "1.44.0",
+      "version": "1.45.1",
       "type": "library",
-      "purl": "pkg:pypi/opentelemetry-sdk@1.44.0",
-      "bom-ref": "pkg:pypi/opentelemetry-sdk@1.44.0",
+      "purl": "pkg:pypi/opentelemetry-sdk@1.45.1",
+      "bom-ref": "pkg:pypi/opentelemetry-sdk@1.45.1",
       "scope": "required",
       "licenses": [
         {
@@ -12839,11 +12758,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "cebe7f65dc12f26ead75c6064de12fd2a9052e5060c0272d402cfa203aae123b"
+          "content": "63d24a6ca645019a631e6a51999c73e93adcac1196ca640b8ae78a7cc4762bf3"
         },
         {
           "alg": "SHA256",
-          "content": "df081c4c6bcfdb1211e3e86140376792643128a25f8d72d1d27675936e7e96ad"
+          "content": "c604c11dc429810812348989115fa44bd558772a3d7442afc43d024f2c250ca4"
         }
       ],
       "supplier": {
@@ -12852,10 +12771,10 @@
     },
     {
       "name": "opentelemetry-semantic-conventions",
-      "version": "0.65b0",
+      "version": "0.66b1",
       "type": "library",
-      "purl": "pkg:pypi/opentelemetry-semantic-conventions@0.65b0",
-      "bom-ref": "pkg:pypi/opentelemetry-semantic-conventions@0.65b0",
+      "purl": "pkg:pypi/opentelemetry-semantic-conventions@0.66b1",
+      "bom-ref": "pkg:pypi/opentelemetry-semantic-conventions@0.66b1",
       "scope": "required",
       "licenses": [
         {
@@ -12867,11 +12786,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "f9b2b81e9d5b64f11bc952075e7e9c7fb0aab075c7fd1c46d597f1b919852d60"
+          "content": "497ca63bf383723411e8eaf60c8779e9877633c936bb641080adab59d0eb6ec8"
         },
         {
           "alg": "SHA256",
-          "content": "1cacde7b0ad306f84c5ef08c3dbe1bbaf20165bba6f8bff43b670e555a086bcb"
+          "content": "d4cddeb4315490b35213f55e2bdc9ac54bb1e4d318927475bed62b35545e581b"
         }
       ],
       "supplier": {
@@ -13403,7 +13322,10 @@
           "alg": "SHA-512",
           "content": "mnvGdvOrIvJOBGUEdGkrVXjN8E/VkIJCkf2eS1DH2yv82ORUlLttmDt0rWY38yYZmVwciZwBUvHM20qxBZf40w=="
         }
-      ]
+      ],
+      "supplier": {
+        "name": "Konstantin Kaefer"
+      }
     },
     {
       "name": "pendulum",
@@ -14757,6 +14679,34 @@
       }
     },
     {
+      "name": "pypdf",
+      "version": "6.21.2",
+      "type": "library",
+      "purl": "pkg:pypi/pypdf@6.21.2",
+      "bom-ref": "pkg:pypi/pypdf@6.21.2",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA256",
+          "content": "0a3e1c5c886a1be03646c16a04827cc166c2a0575c971b26a4bf89686551c2d4"
+        },
+        {
+          "alg": "SHA256",
+          "content": "1d44d1a3a200f25062adff0085b02040e4646431ac2ccac22e42679e91466084"
+        }
+      ],
+      "supplier": {
+        "name": "Mathieu Fenniak <biziqe@mathieu.fenniak.net>"
+      }
+    },
+    {
       "name": "pyreadline3",
       "version": "3.5.6",
       "type": "library",
@@ -14966,34 +14916,6 @@
       ],
       "supplier": {
         "name": "Kirill Simonov"
-      }
-    },
-    {
-      "name": "qdldl",
-      "version": "0.1.9.post1",
-      "type": "library",
-      "purl": "pkg:pypi/qdldl@0.1.9.post1",
-      "bom-ref": "pkg:pypi/qdldl@0.1.9.post1",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "Apache-2.0"
-          }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA256",
-          "content": "da2016d541c26cefc79bca4d8b5bebfa00f35db19704abb20efbd1c08df3b4c7"
-        },
-        {
-          "alg": "SHA256",
-          "content": "25525962e90f1b9bfe3c4fb565222daf2bd77249bb6ffb9ae20b7da551f73538"
-        }
-      ],
-      "supplier": {
-        "name": "Bartolomeo Stellato, Paul Goulart, Goran Banjac"
       }
     },
     {
@@ -15226,6 +15148,34 @@
       ],
       "supplier": {
         "name": "Jordan Harband <ljharb@gmail.com>"
+      }
+    },
+    {
+      "name": "reportlab",
+      "version": "5.0.1",
+      "type": "library",
+      "purl": "pkg:pypi/reportlab@5.0.1",
+      "bom-ref": "pkg:pypi/reportlab@5.0.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA256",
+          "content": "ebd13154be1c8515e665de70bd2d303ae9ddc3ef47e44afd5116441ca0283a26"
+        },
+        {
+          "alg": "SHA256",
+          "content": "1c36e6bb0e71780c72331eba60da7f602e8d4389a8723825af71342e49d791e8"
+        }
+      ],
+      "supplier": {
+        "name": "Andy Robinson, Robin Becker, the ReportLab team and the community"
       }
     },
     {
@@ -16031,7 +15981,10 @@
           "alg": "SHA-512",
           "content": "Ywn4OnzGukp7CDMrp08RQ50YKmuwG47brZgIVPTvBaaAfQlRlygrRqSrxdCiL9M+LlzLBiJ68IR1QqvzHyjC7g=="
         }
-      ]
+      ],
+      "supplier": {
+        "name": "Lovell Fuller <npm@lovell.info>"
+      }
     },
     {
       "name": "shebang-command",
@@ -16331,31 +16284,6 @@
       "supplier": {
         "name": "Valentin 7rulnik Semirulnik <v7rulnik@gmail.com>"
       }
-    },
-    {
-      "name": "sparsediffpy",
-      "version": "0.3.0",
-      "type": "library",
-      "purl": "pkg:pypi/sparsediffpy@0.3.0",
-      "bom-ref": "pkg:pypi/sparsediffpy@0.3.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "Apache-2.0"
-          }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA256",
-          "content": "fdd9115db63ee228d09e1917365b263a16811645c6d32ee7dce50ada09b3d5a5"
-        },
-        {
-          "alg": "SHA256",
-          "content": "22848d97852554c8814cd5a0bffc4f4f41930aa7155f2193e99332e8a9cf6f6d"
-        }
-      ]
     },
     {
       "name": "split2",
@@ -17177,10 +17105,10 @@
     },
     {
       "name": "tinyrainbow",
-      "version": "3.1.0",
+      "version": "3.2.0",
       "type": "library",
-      "purl": "pkg:npm/tinyrainbow@3.1.0",
-      "bom-ref": "pkg:npm/tinyrainbow@3.1.0",
+      "purl": "pkg:npm/tinyrainbow@3.2.0",
+      "bom-ref": "pkg:npm/tinyrainbow@3.2.0",
       "scope": "optional",
       "licenses": [
         {
@@ -17192,33 +17120,9 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "Bf+ILmBgretUrdJxzXM0SgXLZ3XfiaUuOj/IKQHuTXip+05Xn+uyEYdVg0kYDipTBcLrCVyUzAPz7QmArb0mmw=="
+          "content": "LgO3D9yZJjApUiuUfl9iFAwrtaX4+lok3wJIqttGoKCHlWUqHqbQpnxCf82L8FjgKsh4iGo78hqJwgL8F6To2A=="
         }
       ]
-    },
-    {
-      "name": "to-regex-range",
-      "version": "5.0.1",
-      "type": "library",
-      "purl": "pkg:npm/to-regex-range@5.0.1",
-      "bom-ref": "pkg:npm/to-regex-range@5.0.1",
-      "scope": "optional",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-512",
-          "content": "65P7iz6X5yEr1cwcgvQxbbIw7Uk3gOy5dIdtZ4rDveLqhrdJP+Li/Hx6tyK0NEb+2GCyneCMJiGqrADCSNk8sQ=="
-        }
-      ],
-      "supplier": {
-        "name": "Jon Schlinkert (https://github.com/jonschlinkert)"
-      }
     },
     {
       "name": "tomli",
@@ -18003,10 +17907,10 @@
     },
     {
       "name": "vitest",
-      "version": "4.1.10",
+      "version": "4.1.11",
       "type": "library",
-      "purl": "pkg:npm/vitest@4.1.10",
-      "bom-ref": "pkg:npm/vitest@4.1.10",
+      "purl": "pkg:npm/vitest@4.1.11",
+      "bom-ref": "pkg:npm/vitest@4.1.11",
       "scope": "optional",
       "licenses": [
         {
@@ -18018,7 +17922,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "R9jUTe5S4Qb0HCd4TNqpC7oGcrMssMRGXLW80ubjWsW9VH5GF8y1Y0SFLY9AbqSk6nt0PnOx4H4WNJYZ13GUPw=="
+          "content": "fhACrNXUidIbGSBr5FlbuBkO7VWC1ZyLl0DO4CU2DrQoAPxX84Ysxs+HeGQpii5lZWV1Q4gBZTTu49mF+A6Edw=="
         }
       ],
       "supplier": {
@@ -18587,7 +18491,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@492dd4deb5493376aee60cc6f7a162ae88086055",
+      "ref": "pkg:generic/alfloop-dev/odayplus@200ace8ef4d8680f1119b5d849eb1ea52b422652",
       "dependsOn": [
         "pkg:npm/@deck.gl/core@9.3.7",
         "pkg:npm/@deck.gl/layers@9.3.7",
@@ -18597,14 +18501,14 @@
         "pkg:npm/argon2@0.45.1",
         "pkg:npm/h3-js@4.5.0",
         "pkg:npm/maplibre-gl@6.9.0",
-        "pkg:npm/next@15.5.25",
+        "pkg:npm/next@15.5.27",
         "pkg:npm/pg@8.23.0",
         "pkg:npm/react-dom@18.3.1",
         "pkg:npm/react@18.3.1",
         "pkg:pypi/argon2-cffi@25.1.0",
         "pkg:pypi/catboost@1.2.10",
         "pkg:pypi/cryptography@50.0.1",
-        "pkg:pypi/cvxpy@1.9.2",
+        "pkg:pypi/cvxpy@1.7.5",
         "pkg:pypi/dagster@1.13.15",
         "pkg:pypi/dlt@1.29.1",
         "pkg:pypi/duckdb@1.5.4",
@@ -18613,6 +18517,7 @@
         "pkg:pypi/google-cloud-storage@3.13.0",
         "pkg:pypi/great-expectations@1.19.0",
         "pkg:pypi/h3@4.5.0",
+        "pkg:pypi/highspy@1.12.0",
         "pkg:pypi/httpx@0.28.1",
         "pkg:pypi/jsonpath-ng@1.8.0",
         "pkg:pypi/jsonschema@4.26.0",
@@ -18631,9 +18536,11 @@
         "pkg:pypi/pymoo@0.6.2",
         "pkg:pypi/pynacl@1.6.2",
         "pkg:pypi/pyomo@6.10.1",
+        "pkg:pypi/pypdf@6.21.2",
         "pkg:pypi/pytest-xdist@3.8.0",
         "pkg:pypi/pytest@9.1.1",
         "pkg:pypi/pyyaml@6.0.3",
+        "pkg:pypi/reportlab@5.0.1",
         "pkg:pypi/ruff@0.15.20",
         "pkg:pypi/scikit-learn@1.9.0",
         "pkg:pypi/scipy@1.18.0",
@@ -18641,30 +18548,6 @@
         "pkg:pypi/statsforecast@2.1.1",
         "pkg:pypi/statsmodels@0.14.6",
         "pkg:pypi/uvicorn@0.50.2"
-      ]
-    },
-    {
-      "ref": "pkg:npm/@emnapi/runtime@1.11.3",
-      "dependsOn": [
-        "pkg:npm/tslib@2.8.1"
-      ]
-    },
-    {
-      "ref": "pkg:npm/@img/sharp-freebsd-wasm32@0.35.5",
-      "dependsOn": [
-        "pkg:npm/@img/sharp-wasm32@0.35.5"
-      ]
-    },
-    {
-      "ref": "pkg:npm/@img/sharp-wasm32@0.35.5",
-      "dependsOn": [
-        "pkg:npm/@emnapi/runtime@1.11.3"
-      ]
-    },
-    {
-      "ref": "pkg:npm/@img/sharp-webcontainers-wasm32@0.35.5",
-      "dependsOn": [
-        "pkg:npm/@img/sharp-wasm32@0.35.5"
       ]
     },
     {
@@ -18693,30 +18576,9 @@
       ]
     },
     {
-      "ref": "pkg:npm/@next/eslint-plugin-next@15.5.25",
-      "dependsOn": [
-        "pkg:npm/fast-glob@3.3.1"
-      ]
-    },
-    {
       "ref": "pkg:npm/@types/node@20.14.10",
       "dependsOn": [
-        "pkg:npm/undici-types@8.3.0"
-      ]
-    },
-    {
-      "ref": "pkg:npm/eslint-config-next@15.5.25",
-      "dependsOn": [
-        "pkg:npm/@next/eslint-plugin-next@15.5.25",
-        "pkg:npm/@rushstack/eslint-patch@1.16.1",
-        "pkg:npm/@typescript-eslint/eslint-plugin@8.65.0",
-        "pkg:npm/@typescript-eslint/parser@8.65.0",
-        "pkg:npm/eslint-import-resolver-node@0.3.10",
-        "pkg:npm/eslint-import-resolver-typescript@3.10.1",
-        "pkg:npm/eslint-plugin-import@2.32.0",
-        "pkg:npm/eslint-plugin-jsx-a11y@6.10.2",
-        "pkg:npm/eslint-plugin-react-hooks@5.2.0",
-        "pkg:npm/eslint-plugin-react@7.37.5"
+        "pkg:npm/undici-types@5.26.5"
       ]
     },
     {
@@ -18743,27 +18605,9 @@
       ]
     },
     {
-      "ref": "pkg:npm/next@15.5.25",
-      "dependsOn": [
-        "pkg:npm/@next/env@15.5.25",
-        "pkg:npm/@swc/helpers@0.5.15",
-        "pkg:npm/caniuse-lite@1.0.30001806",
-        "pkg:npm/postcss@8.5.28",
-        "pkg:npm/styled-jsx@5.1.6"
-      ]
-    },
-    {
       "ref": "pkg:npm/pbf@5.1.2",
       "dependsOn": [
         "pkg:npm/resolve-protobuf-schema@2.1.0"
-      ]
-    },
-    {
-      "ref": "pkg:npm/sharp@0.35.5",
-      "dependsOn": [
-        "pkg:npm/@img/colour@1.1.0",
-        "pkg:npm/detect-libc@2.1.2",
-        "pkg:npm/semver@6.3.1"
       ]
     },
     {
@@ -18812,7 +18656,7 @@
         "pkg:npm/@math.gl/polygon@4.1.0",
         "pkg:npm/@math.gl/web-mercator@4.1.0",
         "pkg:npm/@types/geojson@7946.0.16",
-        "pkg:npm/earcut@3.2.3"
+        "pkg:npm/earcut@2.2.4"
       ]
     },
     {
@@ -18844,7 +18688,7 @@
     {
       "ref": "pkg:npm/@eslint-community/eslint-utils@4.10.1",
       "dependsOn": [
-        "pkg:npm/eslint-visitor-keys@5.0.1"
+        "pkg:npm/eslint-visitor-keys@3.4.3"
       ]
     },
     {
@@ -18854,10 +18698,10 @@
         "pkg:npm/debug@4.4.3",
         "pkg:npm/espree@9.6.1",
         "pkg:npm/globals@13.24.0",
-        "pkg:npm/ignore@7.0.6",
+        "pkg:npm/ignore@5.3.2",
         "pkg:npm/import-fresh@3.3.1",
-        "pkg:npm/js-yaml@4.3.1",
-        "pkg:npm/minimatch@10.2.5",
+        "pkg:npm/js-yaml@4.3.2",
+        "pkg:npm/minimatch@3.1.5",
         "pkg:npm/strip-json-comments@3.1.1"
       ]
     },
@@ -18879,7 +18723,31 @@
       "dependsOn": [
         "pkg:npm/@humanwhocodes/object-schema@2.0.3",
         "pkg:npm/debug@4.4.3",
-        "pkg:npm/minimatch@10.2.5"
+        "pkg:npm/minimatch@3.1.5"
+      ]
+    },
+    {
+      "ref": "pkg:npm/@img/sharp-freebsd-wasm32@0.35.5",
+      "dependsOn": [
+        "pkg:npm/@img/sharp-wasm32@0.35.5"
+      ]
+    },
+    {
+      "ref": "pkg:npm/@img/sharp-wasm32@0.35.5",
+      "dependsOn": [
+        "pkg:npm/@emnapi/runtime@1.11.3"
+      ]
+    },
+    {
+      "ref": "pkg:npm/@emnapi/runtime@1.11.3",
+      "dependsOn": [
+        "pkg:npm/tslib@2.8.1"
+      ]
+    },
+    {
+      "ref": "pkg:npm/@img/sharp-webcontainers-wasm32@0.35.5",
+      "dependsOn": [
+        "pkg:npm/@img/sharp-wasm32@0.35.5"
       ]
     },
     {
@@ -19023,7 +18891,7 @@
       "ref": "pkg:npm/@rolldown/binding-wasm32-wasi@1.1.5",
       "dependsOn": [
         "pkg:npm/@emnapi/core@1.11.1",
-        "pkg:npm/@emnapi/runtime@1.11.3",
+        "pkg:npm/@emnapi/runtime@1.11.1",
         "pkg:npm/@napi-rs/wasm-runtime@1.1.6"
       ]
     },
@@ -19040,7 +18908,7 @@
         "pkg:npm/@babel/runtime@7.29.7",
         "pkg:npm/@types/aria-query@5.0.4",
         "pkg:npm/aria-query@5.3.0",
-        "pkg:npm/dom-accessibility-api@0.6.3",
+        "pkg:npm/dom-accessibility-api@0.5.16",
         "pkg:npm/lz-string@1.5.0",
         "pkg:npm/picocolors@1.1.1",
         "pkg:npm/pretty-format@27.5.1"
@@ -19085,7 +18953,7 @@
     {
       "ref": "pkg:npm/@types/pg@8.23.1",
       "dependsOn": [
-        "pkg:npm/@types/node@20.14.10",
+        "pkg:npm/@types/node@26.1.1",
         "pkg:npm/pg-protocol@1.16.0",
         "pkg:npm/pg-types@2.2.0"
       ]
@@ -19106,7 +18974,7 @@
     {
       "ref": "pkg:npm/@types/ws@8.18.1",
       "dependsOn": [
-        "pkg:npm/@types/node@20.14.10"
+        "pkg:npm/@types/node@26.1.1"
       ]
     },
     {
@@ -19166,13 +19034,13 @@
         "pkg:npm/@typescript-eslint/visitor-keys@8.65.0",
         "pkg:npm/debug@4.4.3",
         "pkg:npm/minimatch@10.2.5",
-        "pkg:npm/semver@6.3.1",
+        "pkg:npm/semver@7.8.5",
         "pkg:npm/tinyglobby@0.2.17",
         "pkg:npm/ts-api-utils@2.5.0"
       ]
     },
     {
-      "ref": "pkg:npm/brace-expansion@5.0.9",
+      "ref": "pkg:npm/brace-expansion@5.0.12",
       "dependsOn": [
         "pkg:npm/balanced-match@4.0.4"
       ]
@@ -19180,7 +19048,7 @@
     {
       "ref": "pkg:npm/minimatch@10.2.5",
       "dependsOn": [
-        "pkg:npm/brace-expansion@5.0.9"
+        "pkg:npm/brace-expansion@5.0.12"
       ]
     },
     {
@@ -19202,15 +19070,15 @@
     {
       "ref": "pkg:npm/@unrs/resolver-binding-wasm32-wasi@1.12.2",
       "dependsOn": [
-        "pkg:npm/@emnapi/core@1.11.1",
-        "pkg:npm/@emnapi/runtime@1.11.3",
+        "pkg:npm/@emnapi/core@1.10.0",
+        "pkg:npm/@emnapi/runtime@1.10.0",
         "pkg:npm/@napi-rs/wasm-runtime@1.1.6"
       ]
     },
     {
       "ref": "pkg:npm/@emnapi/core@1.10.0",
       "dependsOn": [
-        "pkg:npm/@emnapi/wasi-threads@1.2.2",
+        "pkg:npm/@emnapi/wasi-threads@1.2.1",
         "pkg:npm/tslib@2.8.1"
       ]
     },
@@ -19233,52 +19101,52 @@
       ]
     },
     {
-      "ref": "pkg:npm/@vitest/expect@4.1.10",
+      "ref": "pkg:npm/@vitest/expect@4.1.11",
       "dependsOn": [
         "pkg:npm/@standard-schema/spec@1.1.0",
         "pkg:npm/@types/chai@5.2.3",
-        "pkg:npm/@vitest/spy@4.1.10",
-        "pkg:npm/@vitest/utils@4.1.10",
-        "pkg:npm/chai@6.2.2",
-        "pkg:npm/tinyrainbow@3.1.0"
+        "pkg:npm/@vitest/spy@4.1.11",
+        "pkg:npm/@vitest/utils@4.1.11",
+        "pkg:npm/chai@6.3.0",
+        "pkg:npm/tinyrainbow@3.2.0"
       ]
     },
     {
-      "ref": "pkg:npm/@vitest/mocker@4.1.10",
+      "ref": "pkg:npm/@vitest/mocker@4.1.11",
       "dependsOn": [
-        "pkg:npm/@vitest/spy@4.1.10",
+        "pkg:npm/@vitest/spy@4.1.11",
         "pkg:npm/estree-walker@3.0.3",
         "pkg:npm/magic-string@0.30.21"
       ]
     },
     {
-      "ref": "pkg:npm/@vitest/pretty-format@4.1.10",
+      "ref": "pkg:npm/@vitest/pretty-format@4.1.11",
       "dependsOn": [
-        "pkg:npm/tinyrainbow@3.1.0"
+        "pkg:npm/tinyrainbow@3.2.0"
       ]
     },
     {
-      "ref": "pkg:npm/@vitest/runner@4.1.10",
+      "ref": "pkg:npm/@vitest/runner@4.1.11",
       "dependsOn": [
-        "pkg:npm/@vitest/utils@4.1.10",
+        "pkg:npm/@vitest/utils@4.1.11",
         "pkg:npm/pathe@2.0.3"
       ]
     },
     {
-      "ref": "pkg:npm/@vitest/snapshot@4.1.10",
+      "ref": "pkg:npm/@vitest/snapshot@4.1.11",
       "dependsOn": [
-        "pkg:npm/@vitest/pretty-format@4.1.10",
-        "pkg:npm/@vitest/utils@4.1.10",
+        "pkg:npm/@vitest/pretty-format@4.1.11",
+        "pkg:npm/@vitest/utils@4.1.11",
         "pkg:npm/magic-string@0.30.21",
         "pkg:npm/pathe@2.0.3"
       ]
     },
     {
-      "ref": "pkg:npm/@vitest/utils@4.1.10",
+      "ref": "pkg:npm/@vitest/utils@4.1.11",
       "dependsOn": [
-        "pkg:npm/@vitest/pretty-format@4.1.10",
+        "pkg:npm/@vitest/pretty-format@4.1.11",
         "pkg:npm/convert-source-map@2.0.0",
-        "pkg:npm/tinyrainbow@3.1.0"
+        "pkg:npm/tinyrainbow@3.2.0"
       ]
     },
     {
@@ -19299,7 +19167,7 @@
     {
       "ref": "pkg:npm/apache-arrow@21.2.0",
       "dependsOn": [
-        "pkg:npm/@types/node@20.14.10",
+        "pkg:npm/@types/node@25.9.5",
         "pkg:npm/flatbuffers@25.9.23",
         "pkg:npm/json-with-bigint@3.5.10",
         "pkg:npm/tslib@2.8.1"
@@ -19308,7 +19176,7 @@
     {
       "ref": "pkg:npm/@types/node@25.9.5",
       "dependsOn": [
-        "pkg:npm/undici-types@8.3.0"
+        "pkg:npm/undici-types@7.24.6"
       ]
     },
     {
@@ -19422,22 +19290,16 @@
       ]
     },
     {
-      "ref": "pkg:npm/brace-expansion@1.1.18",
+      "ref": "pkg:npm/brace-expansion@1.1.21",
       "dependsOn": [
-        "pkg:npm/balanced-match@4.0.4",
+        "pkg:npm/balanced-match@1.0.2",
         "pkg:npm/concat-map@0.0.1"
-      ]
-    },
-    {
-      "ref": "pkg:npm/braces@3.0.3",
-      "dependsOn": [
-        "pkg:npm/fill-range@7.1.1"
       ]
     },
     {
       "ref": "pkg:npm/buffer-image-size@0.6.4",
       "dependsOn": [
-        "pkg:npm/@types/node@20.14.10"
+        "pkg:npm/@types/node@26.1.1"
       ]
     },
     {
@@ -19690,25 +19552,25 @@
         "pkg:npm/doctrine@3.0.0",
         "pkg:npm/escape-string-regexp@4.0.0",
         "pkg:npm/eslint-scope@7.2.2",
-        "pkg:npm/eslint-visitor-keys@5.0.1",
+        "pkg:npm/eslint-visitor-keys@3.4.3",
         "pkg:npm/espree@9.6.1",
         "pkg:npm/esquery@1.7.0",
         "pkg:npm/esutils@2.0.3",
         "pkg:npm/fast-deep-equal@3.1.3",
         "pkg:npm/file-entry-cache@6.0.1",
         "pkg:npm/find-up@5.0.0",
-        "pkg:npm/glob-parent@5.1.2",
+        "pkg:npm/glob-parent@6.0.2",
         "pkg:npm/globals@13.24.0",
         "pkg:npm/graphemer@1.4.0",
-        "pkg:npm/ignore@7.0.6",
+        "pkg:npm/ignore@5.3.2",
         "pkg:npm/imurmurhash@0.1.4",
         "pkg:npm/is-glob@4.0.3",
         "pkg:npm/is-path-inside@3.0.3",
-        "pkg:npm/js-yaml@4.3.1",
+        "pkg:npm/js-yaml@4.3.2",
         "pkg:npm/json-stable-stringify-without-jsonify@1.0.1",
         "pkg:npm/levn@0.4.1",
         "pkg:npm/lodash.merge@4.6.2",
-        "pkg:npm/minimatch@10.2.5",
+        "pkg:npm/minimatch@3.1.5",
         "pkg:npm/natural-compare@1.4.0",
         "pkg:npm/optionator@0.9.4",
         "pkg:npm/strip-ansi@6.0.1",
@@ -19716,9 +19578,24 @@
       ]
     },
     {
+      "ref": "pkg:npm/eslint-config-next@15.5.27",
+      "dependsOn": [
+        "pkg:npm/@next/eslint-plugin-next@15.5.27-oday.1",
+        "pkg:npm/@rushstack/eslint-patch@1.16.1",
+        "pkg:npm/@typescript-eslint/eslint-plugin@8.65.0",
+        "pkg:npm/@typescript-eslint/parser@8.65.0",
+        "pkg:npm/eslint-import-resolver-node@0.3.10",
+        "pkg:npm/eslint-import-resolver-typescript@3.10.1",
+        "pkg:npm/eslint-plugin-import@2.32.0",
+        "pkg:npm/eslint-plugin-jsx-a11y@6.10.2",
+        "pkg:npm/eslint-plugin-react-hooks@5.2.0",
+        "pkg:npm/eslint-plugin-react@7.37.5"
+      ]
+    },
+    {
       "ref": "pkg:npm/eslint-import-resolver-node@0.3.10",
       "dependsOn": [
-        "pkg:npm/debug@4.4.3",
+        "pkg:npm/debug@3.2.7",
         "pkg:npm/is-core-module@2.16.2",
         "pkg:npm/resolve@2.0.0-next.7"
       ]
@@ -19744,7 +19621,7 @@
     {
       "ref": "pkg:npm/eslint-module-utils@2.14.0",
       "dependsOn": [
-        "pkg:npm/debug@4.4.3"
+        "pkg:npm/debug@3.2.7"
       ]
     },
     {
@@ -19755,14 +19632,14 @@
         "pkg:npm/array.prototype.findlastindex@1.2.6",
         "pkg:npm/array.prototype.flat@1.3.3",
         "pkg:npm/array.prototype.flatmap@1.3.3",
-        "pkg:npm/debug@4.4.3",
-        "pkg:npm/doctrine@3.0.0",
+        "pkg:npm/debug@3.2.7",
+        "pkg:npm/doctrine@2.1.0",
         "pkg:npm/eslint-import-resolver-node@0.3.10",
         "pkg:npm/eslint-module-utils@2.14.0",
         "pkg:npm/hasown@2.0.4",
         "pkg:npm/is-core-module@2.16.2",
         "pkg:npm/is-glob@4.0.3",
-        "pkg:npm/minimatch@10.2.5",
+        "pkg:npm/minimatch@3.1.5",
         "pkg:npm/object.fromentries@2.0.8",
         "pkg:npm/object.groupby@1.0.3",
         "pkg:npm/object.values@1.2.1",
@@ -19780,7 +19657,7 @@
     {
       "ref": "pkg:npm/eslint-plugin-jsx-a11y@6.10.2",
       "dependsOn": [
-        "pkg:npm/aria-query@5.3.0",
+        "pkg:npm/aria-query@5.3.2",
         "pkg:npm/array-includes@3.1.9",
         "pkg:npm/array.prototype.flatmap@1.3.3",
         "pkg:npm/ast-types-flow@0.0.8",
@@ -19791,7 +19668,7 @@
         "pkg:npm/hasown@2.0.4",
         "pkg:npm/jsx-ast-utils@3.3.5",
         "pkg:npm/language-tags@1.0.9",
-        "pkg:npm/minimatch@10.2.5",
+        "pkg:npm/minimatch@3.1.5",
         "pkg:npm/object.fromentries@2.0.8",
         "pkg:npm/safe-regex-test@1.1.0",
         "pkg:npm/string.prototype.includes@2.0.1"
@@ -19804,12 +19681,12 @@
         "pkg:npm/array.prototype.findlast@1.2.5",
         "pkg:npm/array.prototype.flatmap@1.3.3",
         "pkg:npm/array.prototype.tosorted@1.1.4",
-        "pkg:npm/doctrine@3.0.0",
+        "pkg:npm/doctrine@2.1.0",
         "pkg:npm/es-iterator-helpers@1.4.0",
         "pkg:npm/estraverse@5.3.0",
         "pkg:npm/hasown@2.0.4",
         "pkg:npm/jsx-ast-utils@3.3.5",
-        "pkg:npm/minimatch@10.2.5",
+        "pkg:npm/minimatch@3.1.5",
         "pkg:npm/object.entries@1.1.9",
         "pkg:npm/object.fromentries@2.0.8",
         "pkg:npm/object.values@1.2.1",
@@ -19832,7 +19709,7 @@
       "dependsOn": [
         "pkg:npm/acorn-jsx@5.3.2",
         "pkg:npm/acorn@8.17.0",
-        "pkg:npm/eslint-visitor-keys@5.0.1"
+        "pkg:npm/eslint-visitor-keys@3.4.3"
       ]
     },
     {
@@ -19854,22 +19731,6 @@
       ]
     },
     {
-      "ref": "pkg:npm/fast-glob@3.3.1",
-      "dependsOn": [
-        "pkg:npm/@nodelib/fs.stat@2.0.5",
-        "pkg:npm/@nodelib/fs.walk@1.2.8",
-        "pkg:npm/glob-parent@5.1.2",
-        "pkg:npm/merge2@1.4.1",
-        "pkg:npm/micromatch@4.0.8"
-      ]
-    },
-    {
-      "ref": "pkg:npm/glob-parent@5.1.2",
-      "dependsOn": [
-        "pkg:npm/is-glob@4.0.3"
-      ]
-    },
-    {
       "ref": "pkg:npm/fastq@1.20.1",
       "dependsOn": [
         "pkg:npm/reusify@1.1.0"
@@ -19879,12 +19740,6 @@
       "ref": "pkg:npm/file-entry-cache@6.0.1",
       "dependsOn": [
         "pkg:npm/flat-cache@3.2.0"
-      ]
-    },
-    {
-      "ref": "pkg:npm/fill-range@7.1.1",
-      "dependsOn": [
-        "pkg:npm/to-regex-range@5.0.1"
       ]
     },
     {
@@ -19964,7 +19819,7 @@
         "pkg:npm/fs.realpath@1.0.0",
         "pkg:npm/inflight@1.0.6",
         "pkg:npm/inherits@2.0.4",
-        "pkg:npm/minimatch@10.2.5",
+        "pkg:npm/minimatch@3.1.5",
         "pkg:npm/once@1.4.0",
         "pkg:npm/path-is-absolute@1.0.1"
       ]
@@ -19991,7 +19846,7 @@
     {
       "ref": "pkg:npm/happy-dom@20.11.1",
       "dependsOn": [
-        "pkg:npm/@types/node@20.14.10",
+        "pkg:npm/@types/node@26.1.1",
         "pkg:npm/@types/whatwg-mimetype@3.0.2",
         "pkg:npm/@types/ws@8.18.1",
         "pkg:npm/buffer-image-size@0.6.4",
@@ -20080,7 +19935,7 @@
     {
       "ref": "pkg:npm/is-bun-module@2.0.0",
       "dependsOn": [
-        "pkg:npm/semver@6.3.1"
+        "pkg:npm/semver@7.8.5"
       ]
     },
     {
@@ -20200,7 +20055,7 @@
       ]
     },
     {
-      "ref": "pkg:npm/js-yaml@4.3.1",
+      "ref": "pkg:npm/js-yaml@4.3.2",
       "dependsOn": [
         "pkg:npm/argparse@2.0.1"
       ]
@@ -20260,20 +20115,23 @@
     {
       "ref": "pkg:npm/magic-string@0.30.21",
       "dependsOn": [
-        "pkg:npm/@jridgewell/sourcemap-codec@1.5.5"
-      ]
-    },
-    {
-      "ref": "pkg:npm/micromatch@4.0.8",
-      "dependsOn": [
-        "pkg:npm/braces@3.0.3",
-        "pkg:npm/picomatch@2.3.2"
+        "pkg:npm/@jridgewell/sourcemap-codec@1.6.0"
       ]
     },
     {
       "ref": "pkg:npm/minimatch@3.1.5",
       "dependsOn": [
-        "pkg:npm/brace-expansion@5.0.9"
+        "pkg:npm/brace-expansion@1.1.21"
+      ]
+    },
+    {
+      "ref": "pkg:npm/next@15.5.27",
+      "dependsOn": [
+        "pkg:npm/@next/env@15.5.27",
+        "pkg:npm/@swc/helpers@0.5.15",
+        "pkg:npm/caniuse-lite@1.0.30001806",
+        "pkg:npm/postcss@8.5.28",
+        "pkg:npm/styled-jsx@5.1.6"
       ]
     },
     {
@@ -20425,8 +20283,8 @@
       "ref": "pkg:npm/pretty-format@27.5.1",
       "dependsOn": [
         "pkg:npm/ansi-regex@5.0.1",
-        "pkg:npm/ansi-styles@4.3.0",
-        "pkg:npm/react-is@16.13.1"
+        "pkg:npm/ansi-styles@5.2.0",
+        "pkg:npm/react-is@17.0.2"
       ]
     },
     {
@@ -20577,6 +20435,14 @@
       ]
     },
     {
+      "ref": "pkg:npm/sharp@0.35.5",
+      "dependsOn": [
+        "pkg:npm/@img/colour@1.1.0",
+        "pkg:npm/detect-libc@2.1.2",
+        "pkg:npm/semver@7.8.5"
+      ]
+    },
+    {
       "ref": "pkg:npm/shebang-command@2.0.0",
       "dependsOn": [
         "pkg:npm/shebang-regex@3.0.0"
@@ -20716,13 +20582,7 @@
       "ref": "pkg:npm/tinyglobby@0.2.17",
       "dependsOn": [
         "pkg:npm/fdir@6.5.0",
-        "pkg:npm/picomatch@2.3.2"
-      ]
-    },
-    {
-      "ref": "pkg:npm/to-regex-range@5.0.1",
-      "dependsOn": [
-        "pkg:npm/is-number@7.0.0"
+        "pkg:npm/picomatch@4.0.5"
       ]
     },
     {
@@ -20806,33 +20666,33 @@
       "ref": "pkg:npm/vite@8.1.5",
       "dependsOn": [
         "pkg:npm/lightningcss@1.33.0",
-        "pkg:npm/picomatch@2.3.2",
+        "pkg:npm/picomatch@4.0.5",
         "pkg:npm/postcss@8.5.28",
         "pkg:npm/rolldown@1.1.5",
         "pkg:npm/tinyglobby@0.2.17"
       ]
     },
     {
-      "ref": "pkg:npm/vitest@4.1.10",
+      "ref": "pkg:npm/vitest@4.1.11",
       "dependsOn": [
-        "pkg:npm/@vitest/expect@4.1.10",
-        "pkg:npm/@vitest/mocker@4.1.10",
-        "pkg:npm/@vitest/pretty-format@4.1.10",
-        "pkg:npm/@vitest/runner@4.1.10",
-        "pkg:npm/@vitest/snapshot@4.1.10",
-        "pkg:npm/@vitest/spy@4.1.10",
-        "pkg:npm/@vitest/utils@4.1.10",
+        "pkg:npm/@vitest/expect@4.1.11",
+        "pkg:npm/@vitest/mocker@4.1.11",
+        "pkg:npm/@vitest/pretty-format@4.1.11",
+        "pkg:npm/@vitest/runner@4.1.11",
+        "pkg:npm/@vitest/snapshot@4.1.11",
+        "pkg:npm/@vitest/spy@4.1.11",
+        "pkg:npm/@vitest/utils@4.1.11",
         "pkg:npm/es-module-lexer@2.3.1",
         "pkg:npm/expect-type@1.4.0",
         "pkg:npm/magic-string@0.30.21",
         "pkg:npm/obug@2.1.4",
         "pkg:npm/pathe@2.0.3",
-        "pkg:npm/picomatch@2.3.2",
+        "pkg:npm/picomatch@4.0.5",
         "pkg:npm/std-env@4.2.0",
         "pkg:npm/tinybench@2.9.0",
         "pkg:npm/tinyexec@1.2.4",
         "pkg:npm/tinyglobby@0.2.17",
-        "pkg:npm/tinyrainbow@3.1.0",
+        "pkg:npm/tinyrainbow@3.2.0",
         "pkg:npm/vite@8.1.5",
         "pkg:npm/why-is-node-running@2.3.0"
       ]
@@ -20897,6 +20757,29 @@
       "dependsOn": [
         "pkg:npm/siginfo@2.0.0",
         "pkg:npm/stackback@0.0.2"
+      ]
+    },
+    {
+      "ref": "pkg:npm/@next/eslint-plugin-next@15.5.27-oday.1",
+      "dependsOn": [
+        "pkg:npm/@nodelib/fs.stat@2.0.5",
+        "pkg:npm/@nodelib/fs.walk@1.2.8",
+        "pkg:npm/brace-expansion@2.1.7",
+        "pkg:npm/glob-parent@5.1.2",
+        "pkg:npm/merge2@1.4.1",
+        "pkg:npm/picomatch@2.3.2"
+      ]
+    },
+    {
+      "ref": "pkg:npm/brace-expansion@2.1.7",
+      "dependsOn": [
+        "pkg:npm/balanced-match@1.0.2"
+      ]
+    },
+    {
+      "ref": "pkg:npm/glob-parent@5.1.2",
+      "dependsOn": [
+        "pkg:npm/is-glob@4.0.3"
       ]
     },
     {
@@ -21051,16 +20934,13 @@
       ]
     },
     {
-      "ref": "pkg:pypi/cvxpy@1.9.2",
+      "ref": "pkg:pypi/cvxpy@1.7.5",
       "dependsOn": [
         "pkg:pypi/clarabel@0.11.1",
-        "pkg:pypi/highspy@1.15.1",
         "pkg:pypi/numpy@2.5.1",
         "pkg:pypi/osqp@1.1.3",
-        "pkg:pypi/qdldl@0.1.9.post1",
         "pkg:pypi/scipy@1.18.0",
-        "pkg:pypi/scs@3.2.11",
-        "pkg:pypi/sparsediffpy@0.3.0"
+        "pkg:pypi/scs@3.2.11"
       ]
     },
     {
@@ -21127,7 +21007,7 @@
       "dependsOn": [
         "pkg:pypi/click@8.4.2",
         "pkg:pypi/fsspec@2026.6.0",
-        "pkg:pypi/gitpython@3.1.61",
+        "pkg:pypi/gitpython@3.2.1",
         "pkg:pypi/giturlparse@0.15.0",
         "pkg:pypi/humanize@4.16.0",
         "pkg:pypi/jsonpath-ng@1.8.0",
@@ -21216,7 +21096,7 @@
       ]
     },
     {
-      "ref": "pkg:pypi/gitpython@3.1.61",
+      "ref": "pkg:pypi/gitpython@3.2.1",
       "dependsOn": [
         "pkg:pypi/gitdb@4.0.12"
       ]
@@ -21271,7 +21151,7 @@
     {
       "ref": "pkg:pypi/graphene@3.4.3",
       "dependsOn": [
-        "pkg:pypi/graphql-core@3.2.11",
+        "pkg:pypi/graphql-core@3.2.12",
         "pkg:pypi/graphql-relay@3.2.0",
         "pkg:pypi/python-dateutil@2.9.0.post0",
         "pkg:pypi/typing-extensions@4.15.0"
@@ -21280,7 +21160,7 @@
     {
       "ref": "pkg:pypi/graphql-relay@3.2.0",
       "dependsOn": [
-        "pkg:pypi/graphql-core@3.2.11"
+        "pkg:pypi/graphql-core@3.2.12"
       ]
     },
     {
@@ -21326,7 +21206,7 @@
       ]
     },
     {
-      "ref": "pkg:pypi/highspy@1.15.1",
+      "ref": "pkg:pypi/highspy@1.12.0",
       "dependsOn": [
         "pkg:pypi/numpy@2.5.1"
       ]
@@ -21475,11 +21355,11 @@
         "pkg:pypi/cloudpickle@3.1.2",
         "pkg:pypi/databricks-sdk@0.122.0",
         "pkg:pypi/fastapi@0.138.1",
-        "pkg:pypi/gitpython@3.1.61",
+        "pkg:pypi/gitpython@3.2.1",
         "pkg:pypi/importlib-metadata@9.0.0",
-        "pkg:pypi/opentelemetry-api@1.44.0",
+        "pkg:pypi/opentelemetry-api@1.45.1",
         "pkg:pypi/opentelemetry-proto@1.44.0",
-        "pkg:pypi/opentelemetry-sdk@1.44.0",
+        "pkg:pypi/opentelemetry-sdk@1.45.1",
         "pkg:pypi/packaging@26.2",
         "pkg:pypi/protobuf@6.33.6",
         "pkg:pypi/pydantic@2.13.4",
@@ -21497,9 +21377,9 @@
       "dependsOn": [
         "pkg:pypi/cachetools@7.1.6",
         "pkg:pypi/databricks-sdk@0.122.0",
-        "pkg:pypi/opentelemetry-api@1.44.0",
+        "pkg:pypi/opentelemetry-api@1.45.1",
         "pkg:pypi/opentelemetry-proto@1.44.0",
-        "pkg:pypi/opentelemetry-sdk@1.44.0",
+        "pkg:pypi/opentelemetry-sdk@1.45.1",
         "pkg:pypi/packaging@26.2",
         "pkg:pypi/protobuf@6.33.6",
         "pkg:pypi/pydantic@2.13.4"
@@ -21532,7 +21412,7 @@
         "pkg:pypi/argon2-cffi@25.1.0",
         "pkg:pypi/catboost@1.2.10",
         "pkg:pypi/cryptography@50.0.1",
-        "pkg:pypi/cvxpy@1.9.2",
+        "pkg:pypi/cvxpy@1.7.5",
         "pkg:pypi/dagster@1.13.15",
         "pkg:pypi/dlt@1.29.1",
         "pkg:pypi/duckdb@1.5.4",
@@ -21541,6 +21421,7 @@
         "pkg:pypi/google-cloud-storage@3.13.0",
         "pkg:pypi/great-expectations@1.19.0",
         "pkg:pypi/h3@4.5.0",
+        "pkg:pypi/highspy@1.12.0",
         "pkg:pypi/httpx@0.28.1",
         "pkg:pypi/lifelines@0.30.3",
         "pkg:pypi/lightgbm@4.7.0",
@@ -21556,6 +21437,7 @@
         "pkg:pypi/pynacl@1.6.2",
         "pkg:pypi/pyomo@6.10.1",
         "pkg:pypi/pyyaml@6.0.3",
+        "pkg:pypi/reportlab@5.0.1",
         "pkg:pypi/scikit-learn@1.9.0",
         "pkg:pypi/scipy@1.18.0",
         "pkg:pypi/sqlalchemy@2.0.51",
@@ -21587,7 +21469,7 @@
       ]
     },
     {
-      "ref": "pkg:pypi/opentelemetry-api@1.44.0",
+      "ref": "pkg:pypi/opentelemetry-api@1.45.1",
       "dependsOn": [
         "pkg:pypi/typing-extensions@4.15.0"
       ]
@@ -21599,17 +21481,17 @@
       ]
     },
     {
-      "ref": "pkg:pypi/opentelemetry-sdk@1.44.0",
+      "ref": "pkg:pypi/opentelemetry-sdk@1.45.1",
       "dependsOn": [
-        "pkg:pypi/opentelemetry-api@1.44.0",
-        "pkg:pypi/opentelemetry-semantic-conventions@0.65b0",
+        "pkg:pypi/opentelemetry-api@1.45.1",
+        "pkg:pypi/opentelemetry-semantic-conventions@0.66b1",
         "pkg:pypi/typing-extensions@4.15.0"
       ]
     },
     {
-      "ref": "pkg:pypi/opentelemetry-semantic-conventions@0.65b0",
+      "ref": "pkg:pypi/opentelemetry-semantic-conventions@0.66b1",
       "dependsOn": [
-        "pkg:pypi/opentelemetry-api@1.44.0",
+        "pkg:pypi/opentelemetry-api@1.45.1",
         "pkg:pypi/typing-extensions@4.15.0"
       ]
     },
@@ -21780,18 +21662,18 @@
       ]
     },
     {
-      "ref": "pkg:pypi/qdldl@0.1.9.post1",
-      "dependsOn": [
-        "pkg:pypi/numpy@2.5.1",
-        "pkg:pypi/scipy@1.18.0"
-      ]
-    },
-    {
       "ref": "pkg:pypi/referencing@0.37.0",
       "dependsOn": [
         "pkg:pypi/attrs@26.1.0",
         "pkg:pypi/rpds-py@2026.6.3",
         "pkg:pypi/typing-extensions@4.15.0"
+      ]
+    },
+    {
+      "ref": "pkg:pypi/reportlab@5.0.1",
+      "dependsOn": [
+        "pkg:pypi/charset-normalizer@3.4.9",
+        "pkg:pypi/pillow@13.0.0"
       ]
     },
     {
@@ -21859,12 +21741,6 @@
         "pkg:pypi/prettytable@3.18.0",
         "pkg:pypi/scikit-learn@1.9.0",
         "pkg:pypi/scipy@1.18.0"
-      ]
-    },
-    {
-      "ref": "pkg:pypi/sparsediffpy@0.3.0",
-      "dependsOn": [
-        "pkg:pypi/numpy@2.5.1"
       ]
     },
     {

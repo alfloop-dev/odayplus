@@ -17,14 +17,21 @@ from shared.infrastructure.persistence.job_receipts import (
     JobReceiptIncompleteError,
     TenantScopedJobReceiptStore,
 )
+from shared.infrastructure.persistence.postgresql import PostgresEngine
 from shared.jobs.queue import InMemoryJobQueue
 
 try:
     from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-    from pydantic import BaseModel, Field
+    from pydantic import BaseModel, Field, StrictInt
 except ModuleNotFoundError:  # pragma: no cover - optional API dependency
     APIRouter = None  # type: ignore[assignment]
 else:
+    from modules.opsboard.application.network_reviews import (
+        NetworkReviewConflict,
+        NetworkReviewNotFound,
+        NetworkReviewRoleError,
+        NetworkReviewRuntimeUnavailable,
+    )
     from modules.sitescore.application.reporting import SiteScoreReportService
     from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
     from modules.sitescore.runtime import (
@@ -46,17 +53,26 @@ else:
     class OpenDecisionPayload(BaseModel):
         report_id: str
         created_by: str = Field(min_length=1)
+        submission_summary: str | None = None
+        reviewer_group_id: str | None = None
+        expected_actor_subject_id: str | None = None
+        expected_tenant_id: str | None = None
 
     class DecisionPayload(BaseModel):
         action: str
         actor: str = Field(min_length=1)
         reason: str = ""
+        expected_version: StrictInt | None = None
+        expected_actor_subject_id: str | None = None
+        expected_tenant_id: str | None = None
 
     def create_sitescore_router(
         *,
         repository: InMemorySiteScoreRepository | None = None,
         workflow: SiteScoreDecisionWorkflow | None = None,
         sitescore_decision_repository_for_tenant: Any | None = None,
+        sitescore_repository_for_tenant: Any | None = None,
+        require_canonical_report_reads: bool = False,
         realization_hook: CandidateSiteRealizationHook | None = None,
         audit_log: InMemoryAuditLog | None = None,
         model_binding: ModelBinding | None = None,
@@ -65,6 +81,7 @@ else:
         job_queue: JobQueue | None = None,
         require_durable_jobs: bool | None = None,
         runtime_mode: str | None = None,
+        review_service_resolver: Any | None = None,
     ) -> APIRouter:
         from apps.api.app.routes._common import resolve_tenant_id, runtime_binding_guard
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
@@ -93,6 +110,10 @@ else:
             repository
             if production_runtime_required
             else repository or InMemorySiteScoreRepository()
+        )
+        canonical_report_reads = (
+            production_runtime_required or require_canonical_report_reads
+            or isinstance(getattr(site_repository, "engine", None), PostgresEngine)
         )
         # ODP-FLOW-002: the injected realization hook (durable-backed in E2E mode)
         # is the one exposed via /sitescore/realized, so a realized approval
@@ -127,6 +148,49 @@ else:
 
         require_runtime_binding = runtime_binding_guard(composition_error)
 
+        def require_retained_read_binding():
+            if canonical_report_reads and (
+                    site_repository is None or isinstance(site_repository, InMemorySiteScoreRepository)
+                    or not isinstance(getattr(site_repository, "engine", None), PostgresEngine)
+                    or sitescore_repository_for_tenant is None or review_service_resolver is None):
+                raise HTTPException(503, detail="CANONICAL_REPORT_READ_BINDING_REQUIRED")
+
+        def retained_report_repository(request: Request):
+            if not canonical_report_reads:
+                require_runtime_binding()
+                return site_repository
+            tid = resolve_tenant_id(request)
+            principal = request.state.operator_principal
+            if (principal is None or not principal.authenticated or not principal.subject_id
+                    or principal.tenant_id != tid):
+                raise HTTPException(403, detail="AUTHENTICATED_REPORT_SCOPE_REQUIRED")
+            require_retained_read_binding()
+            scoped = sitescore_repository_for_tenant(tid)
+            if scoped is None or getattr(scoped, "engine", None) is None or getattr(scoped, "tenant_id", None) != tid:
+                raise HTTPException(503, detail="CANONICAL_REPORT_READ_BINDING_REQUIRED")
+            request.state.operator_tenant_id = tid
+            try:
+                review_service_resolver(request).authorize_native_report_candidate(
+                    candidate_id=None, principal=principal, report_repository=scoped,
+                )
+            except (NetworkReviewConflict, NetworkReviewRuntimeUnavailable) as exc:
+                raise HTTPException(503, detail="CANONICAL_REPORT_READ_BINDING_REQUIRED") from exc
+            return scoped
+
+        def authorize_retained_candidate(request: Request, scoped: Any, candidate_id: str):
+            if canonical_report_reads:
+                review_service_resolver(request).authorize_native_report_candidate(
+                    candidate_id=candidate_id, principal=request.state.operator_principal,
+                    report_repository=scoped,
+                )
+
+        def require_retained_report_identity(report: Any, candidate_id: str | None = None):
+            if (report is None or any(not isinstance(getattr(report, key, None), str) or not getattr(report, key).strip()
+                    for key in ("candidate_site_id", "report_id", "sitescore_run_id", "model_version"))
+                    or type(getattr(report, "report_version", None)) is not int or report.report_version < 1
+                    or (candidate_id is not None and report.candidate_site_id != candidate_id)):
+                raise HTTPException(503, detail="CANONICAL_RETAINED_REPORT_IDENTITY_UNAVAILABLE")
+
         def workflow_for_request(request: Request) -> SiteScoreDecisionWorkflow:
             tid = resolve_tenant_id(request)
             if sitescore_decision_repository_for_tenant is not None:
@@ -137,6 +201,7 @@ else:
                         hooks=decision_workflow.hooks,
                         policy_version=decision_workflow.policy_version,
                         store=scoped_store,
+                        approval_store=decision_workflow._approval_store,
                     )
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -147,7 +212,7 @@ else:
         router = APIRouter(
             prefix="/sitescore",
             tags=["sitescore"],
-            dependencies=[Depends(require_runtime_binding)],
+
         )
 
         def receipt_store(request: Request) -> TenantScopedJobReceiptStore:
@@ -213,6 +278,9 @@ else:
             request: Request,
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
+            require_runtime_binding()
+            if production_runtime_required or production_model_required or canonical_report_reads:
+                raise HTTPException(status_code=503, detail={"code": "SITESCORE_EXECUTION_CONTEXT_REQUIRED", "message": "Use the candidate execution request endpoint with its exact committed report context"})
             effective_key = body.idempotency_key or idempotency_key
             active_tenant_id = tenant_id(request)
             active_receipts = receipt_store(request)
@@ -308,11 +376,28 @@ else:
         @router.get(
             "/reports",
             dependencies=[
+                Depends(require_retained_read_binding),
                 Depends(require_permission("sitescore", Action.VIEW, engine=authz_engine))
             ],
         )
-        def list_reports() -> dict[str, Any]:
-            reports = site_repository.list_latest()
+        def list_reports(request: Request) -> dict[str, Any]:
+            scoped = retained_report_repository(request)
+            reports = []
+            candidate_ids, report_ids = set(), set()
+            for report in scoped.list_latest():
+                if canonical_report_reads:
+                    require_retained_report_identity(report)
+                    if report.candidate_site_id in candidate_ids or report.report_id in report_ids:
+                        raise HTTPException(503, detail="CANONICAL_RETAINED_REPORT_HISTORY_CONFLICT")
+                    candidate_ids.add(report.candidate_site_id)
+                    report_ids.add(report.report_id)
+                try:
+                    authorize_retained_candidate(request, scoped, report.candidate_site_id)
+                except (NetworkReviewNotFound, NetworkReviewRoleError):
+                    continue
+                except (NetworkReviewConflict, NetworkReviewRuntimeUnavailable) as exc:
+                    raise HTTPException(503, detail="CANONICAL_REPORT_READ_BINDING_REQUIRED") from exc
+                reports.append(report)
             return {
                 "items": [report.to_summary_dict() for report in reports],
                 "count": len(reports),
@@ -321,21 +406,43 @@ else:
         @router.get(
             "/reports/{candidate_site_id}",
             dependencies=[
+                Depends(require_retained_read_binding),
                 Depends(require_permission("sitescore", Action.VIEW, engine=authz_engine))
             ],
         )
-        def candidate_reports(candidate_site_id: str) -> dict[str, Any]:
-            latest = site_repository.latest(candidate_site_id)
+        def candidate_reports(candidate_site_id: str, request: Request) -> dict[str, Any]:
+            scoped = retained_report_repository(request)
+            try:
+                authorize_retained_candidate(request, scoped, candidate_site_id)
+            except (NetworkReviewNotFound, NetworkReviewRoleError) as exc:
+                raise decision_error(exc) from exc
+            except (NetworkReviewConflict, NetworkReviewRuntimeUnavailable) as exc:
+                raise HTTPException(503, detail="CANONICAL_REPORT_READ_BINDING_REQUIRED") from exc
+            latest = scoped.latest(candidate_site_id)
             if latest is None:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND, detail="report not found"
                 )
-            history = site_repository.history(candidate_site_id)
+            history = scoped.history(candidate_site_id)
+            if canonical_report_reads:
+                require_retained_report_identity(latest, candidate_site_id)
+                for report in history:
+                    require_retained_report_identity(report, candidate_site_id)
+                if (not history or len({r.report_id for r in history}) != len(history)
+                        or len({r.report_version for r in history}) != len(history)
+                        or sum(r == latest for r in history) != 1
+                        or max(r.report_version for r in history) != latest.report_version):
+                    raise HTTPException(503, detail="CANONICAL_RETAINED_REPORT_HISTORY_CONFLICT")
             return {
                 "latest": latest.to_dict(),
                 "versions": [report.to_dict() for report in history],
                 "version_count": len(history),
             }
+
+        def decision_error(exc: Exception) -> HTTPException:
+            return HTTPException(404 if isinstance(exc, NetworkReviewNotFound) else
+                403 if isinstance(exc, NetworkReviewRoleError) else
+                503 if isinstance(exc, NetworkReviewRuntimeUnavailable) else 409, detail=str(exc))
 
         @router.post(
             "/decisions",
@@ -344,25 +451,35 @@ else:
                 Depends(require_permission("sitescore", Action.EXECUTE, engine=authz_engine))
             ],
         )
-        def open_decision(body: OpenDecisionPayload, request: Request) -> dict[str, Any]:
+        def open_decision(body: OpenDecisionPayload, request: Request,
+                          idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+                          if_actor_match: str | None = Header(default=None, alias="If-Actor-Match")) -> dict[str, Any]:
+            principal = request.state.operator_principal
+            if review_service_resolver is not None:
+                request.state.operator_tenant_id = resolve_tenant_id(request)
+                active = review_service_resolver(request)
+                # The scoped report lookup belongs to this tenant's owner; the
+                # unpartitioned captured site_repository is never consulted.
+                try:
+                    if (if_actor_match != principal.subject_id or body.expected_actor_subject_id != principal.subject_id
+                            or body.expected_tenant_id != principal.tenant_id):
+                        raise NetworkReviewConflict("ACTOR_CONTEXT_CONFLICT")
+                    receipt = active.submit_native_report(report_id=body.report_id, principal=principal,
+                        request_payload=body.model_dump(), idempotency_key=idempotency_key,
+                        correlation_id=request.state.correlation_id)
+                    return {**receipt['review'], 'submission_receipt': receipt}
+                except (NetworkReviewConflict, NetworkReviewNotFound, NetworkReviewRoleError, NetworkReviewRuntimeUnavailable) as exc:
+                    raise decision_error(exc) from exc
+            if sitescore_decision_repository_for_tenant is not None:
+                raise HTTPException(503, detail="CANONICAL_REVIEW_OWNER_REQUIRED")
             report = site_repository.get_report(body.report_id)
             if report is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND, detail="report not found"
-                )
+                raise HTTPException(404, detail="report not found")
             active_wf = workflow_for_request(request)
-            tid = resolve_tenant_id(request)
-            decision = active_wf.open_decision(
-                report,
-                created_by=body.created_by,
-                correlation_id=request.state.correlation_id,
-                tenant_id=tid,
-            )
-            decision = active_wf.submit_for_review(
-                decision.decision_id,
-                submitted_by=body.created_by,
-                correlation_id=request.state.correlation_id,
-            )
+            decision = active_wf.open_decision(report, created_by=principal.subject_id,
+                correlation_id=request.state.correlation_id, tenant_id=resolve_tenant_id(request), verified_creator=True)
+            decision = active_wf.submit_for_review(decision.decision_id, submitted_by=principal.subject_id,
+                correlation_id=request.state.correlation_id, verified_submitter=True)
             return decision.to_dict()
 
         @router.post(
@@ -371,19 +488,46 @@ else:
                 Depends(require_permission("sitescore", Action.APPROVE, engine=authz_engine))
             ],
         )
-        def decide(decision_id: str, body: DecisionPayload, request: Request) -> dict[str, Any]:
+        def decide(decision_id: str, body: DecisionPayload, request: Request,
+                   if_actor_match: str | None = Header(default=None, alias="If-Actor-Match")) -> dict[str, Any]:
             try:
                 action = DecisionAction(body.action)
             except ValueError as exc:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                 ) from exc
+            principal = request.state.operator_principal
+            if review_service_resolver is not None:
+                request.state.operator_tenant_id = resolve_tenant_id(request)
+                if (if_actor_match != principal.subject_id or body.expected_actor_subject_id != principal.subject_id
+                        or body.expected_tenant_id != principal.tenant_id):
+                    raise HTTPException(409, detail="ACTOR_CONTEXT_CONFLICT")
+                try:
+                    outcome = review_service_resolver(request).decide_native_review(review_id=decision_id,
+                        action=action.value, reason=body.reason, principal=principal, expected_version=body.expected_version,
+                        correlation_id=request.state.correlation_id)
+                    return {**outcome, "correlation_id": request.state.correlation_id}
+                except (NetworkReviewConflict, NetworkReviewNotFound, NetworkReviewRoleError, NetworkReviewRuntimeUnavailable) as exc:
+                    if isinstance(exc, NetworkReviewRoleError):
+                        from apps.api.oday_api.security.dependencies import (
+                            record_review_owner_denial,
+                        )
+                        record_review_owner_denial(request, audit_log=active_audit_log, resource_id=decision_id, reason=str(exc), module='sitescore')
+                    raise decision_error(exc) from exc
+            if sitescore_decision_repository_for_tenant is not None:
+                raise HTTPException(503, detail="CANONICAL_REVIEW_OWNER_REQUIRED")
             active_wf = workflow_for_request(request)
+            current = active_wf.get(decision_id)
+            if current and (
+                getattr(current, "submission_actor_verified", False) and current.submitted_by == principal.subject_id
+                or getattr(current, "created_by_verified", False) and current.created_by == principal.subject_id
+            ):
+                raise HTTPException(403, detail="proposer cannot approve own submission")
             try:
                 outcome = active_wf.decide(
                     decision_id,
                     action=action,
-                    actor=body.actor,
+                    actor=principal.subject_id,
                     reason=body.reason,
                     correlation_id=request.state.correlation_id,
                 )
@@ -402,6 +546,15 @@ else:
             ],
         )
         def get_decision(decision_id: str, request: Request) -> dict[str, Any]:
+            if review_service_resolver is not None:
+                request.state.operator_tenant_id = resolve_tenant_id(request)
+                try:
+                    return review_service_resolver(request).read_native_review(review_id=decision_id,
+                        principal=request.state.operator_principal)
+                except (NetworkReviewConflict, NetworkReviewNotFound, NetworkReviewRoleError, NetworkReviewRuntimeUnavailable) as exc:
+                    raise decision_error(exc) from exc
+            if sitescore_decision_repository_for_tenant is not None:
+                raise HTTPException(503, detail="CANONICAL_REVIEW_OWNER_REQUIRED")
             active_wf = workflow_for_request(request)
             decision = active_wf.get(decision_id)
             if decision is None:
@@ -417,6 +570,7 @@ else:
             ],
         )
         def list_realized() -> dict[str, Any]:
+            require_runtime_binding()
             realized = active_realization_hook.list_realized()
             return {
                 "items": [site.to_dict() for site in realized],
@@ -425,6 +579,7 @@ else:
 
         @router.get("/prediction-runs/{prediction_run_id}")
         def get_prediction_run(prediction_run_id: str) -> dict[str, Any]:
+            require_runtime_binding()
             run = site_repository.get_prediction_run(prediction_run_id)
             if run is None:
                 raise HTTPException(
@@ -460,6 +615,7 @@ else:
 
         @router.get("/runs/{sitescore_run_id}")
         def get_sitescore_run(sitescore_run_id: str) -> dict[str, Any]:
+            require_runtime_binding()
             run = site_repository.get_sitescore_run(sitescore_run_id)
             if run is None:
                 raise HTTPException(

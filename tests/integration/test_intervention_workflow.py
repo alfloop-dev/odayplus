@@ -2918,7 +2918,8 @@ def test_sqlite_adjust_revalidation_stale_window_rejected_against_competitor_sto
     client_b = TestClient(app_b, headers=INTERVENTION_HEADERS, raise_server_exceptions=False)
 
     try:
-        with ThreadPoolExecutor(max_workers=1) as pool:
+        # Start both ASGI portals before the controlled read/save interleaving.
+        with client_a, client_b, ThreadPoolExecutor(max_workers=1) as pool:
             future_a = pool.submit(
                 client_a.post,
                 f"/interventions/{case_id}/adjust",
@@ -3002,7 +3003,8 @@ def test_sqlite_adjust_revalidation_stale_window_rejected_against_competitor_ass
     client_b = TestClient(app_b, headers=INTERVENTION_HEADERS, raise_server_exceptions=False)
 
     try:
-        with ThreadPoolExecutor(max_workers=1) as pool:
+        # Start both ASGI portals before the controlled read/save interleaving.
+        with client_a, client_b, ThreadPoolExecutor(max_workers=1) as pool:
             future_a = pool.submit(
                 client_a.post,
                 f"/interventions/{case_id}/adjust",

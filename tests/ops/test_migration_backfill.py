@@ -45,6 +45,11 @@ def test_migration_plan_indexes_revision_hashes_and_rollback() -> None:
         "0020",
         "0021",
         "0022",
+        "0023",
+        "0024",
+        "0027",
+        "0028",
+        "0029",
     ]
     assert len(plan.manifest_sha256) == 64
     assert all(len(step.sha256) == 64 for step in plan.steps)
@@ -58,6 +63,58 @@ def test_migration_plan_indexes_revision_hashes_and_rollback() -> None:
         if asset.role == "sql"
     } == {"infra/db/migrations/000014_avm_deal_outcomes.sql"}
     assert len(deal_outcome_step.sha256) == 64
+
+
+def test_intake_policy_calendar_ddl_is_in_the_deployment_manifest() -> None:
+    from hashlib import sha256
+    from pathlib import Path
+
+    plan = build_migration_plan(environment="dev")
+    step = next(step for step in plan.steps if step.revision == "0023")
+    assert step.path.endswith("0023_intake_policy_calendar_kinds.py")
+    assets = [asset for asset in step.assets if asset.role == "sql"]
+    assert len(assets) == 1
+    assert assets[0].path == "infra/db/migrations/000029_intake_policy_calendar_kinds.sql"
+    assert assets[0].sha256 == sha256(Path(assets[0].path).read_bytes()).hexdigest()
+
+
+def test_intake_audit_retention_ddl_is_in_the_deployment_manifest() -> None:
+    from hashlib import sha256
+    from pathlib import Path
+
+    plan = build_migration_plan(environment="dev")
+    step = next(step for step in plan.steps if step.revision == "0024")
+    assert step.path.endswith("0024_intake_audit_retention_kind.py")
+    assets = [asset for asset in step.assets if asset.role == "sql"]
+    assert len(assets) == 1
+    assert assets[0].path == "infra/db/migrations/000030_intake_audit_retention_kind.sql"
+    assert assets[0].sha256 == sha256(Path(assets[0].path).read_bytes()).hexdigest()
+
+
+def test_native_auth_wait_ddl_is_in_the_deployment_manifest() -> None:
+    from hashlib import sha256
+    from pathlib import Path
+
+    plan = build_migration_plan(environment="dev")
+    step = next(step for step in plan.steps if step.revision == "0027")
+    assert step.path.endswith("0027_native_intake_auth_wait.py")
+    assets = [asset for asset in step.assets if asset.role == "sql"]
+    assert len(assets) == 1
+    assert assets[0].path == "infra/db/migrations/000034_native_intake_auth_wait.sql"
+    assert assets[0].sha256 == sha256(Path(assets[0].path).read_bytes()).hexdigest()
+
+
+def test_native_retrieval_quota_ddl_is_in_the_deployment_manifest() -> None:
+    from hashlib import sha256
+    from pathlib import Path
+
+    plan = build_migration_plan(environment="dev")
+    step = next(step for step in plan.steps if step.revision == "0028")
+    assert step.path.endswith("0028_native_intake_retrieval_quota.py")
+    assets = [asset for asset in step.assets if asset.role == "sql"]
+    assert len(assets) == 1
+    assert assets[0].path == "infra/db/migrations/000035_native_intake_retrieval_quota.sql"
+    assert assets[0].sha256 == sha256(Path(assets[0].path).read_bytes()).hexdigest()
 
 
 def test_forecastops_feedback_ddl_is_reachable_from_alembic_head() -> None:
@@ -340,6 +397,7 @@ def test_migration_runner_applies_full_assisted_intake_stack(
                 "002_consistency.sql",
                 "003_promotion_state.sql",
                 "004_tenant_rls_lineage.sql",
+                "005_decision_service_actor.sql",
             ),
         )
 
@@ -359,6 +417,7 @@ def test_migration_runner_applies_full_assisted_intake_stack(
         "002_consistency.sql",
         "003_promotion_state.sql",
         "004_tenant_rls_lineage.sql",
+        "005_decision_service_actor.sql",
     )
 
 
@@ -426,3 +485,28 @@ def test_cli_writes_backfill_plan_json(tmp_path) -> None:
     assert payload["environment"] == "dev"
     assert payload["idempotency_key"].startswith("backfill:")
     assert payload["target_view"] == "store_machine_timeseries_view"
+
+
+def test_native_matching_proposal_kind_is_reachable_with_companion_sql_hash() -> None:
+    from hashlib import sha256
+    from pathlib import Path
+
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    plan = build_migration_plan(environment="dev")
+    step = next(step for step in plan.steps if step.revision == "0029")
+    assert step.path == "infra/db/migrations/versions/0029_native_matching_proposal_authority_kind.py"
+    assets = [asset for asset in step.assets if asset.role == "sql"]
+    assert len(assets) == 1
+    assert assets[0].path == "infra/db/migrations/000036_native_matching_proposal_authority_kind.sql"
+    assert assets[0].sha256 == sha256(Path(assets[0].path).read_bytes()).hexdigest()
+    alembic_assets = [asset for asset in step.assets if asset.role == "alembic"]
+    assert len(alembic_assets) == 1
+    assert alembic_assets[0].path == step.path
+    assert alembic_assets[0].sha256 == sha256(Path(step.path).read_bytes()).hexdigest()
+
+    scripts = ScriptDirectory.from_config(Config("infra/db/migrations/alembic.ini"))
+    assert scripts.get_heads() == ["0029"]
+    assert scripts.get_revision("0029").down_revision == "0028"
+    assert [revision.revision for revision in scripts.iterate_revisions("head", "0028")] == ["0029"]

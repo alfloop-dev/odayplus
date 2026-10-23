@@ -1068,6 +1068,18 @@
         "title": "AssignmentRequest",
         "type": "object"
       },
+      "AssignmentState": {
+        "enum": [
+          "UNASSIGNED",
+          "ASSIGNED",
+          "CLAIMED",
+          "TRANSFERRED",
+          "ESCALATED",
+          "COMPLETED"
+        ],
+        "title": "AssignmentState",
+        "type": "string"
+      },
       "AssignmentStatus": {
         "enum": [
           "ASSIGNED",
@@ -1123,6 +1135,57 @@
           "handoff_note"
         ],
         "title": "AssignmentTransferRequest",
+        "type": "object"
+      },
+      "AssignmentTransferTarget": {
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "owner_role": {
+            "title": "Owner Role",
+            "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject_id",
+          "display_name",
+          "owner_role"
+        ],
+        "title": "AssignmentTransferTarget",
+        "type": "object"
+      },
+      "AssignmentTransferTargetPage": {
+        "properties": {
+          "assignment_id": {
+            "format": "uuid",
+            "title": "Assignment Id",
+            "type": "string"
+          },
+          "assignment_version": {
+            "title": "Assignment Version",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AssignmentTransferTarget"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "assignment_id",
+          "assignment_version",
+          "items"
+        ],
+        "title": "AssignmentTransferTargetPage",
         "type": "object"
       },
       "AttachmentUploadRequest": {
@@ -1432,6 +1495,22 @@
         "title": "BatchSiteContextPayload",
         "type": "object"
       },
+      "CancelCanonicalIntakeAuthorizationWaitRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "CancelCanonicalIntakeAuthorizationWaitRequest",
+        "type": "object"
+      },
       "CandidateDisposition": {
         "enum": [
           "KEEP_HISTORICAL",
@@ -1440,6 +1519,49 @@
         ],
         "title": "CandidateDisposition",
         "type": "string"
+      },
+      "CandidateDispositionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_site_id": {
+            "format": "uuid",
+            "title": "Candidate Site Id",
+            "type": "string"
+          },
+          "disposition": {
+            "enum": [
+              "KEEP_HISTORICAL",
+              "REQUIRE_REVIEW",
+              "REASSIGN"
+            ],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "expected_version": {
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "target_property_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Property Id"
+          }
+        },
+        "required": [
+          "candidate_site_id",
+          "expected_version",
+          "disposition"
+        ],
+        "title": "CandidateDispositionRequest",
+        "type": "object"
       },
       "CandidateReassignment": {
         "properties": {
@@ -1469,6 +1591,1468 @@
           "disposition"
         ],
         "title": "CandidateReassignment",
+        "type": "object"
+      },
+      "CanonicalIdentityJobReceipt": {
+        "properties": {
+          "attempt": {
+            "minimum": 0.0,
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "audit_event_id": {
+            "format": "uuid",
+            "title": "Audit Event Id",
+            "type": "string"
+          },
+          "cancellation_requested_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellation Requested At"
+          },
+          "checkpoint": {
+            "title": "Checkpoint",
+            "type": "string"
+          },
+          "correlation_id": {
+            "format": "uuid",
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "decision_id": {
+            "format": "uuid",
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "job_id": {
+            "format": "uuid",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "match_case_id": {
+            "format": "uuid",
+            "title": "Match Case Id",
+            "type": "string"
+          },
+          "max_attempts": {
+            "minimum": 1.0,
+            "title": "Max Attempts",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "QUEUED",
+              "RUNNING",
+              "SUCCEEDED",
+              "FAILED",
+              "RETRYING",
+              "CANCELLED",
+              "DEAD_LETTER"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "timeout_at": {
+            "format": "date-time",
+            "title": "Timeout At",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "job_id",
+          "decision_id",
+          "match_case_id",
+          "intake_id",
+          "version",
+          "status",
+          "checkpoint",
+          "attempt",
+          "max_attempts",
+          "timeout_at",
+          "cancellation_requested_at",
+          "correlation_id",
+          "audit_event_id"
+        ],
+        "title": "CanonicalIdentityJobReceipt",
+        "type": "object"
+      },
+      "CanonicalIdentityJobSummary": {
+        "properties": {
+          "attempt": {
+            "minimum": 0.0,
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "cancellation_requested_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellation Requested At"
+          },
+          "checkpoint": {
+            "title": "Checkpoint",
+            "type": "string"
+          },
+          "correlation_id": {
+            "format": "uuid",
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "decision_id": {
+            "format": "uuid",
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "job_id": {
+            "format": "uuid",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "match_case_id": {
+            "format": "uuid",
+            "title": "Match Case Id",
+            "type": "string"
+          },
+          "max_attempts": {
+            "minimum": 1.0,
+            "title": "Max Attempts",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "QUEUED",
+              "RUNNING",
+              "SUCCEEDED",
+              "FAILED",
+              "RETRYING",
+              "CANCELLED",
+              "DEAD_LETTER"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "timeout_at": {
+            "format": "date-time",
+            "title": "Timeout At",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "job_id",
+          "decision_id",
+          "match_case_id",
+          "intake_id",
+          "version",
+          "status",
+          "checkpoint",
+          "attempt",
+          "max_attempts",
+          "timeout_at",
+          "cancellation_requested_at",
+          "correlation_id"
+        ],
+        "title": "CanonicalIdentityJobSummary",
+        "type": "object"
+      },
+      "CanonicalIdentityPlanningContext": {
+        "properties": {
+          "anchors": {
+            "items": {
+              "$ref": "#/components/schemas/IdentityPlanningAnchor"
+            },
+            "maxItems": 100,
+            "title": "Anchors",
+            "type": "array"
+          },
+          "candidate_sites": {
+            "items": {
+              "$ref": "#/components/schemas/IdentityPlanningCandidate"
+            },
+            "maxItems": 1000,
+            "title": "Candidate Sites",
+            "type": "array"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "intake_version": {
+            "minimum": 1.0,
+            "title": "Intake Version",
+            "type": "integer"
+          },
+          "listing_input": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CanonicalListingInputReference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "listings": {
+            "items": {
+              "$ref": "#/components/schemas/IdentityPlanningListing"
+            },
+            "maxItems": 1000,
+            "title": "Listings",
+            "type": "array"
+          },
+          "match_case_id": {
+            "format": "uuid",
+            "title": "Match Case Id",
+            "type": "string"
+          },
+          "match_case_version": {
+            "minimum": 1.0,
+            "title": "Match Case Version",
+            "type": "integer"
+          },
+          "properties": {
+            "items": {
+              "$ref": "#/components/schemas/IdentityPlanningProperty"
+            },
+            "maxItems": 100,
+            "title": "Properties",
+            "type": "array"
+          },
+          "source_identity_edges": {
+            "items": {
+              "$ref": "#/components/schemas/IdentityPlanningEdge"
+            },
+            "maxItems": 1000,
+            "title": "Source Identity Edges",
+            "type": "array"
+          }
+        },
+        "required": [
+          "match_case_id",
+          "match_case_version",
+          "intake_id",
+          "intake_version",
+          "anchors",
+          "properties",
+          "listings",
+          "source_identity_edges",
+          "candidate_sites"
+        ],
+        "title": "CanonicalIdentityPlanningContext",
+        "type": "object"
+      },
+      "CanonicalIdentityReceipt": {
+        "properties": {
+          "audit_event_id": {
+            "format": "uuid",
+            "title": "Audit Event Id",
+            "type": "string"
+          },
+          "correlation_id": {
+            "format": "uuid",
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "decision_id": {
+            "format": "uuid",
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "job_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "QUEUED",
+                  "RUNNING",
+                  "SUCCEEDED",
+                  "FAILED",
+                  "RETRYING",
+                  "CANCELLED",
+                  "DEAD_LETTER"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Status"
+          },
+          "match_case_id": {
+            "format": "uuid",
+            "title": "Match Case Id",
+            "type": "string"
+          },
+          "match_case_version": {
+            "minimum": 1.0,
+            "title": "Match Case Version",
+            "type": "integer"
+          },
+          "review_audit_event_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Audit Event Id"
+          },
+          "status": {
+            "enum": [
+              "PENDING_REVIEW",
+              "APPROVED",
+              "REJECTED",
+              "EXECUTING",
+              "EXECUTED",
+              "FAILED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "decision_id",
+          "match_case_id",
+          "match_case_version",
+          "status",
+          "version",
+          "job_id",
+          "audit_event_id",
+          "correlation_id"
+        ],
+        "title": "CanonicalIdentityReceipt",
+        "type": "object"
+      },
+      "CanonicalIdentitySummary": {
+        "properties": {
+          "decision_id": {
+            "format": "uuid",
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "decision_type": {
+            "enum": [
+              "MERGE",
+              "SPLIT",
+              "CREATE",
+              "REVISE",
+              "DUPLICATE"
+            ],
+            "title": "Decision Type",
+            "type": "string"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "intake_version": {
+            "minimum": 1.0,
+            "title": "Intake Version",
+            "type": "integer"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "job_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "QUEUED",
+                  "RUNNING",
+                  "SUCCEEDED",
+                  "FAILED",
+                  "RETRYING",
+                  "CANCELLED",
+                  "DEAD_LETTER"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Status"
+          },
+          "job_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Version"
+          },
+          "match_case_id": {
+            "format": "uuid",
+            "title": "Match Case Id",
+            "type": "string"
+          },
+          "match_case_version": {
+            "minimum": 1.0,
+            "title": "Match Case Version",
+            "type": "integer"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MergePlan"
+              },
+              {
+                "$ref": "#/components/schemas/SplitPlan"
+              },
+              {
+                "$ref": "#/components/schemas/ListingPlan"
+              },
+              {
+                "$ref": "#/components/schemas/ExactIdentityPlan"
+              }
+            ],
+            "title": "Plan"
+          },
+          "proposer_service_principal": {
+            "anyOf": [
+              {
+                "const": "native-intake-identity",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposer Service Principal"
+          },
+          "proposer_subject_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposer Subject Id"
+          },
+          "reviewer_subject_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewer Subject Id"
+          },
+          "status": {
+            "enum": [
+              "DRAFT",
+              "PENDING_REVIEW",
+              "APPROVED",
+              "REJECTED",
+              "EXECUTING",
+              "EXECUTED",
+              "FAILED",
+              "REVERSAL_PENDING",
+              "REVERSED",
+              "SUPERSEDED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "decision_id",
+          "decision_type",
+          "status",
+          "version",
+          "match_case_id",
+          "match_case_version",
+          "intake_id",
+          "intake_version",
+          "proposer_subject_id",
+          "reviewer_subject_id",
+          "plan",
+          "job_id",
+          "job_status",
+          "job_version"
+        ],
+        "title": "CanonicalIdentitySummary",
+        "type": "object"
+      },
+      "CanonicalIntakeAssistedEntryRequestReceipt": {
+        "properties": {
+          "audit_event_id": {
+            "format": "uuid",
+            "title": "Audit Event Id",
+            "type": "string"
+          },
+          "correction_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 7,
+            "minItems": 3,
+            "title": "Correction Ids",
+            "type": "array"
+          },
+          "correlation_id": {
+            "format": "uuid",
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "outbox_event_id": {
+            "format": "uuid",
+            "title": "Outbox Event Id",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "title": "Requested At",
+            "type": "string"
+          },
+          "status": {
+            "const": "REQUESTED",
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "request_id",
+          "intake_id",
+          "status",
+          "version",
+          "requested_at",
+          "correlation_id",
+          "audit_event_id",
+          "outbox_event_id",
+          "correction_ids"
+        ],
+        "title": "CanonicalIntakeAssistedEntryRequestReceipt",
+        "type": "object"
+      },
+      "CanonicalIntakeCancellationReceipt": {
+        "properties": {
+          "audit_event_id": {
+            "format": "uuid",
+            "title": "Audit Event Id",
+            "type": "string"
+          },
+          "cancelled_at": {
+            "format": "date-time",
+            "title": "Cancelled At",
+            "type": "string"
+          },
+          "correlation_id": {
+            "format": "uuid",
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "outbox_event_id": {
+            "format": "uuid",
+            "title": "Outbox Event Id",
+            "type": "string"
+          },
+          "processing_state": {
+            "const": "CANCELLED",
+            "title": "Processing State",
+            "type": "string"
+          },
+          "transition_id": {
+            "format": "uuid",
+            "title": "Transition Id",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "intake_id",
+          "processing_state",
+          "version",
+          "cancelled_at",
+          "correlation_id",
+          "transition_id",
+          "audit_event_id",
+          "outbox_event_id"
+        ],
+        "title": "CanonicalIntakeCancellationReceipt",
+        "type": "object"
+      },
+      "CanonicalIntakeCommandWithdrawalReceipt": {
+        "properties": {
+          "audit_event_id": {
+            "format": "uuid",
+            "title": "Audit Event Id",
+            "type": "string"
+          },
+          "cancellation_id": {
+            "format": "uuid",
+            "title": "Cancellation Id",
+            "type": "string"
+          },
+          "correlation_id": {
+            "format": "uuid",
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "outbox_event_id": {
+            "format": "uuid",
+            "title": "Outbox Event Id",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "title": "Requested At",
+            "type": "string"
+          },
+          "requested_by": {
+            "format": "uuid",
+            "title": "Requested By",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "WITHDRAWN",
+              "CANCELLATION_REQUESTED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "cancellation_id",
+          "request_id",
+          "intake_id",
+          "status",
+          "version",
+          "requested_at",
+          "requested_by",
+          "job_id",
+          "correlation_id",
+          "audit_event_id",
+          "outbox_event_id"
+        ],
+        "title": "CanonicalIntakeCommandWithdrawalReceipt",
+        "type": "object"
+      },
+      "CanonicalIntakeDetail": {
+        "properties": {
+          "correlation_id": {
+            "format": "uuid",
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "intake_method": {
+            "enum": [
+              "URL",
+              "MANUAL",
+              "CSV",
+              "APPROVED_FEED",
+              "OPERATOR_SNAPSHOT"
+            ],
+            "title": "Intake Method",
+            "type": "string"
+          },
+          "processing_state": {
+            "$ref": "#/components/schemas/IntakeStage"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CanonicalIntakeResolution"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scope": {
+            "$ref": "#/components/schemas/NativeIntakeScope"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "title": "Submitted At",
+            "type": "string"
+          },
+          "submitter_subject_id": {
+            "format": "uuid",
+            "title": "Submitter Subject Id",
+            "type": "string"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "intake_id",
+          "tenant_id",
+          "submitter_subject_id",
+          "intake_method",
+          "processing_state",
+          "version",
+          "submitted_at",
+          "correlation_id",
+          "scope"
+        ],
+        "title": "CanonicalIntakeDetail",
+        "type": "object"
+      },
+      "CanonicalIntakePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CanonicalIntakeSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "CanonicalIntakePage",
+        "type": "object"
+      },
+      "CanonicalIntakeReceipt": {
+        "properties": {
+          "audit_event_id": {
+            "format": "uuid",
+            "title": "Audit Event Id",
+            "type": "string"
+          },
+          "correlation_id": {
+            "format": "uuid",
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "intake_method": {
+            "enum": [
+              "URL",
+              "MANUAL"
+            ],
+            "title": "Intake Method",
+            "type": "string"
+          },
+          "outbox_event_id": {
+            "format": "uuid",
+            "title": "Outbox Event Id",
+            "type": "string"
+          },
+          "processing_state": {
+            "const": "SUBMITTED",
+            "title": "Processing State",
+            "type": "string"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "title": "Submitted At",
+            "type": "string"
+          },
+          "transition_id": {
+            "format": "uuid",
+            "title": "Transition Id",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "intake_id",
+          "processing_state",
+          "version",
+          "intake_method",
+          "submitted_at",
+          "correlation_id",
+          "transition_id",
+          "audit_event_id",
+          "outbox_event_id"
+        ],
+        "title": "CanonicalIntakeReceipt",
+        "type": "object"
+      },
+      "CanonicalIntakeResolution": {
+        "properties": {
+          "current_revision_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Revision Id"
+          },
+          "effective_property_id": {
+            "format": "uuid",
+            "title": "Effective Property Id",
+            "type": "string"
+          },
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/CanonicalPersistedListingField"
+            },
+            "maxItems": 100,
+            "title": "Fields",
+            "type": "array"
+          },
+          "lifecycle_state": {
+            "$ref": "#/components/schemas/ListingState"
+          },
+          "listing_id": {
+            "format": "uuid",
+            "title": "Listing Id",
+            "type": "string"
+          },
+          "listing_version": {
+            "minimum": 1.0,
+            "title": "Listing Version",
+            "type": "integer"
+          },
+          "property_id_at_creation": {
+            "format": "uuid",
+            "title": "Property Id At Creation",
+            "type": "string"
+          },
+          "property_version": {
+            "minimum": 1.0,
+            "title": "Property Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "listing_id",
+          "listing_version",
+          "lifecycle_state",
+          "current_revision_id",
+          "property_id_at_creation",
+          "effective_property_id",
+          "property_version"
+        ],
+        "title": "CanonicalIntakeResolution",
+        "type": "object"
+      },
+      "CanonicalIntakeSourcePolicyRecheckReceipt": {
+        "properties": {
+          "audit_event_id": {
+            "format": "uuid",
+            "title": "Audit Event Id",
+            "type": "string"
+          },
+          "correlation_id": {
+            "format": "uuid",
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "outbox_event_id": {
+            "format": "uuid",
+            "title": "Outbox Event Id",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "title": "Requested At",
+            "type": "string"
+          },
+          "status": {
+            "const": "REQUESTED",
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "request_id",
+          "intake_id",
+          "status",
+          "version",
+          "requested_at",
+          "correlation_id",
+          "audit_event_id",
+          "outbox_event_id"
+        ],
+        "title": "CanonicalIntakeSourcePolicyRecheckReceipt",
+        "type": "object"
+      },
+      "CanonicalIntakeSummary": {
+        "properties": {
+          "correlation_id": {
+            "format": "uuid",
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "intake_method": {
+            "enum": [
+              "URL",
+              "MANUAL",
+              "CSV",
+              "APPROVED_FEED",
+              "OPERATOR_SNAPSHOT"
+            ],
+            "title": "Intake Method",
+            "type": "string"
+          },
+          "processing_state": {
+            "$ref": "#/components/schemas/IntakeStage"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/NativeIntakeScope"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "title": "Submitted At",
+            "type": "string"
+          },
+          "submitter_subject_id": {
+            "format": "uuid",
+            "title": "Submitter Subject Id",
+            "type": "string"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "intake_id",
+          "tenant_id",
+          "submitter_subject_id",
+          "intake_method",
+          "processing_state",
+          "version",
+          "submitted_at",
+          "correlation_id",
+          "scope"
+        ],
+        "title": "CanonicalIntakeSummary",
+        "type": "object"
+      },
+      "CanonicalListingInputField": {
+        "properties": {
+          "classification": {
+            "title": "Classification",
+            "type": "string"
+          },
+          "corrected": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrected"
+          },
+          "correction_id": {
+            "format": "uuid",
+            "title": "Correction Id",
+            "type": "string"
+          },
+          "field_path": {
+            "title": "Field Path",
+            "type": "string"
+          },
+          "identity_affecting": {
+            "title": "Identity Affecting",
+            "type": "boolean"
+          },
+          "mask_reason_code": {
+            "anyOf": [
+              {
+                "const": "FIELD_MASKED",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mask Reason Code"
+          },
+          "masked": {
+            "default": false,
+            "title": "Masked",
+            "type": "boolean"
+          },
+          "normalized": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Normalized"
+          },
+          "parsed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parsed"
+          },
+          "proposed_by": {
+            "format": "uuid",
+            "title": "Proposed By",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "PROPOSED",
+              "APPLIED",
+              "REJECTED",
+              "SUPERSEDED",
+              "REVERSED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "correction_id",
+          "field_path",
+          "classification",
+          "status",
+          "version",
+          "identity_affecting",
+          "proposed_by",
+          "parsed",
+          "normalized",
+          "corrected"
+        ],
+        "title": "CanonicalListingInputField",
+        "type": "object"
+      },
+      "CanonicalListingInputReference": {
+        "properties": {
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/CanonicalListingInputField"
+            },
+            "maxItems": 100,
+            "title": "Fields",
+            "type": "array"
+          },
+          "manual_entry_valid_until": {
+            "format": "date-time",
+            "title": "Manual Entry Valid Until",
+            "type": "string"
+          },
+          "normalized_payload_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Normalized Payload Sha256",
+            "type": "string"
+          },
+          "original_input_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Original Input Sha256",
+            "type": "string"
+          },
+          "parser_job_id": {
+            "format": "uuid",
+            "title": "Parser Job Id",
+            "type": "string"
+          },
+          "parser_run_id": {
+            "format": "uuid",
+            "title": "Parser Run Id",
+            "type": "string"
+          },
+          "parser_run_version": {
+            "minimum": 1.0,
+            "title": "Parser Run Version",
+            "type": "integer"
+          },
+          "proposed_correction_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Proposed Correction Ids",
+            "type": "array"
+          },
+          "source_snapshot_id": {
+            "format": "uuid",
+            "title": "Source Snapshot Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "parser_job_id",
+          "parser_run_id",
+          "parser_run_version",
+          "source_snapshot_id",
+          "original_input_sha256",
+          "normalized_payload_sha256",
+          "proposed_correction_ids",
+          "manual_entry_valid_until",
+          "fields"
+        ],
+        "title": "CanonicalListingInputReference",
+        "type": "object"
+      },
+      "CanonicalMatchCasePropertyOption": {
+        "properties": {
+          "address_masked": {
+            "title": "Address Masked",
+            "type": "boolean"
+          },
+          "normalized_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Typed Property normalized address (INTERNAL); masked by the existing field policy.",
+            "title": "Normalized Address"
+          },
+          "property_id": {
+            "format": "uuid",
+            "title": "Property Id",
+            "type": "string"
+          },
+          "region_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region Id"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "property_id",
+          "version",
+          "region_id",
+          "normalized_address",
+          "address_masked"
+        ],
+        "title": "CanonicalMatchCasePropertyOption",
+        "type": "object"
+      },
+      "CanonicalMatchCasePropertyPage": {
+        "properties": {
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "intake_version": {
+            "minimum": 1.0,
+            "title": "Intake Version",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CanonicalMatchCasePropertyOption"
+            },
+            "maxItems": 25,
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "intake_id",
+          "intake_version",
+          "items",
+          "next_cursor"
+        ],
+        "title": "CanonicalMatchCasePropertyPage",
+        "type": "object"
+      },
+      "CanonicalPersistedListingField": {
+        "properties": {
+          "classification": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Classification"
+          },
+          "effective": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective"
+          },
+          "field_path": {
+            "title": "Field Path",
+            "type": "string"
+          },
+          "mask_reason_code": {
+            "anyOf": [
+              {
+                "const": "FIELD_MASKED",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mask Reason Code"
+          },
+          "masked": {
+            "default": false,
+            "title": "Masked",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "field_path"
+        ],
+        "title": "CanonicalPersistedListingField",
         "type": "object"
       },
       "ClosePayload": {
@@ -2084,6 +3668,94 @@
         "title": "CreateActionPayload",
         "type": "object"
       },
+      "CreateMatchCaseRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "append_to_case": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManualMatchCaseContextReference"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Explicitly append audited manual associations to this pending review case; original matching evidence is retained."
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/MatchEvidenceCandidate"
+            },
+            "maxItems": 100,
+            "title": "Candidates",
+            "type": "array"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,4}0*$",
+                "type": "string"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "contradictory_signals": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 100,
+            "title": "Contradictory Signals",
+            "type": "array"
+          },
+          "outcome": {
+            "default": "POSSIBLE_MATCH",
+            "enum": [
+              "NEW",
+              "REVISION",
+              "POSSIBLE_MATCH"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          },
+          "risk_acknowledged": {
+            "const": true,
+            "title": "Risk Acknowledged",
+            "type": "boolean"
+          },
+          "supporting_signals": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Supporting Signals",
+            "type": "array"
+          }
+        },
+        "required": [
+          "confidence",
+          "candidates",
+          "supporting_signals",
+          "contradictory_signals",
+          "reason",
+          "risk_acknowledged"
+        ],
+        "title": "CreateMatchCaseRequest",
+        "type": "object"
+      },
       "DataRoomExportPayload": {
         "properties": {
           "actor": {
@@ -2370,6 +4042,38 @@
           "rationale"
         ],
         "title": "DqTriagePayload",
+        "type": "object"
+      },
+      "DuplicateProposal": {
+        "additionalProperties": false,
+        "properties": {
+          "decision_type": {
+            "const": "DUPLICATE",
+            "title": "Decision Type",
+            "type": "string"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/ListingPlan"
+          },
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 20,
+            "title": "Reason",
+            "type": "string"
+          },
+          "risk_acknowledged": {
+            "const": true,
+            "title": "Risk Acknowledged",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reason",
+          "risk_acknowledged",
+          "decision_type",
+          "plan"
+        ],
+        "title": "DuplicateProposal",
         "type": "object"
       },
       "EligibilityPayload": {
@@ -2918,6 +4622,93 @@
           "as_of"
         ],
         "title": "EvidenceRetentionPurgePayload",
+        "type": "object"
+      },
+      "ExactIdentityAuthority": {
+        "additionalProperties": false,
+        "properties": {
+          "identity_policy_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Identity Policy Sha256",
+            "type": "string"
+          },
+          "policy_version_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Policy Version Id",
+            "type": "string"
+          },
+          "proposal_audit_event_id": {
+            "format": "uuid",
+            "title": "Proposal Audit Event Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy_version_id",
+          "identity_policy_sha256",
+          "proposal_audit_event_id"
+        ],
+        "title": "ExactIdentityAuthority",
+        "type": "object"
+      },
+      "ExactIdentityPlan": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_reassignment_plan": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateDispositionRequest"
+            },
+            "maxItems": 1000,
+            "title": "Candidate Reassignment Plan",
+            "type": "array"
+          },
+          "exact_authority": {
+            "$ref": "#/components/schemas/ExactIdentityAuthority"
+          },
+          "expected_edge_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Edge Versions",
+            "type": "object"
+          },
+          "expected_intake_version": {
+            "minimum": 1.0,
+            "title": "Expected Intake Version",
+            "type": "integer"
+          },
+          "expected_listing_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Listing Versions",
+            "type": "object"
+          },
+          "expected_property_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Property Versions",
+            "type": "object"
+          },
+          "input_binding": {
+            "$ref": "#/components/schemas/ListingInputBinding"
+          }
+        },
+        "required": [
+          "expected_property_versions",
+          "expected_listing_versions",
+          "expected_edge_versions",
+          "candidate_reassignment_plan",
+          "expected_intake_version",
+          "input_binding",
+          "exact_authority"
+        ],
+        "title": "ExactIdentityPlan",
         "type": "object"
       },
       "ExecutePayload": {
@@ -3799,6 +5590,22 @@
         "title": "HeatZoneScoreJobPayload",
         "type": "object"
       },
+      "IdentityJobCancelRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "IdentityJobCancelRequest",
+        "type": "object"
+      },
       "IdentityPartition": {
         "properties": {
           "source_identity_edge_ids": {
@@ -3829,6 +5636,226 @@
           "source_identity_edge_ids"
         ],
         "title": "IdentityPartition",
+        "type": "object"
+      },
+      "IdentityPlanningAnchor": {
+        "properties": {
+          "effective_property_id": {
+            "format": "uuid",
+            "title": "Effective Property Id",
+            "type": "string"
+          },
+          "listing_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Id"
+          },
+          "listing_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Version"
+          },
+          "match_candidate_id": {
+            "format": "uuid",
+            "title": "Match Candidate Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "match_candidate_id",
+          "effective_property_id",
+          "listing_id",
+          "listing_version"
+        ],
+        "title": "IdentityPlanningAnchor",
+        "type": "object"
+      },
+      "IdentityPlanningCandidate": {
+        "properties": {
+          "candidate_site_id": {
+            "format": "uuid",
+            "title": "Candidate Site Id",
+            "type": "string"
+          },
+          "property_id": {
+            "format": "uuid",
+            "title": "Property Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "target_format_code": {
+            "title": "Target Format Code",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "candidate_site_id",
+          "property_id",
+          "version",
+          "status",
+          "target_format_code"
+        ],
+        "title": "IdentityPlanningCandidate",
+        "type": "object"
+      },
+      "IdentityPlanningEdge": {
+        "properties": {
+          "edge_id": {
+            "format": "uuid",
+            "title": "Edge Id",
+            "type": "string"
+          },
+          "edge_version": {
+            "minimum": 1.0,
+            "title": "Edge Version",
+            "type": "integer"
+          },
+          "listing_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Id"
+          },
+          "property_id": {
+            "format": "uuid",
+            "title": "Property Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "edge_id",
+          "property_id",
+          "listing_id",
+          "edge_version"
+        ],
+        "title": "IdentityPlanningEdge",
+        "type": "object"
+      },
+      "IdentityPlanningListing": {
+        "properties": {
+          "lifecycle_state": {
+            "title": "Lifecycle State",
+            "type": "string"
+          },
+          "listing_id": {
+            "format": "uuid",
+            "title": "Listing Id",
+            "type": "string"
+          },
+          "property_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Property Id"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "listing_id",
+          "property_id",
+          "version",
+          "lifecycle_state"
+        ],
+        "title": "IdentityPlanningListing",
+        "type": "object"
+      },
+      "IdentityPlanningProperty": {
+        "properties": {
+          "property_id": {
+            "format": "uuid",
+            "title": "Property Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "property_id",
+          "version",
+          "status"
+        ],
+        "title": "IdentityPlanningProperty",
+        "type": "object"
+      },
+      "IdentityReviewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "enum": [
+              "APPROVE",
+              "REJECT"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "expected_case_version": {
+            "minimum": 1.0,
+            "title": "Expected Case Version",
+            "type": "integer"
+          },
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          },
+          "risk_acknowledged": {
+            "title": "Risk Acknowledged",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "decision",
+          "expected_case_version",
+          "reason",
+          "risk_acknowledged"
+        ],
+        "title": "IdentityReviewRequest",
         "type": "object"
       },
       "IngestionRunPayload": {
@@ -4372,6 +6399,25 @@
         "title": "IntakeSort",
         "type": "string"
       },
+      "IntakeStage": {
+        "enum": [
+          "SUBMITTED",
+          "CHECKING_IDENTITY",
+          "READY",
+          "CHECKING_SOURCE_POLICY",
+          "RETRIEVING",
+          "AWAITING_ASSISTED_ENTRY",
+          "AWAITING_SOURCE_AUTHORIZATION",
+          "PARSING",
+          "MATCHING",
+          "NEEDS_REVIEW",
+          "QUARANTINED",
+          "FAILED",
+          "CANCELLED"
+        ],
+        "title": "IntakeStage",
+        "type": "string"
+      },
       "IntakeState": {
         "enum": [
           "SUBMITTED",
@@ -4901,6 +6947,41 @@
         "title": "JobStatus",
         "type": "string"
       },
+      "ListingConfirmation": {
+        "additionalProperties": false,
+        "properties": {
+          "decision_type": {
+            "enum": [
+              "CREATE",
+              "REVISE"
+            ],
+            "title": "Decision Type",
+            "type": "string"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/ListingPlan"
+          },
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          },
+          "risk_acknowledged": {
+            "const": true,
+            "title": "Risk Acknowledged",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reason",
+          "risk_acknowledged",
+          "decision_type",
+          "plan"
+        ],
+        "title": "ListingConfirmation",
+        "type": "object"
+      },
       "ListingImportPayload": {
         "properties": {
           "records": {
@@ -4925,6 +7006,127 @@
         },
         "title": "ListingImportPayload",
         "type": "object"
+      },
+      "ListingInputBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_correction_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Correction Versions",
+            "type": "object"
+          },
+          "normalized_payload_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Normalized Payload Sha256",
+            "type": "string"
+          },
+          "original_input_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Original Input Sha256",
+            "type": "string"
+          },
+          "parser_job_id": {
+            "format": "uuid",
+            "title": "Parser Job Id",
+            "type": "string"
+          },
+          "parser_run_id": {
+            "format": "uuid",
+            "title": "Parser Run Id",
+            "type": "string"
+          },
+          "parser_run_version": {
+            "minimum": 1.0,
+            "title": "Parser Run Version",
+            "type": "integer"
+          },
+          "source_snapshot_id": {
+            "format": "uuid",
+            "title": "Source Snapshot Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "parser_job_id",
+          "parser_run_id",
+          "parser_run_version",
+          "source_snapshot_id",
+          "original_input_sha256",
+          "normalized_payload_sha256",
+          "expected_correction_versions"
+        ],
+        "title": "ListingInputBinding",
+        "type": "object"
+      },
+      "ListingPlan": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_reassignment_plan": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateDispositionRequest"
+            },
+            "maxItems": 1000,
+            "title": "Candidate Reassignment Plan",
+            "type": "array"
+          },
+          "expected_edge_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Edge Versions",
+            "type": "object"
+          },
+          "expected_intake_version": {
+            "minimum": 1.0,
+            "title": "Expected Intake Version",
+            "type": "integer"
+          },
+          "expected_listing_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Listing Versions",
+            "type": "object"
+          },
+          "expected_property_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Property Versions",
+            "type": "object"
+          },
+          "input_binding": {
+            "$ref": "#/components/schemas/ListingInputBinding"
+          }
+        },
+        "required": [
+          "expected_property_versions",
+          "expected_listing_versions",
+          "expected_edge_versions",
+          "candidate_reassignment_plan",
+          "expected_intake_version",
+          "input_binding"
+        ],
+        "title": "ListingPlan",
+        "type": "object"
+      },
+      "ListingState": {
+        "enum": [
+          "ACTIVE",
+          "REMOVED",
+          "EXPIRED",
+          "STALE",
+          "QUARANTINED",
+          "ARCHIVED"
+        ],
+        "title": "ListingState",
+        "type": "string"
       },
       "ManualIntakeRow": {
         "properties": {
@@ -5007,6 +7209,231 @@
         "title": "ManualIntakeRow",
         "type": "object"
       },
+      "ManualMatchCaseContextReference": {
+        "additionalProperties": false,
+        "properties": {
+          "match_case_id": {
+            "format": "uuid",
+            "title": "Match Case Id",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "match_case_id",
+          "version"
+        ],
+        "title": "ManualMatchCaseContextReference",
+        "type": "object"
+      },
+      "MatchCandidateSummary": {
+        "properties": {
+          "confidence": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Confidence",
+            "type": "string"
+          },
+          "listing_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Id"
+          },
+          "manual_context_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manual Context Version"
+          },
+          "match_candidate_id": {
+            "format": "uuid",
+            "title": "Match Candidate Id",
+            "type": "string"
+          },
+          "observed_listing_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed Listing Version"
+          },
+          "observed_property_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed Property Version"
+          },
+          "property_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Property Id"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "match_candidate_id",
+          "property_id",
+          "listing_id",
+          "rank",
+          "confidence",
+          "observed_property_version",
+          "observed_listing_version"
+        ],
+        "title": "MatchCandidateSummary",
+        "type": "object"
+      },
+      "MatchCaseReceipt": {
+        "properties": {
+          "audit_event_id": {
+            "format": "uuid",
+            "title": "Audit Event Id",
+            "type": "string"
+          },
+          "candidate_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Candidate Ids",
+            "type": "array"
+          },
+          "correlation_id": {
+            "format": "uuid",
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "intake_version": {
+            "title": "Intake Version",
+            "type": "integer"
+          },
+          "match_case_id": {
+            "format": "uuid",
+            "title": "Match Case Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "PROPOSED",
+              "PENDING_REVIEW"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "match_case_id",
+          "intake_id",
+          "status",
+          "version",
+          "intake_version",
+          "audit_event_id",
+          "correlation_id",
+          "candidate_ids"
+        ],
+        "title": "MatchCaseReceipt",
+        "type": "object"
+      },
+      "MatchCaseSummary": {
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/MatchCandidateSummary"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "identity_decision_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Identity Decision Ids",
+            "type": "array"
+          },
+          "intake_id": {
+            "format": "uuid",
+            "title": "Intake Id",
+            "type": "string"
+          },
+          "intake_version": {
+            "title": "Intake Version",
+            "type": "integer"
+          },
+          "match_case_id": {
+            "format": "uuid",
+            "title": "Match Case Id",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "match_case_id",
+          "intake_id",
+          "status",
+          "outcome",
+          "version",
+          "intake_version",
+          "candidates"
+        ],
+        "title": "MatchCaseSummary",
+        "type": "object"
+      },
       "MatchDecisionRequest": {
         "properties": {
           "decision_type": {
@@ -5067,6 +7494,72 @@
         "title": "MatchDecisionRequest",
         "type": "object"
       },
+      "MatchEvidenceCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "confidence": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,4}0*$",
+                "type": "string"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "evidence": {
+            "additionalProperties": true,
+            "title": "Evidence",
+            "type": "object"
+          },
+          "listing_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Id"
+          },
+          "listing_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Version"
+          },
+          "property_id": {
+            "format": "uuid",
+            "title": "Property Id",
+            "type": "string"
+          },
+          "property_version": {
+            "minimum": 1.0,
+            "title": "Property Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "property_id",
+          "property_version",
+          "confidence",
+          "evidence"
+        ],
+        "title": "MatchEvidenceCandidate",
+        "type": "object"
+      },
       "MatchOutcome": {
         "enum": [
           "NEW",
@@ -5077,6 +7570,100 @@
         ],
         "title": "MatchOutcome",
         "type": "string"
+      },
+      "MergePlan": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_reassignment_plan": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateDispositionRequest"
+            },
+            "maxItems": 1000,
+            "title": "Candidate Reassignment Plan",
+            "type": "array"
+          },
+          "expected_edge_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Edge Versions",
+            "type": "object"
+          },
+          "expected_listing_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Listing Versions",
+            "type": "object"
+          },
+          "expected_property_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Property Versions",
+            "type": "object"
+          },
+          "source_property_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Source Property Ids",
+            "type": "array"
+          },
+          "target_property_id": {
+            "format": "uuid",
+            "title": "Target Property Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_property_versions",
+          "expected_listing_versions",
+          "expected_edge_versions",
+          "candidate_reassignment_plan",
+          "source_property_ids",
+          "target_property_id"
+        ],
+        "title": "MergePlan",
+        "type": "object"
+      },
+      "MergeProposal": {
+        "additionalProperties": false,
+        "properties": {
+          "decision_type": {
+            "const": "MERGE",
+            "title": "Decision Type",
+            "type": "string"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/MergePlan"
+          },
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 20,
+            "title": "Reason",
+            "type": "string"
+          },
+          "risk_acknowledged": {
+            "const": true,
+            "title": "Risk Acknowledged",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reason",
+          "risk_acknowledged",
+          "decision_type",
+          "plan"
+        ],
+        "title": "MergeProposal",
+        "type": "object"
       },
       "MergeRequest": {
         "properties": {
@@ -5527,6 +8114,173 @@
         "title": "MonitorGuardrailPayload",
         "type": "object"
       },
+      "NativeAssistedEntryCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "fields": {
+            "$ref": "#/components/schemas/NativeAssistedEntryFields"
+          },
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          },
+          "risk_acknowledged": {
+            "title": "Risk Acknowledged",
+            "type": "boolean"
+          },
+          "risk_summary": {
+            "maxLength": 4000,
+            "minLength": 3,
+            "title": "Risk Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fields",
+          "reason",
+          "risk_summary",
+          "risk_acknowledged"
+        ],
+        "title": "NativeAssistedEntryCommand",
+        "type": "object"
+      },
+      "NativeAssistedEntryFields": {
+        "additionalProperties": false,
+        "properties": {
+          "address": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Address",
+            "type": "string"
+          },
+          "areaPing": {
+            "exclusiveMinimum": 0.0,
+            "title": "Areaping",
+            "type": "number"
+          },
+          "floor": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor"
+          },
+          "listingStatus": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listingstatus"
+          },
+          "listingType": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listingtype"
+          },
+          "providerListingId": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Providerlistingid"
+          },
+          "rent": {
+            "exclusiveMinimum": 0.0,
+            "title": "Rent",
+            "type": "number"
+          }
+        },
+        "required": [
+          "address",
+          "rent",
+          "areaPing"
+        ],
+        "title": "NativeAssistedEntryFields",
+        "type": "object"
+      },
+      "NativeIntakeScope": {
+        "additionalProperties": false,
+        "properties": {
+          "assigned_area_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned Area Id"
+          },
+          "brand_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brand Id"
+          },
+          "heat_zone_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heat Zone Id"
+          },
+          "region_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region Id"
+          }
+        },
+        "title": "NativeIntakeScope",
+        "type": "object"
+      },
       "NetPlanActorPayload": {
         "properties": {
           "actor": {
@@ -5866,6 +8620,51 @@
         "title": "NetworkListingActorPayload",
         "type": "object"
       },
+      "NetworkListingArchivePayload": {
+        "additionalProperties": true,
+        "properties": {
+          "actorName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actorname"
+          },
+          "actorRoleId": {
+            "default": "expansionManager",
+            "title": "Actorroleid",
+            "type": "string"
+          },
+          "expectedActorSubjectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedactorsubjectid"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "title": "NetworkListingArchivePayload",
+        "type": "object"
+      },
       "NetworkListingMergePayload": {
         "additionalProperties": true,
         "properties": {
@@ -5884,6 +8683,17 @@
             "default": "expansionManager",
             "title": "Actorroleid",
             "type": "string"
+          },
+          "expectedActorSubjectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedactorsubjectid"
           },
           "reason": {
             "anyOf": [
@@ -5912,6 +8722,17 @@
             ],
             "title": "Risksummary"
           },
+          "targetIfMatch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetifmatch"
+          },
           "targetListingId": {
             "title": "Targetlistingid",
             "type": "string"
@@ -5921,6 +8742,47 @@
           "targetListingId"
         ],
         "title": "NetworkListingMergePayload",
+        "type": "object"
+      },
+      "NetworkListingRadarReadResponse": {
+        "additionalProperties": true,
+        "description": "Narrow read contract preserving the existing authorized snapshot fields.",
+        "properties": {
+          "listings": {
+            "items": {
+              "$ref": "#/components/schemas/NetworkListingReadResponse"
+            },
+            "title": "Listings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "listings"
+        ],
+        "title": "NetworkListingRadarReadResponse",
+        "type": "object"
+      },
+      "NetworkListingReadResponse": {
+        "additionalProperties": true,
+        "description": "The recorded hard-rule verdict; other authorized listing fields survive.",
+        "properties": {
+          "hardRuleFailures": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Recorded hard-rule failures. Null or absent means unmeasured, not passed. An empty array means a recorded check found no failures; a nonempty array names recorded failures. This field alone does not authorize promotion.",
+            "title": "Hardrulefailures"
+          }
+        },
+        "title": "NetworkListingReadResponse",
         "type": "object"
       },
       "NetworkRebalanceCounts": {
@@ -6263,6 +9125,72 @@
             "default": "expansionManager",
             "title": "Actorroleid",
             "type": "string"
+          },
+          "expectedActorSubjectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedactorsubjectid"
+          },
+          "expectedJobVersion": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedjobversion"
+          },
+          "expectedReportId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedreportid"
+          },
+          "expectedReportVersion": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedreportversion"
+          },
+          "expectedTenantId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedtenantid"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
           }
         },
         "title": "NetworkScoringActorPayload",
@@ -6300,6 +9228,72 @@
               }
             ],
             "title": "Candidateids"
+          },
+          "expectedActorSubjectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedactorsubjectid"
+          },
+          "expectedJobVersion": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedjobversion"
+          },
+          "expectedReportId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedreportid"
+          },
+          "expectedReportVersion": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedreportversion"
+          },
+          "expectedTenantId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedtenantid"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
           }
         },
         "title": "NetworkScoringBatchPayload",
@@ -6330,6 +9324,72 @@
             },
             "title": "Candidateids",
             "type": "array"
+          },
+          "expectedActorSubjectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedactorsubjectid"
+          },
+          "expectedJobVersion": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedjobversion"
+          },
+          "expectedReportId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedreportid"
+          },
+          "expectedReportVersion": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedreportversion"
+          },
+          "expectedTenantId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedtenantid"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
           }
         },
         "required": [
@@ -6434,9 +9494,53 @@
             "title": "Created By",
             "type": "string"
           },
+          "expected_actor_subject_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Actor Subject Id"
+          },
+          "expected_tenant_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Tenant Id"
+          },
           "report_id": {
             "title": "Report Id",
             "type": "string"
+          },
+          "reviewer_group_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewer Group Id"
+          },
+          "submission_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submission Summary"
           }
         },
         "required": [
@@ -7481,6 +10585,18 @@
           },
           "status": {
             "$ref": "#/components/schemas/PromotionStatus"
+          },
+          "target_format_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Target code persisted with this decision, verbatim; null for historical receipts without one.",
+            "title": "Target Format Code"
           },
           "version": {
             "minimum": 1.0,
@@ -8827,6 +11943,22 @@
         "title": "ReleasePayload",
         "type": "object"
       },
+      "RequestCanonicalIntakeSourcePolicyRecheck": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "RequestCanonicalIntakeSourcePolicyRecheck",
+        "type": "object"
+      },
       "RetryCheckpoint": {
         "enum": [
           "RETRIEVING",
@@ -8964,6 +12096,111 @@
           "reason"
         ],
         "title": "ReviewDecisionRequest",
+        "type": "object"
+      },
+      "ReviewSubmissionPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "decisionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decisionid"
+          },
+          "expectedActorSubjectId": {
+            "minLength": 1,
+            "title": "Expectedactorsubjectid",
+            "type": "string"
+          },
+          "expectedCandidateDigest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Expectedcandidatedigest",
+            "type": "string"
+          },
+          "expectedCandidateReviewId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedcandidatereviewid"
+          },
+          "expectedCandidateState": {
+            "minLength": 1,
+            "title": "Expectedcandidatestate",
+            "type": "string"
+          },
+          "expectedDecisionVersion": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expecteddecisionversion"
+          },
+          "expectedLatestReportId": {
+            "minLength": 1,
+            "title": "Expectedlatestreportid",
+            "type": "string"
+          },
+          "expectedLatestReportVersion": {
+            "exclusiveMinimum": 0.0,
+            "title": "Expectedlatestreportversion",
+            "type": "integer"
+          },
+          "expectedReportId": {
+            "minLength": 1,
+            "title": "Expectedreportid",
+            "type": "string"
+          },
+          "expectedReportVersion": {
+            "exclusiveMinimum": 0.0,
+            "title": "Expectedreportversion",
+            "type": "integer"
+          },
+          "expectedTenantId": {
+            "minLength": 1,
+            "title": "Expectedtenantid",
+            "type": "string"
+          },
+          "reviewerGroupId": {
+            "minLength": 1,
+            "title": "Reviewergroupid",
+            "type": "string"
+          },
+          "submissionSummary": {
+            "minLength": 1,
+            "title": "Submissionsummary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expectedReportId",
+          "expectedReportVersion",
+          "expectedLatestReportId",
+          "expectedLatestReportVersion",
+          "decisionId",
+          "expectedCandidateReviewId",
+          "expectedCandidateState",
+          "expectedCandidateDigest",
+          "submissionSummary",
+          "reviewerGroupId",
+          "expectedActorSubjectId",
+          "expectedTenantId"
+        ],
+        "title": "ReviewSubmissionPayload",
         "type": "object"
       },
       "RiskReasonCommand": {
@@ -9329,6 +12566,52 @@
         "title": "ScopePayload",
         "type": "object"
       },
+      "ScoreExecutionRetryPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedActorSubjectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedactorsubjectid"
+          },
+          "expectedJobVersion": {
+            "title": "Expectedjobversion",
+            "type": "integer"
+          },
+          "expectedTenantId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedtenantid"
+          },
+          "expectedVersion": {
+            "title": "Expectedversion",
+            "type": "integer"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expectedVersion",
+          "expectedJobVersion",
+          "reason"
+        ],
+        "title": "ScoreExecutionRetryPayload",
+        "type": "object"
+      },
       "SegmentMetricPayload": {
         "properties": {
           "metrics": {
@@ -9623,6 +12906,125 @@
         "title": "SourceValueExperimentPayload",
         "type": "object"
       },
+      "SplitPartition": {
+        "additionalProperties": false,
+        "properties": {
+          "source_identity_edge_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 1000,
+            "minItems": 1,
+            "title": "Source Identity Edge Ids",
+            "type": "array"
+          },
+          "target_property_id": {
+            "format": "uuid",
+            "title": "Target Property Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target_property_id",
+          "source_identity_edge_ids"
+        ],
+        "title": "SplitPartition",
+        "type": "object"
+      },
+      "SplitPlan": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_reassignment_plan": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateDispositionRequest"
+            },
+            "maxItems": 1000,
+            "title": "Candidate Reassignment Plan",
+            "type": "array"
+          },
+          "expected_edge_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Edge Versions",
+            "type": "object"
+          },
+          "expected_listing_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Listing Versions",
+            "type": "object"
+          },
+          "expected_property_versions": {
+            "additionalProperties": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "title": "Expected Property Versions",
+            "type": "object"
+          },
+          "partitions": {
+            "items": {
+              "$ref": "#/components/schemas/SplitPartition"
+            },
+            "maxItems": 100,
+            "minItems": 2,
+            "title": "Partitions",
+            "type": "array"
+          },
+          "source_property_id": {
+            "format": "uuid",
+            "title": "Source Property Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_property_versions",
+          "expected_listing_versions",
+          "expected_edge_versions",
+          "candidate_reassignment_plan",
+          "source_property_id",
+          "partitions"
+        ],
+        "title": "SplitPlan",
+        "type": "object"
+      },
+      "SplitProposal": {
+        "additionalProperties": false,
+        "properties": {
+          "decision_type": {
+            "const": "SPLIT",
+            "title": "Decision Type",
+            "type": "string"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/SplitPlan"
+          },
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 20,
+            "title": "Reason",
+            "type": "string"
+          },
+          "risk_acknowledged": {
+            "const": true,
+            "title": "Risk Acknowledged",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reason",
+          "risk_acknowledged",
+          "decision_type",
+          "plan"
+        ],
+        "title": "SplitProposal",
+        "type": "object"
+      },
       "SplitRequest": {
         "properties": {
           "partitions": {
@@ -9887,6 +13289,48 @@
           }
         },
         "title": "StoreOpsTransitionPayload",
+        "type": "object"
+      },
+      "SubmitCanonicalIntakeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "intake_method": {
+            "enum": [
+              "URL",
+              "MANUAL"
+            ],
+            "title": "Intake Method",
+            "type": "string"
+          },
+          "original_url": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Url"
+          },
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/NativeIntakeScope"
+          }
+        },
+        "required": [
+          "intake_method",
+          "scope",
+          "reason"
+        ],
+        "title": "SubmitCanonicalIntakeRequest",
         "type": "object"
       },
       "TaskAssignRequest": {
@@ -10960,6 +14404,39 @@
             "minLength": 1,
             "title": "Actor",
             "type": "string"
+          },
+          "expected_actor_subject_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Actor Subject Id"
+          },
+          "expected_tenant_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Tenant Id"
+          },
+          "expected_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
           },
           "reason": {
             "default": "",
@@ -12171,6 +15648,16 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Claim Assignment",
@@ -12276,6 +15763,16 @@
             "description": "Assisted intake API error"
           },
           "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -12397,9 +15894,92 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Transfer Assignment",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/assignments/{assignment_id}/transfer-targets": {
+      "get": {
+        "operationId": "listAssignmentTransferTargets",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "assignment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Assignment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssignmentTransferTargetPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          }
+        },
+        "summary": "Get Assignment Transfer Targets",
         "tags": [
           "assisted-listing-intake"
         ]
@@ -12611,6 +16191,9 @@
               }
             },
             "description": "Unexpected server error"
+          },
+          "503": {
+            "description": "Canonical production evidence inputs not admitted"
           }
         },
         "summary": "Export Evidence",
@@ -12829,6 +16412,129 @@
           }
         },
         "summary": "Get Retained Evidence",
+        "tags": [
+          "audit"
+        ]
+      }
+    },
+    "/api/v1/audit/evidence/exports/{export_id}/download": {
+      "get": {
+        "operationId": "download_retained_evidence_api_v1_audit_evidence_exports__export_id__download_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "export_id",
+            "required": true,
+            "schema": {
+              "title": "Export Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "default": "zip",
+              "enum": [
+                "zip",
+                "pdf"
+              ],
+              "title": "Format",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "application/zip": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Verified retained evidence PDF or JSON/CSV ZIP",
+            "headers": {
+              "X-Artifact-SHA256": {
+                "description": "SHA-256 of response bytes",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "description": "Export permission or sensitive-data authority required"
+          },
+          "404": {
+            "description": "No evidence owned by this subject and tenant"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "410": {
+            "description": "Expired authorization, purged or unavailable artifact"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          },
+          "503": {
+            "description": "Canonical production download admission required"
+          }
+        },
+        "summary": "Download Retained Evidence",
         "tags": [
           "audit"
         ]
@@ -15119,6 +18825,918 @@
         "summary": "Get Deal Outcome",
         "tags": [
           "avm"
+        ]
+      }
+    },
+    "/api/v1/canonical-identity-decisions/{decision_id}": {
+      "get": {
+        "operationId": "getCanonicalIdentityDecision",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "decision_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Decision Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIdentitySummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor, segregation or resource scope denied"
+          },
+          "404": {
+            "description": "Canonical Intake, case, decision or affected resource not found"
+          },
+          "409": {
+            "description": "Native version, custody, plan or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid request headers, path, body or identity plan"
+          },
+          "503": {
+            "description": "Canonical storage, execution configuration or audit unavailable"
+          }
+        },
+        "summary": "Read",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/canonical-identity-decisions/{decision_id}/actions/cancel-job": {
+      "post": {
+        "operationId": "cancelCanonicalIdentityJob",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "decision_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Decision Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityJobCancelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIdentityJobReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor, segregation or resource scope denied"
+          },
+          "404": {
+            "description": "Canonical Intake, case, decision or affected resource not found"
+          },
+          "409": {
+            "description": "Native version, custody, plan or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid request headers, path, body or identity plan"
+          },
+          "503": {
+            "description": "Canonical storage, execution configuration or audit unavailable"
+          }
+        },
+        "summary": "Cancel Job",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/canonical-identity-decisions/{decision_id}/actions/review": {
+      "post": {
+        "operationId": "reviewCanonicalIdentity",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "decision_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Decision Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIdentityReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor, segregation or resource scope denied"
+          },
+          "404": {
+            "description": "Canonical Intake, case, decision or affected resource not found"
+          },
+          "409": {
+            "description": "Native version, custody, plan or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid request headers, path, body or identity plan"
+          },
+          "503": {
+            "description": "Canonical storage, execution configuration or audit unavailable"
+          }
+        },
+        "summary": "Review",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/canonical-identity-decisions/{decision_id}/job": {
+      "get": {
+        "operationId": "getCanonicalIdentityJob",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "decision_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Decision Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIdentityJobSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor, segregation or resource scope denied"
+          },
+          "404": {
+            "description": "Canonical Intake, case, decision or affected resource not found"
+          },
+          "409": {
+            "description": "Native version, custody, plan or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid request headers, path, body or identity plan"
+          },
+          "503": {
+            "description": "Canonical storage, execution configuration or audit unavailable"
+          }
+        },
+        "summary": "Read Job",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/canonical-intakes": {
+      "get": {
+        "operationId": "listCanonicalIntakes",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "processing_state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/IntakeStage"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Processing State"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 2048,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIntakePage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor or resource scope denied"
+          },
+          "404": {
+            "description": "Native Intake not found"
+          },
+          "409": {
+            "description": "Concurrent command or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid native submission"
+          },
+          "503": {
+            "description": "Canonical storage or audit unavailable"
+          }
+        },
+        "summary": "Page",
+        "tags": [
+          "assisted-listing-intake",
+          "assisted-listing-intake"
+        ]
+      },
+      "post": {
+        "operationId": "submitCanonicalIntake",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitCanonicalIntakeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIntakeReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor or resource scope denied"
+          },
+          "404": {
+            "description": "Native Intake not found"
+          },
+          "409": {
+            "description": "Concurrent command or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid native submission"
+          },
+          "503": {
+            "description": "Canonical storage or audit unavailable"
+          }
+        },
+        "summary": "Submit",
+        "tags": [
+          "assisted-listing-intake",
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/canonical-intakes/{intake_id}": {
+      "get": {
+        "operationId": "getCanonicalIntake",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intake_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Intake Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIntakeDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor or resource scope denied"
+          },
+          "404": {
+            "description": "Native Intake not found"
+          },
+          "409": {
+            "description": "Concurrent command or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid native submission"
+          },
+          "503": {
+            "description": "Canonical storage or audit unavailable"
+          }
+        },
+        "summary": "Get",
+        "tags": [
+          "assisted-listing-intake",
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/canonical-intakes/{intake_id}/assisted-entry-completions": {
+      "post": {
+        "description": "Record initial human proposals for a proven current manual-source wait.",
+        "operationId": "requestCanonicalIntakeAssistedEntryCompletion",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intake_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Intake Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NativeAssistedEntryCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIntakeAssistedEntryRequestReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor or resource scope denied"
+          },
+          "404": {
+            "description": "Native Intake not found"
+          },
+          "409": {
+            "description": "Concurrent command or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid native submission"
+          },
+          "503": {
+            "description": "Canonical storage or audit unavailable"
+          }
+        },
+        "summary": "Request Assisted Entry Completion",
+        "tags": [
+          "assisted-listing-intake",
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/canonical-intakes/{intake_id}/assisted-entry-completions/{request_id}/cancel": {
+      "post": {
+        "operationId": "withdrawCanonicalIntakeAssistedEntryRequest",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intake_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Intake Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Request Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelCanonicalIntakeAuthorizationWaitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIntakeCommandWithdrawalReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor or resource scope denied"
+          },
+          "404": {
+            "description": "Native Intake not found"
+          },
+          "409": {
+            "description": "Concurrent command or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid native submission"
+          },
+          "503": {
+            "description": "Canonical storage or audit unavailable"
+          }
+        },
+        "summary": "Withdraw Assisted Entry Request",
+        "tags": [
+          "assisted-listing-intake",
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/canonical-intakes/{intake_id}/cancel": {
+      "post": {
+        "description": "Cancel a settled AUTH_REQUIRED authorization wait with current authority. Other stages are rejected.",
+        "operationId": "cancelCanonicalIntakeAuthorizationWait",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intake_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Intake Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelCanonicalIntakeAuthorizationWaitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIntakeCancellationReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor or resource scope denied"
+          },
+          "404": {
+            "description": "Native Intake not found"
+          },
+          "409": {
+            "description": "Concurrent command or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid native submission"
+          },
+          "503": {
+            "description": "Canonical storage or audit unavailable"
+          }
+        },
+        "summary": "Cancel Authorization Wait",
+        "tags": [
+          "assisted-listing-intake",
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/canonical-intakes/{intake_id}/source-policy-rechecks": {
+      "post": {
+        "description": "Request a governed current-authority recheck from a native authorization or assisted-entry wait.",
+        "operationId": "requestCanonicalIntakeSourcePolicyRecheck",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intake_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Intake Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestCanonicalIntakeSourcePolicyRecheck"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIntakeSourcePolicyRecheckReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor or resource scope denied"
+          },
+          "404": {
+            "description": "Native Intake not found"
+          },
+          "409": {
+            "description": "Concurrent command or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid native submission"
+          },
+          "503": {
+            "description": "Canonical storage or audit unavailable"
+          }
+        },
+        "summary": "Request Source Policy Recheck",
+        "tags": [
+          "assisted-listing-intake",
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/canonical-intakes/{intake_id}/source-policy-rechecks/{request_id}/cancel": {
+      "post": {
+        "operationId": "withdrawCanonicalIntakeSourcePolicyRecheckRequest",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intake_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Intake Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Request Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelCanonicalIntakeAuthorizationWaitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIntakeCommandWithdrawalReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor or resource scope denied"
+          },
+          "404": {
+            "description": "Native Intake not found"
+          },
+          "409": {
+            "description": "Concurrent command or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid native submission"
+          },
+          "503": {
+            "description": "Canonical storage or audit unavailable"
+          }
+        },
+        "summary": "Withdraw Source Policy Recheck Request",
+        "tags": [
+          "assisted-listing-intake",
+          "assisted-listing-intake"
         ]
       }
     },
@@ -19838,6 +24456,16 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Review Identity",
@@ -20208,6 +24836,16 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Submit Batch",
@@ -20285,6 +24923,16 @@
             "description": "Assisted intake API error"
           },
           "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -20748,6 +25396,16 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Submit Url",
@@ -20914,6 +25572,16 @@
             "description": "Assisted intake API error"
           },
           "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -21261,6 +25929,16 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Assign",
@@ -21369,10 +26047,226 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Correct",
         "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/intakes/{intake_id}/match-case": {
+      "get": {
+        "operationId": "getCanonicalMatchCase",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intake_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Intake Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchCaseSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor or resource scope denied"
+          },
+          "404": {
+            "description": "Canonical Intake, case or candidate identity not found"
+          },
+          "409": {
+            "description": "Native version, custody or idempotency conflict"
+          },
+          "503": {
+            "description": "Canonical storage or audit unavailable"
+          }
+        },
+        "summary": "Select",
+        "tags": [
+          "assisted-listing-intake",
+          "assisted-listing-intake"
+        ]
+      },
+      "post": {
+        "operationId": "createCanonicalMatchCase",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intake_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Intake Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMatchCaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchCaseReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor or resource scope denied"
+          },
+          "404": {
+            "description": "Canonical Intake, case or candidate identity not found"
+          },
+          "409": {
+            "description": "Native version, custody or idempotency conflict"
+          },
+          "503": {
+            "description": "Canonical storage or audit unavailable"
+          }
+        },
+        "summary": "Create",
+        "tags": [
+          "assisted-listing-intake",
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/intakes/{intake_id}/match-case/property-options": {
+      "get": {
+        "operationId": "listCanonicalMatchCaseProperties",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intake_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Intake Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 25,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalMatchCasePropertyPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor or resource scope denied"
+          },
+          "404": {
+            "description": "Canonical Intake, case or candidate identity not found"
+          },
+          "409": {
+            "description": "Native version, custody or idempotency conflict"
+          },
+          "503": {
+            "description": "Canonical storage or audit unavailable"
+          }
+        },
+        "summary": "Property Options",
+        "tags": [
+          "assisted-listing-intake",
           "assisted-listing-intake"
         ]
       }
@@ -24176,6 +29070,26 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Get Job Receipt",
@@ -24407,6 +29321,16 @@
             "description": "Assisted intake API error"
           },
           "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -28675,6 +33599,174 @@
           }
         },
         "summary": "Decide Match Case",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/match-cases/{match_case_id}/identity-context": {
+      "get": {
+        "operationId": "getCanonicalIdentityPlanningContext",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "match_case_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Match Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_listing_input",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Listing Input",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIdentityPlanningContext"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor, segregation or resource scope denied"
+          },
+          "404": {
+            "description": "Canonical Intake, case, decision or affected resource not found"
+          },
+          "409": {
+            "description": "Native version, custody, plan or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid request headers, path, body or identity plan"
+          },
+          "503": {
+            "description": "Canonical storage, execution configuration or audit unavailable"
+          }
+        },
+        "summary": "Planning Context",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/match-cases/{match_case_id}/identity-decisions": {
+      "post": {
+        "operationId": "proposeCanonicalIdentity",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "match_case_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Match Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "pattern": "^W/\"[1-9][0-9]*\"$",
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "discriminator": {
+                  "mapping": {
+                    "CREATE": "#/components/schemas/ListingConfirmation",
+                    "DUPLICATE": "#/components/schemas/DuplicateProposal",
+                    "MERGE": "#/components/schemas/MergeProposal",
+                    "REVISE": "#/components/schemas/ListingConfirmation",
+                    "SPLIT": "#/components/schemas/SplitProposal"
+                  },
+                  "propertyName": "decision_type"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/MergeProposal"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SplitProposal"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ListingConfirmation"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DuplicateProposal"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonicalIdentityReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Current actor, segregation or resource scope denied"
+          },
+          "404": {
+            "description": "Canonical Intake, case, decision or affected resource not found"
+          },
+          "409": {
+            "description": "Native version, custody, plan or idempotency conflict"
+          },
+          "422": {
+            "description": "Invalid request headers, path, body or identity plan"
+          },
+          "503": {
+            "description": "Canonical storage, execution configuration or audit unavailable"
+          }
+        },
+        "summary": "Propose",
         "tags": [
           "assisted-listing-intake"
         ]
@@ -33177,9 +38269,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Network Listings Api V1 Operator Network Listings Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/NetworkListingRadarReadResponse"
                 }
               }
             },
@@ -33320,9 +38410,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Network Listings Api V1 Operator Network Listings  Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/NetworkListingRadarReadResponse"
                 }
               }
             },
@@ -33507,6 +38595,186 @@
               "default": "",
               "title": "Slastate",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sourceId",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 200,
+              "title": "Sourceid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "submittedBy",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 200,
+              "title": "Submittedby",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "ownerId",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 200,
+              "title": "Ownerid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "assignmentStatus",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/AssignmentState"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Assignmentstatus"
+            }
+          },
+          {
+            "in": "query",
+            "name": "assignedAreaId",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 200,
+              "title": "Assignedareaid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "observedFrom",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "format": "date-time",
+              "title": "Observedfrom"
+            }
+          },
+          {
+            "in": "query",
+            "name": "observedTo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "format": "date-time",
+              "title": "Observedto"
+            }
+          },
+          {
+            "in": "query",
+            "name": "updatedFrom",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "format": "date-time",
+              "title": "Updatedfrom"
+            }
+          },
+          {
+            "in": "query",
+            "name": "updatedTo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "format": "date-time",
+              "title": "Updatedto"
+            }
+          },
+          {
+            "in": "query",
+            "name": "masked",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Masked"
+            }
+          },
+          {
+            "in": "query",
+            "name": "restricted",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Restricted"
+            }
+          },
+          {
+            "in": "query",
+            "name": "retryable",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Retryable"
             }
           },
           {
@@ -34331,6 +39599,22 @@
           },
           {
             "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
             "name": "X-Correlation-Id",
             "required": false,
             "schema": {
@@ -34490,13 +39774,45 @@
               ],
               "title": "X-Correlation-Id"
             }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Actor-Match"
+            }
           }
         ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/NetworkListingActorPayload"
+                "$ref": "#/components/schemas/NetworkListingArchivePayload"
               }
             }
           },
@@ -34781,6 +40097,38 @@
                 }
               ],
               "title": "X-Correlation-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Actor-Match"
             }
           }
         ],
@@ -36277,6 +41625,280 @@
         ]
       }
     },
+    "/api/v1/operator/network-reviews/candidates/{candidate_id}/submission-context": {
+      "get": {
+        "operationId": "submission_context_api_v1_operator_network_reviews_candidates__candidate_id__submission_context_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "decisionId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Decisionid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Submission Context",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
+    "/api/v1/operator/network-reviews/candidates/{candidate_id}/submit": {
+      "post": {
+        "operationId": "submit_review_api_v1_operator_network_reviews_candidates__candidate_id__submit_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Correlation-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Actor-Match"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewSubmissionPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Submit Review",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
     "/api/v1/operator/network-reviews/reset": {
       "post": {
         "operationId": "reset_network_reviews_api_v1_operator_network_reviews_reset_post",
@@ -36738,6 +42360,110 @@
         ]
       }
     },
+    "/api/v1/operator/network-scoring/candidates/{candidate_id}/execution-context": {
+      "get": {
+        "operationId": "execution_context_api_v1_operator_network_scoring_candidates__candidate_id__execution_context_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Execution Context Api V1 Operator Network Scoring Candidates  Candidate Id  Execution Context Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Execution Context",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
     "/api/v1/operator/network-scoring/candidates/{candidate_id}/score": {
       "post": {
         "operationId": "score_candidate_api_v1_operator_network_scoring_candidates__candidate_id__score_post",
@@ -36781,6 +42507,22 @@
                 }
               ],
               "title": "X-Correlation-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Actor-Match"
             }
           }
         ],
@@ -37000,6 +42742,272 @@
           }
         },
         "summary": "Set Compare",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
+    "/api/v1/operator/network-scoring/execution-requests/{request_id}": {
+      "get": {
+        "operationId": "execution_request_api_v1_operator_network_scoring_execution_requests__request_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Execution Request Api V1 Operator Network Scoring Execution Requests  Request Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Execution Request",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
+    "/api/v1/operator/network-scoring/execution-requests/{request_id}/retry": {
+      "post": {
+        "operationId": "retry_execution_request_api_v1_operator_network_scoring_execution_requests__request_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Correlation-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Correlation-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Actor-Match"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScoreExecutionRetryPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Retry Execution Request Api V1 Operator Network Scoring Execution Requests  Request Id  Retry Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Retry Execution Request",
         "tags": [
           "operator"
         ]
@@ -44279,6 +50287,24 @@
     "/api/v1/priceops/exploration-candidates": {
       "post": {
         "operationId": "generate_exploration_candidates_api_v1_priceops_exploration_candidates_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -44618,6 +50644,9 @@
             },
             "description": "Resource not found"
           },
+          "405": {
+            "description": "Gate mutation requires workflow approval"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -44747,6 +50776,9 @@
               }
             },
             "description": "Resource not found"
+          },
+          "405": {
+            "description": "Gate mutation requires workflow approval"
           },
           "409": {
             "content": {
@@ -47105,6 +53137,16 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Review Promotion",
@@ -47224,6 +53266,40 @@
     "/api/v1/sitescore/decisions": {
       "post": {
         "operationId": "open_decision_api_v1_sitescore_decisions_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Actor-Match"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -47439,6 +53515,22 @@
             "schema": {
               "title": "Decision Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Actor-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Actor-Match"
             }
           }
         ],
@@ -48385,6 +54477,16 @@
               }
             },
             "description": "Assisted intake API error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
           }
         },
         "summary": "Pause Sla",
@@ -48490,6 +54592,16 @@
             "description": "Assisted intake API error"
           },
           "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {

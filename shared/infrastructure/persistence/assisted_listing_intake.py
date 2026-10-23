@@ -1,17 +1,15 @@
-"""Ordered production migration loader for the Assisted Listing Intake schema.
+"""Assisted Listing Intake migrations and native snapshot metadata access.
 
 This module is the programmatic surface over the ordered PostgreSQL 16 migration
 under ``infra/db/migrations/assisted_listing_intake/``. That directory holds the
-four approved contract DDL artifacts (baseline + three consistency/state/RLS
-patches) from ODP-SD-INTAKE-001, copied byte-for-byte so the production migration
-never drifts from the reviewed contract, plus a structural downgrade boundary.
+versioned contract DDL artifacts, copied byte-for-byte so the production
+migration never drifts from its declared contract, plus a structural downgrade
+boundary. The original four-artifact receipt is preserved on forward upgrade.
 
-The module is intentionally driver-agnostic: it only reads SQL text and computes
-traceability checksums. Applying the SQL is the caller's responsibility (pass an
-``execute`` callable such as ``psycopg`` cursor ``.execute``). Keeping it free of
-any database driver lets it import cleanly in the minimal CI environment while the
-schema is proven at runtime against real PostgreSQL 16 by the contract and RLS
-security tests.
+Migration metadata helpers read SQL and compute traceability checksums. The
+explicit database upgrade opens its own migration connection. Native snapshot
+metadata access borrows the caller's current engine and transaction; it never
+opens, commits or closes a connection.
 
 Contract references:
 - docs/data/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA.sql
@@ -28,6 +26,7 @@ import json
 import pickle
 import threading
 from collections.abc import Callable, Iterable
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -56,6 +55,10 @@ _UPGRADE_STEPS: tuple[tuple[str, str], ...] = (
     (
         "004_tenant_rls_lineage.sql",
         "ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0004_TENANT_RLS_LINEAGE_PATCH.sql",
+    ),
+    (
+        "005_decision_service_actor.sql",
+        "ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0005_DECISION_SERVICE_ACTOR_PATCH.sql",
     ),
 )
 DOWNGRADE_FILE = "downgrade.sql"
@@ -225,6 +228,8 @@ _STATE_COLLECTIONS: dict[str, str] = {
     "slas": "assisted_intake.slas",
     "saved_views": "assisted_intake.saved_views",
     "replays": "assisted_intake.idempotency_replays",
+    "workflow_audits": "assisted_intake.workflow_audits",
+    "workflow_outbox": "assisted_intake.workflow_outbox",
 }
 
 _STATE_KEY_FIELDS: dict[str, tuple[str, ...]] = {
@@ -236,6 +241,8 @@ _STATE_KEY_FIELDS: dict[str, tuple[str, ...]] = {
     "promotions": ("promotion_decision_id",),
     "slas": ("sla_instance_id",),
     "saved_views": ("saved_view_id",),
+    "workflow_audits": ("audit_event_id",),
+    "workflow_outbox": ("event_id",),
 }
 
 
@@ -261,7 +268,7 @@ class MigrationStep:
 
 @dataclass(frozen=True)
 class MigrationApplyResult:
-    """Receipt for applying and validating the complete 001-004 stack."""
+    """Receipt for applying and validating the complete ordered stack."""
 
     manifest_sha256: str
     steps: tuple[str, ...]
@@ -288,6 +295,22 @@ class DurableAssistedIntakeStore:
         self._store = store
         self._engine = store.engine
         self._local = threading.local()
+        self._canonical_audit_sink = None
+
+    def configure_canonical_audit(self, sink: Any) -> None:
+        if sink.writer.engine is not self._engine:
+            raise ValueError("Canonical audit must share the business transaction engine")
+        self._canonical_audit_sink = sink
+
+    def configure_audit_retention(self, provider: Any) -> None:
+        if self._canonical_audit_sink is None:
+            raise RuntimeError("Canonical Intake audit writer is not wired")
+        self._canonical_audit_sink.set_retention_provider(provider)
+
+    def canonical_audit_is_committed(self, audit: Any) -> bool:
+        return bool(self._canonical_audit_sink
+                    and audit.get("tenant_id") == self._local.tenant_id
+                    and self._canonical_audit_sink.is_committed(audit))
 
     def __getattr__(self, name: str) -> Any:
         if name not in _STATE_COLLECTIONS:
@@ -363,6 +386,20 @@ class DurableAssistedIntakeStore:
                 current[name] = dict(value)
         return current
 
+    @contextmanager
+    def transaction(self):
+        """Roll back request state as well as SQL on command/commit failure."""
+        self._current_collections()  # Require a verified tenant binding.
+        collections = deepcopy(self._local.collections)
+        baseline = deepcopy(self._local.baseline)
+        try:
+            with self._engine.lock:
+                yield
+        except BaseException:
+            self._local.collections = collections
+            self._local.baseline = baseline
+            raise
+
     def _read_locked(
         self,
         collection: str,
@@ -398,12 +435,15 @@ class DurableAssistedIntakeStore:
             for key, value in current_values.items():
                 baseline = baseline_values.get(key)
                 if key not in baseline_values or value != baseline:
+                    if name == "workflow_audits" and key in baseline_values:
+                        raise AssistedIntakePersistenceConflict("Workflow audit records are append-only")
                     changes.append((name, collection, key, baseline, value))
 
         if not changes:
             return
 
         with self._engine.lock:
+            canonical_audits = {}
             for _name, collection, key, baseline, value in sorted(changes):
                 storage_key = f"{tenant_id}:{key}"
                 persisted = self._read_locked(collection, storage_key)
@@ -411,12 +451,20 @@ class DurableAssistedIntakeStore:
                     raise AssistedIntakePersistenceConflict(
                         f"Concurrent Assisted Intake update for {collection}/{key}"
                     )
+                if _name == "workflow_audits":
+                    from shared.audit.errors import CanonicalAuditUnavailable
+                    parent = current["intakes"].get(value.get("intake_id"))
+                    if self._canonical_audit_sink is None or parent is None:
+                        raise CanonicalAuditUnavailable("Canonical audit writer/parent is unavailable")
+                    value = self._canonical_audit_sink.persist(value, parent["scope"])
+                    canonical_audits[key] = value
                 self._store.put(
                     collection,
                     storage_key,
                     self._wrap(tenant_id, key, deepcopy(value)),
                 )
-        self._local.baseline = deepcopy(current)
+        self.workflow_audits.update(canonical_audits)
+        self._local.baseline = deepcopy(self._current_collections())
 
     # Operator network-listings repository compatibility. Keeping one state
     # owner avoids dual writes between the operator and approved v1 routers.
@@ -446,7 +494,14 @@ class DurableAssistedIntakeStore:
         listing_id: str,
         metadata: dict[str, Any],
     ) -> None:
-        self._store.put(self._LISTING_META, listing_id, metadata)
+        with self._engine.lock:
+            collection = (self._store._collection(self._LISTING_META)
+                          if hasattr(self._store, "_collection") else self._LISTING_META)
+            # This store is PostgreSQL-only. Use the reader's exact partitioned
+            # advisory key before an upsert can insert a previously absent row.
+            self._engine.query_one("SELECT pg_advisory_xact_lock(hashtextextended(?, 0)) AS locked",
+                                   (f"{collection}:{listing_id}",))
+            self._store.put(self._LISTING_META, listing_id, metadata)
 
     def get_candidate_metadata(self, candidate_id: str) -> dict[str, Any]:
         return self._store.get(self._CANDIDATE_META, candidate_id) or {}
@@ -519,7 +574,7 @@ def apply_upgrade(execute: Callable[[str], object]) -> None:
 
 
 def validate_required_tables(engine: Any) -> None:
-    """Fail closed unless every approved 001-004 relation is installed."""
+    """Fail closed unless every declared Intake relation is installed."""
 
     missing: list[str] = []
     for relation in ALL_TABLES:
@@ -564,7 +619,11 @@ def apply_upgrade_to_database(database_url: str) -> MigrationApplyResult:
     except ImportError as exc:  # pragma: no cover - runtime dependency contract
         raise AssistedIntakeSchemaError("Assisted Intake migration requires psycopg") from exc
 
-    expected_manifest = manifest_checksum()
+    steps = migration_steps()
+    statements = upgrade_statements()
+    prefixes = ((4, "001-004"), (len(steps), "001-005"))
+    expected_manifests = {name: manifest_checksum(steps[:count]) for count, name in prefixes}
+    expected_manifest = expected_manifests["001-005"]
     try:
         with psycopg.connect(
             _psycopg_url(database_url),
@@ -587,21 +646,21 @@ def apply_upgrade_to_database(database_url: str) -> MigrationApplyResult:
                       )
                     """
                 )
-                applied = connection.execute(
+                rows = connection.execute(
                     """
-                    SELECT manifest_sha256
+                    SELECT migration_name, manifest_sha256
                     FROM odp_runtime.assisted_intake_schema_migrations
-                    WHERE migration_name = '001-004'
+                    ORDER BY migration_name
                     FOR UPDATE
                     """
-                ).fetchone()
-                if applied is not None:
-                    if applied["manifest_sha256"] != expected_manifest:
-                        raise AssistedIntakeSchemaError(
-                            "Installed Assisted Intake schema manifest does not "
-                            "match the reviewed 001-004 stack"
-                        )
-                else:
+                ).fetchall()
+                applied = {row["migration_name"]: row["manifest_sha256"] for row in rows}
+                if (any(expected_manifests.get(name) != digest for name, digest in applied.items())
+                        or ("001-005" in applied and "001-004" not in applied)):
+                    raise AssistedIntakeSchemaError(
+                        "Installed Assisted Intake schema manifest does not match the declared ordered stack"
+                    )
+                if not applied:
                     shared_tables = {
                         relation
                         for relation in _CANONICAL_SHARED_TABLES
@@ -613,7 +672,25 @@ def apply_upgrade_to_database(database_url: str) -> MigrationApplyResult:
                     }
                     if shared_tables:
                         connection.execute(_read(CANONICAL_COMPATIBILITY_PATH))
-                    for _name, sql in upgrade_statements():
+                installed_count = 0
+                for count, marker in prefixes:
+                    if marker in applied:
+                        if marker == "001-005":
+                            present = connection.execute(
+                                "SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid="
+                                "to_regclass('identity.match_decisions') AND attname="
+                                "'proposer_service_principal' AND NOT attisdropped) AS present"
+                            ).fetchone()["present"]
+                            if not present:
+                                raise AssistedIntakeSchemaError(
+                                    "Recorded decision service actor schema is missing; repair is not an upgrade"
+                                )
+                            # The additive migration's own replay validates
+                            # its exact actor constraint/function/trigger.
+                            connection.execute(_without_transaction_control(statements[count - 1][1]))
+                        installed_count = count
+                        continue
+                    for _name, sql in statements[installed_count:count]:
                         connection.execute(_without_transaction_control(sql))
                     connection.execute(
                         """
@@ -622,10 +699,11 @@ def apply_upgrade_to_database(database_url: str) -> MigrationApplyResult:
                             migration_name,
                             manifest_sha256
                           )
-                        VALUES ('001-004', %s)
+                        VALUES (%s, %s)
                         """,
-                        (expected_manifest,),
+                        (marker, expected_manifests[marker]),
                     )
+                    installed_count = count
 
             missing: list[str] = []
             for relation in ALL_TABLES:
@@ -644,7 +722,7 @@ def apply_upgrade_to_database(database_url: str) -> MigrationApplyResult:
         raise
     except Exception as exc:
         raise AssistedIntakeSchemaError(
-            "Unable to apply the Assisted Listing Intake 001-004 schema stack"
+            "Unable to apply the Assisted Listing Intake 001-005 schema stack"
         ) from exc
 
     return MigrationApplyResult(
@@ -704,3 +782,60 @@ def manifest_checksum(steps: Iterable[MigrationStep] | None = None) -> str:
     payload = [asdict(step) for step in (steps if steps is not None else migration_steps())]
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+class NativeIntakeSnapshotMetadataRepository:
+    """Existing snapshot metadata within the caller's authorized SQL root.
+
+    This facade neither stores raw content nor owns a transaction. The native
+    owner retains its current authority, budget and fence checks around each
+    call, including the exact-generation/legacy-NULL reference guard.
+    """
+
+    def __init__(self, graph: Any) -> None:
+        self.graph = graph
+        self.engine = graph.engine
+
+    def referenced_object(self, tenant: str, uri: str, generation: int) -> dict | None:
+        return self.engine.query_one("SELECT source_snapshot_id FROM intake.source_snapshots "
+            "WHERE tenant_id=? AND raw_object_uri=? AND (object_generation=? OR object_generation IS NULL) LIMIT 1",
+            (tenant, uri, generation))
+
+    def find_content(self, tenant: str, intake: str, source: str, content_sha256: str) -> dict | None:
+        return self.engine.query_one("SELECT * FROM intake.source_snapshots WHERE tenant_id=? AND intake_id=? "
+            "AND source_id=? AND content_sha256=? FOR UPDATE", (tenant, intake, source, content_sha256))
+
+    def insert(self, values: tuple[object, ...]) -> None:
+        self.engine.execute("INSERT INTO intake.source_snapshots (source_snapshot_id,tenant_id,intake_id,source_id,"
+            "original_url,canonical_url,raw_object_uri,content_sha256,media_type,byte_length,captured_at,observed_at,"
+            "capture_method,retention_class,encryption_key_ref,object_generation,residency_mode,version) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", values)
+
+    def required_for_intake(self, tenant: str, snapshot: str, intake: str) -> dict:
+        return self.graph._one("SELECT * FROM intake.source_snapshots WHERE tenant_id=? AND source_snapshot_id=? "
+            "AND intake_id=?", (tenant, snapshot, intake))
+
+    @staticmethod
+    def _selected_parameters(tenant: str, snapshots: list[str], row_limit: int) -> tuple:
+        if (type(snapshots) is not list or type(row_limit) is not int or row_limit < 1
+                or len(snapshots) >= row_limit):
+            raise ValueError("NATIVE_SNAPSHOT_METADATA_SELECTION_BOUND_REQUIRED")
+        return tenant, snapshots, row_limit
+
+    def selected_sizes(self, tenant: str, snapshots: list[str], row_limit: int) -> list[dict]:
+        """Size only exact referenced metadata before the caller fetches cells.
+
+        The caller owns the current tenant authority, whole-read byte budget
+        and original SQL root/clock. A guarded graph keeps those checks around
+        this fixed parameterized read. No provider object or raw body is read.
+        """
+        params = self._selected_parameters(tenant, snapshots, row_limit)
+        return self.engine.query("SELECT source_snapshot_id AS id,octet_length(to_jsonb(t)::text) AS bytes "
+            "FROM intake.source_snapshots t WHERE tenant_id=? AND source_snapshot_id=ANY(?::uuid[]) "
+            "ORDER BY source_snapshot_id LIMIT ?", params)
+
+    def selected_metadata(self, tenant: str, snapshots: list[str], row_limit: int) -> list[dict]:
+        """Read selected existing metadata after the caller's size preflight."""
+        params = self._selected_parameters(tenant, snapshots, row_limit)
+        return self.engine.query("SELECT * FROM intake.source_snapshots WHERE tenant_id=? "
+            "AND source_snapshot_id=ANY(?::uuid[]) ORDER BY source_snapshot_id LIMIT ? FOR SHARE", params)

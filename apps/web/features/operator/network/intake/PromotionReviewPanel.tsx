@@ -137,7 +137,6 @@ export type PromotionReviewPanelProps = {
   proposerId?: string;
   /** Gate evaluation snapshot hash the request must bind to. */
   gateSnapshotSha256: string;
-  targetFormatOptions?: readonly string[];
   /** Role gates. Absent permission removes/disables the control (§8.7). */
   canRequest?: boolean;
   canReview?: boolean;
@@ -154,6 +153,11 @@ export type PromotionReviewPanelProps = {
   onRefresh?: () => void;
   testId?: string;
 };
+
+function isValidTargetFormat(value: unknown): value is string {
+  // Match the API string-length contract, including Unicode code points.
+  return typeof value === "string" && Array.from(value).length >= 1 && Array.from(value).length <= 64;
+}
 
 function PromotionConfirmationDialog({
   busy,
@@ -180,10 +184,12 @@ function PromotionConfirmationDialog({
   reason: string;
   record: AssistedIntake;
 }) {
-  const panelRef = useModalDialogBehavior({ dismissible: !busy, onClose });
+  const [escapeBlocked, setEscapeBlocked] = useState(false);
+  const panelRef = useModalDialogBehavior({ dismissible: false, onClose, onEscapeBlocked: () => setEscapeBlocked(true) });
   const summary = [
     ["收件", record.id],
     ["既有 Listing", promotion.listing_id || "—"],
+    ["目標店型", promotion.target_format_code || "尚未取得"],
     ["提案者", promotion.proposer_subject_id || record.submitter || "—"],
     ["審查者", `${currentOperator.name}（${currentOperator.id}）`],
     ["Gate snapshot", gateSnapshotSha256 || "—"],
@@ -195,9 +201,6 @@ function PromotionConfirmationDialog({
       className={`${styles.overlay} ${styles.overlayStacked}`}
       data-screen-label="Dialog Promotion 核准"
       data-testid="promotion-confirmation-dialog"
-      onMouseDown={(event) => {
-        if (!busy && event.target === event.currentTarget) onClose();
-      }}
     >
       <div
         aria-describedby="promotion-confirmation-impact"
@@ -224,6 +227,7 @@ function PromotionConfirmationDialog({
         </header>
 
         <div className={styles.promotionConfirmBody}>
+          {escapeBlocked ? <p className={styles.noteBox} role="status">決策確認視窗需以「取消」按鈕關閉（防誤觸 Esc）</p> : null}
           <div className={styles.reviewSummary} data-testid="promotion-review-summary">
             <div className={styles.sectionHead}>決策前檢視 REVIEW SUMMARY</div>
             {summary.map(([label, value]) => (
@@ -266,7 +270,7 @@ function PromotionConfirmationDialog({
             className={styles.primaryButton}
             data-autofocus
             data-testid="promotion-confirm-approve-btn"
-            disabled={busy}
+            disabled={busy || !isValidTargetFormat(promotion.target_format_code)}
             onClick={onConfirm}
             type="button"
           >
@@ -278,14 +282,18 @@ function PromotionConfirmationDialog({
   );
 }
 
-export function PromotionReviewPanel({
+export function PromotionReviewPanel(props: PromotionReviewPanelProps) {
+  // Drafts and retry keys belong to one intake; version refreshes retain them.
+  return <PromotionReviewPanelForIntake key={props.record.id} {...props} />;
+}
+
+function PromotionReviewPanelForIntake({
   record,
   promotion = null,
   scoreJob = null,
   currentOperator,
   proposerId: proposerIdProp,
   gateSnapshotSha256,
-  targetFormatOptions = ["FMT-STANDARD-STORE", "FMT-MICRO-STORE", "FMT-SMART-VENDING"],
   canRequest = true,
   canReview = true,
   canReplayScore = false,
@@ -300,7 +308,7 @@ export function PromotionReviewPanel({
   testId = "promotion-review-panel",
 }: PromotionReviewPanelProps) {
   // ---- request draft state (preserved across conflicts and lost responses) --
-  const [targetFormatCode, setTargetFormatCode] = useState<string>(targetFormatOptions[0] ?? "");
+  const [targetFormatCode, setTargetFormatCode] = useState("");
   const [requestReason, setRequestReason] = useState("");
   const [requestAck, setRequestAck] = useState(false);
   // ---- review draft state ---------------------------------------------------
@@ -339,6 +347,8 @@ export function PromotionReviewPanel({
   const requestOpen =
     record.stage === "READY" && (!promotion || status === "REJECTED");
   const reviewOpen = status === "PENDING_REVIEW";
+  const requestFormatValid = isValidTargetFormat(targetFormatCode);
+  const persistedFormatValid = isValidTargetFormat(promotion?.target_format_code);
 
   const candidateId = committedCandidateId(promotion);
   const scoreJobId = committedScoreJobId(promotion);
@@ -350,8 +360,8 @@ export function PromotionReviewPanel({
   // ---- handlers (non-optimistic: state changes only via server receipts) ----
   async function handleRequest() {
     if (busy || !onRequestPromotion) return;
-    if (!targetFormatCode) {
-      setLocalError("請選擇晉升目標型態（target_format_code）。");
+    if (!requestFormatValid) {
+      setLocalError("請填寫目標店型代碼（1 至 64 個字元）。");
       return;
     }
     if (requestReason.trim().length < 3) {
@@ -383,6 +393,10 @@ export function PromotionReviewPanel({
 
   async function handleReview(decision: "APPROVE" | "REJECT") {
     if (busy || !onReviewPromotion || !promotion || !reviewKey) return;
+    if (decision === "APPROVE" && !persistedFormatValid) {
+      setLocalError("尚未取得伺服器保存的目標店型，請重新載入後再核准。");
+      return;
+    }
     if (isSelfReview) {
       setLocalError("提案者不得審查自己的晉升申請（SELF_REVIEW_DENIED）。");
       return;
@@ -593,22 +607,19 @@ export function PromotionReviewPanel({
             </div>
 
             <label className={styles.fieldLabel} htmlFor="promotion-target-format">
-              目標型態 target_format_code（必填）
+              目標店型代碼（必填）
             </label>
-            <select
-              className={styles.select}
+            <input
+              className={styles.input}
               data-testid="promotion-target-format"
               disabled={busy}
               id="promotion-target-format"
+              minLength={1}
               onChange={(e) => setTargetFormatCode(e.target.value)}
+              required
+              type="text"
               value={targetFormatCode}
-            >
-              {targetFormatOptions.map((code) => (
-                <option key={code} value={code}>
-                  {code}
-                </option>
-              ))}
-            </select>
+            />
 
             <label className={styles.fieldLabel} htmlFor="promotion-request-reason" style={{ marginTop: "8px" }}>
               申請原因（必填，寫入決策與 Audit）
@@ -660,7 +671,7 @@ export function PromotionReviewPanel({
               <button
                 className={styles.primaryButton}
                 data-testid="promotion-request-submit"
-                disabled={busy || !requestAck || requestReason.trim().length < 3}
+                disabled={busy || !requestFormatValid || !requestAck || requestReason.trim().length < 3}
                 onClick={handleRequest}
                 type="button"
               >
@@ -719,6 +730,11 @@ export function PromotionReviewPanel({
             </div>
           </div>
 
+          {!persistedFormatValid ? (
+            <div className={styles.noteBox} data-testid="promotion-target-unavailable" role="status">
+              尚未取得伺服器保存的目標店型，請重新載入後再核准。
+            </div>
+          ) : null}
           {isSelfReview ? (
             <div className={styles.errorPanel} data-testid="promotion-self-review-notice" role="alert">
               <span className={styles.errorSummary}>✕ 自我審查已封鎖（SELF_REVIEW_DENIED）</span>
@@ -777,7 +793,7 @@ export function PromotionReviewPanel({
                 <button
                   className={styles.primaryButton}
                   data-testid="promotion-approve-btn"
-                  disabled={busy || !reviewAck || reviewReason.trim().length < 3}
+                  disabled={busy || !persistedFormatValid || !reviewAck || reviewReason.trim().length < 3}
                   onClick={() => setReviewConfirmationOpen(true)}
                   type="button"
                 >
@@ -794,6 +810,12 @@ export function PromotionReviewPanel({
         <div className={styles.sectionBox} data-testid="promotion-receipt" style={{ marginTop: "10px" }}>
           <div className={styles.sectionHead}>持久化晉升收據 DURABLE PROMOTION RECEIPT</div>
           <div className={styles.metaGrid}>
+            <div>
+              <span className={styles.metaCaption}>目標店型</span>
+              <div className={styles.metaValue} data-testid="promotion-receipt-target-format" style={{ whiteSpace: "pre-wrap" }}>
+                {promotion.target_format_code || "尚未取得"}
+              </div>
+            </div>
             <div>
               <span className={styles.metaCaption}>決策編號 Decision ID</span>
               <div className={styles.metaValue} data-testid="promotion-decision-id">

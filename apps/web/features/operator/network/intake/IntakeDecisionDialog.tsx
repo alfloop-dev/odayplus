@@ -5,7 +5,7 @@ import type { AssistedIntake } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
 import { IntakeDialogShell } from "./IntakeDialogShell";
 import type { IntakeApiError } from "./intakeClient";
-import { decisionTitle, matchLabel, shortUrl, stageLabel, type IntakeDecisionKind } from "./intakeTypes";
+import { decisionOptions, decisionTitle, matchConfidence, matchLabel, shortUrl, stageLabel, type IntakeDecisionKind } from "./intakeTypes";
 
 // "Dialog 收件決策確認" (UX-SCR-EXP-003D commit step).
 //
@@ -42,14 +42,20 @@ export function IntakeDecisionDialog({
   const [reason, setReason] = useState("");
   const [riskAcknowledged, setRiskAcknowledged] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [escapeBlocked, setEscapeBlocked] = useState(false);
 
   const title = decisionTitle(kind, record);
+  const decisionAvailable = decisionOptions(record).some((option) => option.kind === kind);
   const outcome = record.matchResult?.outcome;
   const target = record.matchResult?.targetListingId ?? "";
   const riskSummary = buildRiskSummary(record, kind, target);
 
   function handleSubmit() {
     if (busy) return;
+    if (!decisionAvailable) {
+      setLocalError("決策所需的比對分類尚未由 API 提供。");
+      return;
+    }
     // decide_intake ALWAYS requires a reason server-side (422 otherwise), so
     // the dialog never treats it as optional regardless of decision kind.
     if (!reason.trim()) {
@@ -66,12 +72,15 @@ export function IntakeDecisionDialog({
 
   const summaryRows = buildSummaryRows(record, kind, target);
   const shownError = localError ?? error?.summary ?? null;
+  const requestClose = () => { if (!busy) onClose(); };
 
   return (
     <IntakeDialogShell
       ariaLabel={`確認決策：${title}`}
       className={styles.panelDecide}
-      onClose={onClose}
+      dismissible={false}
+      onEscapeBlocked={() => setEscapeBlocked(true)}
+      onClose={requestClose}
       screenLabel="Dialog 收件決策確認"
       stacked
       testId="intake-decide-dialog"
@@ -80,12 +89,13 @@ export function IntakeDecisionDialog({
         <span className={styles.dialogTitle} data-testid="intake-decide-title">
           確認決策：{title}
         </span>
-        <button aria-label="關閉" className={styles.dialogClose} onClick={onClose} type="button">
+        <button aria-label="關閉" className={styles.dialogClose} disabled={busy} onClick={requestClose} type="button">
           ×
         </button>
       </div>
 
       <div className={styles.dialogBody}>
+        {escapeBlocked ? <p className={styles.noteBox} role="status">決策確認視窗需以「取消」按鈕關閉（防誤觸 Esc）</p> : null}
         <div className={styles.metaValue} data-testid="intake-decide-sub">
           {record.id} · {outcome ? matchLabel(outcome) : stageLabel(record.stage)} · 信心{" "}
           {formatConfidence(record)}
@@ -111,6 +121,7 @@ export function IntakeDecisionDialog({
             className={styles.textarea}
             data-autofocus
             data-testid="intake-decide-reason"
+            disabled={busy}
             id="intake-decide-reason"
             onChange={(event) => setReason(event.target.value)}
             placeholder="例：樓層與提供者 ID 矛盾，實地確認為不同物件…"
@@ -128,6 +139,7 @@ export function IntakeDecisionDialog({
             <input
               checked={riskAcknowledged}
               data-testid="intake-decide-risk-ack"
+              disabled={busy}
               id="intake-decide-risk-ack"
               onChange={(event) => setRiskAcknowledged(event.target.checked)}
               type="checkbox"
@@ -159,13 +171,13 @@ export function IntakeDecisionDialog({
       </div>
 
       <div className={styles.dialogFooter}>
-        <button className={styles.secondaryButton} onClick={onClose} type="button">
+        <button className={styles.secondaryButton} disabled={busy} onClick={requestClose} type="button">
           取消
         </button>
         <button
           className={styles.primaryButton}
           data-testid="intake-decide-submit"
-          disabled={busy}
+          disabled={busy || !decisionAvailable}
           onClick={handleSubmit}
           type="button"
         >
@@ -259,6 +271,6 @@ function buildSummaryRows(
 }
 
 function formatConfidence(record: AssistedIntake): string {
-  if (!record.matchResult) return "—";
-  return record.matchResult.confidence.toFixed(2);
+  const value = matchConfidence(record.matchResult?.confidence);
+  return value === null ? "UNAVAILABLE" : value.toFixed(2);
 }

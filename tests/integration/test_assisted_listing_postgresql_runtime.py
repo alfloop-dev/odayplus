@@ -20,6 +20,10 @@ from shared.infrastructure.persistence.postgresql import (
     _REQUIRED_RELATIONS,
     PostgresEngine,
 )
+from tests.intake_workflow_fixture import (
+    SyntheticIntakeAuditRetention,
+    SyntheticIntakeWorkflowPolicy,
+)
 
 pytestmark = pytest.mark.requires_live_env
 
@@ -63,6 +67,7 @@ _INTAKE_MIGRATION_SCHEMA = "odp_runtime"
 _CANONICAL_STUB_DDL = """
     CREATE SCHEMA IF NOT EXISTS core;
     CREATE SCHEMA IF NOT EXISTS workflow;
+    CREATE SCHEMA IF NOT EXISTS pricing;
     CREATE TABLE IF NOT EXISTS core.tenants (
         tenant_id UUID PRIMARY KEY,
         tenant_name TEXT NOT NULL,
@@ -85,6 +90,13 @@ _CANONICAL_STUB_DDL = """
     CREATE TABLE IF NOT EXISTS workflow.decision_policies (
         policy_version_id VARCHAR(100) PRIMARY KEY
     );
+    -- Relation-only boot stubs for this intake-specific fixture. Canonical
+    -- exploration columns, approvals, budget triggers and FKs are verified
+    -- separately against the full migrations in test_priceops_canonical_gate.
+    CREATE TABLE IF NOT EXISTS workflow.decisions (decision_id UUID PRIMARY KEY);
+    CREATE TABLE IF NOT EXISTS workflow.approvals (approval_id UUID PRIMARY KEY);
+    CREATE TABLE IF NOT EXISTS pricing.exploration_gates (gate_id UUID PRIMARY KEY);
+    CREATE TABLE IF NOT EXISTS pricing.exploration_decisions (decision_id UUID PRIMARY KEY);
 """
 
 _CANONICAL_STUB_RELATIONS = frozenset(
@@ -171,6 +183,7 @@ def test_full_assisted_intake_stack_applies_and_validates(
         "002_consistency.sql",
         "003_promotion_state.sql",
         "004_tenant_rls_lineage.sql",
+        "005_decision_service_actor.sql",
     )
     assert result.required_tables == ALL_TABLES
     with intake_blank_db.connect() as connection:
@@ -184,6 +197,58 @@ def test_full_assisted_intake_stack_applies_and_validates(
             is None
         ]
     assert missing == []
+
+
+def test_postgresql_batch_worker_result_survives_restart_in_live_operator_partition(
+    intake_blank_db,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Synthetic production-mode wiring: API enqueue → worker → fresh API read."""
+    from apps.worker.oday_worker.main import ODayWorker
+    from shared.jobs.queue import JobStatus
+
+    database_url = _database_url(intake_blank_db)
+    apply_upgrade_to_database(database_url)
+    _install_canonical_runtime(database_url)
+    _configure_production(monkeypatch, tmp_path, database_url)
+    app = create_app(external_provider_validation=_live_provider_validation(), assisted_intake_audit_retention=SyntheticIntakeAuditRetention(), assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
+    try:
+        with TestClient(app) as client:
+            enqueued = client.post(
+                "/api/v1/jobs",
+                json={
+                    "job_type": "batch-listing-intake",
+                    "payload": {"items": [{"item_id": "one", "address_raw": "Synthetic PG address"}]},
+                },
+                headers=_headers(ACTOR_ID),
+            )
+            assert enqueued.status_code == 202, enqueued.text
+            bundle = app.state.persistence_bundle
+            assert ODayWorker(persistence=bundle).run_once()
+            completed = bundle.job_queue.get(enqueued.json()["job_id"])
+            assert completed.status == JobStatus.SUCCEEDED
+            intake_id = completed.payload["receipt"]["items"][0]["result_ref"]
+            path = f"/api/v1/operator/network-listings/intake/{intake_id}"
+            readback = client.get(path, headers=_headers(ACTOR_ID))
+            assert readback.status_code == 200, readback.text
+            assert readback.json()["tenantId"] == TENANT_ID
+            assert readback.json()["submitter"] == ACTOR_ID
+    finally:
+        app.state.persistence_bundle.engine.close()
+
+    restarted = create_app(external_provider_validation=_live_provider_validation(), assisted_intake_audit_retention=SyntheticIntakeAuditRetention(), assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
+    try:
+        with TestClient(restarted) as client:
+            persisted = client.get(path, headers=_headers(ACTOR_ID))
+            assert persisted.status_code == 200, persisted.text
+            assert persisted.json()["id"] == intake_id
+            assert persisted.json()["parsedFields"]["address"]["normalizedValue"] == "Synthetic PG address"
+            foreign = client.get(path, headers={**_headers(ACTOR_ID), "x-tenant-id": str(uuid4())})
+            assert foreign.status_code == 404
+            assert restarted.state.persistence_bundle.operator_intake_repository.get_intake(intake_id) is None
+    finally:
+        restarted.state.persistence_bundle.engine.close()
 
 
 @pytest.mark.requires_postgis  # canonical baseline DDL declares CREATE EXTENSION postgis
@@ -207,7 +272,7 @@ def test_full_stack_composes_after_canonical_migration_and_is_idempotent(
             """
             SELECT manifest_sha256
             FROM odp_runtime.assisted_intake_schema_migrations
-            WHERE migration_name = '001-004'
+            WHERE migration_name = '001-005'
             """
         ).fetchone()
         assert marker is not None
@@ -263,11 +328,12 @@ def test_production_api_boots_with_postgresql_and_fails_on_missing_intake_schema
         RuntimeError,
         match="Assisted Listing Intake schema is incomplete",
     ):
-        create_app(external_provider_validation=_live_provider_validation())
+        create_app(external_provider_validation=_live_provider_validation(), assisted_intake_audit_retention=SyntheticIntakeAuditRetention(), assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
 
     apply_upgrade_to_database(database_url)
     app = create_app(
         external_provider_validation=_live_provider_validation(),
+        assisted_intake_audit_retention=SyntheticIntakeAuditRetention(), assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy(),
     )
     try:
         assert app.state.persistence_bundle.mode == "postgresql"
@@ -289,6 +355,7 @@ def test_assisted_intake_http_state_survives_postgresql_restart(
 
     app = create_app(
         external_provider_validation=_live_provider_validation(),
+        assisted_intake_audit_retention=SyntheticIntakeAuditRetention(), assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy(),
     )
     client = TestClient(app)
     submit_key = f"production-submit-{uuid4()}"
@@ -341,6 +408,7 @@ def test_assisted_intake_http_state_survives_postgresql_restart(
 
     restarted = create_app(
         external_provider_validation=_live_provider_validation(),
+        assisted_intake_audit_retention=SyntheticIntakeAuditRetention(), assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy(),
     )
     restarted_client = TestClient(restarted)
     try:
@@ -427,3 +495,83 @@ def test_assisted_intake_rejects_stale_multi_instance_write(
     finally:
         first.engine.close()
         second.engine.close()
+
+
+def test_initial_workflow_and_evidence_survive_postgresql_restart(intake_blank_db, monkeypatch, tmp_path):
+    database_url = _database_url(intake_blank_db)
+    apply_upgrade_to_database(database_url)
+    _install_canonical_runtime(database_url)
+    _configure_production(monkeypatch, tmp_path, database_url)
+    policy = SyntheticIntakeWorkflowPolicy()
+    app = create_app(external_provider_validation=_live_provider_validation(), assisted_intake_audit_retention=SyntheticIntakeAuditRetention(), assisted_intake_workflow_policy=policy)
+    key = f"synthetic-workflow-restart-{uuid4()}"
+    body = {"original_url": "https://example.invalid/workflow-restart", "scope": {"tenant_id": TENANT_ID}}
+    try:
+        with TestClient(app) as client:
+            submitted = client.post("/api/v1/intakes/url", json=body, headers=_headers(ACTOR_ID, key=key))
+            assert submitted.status_code == 202, submitted.text
+            intake_id = submitted.json()["intake_id"]
+            detail = client.get(f"/api/v1/intakes/{intake_id}", headers=_headers(ACTOR_ID)).json()
+            assignment_id, sla_id = detail["assignment_id"], detail["sla_instance_id"]
+            assert detail["assignment_status"] == "UNASSIGNED" and detail["sla_state"] == "ON_TRACK"
+            state = app.state.assisted_intake_store
+            state.refresh(TENANT_ID)
+            assert len(state.assignments) == len(state.slas) == 1
+            assert len(state.workflow_audits) == 3 and len(state.workflow_outbox) == 2
+            audit_ids, event_ids = set(state.workflow_audits), set(state.workflow_outbox)
+    finally:
+        app.state.persistence_bundle.engine.close()
+    restarted = create_app(external_provider_validation=_live_provider_validation(), assisted_intake_audit_retention=SyntheticIntakeAuditRetention(), assisted_intake_workflow_policy=policy)
+    try:
+        with TestClient(restarted) as client:
+            detail = client.get(f"/api/v1/intakes/{intake_id}", headers=_headers(ACTOR_ID))
+            assert detail.status_code == 200
+            assert detail.json()["assignment_id"] == assignment_id and detail.json()["sla_instance_id"] == sla_id
+            replay = client.post("/api/v1/intakes/url", json=body, headers=_headers(ACTOR_ID, key=key))
+            assert replay.status_code == 200 and replay.json() == submitted.json()
+            state = restarted.state.assisted_intake_store
+            state.refresh(TENANT_ID)
+            assert set(state.workflow_audits) == audit_ids and set(state.workflow_outbox) == event_ids
+            state.refresh(str(uuid4()))
+            assert not state.intakes and not state.assignments and not state.slas
+            assert not state.workflow_audits and not state.workflow_outbox
+    finally:
+        restarted.state.persistence_bundle.engine.close()
+
+
+def test_partial_database_flush_rolls_back_workflow_and_retry_is_fresh(intake_blank_db, monkeypatch, tmp_path):
+    database_url = _database_url(intake_blank_db)
+    apply_upgrade_to_database(database_url)
+    _install_canonical_runtime(database_url)
+    _configure_production(monkeypatch, tmp_path, database_url)
+    app = create_app(external_provider_validation=_live_provider_validation(), assisted_intake_audit_retention=SyntheticIntakeAuditRetention(), assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
+    store = app.state.assisted_intake_store
+    original_put = store._store.put
+    calls = 0
+
+    def failing_put(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        original_put(*args, **kwargs)
+        if calls == 3:
+            raise RuntimeError("synthetic crash after three SQL writes")
+
+    key = f"synthetic-workflow-flush-{uuid4()}"
+    body = {"original_url": "https://example.invalid/workflow-flush", "scope": {"tenant_id": TENANT_ID}}
+    try:
+        with TestClient(app, raise_server_exceptions=False) as client:
+            with monkeypatch.context() as patch:
+                patch.setattr(store._store, "put", failing_put)
+                failed = client.post("/api/v1/intakes/url", json=body, headers=_headers(ACTOR_ID, key=key))
+            assert failed.status_code == 500, failed.text
+            assert calls == 3
+            store.refresh(TENANT_ID)
+            for name in ("intakes", "jobs", "assignments", "slas", "replays", "workflow_audits", "workflow_outbox"):
+                assert not getattr(store, name), name
+            retried = client.post("/api/v1/intakes/url", json=body, headers=_headers(ACTOR_ID, key=key))
+            assert retried.status_code == 202, retried.text
+            store.refresh(TENANT_ID)
+            assert len(store.intakes) == len(store.assignments) == len(store.slas) == len(store.jobs) == len(store.replays) == 1
+            assert len(store.workflow_audits) == 3 and len(store.workflow_outbox) == 2
+    finally:
+        app.state.persistence_bundle.engine.close()

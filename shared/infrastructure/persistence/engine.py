@@ -38,6 +38,7 @@ _SCHEMA_FILES = (
     "000022_durable_manual_corrections.sql",
     "000024_avm_quality_score_nullable_sqlite.sql",
     "000026_canonical_measurement_nullable_sqlite.sql",
+    "000031_durable_job_availability_sqlite.sql",
 )
 
 
@@ -62,9 +63,11 @@ class SqliteEngine:
         self._tx_depth = 0
         self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA foreign_keys=ON")
-        self._bootstrap()
+        try:
+            self._bootstrap()
+        except BaseException:
+            self._conn.close()
+            raise
 
     @property
     def path(self) -> Path:
@@ -76,42 +79,52 @@ class SqliteEngine:
 
     def _bootstrap(self) -> None:
         with self._lock:
-            for filename in _SCHEMA_FILES:
-                ddl = (_MIGRATIONS_DIR / filename).read_text(encoding="utf-8")
-                # Strip comments and group lines into semicolon-separated statements
-                statements = []
-                current = []
-                for line in ddl.splitlines():
-                    stripped = line.split("--")[0].strip()
-                    if not stripped:
-                        continue
-                    current.append(stripped)
-                    if stripped.endswith(";"):
-                        statements.append(" ".join(current))
-                        current = []
-                if current:
-                    statements.append(" ".join(current))
-
-                for statement in statements:
-                    statement = statement.strip()
-                    if not statement:
-                        continue
-                    if statement.upper().startswith("PRAGMA FOREIGN_KEYS"):
-                        # SQLite PRAGMA foreign_keys is a no-op inside an open transaction.
-                        # Commit any pending transaction before and after toggling foreign_keys.
-                        self._conn.commit()
-                        self._conn.execute(statement)
-                        self._conn.commit()
-                        continue
-                    try:
-                        self._conn.execute(statement)
-                    except sqlite3.OperationalError as exc:
-                        exc_msg = str(exc).lower()
-                        if "duplicate column name" in exc_msg or "already exists" in exc_msg:
+            # Bound only initialization waits; ordinary command waits retain
+            # SQLite's existing five-second timeout after bootstrap.
+            self._conn.execute("PRAGMA busy_timeout=30000")
+            try:
+                self._conn.execute("PRAGMA journal_mode=WAL")
+                self._conn.execute("PRAGMA foreign_keys=OFF")
+                self._conn.execute("BEGIN IMMEDIATE")
+                for filename in _SCHEMA_FILES:
+                    ddl = (_MIGRATIONS_DIR / filename).read_text(encoding="utf-8")
+                    # Strip comments and group lines into semicolon-separated statements
+                    statements = []
+                    current = []
+                    for line in ddl.splitlines():
+                        stripped = line.split("--")[0].strip()
+                        if not stripped:
                             continue
-                        raise exc
-            self._conn.commit()
-            self._conn.execute("PRAGMA foreign_keys=ON")
+                        current.append(stripped)
+                        if stripped.endswith(";"):
+                            statements.append(" ".join(current))
+                            current = []
+                    if current:
+                        statements.append(" ".join(current))
+
+                    for statement in statements:
+                        statement = statement.strip()
+                        if not statement:
+                            continue
+                        if statement.upper().startswith("PRAGMA FOREIGN_KEYS"):
+                            # Table-rebuild migrations require FK checks off. The
+                            # whole bootstrap owns one SQL transaction; do not
+                            # commit midway and release its cross-connection lock.
+                            continue
+                        try:
+                            self._conn.execute(statement)
+                        except sqlite3.OperationalError as exc:
+                            exc_msg = str(exc).lower()
+                            if "duplicate column name" in exc_msg or "already exists" in exc_msg:
+                                continue
+                            raise exc
+                self._conn.commit()
+            except BaseException:
+                self._conn.rollback()
+                raise
+            finally:
+                self._conn.execute("PRAGMA foreign_keys=ON")
+                self._conn.execute("PRAGMA busy_timeout=5000")
 
     @contextmanager
     def transaction(self) -> Iterator[SqliteEngine]:

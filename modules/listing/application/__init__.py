@@ -11,9 +11,8 @@ __all__ = [
     "ListingPipelineRecord",
     "run_listing_csv_import",
     "run_listing_import",
-    "IntakeWorkflowService",
-    "InMemoryIntakeRepository",
     "AssignmentSlaService",
+    "SlaCalendar",
     "InMemoryAssignmentRepository",
     "InMemorySlaRepository",
 ]
@@ -24,9 +23,8 @@ _EXPORT_MODULES = {
     "ListingPipelineRecord": "modules.listing.application.pipeline",
     "run_listing_csv_import": "modules.listing.application.pipeline",
     "run_listing_import": "modules.listing.application.pipeline",
-    "IntakeWorkflowService": "modules.listing.application.intake_workflow",
-    "InMemoryIntakeRepository": "modules.listing.application.intake_workflow",
     "AssignmentSlaService": "modules.listing.application.assignment_sla",
+    "SlaCalendar": "modules.listing.application.assignment_sla",
     "InMemoryAssignmentRepository": "modules.listing.application.assignment_sla",
     "InMemorySlaRepository": "modules.listing.application.assignment_sla",
 }

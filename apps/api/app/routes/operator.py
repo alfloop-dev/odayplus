@@ -118,6 +118,7 @@ def create_operator_router(
     *,
     audit_log: InMemoryAuditLog | None = None,
     document_store: Any | None = None,
+    job_queue: Any | None = None,
     state_service: OperatorStateService | None = None,
     growth_service: GrowthService | None = None,
     listing_repository: Any | None = None,
@@ -128,6 +129,7 @@ def create_operator_router(
     netplan_repository_for_tenant: Any | None = None,
     priceops_repository_for_tenant: Any | None = None,
     model_runtime: Any | None = None,
+    score_execution_service: Any | None = None,
     avm_production_executor: Any | None = None,
     avm_depreciation_version_pin: str | None = None,
     avm_rollback_receipt: DepreciationRollbackReceipt | None = None,
@@ -136,7 +138,10 @@ def create_operator_router(
     netplan_approval_verifier: Any | None = None,
     evidence_store: Any | None = None,
     intake_repository: Any | None = None,
+    intake_workflow_store: Any | None = None,
+    intake_workflow_policy: Any | None = None,
     live_repository: OperatorLiveRepositoryProtocol | None = None,
+    fixture_issue_repository: Any | None = None,
     identity_user_role_service: Any | None = None,
     require_live_data: bool = False,
     persistence_mode: str = "memory",
@@ -207,6 +212,7 @@ def create_operator_router(
         svc = state_service or OperatorStateService(
             persistence_mode=persistence_mode,
             provider_mode=provider_mode,
+            fixture_issue_repository=fixture_issue_repository,
         )
 
     router = APIRouter(prefix="/operator", tags=["operator"])
@@ -574,6 +580,7 @@ def create_operator_router(
         from shared.infrastructure.persistence.operator_domains import (
             DurableOperatorDomainStateRepository,
         )
+        from shared.infrastructure.persistence.repositories import DurableApprovalRepository
         from shared.workflow.sitescore import SiteScoreDecisionWorkflow
 
         def require_tenant_repository(
@@ -629,6 +636,25 @@ def create_operator_router(
             document_store,
             "network-listings",
         )
+        listing_write_guard = None
+        if getattr(document_store.engine, "dialect", None) == "postgresql":
+            from shared.audit.backlog import (
+                AuditBacklogBlocked,
+                AuditBacklogUnavailable,
+                CanonicalAuditBacklog,
+            )
+
+            listing_backlog = CanonicalAuditBacklog(document_store.engine)
+
+            def listing_write_guard(tenant_id: str) -> None:
+                try:
+                    listing_backlog.require_available(tenant_id)
+                except (AuditBacklogBlocked, AuditBacklogUnavailable) as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="BACKPRESSURE_ACTIVE",
+                        headers={"Retry-After": "30"},
+                    ) from exc
         scoring_state_repository = DurableOperatorDomainStateRepository(
             document_store,
             "network-scoring",
@@ -650,6 +676,22 @@ def create_operator_router(
             "governance",
         )
 
+        def live_intake_repository(tenant_id: str) -> Any:
+            legacy = DurableAssistedIntakeRepository(
+                TenantScopedDocumentStore(document_store, tenant_id)
+            )
+            if allow_test_reset:
+                return legacy
+            if intake_workflow_store is None:
+                raise HTTPException(503, "INTAKE_WORKFLOW_STORE_UNAVAILABLE")
+            from shared.infrastructure.persistence.operator_intake_workflow import (
+                OperatorIntakeWorkflowRepository,
+            )
+
+            return OperatorIntakeWorkflowRepository(
+                intake_workflow_store, legacy, tenant_id, intake_workflow_policy,
+            )
+
         listing_resolver = DurableTenantServiceResolver(
             listing_state_repository,
             factory=lambda state, tenant_id: NetworkListingService(
@@ -658,17 +700,20 @@ def create_operator_router(
                     "listing_repository",
                     tenant_id,
                 ),
-                intake_repository=DurableAssistedIntakeRepository(
-                    TenantScopedDocumentStore(document_store, tenant_id)
-                ),
+                intake_repository=live_intake_repository(tenant_id),
                 initial_state=state,
                 # Canonical fixture state may exist only behind the explicit
                 # test-reset gate (ODP_E2E_MODE): production keeps the durable
                 # listing aggregate fail-closed empty until real intake writes.
                 seed_fixtures=allow_test_reset,
                 tenant_id=tenant_id,
+                high_risk_write_guard=listing_write_guard,
+                review_decision_repository=require_tenant_repository(
+                    sitescore_decision_repository_for_tenant, "sitescore_decision_repository", tenant_id,
+                ),
             ),
             exporter=lambda service: service.export_state(),
+            transactional_mutations=True,
             mutating_methods={
                 "reset",
                 "convert_listing",
@@ -681,24 +726,36 @@ def create_operator_router(
                 "promote_intake",
             },
         )
+        from modules.listing.application.candidate_score_context import CandidateScoreContextReader
+
         scoring_resolver = DurableTenantServiceResolver(
             scoring_state_repository,
-            factory=lambda state, tenant_id: NetworkScoringService(
-                initial_state=state,
-                seed_fixtures=False,
-                listing_repository=require_tenant_repository(
-                    listing_repository_for_tenant,
-                    "listing_repository",
-                    tenant_id,
+            factory=lambda state, tenant_id: (
+                lambda listing_repository: NetworkScoringService(
+                    initial_state=state,
+                    seed_fixtures=False,
+                    listing_repository=listing_repository,
+                    current_context_reader=CandidateScoreContextReader(
+                        tenant_id=tenant_id, repository=listing_repository,
+                        engine=document_store.engine, store=intake_workflow_store,
+                    ),
+                    sitescore_repository=require_tenant_repository(
+                        sitescore_repository_for_tenant,
+                        "sitescore_repository",
+                        tenant_id,
+                    ),
+                    model_runtime=require_model_runtime(),
+                    current_model_admission=getattr(
+                        getattr(score_execution_service, "repository", None), "model_admission", None,
+                    ),
+                    execution_service=score_execution_service,
+                    require_canonical=True,
+                    tenant_id=tenant_id,
+                )
+            )(
+                require_tenant_repository(
+                    listing_repository_for_tenant, "listing_repository", tenant_id,
                 ),
-                sitescore_repository=require_tenant_repository(
-                    sitescore_repository_for_tenant,
-                    "sitescore_repository",
-                    tenant_id,
-                ),
-                model_runtime=require_model_runtime(),
-                require_canonical=True,
-                tenant_id=tenant_id,
             ),
             exporter=lambda service: service.export_state(),
             mutating_methods={
@@ -708,34 +765,38 @@ def create_operator_router(
                 "set_compare_set",
             },
         )
+        def review_service_factory(state: dict[str, Any] | None, tenant_id: str) -> NetworkReviewService:
+            decision_repository = require_tenant_repository(
+                sitescore_decision_repository_for_tenant, "sitescore_decision_repository", tenant_id,
+            )
+            scoped_store = TenantScopedDocumentStore(document_store, tenant_id)
+            candidate_service = NetworkListingService(
+                listing_repository=require_tenant_repository(listing_repository_for_tenant, "listing_repository", tenant_id),
+                intake_repository=DurableAssistedIntakeRepository(scoped_store),
+                seed_fixtures=False, tenant_id=tenant_id, review_decision_repository=decision_repository,
+            )
+            def audit_delivery_factory(tenant: str):
+                from shared.audit.durable_delivery import DurableAuditDelivery
+                from shared.infrastructure.persistence.job_queue import DurableJobQueue
+                # Older router callers can share the existing SQL queue table;
+                # production supplies the worker's same-engine queue instance.
+                queue = job_queue if job_queue is not None else DurableJobQueue(document_store.engine)
+                return DurableAuditDelivery(document_store.engine, tenant, queue, active_audit_log._worm_sink)
+            return NetworkReviewService(
+                initial_state=state, seed_fixtures=False, require_canonical=True,
+                decision_repository=decision_repository,
+                sitescore_repository=require_tenant_repository(sitescore_repository_for_tenant, "sitescore_repository", tenant_id),
+                decision_workflow=SiteScoreDecisionWorkflow(audit_log=active_audit_log, store=decision_repository,
+                                                          approval_store=DurableApprovalRepository(scoped_store)),
+                candidate_workflow_service=candidate_service, audit_delivery_factory=audit_delivery_factory,
+            )
+
         review_resolver = DurableTenantServiceResolver(
             review_state_repository,
-            factory=lambda state, tenant_id: (
-                lambda decision_repository, sitescore_repository: NetworkReviewService(
-                    initial_state=state,
-                    seed_fixtures=False,
-                    decision_repository=decision_repository,
-                    sitescore_repository=sitescore_repository,
-                    decision_workflow=SiteScoreDecisionWorkflow(
-                        audit_log=active_audit_log,
-                        store=decision_repository,
-                    ),
-                    require_canonical=True,
-                )
-            )(
-                require_tenant_repository(
-                    sitescore_decision_repository_for_tenant,
-                    "sitescore_decision_repository",
-                    tenant_id,
-                ),
-                require_tenant_repository(
-                    sitescore_repository_for_tenant,
-                    "sitescore_repository",
-                    tenant_id,
-                ),
-            ),
+            factory=review_service_factory,
             exporter=lambda service: service.export_state(),
-            mutating_methods={"reset", "decide_review"},
+            mutating_methods={"reset", "decide_review", "submit_review", "submit_native_report", "decide_native_review"},
+            transactional_mutations=True,
         )
 
         def write_governance_approval(
@@ -846,6 +907,7 @@ def create_operator_router(
                     "sitescore_decision_repository",
                     tenant_id,
                 ),
+                sitescore_approval_repository=DurableApprovalRepository(TenantScopedDocumentStore(document_store, tenant_id)),
                 avm_repository=require_tenant_repository(
                     avm_repository_for_tenant,
                     "avm_repository",
@@ -919,6 +981,7 @@ def create_operator_router(
                     "sitescore", Action.EXECUTE, engine=authz_engine
                 ),
                 service_resolver=scoring_resolver,
+                execution_service=score_execution_service,
                 read_scope_snapshot_fn=network_read_scope_snapshot,
                 allow_reset=allow_test_reset,
             )
@@ -926,11 +989,15 @@ def create_operator_router(
         router.include_router(
             create_network_review_sub_router(
                 NetworkReviewService(seed_fixtures=False),
+                audit_log=active_audit_log,
                 require_view_permission_fn=require_operator_permission(
                     "sitescore",
                     Action.VIEW,
                     engine=authz_engine,
                     scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE,
+                ),
+                require_submit_permission_fn=require_operator_permission(
+                    "sitescore", Action.EXECUTE, engine=authz_engine
                 ),
                 require_decide_permission_fn=require_operator_permission(
                     "sitescore", Action.APPROVE, engine=authz_engine
@@ -962,6 +1029,12 @@ def create_operator_router(
                 require_view_permission_fn=operator_view_guard,
                 require_permission_fn=require_operator_permission(
                     "intervention", Action.CREATE, engine=authz_engine
+                ),
+                require_approval_permission_fn=require_operator_permission(
+                    "intervention", Action.APPROVE, engine=authz_engine
+                ),
+                require_transition_permission_fn=require_operator_permission(
+                    "intervention", Action.EXECUTE, engine=authz_engine
                 ),
                 service_resolver=growth_resolver,
             )
@@ -1107,12 +1180,15 @@ def create_operator_router(
     router.include_router(
         create_network_review_sub_router(
             NetworkReviewService(),
-            read_scope_snapshot_fn=local_network_read_scope_snapshot,
+            audit_log=active_audit_log,            read_scope_snapshot_fn=local_network_read_scope_snapshot,
             require_view_permission_fn=require_operator_permission(
                 "sitescore",
                 Action.VIEW,
                 engine=authz_engine,
                 scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE,
+            ),
+            require_submit_permission_fn=require_operator_permission(
+                "sitescore", Action.EXECUTE, engine=authz_engine
             ),
             require_decide_permission_fn=require_operator_permission(
                 "sitescore", Action.APPROVE, engine=authz_engine
@@ -1184,6 +1260,12 @@ def create_operator_router(
             require_view_permission_fn=operator_view_guard,
             require_permission_fn=require_operator_permission(
                 "intervention", Action.CREATE, engine=authz_engine
+            ),
+            require_approval_permission_fn=require_operator_permission(
+                "intervention", Action.APPROVE, engine=authz_engine
+            ),
+            require_transition_permission_fn=require_operator_permission(
+                "intervention", Action.EXECUTE, engine=authz_engine
             ),
         )
     )

@@ -1,0 +1,15 @@
+Private Next 15.5.27 ESLint compatibility fork, 15.5.27-oday.1.
+
+All upstream rules, configs and plugin exports retain their original bytes.
+The directory traversal helper uses the preserved fast-glob 3.3.1 traversal
+implementation with picomatch 2.3.2 scan/regex semantics. Brace expansion uses
+brace-expansion 2.1.7; the known vulnerable braces compile/expand walkers are
+excluded. The retained iterative parser supplies compatibility range checks;
+its stringify helper also walks iteratively.
+
+The fork includes the upstream Next, fast-glob and retained parser MIT
+copyright notices. UPSTREAM.json records source hashes and provenance.
+This is a local private fork, not a claimed upstream patched release.
+Prior compatibility and audit results are historical candidate evidence;
+current monorepo install, lint, regression and audit validation is required.
+Release, license exceptions and security waivers are not approved here.

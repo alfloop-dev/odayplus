@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import pytest
 import uvloop
@@ -33,6 +36,24 @@ from shared.infrastructure.persistence.operator_domains import (
     TenantScopedDocumentStore,
 )
 from shared.infrastructure.persistence.repositories import DurableDecisionStore
+from tests.intake_registry_fixture import (
+    APPROVER,
+    MANAGER,
+    OWNER,
+    TENANT,
+    _audit_retention_row,
+    _calendar_row,
+    _workflow_row,
+)
+from tests.integration.test_intake_registry_calendar_postgresql import (
+    _bundle as _postgres_bundle,
+)
+from tests.integration.test_intake_registry_calendar_postgresql import (
+    _insert_policy,
+)
+from tests.integration.test_operator_intake_workflow_postgresql import (
+    bridge_database as bridge_database,
+)
 
 BASE = "/api/v1/operator"
 SEED_IDS = {
@@ -191,13 +212,15 @@ class _ScopeCapturingLiveRepository(_StaticLiveRepository):
 
 
 def _live_app(
-    database_path: Path,
+    database_path: Path | None,
     *,
     allow_test_reset: bool = False,
     live_repository: Any | None = None,
+    bundle: Any | None = None,
 ) -> tuple[FastAPI, Any]:
-    bundle = _durable_bundle(database_path)
-    document_store = SqliteDocumentStore(bundle.engine)
+    bundle = bundle if bundle is not None else _durable_bundle(database_path)
+    workflow_store = getattr(bundle, "assisted_intake_store", None)
+    document_store = workflow_store._store if workflow_store else SqliteDocumentStore(bundle.engine)
 
     def scoped(tenant_id: str) -> TenantScopedDocumentStore:
         return TenantScopedDocumentStore(document_store, tenant_id)
@@ -234,6 +257,8 @@ def _live_app(
                 scoped(tenant_id)
             ),
             model_runtime=_UnusedModelRuntime(),
+            intake_workflow_store=workflow_store,
+            intake_workflow_policy=getattr(bundle, "assisted_intake_workflow_policy", None),
             live_repository=live_repository or OperatorLiveRepository(bundle),
             require_live_data=True,
             persistence_mode="postgresql",
@@ -243,6 +268,38 @@ def _live_app(
         prefix="/api/v1",
     )
     return app, bundle
+
+
+def _postgres_live_app(database, monkeypatch):
+    """Production workflow dependencies use a real isolated PostgreSQL engine."""
+    return _live_app(None, bundle=_postgres_bundle(database, monkeypatch))
+
+
+def _second_workflow_tenant(database):
+    """A second explicitly synthetic registry, never installed in product code."""
+    tenant = "00000000-0000-0000-0000-000000000002"
+    ids = {APPROVER: "00000000-0000-0000-0000-000000000201",
+           MANAGER: "00000000-0000-0000-0000-000000000202",
+           OWNER: "00000000-0000-0000-0000-000000000203"}
+    with database.connect() as conn:
+        conn.execute("INSERT INTO core.tenants (tenant_id,tenant_name) VALUES (%s,%s)",
+                     (tenant, "Synthetic second workflow tenant"))
+        for source, target in ids.items():
+            conn.execute("""INSERT INTO identity.accounts
+                (account_id,tenant_id,username,email,status,created_by)
+                SELECT %s,%s,%s,%s,status,created_by FROM identity.accounts WHERE account_id=%s""",
+                         (target, tenant, target, target + "@example.invalid", source))
+            conn.execute("""INSERT INTO identity.account_roles(account_id,role,granted_by)
+                SELECT %s,role,granted_by FROM identity.account_roles WHERE account_id=%s""", (target, source))
+            conn.execute("INSERT INTO identity.account_scopes(account_id) VALUES (%s)", (target,))
+        for row in (_workflow_row(), _calendar_row(), _audit_retention_row()):
+            parameters = deepcopy(row.parameters)
+            if "calendar_version_id" in parameters:
+                parameters["calendar_version_id"] = parameters["calendar_version_id"].replace(TENANT, tenant)
+            _insert_policy(conn, replace(row, tenant_id=tenant, approved_by=ids[APPROVER],
+                                        policy_version_id=row.policy_version_id.replace(TENANT, tenant),
+                                        parameters=parameters))
+    return tenant, ids[MANAGER]
 
 
 @pytest.mark.parametrize(("roles", "tabs"), [
@@ -272,10 +329,11 @@ def test_live_bootstrap_and_today_project_verified_navigation(tmp_path, roles, t
         bundle.engine.close()
 
 
+@pytest.mark.requires_live_env
 def test_live_router_mounts_all_operator_domain_routes_without_seed_rows(
-    tmp_path: Path,
+    bridge_database, monkeypatch,
 ) -> None:
-    app, bundle = _live_app(tmp_path / "operator-live-routes.sqlite3")
+    app, bundle = _postgres_live_app(bridge_database, monkeypatch)
     try:
         paths = set(app.openapi()["paths"])
         assert {
@@ -300,9 +358,9 @@ def test_live_router_mounts_all_operator_domain_routes_without_seed_rows(
         } <= paths
 
         with TestClient(app) as client:
-            headers = _headers("tenant-live-empty")
-            ops_headers = _ops_headers("tenant-live-empty")
-            franchisee_headers = _franchisee_headers("tenant-live-empty")
+            headers = {**_headers(TENANT), "x-subject-id": MANAGER}
+            ops_headers = {**_ops_headers(TENANT), "x-subject-id": MANAGER}
+            franchisee_headers = {**_franchisee_headers(TENANT), "x-subject-id": MANAGER}
             shell_search = client.get(
                 f"{BASE}/shell/search",
                 headers=headers,
@@ -677,6 +735,16 @@ def test_durable_listings_seed_canonical_state_only_behind_test_reset_gate(
                 listing["id"] for listing in snapshot.json()["listings"]
             }
             assert {"L-2024", "L-2025", "L-2029", "L-2030"} <= listing_ids
+            assert next(
+                listing for listing in snapshot.json()["listings"] if listing["id"] == "L-2024"
+            )["hardRuleFailures"] == []
+            # The next request reconstructs the aggregate from durable rows;
+            # the seed's recorded pass must survive that round trip.
+            restored = client.get(f"{BASE}/network-listings", headers=headers)
+            assert restored.status_code == 200
+            assert next(
+                listing for listing in restored.json()["listings"] if listing["id"] == "L-2024"
+            )["hardRuleFailures"] == []
 
             converted = client.post(
                 f"{BASE}/network-listings/listings/L-2024/convert",
@@ -686,7 +754,7 @@ def test_durable_listings_seed_canonical_state_only_behind_test_reset_gate(
                 ),
                 json={"actorRoleId": "expansionManager"},
             )
-            assert converted.status_code == 200
+            assert converted.status_code == 200, converted.text
 
             # The conversion is durable: a fresh request rebuilds the service
             # from persisted state and still sees candidate linkage.
@@ -700,6 +768,7 @@ def test_durable_listings_seed_canonical_state_only_behind_test_reset_gate(
             )
             assert l2024["status"] == "candidate"
             assert l2024["candidateId"] == "CS-1001"
+            assert l2024["hardRuleFailures"] == []
 
             # Reset stays available behind the gate and restores the canonical
             # seed, discarding the conversion.
@@ -716,6 +785,59 @@ def test_durable_listings_seed_canonical_state_only_behind_test_reset_gate(
                 if listing["id"] == "L-2024"
             )
             assert l2024_reset.get("candidateId") in (None, "")
+            assert l2024_reset["hardRuleFailures"] == []
+            converted_after_reset = client.post(
+                f"{BASE}/network-listings/listings/L-2024/convert",
+                headers=_headers("tenant-e2e-seeded", idempotency_key="e2e-seed-convert-2"),
+                json={"actorRoleId": "expansionManager"},
+            )
+            assert converted_after_reset.status_code == 200, converted_after_reset.text
+    finally:
+        bundle.engine.close()
+
+
+@pytest.mark.parametrize("verdict", [None, ["floor_not_ground_level"]], ids=["unknown", "failed"])
+def test_durable_seed_retains_unapproved_verdict_across_requests_and_reset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verdict: list[str] | None,
+) -> None:
+    from modules.opsboard.application import network_listings
+
+    original_seed = network_listings._seed_state
+
+    def explicit_seed(**kwargs: Any) -> dict[str, Any]:
+        state = original_seed(**kwargs)
+        next(row for row in state["listings"] if row["id"] == "L-2024")["hardRuleFailures"] = verdict
+        return state
+
+    monkeypatch.setattr(network_listings, "_seed_state", explicit_seed)
+    app, bundle = _live_app(tmp_path / "operator-seed-verdict.sqlite3", allow_test_reset=True)
+    try:
+        with TestClient(app) as client:
+            headers = _headers("tenant-seed-verdict")
+            for phase in ("initial", "reset"):
+                if phase == "reset":
+                    reset = client.post(f"{BASE}/network-listings/reset", headers=headers)
+                    assert reset.status_code == 200
+                # Both initial seed and reconstructed service must expose the
+                # actual null/failure verdict, never an invented pass.
+                for _ in range(2):
+                    snapshot = client.get(f"{BASE}/network-listings", headers=headers)
+                    assert snapshot.status_code == 200
+                    listing = next(
+                        row for row in snapshot.json()["listings"] if row["id"] == "L-2024"
+                    )
+                    assert listing["hardRuleFailures"] == verdict
+                converted = client.post(
+                    f"{BASE}/network-listings/listings/L-2024/convert",
+                    headers=_headers("tenant-seed-verdict", idempotency_key=f"seed-verdict-{phase}"),
+                    json={"actorRoleId": "expansionManager"},
+                )
+                assert converted.status_code == 422, converted.text
+                expected = "HARD_RULE_EVIDENCE_REQUIRED" if verdict is None else "hard-rule failures"
+                assert expected in converted.json()["detail"]
+                after = client.get(f"{BASE}/network-listings", headers=headers)
+                assert after.status_code == 200
+                assert after.json()["candidates"] == []
     finally:
         bundle.engine.close()
 
@@ -880,7 +1002,7 @@ def test_store_ops_production_empty_postgres_state_returns_503_without_seeding()
     assert response.json()["detail"] == {
         "code": "STORE_OPS_LIVE_DATA_UNAVAILABLE",
         "operation": "store_ops.summary",
-        "message": "Store Ops production state has not been materialized",
+        "message": "Store Ops scoped PostgreSQL repositories are not configured",
     }
     assert store.put_calls == []
     assert "ST-008" not in response.text
@@ -952,7 +1074,7 @@ def test_store_ops_production_rejects_fixture_already_persisted_in_postgres() ->
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "STORE_OPS_LIVE_DATA_UNAVAILABLE"
     assert response.json()["detail"]["message"] == (
-        "Store Ops production state contains canonical fixture identifiers"
+        "Store Ops scoped PostgreSQL repositories are not configured"
     )
     assert "ST-008" not in response.text
 
@@ -1001,17 +1123,19 @@ def test_live_router_without_document_store_mounts_routes_and_returns_503(
         bundle.engine.close()
 
 
+@pytest.mark.requires_live_env
 def test_live_intake_write_and_idempotency_survive_restart(
-    tmp_path: Path,
+    bridge_database, monkeypatch,
 ) -> None:
-    database_path = tmp_path / "operator-live-restart.sqlite3"
-    headers = _headers("tenant-live-a", idempotency_key="idem-live-a-1")
+    tenant_id = TENANT
+    headers = {**_headers(tenant_id, idempotency_key="idem-live-a-1"),
+               "x-subject-id": MANAGER, "x-correlation-id": str(uuid4())}
     payload = {
         "url": "https://example.com/property/live-a-1",
         "heatZoneId": None,
     }
 
-    first_app, first_bundle = _live_app(database_path)
+    first_app, first_bundle = _postgres_live_app(bridge_database, monkeypatch)
     try:
         with TestClient(first_app) as client:
             first = client.post(
@@ -1024,12 +1148,12 @@ def test_live_intake_write_and_idempotency_survive_restart(
     finally:
         first_bundle.engine.close()
 
-    reopened_app, reopened_bundle = _live_app(database_path)
+    reopened_app, reopened_bundle = _postgres_live_app(bridge_database, monkeypatch)
     try:
         with TestClient(reopened_app) as client:
             detail = client.get(
                 f"{BASE}/network-listings/intake/{intake_id}",
-                headers=_headers("tenant-live-a"),
+                headers=headers,
             )
             replay = client.post(
                 f"{BASE}/network-listings/intake/submit",
@@ -1046,29 +1170,36 @@ def test_live_intake_write_and_idempotency_survive_restart(
         reopened_bundle.engine.close()
 
 
+@pytest.mark.requires_live_env
 def test_live_domain_state_and_idempotency_are_tenant_isolated(
-    tmp_path: Path,
+    bridge_database, monkeypatch,
 ) -> None:
-    app, bundle = _live_app(tmp_path / "operator-live-tenants.sqlite3")
+    tenant_a_id = TENANT
+    tenant_b_id, actor_b = _second_workflow_tenant(bridge_database)
+    headers_a = {**_headers(tenant_a_id, idempotency_key="shared-key"),
+                 "x-subject-id": MANAGER, "x-correlation-id": str(uuid4())}
+    headers_b = {**_headers(tenant_b_id, idempotency_key="shared-key"),
+                 "x-subject-id": actor_b, "x-correlation-id": str(uuid4())}
+    app, bundle = _postgres_live_app(bridge_database, monkeypatch)
     try:
         with TestClient(app) as client:
             tenant_a = client.post(
                 f"{BASE}/network-listings/intake/submit",
-                headers=_headers("tenant-a", idempotency_key="shared-key"),
+                headers=headers_a,
                 json={"url": "https://example.com/property/tenant-a"},
             )
             tenant_b_list = client.get(
                 f"{BASE}/network-listings/intake",
-                headers=_headers("tenant-b"),
+                headers=headers_b,
             )
             tenant_b = client.post(
                 f"{BASE}/network-listings/intake/submit",
-                headers=_headers("tenant-b", idempotency_key="shared-key"),
+                headers=headers_b,
                 json={"url": "https://example.com/property/tenant-b"},
             )
             tenant_a_list = client.get(
                 f"{BASE}/network-listings/intake",
-                headers=_headers("tenant-a"),
+                headers=headers_a,
             )
 
         assert tenant_a.status_code == 200, tenant_a.text
@@ -1082,55 +1213,23 @@ def test_live_domain_state_and_idempotency_are_tenant_isolated(
         bundle.engine.close()
 
 
-def test_live_governance_write_and_idempotency_survive_restart(
-    tmp_path: Path,
-) -> None:
-    database_path = tmp_path / "operator-governance-restart.sqlite3"
-    headers = _headers(
-        "tenant-governance",
-        idempotency_key="idem-governance-export",
-    )
-    payload = {
-        "dateFrom": "2026-07-01",
-        "dateTo": "2026-07-24",
-        "modules": ["Network"],
-        "contents": ["Audit Trail"],
-        "format": "PDF",
-    }
-
-    first_app, first_bundle = _live_app(database_path)
-    try:
-        with TestClient(first_app) as client:
-            first = client.post(
-                f"{BASE}/governance/evidence-package",
-                headers=headers,
-                json=payload,
-            )
-        assert first.status_code == 200, first.text
-        package_id = first.json()["package"]["id"]
-    finally:
-        first_bundle.engine.close()
-
-    reopened_app, reopened_bundle = _live_app(database_path)
-    try:
-        with TestClient(reopened_app) as client:
-            history = client.get(
-                f"{BASE}/governance/evidence-packages",
-                headers=_headers("tenant-governance"),
-            )
-            replay = client.post(
-                f"{BASE}/governance/evidence-package",
-                headers=headers,
-                json=payload,
-            )
-
-        assert history.status_code == 200, history.text
-        assert [item["id"] for item in history.json()["items"]] == [package_id]
-        assert replay.status_code == 200, replay.text
-        assert replay.json()["package"]["id"] == package_id
-        assert replay.json()["idempotentReplay"] is True
-    finally:
-        reopened_bundle.engine.close()
+def test_live_governance_export_refuses_metadata_only_success_after_restart(tmp_path: Path) -> None:
+    database_path = tmp_path / "operator-governance-unavailable.sqlite3"
+    headers = _headers("tenant-governance", idempotency_key="idem-unadmitted-export")
+    payload = {"dateFrom": "2026-07-01", "dateTo": "2026-07-24", "modules": ["Network"], "contents": ["Audit Trail"], "format": "PDF"}
+    for _attempt in range(2):
+        app, bundle = _live_app(database_path)
+        try:
+            with TestClient(app) as client:
+                before = client.get(f"{BASE}/governance/snapshot", headers=headers).json()
+                response = client.post(f"{BASE}/governance/evidence-package", headers=headers, json=payload)
+                assert response.status_code == 503 and "CANONICAL_EVIDENCE_EXPORT_REQUIRED" in response.text
+                after = client.get(f"{BASE}/governance/snapshot", headers=headers).json()
+                assert after["evidencePackages"] == before["evidencePackages"] == []
+                assert after["auditRows"] == before["auditRows"]
+                assert "package" not in response.json()
+        finally:
+            bundle.engine.close()
 
 
 @pytest.mark.parametrize(("header", "axis", "allowed"), [
@@ -1139,26 +1238,57 @@ def test_live_governance_write_and_idempotency_survive_restart(
     ("x-region-ids", "regionId", "NORTH"),
     ("x-store-ids", "storeId", "STORE-A"),
 ])
-def test_live_network_viewer_scope_is_projected_after_tenant_resolution(tmp_path, header, axis, allowed):
-    app, bundle = _live_app(tmp_path / "read-scope.sqlite")
-    store = SqliteDocumentStore(bundle.engine)
+@pytest.mark.requires_live_env
+def test_live_network_viewer_scope_is_projected_after_tenant_resolution(bridge_database, monkeypatch, header, axis, allowed):
+    from modules.listing.domain.models import CandidateSiteDraft, ListingDedupKey
+    from shared.domain.models import AddressLocation, CandidateSite, Listing
+    from shared.infrastructure.persistence.operator_network_listings import (
+        DurableAssistedIntakeRepository,
+    )
+
+    app, bundle = _postgres_live_app(bridge_database, monkeypatch)
+    store = bundle.assisted_intake_store._store
     state_repository = DurableOperatorDomainStateRepository(store, "network-listings")
-    state_repository.save("tenant-a", {
+    state = {
         "heatZones": [{"id": "ZONE-A", "label": "A"}, {"id": "ZONE-B", "label": "B"}],
         "listings": [
-            {"id": "LISTING-A", "tenantId": "tenant-a", "heatZoneId": "ZONE-A", axis: allowed},
-            {"id": "LISTING-B", "tenantId": "tenant-a", "heatZoneId": "ZONE-B", axis: "excluded"},
+            {"id": "LISTING-A", "tenantId": TENANT, "heatZoneId": "ZONE-A", axis: allowed},
+            {"id": "LISTING-B", "tenantId": TENANT, "heatZoneId": "ZONE-B", axis: "excluded"},
         ],
         "candidates": [
             {"id": "CANDIDATE-A", "listingId": "LISTING-A"},
-            {"id": "CANDIDATE-B", "listingId": "LISTING-B", "tenantId": "tenant-a"},
+            {"id": "CANDIDATE-B", "listingId": "LISTING-B", "tenantId": TENANT},
         ],
         "siteReviews": [{"id": "REVIEW-A", "candidateId": "CANDIDATE-A"},
                         {"id": "REVIEW-B", "candidateId": "CANDIDATE-B"}],
         "assistedIntakes": [], "listingSources": [], "auditEvents": [],
-    })
-    headers = {"x-subject-id": "reader", "x-roles": "platform_admin,operator_viewer",
-               "x-operator-role": "pm-audit", "x-tenant-id": "tenant-a", header: allowed}
+    }
+    # A domain snapshot cannot supply resources missing from their durable
+    # owner. Seed the exact controlled rows and links this projection reads.
+    resources = bundle.listing_repository_for_tenant(TENANT)
+    metadata = DurableAssistedIntakeRepository(TenantScopedDocumentStore(store, TENANT))
+    persisted = {}
+    for row in state["listings"]:
+        address = AddressLocation(address_id=f"address-{row['id']}", raw_address="Synthetic scope record")
+        listing = Listing(listing_id=row["id"], tenant_id=TENANT, address_id=address.address_id,
+                          source_id="synthetic-scope", source_listing_id=row["id"])
+        resources.save_listing(listing, address, ListingDedupKey(
+            source_id=listing.source_id, source_listing_id=listing.source_listing_id,
+            normalized_address=f"Synthetic scope record {row['id']}",
+            rent_amount=listing.rent_amount, area_ping=listing.area_ping,
+        ))
+        metadata.save_listing_metadata(row["id"], row)
+        persisted[row["id"]] = (listing, address, row["heatZoneId"])
+    for row in state["candidates"]:
+        listing, address, zone = persisted[row["listingId"]]
+        resources.save_candidate(CandidateSiteDraft(
+            listing=listing, address=address, heat_zone_id=zone,
+            candidate_site=CandidateSite(candidate_site_id=row["id"], listing_id=row["listingId"],
+                                         address_id=address.address_id),
+        ))
+    state_repository.save(TENANT, state)
+    headers = {"x-subject-id": MANAGER, "x-roles": "platform_admin,operator_viewer",
+               "x-operator-role": "pm-audit", "x-tenant-id": TENANT, header: allowed}
     try:
         with TestClient(app) as client:
             response = client.get(f"{BASE}/network-listings", headers=headers)
@@ -1169,7 +1299,7 @@ def test_live_network_viewer_scope_is_projected_after_tenant_resolution(tmp_path
             assert [row["id"] for row in snap["siteReviews"]] == ["REVIEW-A"]
             assert snap["counts"]["listings"] == 1
             assert "LISTING-B" not in response.text and "CANDIDATE-B" not in response.text
-            foreign = client.get(f"{BASE}/network-listings", headers={**headers, "x-tenant-id": "tenant-b"})
+            foreign = client.get(f"{BASE}/network-listings", headers={**headers, "x-tenant-id": "00000000-0000-0000-0000-000000000002"})
             assert foreign.status_code == 200 and foreign.json()["listings"] == []
     finally:
         bundle.engine.close()
@@ -1208,3 +1338,125 @@ def test_tenant_scoped_document_store_never_queries_unpartitioned_collections() 
     for coll in called_collections:
         assert coll.startswith(f"{base_coll}.tenant.")
         assert coll != base_coll
+
+
+@pytest.mark.requires_live_env
+def test_batch_worker_result_is_readable_by_live_operator_after_restart(bridge_database, monkeypatch) -> None:
+    """A worker receipt must identify a row the live tenant route can read."""
+    from apps.worker.oday_worker.handlers import BATCH_LISTING_INTAKE_JOB_TYPE
+    from apps.worker.oday_worker.main import ODayWorker
+    from shared.jobs.queue import JobRequest, JobStatus
+
+    tenant = TENANT
+    app, bundle = _postgres_live_app(bridge_database, monkeypatch)
+    try:
+        job, _ = bundle.job_queue.enqueue(
+            JobRequest(
+                job_type=BATCH_LISTING_INTAKE_JOB_TYPE,
+                payload={
+                    "tenant_id": tenant,
+                    "items": [{"item_id": "one", "address_raw": "Synthetic address"}],
+                },
+            ),
+            correlation_id="synthetic-batch-readback",
+        )
+        assert ODayWorker(persistence=bundle).run_once()
+        completed = bundle.job_queue.get(job.job_id)
+        assert completed.status == JobStatus.SUCCEEDED
+        intake_id = completed.payload["receipt"]["items"][0]["result_ref"]
+        with TestClient(app) as client:
+            response = client.get(f"{BASE}/network-listings/intake/{intake_id}", headers=_headers(tenant))
+            assert response.status_code == 200, response.text
+            assert response.json()["id"] == intake_id
+    finally:
+        bundle.engine.close()
+
+    restarted_app, restarted = _postgres_live_app(bridge_database, monkeypatch)
+    try:
+        with TestClient(restarted_app) as client:
+            same = client.get(f"{BASE}/network-listings/intake/{intake_id}", headers=_headers(tenant))
+            assert same.status_code == 200, same.text
+            assert same.json()["tenantId"] == tenant
+            assert same.json()["parsedFields"]["address"]["normalizedValue"] == "Synthetic address"
+            foreign = client.get(f"{BASE}/network-listings/intake/{intake_id}", headers=_headers("00000000-0000-0000-0000-000000000002"))
+            assert foreign.status_code == 404
+    finally:
+        restarted.engine.close()
+
+
+def test_tenant_atomic_intake_insert_preserves_first_record_and_separates_tenants(tmp_path: Path) -> None:
+    path = tmp_path / "tenant-atomic-intake.sqlite3"
+    bundle = _durable_bundle(path)
+    try:
+        first = {"id": "same-id", "tenantId": "tenant-a", "version": 7}
+        repo_a = bundle.operator_intake_repository_for_tenant("tenant-a")
+        assert repo_a.create_intake_if_absent(first) == (first, True)
+        replacement = {**first, "version": 1}
+        assert repo_a.create_intake_if_absent(replacement) == (first, False)
+        foreign = {**replacement, "tenantId": "tenant-b"}
+        repo_b = bundle.operator_intake_repository_for_tenant("tenant-b")
+        assert repo_b.get_intake("same-id") is None
+        assert repo_b.create_intake_if_absent(foreign) == (foreign, True)
+        # No unpartitioned document is created by either atomic write.
+        assert bundle.operator_intake_repository.get_intake("same-id") is None
+    finally:
+        bundle.engine.close()
+    reopened = _durable_bundle(path)
+    try:
+        assert reopened.operator_intake_repository_for_tenant("tenant-a").get_intake("same-id") == first
+        assert reopened.operator_intake_repository_for_tenant("tenant-b").get_intake("same-id") == foreign
+    finally:
+        reopened.engine.close()
+
+
+@pytest.mark.parametrize("dependency", ["operator_intake_repository", "listing_repository"])
+def test_durable_batch_missing_scoped_repository_fails_before_writes(tmp_path: Path, dependency: str) -> None:
+    from dataclasses import replace
+
+    from apps.worker.oday_worker.handlers import build_batch_listing_intake_service
+
+    bundle = _durable_bundle(tmp_path / "missing-batch-dependency.sqlite3")
+    try:
+        incomplete = replace(bundle, **{dependency: None})
+        with pytest.raises(RuntimeError, match="tenant-aware batch"):
+            build_batch_listing_intake_service("verified-tenant", incomplete)
+        assert bundle.engine.query_one("SELECT count(*) AS total FROM durable_documents")["total"] == 0
+    finally:
+        bundle.engine.close()
+
+
+@pytest.mark.parametrize("tenant", ["", " ", None])
+def test_batch_service_rejects_missing_tenant_before_repository_access(tenant: Any) -> None:
+    from types import SimpleNamespace
+
+    from apps.worker.oday_worker.handlers import build_batch_listing_intake_service
+
+    with pytest.raises(ValueError, match="verified tenant"):
+        build_batch_listing_intake_service(tenant, SimpleNamespace())
+
+
+@pytest.mark.parametrize("legacy_tenant", ["verified-tenant", "foreign-tenant"])
+def test_batch_legacy_row_requires_reconciliation_without_copy_or_disclosure(tmp_path: Path, legacy_tenant: str) -> None:
+    from apps.worker.oday_worker.handlers import (
+        _default_batch_listing_item_executor,
+        batch_listing_intake_id,
+    )
+
+    bundle = _durable_bundle(tmp_path / "legacy-batch-row.sqlite3")
+    tenant = "verified-tenant"
+    intake_id = batch_listing_intake_id(tenant, "job", "one")
+    legacy = {"id": intake_id, "tenantId": legacy_tenant, "version": 8, "private_note": "legacy correction"}
+    try:
+        bundle.operator_intake_repository.save_intake(legacy)
+        result, error = _default_batch_listing_item_executor(
+            {"item_id": "one", "address_raw": "Synthetic replacement"},
+            tenant, bundle, job_id="job", item_id="one",
+        )
+        assert result is None
+        assert error.code == "INTAKE_PARTITION_RECONCILIATION_REQUIRED"
+        assert error.retryable is False
+        assert "legacy correction" not in str(error)
+        assert bundle.operator_intake_repository.get_intake(intake_id) == legacy
+        assert bundle.operator_intake_repository_for_tenant(tenant).get_intake(intake_id) is None
+    finally:
+        bundle.engine.close()

@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DesignStoreOpsWorkspace,
@@ -16,7 +16,9 @@ import {
   resolveNetworkTabGateState,
 } from "../NetworkFindAreasWorkspace";
 import { resolveGovernanceDecisionAuthority } from "../GovernanceWorkspace";
+import { HEAT_ZONE_FIXTURES, LISTING_FIXTURES, LISTING_SOURCE_FIXTURES } from "../fixtures";
 import { normalizeGovernanceActionAuthority } from "../governance/governanceLoader";
+import { STORE_OPS_REFRESH_EVENT } from "../storeOpsWorkflowTypes";
 import {
   operatorLoadFailureFromError,
   operatorLoadFailureFromResponse,
@@ -78,6 +80,218 @@ describe("production workspace data contracts", () => {
     expect(screen.queryByText("付款機前卡住＋付款失敗＋Google 負評")).not.toBeInTheDocument();
   });
 
+  const canonicalStoreOpsPayload = {
+    source: "operator-store-ops-production",
+    stores: [{
+      id: "LIVE-STORE-1", name: "正式門市", district: "正式行政區", city: "台北市", manager: "正式負責人",
+      lights: { demand: "green", operations: "yellow", staffing: "green", margin: "green" }, riskScore: 15,
+    }],
+    issues: [{
+      id: "LIVE-ISSUE-1", title: "來源事件標題", storeId: "LIVE-STORE-1", storeName: "正式門市",
+      status: "new", severity: "medium", source: "multiSignal", ownerRoleId: "opsLead", ownerName: "正式負責人",
+      slaDueAt: "2026-10-14T12:00:00Z", createdAt: "2026-10-14T01:00:00Z", updatedAt: "2026-10-14T01:00:00Z",
+      evidenceIds: [], summary: "來源事件摘要",
+    }],
+    evidence: [], auditEvents: [], fourLightSummary: [], count: 1,
+  };
+
+  const unavailableStorePayloads: Array<[string, unknown]> = [
+    ["null", null], ["string", "unexpected"], ["number", 42], ["boolean", true],
+    ["array", []], ["array of snapshots", [canonicalStoreOpsPayload]],
+    ["missing collections", {}],
+    ...["issues", "stores", "evidence", "auditEvents"].flatMap((field): Array<[string, unknown]> => [
+      [`${field} object`, { ...canonicalStoreOpsPayload, [field]: {} }],
+      [`${field} null`, { ...canonicalStoreOpsPayload, [field]: null }],
+      [`${field} string`, { ...canonicalStoreOpsPayload, [field]: "unexpected" }],
+      [`${field} null row`, { ...canonicalStoreOpsPayload, [field]: [null] }],
+    ]),
+    ["issue object title", { ...canonicalStoreOpsPayload, issues: [{ ...canonicalStoreOpsPayload.issues[0], title: {} }] }],
+    ["issue nonarray evidence IDs", { ...canonicalStoreOpsPayload, issues: [{ ...canonicalStoreOpsPayload.issues[0], evidenceIds: {} }] }],
+    ["store missing lights", { ...canonicalStoreOpsPayload, stores: [{ ...canonicalStoreOpsPayload.stores[0], lights: null }] }],
+    ["store incomplete lights", { ...canonicalStoreOpsPayload, stores: [{ ...canonicalStoreOpsPayload.stores[0], lights: {} }] }],
+    ["store array-valued light", { ...canonicalStoreOpsPayload, stores: [{ ...canonicalStoreOpsPayload.stores[0], lights: {
+      ...canonicalStoreOpsPayload.stores[0].lights, demand: ["green"],
+    } }] }],
+    ["store unknown light", { ...canonicalStoreOpsPayload, stores: [{ ...canonicalStoreOpsPayload.stores[0], lights: {
+      ...canonicalStoreOpsPayload.stores[0].lights, demand: "unknown",
+    } }] }],
+    ["seed malformed collection", { ...canonicalStoreOpsPayload, source: "fixture-store-ops", issues: {} }],
+    ["seed malformed row", { ...canonicalStoreOpsPayload, source: "fixture-store-ops", stores: [null] }],
+  ];
+  it.each(unavailableStorePayloads)("keeps a successful unknown Store API %s unavailable without demo rows or a render crash", async (_shape, payload) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    const onOpenWorkflow = vi.fn();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    })));
+
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={onOpenWorkflow} />);
+
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    expect(gate).toHaveAttribute("data-status", "empty");
+    expect(screen.queryByLabelText("門市 Issue queue")).not.toBeInTheDocument();
+    expect(screen.queryByText("14 台")).not.toBeInTheDocument();
+    expect(screen.queryByText("0 件 正常")).not.toBeInTheDocument();
+    expect(onOpenWorkflow).not.toHaveBeenCalled();
+  });
+
+  it("preserves the initial local demo after a transport failure before any successful API response", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Owned test transport refusal")));
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+
+    await waitFor(() => expect(error).toHaveBeenCalled());
+    expect(screen.getByLabelText("ISS-1024 detail")).toBeInTheDocument();
+    expect(screen.getByText("14 台")).toBeInTheDocument();
+    expect(screen.queryByTestId("operator-data-unavailable")).not.toBeInTheDocument();
+  });
+
+  it("does not revive the initial demo after an empty successful response and a failed retry", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response("null", { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockRejectedValue(new Error("Owned retry transport refusal")));
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    expect(gate).toHaveAttribute("data-status", "empty");
+
+    fireEvent.click(screen.getByRole("button", { name: "重新載入" }));
+
+    await waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error"));
+    expect(screen.queryByLabelText("門市 Issue queue")).not.toBeInTheDocument();
+    expect(screen.queryByText("14 台")).not.toBeInTheDocument();
+  });
+
+  it("clears previously explicit seed rows when a successful refresh body is unknown", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...canonicalStoreOpsPayload, source: "fixture-store-ops" }), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValue(new Response("null", { status: 200, headers: { "Content-Type": "application/json" } })));
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+    await screen.findByLabelText("LIVE-ISSUE-1 detail");
+    expect(screen.getByText("14 台")).toBeInTheDocument();
+
+    window.dispatchEvent(new Event(STORE_OPS_REFRESH_EVENT));
+
+    expect(await screen.findByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "empty");
+    expect(screen.queryByLabelText("LIVE-ISSUE-1 detail")).not.toBeInTheDocument();
+    expect(screen.queryByText("14 台")).not.toBeInTheDocument();
+  });
+
+  it("keeps an undecodable successful API body unavailable", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{invalid JSON", {
+      status: 200, headers: { "Content-Type": "application/json" },
+    })));
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-status", "error"));
+    expect(screen.queryByLabelText("門市 Issue queue")).not.toBeInTheDocument();
+    expect(screen.queryByText("14 台")).not.toBeInTheDocument();
+  });
+
+  it("retains a valid explicitly seeded local response as a fixture", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...canonicalStoreOpsPayload, source: "fixture-store-ops",
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+
+    await screen.findByLabelText("LIVE-ISSUE-1 detail");
+    expect(screen.getByText("14 台")).toBeInTheDocument();
+    expect(screen.queryByTestId("operator-data-unavailable")).not.toBeInTheDocument();
+  });
+
+  it.each(["true", "false"])("does not fill canonical Store API gaps with demo metrics or healthy evidence when production=%s", async (productionMode) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", productionMode);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(canonicalStoreOpsPayload), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    })));
+
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+
+    const detail = await screen.findByLabelText("LIVE-ISSUE-1 detail");
+    const strip = detail.querySelector('[class*="storeStrip"]')!;
+    expect(strip.children).toHaveLength(5);
+    expect(strip).toHaveTextContent("正式門市");
+    expect(within(strip as HTMLElement).getAllByText("不可用")).toHaveLength(3);
+    expect(strip).not.toHaveTextContent(/自助洗衣|14 台|18,420|14,200|9,500|NT\$/);
+    const fusion = within(detail).getByRole("heading", { name: "證據融合" }).closest("section")!;
+    expect(within(fusion).getAllByText("資料不可用")).toHaveLength(6);
+    expect(fusion).not.toHaveTextContent(/4\.8|0 件|正常|在線|健康|皆綠/);
+    expect(screen.getByLabelText("門市 Issue queue")).toBeInTheDocument();
+    expect(screen.getByLabelText("Action rail")).toBeInTheDocument();
+  });
+
+  it.each(["true", "false"])("renders source evidence titles without inventing ratings/status and keeps masked confidence or missing forecasts unavailable when production=%s", async (productionMode) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", productionMode);
+    const kinds = ["googleReview", "csCase", "camera", "payment", "iot", "forecastOps"];
+    const evidence = kinds.map((kind, index) => ({
+      id: `LIVE-EVIDENCE-${index}`, issueId: "LIVE-ISSUE-1", kind, title: `來源證據 ${kind}`,
+      sourceLabel: `正式來源 ${kind}`, summary: `來源摘要 ${kind}`, polarity: "neutral",
+      confidence: index === 0 ? null : 0.91, occurredAt: "2026-10-14T01:00:00Z",
+    }));
+    const payload = {
+      ...canonicalStoreOpsPayload,
+      issues: [{ ...canonicalStoreOpsPayload.issues[0], evidenceIds: evidence.map((row) => row.id) }], evidence,
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    })));
+
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+
+    const detail = await screen.findByLabelText("LIVE-ISSUE-1 detail");
+    const fusion = within(detail).getByRole("heading", { name: "證據融合" }).closest("section")!;
+    for (const kind of kinds) expect(within(fusion).getByText(`來源證據 ${kind}`)).toBeInTheDocument();
+    expect(fusion).not.toHaveTextContent(/★|未回覆|Zendesk 異常|交易延遲警告|Telemetry 警告|四燈評估警告|影像已解鎖/);
+    const panel = within(screen.getByRole("tabpanel"));
+    const confidence = panel.getByText("信心度").closest("div")!;
+    expect(confidence).toHaveTextContent("不可用");
+    expect(confidence).not.toHaveTextContent("0%");
+    fireEvent.click(screen.getByRole("tab", { name: "ForecastOps" }));
+    expect(screen.getByTestId("store-forecast-unavailable")).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /28 天/ })).not.toBeInTheDocument();
+  });
+
+  it.each(["empty", "missing"])("keeps a partial canonical API with %s stores unavailable in local demo mode", async (storeArrayState) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    const payload: Record<string, unknown> = { ...canonicalStoreOpsPayload, stores: [] };
+    if (storeArrayState === "missing") delete payload.stores;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    })));
+
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    expect(gate).toHaveAttribute("data-status", "empty");
+    expect(screen.queryByLabelText("LIVE-ISSUE-1 detail")).not.toBeInTheDocument();
+    expect(screen.queryByText("14 台")).not.toBeInTheDocument();
+    expect(screen.queryByText("0 件 正常")).not.toBeInTheDocument();
+  });
+
+  it("preserves source-provided fixture confidence metadata while camera images remain purpose-locked", () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => new Promise(() => {})));
+
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Camera" }));
+    const panel = within(screen.getByRole("tabpanel"));
+    expect(panel.getByText("信心度").closest("div")).toHaveTextContent("70%");
+    expect(panel.getByRole("button", { name: "輸入調閱目的以檢視" })).toBeInTheDocument();
+    expect(screen.getByText("14 台")).toBeInTheDocument();
+  });
+
   it("classifies Store Ops seed, empty, and usable API payloads", () => {
     const livePayload = {
       source: "operator-store-ops-production",
@@ -95,32 +309,213 @@ describe("production workspace data contracts", () => {
   it("requires non-seed, non-empty Network and Listing API snapshots", () => {
     const listingSnapshot = {
       source: "api" as const,
-      heatZones: [{ id: "LIVE-HZ-1" }],
-      listingSources: [{ id: "LIVE-SOURCE-1" }],
-      listings: [{ id: "LIVE-LISTING-1" }],
+      heatZones: [{ ...HEAT_ZONE_FIXTURES[0], id: "LIVE-HZ-1" }],
+      listingSources: [{ ...LISTING_SOURCE_FIXTURES[0], id: "LIVE-SOURCE-1" }],
+      listings: [{ ...LISTING_FIXTURES[0], id: "LIVE-LISTING-1" }],
       candidates: [],
       siteReviews: [],
     } as any;
+    // Actual NetworkScoringService fixture DTOs supply renderer prerequisites.
+    // An id-only record is not a scorecard or a candidate Gate contract.
+    const scoringCandidatePrerequisites = {
+    "id": "CS-1001",
+    "listingId": "L-2024",
+    "heatZoneId": "HZ-01",
+    "title": "信義松仁候選點",
+    "zoneLabel": "信義松仁 86",
+    "address": "台北市信義區松仁路 96 號 1F",
+    "district": "台北市信義區",
+    "modelVersion": "SiteScore v2.3",
+    "datasetSnapshotId": "FS-20260704-0600",
+    "stage": "evaluated",
+    "gate": {
+        "state": "ready",
+        "passed": true,
+        "missing": [],
+        "otherMissing": [],
+        "blockNote": "",
+        "checks": [
+            {
+                "key": "address",
+                "label": "地址定位",
+                "state": "ok",
+                "note": "台北市信義區松仁路 96 號 1F"
+            },
+            {
+                "key": "geocode",
+                "label": "Geocode ≥ 0.80",
+                "state": "ok",
+                "note": "0.94（高）"
+            },
+            {
+                "key": "rent",
+                "label": "租金",
+                "state": "ok",
+                "note": "NT$58,000／月（區間 P45）"
+            },
+            {
+                "key": "area",
+                "label": "坪數",
+                "state": "ok",
+                "note": "18 坪"
+            },
+            {
+                "key": "floor",
+                "label": "樓層",
+                "state": "ok",
+                "note": "1F 臨路"
+            },
+            {
+                "key": "hardRule",
+                "label": "Hard rule",
+                "state": "ok",
+                "note": "3/3 通過（面積／樓層／用途）"
+            }
+        ],
+        "okCount": 6,
+        "totalCount": 6
+    },
+    "scored": true,
+    "score": 82,
+    "recommendation": "GO",
+    "reviewId": null,
+    "inCompare": true
+};
+    const scorecardPrerequisites = {
+    "id": "CS-1001",
+    "title": "信義松仁候選點",
+    "zoneLabel": "信義松仁 86",
+    "heatZoneId": "HZ-01",
+    "score": 82,
+    "recommendation": "GO",
+    "modelVersion": "SiteScore v2.3",
+    "datasetSnapshotId": "FS-20260704-0600",
+    "generatedAt": "2026-07-04 06:10",
+    "confidence": "中高",
+    "payback": "22 個月",
+    "revenuePath": {
+        "m1": 182,
+        "m3": 268,
+        "m6": 342,
+        "m12": 428
+    },
+    "band": {
+        "p10": "NT$356K",
+        "p50": "NT$428K",
+        "p90": "NT$512K"
+    },
+    "subScores": {
+        "rentReasonableness": "合理（區間 P45）",
+        "cannibalization": "4%（低）",
+        "competition": "中（無 24h 競店）",
+        "demand": "強（夜間人流 84）",
+        "poiFit": "高",
+        "access": "中（週末停車不易）"
+    },
+    "capex": "NT$1.6M（14 台配置）",
+    "rentAssumption": "月租 NT$58,000（區間 P45）",
+    "drivers": [
+        "夜間人流指數 84",
+        "千戶級社區 6 個",
+        "無 24h 競店"
+    ],
+    "reasons": [
+        "住宅＋商辦混合，夜間洗烘需求強",
+        "既有店 650m，稀釋僅 4%",
+        "降租後租金落於區間 P45，仍可接受"
+    ],
+    "risks": [
+        "週末停車不易",
+        "租約含 3% 年調條款",
+        "晚間人流資料信心中等"
+    ],
+    "conditions": [],
+    "conditionTitle": "",
+    "reviewId": null
+};
+    const compareColumnPrerequisites = {
+    "id": "CS-1001",
+    "title": "信義松仁候選點",
+    "priority": "P1",
+    "recommendation": "GO",
+    "score": 82,
+    "isBest": true
+};
     const scoringSnapshot = {
       source: "api" as const,
       modelVersion: "sitescore-production-v1",
-      candidates: [{ id: "LIVE-CANDIDATE-1" }],
-      scorecards: [{ candidateId: "LIVE-CANDIDATE-1" }],
+      candidates: [{ ...scoringCandidatePrerequisites, id: "LIVE-CANDIDATE-1" }],
+      scorecards: [{ ...scorecardPrerequisites, id: "LIVE-CANDIDATE-1", candidateId: "LIVE-CANDIDATE-1" }],
       batchResults: [],
-      compare: { columns: [{ id: "LIVE-CANDIDATE-1" }], metrics: [], recommendation: null, empty: false },
+      compare: { columns: [{ ...compareColumnPrerequisites, id: "LIVE-CANDIDATE-1" }], metrics: [], recommendation: null, empty: false },
       compareSet: [],
     } as any;
     const rebalanceSnapshot = {
       source: "api" as const,
       stores: [{ id: "LIVE-STORE-1" }],
     } as any;
+    // Actual legacy NetworkReviewService DTO supplies safe Review renderer fields.
+    const legacyReviewPrerequisites = {
+    "id": "RV-702",
+    "candidateId": "CS-1001",
+    "candidateTitle": "信義松仁候選點",
+    "zoneLabel": "信義松仁 86",
+    "recommendation": "GO",
+    "score": 82,
+    "risk": "回本 22 個月 · 週末停車不易",
+    "requestedBy": "王若寧（拓展）",
+    "reviewerRole": "選址審核 / Site Reviewer",
+    "submittedAt": "2026-07-13 09:20",
+    "dueAt": "2026-07-16 18:00",
+    "payback": "22 個月",
+    "m12P50": "NT$428K",
+    "rentReasonableness": "合理（區間 P45）",
+    "cannibalization": "4%（低）",
+    "sourceListingId": "L-2024",
+    "fieldVisit": "已完成（現勘照片 6 張）",
+    "brokerContact": "已聯絡（王仲介）",
+    "notes": "住宅＋商辦混合，夜間洗烘需求強；既有店 650m 稀釋僅 4%。",
+    "modelVersion": "SiteScore v2.3",
+    "datasetSnapshotId": "FS-20260704-0600",
+    "compareText": "P1 主推（GO 82，領先板橋府中 6 分）",
+    "candidateStatus": "pendingreview",
+    "eventChips": [
+        "SiteScore v2.3",
+        "Dataset FS-20260704-0600",
+        "現勘完成",
+        "比較 P1"
+    ],
+    "history": [
+        {
+            "t": "2026-07-04 06:10",
+            "v": "SiteScore 完成 GO 82"
+        },
+        {
+            "t": "2026-07-13 09:20",
+            "v": "王若寧送審（拓展）"
+        }
+    ],
+    "status": "pending",
+    "statusLabel": "待審核",
+    "decision": null,
+    "candidateStatusLabel": "待審核",
+    "candidateMissingData": [],
+    "pending": true,
+    "decided": false,
+    "overrideAvailable": true
+};
     const reviewsSnapshot = {
       source: "api" as const,
-      reviews: [{ id: "LIVE-REVIEW-1" }],
+      reviews: [{ ...legacyReviewPrerequisites, id: "LIVE-REVIEW-1" }],
     } as any;
 
     expect(inspectNetworkListingsSnapshot(listingSnapshot)).toBe("ready");
     expect(inspectNetworkScoringSnapshot(scoringSnapshot)).toBe("ready");
+    expect(inspectNetworkListingsSnapshot({ ...listingSnapshot, candidates: [null] })).toBe("error");
+    expect(inspectNetworkScoringSnapshot({ ...scoringSnapshot,
+      candidates: [{ ...scoringSnapshot.candidates[0], gate: null }] })).toBe("error");
+    expect(inspectNetworkScoringSnapshot({ ...scoringSnapshot,
+      scorecards: [{ ...scoringSnapshot.scorecards[0], band: null }] })).toBe("error");
     expect(inspectNetworkRebalanceSnapshot(rebalanceSnapshot)).toBe("ready");
     expect(inspectNetworkReviewsSnapshot(reviewsSnapshot)).toBe("ready");
 
@@ -133,7 +528,13 @@ describe("production workspace data contracts", () => {
     // Malformed collections and seed payloads remain refused.
     expect(inspectNetworkListingsSnapshot({ ...listingSnapshot, heatZones: undefined })).toBe("empty");
     expect(inspectNetworkListingsSnapshot({ ...listingSnapshot, source: undefined })).toBe("empty");
-    expect(inspectNetworkScoringSnapshot({ ...scoringSnapshot, scorecards: [] })).toBe("empty");
+    // A canonical candidate waiting for its worker has no scorecard/ranking.
+    expect(inspectNetworkScoringSnapshot({ ...scoringSnapshot, source: "canonical", scorecards: [],
+      compare: { columns: [], metrics: [], recommendation: null, empty: true } })).toBe("ready");
+    expect(inspectNetworkScoringSnapshot({ ...scoringSnapshot, source: "canonical" })).toBe("ready");
+    expect(inspectNetworkScoringSnapshot({ ...scoringSnapshot, candidates: [], scorecards: [] })).toBe("empty");
+    expect(inspectNetworkScoringSnapshot({ ...scoringSnapshot, candidates: undefined })).toBe("empty");
+    expect(inspectNetworkScoringSnapshot({ ...scoringSnapshot, source: "fixture" })).toBe("seed");
     expect(inspectNetworkRebalanceSnapshot({ ...rebalanceSnapshot, stores: [] })).toBe("empty");
     expect(inspectNetworkReviewsSnapshot({ ...reviewsSnapshot, reviews: [] })).toBe("empty");
   });

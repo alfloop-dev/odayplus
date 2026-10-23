@@ -548,6 +548,14 @@ class DurableStoreOpsRepository:
     """
 
     def __init__(self, store: Any, *, tenant_id: str | None = None) -> None:
+        from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
+
+        # The Operator adapter and the materializer use the same opaque
+        # collection partition. Retain that scope exactly once.
+        if isinstance(store, TenantScopedDocumentStore):
+            if tenant_id is not None and str(tenant_id).strip() != store.tenant_id:
+                raise StoreOpsLiveDataUnavailable("Store Ops repository belongs to another tenant")
+            tenant_id, store = store.tenant_id, store._store
         self._store = store
         tenant = None if tenant_id is None else str(tenant_id).strip()
         if tenant_id is not None and not tenant:
@@ -930,6 +938,8 @@ class StoreOpsService:
         masking_profile: str = "masked",
         user_roles: Iterable[str] | None = None,
         tenant_id: str | None = None,
+        actor_role_id: str | None = None,
+        actor_name: str | None = None,
     ) -> dict[str, Any]:
         att = self.get_attachment(
             issue_id=issue_id,
@@ -942,8 +952,8 @@ class StoreOpsService:
         self._update_state(
             lambda state: _append_audit_event(
                 state,
-                actor_role_id=roles_list[0] if roles_list else "opsLead",
-                actor_name=roles_list[0] if roles_list else "Operator",
+                actor_role_id=actor_role_id or (roles_list[0] if roles_list else "opsLead"),
+                actor_name=actor_name or (roles_list[0] if roles_list else "Operator"),
                 action="attachment.downloaded",
                 category="attachment",
                 message=(

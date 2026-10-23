@@ -33,6 +33,17 @@ import {
 } from "../governance/governanceEnvelope";
 
 /** Exactly the shape `normalizeShellEnvelope` produces for `envelope.approvals`. */
+// Existing business assertions keep their transport premise: a current
+// canonical session precedes protected shell reads. No principal/grant is
+// derived from this unit-test response.
+function stubAuthenticatedFetch(read: typeof fetch) {
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => String(input) === "/auth/session"
+    ? Promise.resolve(process.env.NEXT_PUBLIC_PRODUCTION_MODE === "true"
+      ? new Response(JSON.stringify({ subject: "unit-shell-account", expiresAt: Math.floor(Date.now() / 1000) + 3600 }), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }) : new Response(JSON.stringify({ authenticated: false }), { status: 401, headers: { "Content-Type": "application/json" } })) : read(input, init)));
+}
+
 const shellDecisionCards = [
   {
     cta: "檢視",
@@ -176,7 +187,7 @@ describe("Govern workspace admits only governance rows", () => {
 
   it("drops shell decision cards instead of crashing when they arrive on the approvals prop", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ detail: "down" }, 503)));
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(jsonResponse({ detail: "down" }, 503)));
 
     const { rerender } = render(<GovernanceWorkspace roleId="ops-lead" />);
     expect(await screen.findByTestId("governance-workspace")).toBeInTheDocument();
@@ -199,7 +210,7 @@ describe("Govern workspace admits only governance rows", () => {
 
   it("drops malformed approval, decision and audit rows without throwing", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ detail: "down" }, 503)));
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(jsonResponse({ detail: "down" }, 503)));
 
     render(
       <GovernanceWorkspace
@@ -226,7 +237,7 @@ describe("Govern workspace admits only governance rows", () => {
 
   it("renders an incomplete governance row with explicit unavailable fields", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ detail: "down" }, 503)));
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(jsonResponse({ detail: "down" }, 503)));
 
     // Shape emitted by the canonical Governance modules: identified and
     // classified, but with no requestor, priority or evidence.
@@ -257,7 +268,7 @@ describe("Govern workspace admits only governance rows", () => {
 
   it("clears rows supplied by a governance side channel that goes away", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ detail: "down" }, 503)));
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(jsonResponse({ detail: "down" }, 503)));
 
     const { rerender } = render(
       <GovernanceWorkspace
@@ -284,7 +295,7 @@ describe("Govern workspace admits only governance rows", () => {
 
   it("keeps the Governance snapshot API as the source of truth over shell rows", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(governanceSnapshot)));
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(jsonResponse(governanceSnapshot)));
 
     render(
       <GovernanceWorkspace roleId="ops-lead" approvals={shellDecisionCards as never} />,
@@ -298,7 +309,7 @@ describe("Govern workspace admits only governance rows", () => {
 
   it("still fails closed in production when the Governance API is unavailable", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ detail: "down" }, 503)));
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(jsonResponse({ detail: "down" }, 503)));
 
     render(
       <GovernanceWorkspace roleId="ops-lead" approvals={shellDecisionCards as never} />,
@@ -458,8 +469,7 @@ describe("Operator console govern route with a delayed shell envelope", () => {
       bootstrap.release = resolve;
     });
 
-    vi.stubGlobal(
-      "fetch",
+    stubAuthenticatedFetch(
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url.includes("/api/v1/operator/bootstrap")) {
@@ -527,7 +537,11 @@ describe("Operator console govern route with a delayed shell envelope", () => {
     render(<OperatorConsole searchParams={{}} />);
     expect(await screen.findByTestId("operator-console")).toBeInTheDocument();
     bootstrap.release();
-    await waitFor(() => expect(screen.getByText("Live API")).toBeInTheDocument());
+    await waitFor(() => {
+      const banner = screen.getByText("開發／驗收 API 資料");
+      expect(banner).toBeInTheDocument();
+      expect(banner.closest("[data-data-status]")).toHaveAttribute("data-data-status", "ready");
+    });
 
     fireEvent.click(screen.getByRole("button", { name: /治理稽核/ }));
 
@@ -541,7 +555,11 @@ describe("Operator console govern route with a delayed shell envelope", () => {
     render(<OperatorConsole searchParams={{}} />);
     expect(await screen.findByTestId("operator-console")).toBeInTheDocument();
     bootstrap.release();
-    await waitFor(() => expect(screen.getByText("Live API")).toBeInTheDocument());
+    await waitFor(() => {
+      const banner = screen.getByText("開發／驗收 API 資料");
+      expect(banner).toBeInTheDocument();
+      expect(banner.closest("[data-data-status]")).toHaveAttribute("data-data-status", "ready");
+    });
 
     fireEvent.click(screen.getByTestId("operator-approval-count"));
 
@@ -555,7 +573,11 @@ describe("Operator console govern route with a delayed shell envelope", () => {
     render(<OperatorConsole searchParams={{}} />);
     expect(await screen.findByTestId("operator-console")).toBeInTheDocument();
     bootstrap.release();
-    await waitFor(() => expect(screen.getByText("Live API")).toBeInTheDocument());
+    await waitFor(() => {
+      const banner = screen.getByText("開發／驗收 API 資料");
+      expect(banner).toBeInTheDocument();
+      expect(banner.closest("[data-data-status]")).toHaveAttribute("data-data-status", "ready");
+    });
 
     fireEvent.click(screen.getByTestId("operator-command-trigger"));
     const palette = await screen.findByTestId("operator-command-palette");
@@ -579,10 +601,10 @@ describe("Operator console govern route with a delayed shell envelope", () => {
         allowedWorkspaces: ["today", "store", "growth", "network", "govern"],
       },
       {
-        id: "cs-lead",
-        label: "客服主管",
-        subtitle: "評論、客服案件與門市回覆",
-        allowedWorkspaces: ["today", "store", "govern"],
+        id: "pm-audit",
+        label: "PM／稽核",
+        subtitle: "治理、決策與稽核",
+        allowedWorkspaces: ["today", "network", "govern"],
       },
     ];
     const withSideChannel = {
@@ -601,12 +623,12 @@ describe("Operator console govern route with a delayed shell envelope", () => {
     };
     const withoutSideChannel = {
       ...shellEnvelopePayload,
+      meta: { ...shellEnvelopePayload.meta, role: { ...shellEnvelopePayload.meta.role, ...roles[1] } },
       navigation: { ...shellEnvelopePayload.navigation, roles },
     };
 
     let bootstrapCalls = 0;
-    vi.stubGlobal(
-      "fetch",
+    stubAuthenticatedFetch(
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url.includes("/api/v1/operator/bootstrap")) {
@@ -629,9 +651,9 @@ describe("Operator console govern route with a delayed shell envelope", () => {
     fireEvent.click(screen.getByTestId("operator-command-trigger"));
     const palette = await screen.findByTestId("operator-command-palette");
     fireEvent.change(screen.getByRole("combobox", { name: /Command palette search/ }), {
-      target: { value: "切換角色：客服主管" },
+      target: { value: "切換角色：PM／稽核" },
     });
-    fireEvent.click(await within(palette).findByRole("option", { name: /切換角色：客服主管/ }));
+    fireEvent.click(await within(palette).findByRole("option", { name: /切換角色：PM／稽核/ }));
 
     await waitFor(() => expect(bootstrapCalls).toBeGreaterThan(1));
     await waitFor(() =>

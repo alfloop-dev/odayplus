@@ -5,6 +5,16 @@
   color: #172033;
 }
 
+.candidateWorkflowFacts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: 8px 16px;
+  margin: 0 0 12px;
+  font-size: 12px;
+}
+.candidateWorkflowFacts dt { font-weight: 700; }
+.candidateWorkflowFacts dd { margin: 4px 0 0; overflow-wrap: anywhere; }
+
 /* Package 10 S05 page header: title, summary and KPI chips on one row. */
 .header {
   display: flex;
@@ -2488,12 +2498,12 @@
 }
 
 .reviewDialog {
-  width: 520px;
-  max-width: 94vw;
+  width: min(520px, 100%);
+  box-sizing: border-box;
   background: #ffffff;
   border-radius: 14px;
   box-shadow: 0 24px 64px rgba(12, 18, 44, 0.3);
-  max-height: 92vh;
+  max-height: calc(100dvh - 40px);
   overflow-y: auto;
 }
 
@@ -2513,7 +2523,7 @@
   margin-left: auto;
   background: none;
   border: none;
-  color: #8a93a8;
+  color: #536079;
   font-size: 17px;
   cursor: pointer;
   line-height: 1;
@@ -2890,6 +2900,14 @@
   color: #ffffff;
 }
 
+.pipelineFilterList button:disabled {
+  color: #6e7891;
+  background: #f8fafd;
+  cursor: default;
+}
+
+.candidatePipelineNote { margin: 0; color: #6e7891; font-size: 10px; line-height: 1.5; }
+
 .pipelineFilterList button b {
   margin-left: auto;
   font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
@@ -3022,23 +3040,58 @@
 }
 
 .candidateDetailPanel {
-  position: sticky;
-  top: 76px;
+  position: static;
+  padding: 14px 16px;
+  gap: 10px;
 }
+
+.candidateSourceLine { color: #6d4fa3; font-size: 10px; font-weight: 600; }
+.candidateDetailScore { border: 1px solid #d9dff5; background: #eef1fb; border-radius: 9px; padding: 8px 11px; color: #2e3a97; font-size: 12px; font-weight: 700; }
+.candidateGateContainer { overflow: hidden; border: 1px solid #e9edf4; border-radius: 10px; }
+.candidateGateHeader { display: flex; align-items: center; gap: 8px; background: #f8fafd; padding: 8px 12px; color: #6e7891; font-size: 10px; font-weight: 700; }
+.candidateGateHeader > span:last-child { margin-left: auto; color: #2e3a97; font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace); }
+.candidateDetailFacts { display: flex; flex-direction: column; gap: 5px; margin: 0; font-size: 11px; }
+.candidateDetailFacts > div { display: flex; gap: 8px; }
+.candidateDetailFacts dt { flex: none; width: 78px; color: #6e7891; }
+.candidateDetailFacts dd { min-width: 0; margin: 0; color: #3a4362; overflow-wrap: anywhere; }
+.candidateAttachmentSlot { display: flex; align-items: center; justify-content: center; height: 56px; border: 1px dashed #c9d2e0; border-radius: 8px; background: repeating-linear-gradient(45deg, #e8ecf3, #e8ecf3 8px, #eff2f8 8px, #eff2f8 16px); color: #6e7891; font-size: 9.5px; }
+.candidateWorkflowActions { display: flex; flex-direction: column; gap: 6px; }
+.candidateWorkflowActions p { overflow: visible; margin: 0; color: #6e7891; font-size: 10.5px; line-height: 1.5; white-space: normal; }
+.candidateSecondaryActions { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+.candidateSecondaryActions button { width: 100%; border: 1px solid #d6dce8; border-radius: 8px; background: #ffffff; padding: 8px 12px; color: #3a4362; font: inherit; font-size: 12px; font-weight: 600; }
+.candidateSecondaryActions button:disabled { color: #6e7891; background: #f8fafd; }
 
 .candidateDetailPanel .gateGrid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
   overflow: hidden;
-  border: 1px solid #e9edf4;
-  border-radius: 10px;
+  border: 0;
+  border-radius: 0;
   margin: 0;
 }
 
 .candidateDetailPanel .gateRowItem {
   grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  column-gap: 7px;
+  row-gap: 0;
   border-radius: 0;
   background: #ffffff;
-  padding: 6px 9px;
+  border-top: 1px solid #f1f3f8;
+  padding: 6px 12px;
+  font-size: 10.5px;
+}
+
+.candidateDetailPanel .gateRowItem > [data-gate-label] { color: #3a4362; font-weight: 700; line-height: 1.35; }
+.candidateDetailPanel .gateMark { display: flex; grid-row: 1 / 3; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 5px; margin-top: 1px; font-size: 9.5px; }
+.candidateDetailPanel .gateRowItem[data-state="ok"] .gateMark { background: #e5f3ea; }
+.candidateDetailPanel .gateRowItem[data-state="warn"] .gateMark { background: #fbf1dd; }
+.candidateDetailPanel .gateRowItem[data-state="fail"] .gateMark { background: #fbe9e7; }
+
+.candidateDetailPanel .gateRowItem[data-state="unknown"] .gateMark,
+.candidateDetailPanel .gateRowItem[data-state="recorded"] .gateMark {
+  background: #eef1f6;
+  color: #5a6478;
 }
 
 .candidateDetailPanel .gateRowItem small {
@@ -3365,6 +3418,13 @@
   box-shadow: 0 0 0 3px rgba(46, 58, 151, 0.12);
 }
 
+.reviewDialog .reviewSyncNote { color: #536079; overflow-wrap: anywhere; }
+.reviewDialogClose:focus-visible, .reviewDialogCancel:focus-visible,
+.reviewDialogSubmit:focus-visible, .reviewAckButton:focus-visible {
+  outline: 2px solid #2e3a97;
+  outline-offset: 2px;
+}
+
 .reviewDialogFieldLabelWarn + .reviewDialogInput {
   border-color: #e4c88a;
   background: #fffdf6;
@@ -3372,7 +3432,6 @@
 
 @media (min-width: 1160px) {
 
-  .candidateDetailPanel,
   .sourceFilterPanel {
     position: sticky;
     top: 76px;
@@ -3427,6 +3486,18 @@
     grid-template-columns: 280px minmax(0, 1fr);
   }
 
+}
+
+/* R7 Candidate keeps its 180px Pipeline and 348px detail at 1024px.
+   The two-column Radar tablet rule above belongs to the Intake layout. */
+@media (min-width: 1024px) and (max-width: 1159px) {
+  .candidateWorkspace {
+    grid-template-columns: 180px minmax(0, 1fr) 348px;
+  }
+
+  .candidateDetailPanel {
+    grid-column: auto;
+  }
 }
 
 @media (max-width: 759px) {
@@ -3678,18 +3749,6 @@
 
   .roiValue {
     margin-left: 0;
-  }
-
-  .reviewDialogOverlay {
-    align-items: flex-end;
-    padding: 10px;
-  }
-
-  .reviewDialog {
-    width: 100%;
-    max-width: 100%;
-    max-height: 94vh;
-    border-radius: 12px;
   }
 
   .workspace > *,

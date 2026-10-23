@@ -4,8 +4,7 @@ These exercise the ordered migration under
 ``infra/db/migrations/assisted_listing_intake/`` against a real PostgreSQL 16
 server (see ``tests/conftest.py`` for provisioning). They prove clean install,
 catalog constraints, the downgrade boundary, and that the production migration
-reproduces the approved ODP-SD-INTAKE-001 four-artifact DDL stack without dropping
-any approved constraint.
+reproduces the declared contract DDL stack without dropping original constraints.
 
 Run locally with the bundled server::
 
@@ -92,6 +91,7 @@ def test_migration_reproduces_reviewed_contract_artifacts_byte_for_byte() -> Non
         "002_consistency.sql",
         "003_promotion_state.sql",
         "004_tenant_rls_lineage.sql",
+        "005_decision_service_actor.sql",
     ]
     # Every ordered migration file must be a byte-for-byte copy of the artifact
     # it converts, so no approved constraint can be dropped or altered in transit.

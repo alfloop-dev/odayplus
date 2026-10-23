@@ -7,6 +7,14 @@ afterEach(() => {
 });
 
 describe("operatorSecurityHeaders", () => {
+  it("keeps the expansion contributor distinct from the reviewer in fixture mode", () => {
+    vi.stubEnv("NODE_ENV", "test");
+    const headers = operatorSecurityHeaders("expansion-staff");
+    expect(headers["X-Operator-Role"]).toBe("expansion-staff");
+    expect(headers["X-Roles"]).toBe("expansion_user");
+    expect(headers["X-Roles"]).not.toMatch(/site_reviewer|operations_manager/);
+  });
+
   it("sends no browser-asserted identity in production", () => {
     vi.stubEnv("NODE_ENV", "production");
     sessionStorage.setItem("oday.operator.subject", "spoofed-subject");

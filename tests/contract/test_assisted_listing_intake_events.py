@@ -8,6 +8,150 @@ import pytest
 from shared.domain.events import CONSUMER_MODE, DomainEvent, validate_event
 
 
+def _identity_event(version=1):
+    tenant, case = str(uuid4()), str(uuid4())
+    payload = {"match_decision_id": str(uuid4()), "match_case_id": case,
+        "decision_type": "DUPLICATE", "status": "APPROVED",
+        "proposer_subject_id": str(uuid4()) if version == 1 else None, "reviewer_subject_id": None}
+    if version == 2:
+        payload["proposer_service_principal"] = "native-intake-identity"
+    return DomainEvent(event_type="match.decided", event_version=version,
+        producer="identity_resolution_service", tenant_id=tenant, aggregate_type="match_case",
+        aggregate_id=case, aggregate_version=2, partition_key=f"{tenant}:{case}",
+        correlation_id=str(uuid4()), schema_ref=f"#/payloads/MatchDecidedV{version}", payload=payload)
+
+
+@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize("mode", ["producer", CONSUMER_MODE])
+def test_human_v1_and_truthful_service_v2_use_the_same_versioned_identity_event(version, mode):
+    assert validate_event(_identity_event(version), mode=mode) == []
+
+
+@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize("mode", ["producer", CONSUMER_MODE])
+def test_optional_schema_ref_can_be_omitted_without_changing_the_versioned_payload_contract(version, mode):
+    event = _identity_event(version).to_dict()
+    del event["schema_ref"]
+    assert validate_event(event, mode=mode) == []
+
+
+@pytest.mark.parametrize("mode", ["producer", CONSUMER_MODE])
+def test_omitting_optional_schema_ref_does_not_admit_a_service_payload_as_human_v1(mode):
+    event = _identity_event(2).to_dict()
+    del event["schema_ref"]
+    event["event_version"] = 1
+    assert validate_event(event, mode=mode)
+
+
+@pytest.mark.parametrize("mode", ["producer", CONSUMER_MODE])
+@pytest.mark.parametrize("field,value", [("event_version", 999), ("event_version", True),
+    ("schema_ref", "#/payloads/MatchDecidedV2"), ("producer", "matcher_service"),
+    ("aggregate_type", "listing")])
+def test_identity_event_cannot_select_unknown_version_or_forged_catalog_metadata(mode, field, value):
+    event = _identity_event().to_dict()
+    event[field] = value
+    assert validate_event(event, mode=mode)
+
+
+@pytest.mark.parametrize("mode", ["producer", CONSUMER_MODE])
+@pytest.mark.parametrize("field,value", [("proposer_subject_id", "HUMAN"),
+    ("reviewer_subject_id", "HUMAN"), ("proposer_service_principal", "matcher_service"),
+    ("decision_type", "CREATE"), ("proposer_service_principal", None)])
+def test_service_identity_event_cannot_invent_human_approval_or_another_service(mode, field, value):
+    event = _identity_event(2)
+    event.payload[field] = str(uuid4()) if value == "HUMAN" else value
+    assert validate_event(event, mode=mode)
+
+
+@pytest.mark.parametrize("mode", ["producer", CONSUMER_MODE])
+def test_service_identity_event_cannot_be_labeled_as_the_human_v1_contract(mode):
+    event = _identity_event(2).to_dict()
+    event.update(event_version=1, schema_ref="#/payloads/MatchDecidedV1")
+    assert validate_event(event, mode=mode)
+
+
+def test_service_v2_keeps_existing_unknown_optional_field_consumer_compatibility():
+    event = _identity_event(2)
+    event.payload["future_optional_display_label"] = "engineering fixture only"
+    assert validate_event(event)
+    assert validate_event(event, mode=CONSUMER_MODE) == []
+
+
+@pytest.fixture
+def snapshot_event():
+    def create(event_type, producer, changes):
+        tenant, intake, snapshot = str(uuid4()), str(uuid4()), str(uuid4())
+        return DomainEvent(event_type=event_type, producer=producer, tenant_id=tenant,
+            aggregate_type="source_snapshot", aggregate_id=snapshot, aggregate_version=1,
+            partition_key=f"{tenant}:{intake}", correlation_id=str(uuid4()),
+            schema_ref="#/payloads/SnapshotCreatedV1", sensitive_fields=["payload.object_uri"],
+            payload={"source_snapshot_id": snapshot, "intake_id": intake, "source_id": "synthetic-source",
+                "content_sha256": "a" * 64, "captured_at": "2026-10-17T00:00:00+00:00",
+                "retention_class": "SOURCE_RAW", "residency_mode": "TW_ONLY", "object_generation": 9,
+                **changes})
+    return create
+
+
+@pytest.mark.parametrize("event_type,producer", [("snapshot.created", "retrieval_service"),
+    ("snapshot.manual_entry_created", "assisted_entry_service")])
+@pytest.mark.parametrize("mode", ["producer", CONSUMER_MODE])
+@pytest.mark.parametrize("field,value", [("content_sha256", "invalid-digest"),
+    ("content_sha256", "A" * 64), ("captured_at", "2026-99-99T99:99:99+00:00"),
+    ("captured_at", "2026-02-30T01:02:03Z"), ("captured_at", "2026-10-17T01:02:03"),
+    ("captured_at", "2026-10-17T01:02:03+00:60"), ("captured_at", "2026-10-17T01:02:03+24:00"),
+    ("captured_at", "2026-10-17 01:02:03+00:00")])
+def test_snapshot_declared_digest_and_calendar_constraints_apply_in_both_modes(snapshot_event,
+        event_type, producer, mode, field, value):
+    errors = validate_event(snapshot_event(event_type, producer, {field: value}), mode=mode)
+    assert any(field in error and ("pattern" if field == "content_sha256" else "format") in error for error in errors)
+
+
+@pytest.mark.parametrize("event_type,producer", [("snapshot.created", "retrieval_service"),
+    ("snapshot.manual_entry_created", "assisted_entry_service")])
+@pytest.mark.parametrize("captured_at", ["2026-10-17T00:00:00Z", "2026-10-17t08:00:00z",
+    "2026-10-17T08:00:00.123456+08:00", "2024-02-29T12:34:56-03:30"])
+def test_snapshot_accepts_valid_calendar_dates_and_rfc3339_offsets(snapshot_event, event_type, producer, captured_at):
+    event = snapshot_event(event_type, producer, {"captured_at": captured_at})
+    assert validate_event(event) == []
+    assert validate_event(event, mode=CONSUMER_MODE) == []
+
+
+def test_declared_patterns_keep_json_schema_search_semantics():
+    from shared.domain.events import EventContractValidator
+
+    validator = EventContractValidator()
+    schema = {"type": "string", "pattern": "observed"}
+    assert validator.validate_schema("prefix-observed-suffix", schema) == []
+    assert validator.validate_schema("missing", schema)
+
+
+@pytest.mark.parametrize("invalid_field", [None, "source_listing_id", "listing_id"])
+def test_candidate_created_uses_the_effective_closed_payload_registry(invalid_field) -> None:
+    """The later complete registry overrides the catalog's old field summary."""
+    payload = {
+        "candidate_site_id": str(uuid4()), "property_id": str(uuid4()),
+        "listing_id": str(uuid4()), "promotion_decision_id": str(uuid4()),
+        "target_format_code": "FMT-MICRO-STORE", "status": "NEW", "version": 1,
+    }
+    if invalid_field == "source_listing_id":
+        payload[invalid_field] = str(uuid4())
+    elif invalid_field == "listing_id":
+        del payload[invalid_field]
+    tenant_id = str(uuid4())
+    event = DomainEvent(
+        event_type="candidate.created", payload=payload, tenant_id=tenant_id,
+        aggregate_type="candidate_site", aggregate_id=payload["candidate_site_id"],
+        aggregate_version=1, partition_key=f"{tenant_id}:{payload['candidate_site_id']}",
+        correlation_id=str(uuid4()), producer="candidate_promotion_service",
+        schema_ref="#/payloads/CandidateCreatedV1",
+    )
+    errors = validate_event(event)
+    if invalid_field is None:
+        assert errors == []
+    else:
+        assert errors and any(invalid_field in error for error in errors)
+
+
 def test_valid_event_contract() -> None:
     # Construct a valid event based on intake.submitted
     event = DomainEvent(

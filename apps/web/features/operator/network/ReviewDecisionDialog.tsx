@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useId, useState } from "react";
+import { useModalDialogBehavior } from "./useModalDialogBehavior";
+import { formatReviewScore } from "./networkReviewProjection";
 import styles from "../networkFindAreas.module.css";
 import {
   DECISION_BUTTON_LABEL,
@@ -40,15 +42,24 @@ export function ReviewDecisionDialog({
   const [requiredData, setRequiredData] = useState("");
   const [ack, setAck] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [escapeBlocked, setEscapeBlocked] = useState(false);
+  const formId = useId();
+  const requestClose = () => { if (!submitting) onClose(); };
+  const panelRef = useModalDialogBehavior({ dismissible: false, onClose: requestClose, onEscapeBlocked: () => setEscapeBlocked(true) });
+  useEffect(() => {
+    if (submitting) panelRef.current?.querySelector<HTMLElement>("[data-autofocus]")?.focus();
+  }, [submitting, panelRef]);
 
   const override = isOverride(action, review.recommendation);
   const finalLabel = DECISION_FINAL_LABEL[action];
 
-  const syncNote =
-    `送出後 Candidate、Review、Approval、Decision、Audit 於同一交易同步：` +
-    `${review.candidateId} → ${finalLabel}，並寫入 Decision Log 與稽核軌跡。`;
+  const syncNote = review.canonicalDecisionStatus
+    ? `送出後重新讀取正式決策紀錄；結果與處理人員以伺服器保存的紀錄為準。`
+    : `送出後 Candidate、Review、Approval、Decision、Audit 於同一交易同步：` +
+      `${review.candidateId} → ${finalLabel}，並寫入 Decision Log 與稽核軌跡。`;
 
   function handleSubmit() {
+    if (submitting) return;
     if (reason.trim().length < MIN_REASON_LEN) {
       setLocalError("決策原因必填（至少 10 字）。");
       return;
@@ -76,11 +87,9 @@ export function ReviewDecisionDialog({
       className={styles.reviewDialogOverlay}
       data-screen-label="Dialog Review Decision"
       data-testid="review-decision-dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label={`${DECISION_BUTTON_LABEL[action]} — ${review.candidateTitle}`}
     >
-      <div className={styles.reviewDialog}>
+      <div className={styles.reviewDialog} ref={panelRef} role="dialog" aria-modal="true"
+        aria-label={`${DECISION_BUTTON_LABEL[action]} — ${review.candidateTitle}`} aria-busy={Boolean(submitting)}>
         <div className={styles.reviewDialogHead}>
           <div className={styles.reviewDialogTitle} data-testid="review-decision-title">
             {DECISION_BUTTON_LABEL[action]} · {review.candidateTitle}
@@ -88,7 +97,8 @@ export function ReviewDecisionDialog({
           <button
             className={styles.reviewDialogClose}
             data-testid="review-decision-close"
-            onClick={onClose}
+            onClick={requestClose}
+            disabled={submitting}
             type="button"
             aria-label="關閉"
           >
@@ -97,8 +107,9 @@ export function ReviewDecisionDialog({
         </div>
 
         <div className={styles.reviewDialogBody}>
+          {escapeBlocked ? <p className={styles.muted} role="status">決策確認視窗需以「取消」按鈕關閉（防誤觸 Esc）</p> : null}
           <div className={styles.reviewDialogSub}>
-            {review.id} · SiteScore {review.recommendation} {review.score} → {finalLabel}
+            {review.id} · SiteScore {review.recommendation} {formatReviewScore(review.score)} → {finalLabel}
           </div>
 
           {override ? (
@@ -108,8 +119,11 @@ export function ReviewDecisionDialog({
           ) : null}
 
           <div className={styles.reviewDialogField}>
-            <span className={styles.reviewDialogFieldLabel}>決策原因（必填 — 寫入 Decision Log）</span>
+            <label className={styles.reviewDialogFieldLabel} htmlFor={`${formId}-reason`}>決策原因（必填 — 寫入 Decision Log）</label>
             <textarea
+              id={`${formId}-reason`}
+              data-autofocus
+              readOnly={submitting}
               className={styles.reviewDialogInput}
               data-testid="review-decision-reason"
               rows={3}
@@ -121,10 +135,12 @@ export function ReviewDecisionDialog({
 
           {action === "WAIT" ? (
             <div className={styles.reviewDialogField}>
-              <span className={`${styles.reviewDialogFieldLabel} ${styles.reviewDialogFieldLabelWarn}`}>
+              <label className={`${styles.reviewDialogFieldLabel} ${styles.reviewDialogFieldLabelWarn}`} htmlFor={`${formId}-conditions`}>
                 通過條件（必填 — 條件達成後可重評為 GO）
-              </span>
+              </label>
               <textarea
+                id={`${formId}-conditions`}
+                readOnly={submitting}
                 className={styles.reviewDialogInput}
                 data-testid="review-decision-conditions"
                 rows={3}
@@ -137,10 +153,12 @@ export function ReviewDecisionDialog({
 
           {action === "RETURN" ? (
             <div className={styles.reviewDialogField}>
-              <span className={styles.reviewDialogFieldLabel}>
+              <label className={styles.reviewDialogFieldLabel} htmlFor={`${formId}-required`}>
                 需補資料（必填 — 以「、」分隔，會同步至 Candidate 缺資料清單）
-              </span>
+              </label>
               <input
+                id={`${formId}-required`}
+                readOnly={submitting}
                 className={styles.reviewDialogInput}
                 data-testid="review-decision-required"
                 value={requiredData}
@@ -155,6 +173,8 @@ export function ReviewDecisionDialog({
               className={styles.reviewAckButton}
               data-checked={ack ? "true" : "false"}
               data-testid="review-decision-ack"
+              aria-pressed={ack}
+              disabled={submitting}
               onClick={() => setAck((value) => !value)}
               type="button"
             >
@@ -168,7 +188,7 @@ export function ReviewDecisionDialog({
           ) : null}
 
           {shownError ? (
-            <div className={styles.errorText} data-testid="review-decision-error">
+            <div className={styles.errorText} data-testid="review-decision-error" role="alert">
               {shownError}
             </div>
           ) : null}
@@ -179,7 +199,7 @@ export function ReviewDecisionDialog({
         </div>
 
         <div className={styles.reviewDialogActions}>
-          <button className={styles.reviewDialogCancel} onClick={onClose} type="button">
+          <button className={styles.reviewDialogCancel} onClick={requestClose} disabled={submitting} type="button">
             取消
           </button>
           <button

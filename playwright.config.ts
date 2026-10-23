@@ -33,7 +33,7 @@ export default defineConfig({
     trace: "on-first-retry",
     extraHTTPHeaders: {
       "x-subject-id": "product-e2e-test",
-      "x-roles": "finance_legal,expansion_user,operations_manager,regional_supervisor,site_reviewer,data_owner,auditor,executive",
+      "x-roles": "finance_legal,expansion_user,operations_manager,regional_supervisor,site_reviewer,marketing_manager,data_owner,auditor,executive",
       // Operator Console routes are tenant-isolated (OPERATOR_TENANT_ID in
       // apps/api/oday_api/security/dependencies.py). Without this the guard
       // denies at operator.tenant_isolation before RBAC runs, so every
@@ -48,7 +48,7 @@ export default defineConfig({
   webServer: [
     {
       command: `.venv/bin/python -m uvicorn apps.api.oday_api.main:app --host 127.0.0.1 --port ${API_PORT}`,
-      url: `${API_BASE_URL}/platform/health`,
+      url: process.env.ODP_PLAYWRIGHT_API_HEALTH_URL ?? `${API_BASE_URL}/platform/health`,
       timeout: 120_000,
       reuseExistingServer: REUSE_EXISTING_SERVER,
     },

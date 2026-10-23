@@ -17,9 +17,11 @@ import { useEffect, useRef, type MutableRefObject } from "react";
 
 export function useModalDialogBehavior({
   dismissible = true,
+  onEscapeBlocked,
   onClose,
 }: {
   dismissible?: boolean;
+  onEscapeBlocked?: () => void;
   onClose: () => void;
 }): MutableRefObject<HTMLDivElement | null> {
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -47,6 +49,7 @@ export function useModalDialogBehavior({
         // A write in flight is not cancellable from here; swallow the key
         // rather than hiding a request whose outcome is still unknown.
         if (dismissible) onClose();
+        else onEscapeBlocked?.();
         return;
       }
       if (event.key !== "Tab") return;
@@ -68,7 +71,7 @@ export function useModalDialogBehavior({
 
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [dismissible, onClose]);
+  }, [dismissible, onClose, onEscapeBlocked]);
 
   return panelRef;
 }
@@ -77,7 +80,7 @@ export function focusables(root: HTMLElement | null): HTMLElement[] {
   if (!root) return [];
   return Array.from(
     root.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
     ),
   ).filter((element) => element.offsetParent !== null || element === document.activeElement);
 }

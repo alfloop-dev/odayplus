@@ -270,6 +270,7 @@ def test_sitescore_api_scores_reports_and_runs_decision_loop() -> None:
     open_response = client.post(
         "/sitescore/decisions",
         json={"report_id": report_id, "created_by": "analyst-a"},
+        headers={"x-subject-id": "analyst-a"},
     )
     assert open_response.status_code == 201
     decision_id = open_response.json()["decision_id"]
@@ -279,12 +280,14 @@ def test_sitescore_api_scores_reports_and_runs_decision_loop() -> None:
     missing_reason = client.post(
         f"/sitescore/decisions/{decision_id}/decision",
         json={"action": "APPROVE", "actor": "director-b"},
+        headers={"x-subject-id": "director-b"},
     )
     assert missing_reason.status_code == 422
 
     approve = client.post(
         f"/sitescore/decisions/{decision_id}/decision",
         json={"action": "APPROVE", "actor": "director-b", "reason": "符合展店標準"},
+        headers={"x-subject-id": "director-b"},
     )
     assert approve.status_code == 200
     approve_body = approve.json()

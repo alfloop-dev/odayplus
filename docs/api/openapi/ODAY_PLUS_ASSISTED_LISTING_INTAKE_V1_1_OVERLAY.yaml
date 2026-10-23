@@ -358,6 +358,9 @@ actions:
         type: object
         required: [promotion_decision_id, intake_id, listing_id, status, decision_type, proposer_subject_id, version, audit_event_id, correlation_id]
         properties:
+          target_format_code:
+            type: [string, 'null']
+            description: Target code persisted with this decision, verbatim; null for historical receipts without one.
           promotion_decision_id: {type: string, format: uuid}
           intake_id: {type: string, format: uuid}
           listing_id: {type: string, format: uuid}

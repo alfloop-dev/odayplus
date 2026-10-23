@@ -17,6 +17,15 @@ function urlOf(input: RequestInfo | URL): string {
   return typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
 }
 
+// Preserve the existing protected-read premise while the shell now rechecks
+// the canonical session. This is unit transport data, not a grant/principal.
+function stubAuthenticatedFetch(read: typeof fetch) {
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => String(input) === "/auth/session"
+    ? Promise.resolve(new Response(JSON.stringify({ subject: "unit-shell-account", expiresAt: Math.floor(Date.now() / 1000) + 3600 }), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    })) : read(input, init)));
+}
+
 const originalLocation = window.location;
 let assign: ReturnType<typeof vi.fn>;
 
@@ -82,7 +91,7 @@ describe("OperatorConsole session wiring", () => {
       if (urlOf(input) === "/auth/logout") return json(200, { ok: true });
       return json(403, { detail: "role does not permit view on operator_console" });
     });
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<OperatorConsole searchParams={{ ws: "today" }} />);
     fireEvent.click(screen.getByRole("button", { name: /營運主管/, expanded: false }));
@@ -95,8 +104,7 @@ describe("OperatorConsole session wiring", () => {
 
   it("reports a failed sign-out and stays on the page", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal(
-      "fetch",
+    stubAuthenticatedFetch(
       vi.fn(async (input: RequestInfo | URL) =>
         urlOf(input) === "/auth/logout"
           ? json(503, { error: { code: "WEB_AUTH_UNAVAILABLE" } })
@@ -114,7 +122,7 @@ describe("OperatorConsole session wiring", () => {
 
   it("sends a session with a pending first-login rotation to the password page", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(403, { detail: "PASSWORD_CHANGE_REQUIRED" })));
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(json(403, { detail: "PASSWORD_CHANGE_REQUIRED" })));
 
     render(<OperatorConsole searchParams={{ ws: "today" }} />);
 
@@ -123,7 +131,7 @@ describe("OperatorConsole session wiring", () => {
 
   it("points a pure administrator from the business shell to the admin console", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(403, { detail: "role does not permit view" })));
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(json(403, { detail: "role does not permit view" })));
 
     render(<OperatorConsole searchParams={{ ws: "today" }} />);
 
@@ -160,7 +168,7 @@ describe("OperatorAdminConsole", () => {
       if (url === "/api/v1/operator/users/audit-trail") return json(200, { events: [], count: 0 });
       throw new Error(`unexpected request ${url}`);
     });
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<OperatorAdminConsole />);
 
@@ -172,7 +180,7 @@ describe("OperatorAdminConsole", () => {
 
   it("shows dev-only scope and actual missing-model limitations to the pure admin", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal("fetch", vi.fn(async () => json(200, { users: [adminUser], roles: [], events: [] })));
+    stubAuthenticatedFetch( vi.fn(async () => json(200, { users: [adminUser], roles: [], events: [] })));
     render(<OperatorAdminConsole releaseStatus={{
       profile: "dev-admin", models: "limited", unavailableServices: ["ForecastOps"],
     }} />);
@@ -187,7 +195,7 @@ describe("OperatorAdminConsole", () => {
   });
 
   it("shows core-ops as live core operations with models not yet ready, never as full acceptance", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => json(200, { users: [adminUser], roles: [], events: [] })));
+    stubAuthenticatedFetch(vi.fn(async () => json(200, { users: [adminUser], roles: [], events: [] })));
     render(<OperatorAdminConsole releaseStatus={{
       profile: "core-ops", models: "limited", unavailableServices: ["ForecastOps"],
     }} />);
@@ -206,7 +214,7 @@ describe("OperatorAdminConsole", () => {
   });
 
   it.each(["full", "dev-admin", "core-ops"] as const)("keeps truthful model-ready messaging for %s", profile => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(401, {})));
+    stubAuthenticatedFetch(vi.fn().mockResolvedValue(json(401, {})));
     render(<OperatorAdminConsole releaseStatus={{ profile, models: "ready", unavailableServices: ["AVM"] }} />);
     const notice = screen.getByTestId("operator-release-notice");
     expect(notice).toHaveTextContent("正式模型綁定已就緒");
@@ -216,14 +224,14 @@ describe("OperatorAdminConsole", () => {
   });
 
   it("does not turn unavailable status evidence into model availability", () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(401, {})));
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(json(401, {})));
     render(<OperatorAdminConsole releaseStatus={{ profile: "dev-admin", models: "unknown", unavailableServices: [] }} />);
     expect(screen.getByTestId("operator-release-notice")).toHaveTextContent("無法確認目前模型狀態");
     expect(screen.getByTestId("operator-release-notice")).not.toHaveTextContent("正式模型綁定已就緒");
   });
 
   it("routes a pending password rotation to the password page", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(403, { detail: "PASSWORD_CHANGE_REQUIRED" })));
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(json(403, { detail: "PASSWORD_CHANGE_REQUIRED" })));
 
     render(<OperatorAdminConsole />);
 
@@ -232,7 +240,7 @@ describe("OperatorAdminConsole", () => {
   });
 
   it("refuses an account without user administration", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(403, { detail: "role does not permit view on user" })));
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(json(403, { detail: "role does not permit view on user" })));
 
     render(<OperatorAdminConsole />);
 
@@ -243,7 +251,7 @@ describe("OperatorAdminConsole", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
       urlOf(input) === "/auth/logout" ? json(200, { ok: true }) : json(401, { detail: "no_credentials" }),
     );
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<OperatorAdminConsole />);
     fireEvent.click(screen.getByRole("button", { name: "Logout" }));
@@ -262,7 +270,7 @@ describe("OperatorPasswordChange", () => {
 
   it("rotates through /auth/password and continues to the admin console", async () => {
     const fetchMock = vi.fn().mockResolvedValue(json(200, { ok: true }));
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
     const navigate = vi.fn();
 
     render(<OperatorPasswordChange navigate={navigate} />);
@@ -280,7 +288,7 @@ describe("OperatorPasswordChange", () => {
 
   it("does not submit mismatched passwords", async () => {
     const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<OperatorPasswordChange navigate={vi.fn()} />);
     fill("one-time-secret-value", "a-new-personal-passphrase", "different-passphrase-x");
@@ -291,7 +299,7 @@ describe("OperatorPasswordChange", () => {
 
   it("does not submit when new password equals current password", async () => {
     const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<OperatorPasswordChange navigate={vi.fn()} />);
     fill("same-password-1234", "same-password-1234", "same-password-1234");
@@ -302,7 +310,7 @@ describe("OperatorPasswordChange", () => {
 
   it("does not submit when new password is NFKC equivalent to current password", async () => {
     const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<OperatorPasswordChange navigate={vi.fn()} />);
     fill("same-password-1234", "ｓame-password-1234", "ｓame-password-1234");
@@ -312,8 +320,7 @@ describe("OperatorPasswordChange", () => {
   });
 
   it("shows the server refusal and stays on the form", async () => {
-    vi.stubGlobal(
-      "fetch",
+    stubAuthenticatedFetch(
       vi.fn().mockResolvedValue(json(401, { error: { code: "AUTH_INVALID_CREDENTIALS", summary: "x" } })),
     );
     const navigate = vi.fn();
@@ -326,8 +333,7 @@ describe("OperatorPasswordChange", () => {
   });
 
   it("shows server policy violation refusal and stays on the form", async () => {
-    vi.stubGlobal(
-      "fetch",
+    stubAuthenticatedFetch(
       vi.fn().mockResolvedValue(
         json(400, {
           error: {

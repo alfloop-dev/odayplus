@@ -4,6 +4,7 @@ import React, { useMemo, useRef, useState } from "react";
 import styles from "./intake.module.css";
 import { IntakeDialogShell } from "./IntakeDialogShell";
 import type { IntakeApiError } from "./intakeClient";
+import type { NativeIntakeScope } from "@oday-plus/openapi-client";
 
 // "Dialog 從網址新增物件" (UX-SCR-EXP-003A).
 //
@@ -34,19 +35,27 @@ export function AddListingFromUrlDialog({
   onOpenExisting,
   onSubmit,
   submitterLabel,
+  canonicalScopes,
+  locked = false,
+  errorContent,
 }: {
   busy: boolean;
   defaultHeatZoneId?: string;
   error: IntakeApiError | null;
   onClose: () => void;
   onOpenExisting?: (intakeId: string) => void;
-  onSubmit: (input: { url: string; heatZoneId: string }) => void | Promise<void>;
+  onSubmit: (input: { url: string; heatZoneId: string; reason?: string; scope?: NativeIntakeScope }) => void | Promise<void>;
   submitterLabel: string;
+  canonicalScopes?: ReadonlyArray<{ label: string; scope: NativeIntakeScope }>;
+  locked?: boolean;
+  errorContent?: React.ReactNode;
 }) {
   const [url, setUrl] = useState("");
   const [heatZoneId, setHeatZoneId] = useState(defaultHeatZoneId ?? "");
   const [localError, setLocalError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [reason, setReason] = useState("");
+  const [scopeIndex, setScopeIndex] = useState("");
   const submitLock = useRef(false);
 
   const trimmed = url.trim();
@@ -65,11 +74,16 @@ export function AddListingFromUrlDialog({
       setLocalError(URL_HINT);
       return;
     }
+    if (canonicalScopes && (reason.trim().length < 3 || !canonicalScopes[Number(scopeIndex)] || scopeIndex === "")) {
+      setLocalError("請選取正式收件範圍，並填寫至少三字的送件原因。");
+      return;
+    }
     setLocalError(null);
     submitLock.current = true;
     setSubmitting(true);
     try {
-      await onSubmit({ url: trimmed, heatZoneId });
+      await onSubmit(canonicalScopes ? { url: trimmed, heatZoneId: "", reason: reason.trim(),
+        scope: canonicalScopes[Number(scopeIndex)].scope } : { url: trimmed, heatZoneId });
     } finally {
       submitLock.current = false;
       setSubmitting(false);
@@ -86,13 +100,15 @@ export function AddListingFromUrlDialog({
     <IntakeDialogShell
       ariaLabel="從網址新增物件"
       onClose={onClose}
+      dismissible={!busy && !submitting}
+      stacked={Boolean(canonicalScopes)}
       screenLabel="Dialog 從網址新增物件"
       testId="intake-add-dialog"
     >
       <div className={styles.dialogHead}>
         <span className={styles.dialogTitle}>從網址新增物件</span>
         <span className={styles.screenBadge}>UX-SCR-EXP-003A</span>
-        <button aria-label="關閉" className={styles.dialogClose} onClick={onClose} type="button">
+        <button aria-label="關閉" disabled={busy || submitting} className={styles.dialogClose} onClick={onClose} type="button">
           ×
         </button>
       </div>
@@ -107,6 +123,7 @@ export function AddListingFromUrlDialog({
             data-autofocus
             data-testid="intake-url-input"
             id="intake-url"
+            disabled={busy || submitting || locked}
             onChange={(event) => setUrl(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") void handleSubmit();
@@ -138,7 +155,10 @@ export function AddListingFromUrlDialog({
 
         <div className={styles.grid2}>
           <div>
-            <label className={styles.fieldLabel} htmlFor="intake-area">
+            {canonicalScopes ? <label className={styles.fieldLabel}>正式收件範圍<select className={styles.select}
+              disabled={busy || submitting || locked} value={scopeIndex} onChange={(event) => setScopeIndex(event.target.value)}>
+              <option value="">請明確選取範圍</option>{canonicalScopes.map((option, index) => <option key={index} value={index}>{option.label}</option>)}
+            </select></label> : <><label className={styles.fieldLabel} htmlFor="intake-area">
               HeatZone／指定區域（選填）
             </label>
             <select
@@ -147,13 +167,14 @@ export function AddListingFromUrlDialog({
               id="intake-area"
               onChange={(event) => setHeatZoneId(event.target.value)}
               value={heatZoneId}
+              disabled={busy || submitting || locked}
             >
               {HEAT_ZONE_OPTIONS.map((option) => (
                 <option key={option.id || "none"} value={option.id}>
                   {option.label}
                 </option>
               ))}
-            </select>
+            </select></>}
           </div>
           <div>
             <span className={styles.fieldLabel}>送件人</span>
@@ -162,6 +183,9 @@ export function AddListingFromUrlDialog({
             </div>
           </div>
         </div>
+
+        {canonicalScopes ? <label className={styles.fieldLabel}>送件原因<textarea className={styles.textarea}
+          disabled={busy || submitting || locked} maxLength={4000} value={reason} onChange={(event) => setReason(event.target.value)} /></label> : null}
 
         <div className={styles.noteBox} data-testid="intake-process-note">
           送出後：識別檢查（相同 URL 直接指向既有紀錄）→ 來源政策判定 →
@@ -201,10 +225,11 @@ export function AddListingFromUrlDialog({
             ) : null}
           </div>
         ) : null}
+        {errorContent}
       </div>
 
       <div className={styles.dialogFooter}>
-        <button className={styles.secondaryButton} onClick={onClose} type="button">
+        <button className={styles.secondaryButton} disabled={busy || submitting} onClick={onClose} type="button">
           取消
         </button>
         <button
@@ -214,7 +239,7 @@ export function AddListingFromUrlDialog({
           onClick={() => void handleSubmit()}
           type="button"
         >
-          {busy || submitting ? "送出中…（防止重複送出）" : "送出 URL"}
+          {busy || submitting ? "送出中…（防止重複送出）" : locked ? "重試同一請求" : "送出 URL"}
         </button>
       </div>
     </IntakeDialogShell>

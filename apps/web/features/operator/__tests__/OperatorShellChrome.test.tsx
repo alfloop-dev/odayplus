@@ -4,6 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OperatorConsole, operatorBootstrapRetryPolicy } from "../OperatorConsole";
 import { DEFAULT_OPERATOR_ROLE_ID, OPERATOR_ROLES, getOperatorRole } from "../navigation";
 
+// Preserve the existing protected-read premise while the shell now rechecks
+// the canonical session. This is unit transport data, not a grant/principal.
+function stubAuthenticatedFetch(read: typeof fetch) {
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => String(input) === "/auth/session"
+    ? Promise.resolve(new Response(JSON.stringify({ subject: "unit-shell-account", expiresAt: Math.floor(Date.now() / 1000) + 3600 }), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    })) : read(input, init)));
+}
+
 const productionRetryDelays = [...operatorBootstrapRetryPolicy.delaysMs];
 
 const liveEnvelope = {
@@ -83,6 +92,20 @@ function headerSignature() {
 }
 
 describe("Operator shared header chrome", () => {
+  it("preserves the API expansion contributor persona rather than falling back to operations", async () => {
+    const envelope = structuredClone(liveEnvelope);
+    envelope.meta.role = { ...envelope.meta.role, id: "expansion-staff", label: "展店專員", allowedWorkspaces: ["today", "network"] };
+    envelope.navigation.roles = [{ id: "expansion-staff", label: "展店專員", subtitle: "Own intake work", allowedWorkspaces: ["today", "network"] }];
+    envelope.navigation.allowedWorkspaces = ["today", "network"];
+    envelope.today.hero.roleLabel = "展店專員";
+    stubAuthenticatedFetch( vi.fn().mockImplementation(async () => jsonResponse(envelope)));
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+    await waitFor(() => expect(screen.getByTitle("展店專員")).toBeInTheDocument());
+    fireEvent.click(screen.getByTitle("展店專員"));
+    fireEvent.click(screen.getByRole("button", { name: /展店專員 Own intake work/ }));
+    expect(window.sessionStorage.getItem("oday.operator.role")).toBe("expansion-staff");
+  });
+
   beforeEach(() => {
     window.sessionStorage.clear();
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
@@ -98,14 +121,14 @@ describe("Operator shared header chrome", () => {
   });
 
   it("keeps the same header structure for ready Today, other workspaces and the data gate", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(liveEnvelope)));
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(jsonResponse(liveEnvelope)));
     const ready = render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
     expect(await screen.findByText("Live unresolved")).toBeInTheDocument();
     const readyToday = headerSignature();
     expect(screen.getByRole("main").className).toMatch(/shell_today/);
     ready.unmount();
 
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    stubAuthenticatedFetch( vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
     render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "store" }} />);
     await waitFor(() =>
       expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error"),
@@ -117,7 +140,7 @@ describe("Operator shared header chrome", () => {
   });
 
   it("labels the deployment environment from deploy config, not from the fixture policy", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(liveEnvelope)));
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(jsonResponse(liveEnvelope)));
     const dev = render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
     const devBadge = screen.getByTestId("operator-environment-badge");
     expect(devBadge).toHaveTextContent("DEV");
@@ -127,7 +150,7 @@ describe("Operator shared header chrome", () => {
     expect(screen.getByTestId("operator-environment-badge")).toHaveTextContent("DEV");
     dev.unmount();
 
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    stubAuthenticatedFetch( vi.fn().mockRejectedValue(new Error("offline")));
     const staging = render(<OperatorConsole deploymentEnvironment="staging" searchParams={{ ws: "today" }} />);
     await screen.findByTestId("operator-data-unavailable");
     expect(screen.getByTestId("operator-environment-badge")).toHaveTextContent("STAGING");
@@ -141,7 +164,7 @@ describe("Operator shared header chrome", () => {
     const fetchMock = vi
       .fn()
       .mockRejectedValue(new DOMException("signal timed out", "TimeoutError"));
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
 
@@ -165,8 +188,7 @@ describe("Operator shared header chrome", () => {
   });
 
   it("treats an upstream 504 as a timeout and reports the server correlation id", async () => {
-    vi.stubGlobal(
-      "fetch",
+    stubAuthenticatedFetch(
       vi.fn().mockResolvedValue(
         new Response(JSON.stringify({ error: { code: "WEB_API_UPSTREAM_TIMEOUT", retryable: true } }), {
           status: 504,
@@ -184,7 +206,8 @@ describe("Operator shared header chrome", () => {
     );
     expect(within(gate).getByTestId("operator-data-unavailable-technical")).toHaveTextContent("504");
     // A persistent upstream timeout uses the whole cold-start budget, then gates.
-    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === "/api/v1/operator/bootstrap")).toHaveLength(4);
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url) === "/auth/session")).toBe(true);
   });
 
   it("retries a cold-start 504 once with the same correlation id and renders live data", async () => {
@@ -198,7 +221,7 @@ describe("Operator shared header chrome", () => {
         }),
       )
       .mockResolvedValueOnce(jsonResponse(liveEnvelope));
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
 
@@ -228,7 +251,7 @@ describe("Operator shared header chrome", () => {
       .fn()
       .mockResolvedValueOnce(failingBodyResponse(new DOMException("signal timed out", "TimeoutError")))
       .mockResolvedValueOnce(jsonResponse(liveEnvelope));
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
 
@@ -244,7 +267,7 @@ describe("Operator shared header chrome", () => {
     const fetchMock = vi
       .fn()
       .mockImplementation(async () => failingBodyResponse(new TypeError("network error")));
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
 
@@ -268,7 +291,7 @@ describe("Operator shared header chrome", () => {
       .fn()
       .mockResolvedValueOnce(failingBodyResponse(new DOMException("The operation was aborted.", "AbortError")))
       .mockResolvedValueOnce(jsonResponse(liveEnvelope));
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
 
@@ -283,7 +306,7 @@ describe("Operator shared header chrome", () => {
       .mockImplementation(async () =>
         failingBodyResponse(new DOMException("The operation was aborted.", "AbortError")),
       );
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
 
@@ -308,7 +331,7 @@ describe("Operator shared header chrome", () => {
       .mockResolvedValueOnce(coldStart())
       .mockResolvedValueOnce(coldStart())
       .mockReturnValueOnce(fourth);
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
 
@@ -346,7 +369,7 @@ describe("Operator shared header chrome", () => {
         }),
       )
       .mockReturnValueOnce(retry.promise);
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
@@ -367,7 +390,10 @@ describe("Operator shared header chrome", () => {
     await new Promise((resolve) => window.setTimeout(resolve, 0));
     expect(detail()).toHaveTextContent("正在啟動");
 
-    retry.resolve(jsonResponse(liveEnvelope));
+    const selectedEnvelope = structuredClone(liveEnvelope);
+    selectedEnvelope.meta.role = { ...selectedEnvelope.meta.role, ...otherRole };
+    selectedEnvelope.navigation.roles = [otherRole];
+    retry.resolve(jsonResponse(selectedEnvelope));
     expect(await screen.findByText("Live unresolved")).toBeInTheDocument();
   });
 
@@ -375,7 +401,7 @@ describe("Operator shared header chrome", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValue(failingBodyResponse(new SyntaxError("Unexpected token < in JSON")));
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
 
@@ -386,7 +412,7 @@ describe("Operator shared header chrome", () => {
 
   it("does not retry a permission denial", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ detail: "forbidden" }, 403));
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
 
@@ -396,8 +422,7 @@ describe("Operator shared header chrome", () => {
   });
 
   it("tells an expired session to sign in again instead of showing permission guidance", async () => {
-    vi.stubGlobal(
-      "fetch",
+    stubAuthenticatedFetch(
       vi.fn().mockResolvedValue(
         jsonResponse({ error: { code: "WEB_SESSION_REQUIRED", message: "A valid web session is required." } }, 401),
       ),
@@ -418,7 +443,7 @@ describe("Operator shared header chrome", () => {
   });
 
   it("does not show implementation jargon in the data-mode banner", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    stubAuthenticatedFetch( vi.fn().mockRejectedValue(new Error("offline")));
     render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
     // The gate exists during loading too; wait for the final error banner,
     // not merely the gate's first render, before checking its wording.
