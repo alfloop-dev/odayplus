@@ -64,9 +64,9 @@ def _cvxpy_solve_worker(budget: float, isolate_process: bool = True) -> tuple[st
     return res.solver_status, res.objective_value
 
 
-def _same_process_order1_worker() -> None:
+def _same_process_order1_worker() -> tuple[tuple[str, float], tuple[str, float]]:
     # Order 1: OR-Tools then CVXPY/HiGHS in same process (without isolation)
-    _ortools_solve_worker(200.0, isolate_process=False)
+    primary = _ortools_solve_worker(200.0, isolate_process=False)
     scenarios = (Scenario("s1", 1.0),)
     actions = (
         ScenarioActionOption(
@@ -87,11 +87,10 @@ def _same_process_order1_worker() -> None:
         preferred_solver="HIGHS",
         isolate_process=False,
     )
-    if res.solver_status == "SOLVER_UNAVAILABLE":
-        raise RuntimeError("Order 1 failed: highspy undefined symbol")
+    return primary, (res.solver_status, res.objective_value)
 
 
-def _same_process_order2_worker() -> None:
+def _same_process_order2_worker() -> tuple[tuple[str, float], tuple[str, float]]:
     # Order 2: CVXPY/HiGHS then OR-Tools in same process (without isolation)
     scenarios = (Scenario("s1", 1.0),)
     actions = (
@@ -106,16 +105,15 @@ def _same_process_order2_worker() -> None:
         ),
     )
     constraints = RobustNetPlanConstraints(max_budget=200.0)
-    solve_robust_network_plan(
+    robust = solve_robust_network_plan(
         options_by_entity={"store_1": actions},
         scenarios=scenarios,
         constraints=constraints,
         preferred_solver="HIGHS",
         isolate_process=False,
     )
-    res_status, _ = _ortools_solve_worker(200.0, isolate_process=False)
-    if res_status not in {"optimal", "feasible", "OPTIMAL", "FEASIBLE"}:
-        raise RuntimeError("Order 2 failed: libortools undefined symbol")
+    res_status, objective = _ortools_solve_worker(200.0, isolate_process=False)
+    return (robust.solver_status, robust.objective_value), (res_status, objective)
 
 
 def _crashing_worker() -> None:
@@ -134,14 +132,20 @@ def test_process_isolation_runner_executes_solvers_without_abi_conflict() -> Non
     assert obj2 > 0.0
 
 
-def test_both_same_process_orders_reproduce_abi_conflict_and_isolation_fixes_both() -> None:
-    # Same-process Order 1 (OR-Tools then CVXPY/HiGHS) fails due to highspy undefined symbol
-    with pytest.raises(RuntimeError, match="Order 1 failed"):
-        run_in_process_isolation(_same_process_order1_worker)
-
-    # Same-process Order 2 (CVXPY/HiGHS then OR-Tools) fails due to libortools undefined symbol
-    with pytest.raises(ImportError, match="libortools"):
-        run_in_process_isolation(_same_process_order2_worker)
+def test_validated_profile_runs_both_same_process_orders_and_default_isolation() -> None:
+    # Each subprocess executes both native frameworks without a preferred
+    # import order. Requiring the old ABI bug would reject a corrected profile.
+    # Nominal defaults penalize risk by 100,000: 100 - 0.1 * 100,000.
+    # Robust defaults sum expected and worst-case value: 100 + 100.
+    for worker, expected in (
+        (_same_process_order1_worker, (-9900.0, 200.0)),
+        (_same_process_order2_worker, (200.0, -9900.0)),
+    ):
+        results = run_in_process_isolation(worker)
+        assert len(results) == 2
+        for (status, objective), expected_objective in zip(results, expected, strict=True):
+            assert status in {"optimal", "feasible", "OPTIMAL", "FEASIBLE"}
+            assert objective == pytest.approx(expected_objective)
 
     # Default entrypoints (isolate_process=True) solve both sequentially without conflict
     res1 = solve_network_plan(

@@ -62,7 +62,10 @@ def deep_merge(dict1: dict[str, Any], dict2: dict[str, Any]) -> dict[str, Any]:
         if k in result and isinstance(result[k], dict) and isinstance(v, dict):
             result[k] = deep_merge(result[k], v)
         elif k in result and isinstance(result[k], list) and isinstance(v, list):
-            result[k] = list(set(result[k] + v))
+            # The reviewed event stack applies later overlays over earlier
+            # clauses. Unioning `required` resurrects removed catalog fields
+            # that the complete closed payload registry explicitly disallows.
+            result[k] = list(v)
         else:
             result[k] = v
     return result

@@ -551,7 +551,7 @@ class BusinessWeb:
                 self.governance["decisions"].append({
                     "id": "DEC-1", "approvalId": approval["id"],
                     "finalDecision": {"approve": "Approved", "return": "Returned", "reject": "Rejected"}[ctx.body["action"]],
-                    "reason": ctx.body.get("reason") or "符合風險與預算規範",
+                    "reason": ctx.body.get("reason") or "",
                     "actor": ctx.body.get("actorName"), "decidedAt": NOW,
                 })
             if "governance" not in self.drop_audit:
@@ -559,7 +559,7 @@ class BusinessWeb:
                     {
                         "id": "AUD-GOV-1",
                         "category": "approval",
-                        "correlationId": f"corr-{ctx.body.get('approvalId')}",
+                        "correlationId": ctx.headers.get("x-correlation-id"),
                         "actor": ctx.body.get("actorName"),
                         "action": {"approve": "決策核准", "return": "決策退回", "reject": "決策駁回"}[ctx.body["action"]],
                         "entityRef": (approval or {}).get("entityRef") or ctx.body.get("approvalId"),
@@ -1981,7 +1981,11 @@ def test_ready_intake_creates_tenant_bound_listing_surviving_repository_restart(
     repository.save_intake({
         "id": "OFFLINE-DURABLE-INTAKE", "sourceId": "OFFLINE-SOURCE", "tenantId": TENANT,
         "heatZoneId": "HZ-01", "originalUrl": "https://example.invalid/offline",
-        "stage": "READY", "version": 3, "parsedFields": {}, "auditEvents": [],
+        "stage": "READY", "version": 3, "parsedFields": {
+            "address": {"normalizedValue": "Synthetic offline address"},
+            "rent": {"normalizedValue": "54000"},
+            "areaPing": {"normalizedValue": "22.5"},
+        }, "auditEvents": [],
         "matchResult": {"targetListingId": "L-2024"},
     })
     service = NetworkListingService(bundle.listing_repository, repository, tenant_id=TENANT)
@@ -1994,7 +1998,8 @@ def test_ready_intake_creates_tenant_bound_listing_surviving_repository_restart(
         idempotency_key="offline-create", correlation_id="offline-create-corr",
     )
     assert result["stage"] == before["stage"] == "READY"
-    assert result["version"] == before["version"] == 3
+    assert before["version"] == 3
+    assert result["version"] == before["version"] + 1
     target_id = result["matchResult"]["targetListingId"]
     assert target_id not in prior_ids
     bundle.engine.close()
@@ -2002,6 +2007,7 @@ def test_ready_intake_creates_tenant_bound_listing_surviving_repository_restart(
     rebuilt = NetworkListingService(restarted.listing_repository, restarted.operator_intake_repository,
                                     seed_fixtures=False, tenant_id=TENANT)
     saved = rebuilt.get_intake(before["id"])
+    assert saved["version"] == result["version"]
     row = next(row for row in rebuilt.snapshot(tenant_id=TENANT)["listings"] if row["id"] == target_id)
     assert row["tenantId"] == TENANT and row["sourceId"] == before["sourceId"]
     assert saved["matchResult"]["targetListingId"] == target_id
@@ -2178,7 +2184,7 @@ def test_governance_vocabulary_matches_actual_service(action: str) -> None:
         correlation_id="offline-corr",
     )
     assert response["action"] == action and response["decision"]["id"]
-    assert service.snapshot()["auditRows"][0]["correlationId"] == f"corr-{approval_id}"
+    assert service.snapshot()["auditRows"][0]["correlationId"] == "offline-corr"
     assert action in bj.JOURNEYS_BY_ID["governance"].writes_allowed["decision"]
 
 
@@ -2199,7 +2205,11 @@ def test_intake_actual_action_vocabulary_accepts_authorized_scope(action: str) -
             "heatZoneId": "HZ-01",
             "originalUrl": "https://example.invalid/offline",
             "stage": "READY",
-            "parsedFields": {},
+            "parsedFields": {
+                "address": {"normalizedValue": "Synthetic manual address"},
+                "rent": {"normalizedValue": "54000"},
+                "areaPing": {"normalizedValue": "22"},
+            },
             "auditEvents": [],
             "matchResult": {"targetListingId": "L-2024"},
         }
@@ -2644,13 +2654,15 @@ def test_real_netplan_decide_producer_is_root_approval_and_reads_same_record(
         assert result["captured"][f"disclosure_checked_at_{stage}"] in web.observed_times
 
 
-@pytest.mark.parametrize("action,reason", [("approve", "Offline scoped approval"), ("return", "Offline scoped return justification"), ("reject", "Offline scoped reject justification"), ("approve", "")])
+@pytest.mark.parametrize("action,reason", [("approve", "Offline scoped approval"), ("return", "Offline scoped return justification"), ("reject", "Offline scoped reject justification")])
 def test_runner_matches_actual_governance_http_decision_audit(action: str, reason: str) -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
     from apps.api.app.routes.operator_modules.governance import create_governance_sub_router
+    from apps.api.oday_api.security.dependencies import require_operator_permission
     from modules.opsboard.application.governance import GovernanceService
+    from shared.auth import Action
 
     service = GovernanceService()  # OFFLINE in-memory producer and durable read
     original = service.snapshot()["approvals"][0]
@@ -2661,8 +2673,15 @@ def test_runner_matches_actual_governance_http_decision_audit(action: str, reaso
         request.state.correlation_id = request.headers.get("x-correlation-id", "offline")
         return await call_next(request)
 
-    app.include_router(create_governance_sub_router(service), prefix="/api/v1/operator")
-    client = TestClient(app)
+    app.include_router(create_governance_sub_router(
+        service,
+        require_view_permission_fn=require_operator_permission(),
+        require_decision_permission_fn=require_operator_permission("intervention", Action.APPROVE),
+    ), prefix="/api/v1/operator")
+    client = TestClient(app, headers={
+        "x-subject-id": account_id("governance.lead"), "x-roles": "operations_manager",
+        "x-tenant-id": TENANT, "x-operator-role": "ops-lead",
+    })
 
     class RealGovernanceWeb(BusinessWeb):
         def __init__(self) -> None:
@@ -2693,12 +2712,12 @@ def test_runner_matches_actual_governance_http_decision_audit(action: str, reaso
     assert row["actor"] == entry["account_ids"]["primary"]
     assert row["approvalId"] == original["id"]
     assert row["finalDecision"] == {"approve": "Approved", "return": "Returned", "reject": "Rejected"}[action]
-    assert row["reason"] == (reason or "符合風險與預算規範")
+    assert row["reason"] == reason
     assert any(item["id"] == result["captured"]["governance_audit_id"] for item in actual["auditRows"])
     assert bj.journey_receipt_problems(bj.JOURNEYS_BY_ID["governance"], result) == []
 
 
-@pytest.mark.parametrize("fault", ["status", "replacement", "finalDecision", "reason", "actor", "approvalId", "auditActor", "auditAction", "auditReason", "auditTarget"])
+@pytest.mark.parametrize("fault", ["status", "replacement", "finalDecision", "reason", "actor", "approvalId", "auditActor", "auditAction", "auditReason", "auditTarget", "auditCorrelation"])
 def test_governance_wrong_or_replaced_decision_and_audit_cannot_pass(fault: str) -> None:
     class WrongDecision(BusinessWeb):
         def request(self, method: str, path: str, **kwargs: Any) -> Resp:
@@ -2710,7 +2729,7 @@ def test_governance_wrong_or_replaced_decision_and_audit_cannot_pass(fault: str)
                 elif fault == "replacement":
                     decision.update(id="UNRELATED-DECISION", finalDecision="Rejected")
                 elif fault.startswith("audit"):
-                    key = {"auditActor": "actor", "auditAction": "action", "auditReason": "reason", "auditTarget": "entityRef"}[fault]
+                    key = {"auditActor": "actor", "auditAction": "action", "auditReason": "reason", "auditTarget": "entityRef", "auditCorrelation": "correlationId"}[fault]
                     self.governance["auditRows"][-1][key] = "Unrelated value"
                 else:
                     decision[fault] = "Unrelated value"
@@ -2740,6 +2759,15 @@ def test_resealed_governance_receipt_needs_current_decision_and_audit(fault: str
 def test_governance_caller_actor_override_blocks_before_any_write() -> None:
     scope = scope_document()
     scope["journeys"]["governance"]["writes"]["decision"]["body"]["actorName"] = "Someone else"
+    receipt, web, _ = run(scope=scope, selection=["governance"])
+    assert receipt["journeys"]["governance"]["status"] == "BLOCKED"
+    _zero_writes(receipt, web, "governance")
+
+
+@pytest.mark.parametrize("reason", ["", "   ", None])
+def test_governance_missing_authored_reason_blocks_before_any_write(reason) -> None:
+    scope = scope_document()
+    scope["journeys"]["governance"]["writes"]["decision"]["body"]["reason"] = reason
     receipt, web, _ = run(scope=scope, selection=["governance"])
     assert receipt["journeys"]["governance"]["status"] == "BLOCKED"
     _zero_writes(receipt, web, "governance")
@@ -2943,3 +2971,220 @@ def test_franchise_contract_matches_real_shell_service() -> None:
         ]
         == written["report"]["reportId"]
     )
+
+
+# ODP-FULL-ACCEPTANCE-CALLER-261021: OFFLINE subprocess controls of the original
+# Bash caller, gate CLI, runtime checks and six-journey verifier. No live proof.
+def _run_original_final_deploy_gate(
+    tmp_path: Path,
+    *,
+    profile: str | None,
+    receipt_case: str,
+    runtime_failed: bool = False,
+) -> tuple[Any, dict[str, Any], dict[str, Any], list[str]]:
+    import os
+    import subprocess
+
+    source = (ROOT / "product_ops/deployment/deploy_cloud_run_waji.sh").read_text()
+    caller = source.index("run_locked_python delivery_toolchain/e2e/check_live_e2e_gate.py")
+    branch = source.rindex('if [ -n "${ODP_DEV_SMOKE_FOREGROUND_FD:-}" ]; then', 0, caller)
+    commit = source.index("\nDEPLOYMENT_COMMITTED=true\n", caller)
+    actual_caller = source[branch : commit + len("\nDEPLOYMENT_COMMITTED=true\n")]
+    trap_start = source.index("handle_deployment_exit() {")
+    trap_end = source.index("trap handle_deployment_exit EXIT", trap_start)
+    actual_trap = source[trap_start : trap_end + len("trap handle_deployment_exit EXIT")]
+    digest_export = next(
+        line for line in source.splitlines()
+        if line.startswith("export ODP_RELEASE_MANIFEST_DIGEST=")
+    )
+
+    receipt, _, _ = run()  # Existing six-journey OFFLINE producer/HTTP doubles.
+    receipt_path = tmp_path / "offline six journey receipt.json"
+    if receipt_case == "other-sha":
+        receipt["source_sha"] = receipt["release"]["release_sha"] = "c" * 40
+    elif receipt_case == "other-digest":
+        receipt["release"]["manifest_digest"] = "sha256:" + "0" * 64
+    elif receipt_case == "missing-journey":
+        receipt["journeys"].pop("franchise")
+    elif receipt_case == "offline-marker":
+        receipt["offline_fixture"] = True
+    if receipt_case not in {"missing-env", "missing-file"}:
+        receipt_path.write_text(
+            "{malformed" if receipt_case == "malformed" else json.dumps(reseal(receipt))
+        )
+
+    # The bridge replaces only network/worker boundaries with existing doubles.
+    # It executes the original gate main/evaluator/verifier/exit rule unchanged.
+    driver = tmp_path / "offline_gate_driver.py"
+    driver.write_text(r'''
+import json
+import os
+from pathlib import Path
+import socket
+import sys
+
+root = Path(os.environ["PYTHONPATH"])
+sys.path.insert(0, str(root))
+import importlib.util
+
+spec = importlib.util.spec_from_file_location(
+    "offline_original_deploy_gate_fixtures", root / "tests/e2e/test_live_business_journeys.py"
+)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+fixtures = module.fixtures
+gate = fixtures.gate
+profile = os.environ.get("ODP_RELEASE_PROFILE", "full") or "full"
+web = fixtures.passing_web_http()
+routes = fixtures.live_routes()
+if profile in {"core-ops", "dev-admin"}:
+    limited = module._load(
+        "offline_original_limited_gate_fixtures", root / "tests/e2e/test_live_e2e_gate_dev_admin.py"
+    )
+    if profile == "core-ops":
+        routes = limited.core_ops_api()
+    else:
+        routes = limited.api_routes()
+        web = limited.AdminWeb(limited.web_routes())
+        os.environ[gate.DEV_ADMIN_USERNAME_ENV] = limited.USERNAME
+        os.environ[gate.DEV_ADMIN_PASSWORD_ENV] = limited.PASSWORD
+        os.environ[gate.DEV_ADMIN_DENIED_ROLE_ENV] = limited.DENIED_ROLE
+if os.environ.get("TEST_RUNTIME_FAILED") == "true":
+    routes["anon GET /readiness"] = fixtures.response(503, {})
+
+def no_network(*args, **kwargs):
+    raise AssertionError("OFFLINE caller regression attempted a network connection")
+
+socket.create_connection = no_network
+gate.UrllibHttpClient = lambda *args, **kwargs: fixtures.FakeHttp(routes)
+gate.CloudRunWorkerDriver = lambda **kwargs: fixtures.FakeWorkerDriver()
+gate._web_client = lambda *args, **kwargs: web
+gate.time.time = lambda: 1  # Same deterministic correlation as the original fixtures.
+original_evaluate = gate.evaluate_gate
+observed = {"argv": sys.argv[1:], "original_evaluator": original_evaluate.__code__.co_filename,
+            "original_verifier": gate.business_journeys.verify_receipt.__code__.co_filename}
+
+def observe(config, **kwargs):
+    observed.update(expected_sha=config.expected_sha, expected_manifest_digest=config.expected_manifest_digest,
+                    profile=config.release_profile)
+    clock = fixtures.FakeClock()
+    return original_evaluate(config, **kwargs, monotonic=clock.monotonic, sleep=clock.sleep)
+
+gate.evaluate_gate = observe
+assert sys.argv[1] == "delivery_toolchain/e2e/check_live_e2e_gate.py"
+code = gate.main(sys.argv[2:])
+observed["gate_exit"] = code
+Path(os.environ["TEST_OBSERVED"]).write_text(json.dumps(observed))
+raise SystemExit(code)
+''')
+    events = tmp_path / "events.txt"
+    output = tmp_path / "actual gate report.json"
+    observed = tmp_path / "observed.json"
+    # Only external recovery operations are doubled. The EXIT handler and its
+    # committed-state condition are the exact original shipped Bash function.
+    harness = r'''
+set -euo pipefail
+DEPLOYMENT_COMMITTED=false
+ROLLBACK_ARMED=true
+SCHEDULER_ROLLBACK_ARMED=false
+release_recovery_mode() { printf 'rollback'; }
+rollback_release_traffic() { printf 'rollback\n' >> "$TEST_EVENTS"; }
+cleanup() { printf 'cleanup committed=%s\n' "$DEPLOYMENT_COMMITTED" >> "$TEST_EVENTS"; }
+run_locked_python() { "$TEST_PYTHON" -B "$TEST_GATE_DRIVER" "$@"; }
+'''
+    harness += actual_trap + "\n" + digest_export + "\n" + actual_caller
+    harness += '\nprintf "commit reached\\n" >> "$TEST_EVENTS"\n'
+    environment = {
+        "PATH": os.defpath,
+        "PYTHONPATH": str(ROOT),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "TMPDIR": str(tmp_path),
+        "TEST_PYTHON": sys.executable,
+        "TEST_GATE_DRIVER": str(driver),
+        "TEST_EVENTS": str(events),
+        "TEST_OBSERVED": str(observed),
+        "TEST_RUNTIME_FAILED": str(runtime_failed).lower(),
+        "LIVE_E2E_API_URL": fixtures.API_URL,
+        "LIVE_E2E_WEB_URL": fixtures.WEB_URL,
+        "LIVE_E2E_DEPLOYMENT_MODE": "dev",
+        "ODAY_RELEASE_SHA": SHA,
+        "MANIFEST_DIGEST": DIGEST,
+        "WORKER_CANDIDATE_JOB": "offline-worker",
+        "GCP_REGION": "offline-region",
+        "GCP_PROJECT": "offline-project",
+        "LIVE_E2E_REPORT": str(output),
+        "ODP_OPERATOR_SMOKE_BEARER_TOKEN": "offline-operator-token",
+        "ODP_OPERATOR_SMOKE_ROLE": "ops_admin",
+        "ODP_API_INVOKER_TOKEN": "offline-transport-token",
+        "ODP_EXTERNAL_PROVIDER_MODE": "disabled" if profile in {"core-ops", "dev-admin"} else "live",
+        "API_SERVICE": "offline-api",
+        "WEB_SERVICE": "offline-web",
+        "API_TRAFFIC_SNAPSHOT": "offline-api-before.json",
+        "WEB_TRAFFIC_SNAPSHOT": "offline-web-before.json",
+    }
+    if profile is not None:
+        environment["ODP_RELEASE_PROFILE"] = profile
+    if receipt_case != "missing-env":
+        environment["ODP_LIVE_BUSINESS_JOURNEY_RECEIPT"] = str(receipt_path)
+    result = subprocess.run(
+        ["bash", "-c", harness], cwd=ROOT, env=environment,
+        capture_output=True, text=True, check=False, timeout=60,
+    )
+    return (
+        result, json.loads(output.read_text()), json.loads(observed.read_text()),
+        events.read_text().splitlines(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("profile", "receipt_case", "runtime_failed", "passes", "full_status"),
+    [
+        (None, "missing-env", False, False, "BLOCKED"),
+        ("", "missing-env", False, False, "BLOCKED"),
+        ("full", "missing-file", False, False, "BLOCKED"),
+        ("full", "malformed", False, False, "BLOCKED"),
+        ("full", "other-sha", False, False, "BLOCKED"),
+        ("full", "other-digest", False, False, "BLOCKED"),
+        ("full", "missing-journey", False, False, "BLOCKED"),
+        ("full", "offline-marker", False, False, "BLOCKED"),
+        (None, "valid", False, True, "PASSED"),
+        ("full", "valid", False, True, "PASSED"),
+        ("full", "valid", True, False, "BLOCKED"),
+        ("core-ops", "missing-env", False, True, "NOT_ADMITTED"),
+        ("dev-admin", "missing-env", False, True, "NOT_ADMITTED"),
+        ("core-ops", "missing-env", True, False, "NOT_ADMITTED"),
+    ],
+    ids=[
+        "default-full-missing", "empty-default-full-missing", "full-missing-file",
+        "full-malformed", "full-other-sha", "full-other-digest", "full-incomplete",
+        "full-offline", "default-full-valid", "full-valid", "full-runtime-failure",
+        "core-ops-runtime-pass", "dev-admin-runtime-pass", "core-ops-runtime-failure",
+    ],
+)
+def test_original_deploy_caller_requires_full_verdict_before_commit(
+    tmp_path: Path, record_property: Any, profile: str | None, receipt_case: str,
+    runtime_failed: bool, passes: bool, full_status: str,
+) -> None:
+    result, report, observed, events = _run_original_final_deploy_gate(
+        tmp_path, profile=profile, receipt_case=receipt_case, runtime_failed=runtime_failed,
+    )
+    full = (profile or "full") == "full"
+    assert ("--require-full-acceptance" in observed["argv"]) is full
+    assert observed["profile"] == (profile or "full")
+    assert observed["expected_sha"] == SHA
+    assert observed["expected_manifest_digest"] == DIGEST
+    assert observed["original_evaluator"] == str(ROOT / "delivery_toolchain/e2e/check_live_e2e_gate.py")
+    assert observed["original_verifier"] == str(RUNNER)
+    assert report["ok"] is (not runtime_failed), report["blockers"]
+    assert report["full_acceptance"]["status"] == full_status
+    assert report["release_profile"]["full_product_acceptance_claimed"] is (full_status == "PASSED")
+    assert result.returncode == observed["gate_exit"] == (0 if passes else 1), result.stderr
+    assert events == (
+        ["commit reached", "cleanup committed=true"] if passes
+        else ["rollback", "cleanup committed=false"]
+    )
+    record_property("original_deploy_full_acceptance_caller", json.dumps({
+        **observed, "receipt_case": receipt_case, "offline_regression_only": True,
+        "runtime_ok": report["ok"], "full_status": full_status, "events": events,
+    }, sort_keys=True))

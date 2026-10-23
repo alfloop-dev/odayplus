@@ -37,6 +37,7 @@ import type {
   GovernanceAuditRow,
   GovernanceDecisionRow,
   GovernanceEvidence,
+  GovernanceNativeTarget,
 } from "../governanceTypes";
 import type {
   GovernanceEvidencePackage,
@@ -96,6 +97,29 @@ function normalizeEvidence(value: unknown): GovernanceEvidence | null {
   };
 }
 
+/** Only admit exact existing owner routes with their canonical row identity. */
+function normalizeNativeTarget(
+  value: unknown,
+  row: { id: string; module: string; entityRef?: string; decisionId?: string },
+): GovernanceNativeTarget | null {
+  const target = asRecord(value);
+  if (!target) return null;
+  const entityId = typeof target.entityId === "string" ? target.entityId.trim() : "";
+  if (!entityId || entityId !== row.entityRef) return null;
+  if (target.workspace === "today" && target.tab === "interventions"
+    && row.module === "Store Ops" && entityId === row.id
+    && Object.keys(target).every((key) => ["workspace", "tab", "entityId"].includes(key))) {
+    return { workspace: "today", tab: "interventions", entityId };
+  }
+  if (target.workspace === "network" && target.tab === "review" && row.module === "SiteScore"
+    && typeof target.candidateId === "string" && target.candidateId === entityId
+    && typeof target.reviewId === "string" && target.reviewId.length > 0 && target.reviewId === row.decisionId
+    && Object.keys(target).every((key) => ["workspace", "tab", "entityId", "candidateId", "reviewId"].includes(key))) {
+    return { workspace: "network", tab: "review", entityId, candidateId: entityId, reviewId: target.reviewId };
+  }
+  return null;
+}
+
 /**
  * Admit one governance approval.  A record must identify itself (`id`), state
  * which governance module owns it (`module`), name the item under review
@@ -107,14 +131,17 @@ export function normalizeGovernanceApproval(value: unknown): GovernanceApproval 
   const record = asRecord(value);
   if (!record) return null;
   const id = usableText(record.id);
-  const module = usableText(record.module);
+  const moduleId = usableText(record.module);
   const title = usableText(record.title);
   const status = usableText(record.status);
-  if (!id || !module || !title || !status) return null;
+  if (!id || !moduleId || !title || !status) return null;
+  const entityRef = usableText(record.entityRef);
+  const decisionId = usableText(record.decisionId);
+  const authority = asRecord(record.actionAuthority);
 
   return {
     id,
-    module,
+    module: moduleId,
     title,
     status,
     ...field("requestor", record.requestor),
@@ -123,6 +150,14 @@ export function normalizeGovernanceApproval(value: unknown): GovernanceApproval 
     ...field("owner", record.owner),
     ...field("sla", record.sla),
     ...field("entityRef", record.entityRef),
+    ...field("decisionId", record.decisionId),
+    ...(Object.prototype.hasOwnProperty.call(record, "nativeTarget")
+      ? { nativeTarget: normalizeNativeTarget(record.nativeTarget, { id, module: moduleId, entityRef, decisionId }) }
+      : {}),
+    // Preserve a server refusal independently of native-target parsing.
+    ...(authority?.decide === false
+      ? { actionAuthority: { decide: false as const, ...field("reason", authority.reason) } }
+      : {}),
     ...field("summary", record.summary),
     ...field("systemRecommendation", record.systemRecommendation),
     ...field("risk", record.risk),
@@ -147,13 +182,13 @@ export function normalizeGovernanceDecisionRow(value: unknown): GovernanceDecisi
   const record = asRecord(value);
   if (!record) return null;
   const id = usableText(record.id);
-  const module = usableText(record.module);
+  const moduleId = usableText(record.module);
   const item = usableText(record.item);
-  if (!id || !module || !item) return null;
+  if (!id || !moduleId || !item) return null;
 
   return {
     id,
-    module,
+    module: moduleId,
     item,
     ...field("systemRecommendation", record.systemRecommendation),
     ...field("finalDecision", record.finalDecision),

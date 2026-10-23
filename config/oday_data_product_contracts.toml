@@ -30,14 +30,14 @@ name = "oday-data-product-contracts"
 type = "product"
 semantic_version = "0.4.1"
 status = "PUBLISHED"
-content_digest = "139d75f59fd1d39d9d28e4d9671246ebb5d4c0478ed6d4e36efae60208017b13"
+content_digest = "388e5145e9bf106683168cefc0663caad4419acbcab376554e1d2d137d383af9"
 owner_task_id = "XR-CONTRACTS-PRODUCT-001"
 published_at = "2026-08-14T14:40:00Z"
 
 [source]
 repository = "alfloop-dev/oday-data-platform"
 branch = "dev"
-commit_sha = "245aa00e417b6f8450baa608e8976584e00be6fc"
+commit_sha = "606c35f26a47df9eae7667eaeb82f5eebf75fa22"
 release_path = "contracts/releases/emgi/product"
 
 [compatibility]
@@ -54,7 +54,7 @@ release_root = "packages/oday_data_product_contracts_client/_release"
 generated_root = "packages/oday_data_product_contracts_client/models"
 
 [vendor.artifacts]
-"release.json" = "3442a9234de104c30a5caac99da781d6e27dae78eecde1b1b887125ee0f75f94"
+"release.json" = "acdc828ecca8e5a476c3b02f60d6e53d992f8c05a40877e9babb94e629ee4bdc"
 "compatibility.json" = "19e721680995066df184da7c65ce3c1a98ecb3b80e0ee0c340210a2849556475"
 "schemas.json" = "737559f6c0a37553edc9427f99c9d95737982ded5856566437e985a54c5f53d5"
 "dependency-closure.json" = "b85a849c1a3aae2e51b41c2108262ad04518b53b60117d51720f51089d9f1ce9"

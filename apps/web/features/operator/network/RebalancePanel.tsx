@@ -8,6 +8,8 @@ import {
   readConstraintDisclosure,
 } from "./constraintDisclosure";
 import { PlanGanttChart } from "./PlanGanttChart";
+import { NetPlanScenarioBuilder } from "./NetPlanScenarioBuilder";
+import type { NetPlanBuilderApi } from "./netplanBuilderClient";
 
 type RebalanceAction = "request-avm" | "complete-avm" | "solve-netplan" | "select-scenario" | "submit-review";
 
@@ -23,6 +25,7 @@ export type RebalanceReviewSubmission = {
 
 export type RebalancePanelProps = {
   apiError?: string | null;
+  builderApi?: NetPlanBuilderApi;
   busyAction?: string | null;
   onCompleteAvm: (storeId: string) => void;
   onRequestAvm: (storeId: string) => void;
@@ -107,6 +110,7 @@ function classifyDisclosure(scenario: {
 
 export function RebalancePanel({
   apiError,
+  builderApi,
   busyAction,
   onCompleteAvm,
   onRequestAvm,
@@ -115,6 +119,7 @@ export function RebalancePanel({
   onSubmitReview,
   rows,
 }: RebalancePanelProps) {
+  const [builderDirty, setBuilderDirty] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(rows[0]?.id ?? null);
   const [ackReason, setAckReason] = useState<string>("");
   const [ackActorName, setAckActorName] = useState<string>("");
@@ -176,7 +181,8 @@ export function RebalancePanel({
     );
   }
 
-  const cta = primaryCta(
+  const cta = builderApi && selected.status === "approved" ? { action: null, disabled: true,
+    label: "已核准，請於情境區登錄執行與結果", note: "方案執行與實際結果沿下方原核准情境分別登錄。" } : primaryCta(
     selected,
     isAcknowledgementSatisfied,
     selectedHasBlocked,
@@ -188,7 +194,7 @@ export function RebalancePanel({
   const avmQuality = describeAvmQuality(selected.avmQualityDisposition, selected.avmConf);
 
   function handlePrimary() {
-    if (cta.disabled) return;
+    if (cta.disabled || builderDirty) return;
     if (cta.action === "request-avm") onRequestAvm(selected.id);
     if (cta.action === "complete-avm") onCompleteAvm(selected.id);
     if (cta.action === "solve-netplan") onSolveNetPlan(selected.id);
@@ -341,6 +347,8 @@ export function RebalancePanel({
             </section>
           ) : null}
 
+          {builderApi ? <NetPlanScenarioBuilder key={selected.id} storeId={selected.id} api={builderApi} onDirtyChange={setBuilderDirty} /> : null}
+
           {selected.netPlanScenarios && selected.netPlanScenarios.length > 0 ? (
             <section className={styles.rebalanceNetPlanBlock} data-testid={`rebalance-netplan-${selected.id}`} data-solve-completed-at={selected.netPlanJob?.completedAt}>
               <div className={styles.rebalanceNetPlanHeader}>NETPLAN 三案 · 點擊選擇</div>
@@ -364,7 +372,7 @@ export function RebalancePanel({
                         scenario.isSystemRecommendation && styles.netPlanScenarioCardRec,
                       )}
                       data-testid={`rebalance-scenario-${scenarioId}`}
-                      disabled={actionBusy || selected.status !== "netplanreview" || scenarioBusy}
+                      disabled={actionBusy || builderDirty || selected.status !== "netplanreview" || scenarioBusy}
                       key={scenarioId}
                       onClick={() => onSelectScenario(selected.id, scenarioId)}
                       type="button"
@@ -631,7 +639,7 @@ export function RebalancePanel({
           <button
             className={styles.rebalancePrimary}
             data-testid="rebalance-primary-action"
-            disabled={cta.disabled || actionBusy}
+            disabled={cta.disabled || actionBusy || builderDirty}
             onClick={handlePrimary}
             type="button"
           >

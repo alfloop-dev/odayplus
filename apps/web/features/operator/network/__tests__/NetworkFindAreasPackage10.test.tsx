@@ -7,6 +7,8 @@ import type { Candidate, OperatorHeatZone } from "../../types";
 import * as fixtures from "../../fixtures";
 import { ExpansionStepper } from "../ExpansionStepper";
 import type { ReviewItem } from "../networkReviewTypes";
+import { FindAreasPanel } from "../FindAreasPanel";
+import { buildNetworkFindAreasViewModel } from "../../networkFindAreasViewModel";
 
 // Package 10 Find Areas content parity (ODP-UI-NETWORK-FIND-AREAS-PARITY-001).
 // The map needs WebGL, so it is stubbed; its props are captured instead.
@@ -62,6 +64,13 @@ function renderFindAreas(
   return render(findAreasElement(activeRoleId, zones));
 }
 
+function mockCurrentAreaRead() {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => String(input).includes("/network-listings")
+    ? new Response(JSON.stringify({ source: "api", heatZones: fixtures.HEAT_ZONE_FIXTURES,
+      listingSources: [], listings: [], candidates: [], siteReviews: [] }),
+    { status: 200, headers: { "Content-Type": "application/json" } }) : new Response("{}", { status: 503 })));
+}
+
 function lastPushedParams() {
   return new URL(String(navigation.push.mock.calls.at(-1)?.[0]), "http://local").searchParams;
 }
@@ -90,6 +99,65 @@ describe("Network Find Areas — Package 10 content", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+  });
+
+  it.each(["current-api-zone", "zone-withheld", "fixture-source", "forbidden", "native-unavailable", "invalid-availability"])(
+    "enables personal search only for the current authorized API zone: %s", async scenario => {
+      // A POC shell may contain fallback cards while its actual API withholds
+      // that zone. Neither the card nor an HTTP 200 is a write authority.
+      const zone = fixtures.HEAT_ZONE_FIXTURES[0];
+      const fetcher = vi.fn(async (input: string) => {
+        if (!String(input).includes("/network-listings")) return new Response("{}", { status: 503 });
+        return new Response(JSON.stringify({ source: scenario === "fixture-source" ? "fixture" : "api",
+          heatZones: scenario === "zone-withheld" ? [] : [zone],
+          ...(scenario === "native-unavailable" ? { heatZoneAvailability: { state: "unavailable" } } : {}),
+          ...(scenario === "invalid-availability" ? { heatZoneAvailability: { state: "available", message: {} } } : {}),
+          listingSources: [], listings: [], candidates: [], siteReviews: [] }), {
+          status: scenario === "forbidden" ? 403 : 200, headers: { "Content-Type": "application/json" },
+        });
+      });
+      vi.stubGlobal("fetch", fetcher);
+      renderFindAreas("expansion-manager", { selectedHeatZoneId: zone.id });
+      await waitFor(() => expect(fetcher.mock.calls.some(([input]) => String(input).includes("/network-listings"))).toBe(true));
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+      const button = within(screen.getByTestId("find-areas-zone-actions"))
+        .getByRole("button", { name: "建立物件搜尋條件" });
+      if (scenario === "current-api-zone") await waitFor(() => expect(button).toBeEnabled());
+      else expect(button).toBeDisabled();
+      const intake = within(screen.getByTestId("find-areas-zone-actions"))
+        .getByRole("button", { name: "＋ 從網址新增物件（帶入本區）" });
+      if (scenario === "current-api-zone") expect(intake).toBeEnabled();
+      else { expect(intake).toBeDisabled(); fireEvent.click(intake); expect(navigation.push).not.toHaveBeenCalled(); }
+    },
+  );
+
+  it("area URL intake waits for the same current read as its zone options before carrying the visible area", async () => {
+    const nativeZone = { ...fixtures.HEAT_ZONE_FIXTURES[0], id: "native-current-zone", label: "先抵達的原生區域" };
+    const aggregateZone = { ...fixtures.HEAT_ZONE_FIXTURES[1], id: "current-aggregate-zone", label: "目前讀取確認的區域" };
+    let finish!: (response: Response) => void;
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => String(input).includes("/network-listings")
+      ? new Promise<Response>(resolve => { finish = resolve; }) : new Response("{}", { status: 503 }));
+    vi.stubGlobal("fetch", fetcher);
+    render(<NetworkFindAreasWorkspace activeRoleId="expansion-manager"
+      liveHeatZones={{ fetchedAt: "2026-10-16T00:00:00Z", items: [nativeZone], source: "api", state: "ready" }} />);
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    expect(screen.getByTestId("find-areas-zone-detail")).toHaveTextContent(nativeZone.label);
+    const button = screen.getByRole("button", { name: "＋ 從網址新增物件（帶入本區）" });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(navigation.push).not.toHaveBeenCalled();
+    await act(async () => finish(new Response(JSON.stringify({ source: "api", heatZones: [aggregateZone],
+      selectedHeatZoneId: aggregateZone.id, listingSources: [], listings: [], candidates: [], siteReviews: [] }),
+    { status: 200, headers: { "Content-Type": "application/json" } })));
+    await waitFor(() => expect(button).toBeEnabled());
+    expect(screen.getByTestId("find-areas-zone-detail")).toHaveTextContent(aggregateZone.label);
+    fireEvent.click(button);
+    const params = lastPushedParams();
+    expect(params.get("heatZoneId")).toBe(aggregateZone.id);
+    expect(params.get("heatZoneId")).not.toBe(nativeZone.id);
+    expect(params.get("tab")).toBe("radar");
+    expect(params.get("dialog")).toBe("add");
+    expect(fetcher.mock.calls.every(([input]) => String(input).includes("/api/v1/"))).toBe(true);
   });
 
   it("shows the one-row header with the four Chinese KPI chips", () => {
@@ -155,7 +223,23 @@ describe("Network Find Areas — Package 10 content", () => {
     expect(within(detail).getByText("下一步")).toBeInTheDocument();
 
     const actions = within(screen.getByTestId("find-areas-zone-actions")).getAllByRole("button");
+    // Exact Package 10 primary + URL intake + four secondary actions. Missing
+    // search/quarter-plan owners are unavailable, never substituted workflows.
     expect(actions).toHaveLength(6);
+    const survey = within(screen.getByTestId("find-areas-zone-actions")).getByRole("button", { name: "指派找點任務" });
+    expect(survey).toBeDisabled();
+    expect(survey).toHaveAttribute("title", "熱區任務服務未接通");
+    expect(actions.map((action) => action.textContent)).toEqual([
+      expect.stringMatching(/^查看本區物件（\d+）$/),
+      "＋ 從網址新增物件（帶入本區）",
+      "✓ 已追蹤（點擊移除）",
+      "指派找點任務",
+      "建立物件搜尋條件",
+      "加入季度展店計畫",
+    ]);
+    for (const label of ["建立物件搜尋條件", "加入季度展店計畫"]) {
+      expect(within(screen.getByTestId("find-areas-zone-actions")).getByRole("button", { name: label })).toBeDisabled();
+    }
     expect(actions[0]).toHaveTextContent(/^查看本區物件（\d+）$/);
     expect(detail).not.toHaveTextContent(/Source Listings|Score Candidate|Submit Review|Pipeline/);
   });
@@ -168,13 +252,37 @@ describe("Network Find Areas — Package 10 content", () => {
     expect(screen.getByRole("button", { name: "加入追蹤" })).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("opens the canonical add-from-URL dialog on Listing Radar for roles that may submit", () => {
+  it("opens the canonical add-from-URL dialog on Listing Radar for roles that may submit", async () => {
+    mockCurrentAreaRead();
     renderFindAreas("expansion-manager");
-    fireEvent.click(screen.getByRole("button", { name: "＋ 從網址新增物件（帶入本區）" }));
+    const action = screen.getByRole("button", { name: "＋ 從網址新增物件（帶入本區）" });
+    await waitFor(() => expect(action).toBeEnabled());
+    fireEvent.click(action);
     const href = String(navigation.push.mock.calls.at(-1)?.[0]);
     const params = new URL(href, "http://local").searchParams;
     expect(params.get("tab")).toBe("radar");
     expect(params.get("dialog")).toBe("add");
+  });
+
+  it.each([
+    ["HZ-01", ""], ["HZ-01", "HZ-OLD"], ["HZ-02", ""], ["HZ-02", "HZ-OLD"],
+  ])("hands %s to both explicit area actions after prior filter '%s'", async (zoneId, previousFilter) => {
+    mockCurrentAreaRead();
+    navigation.search = new URLSearchParams({ ws: "network", tab: "find", heatZoneId: previousFilter, page: "8", search: "保留條件" }).toString() + "&extra=a&extra=b";
+    for (const name of [/^查看本區物件/, /^＋ 從網址新增物件/]) {
+      const view = renderFindAreas("expansion-manager", { selectedHeatZoneId: zoneId });
+      const action = screen.getByRole("button", { name });
+      await waitFor(() => expect(action).toBeEnabled());
+      fireEvent.click(action);
+      const params = lastPushedParams();
+      expect(params.get("heatZoneId")).toBe(zoneId);
+      expect(params.get("page")).toBe("1");
+      expect(params.get("tab")).toBe("radar");
+      expect(params.get("search")).toBe("保留條件");
+      expect(params.getAll("extra")).toEqual(["a", "b"]);
+      if (String(name).includes("網址")) expect(params.get("dialog")).toBe("add");
+      view.unmount();
+    }
   });
 
   it("disables add-from-URL for a role without the intake submit grant", () => {
@@ -184,10 +292,13 @@ describe("Network Find Areas — Package 10 content", () => {
 
   it.each([
     [/^查看本區物件/, "radar"],
-    [/^查看本區候選點/, "candidates"],
-  ])("routes %s to the %s tab", (name, tab) => {
+    [/^＋ 從網址新增物件/, "radar"],
+  ])("routes %s to the %s tab", async (name, tab) => {
+    mockCurrentAreaRead();
     renderFindAreas();
-    fireEvent.click(screen.getByRole("button", { name }));
+    const action = screen.getByRole("button", { name });
+    await waitFor(() => expect(action).toBeEnabled());
+    fireEvent.click(action);
     expect(new URL(String(navigation.push.mock.calls.at(-1)?.[0]), "http://local").searchParams.get("tab")).toBe(tab);
   });
 
@@ -195,12 +306,10 @@ describe("Network Find Areas — Package 10 content", () => {
   it.each([
     ["HZ-01", "CS-1002", "CS-1003"],
     ["HZ-02", "CS-1003", "CS-1002"],
-  ])("scopes 查看本區候選點 for %s to that zone's candidates", (zoneId, inZone, otherZone) => {
+  ])("scopes the canonical Candidates deep link for %s to that zone's candidates", (zoneId, inZone, otherZone) => {
+    navigation.search = `ws=network&tab=candidates&zone=${zoneId}`;
     renderFindAreas("expansion-manager", { selectedHeatZoneId: zoneId });
-    fireEvent.click(screen.getByRole("button", { name: "查看本區候選點（1）" }));
-
-    expect(lastPushedParams().get("tab")).toBe("candidates");
-    expect(lastPushedParams().get("zone")).toBe(zoneId);
+    expect(screen.getByTestId("candidate-zone-scope")).toHaveTextContent("（1）");
     const board = screen.getByTestId("network-candidate-table");
     expect(within(board).getByTestId(`candidate-row-${inZone}`)).toHaveAttribute("data-active", "true");
     expect(within(board).queryByTestId(`candidate-row-${otherZone}`)).toBeNull();
@@ -209,13 +318,12 @@ describe("Network Find Areas — Package 10 content", () => {
   it("shows an empty scoped board for a zone without candidates", () => {
     const { HEAT_ZONE_FIXTURES } = fixtures;
     const emptyZone: OperatorHeatZone = { ...HEAT_ZONE_FIXTURES[1], id: "HZ-03", label: "中山南京東路", rank: 3 };
+    navigation.search = "ws=network&tab=candidates&zone=HZ-03";
     renderFindAreas("expansion-manager", {
       heatZones: [...HEAT_ZONE_FIXTURES, emptyZone],
       selectedHeatZoneId: "HZ-03",
     });
-    fireEvent.click(screen.getByRole("button", { name: "查看本區候選點（0）" }));
-
-    expect(lastPushedParams().get("zone")).toBe("HZ-03");
+    expect(screen.getByTestId("candidate-zone-scope")).toHaveTextContent("中山南京東路（0）");
     expect(screen.queryByTestId("network-candidate-table")).toBeNull();
     expect(screen.queryByTestId(/^candidate-row-/)).toBeNull();
     expect(screen.getByTestId("candidate-empty")).toHaveTextContent("中山南京東路 尚無候選點。");
@@ -391,4 +499,94 @@ describe("Expansion stepper copy", () => {
     expect(stepper).toHaveTextContent("下一步：查看本區物件並轉為候選點");
     expect(screen.queryByRole("status")).toBeNull();
   });
+});
+
+describe("Find Areas does not promote prototype map facts into production", () => {
+  beforeEach(() => { mapProps.last = null; });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  function renderPanel(fixturesAllowed: boolean, heatZones = fixtures.HEAT_ZONE_FIXTURES) {
+    // Owned engineering rows exercise the DTO boundary, not real model/data readiness.
+    const viewModel = buildNetworkFindAreasViewModel({ fixturesAllowed, heatZones, listings: [], candidates: [] });
+    render(<FindAreasPanel activeRoleId="expansion-manager" fixturesAllowed={fixturesAllowed}
+      viewModel={viewModel} selectedZone={viewModel.zones[0]} effectiveLens="demand"
+      isSelectedTracked={false} heatZones={heatZones} listings={[]} candidates={[]} canAddListing={false}
+      onSelectZone={vi.fn()} onChangeLens={vi.fn()} onToggleTracked={vi.fn()} onSourceListings={vi.fn()}
+      onAddListingFromUrl={vi.fn()} />);
+    return viewModel;
+  }
+
+  it("keeps ranked production rows available without inventing geometry, model, snapshot or FRESH state", async () => {
+    const viewModel = renderPanel(false);
+    await waitFor(() => expect(mapProps.last?.productionMode).toBe(true));
+    expect(mapProps.last?.dataSource).toBe("api");
+    expect(mapProps.last?.zones).toEqual([]);
+    expect(mapProps.last?.freshness).toEqual({
+      status: "MISSING", updatedAt: "", modelVersion: "", featureSnapshotTime: "", sourceSnapshotId: "",
+    });
+    expect(screen.getByTestId("find-areas-map-geometry-unavailable")).toHaveTextContent("地圖 geometry 尚未可用；列表仍可用於審查。");
+    for (const zone of viewModel.rankedZones) {
+      expect(within(screen.getByTestId("find-areas-tray")).getByRole("button", {
+        name: `${zone.label} ${zone.lensPoints} 分`,
+      })).toBeInTheDocument();
+    }
+  });
+
+  it("preserves the explicit POC map illustration and labels", async () => {
+    renderPanel(true);
+    await waitFor(() => expect(mapProps.last?.productionMode).toBe(false));
+    expect(mapProps.last?.dataSource).toBe("fixture");
+    expect((mapProps.last?.zones as Array<{ h3: string }>)[0].h3).toBe(`h3-${fixtures.HEAT_ZONE_FIXTURES[0].id}`);
+    expect(mapProps.last?.freshness).toMatchObject({ status: "FRESH", modelVersion: "network-ops-local" });
+    expect(screen.queryByTestId("find-areas-map-geometry-unavailable")).toBeNull();
+  });
+
+  it("passes recorded native metadata and explicit null geometry without promoting the timestamp to FRESH", async () => {
+    const row: OperatorHeatZone = { ...fixtures.HEAT_ZONE_FIXTURES[0], mapEvidence: {
+      h3Index: "8928308280fffff", h3Resolution: 9, geometry: null, score: 0, priorityRank: 1,
+      state: "UNTOUCHED", confidence: 0, unmetDemandScore: 0, formatFitScore: 0,
+      cannibalizationRisk: 0, rentFeasibility: 0, listingAvailability: 0,
+      modelVersion: "recorded-owner-model", featureVersion: "recorded-owner-features",
+      featureSnapshotTime: "2026-10-15T00:00:00Z", predictionOriginTime: "2026-10-15T00:00:00Z",
+      lastScoredAt: "2026-10-15T00:01:00Z", sourceSnapshotIds: ["recorded-owner-source"],
+    } };
+    renderPanel(false, [row]);
+    await waitFor(() => expect(mapProps.last?.zones).toHaveLength(1));
+    expect(mapProps.last?.zones).toEqual([expect.objectContaining({
+      id: row.id, h3: row.mapEvidence!.h3Index, geometry: null, score: 0,
+      modelVersion: "recorded-owner-model", sourceSnapshotIds: ["recorded-owner-source"], poiCount: null,
+    })]);
+    expect(mapProps.last?.freshness).toMatchObject({ status: "MISSING", modelVersion: "recorded-owner-model",
+      featureSnapshotTime: row.mapEvidence!.featureSnapshotTime, sourceSnapshotId: "recorded-owner-source" });
+  });
+
+  it("shows an unavailable recorded lens as plain text without a favorable score tier", async () => {
+    const row: OperatorHeatZone = { ...fixtures.HEAT_ZONE_FIXTURES[0], label: "Missing row", rank: null,
+      demandGap: null, competitionIndex: null, cannibalizationRisk: null, confidence: null, centroid: null };
+    renderPanel(false, [row]);
+    await waitFor(() => expect(mapProps.last?.productionMode).toBe(true));
+    const card = screen.getByRole("button", { name: "Missing row 未評估" });
+    expect(card.querySelector("[data-tier]")).toBeNull();
+    expect(screen.getByTestId("find-areas-zone-score")).toHaveTextContent("未評估");
+    expect(screen.getByTestId("find-areas-zone-score")).not.toHaveAttribute("data-tier");
+    expect(screen.getByTestId("find-areas-zone-detail")).toHaveTextContent("HeatZone 綜合 未評估");
+    expect(mapProps.last?.lensScores).toEqual([]);
+  });
+
+});
+
+
+it("hands the exact selected HeatZone to the assignment entry and preserves unavailable geometry instead of making a fake task", () => {
+  const heatZones = fixtures.HEAT_ZONE_FIXTURES;
+  const viewModel = buildNetworkFindAreasViewModel({ fixturesAllowed: false, heatZones, listings: [], candidates: [] });
+  const open = vi.fn(), selected = viewModel.zones[0];
+  render(<FindAreasPanel activeRoleId="expansion-manager" fixturesAllowed={false}
+    viewModel={viewModel} selectedZone={selected} effectiveLens="demand" isSelectedTracked={false}
+    heatZones={heatZones} listings={[]} candidates={[]} canAddListing={false}
+    onSelectZone={vi.fn()} onChangeLens={vi.fn()} onToggleTracked={vi.fn()} onSourceListings={vi.fn()}
+    onAddListingFromUrl={vi.fn()}
+    onOpenSurvey={open} />);
+  fireEvent.click(screen.getByRole("button", { name: "指派找點任務" }));
+  expect(open).toHaveBeenCalledOnce(); expect(open).toHaveBeenCalledWith(selected.id);
+  expect(screen.getByTestId("find-areas-map-geometry-unavailable")).toBeVisible();
 });

@@ -10,13 +10,6 @@ export interface TransferTargetOption {
   role: string;
 }
 
-export const DEFAULT_TRANSFER_TARGETS: TransferTargetOption[] = [
-  { id: "actor-mgr", name: "吳孟哲（展店主管）", role: "expansion-manager" },
-  { id: "actor-steward", name: "周育安（資料管理員）", role: "data-steward" },
-  { id: "actor-staff", name: "許庭瑜（展店）", role: "expansion-staff" },
-  { id: "gov-queue", name: "治理覆核佇列", role: "site-reviewer" },
-];
-
 export interface TransferIntakeDialogProps {
   busy: boolean;
   error: IntakeApiError | null;
@@ -31,6 +24,14 @@ export interface TransferIntakeDialogProps {
   record: AssistedIntake;
   onConflictRefresh?: () => void;
   targetOptions?: TransferTargetOption[];
+  targetsLoading?: boolean;
+  targetsError?: string | null;
+  onTargetsRefresh?: () => void;
+  resourceVersion?: number | null;
+}
+
+export function transferTargetKey(target: TransferTargetOption): string {
+  return JSON.stringify([target.id, target.role]);
 }
 
 /**
@@ -45,9 +46,13 @@ export function TransferIntakeDialog({
   onSubmit,
   record,
   onConflictRefresh,
-  targetOptions = DEFAULT_TRANSFER_TARGETS,
+  targetOptions = [],
+  targetsLoading = false,
+  targetsError = null,
+  onTargetsRefresh,
+  resourceVersion = null,
 }: TransferIntakeDialogProps) {
-  const [targetId, setTargetId] = useState(targetOptions[0]?.id || "");
+  const [targetId, setTargetId] = useState("");
   const [handoffNote, setHandoffNote] = useState("");
   const [riskAcknowledged, setRiskAcknowledged] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -61,17 +66,24 @@ export function TransferIntakeDialog({
     };
   }, []);
 
-  const selectedTarget =
-    targetOptions.find((o) => o.id === targetId) || targetOptions[0] || { id: "", name: "未指定", role: "" };
+  const selectedTarget = targetOptions.find((option) => transferTargetKey(option) === targetId);
+  const targetsUnavailable = targetsLoading || Boolean(targetsError) || targetOptions.length === 0;
+  const versionAvailable = Number.isSafeInteger(resourceVersion) && Number(resourceVersion) >= 1;
+  const displayedVersion = versionAvailable ? `v${resourceVersion}` : "尚未取得";
 
   const title = "轉交收件（Transfer）";
   const riskSummary =
-    `將收件 ${record.id} 轉交給 ${selectedTarget.name}。` +
+    `將收件 ${record.id} 轉交給 ${selectedTarget?.name ?? "未指定對象"}。` +
     `此操作會變更指派的處理者與責任。前後值與交接說明會寫入 Audit 歷程。`;
 
   function handleSubmit() {
-    if (busy) return;
+    if (busy || !versionAvailable) return;
     setLocalError(null);
+
+    if (targetsUnavailable || !selectedTarget) {
+      setLocalError("請選擇目前具有權限的轉交對象。");
+      return;
+    }
 
     if (!handoffNote.trim()) {
       setLocalError("請輸入 Handoff note（工作交接說明）。");
@@ -128,7 +140,7 @@ export function TransferIntakeDialog({
         >
           收件編號：<strong>{record.id}</strong> · 目前負責人：
           <strong data-testid="transfer-record-owner">{record.owner || "未指派"}</strong> · 版本：
-          <span data-testid="transfer-record-version">v{record.version || 1}</span>
+          <span data-testid="transfer-record-version">{displayedVersion}</span>
         </div>
 
         <div>
@@ -139,15 +151,25 @@ export function TransferIntakeDialog({
             className={styles.select}
             data-testid="transfer-target-select"
             id="transfer-target-select"
+            disabled={busy || targetsUnavailable}
             onChange={(e) => setTargetId(e.target.value)}
             value={targetId}
           >
+            <option value="">請選擇轉交對象</option>
             {targetOptions.map((opt) => (
-              <option key={opt.id} value={opt.id}>
-                {opt.name}
+              <option key={transferTargetKey(opt)} value={transferTargetKey(opt)}>
+                {opt.name} · {opt.role}
               </option>
             ))}
           </select>
+          {targetsLoading ? <p role="status">正在取得可轉交對象…</p> : null}
+          {!targetsLoading && (targetsError || targetOptions.length === 0) ? (
+            <div role="status" data-testid="transfer-targets-unavailable">
+              {targetsError || "此指派目前沒有符合權限與範圍的轉交對象。"}
+              {onTargetsRefresh ? <button type="button" disabled={busy} onClick={onTargetsRefresh}>重新取得對象</button> : null}
+            </div>
+          ) : null}
+          {targetId && !selectedTarget && !targetsLoading ? <p role="alert">原選取對象已無法轉交，請重新選擇。</p> : null}
         </div>
 
         <div>
@@ -168,10 +190,10 @@ export function TransferIntakeDialog({
         {isConflict && onConflictRefresh ? (
           <div className={styles.errorPanel} data-testid="transfer-conflict-panel" role="alert">
             <span className={styles.errorSummary}>
-              409 OWNER_CONFLICT — 此收件的 owner 在你開啟後已變更
+              409 — 轉交操作衝突，請重新整理指派狀態與版本
             </span>
             <span className={styles.errorMeta}>
-              目前 owner：{record.owner || "未指定"} · 版本 v{record.version || 1}
+              目前 owner：{record.owner || "未指定"} · 指派版本 {displayedVersion}
             </span>
             <span className={styles.errorNext}>
               重新整理套用最新狀態後再送出 — 你的交接說明與選項已保留。
@@ -227,7 +249,7 @@ export function TransferIntakeDialog({
         <button
           className={styles.primaryButton}
           data-testid="transfer-submit-btn"
-          disabled={busy}
+          disabled={busy || !versionAvailable || targetsUnavailable || !selectedTarget}
           onClick={handleSubmit}
           type="button"
         >

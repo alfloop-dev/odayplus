@@ -2,7 +2,7 @@
 #
 # Contract:  emgi.property-observation.v1 (domain_observation, v1.0.0)
 # Release:   oday-data-product-contracts.v0.4.1
-# Producer:  alfloop-dev/oday-data-platform@245aa00e417b6f8450baa608e8976584e00be6fc
+# Producer:  alfloop-dev/oday-data-platform@606c35f26a47df9eae7667eaeb82f5eebf75fa22
 # Schema:    schemas/property-observation.schema.json
 # Digest:    86bf3a958fb14135f49eae66044188cac1322dbcd5d7f76b6ce9ba2d5527f1c1
 """Portable, versioned document snapshot of canonical real estate property entities, listing observations, and status histories."""

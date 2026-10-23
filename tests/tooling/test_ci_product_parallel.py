@@ -198,12 +198,12 @@ def test_ci_workflow_command_exact_single_ownership(ci_workflow: dict[str, Any])
     """Assert each complete original acceptance command is present in exactly one lane."""
     jobs = ci_workflow["jobs"]
 
-    # Canonical acceptance commands from the baseline monolithic product job
+    # Canonical acceptance commands; database execution also preserves JUnit evidence.
     expected_command_lanes = {
         "uv run ruff check tests modules apps shared models solver pipelines infra": "product-lint-unit",
         'uv run pytest -m "not requires_live_env and not performance" tests modules apps shared models -n auto': "product-lint-unit",
         "uv run pytest tests/integration/test_official_real_estate_postgresql.py": "product-db",
-        'uv run pytest -m "requires_live_env and not requires_postgis" tests/contract tests/ops tests/integration': "product-db",
+        'uv run pytest -ra --junitxml="$RUNNER_TEMP/product-db-results.xml" -m "requires_live_env" tests/contract tests/ops tests/integration': "product-db",
         "make api-contract": "product-api-contract",
         "make security": "product-security",
         "make node-check": "product-node",
@@ -659,3 +659,29 @@ def test_verify_change_review_scope_for_contract_test_deliverable() -> None:
     result = classify_paths(touched_paths, manifest)
     assert result["scope"] == "product_or_mixed"
     assert result["non_tooling_paths"] == ["tests/contract/test_merge_queue_batch_policy.py"]
+
+
+def test_quarterly_password_browser_is_a_required_isolated_supplement() -> None:
+    workflow = yaml.safe_load(CI_WORKFLOW_PATH.read_text())
+    steps = workflow["jobs"]["product-e2e-gate"]["steps"]
+    by_name = {step.get("name"): step for step in steps}
+    name = "Verify area planning drafts with password session and PostgreSQL"
+    quarter = by_name[name]
+    personal = by_name["Verify personal listing search with canonical API and PostgreSQL"]
+    assert quarter.get("continue-on-error", False) is False
+    assert quarter.get("if") is None
+    assert quarter["timeout-minutes"] == personal["timeout-minutes"] == 10
+    assert quarter["env"]["ODP_SCORE_BROWSER_MODE"] == "isolated-synthetic"
+    assert quarter["env"]["ODP_SCORE_BROWSER_DATABASE_URL"].endswith("/odp_score_browser_quarterly_ci")
+    assert quarter["env"]["ODP_SCORE_BROWSER_DATABASE_URL"] != personal["env"]["ODP_SCORE_BROWSER_DATABASE_URL"]
+    assert "CREATE DATABASE odp_score_browser_quarterly_ci" in quarter["run"]
+    assert "--config tests/visual/operator-area-planning-draft.config.ts" in quarter["run"]
+    assert "--reporter=list,json,html" in quarter["run"]
+    order = [step.get("name") for step in steps]
+    assert order.index("Build personal listing search supplemental fixture") < order.index(name)
+    assert order.index("Verify personal listing search with canonical API and PostgreSQL") < order.index(name)
+    assert order.index(name) < order.index("Run product E2E dev merge gate")
+    diagnostics = by_name["Preserve supplemental area planning3 diagnostics"]
+    assert diagnostics["if"] == "always()"
+    assert diagnostics["with"]["retention-days"] == 90
+    assert diagnostics["with"]["path"] == "${{ runner.temp }}/product-e2e-supplemental/area-planning3/"

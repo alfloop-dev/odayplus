@@ -73,14 +73,14 @@ class TestGeocodeConfidenceComesFromTheAddress:
         """The fail-open: this used to report 1.0 from the listing record.
 
         A listing whose address row is gone has no geocode evidence at all, so
-        the dict layer reports 0.0 -- what `AddressLocation` itself defaults to
-        and what the promotion gate reads as absence.
+        the dict layer reports None, matching the nullable AddressLocation
+        contract and keeping an absent measurement distinct from measured zero.
         """
         repo = _repository(geocode_confidence=0.94)
         listing = repo.get_listing(LISTING_ID)
         repo.addresses.clear()
 
-        assert _service(repo)._listing_to_dict(listing)["geocodeConfidence"] == 0.0
+        assert _service(repo)._listing_to_dict(listing)["geocodeConfidence"] is None
 
     def test_listing_confidence_is_still_reported_under_its_own_key(self) -> None:
         """Both values survive; they just stop being interchangeable."""
@@ -91,4 +91,4 @@ class TestGeocodeConfidenceComesFromTheAddress:
         as_dict = _service(repo)._listing_to_dict(listing)
 
         assert as_dict["listingConfidence"] == 1.0
-        assert as_dict["geocodeConfidence"] == 0.0
+        assert as_dict["geocodeConfidence"] is None

@@ -144,7 +144,11 @@ def test_store_visual_checks_are_required_after_bootstrap_before_business_runner
     assert steps[business]["run"] == "make product-e2e-gate"
 
     config = "tests/visual/operator-store-ops-parity.config.ts"
-    assert steps[visual]["run"] == f"npx playwright test --config {config}"
+    assert steps[visual]["run"] == (
+        f"npx playwright test --config {config} "
+        '--output "$RUNNER_TEMP/product-e2e-supplemental/geometry45/test-results" '
+        "--reporter=list,json,html"
+    )
     assert "if" not in steps[visual]
     assert not steps[visual].get("continue-on-error", False)
     assert (REPO_ROOT / config).is_file()

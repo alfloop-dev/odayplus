@@ -23,7 +23,7 @@ from modules.site_economics.domain.models import (
 CONTRACT_ID = "odayplus.site-economics.v1"
 CONTRACT_VERSION = "1.0.0"
 CONTRACT_CATEGORY = "decision_product"
-ENGINE_VERSION = "site-economics-simulator-v1.0.0"
+ENGINE_VERSION = "site-economics-simulator-v1.2.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,19 +76,19 @@ class SimulationAssumptionsSnapshot:
         return {
             "format_code": self.format_code,
             "format_version": self.format_version,
-            "monthly_base_rent": self.monthly_base_rent,
-            "area_ping": self.area_ping,
-            "total_equipment_capex": self.total_equipment_capex,
-            "total_fitout_capex": self.total_fitout_capex,
-            "total_initial_cash_outlay": self.total_initial_cash_outlay,
-            "debt_ratio": self.debt_ratio,
-            "annual_interest_rate": self.annual_interest_rate,
+            "monthly_base_rent": float(self.monthly_base_rent),
+            "area_ping": float(self.area_ping),
+            "total_equipment_capex": float(self.total_equipment_capex),
+            "total_fitout_capex": float(self.total_fitout_capex),
+            "total_initial_cash_outlay": float(self.total_initial_cash_outlay),
+            "debt_ratio": float(self.debt_ratio),
+            "annual_interest_rate": float(self.annual_interest_rate),
             "loan_term_months": self.loan_term_months,
-            "corporate_tax_rate": self.corporate_tax_rate,
-            "equipment_salvage_ratio": self.equipment_salvage_ratio,
-            "demand_multiplier": self.demand_multiplier,
-            "competitor_discount": self.competitor_discount,
-            "cannibalization_discount": self.cannibalization_discount,
+            "corporate_tax_rate": float(self.corporate_tax_rate),
+            "equipment_salvage_ratio": float(self.equipment_salvage_ratio),
+            "demand_multiplier": float(self.demand_multiplier),
+            "competitor_discount": float(self.competitor_discount),
+            "cannibalization_discount": float(self.cannibalization_discount),
             "lease_term_months": self.lease_term_months,
             "lease_deposit_months": self.lease_deposit_months,
             "rent_free_months": self.rent_free_months,
@@ -139,15 +139,17 @@ class ScenarioSummary:
         return {
             "scenario_name": self.scenario_name,
             "description": self.description,
-            "demand_multiplier": self.demand_multiplier,
-            "competitor_discount": self.competitor_discount,
-            "monthly_rent": self.monthly_rent,
-            "levered_npv": self.levered_npv,
-            "unlevered_npv": self.unlevered_npv,
-            "levered_irr": self.levered_irr,
-            "simple_payback_months": self.simple_payback_months,
+            "demand_multiplier": float(self.demand_multiplier),
+            "competitor_discount": float(self.competitor_discount),
+            "monthly_rent": float(self.monthly_rent),
+            "levered_npv": float(self.levered_npv),
+            "unlevered_npv": float(self.unlevered_npv),
+            "levered_irr": float(self.levered_irr) if self.levered_irr is not None else None,
+            "simple_payback_months": (
+                float(self.simple_payback_months) if self.simple_payback_months is not None else None
+            ),
             "is_payback_censored": self.is_payback_censored,
-            "average_monthly_ebitda": self.average_monthly_ebitda,
+            "average_monthly_ebitda": float(self.average_monthly_ebitda),
             "recommendation": self.recommendation,
         }
 
@@ -204,7 +206,9 @@ class SiteEconomicsDocument:
             source_market_context_id=data.get("source_market_context_id"),
             source_market_context_sha256=data.get("source_market_context_sha256"),
             scenarios=scenarios,
-            engine_version=str(data.get("engine_version", ENGINE_VERSION)),
+            # Retain the preceding reader's fallback; absent historical
+            # metadata cannot establish use of the new capital-asset engine.
+            engine_version=str(data.get("engine_version", "site-economics-simulator-v1.1.0")),
             metadata=dict(data.get("metadata", {})),
         )
 
@@ -219,7 +223,7 @@ class SiteEconomicsDocument:
             "format_version": self.format_version,
             "evaluated_at": self.evaluated_at,
             "horizon_months": self.horizon_months,
-            "annual_discount_rate": self.annual_discount_rate,
+            "annual_discount_rate": float(self.annual_discount_rate),
             "source_market_context_id": self.source_market_context_id,
             "source_market_context_sha256": self.source_market_context_sha256,
             "metrics": self.metrics.to_dict(),

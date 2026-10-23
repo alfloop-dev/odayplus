@@ -1,4 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
+import nativeCameraPurpose from "../fixtures/operator-store-camera-purpose-native.json";
+import currentMemoryWorkflow from "../fixtures/operator-store-typed-workflow-memory.json";
+import { createHash } from "node:crypto";
 
 type StoreLightStatus = "green" | "yellow" | "red";
 type StoreOpsIssue = {
@@ -16,7 +19,55 @@ type StoreOpsIssue = {
   updatedAt: string;
   evidenceIds: string[];
   summary: string;
+  workflowRecords?: Record<string, unknown>[];
+  outcomeReviews?: Record<string, unknown>[];
 };
+
+type MemoryWorkflowSample = {
+  requestPayload: Record<string, unknown>;
+  issueUpdatedAt: string;
+  record: Record<string, unknown>;
+  auditEvent: { id: string; occurredAt: string; metadata: Record<string, unknown> };
+  evidenceItem?: Record<string, unknown>;
+};
+const memoryWorkflowSamples = currentMemoryWorkflow.actions as unknown as Record<string, MemoryWorkflowSample>;
+
+function canonicalFixtureJSON(value: unknown): string {
+  if (Array.isArray(value)) return "[" + value.map(canonicalFixtureJSON).join(",") + "]";
+  if (value !== null && typeof value === "object") {
+    const row = value as Record<string, unknown>;
+    return "{" + Object.keys(row).sort().map((key) => JSON.stringify(key) + ":" + canonicalFixtureJSON(row[key])).join(",") + "}";
+  }
+  return JSON.stringify(value);
+}
+
+// These are explicitly mocked transport bindings around current, actually
+// captured MemoryStoreOpsService records. They are not authenticated SQL,
+// delivered media, device execution or measured outcome evidence.
+function bindMemoryWorkflowReceipt(
+  sample: MemoryWorkflowSample,
+  action: string,
+  issue: StoreOpsIssue,
+  sourceIssueUpdatedAt: string,
+  payload: Record<string, unknown>,
+  headers: Record<string, string>,
+) {
+  const expectedPayload = structuredClone(sample.requestPayload);
+  if (action === "field-report") expectedPayload.observedAt = sourceIssueUpdatedAt;
+  expect(payload).toMatchObject(expectedPayload);
+  const record = structuredClone(sample.record);
+  const auditEvent = structuredClone(sample.auditEvent);
+  record.correlationId = headers["x-correlation-id"];
+  record.sourceIssueUpdatedAt = sourceIssueUpdatedAt;
+  record.recordedAt = issue.updatedAt;
+  if (action === "field-report") (record.submission as Record<string, unknown>).observedAt = payload.observedAt;
+  auditEvent.occurredAt = action === "camera-purpose" ? sample.auditEvent.occurredAt : issue.updatedAt;
+  auditEvent.metadata.idempotencyKey = headers["idempotency-key"];
+  auditEvent.metadata.reviewRecordHash = createHash("sha256").update(canonicalFixtureJSON(record)).digest("hex");
+  const history = action === "outcome" ? "outcomeReviews" : "workflowRecords";
+  issue[history] = [...(issue[history] ?? []), record];
+  return { auditEvent };
+}
 
 const stores = [
   {
@@ -159,7 +210,11 @@ test("Package 10 issue detail exposes the four-light evidence without legacy fil
   );
   await page.getByText("ISS-1024", { exact: true }).first().click();
   await expect(page.getByText("FORECASTOPS 四燈")).toBeVisible();
-  await expect(page.getByText("設備 紅")).toBeVisible();
+  // This legacy mock has no health-owner metadata; its raw colors are not measurements.
+  for (const dimension of ["需求", "設備", "清潔", "利潤"]) {
+    await expect(page.getByText(`${dimension} 資料不可用`, { exact: true })).toBeVisible();
+  }
+  await expect(page.getByText("設備 紅", { exact: true })).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: /Operations Red 1/ }),
   ).toHaveCount(0);
@@ -262,13 +317,26 @@ test("camera evidence remains locked until permitted purpose is submitted", asyn
   await expect(
     page.locator('[data-screen-label="Store Ops 門市營運"]'),
   ).toBeVisible();
-  await expect(page.getByText("影像鎖定 • 需授權")).toBeVisible();
+  // This unlabelled mocked API is a canonical response, even in E2E/POC.
+  // Wait for its stable unavailable tile rather than the initial demo flash.
+  const detail = page.locator('[aria-label="ISS-1024 detail"]');
+  const cameraTile = detail.locator("article").filter({ has: page.getByText("Camera 影像", { exact: true }) });
+  await expect(cameraTile.getByText("影像內容不可用", { exact: true })).toBeVisible();
+  await expect(cameraTile.getByText("影像內容不可用；調閱目的紀錄不代表存取授權。", { exact: true })).toBeVisible();
+  await expect(cameraTile.getByText(baseEvidence[0].title, { exact: true })).toHaveCount(0);
+  await expect(cameraTile.getByText(baseEvidence[0].summary, { exact: true })).toHaveCount(0);
+  await expect(cameraTile.locator("video, audio, iframe, img, source")).toHaveCount(0);
 
-  await page.getByText("點擊填寫調閱目的").click();
+  await cameraTile.getByRole("button", { name: "填寫調閱目的", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "調閱 Camera 片段" });
   await dialog
     .getByRole("textbox", { name: /調閱目的/ })
     .fill("payment incident quality audit");
+  await dialog.getByText("調閱範圍與保留設定", { exact: true }).click();
+  await dialog.getByRole("textbox", { name: "攝影機位置", exact: true })
+    .fill(nativeCameraPurpose.requestPayload.cameraLocation);
+  await dialog.getByRole("textbox", { name: "調閱時段", exact: true })
+    .fill(nativeCameraPurpose.requestPayload.timeWindow);
   await dialog
     .getByRole("checkbox", { name: /確認隱私與稽核告知/ })
     .check();
@@ -280,7 +348,21 @@ test("camera evidence remains locked until permitted purpose is submitted", asyn
     "/api/v1/operator/store-ops/issues/ISS-1024/camera-purpose",
   );
 
-  await expect(page.getByText("影像已解鎖")).toBeVisible();
+  await expect(dialog).toHaveCount(0);
+  await expect(cameraTile.getByText("調閱目的已記錄", { exact: true })).toBeVisible();
+  await expect(cameraTile.getByText("影像內容不可用；調閱目的紀錄不代表存取授權。", { exact: true })).toBeVisible();
+  await expect(cameraTile.getByRole("button", { name: "更新調閱目的", exact: true })).toBeVisible();
+  await expect(page.getByText("影像已解鎖", { exact: true })).toHaveCount(0);
+  await expect(cameraTile.getByText(nativeCameraPurpose.evidenceItem.title, { exact: true })).toHaveCount(0);
+  await expect(cameraTile.getByText(nativeCameraPurpose.evidenceItem.summary, { exact: true })).toHaveCount(0);
+  await expect(cameraTile.getByText(memoryWorkflowSamples["camera-purpose"].evidenceItem!.title as string, { exact: true })).toHaveCount(0);
+  await expect(cameraTile.getByText(memoryWorkflowSamples["camera-purpose"].evidenceItem!.summary as string, { exact: true })).toHaveCount(0);
+  await expect(cameraTile.locator("video, audio, iframe, img, source")).toHaveCount(0);
+  const purposeWrites = api.writeRequests.flatMap((url, index) =>
+    url.pathname.endsWith("/issues/ISS-1024/camera-purpose") ? [index] : []);
+  expect(purposeWrites).toHaveLength(1);
+  expect(api.writeHeaders[purposeWrites[0]]["idempotency-key"]).toBeTruthy();
+  expect(api.writeHeaders[purposeWrites[0]]["x-correlation-id"]).toBeTruthy();
   expect(
     api.writeRequests.some(
       (url) =>
@@ -329,6 +411,10 @@ async function mockStoreOpsApi(page: Page) {
       const issue = issues.find((item) =>
         url.pathname.includes(`/issues/${item.id}/`),
       );
+      let cameraPurposeReceipt;
+      const action = url.pathname.split("/").at(-1)!;
+      const sample = memoryWorkflowSamples[action];
+      const sourceIssueUpdatedAt = issue?.updatedAt;
       if (issue) {
         if (url.pathname.endsWith("/triage")) issue.status = "triaged";
         else if (url.pathname.endsWith("/assign")) issue.status = "assigned";
@@ -339,12 +425,23 @@ async function mockStoreOpsApi(page: Page) {
         else if (url.pathname.endsWith("/camera-purpose")) {
           const camera = evidence.find((item) => item.id === "EV-1024-CAM");
           if (camera) {
+            // This declared mock copies a real owned-memory native producer
+            // receipt; missing lockedReason by itself is not unlock evidence.
+            expect(issue.id).toBe(nativeCameraPurpose.evidenceItem.issueId);
+            expect(request.postDataJSON()).toMatchObject(nativeCameraPurpose.requestPayload);
             delete (camera as { lockedReason?: string }).lockedReason;
-            camera.summary =
-              "Camera evidence unlocked for a recorded, audit-scoped purpose.";
+            Object.assign(camera, structuredClone(sample.evidenceItem));
+            // Current producer updates issue time with the saved purpose record.
+            issue.updatedAt = sample.issueUpdatedAt;
+            cameraPurposeReceipt = { evidenceItem: camera };
           }
         }
-        issue.updatedAt = new Date().toISOString();
+        if (!url.pathname.endsWith("/camera-purpose")) issue.updatedAt = new Date().toISOString();
+        if (sample && sourceIssueUpdatedAt) {
+          const receipt = bindMemoryWorkflowReceipt(sample, action, issue, sourceIssueUpdatedAt, request.postDataJSON(), request.headers());
+          auditEvents.push(receipt.auditEvent);
+          cameraPurposeReceipt = { ...cameraPurposeReceipt, ...receipt };
+        }
       }
       await route.fulfill({
         contentType: "application/json",
@@ -356,6 +453,7 @@ async function mockStoreOpsApi(page: Page) {
           fourLightSummary: summarizeLights(issues),
           count: issues.length,
           issue,
+          ...cameraPurposeReceipt,
           idempotentReplay: false,
         }),
       });

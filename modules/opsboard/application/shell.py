@@ -30,6 +30,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 from uuid import uuid4
 
+from modules.opsboard.application.operator_live_repository import OperatorLiveRepositoryError
 from modules.opsboard.application.operator_state import (
     ROLES,
     WORKSPACES,
@@ -217,6 +218,15 @@ class TenantBoundOperatorStateService:
 
     def get_work_queue(self, **kwargs: Any) -> list[dict[str, Any]]:
         return self._state.get_work_queue(**kwargs, **self._scope)
+
+    def get_task_center(self, **kwargs: Any) -> dict[str, Any]:
+        return self._state.get_task_center(**kwargs, **self._scope)
+
+    def admit_franchisee_reports(self, reports: list[dict[str, Any]], audit_events: list[dict[str, Any]]) -> dict[str, Any]:
+        reader = getattr(self._state, "admit_franchisee_reports", None)
+        if not callable(reader):
+            raise OperatorLiveRepositoryError("request-scoped supervisor report admission is unavailable")
+        return reader(reports, audit_events)
 
     def search(self, query: str, **kwargs: Any) -> dict[str, Any]:
         return self._state.search(query, **kwargs, **self._scope)
@@ -707,9 +717,15 @@ class ShellService:
         assignee: str | None = None,
         status: str | None = None,
         task_id: str | None = None,
+        view: str | None = None,
+        request_key: str | None = None,
     ) -> dict[str, Any]:
         """Return the Task Center list with filters, facets and deep links."""
         role = self._role(role_id=role_id, subject_id=subject_id, system_roles=system_roles)
+        if view is not None:
+            return self._get_retained_tasks(role=role, subject_id=subject_id, system_roles=system_roles,
+                                            correlation_id=correlation_id, view=view,
+                                            sla=sla, assignee=assignee, status=status, task_id=task_id, request_key=request_key)
         tasks = self._tasks_for(role=role, subject_id=subject_id)
 
         facets = {
@@ -760,6 +776,72 @@ class ShellService:
                 {"id": str(item["id"]), "label": str(item["label"])} for item in ROLES
             ],
         }
+
+    def _get_retained_tasks(
+        self, *, role: dict[str, Any], subject_id: str | None, system_roles: str | None,
+        correlation_id: str | None, view: str, sla: str | None,
+        assignee: str | None, status: str | None, task_id: str | None,
+        request_key: str | None = None,
+    ) -> dict[str, Any]:
+        if view not in {"all", "assigned", "approvals", "initiated", "completed"}:
+            raise ShellPolicyError("unknown Task Center view")
+        projection = self._state.get_task_center(role_id=role["id"], subject_id=subject_id,
+                                                  system_roles=system_roles)
+        assignments = self._records_by_id(TASK_ASSIGNMENTS, "taskId")
+        tasks = []
+        for source in projection["records"]:
+            if source["workspace"] not in self._allowed_workspaces(role):
+                continue
+            assignment = assignments.get(source["sourceId"], {})
+            # Existing assignment documents address raw task IDs. Ambiguous
+            # cross-domain IDs cannot inherit another object's assignment.
+            unique = sum(row["sourceId"] == source["sourceId"] for row in projection["records"]) == 1
+            if not unique or source["sourceKind"] == "market-survey.assignment":
+                # Native Survey lifecycle owns its assignee. A generic shell
+                # assignment document cannot override that retained command.
+                assignment = {}
+            assignee_id = assignment.get("assigneeId", source.get("assigneeId"))
+            due = assignment.get("slaDueAt", source.get("slaDueAt"))
+            tasks.append({**source, "assigneeId": assignee_id,
+                          "assigneeName": assignment.get("assigneeName"),
+                          "assignedToMe": bool(subject_id) and assignee_id == subject_id,
+                          "initiatedByMe": bool(subject_id) and source.get("createdBy") == subject_id,
+                          "slaDueAt": due, "slaState": _sla_state(due, now=datetime.now(UTC))})
+        active = [row for row in tasks if not row["completed"]]
+        counts = {"all": len(tasks), "assigned": sum(row["assignedToMe"] for row in active),
+                  "approvals": sum(row["requiresApproval"] for row in active),
+                  "initiated": sum(row["initiatedByMe"] for row in active),
+                  "completed": sum(row["completed"] for row in tasks)}
+        filtered = [row for row in tasks if view == "all"
+                    or view == "assigned" and row["assignedToMe"] and not row["completed"]
+                    or view == "approvals" and row["requiresApproval"] and not row["completed"]
+                    or view == "initiated" and row["initiatedByMe"] and not row["completed"]
+                    or view == "completed" and row["completed"]]
+        if sla:
+            filtered = [row for row in filtered if row["slaState"] == sla]
+        if assignee:
+            filtered = [row for row in filtered if (row["assignedToMe"] if assignee == "me"
+                        else not row["assigneeId"] if assignee == "unassigned" else row["assigneeId"] == assignee)]
+        if status:
+            filtered = [row for row in filtered if row["status"] == status]
+        selected = []
+        if task_id:
+            selected = [row for row in tasks if row["taskId"] == task_id]
+            if not selected:
+                matches = [row for row in tasks if row["sourceId"] == task_id]
+                selected = matches if len(matches) == 1 else []
+        if request_key:
+            # A saved notification for a replaced/resubmitted request must not
+            # silently open a different round of the same task.
+            selected = [row for row in selected if row["requiresApproval"] is True
+                        and isinstance(row.get("notificationRequest"), dict)
+                        and row["notificationRequest"].get("key") == request_key]
+        return {"meta": {"source": "operator-shell-canonical-tasks", "correlationId": correlation_id,
+                         "view": view, "coverage": projection["coverage"], "dataOrigin": projection["dataOrigin"]},
+                "items": filtered, "count": len(filtered), "total": len(tasks), "viewCounts": counts,
+                "activeCount": len(active), "selected": selected[0] if len(selected) == 1 else None,
+                "selectionUnavailable": bool(task_id) and len(selected) != 1,
+                "actions": self._task_actions(role=role)}
 
     def assign_task(
         self,
@@ -842,11 +924,89 @@ class ShellService:
         role: dict[str, Any],
         subject_id: str | None,
     ) -> list[dict[str, Any]]:
+        return self._notification_snapshot(role=role, subject_id=subject_id)[0]
+
+    def _pending_notification_requests(
+        self, *, role: dict[str, Any], subject_id: str | None,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        coverage = {"complete": False, "state": "unavailable", "reasonCode": "CANONICAL_APPROVAL_NOTIFICATION_OWNER_UNAVAILABLE",
+                    "supportedDomains": ["sitescore.decision", "intervention"]}
+        reader = getattr(self._state, "get_task_center", None)
+        if not subject_id or not callable(reader):
+            return [], coverage
+        try:
+            projection = reader(role_id=role["id"], subject_id=subject_id)
+        except OperatorLiveRepositoryError:
+            # Alert/job owners remain readable. Unavailable approval coverage
+            # is explicit; this is never a claim of no pending requests.
+            return [], coverage
+        if not isinstance(projection, dict) or not isinstance(projection.get("records"), list):
+            raise ShellPolicyError("canonical task notification owner is malformed")
+        if (projection.get("coverage") or {}).get("reasonCode") == "TASK_FIXTURE_HAS_NO_CANONICAL_HISTORY":
+            return [], coverage
+        rows = []
+        for task in projection["records"]:
+            if (not isinstance(task, dict) or task.get("requiresApproval") is not True
+                or task.get("completed") is not False or task.get("sourceKind") not in {"sitescore.decision", "intervention"}
+                or task.get("workspace") not in self._allowed_workspaces(role)):
+                continue
+            request = task.get("notificationRequest")
+            if not isinstance(request, dict):
+                continue  # no current retained submission proof; no fabricated event
+            key = request.get("key")
+            if not isinstance(key, str) or len(key) != 64 or any(char not in "0123456789abcdef" for char in key):
+                raise ShellPolicyError("canonical request identity is malformed")
+            task_id = task.get("taskId")
+            if not isinstance(task_id, str) or task_id != f"{task['sourceKind']}:{task.get('sourceId')}":
+                raise ShellPolicyError("canonical request task identity is malformed")
+            rows.append({"id": f"approval-request:{key}", "title": f"待核准：{task['title']}",
+                "detail": f"來源仍為 {task['status']}；請開啟該次任務，再依原完整核准流程處理。",
+                "tone": "warning", "category": "approval", "occurredAt": request["occurredAt"],
+                "sourceEntity": {"kind": task["sourceKind"], "id": task["sourceId"]},
+                "sourceTaskId": task_id, "sourceRequestKey": key,
+                "sourceDetail": {"state": "available", "consumer": "task-center"}, "target": None})
+        coverage.update(state="partial", reasonCode="ONLY_ADMITTED_CURRENT_NATIVE_SUBMISSIONS_SUPPORTED")
+        return rows, coverage
+
+    def _supervisor_reports(self) -> dict[str, Any]:
+        reader = getattr(self._state, "admit_franchisee_reports", None)
+        unavailable = {"records": [], "coverage": {"complete": False, "state": "unavailable", "reasonCode": "SUPERVISOR_REPORT_OWNER_ADMISSION_UNAVAILABLE"}}
+        if not callable(reader):
+            return unavailable
+        try:
+            result = reader(self._repo.list_records(FRANCHISEE_REPORTS), self._repo.list_records(AUDIT_EVENTS))
+        except OperatorLiveRepositoryError:
+            return unavailable
+        if not isinstance(result, dict) or not isinstance(result.get("records"), list) or not isinstance(result.get("coverage"), dict):
+            raise ShellPolicyError("supervisor report admission is malformed")
+        return result
+
+    def get_supervisor_report(self, report_id: str, **_context: Any) -> dict[str, Any]:
+        snapshot = self._supervisor_reports()
+        if snapshot["coverage"].get("state") == "unavailable":
+            raise OperatorLiveRepositoryError("supervisor report owner admission is unavailable")
+        rows = [row for row in snapshot["records"] if row["reportId"] == report_id]
+        if len(rows) != 1:
+            raise ShellNotFound("specified report is unavailable")
+        return {"source": "canonical-franchisee-report-owner", "report": deepcopy(rows[0]),
+                "delivery": {"email": "not_evidenced", "meaning": "current authorized in-app source view; not an external delivery receipt"}}
+
+    def _notification_snapshot(
+        self, *, role: dict[str, Any], subject_id: str | None,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
         envelope = self._state.get_today(role_id=role["id"], subject_id=subject_id)
         states = self._records_by_id(NOTIFICATION_STATES, "stateId")
         actor = self._actor_key(subject_id=subject_id, role=role)
         rows: list[dict[str, Any]] = []
-        for item in envelope["notifications"]:
+        pending, coverage = self._pending_notification_requests(role=role, subject_id=subject_id)
+        reports = self._supervisor_reports()
+        supervisor_rows = [{"id": f"franchisee-report:{report['reportId']}", "title": f"加盟主回報：{report['category']}",
+            "detail": f"門市 {report['storeId']} 有已保存的加盟主回報；請檢視原始表單。",
+            "category": "alert", "tone": "info", "occurredAt": report["createdAt"],
+            "sourceEntity": {"kind": "franchisee.report", "id": report["reportId"]},
+            "sourceReportId": report["reportId"], "sourceDetail": {"state": "available", "consumer": "supervisor-report"}, "target": None}
+            for report in reports["records"]]
+        for item in [*envelope["notifications"], *pending, *supervisor_rows]:
             notification_id = str(item.get("id") or item.get("title"))
             state_id = f"{actor}:{notification_id}"
             state = states.get(state_id, {})
@@ -863,9 +1023,15 @@ class ShellService:
                 }
             )
         rows.sort(key=lambda item: (item["acknowledged"], _severity_rank(item["severity"])))
-        return rows
+        return rows, coverage, reports["coverage"]
 
     def _notification_source_href(self, item: dict[str, Any]) -> str:
+        if item.get("sourceReportId"):
+            from urllib.parse import quote
+            return "/notifications/reports/" + quote(item["sourceReportId"], safe="")
+        if item.get("sourceTaskId") and item.get("sourceRequestKey"):
+            from urllib.parse import urlencode
+            return "/tasks?" + urlencode({"taskId": item["sourceTaskId"], "view": "approvals", "requestKey": item["sourceRequestKey"]})
         target = item.get("target") or {}
         entity_id = target.get("entityId")
         if entity_id:
@@ -884,7 +1050,7 @@ class ShellService:
     ) -> dict[str, Any]:
         """Return the durable, role-filtered notification inbox."""
         role = self._role(role_id=role_id, subject_id=subject_id, system_roles=system_roles)
-        rows = self._notifications_for(role=role, subject_id=subject_id)
+        rows, approval_coverage, supervisor_coverage = self._notification_snapshot(role=role, subject_id=subject_id)
         filtered = rows
         if severity:
             filtered = [item for item in filtered if item["severity"] == severity]
@@ -896,6 +1062,9 @@ class ShellService:
                 "correlationId": correlation_id,
                 "role": {"id": role["id"], "label": role["label"]},
                 "source": "operator-shell-notifications",
+                "approvalCoverage": approval_coverage,
+                "supervisorReportCoverage": supervisor_coverage,
+                "systemAnnouncementCoverage": {"state": "unavailable", "complete": False, "reasonCode": "NO_CANONICAL_ANNOUNCEMENT_OWNER"},
             },
             "items": filtered,
             "count": len(filtered),

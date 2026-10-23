@@ -1,0 +1,408 @@
+{
+  "schemaVersion": 1,
+  "fixtureScope": "Owned actual in-memory StoreOpsService producer capture; not HTTP/auth/production proof",
+  "nativeProducerSourceSHA256": "98c1cddf8418b8f88ad81504b14e2d9784c79f24f5f0c5534601b86793333916",
+  "requestPayload": {
+    "purpose": "payment incident quality audit",
+    "cameraLocation": "台北信義 A11 櫃檯攝影機",
+    "timeWindow": "最近 30 分鐘",
+    "retentionHours": 24,
+    "privacyAcknowledged": true
+  },
+  "evidenceItem": {
+    "id": "EV-1024-CAM",
+    "issueId": "ISS-1024",
+    "kind": "camera",
+    "title": "Camera event placeholder",
+    "sourceLabel": "Camera Access",
+    "summary": "Camera evidence unlocked for a recorded, audit-scoped purpose.",
+    "polarity": "neutral",
+    "confidence": 0.7,
+    "occurredAt": "2026-07-04T20:05:00.000Z",
+    "purpose": "payment incident quality audit",
+    "cameraLocation": "台北信義 A11 櫃檯攝影機",
+    "timeWindow": "最近 30 分鐘",
+    "retentionHours": 24,
+    "unlockedAt": "2026-10-14T04:07:38.927309+00:00"
+  },
+  "auditEvent": {
+    "id": "AUD-OPS-7003",
+    "occurredAt": "2026-10-14T04:07:38.927345+00:00",
+    "actorRoleId": "opsLead",
+    "actorName": "Local native producer fixture",
+    "category": "evidence",
+    "action": "evidence.camera_purpose.recorded",
+    "targetType": "issue",
+    "targetId": "ISS-1024",
+    "message": "ISS-1024 camera evidence purpose recorded before access.",
+    "metadata": {
+      "issueId": "ISS-1024",
+      "evidenceId": "EV-1024-CAM",
+      "purpose": "payment incident quality audit",
+      "cameraLocation": "台北信義 A11 櫃檯攝影機",
+      "timeWindow": "最近 30 分鐘",
+      "retentionHours": 24,
+      "idempotencyKey": "owned-native-camera-purpose-contract-capture-v1"
+    }
+  },
+  "snapshot": {
+    "stores": [
+      {
+        "id": "ST-008",
+        "name": "台北信義 A11",
+        "district": "Xinyi",
+        "city": "Taipei",
+        "manager": "Mina Chen",
+        "lights": {
+          "demand": "green",
+          "operations": "red",
+          "staffing": "yellow",
+          "margin": "yellow"
+        },
+        "riskScore": 88
+      },
+      {
+        "id": "ST-014",
+        "name": "台北大安復興",
+        "district": "Da-an",
+        "city": "Taipei",
+        "manager": "Leo Huang",
+        "lights": {
+          "demand": "green",
+          "operations": "yellow",
+          "staffing": "green",
+          "margin": "green"
+        },
+        "riskScore": 52
+      },
+      {
+        "id": "ST-021",
+        "name": "新北板橋文化",
+        "district": "Banqiao",
+        "city": "New Taipei",
+        "manager": "An Lin",
+        "lights": {
+          "demand": "yellow",
+          "operations": "yellow",
+          "staffing": "red",
+          "margin": "red"
+        },
+        "riskScore": 79
+      }
+    ],
+    "issues": [
+      {
+        "id": "ISS-1024",
+        "title": "晚間負評與清潔分數同步惡化",
+        "storeId": "ST-008",
+        "storeName": "台北信義 A11",
+        "status": "new",
+        "severity": "critical",
+        "source": "multiSignal",
+        "ownerRoleId": "opsLead",
+        "ownerName": "營運主管",
+        "slaDueAt": "2026-07-05T11:00:00.000Z",
+        "createdAt": "2026-07-05T06:24:00.000Z",
+        "updatedAt": "2026-07-05T06:24:00.000Z",
+        "evidenceIds": [
+          "EV-1024-GR",
+          "EV-1024-CS",
+          "EV-1024-CAM",
+          "EV-1024-IOT",
+          "EV-1024-PAY",
+          "EV-1024-FOUR",
+          "EV-1024-CLN"
+        ],
+        "summary": "Google one-star reviews, CS complaints, and cleaning audit all point to a peak-hour service quality incident."
+      },
+      {
+        "id": "ISS-1021",
+        "title": "冷氣遠端重啟等待核准",
+        "storeId": "ST-014",
+        "storeName": "台北大安復興",
+        "status": "waitingapproval",
+        "severity": "high",
+        "source": "iot",
+        "ownerRoleId": "facilitiesLead",
+        "ownerName": "工務主任",
+        "slaDueAt": "2026-07-05T10:30:00.000Z",
+        "createdAt": "2026-07-05T04:50:00.000Z",
+        "updatedAt": "2026-07-05T07:30:00.000Z",
+        "evidenceIds": [
+          "EV-1021-IOT",
+          "EV-1021-PAY"
+        ],
+        "relatedApprovalId": "APR-502",
+        "summary": "HVAC telemetry shows repeated compressor fault codes; remote restart needs manager approval before peak traffic."
+      },
+      {
+        "id": "ISS-1008",
+        "title": "補班日人力不足觀察中",
+        "storeId": "ST-021",
+        "storeName": "新北板橋文化",
+        "status": "observing",
+        "severity": "medium",
+        "source": "forecastOps",
+        "ownerRoleId": "supportLead",
+        "ownerName": "客服主管",
+        "slaDueAt": "2026-07-06T03:00:00.000Z",
+        "createdAt": "2026-07-04T02:10:00.000Z",
+        "updatedAt": "2026-07-05T01:15:00.000Z",
+        "evidenceIds": [
+          "EV-1008-FOUR",
+          "EV-1008-CS"
+        ],
+        "summary": "ForecastOps staffing light remains red after shift swap; CS queue is improving but still above baseline."
+      }
+    ],
+    "evidence": [
+      {
+        "id": "EV-1024-GR",
+        "issueId": "ISS-1024",
+        "kind": "googleReview",
+        "title": "Google review cluster",
+        "sourceLabel": "Google Reviews",
+        "summary": "Three one-star reviews mention sticky tables and slow pickup between 19:00 and 21:00.",
+        "polarity": "supporting",
+        "confidence": 0.91,
+        "occurredAt": "2026-07-04T21:22:00.000Z"
+      },
+      {
+        "id": "EV-1024-CS",
+        "issueId": "ISS-1024",
+        "kind": "csCase",
+        "title": "Customer service cases",
+        "sourceLabel": "Zendesk POC",
+        "summary": "Two refund requests match the same time window and counter lane.",
+        "polarity": "supporting",
+        "confidence": 0.86,
+        "occurredAt": "2026-07-04T21:44:00.000Z"
+      },
+      {
+        "id": "EV-1024-CAM",
+        "issueId": "ISS-1024",
+        "kind": "camera",
+        "title": "Camera event placeholder",
+        "sourceLabel": "Camera Access",
+        "summary": "Camera evidence unlocked for a recorded, audit-scoped purpose.",
+        "polarity": "neutral",
+        "confidence": 0.7,
+        "occurredAt": "2026-07-04T20:05:00.000Z",
+        "purpose": "payment incident quality audit",
+        "cameraLocation": "台北信義 A11 櫃檯攝影機",
+        "timeWindow": "最近 30 分鐘",
+        "retentionHours": 24,
+        "unlockedAt": "2026-10-14T04:07:38.927309+00:00"
+      },
+      {
+        "id": "EV-1024-IOT",
+        "issueId": "ISS-1024",
+        "kind": "iot",
+        "title": "Dining-area sensor anomaly",
+        "sourceLabel": "IoT",
+        "summary": "Table-zone humidity and waste-bin fill events exceeded normal thresholds.",
+        "polarity": "supporting",
+        "confidence": 0.82,
+        "occurredAt": "2026-07-04T20:12:00.000Z"
+      },
+      {
+        "id": "EV-1024-PAY",
+        "issueId": "ISS-1024",
+        "kind": "payment",
+        "title": "Payment queue slowdown",
+        "sourceLabel": "Payment",
+        "summary": "Median checkout time rose 34 percent during the complaint window.",
+        "polarity": "supporting",
+        "confidence": 0.78,
+        "occurredAt": "2026-07-04T20:40:00.000Z"
+      },
+      {
+        "id": "EV-1024-FOUR",
+        "issueId": "ISS-1024",
+        "kind": "forecastOps",
+        "title": "ForecastOps four-light snapshot",
+        "sourceLabel": "ForecastOps",
+        "summary": "Operations light is red; staffing and margin lights are yellow.",
+        "polarity": "supporting",
+        "confidence": 0.88,
+        "occurredAt": "2026-07-05T05:00:00.000Z"
+      },
+      {
+        "id": "EV-1024-CLN",
+        "issueId": "ISS-1024",
+        "kind": "cleaning",
+        "title": "Cleaning checklist miss",
+        "sourceLabel": "Cleaning QA",
+        "summary": "19:30 lobby reset checklist was not completed before the second dinner wave.",
+        "polarity": "supporting",
+        "confidence": 0.8,
+        "occurredAt": "2026-07-04T19:40:00.000Z"
+      },
+      {
+        "id": "EV-1021-IOT",
+        "issueId": "ISS-1021",
+        "kind": "iot",
+        "title": "HVAC compressor code",
+        "sourceLabel": "IoT",
+        "summary": "Fault code C-18 repeated four times after 05:00.",
+        "polarity": "supporting",
+        "confidence": 0.94,
+        "occurredAt": "2026-07-05T05:21:00.000Z"
+      },
+      {
+        "id": "EV-1021-PAY",
+        "issueId": "ISS-1021",
+        "kind": "payment",
+        "title": "No revenue drop yet",
+        "sourceLabel": "Payment",
+        "summary": "Morning payment volume remains inside normal band.",
+        "polarity": "contrary",
+        "confidence": 0.72,
+        "occurredAt": "2026-07-05T07:05:00.000Z"
+      },
+      {
+        "id": "EV-1008-FOUR",
+        "issueId": "ISS-1008",
+        "kind": "forecastOps",
+        "title": "Staffing light red",
+        "sourceLabel": "ForecastOps",
+        "summary": "Forecast requires two more crew hours between 12:00 and 14:00.",
+        "polarity": "supporting",
+        "confidence": 0.84,
+        "occurredAt": "2026-07-05T01:00:00.000Z"
+      },
+      {
+        "id": "EV-1008-CS",
+        "issueId": "ISS-1008",
+        "kind": "csCase",
+        "title": "Support wait improving",
+        "sourceLabel": "Zendesk POC",
+        "summary": "Queue wait dropped after shift swap but remains above target.",
+        "polarity": "neutral",
+        "confidence": 0.76,
+        "occurredAt": "2026-07-05T01:10:00.000Z"
+      }
+    ],
+    "auditEvents": [
+      {
+        "id": "AUD-OPS-7003",
+        "occurredAt": "2026-10-14T04:07:38.927345+00:00",
+        "actorRoleId": "opsLead",
+        "actorName": "Local native producer fixture",
+        "category": "evidence",
+        "action": "evidence.camera_purpose.recorded",
+        "targetType": "issue",
+        "targetId": "ISS-1024",
+        "message": "ISS-1024 camera evidence purpose recorded before access.",
+        "metadata": {
+          "issueId": "ISS-1024",
+          "evidenceId": "EV-1024-CAM",
+          "purpose": "payment incident quality audit",
+          "cameraLocation": "台北信義 A11 櫃檯攝影機",
+          "timeWindow": "最近 30 分鐘",
+          "retentionHours": 24,
+          "idempotencyKey": "owned-native-camera-purpose-contract-capture-v1"
+        }
+      },
+      {
+        "id": "AUD-OPS-7001",
+        "occurredAt": "2026-07-05T07:28:00.000Z",
+        "actorRoleId": "facilitiesLead",
+        "actorName": "工務主任",
+        "category": "approval",
+        "action": "approval.requested",
+        "targetType": "approval",
+        "targetId": "APR-502",
+        "message": "Store Ops approval APR-502 was requested for ISS-1021.",
+        "metadata": {
+          "issueId": "ISS-1021"
+        }
+      },
+      {
+        "id": "AUD-OPS-7002",
+        "occurredAt": "2026-07-05T06:24:00.000Z",
+        "actorRoleId": "opsLead",
+        "actorName": "ForecastOps",
+        "category": "workflow",
+        "action": "issue.created",
+        "targetType": "issue",
+        "targetId": "ISS-1024",
+        "message": "ISS-1024 created from payment, review, cleaning, and four-light evidence.",
+        "metadata": {
+          "issueId": "ISS-1024",
+          "light": "operations",
+          "lightStatus": "red"
+        }
+      }
+    ],
+    "fourLightSummary": [
+      {
+        "dimension": "demand",
+        "label": "Demand",
+        "counts": {
+          "green": 2,
+          "yellow": 1,
+          "red": 0
+        },
+        "issueCounts": {
+          "green": 2,
+          "yellow": 1,
+          "red": 0
+        }
+      },
+      {
+        "dimension": "operations",
+        "label": "Operations",
+        "counts": {
+          "green": 0,
+          "yellow": 2,
+          "red": 1
+        },
+        "issueCounts": {
+          "green": 0,
+          "yellow": 2,
+          "red": 1
+        }
+      },
+      {
+        "dimension": "staffing",
+        "label": "Staffing",
+        "counts": {
+          "green": 1,
+          "yellow": 1,
+          "red": 1
+        },
+        "issueCounts": {
+          "green": 1,
+          "yellow": 1,
+          "red": 1
+        }
+      },
+      {
+        "dimension": "margin",
+        "label": "Margin",
+        "counts": {
+          "green": 1,
+          "yellow": 1,
+          "red": 1
+        },
+        "issueCounts": {
+          "green": 1,
+          "yellow": 1,
+          "red": 1
+        }
+      }
+    ],
+    "count": 3,
+    "filters": {
+      "query": "",
+      "statuses": [],
+      "sources": [],
+      "severities": [],
+      "mineOnly": false,
+      "roleId": "opsLead",
+      "light": null,
+      "lightStatus": null
+    }
+  }
+}

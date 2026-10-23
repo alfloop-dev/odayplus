@@ -11,6 +11,9 @@ export type ExpansionStep = {
   tabIndex: number;
   entityId?: string | null;
   summary: string;
+  /** Read presentation only; unknown progress does not deny ordinary tab reads. */
+  stateLabel?: string;
+  navigationAvailable?: boolean;
 };
 
 // Package 10 S05 flowVals: what the operator does at each step, shown as
@@ -37,10 +40,14 @@ export function ExpansionStepper({
   activeTab,
   onStepSelect,
   steps,
+  workflowNotice,
+  workflowNextAction,
 }: {
   activeTab: number;
   onStepSelect: (tabIndex: number) => void;
   steps: ExpansionStep[];
+  workflowNotice?: string;
+  workflowNextAction?: string;
 }) {
   if (!steps.length) {
     return null;
@@ -62,7 +69,7 @@ export function ExpansionStepper({
         <strong title={activeStep?.summary}>
           {activeLabel ? `目前步驟：${activeLabel.zh} ${activeLabel.en}` : "低效重配 — 不在找點流程內"}
         </strong>
-        <em>{nextActionLabel(steps)}</em>
+        <em>{workflowNextAction ?? nextActionLabel(steps)}</em>
       </div>
       <div className={styles.expansionStepGrid}>
         {steps.map((step, index) => {
@@ -74,21 +81,21 @@ export function ExpansionStepper({
               className={styles.expansionStep}
               data-state={step.state}
               data-testid={`network-step-${step.id}`}
-              disabled={isBlocked}
+              disabled={step.navigationAvailable === false || isBlocked && step.navigationAvailable !== true}
               key={step.id}
               onClick={() => onStepSelect(step.tabIndex)}
               title={step.summary}
               type="button"
             >
               <span className={styles.expansionStepIndex} aria-hidden="true">
-                {step.state === "completed" ? "✓" : step.state === "blocked" ? "!" : index + 1}
+                {step.state === "completed" ? "✓" : step.state === "blocked" && step.navigationAvailable !== true ? "!" : index + 1}
               </span>
               <span className={styles.expansionStepBody}>
                 <strong>{label.zh}</strong>
                 <small>{label.en}</small>
               </span>
               <span className={styles.expansionStepState}>
-                {step.state === "blocked" ? "缺資料" : step.entityId ?? stateLabel(step.state)}
+                {step.stateLabel ?? (step.state === "blocked" ? "缺資料" : step.entityId ?? stateLabel(step.state))}
               </span>
               <span className={styles.srOnly}>{step.state}</span>
             </button>
@@ -100,7 +107,7 @@ export function ExpansionStepper({
         {steps.map((step, index) => (
           <button
             aria-current={activeTab === step.tabIndex ? "step" : undefined}
-            disabled={step.state === "blocked"}
+            disabled={step.navigationAvailable === false || step.state === "blocked" && step.navigationAvailable !== true}
             key={step.id}
             onClick={() => onStepSelect(step.tabIndex)}
             type="button"
@@ -115,7 +122,7 @@ export function ExpansionStepper({
         already shown by their 缺資料 tags. The notice is for a blocked step
         the operator has to act on now, as in Package 10 (flowBlockShow).
       */}
-      {blockedNext ? (
+      {workflowNotice ? <div className={styles.flowBlockNotice} role="status" data-testid="network-workflow-context-notice">{workflowNotice}</div> : blockedNext ? (
         <div className={styles.flowBlockNotice} role="status">
           <span aria-hidden="true">!</span>
           {blockedNext.summary}

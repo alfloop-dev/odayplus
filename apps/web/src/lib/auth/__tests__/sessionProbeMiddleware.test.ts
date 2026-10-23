@@ -104,7 +104,7 @@ describe("production session probe through middleware", () => {
 
     const live = await dispatch(withCookie("/auth/session", cookie));
     expect(live.status).toBe(200);
-    expect((await live.json()).subject).toBe("platform-admin");
+    expect((await live.json()).subject).toBe("account-admin");
     expect((await dispatch(withCookie("/operator", cookie))).status).toBe(200);
 
     const logoutRequest = withCookie("/auth/logout", cookie, "POST");

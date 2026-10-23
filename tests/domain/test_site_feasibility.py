@@ -79,6 +79,7 @@ def test_infeasible_site_due_to_zoning_or_flood():
             "frontage_meters": 5.0,
             "utilities_power_capacity_amp": 100,
             "utilities_water_pressure_psi": 40,
+            "utilities_drainage_available": True,
             "flood_risk_level": "LOW",
             "loading_zone_available": True,
             "temporary_stop_allowed": True,
@@ -130,6 +131,7 @@ def test_conditional_feasibility_due_to_low_power_capacity():
             "frontage_meters": 5.0,
             "utilities_power_capacity_amp": 30, # Requires upgrade (e.g. standard might need 100)
             "utilities_water_pressure_psi": 40,
+            "utilities_drainage_available": True,
             "flood_risk_level": "LOW",
             "loading_zone_available": True,
             "temporary_stop_allowed": True,
@@ -181,6 +183,7 @@ def test_fully_feasible_site():
             "frontage_meters": 5.0,
             "utilities_power_capacity_amp": 150,
             "utilities_water_pressure_psi": 40,
+            "utilities_drainage_available": True,
             "flood_risk_level": "LOW",
             "loading_zone_available": True,
             "temporary_stop_allowed": True,
@@ -215,6 +218,7 @@ def _survey(**attributes: object) -> dict[str, object]:
             "frontage_meters": 5.0,
             "utilities_power_capacity_amp": 100,
             "utilities_water_pressure_psi": 40,
+            "utilities_drainage_available": True,
             "flood_risk_level": "LOW",
             "loading_zone_available": True,
             "temporary_stop_allowed": True,
@@ -241,6 +245,32 @@ def test_missing_required_evidence_fails_closed_even_when_power_is_present() -> 
     reasons = " ".join(doc.decision.reasons).lower()
     assert "legal use" in reasons
     assert "flood" in reasons
+
+
+@pytest.mark.parametrize("drainage", ["missing", None, "unknown", {}, []])
+def test_drainage_unknown_requires_survey_even_with_other_complete_approved_facts(drainage):
+    # Original full specification 11.10: unknown drainage requires FIELD_SURVEY.
+    # Missing is different from a declared false flag, which requires remediation.
+    survey = _survey()
+    if drainage == "missing":
+        survey["attributes"].pop("utilities_drainage_available", None)
+    else:
+        survey["attributes"]["utilities_drainage_available"] = drainage
+    result = SiteFeasibilityService().evaluate_feasibility("SITE-001", _context(), [survey])
+    assert result.decision.recommendation is FeasibilityDecision.UNKNOWN_REQUIRES_SURVEY
+    assert result.metadata["binding_recommendation_allowed"] is False
+    assert "drainage" in " ".join(result.decision.reasons).lower()
+
+
+@pytest.mark.parametrize("available,expected", [(True, FeasibilityDecision.FEASIBLE),
+    (False, FeasibilityDecision.CONDITIONAL)])
+def test_explicit_nested_drainage_fact_is_preserved_without_assuming_availability(available, expected):
+    survey = _survey()
+    survey["attributes"].pop("utilities_drainage_available", None)
+    survey["attributes"]["utilities"] = {"drainage_available": available}
+    result = SiteFeasibilityService().evaluate_feasibility("SITE-001", _context(), [survey])
+    assert result.decision.recommendation is expected
+    assert result.metadata["binding_recommendation_allowed"] is available
 
 
 @pytest.mark.parametrize("flag", ["is_retracted", "is_superseded"])

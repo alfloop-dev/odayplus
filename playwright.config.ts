@@ -33,7 +33,7 @@ export default defineConfig({
     trace: "on-first-retry",
     extraHTTPHeaders: {
       "x-subject-id": "product-e2e-test",
-      "x-roles": "finance_legal,expansion_user,operations_manager,regional_supervisor,site_reviewer,data_owner,auditor,executive",
+      "x-roles": "finance_legal,expansion_user,operations_manager,regional_supervisor,site_reviewer,marketing_manager,data_owner,auditor,executive",
       // Operator Console routes are tenant-isolated (OPERATOR_TENANT_ID in
       // apps/api/oday_api/security/dependencies.py). Without this the guard
       // denies at operator.tenant_isolation before RBAC runs, so every

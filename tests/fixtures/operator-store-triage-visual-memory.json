@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "fixtureScope": "Explicit local InMemoryStoreOpsService triage capture for original visual payment retry scenario. No SQL, browser, authenticated principal, delivered media or measured effect. Request CID/key/time transport adaptation is explicitly mocked.",
+  "sourceSixFixtureSHA256": "1deede4d4e493323a4064c482e2250a5593f42d92fc969dcef4e90c40ff1bb69",
+  "sourceFrontendFixturesSHA256": "832aa1095aca8252581bcf9d43739a735b5d3dbd2384e0afefab8bd74fe4801c",
+  "producerSourceSHA256": {
+    "modules/opsboard/application/store_ops.py": "46965af64b5dd60eccc7de748fce2bc29f4fdcb0be7496a86db687a79ea82801",
+    "modules/opsboard/domain/store_ops_reviews.py": "701aed5992b5de66d23a8d44053579cb4c25528310ec413291669c281f5b902c",
+    "shared/audit/events.py": "9fce77ae2446a3e9ff7ac8ee9ef45a6e82c733190c12c7a3fadd941b0b26e792"
+  },
+  "triage": {
+    "requestPayload": {
+      "severity": "critical",
+      "category": "payment",
+      "evidenceStrength": "usable",
+      "decision": "accept",
+      "observationWindow": "",
+      "needEvidence": false,
+      "demoFastForward": false,
+      "notes": "Google one-star reviews, CS complaints, and cleaning audit all point to a peak-hour service quality incident."
+    },
+    "issueUpdatedAt": "2026-10-15T04:54:47.300951+00:00",
+    "status": "triaged",
+    "record": {
+      "id": "AUD-OPS-1",
+      "issueId": "ISS-1024",
+      "storeId": "ST-008",
+      "actorSubjectId": null,
+      "actorName": "營運主管",
+      "actorRoleId": "opsLead",
+      "actorEvidence": "caller_supplied",
+      "recordedAt": "2026-10-15T04:54:47.300951+00:00",
+      "correlationId": "declared-visual-memory-triage",
+      "workflowAuditId": "AUD-OPS-1",
+      "auditEventId": "eaf89b77-676b-4b3d-9262-31d286522089",
+      "sourceIssueUpdatedAt": "2026-07-05T06:24:00.000Z",
+      "evidenceIds": [
+        "EV-1024-GR",
+        "EV-1024-CS",
+        "EV-1024-CAM",
+        "EV-1024-IOT",
+        "EV-1024-PAY",
+        "EV-1024-FOUR",
+        "EV-1024-CLN"
+      ],
+      "action": "triage",
+      "submission": {
+        "severity": "critical",
+        "category": "payment",
+        "evidenceStrength": "usable",
+        "decision": "accept",
+        "observationWindow": "",
+        "needEvidence": false,
+        "demoFastForward": false,
+        "notes": "Google one-star reviews, CS complaints, and cleaning audit all point to a peak-hour service quality incident."
+      },
+      "clockAdvanced": false
+    },
+    "auditEvent": {
+      "id": "AUD-OPS-1",
+      "occurredAt": "2026-10-15T04:54:47.300981+00:00",
+      "actorRoleId": "opsLead",
+      "actorName": "營運主管",
+      "category": "workflow",
+      "action": "issue.triage",
+      "targetType": "issue",
+      "targetId": "ISS-1024",
+      "message": "ISS-1024 triage moved new -> triaged.",
+      "metadata": {
+        "issueId": "ISS-1024",
+        "previousStatus": "new",
+        "status": "triaged",
+        "actionType": "triage",
+        "idempotencyKey": "declared-visual-memory-triage",
+        "workflowAuditId": "AUD-OPS-1",
+        "reviewRecordHash": "1d14cdefc2a0450f482aa876b200ae142ead5a8b377a2bf3645cdb0e3ad9ff88"
+      }
+    }
+  }
+}

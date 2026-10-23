@@ -96,6 +96,7 @@ class DecisionPolicy:
     rollback_policy_version: str | None = None
     approved_by: str = ""
     owner_role: str = ""
+    approved_at: datetime | None = None
 
     def __post_init__(self) -> None:
         """Hold the naming rule that `chk_decision_policy_version_id_format` holds.

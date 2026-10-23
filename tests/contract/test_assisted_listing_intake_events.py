@@ -8,6 +8,33 @@ import pytest
 from shared.domain.events import CONSUMER_MODE, DomainEvent, validate_event
 
 
+@pytest.mark.parametrize("invalid_field", [None, "source_listing_id", "listing_id"])
+def test_candidate_created_uses_the_effective_closed_payload_registry(invalid_field) -> None:
+    """The later complete registry overrides the catalog's old field summary."""
+    payload = {
+        "candidate_site_id": str(uuid4()), "property_id": str(uuid4()),
+        "listing_id": str(uuid4()), "promotion_decision_id": str(uuid4()),
+        "target_format_code": "FMT-MICRO-STORE", "status": "NEW", "version": 1,
+    }
+    if invalid_field == "source_listing_id":
+        payload[invalid_field] = str(uuid4())
+    elif invalid_field == "listing_id":
+        del payload[invalid_field]
+    tenant_id = str(uuid4())
+    event = DomainEvent(
+        event_type="candidate.created", payload=payload, tenant_id=tenant_id,
+        aggregate_type="candidate_site", aggregate_id=payload["candidate_site_id"],
+        aggregate_version=1, partition_key=f"{tenant_id}:{payload['candidate_site_id']}",
+        correlation_id=str(uuid4()), producer="candidate_promotion_service",
+        schema_ref="#/payloads/CandidateCreatedV1",
+    )
+    errors = validate_event(event)
+    if invalid_field is None:
+        assert errors == []
+    else:
+        assert errors and any(invalid_field in error for error in errors)
+
+
 def test_valid_event_contract() -> None:
     # Construct a valid event based on intake.submitted
     event = DomainEvent(

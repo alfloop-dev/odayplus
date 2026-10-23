@@ -13,6 +13,7 @@ from delivery_toolchain.openapi.generate_assisted_listing_intake_client import (
     build,
 )
 from delivery_toolchain.openapi.generate_client import render
+from tests.intake_workflow_fixture import SyntheticIntakeWorkflowPolicy
 
 EXPECTED_OPERATIONS = {
     "listIntakes", "submitUrlIntake", "submitIntakeBatch", "getIntake",
@@ -168,7 +169,7 @@ def test_every_approved_operation_reaches_generated_client() -> None:
 
 def test_live_runtime_request_and_response_schema_match_every_effective_operation() -> None:
     artifact = json.loads(ARTIFACT.read_text())
-    app = create_app()
+    app = create_app(assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
     live = app.openapi()
     live_paths = live["paths"]
 

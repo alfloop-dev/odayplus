@@ -316,6 +316,12 @@ if [ "${ODP_DEPLOY_BY_DIGEST:-false}" = "true" ]; then
     fi
   done
 else
+  case "${ODP_DEPLOY_ENV}" in
+    prod|production)
+      echo "Error: production deployment requires ODP_DEPLOY_BY_DIGEST=true and immutable image references." >&2
+      exit 1
+      ;;
+  esac
   IMAGE_TAG="${IMAGE_TAG:-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}}"
   API_IMAGE="${REPO_PATH}/${API_SERVICE}:${IMAGE_TAG}"
   WEB_IMAGE="${REPO_PATH}/${WEB_SERVICE}:${IMAGE_TAG}"
@@ -438,6 +444,9 @@ keys = [
     "ODP_PERSISTENCE",
     "ODP_OBJECT_STORE",
     "ODP_SNAPSHOT_BUCKET",
+    "ODP_AUDIT_WORM_SINK_URI",
+    "ODP_AUDIT_WORM_WRITER_SERVICE_ACCOUNT",
+    "ODP_AUDIT_WORM_RECOVERY_SERVICE_ACCOUNT",
     "MLFLOW_TRACKING_URI",
     "ODP_MLFLOW_CLOUD_RUN_AUDIENCE",
     "ODP_COMPETITOR_MANUAL_SOURCE_STATUS",
@@ -1275,6 +1284,10 @@ except Exception:
     sys.exit("Error: PROVISIONING_FOREGROUND_GATE_REFUSED")
 PY
 else
+FULL_ACCEPTANCE_ARGS=()
+if [ "${ODP_RELEASE_PROFILE:-full}" = "full" ]; then
+  FULL_ACCEPTANCE_ARGS=(--require-full-acceptance)
+fi
 run_locked_python delivery_toolchain/e2e/check_live_e2e_gate.py \
   --api-url "${LIVE_E2E_API_URL}" \
   --web-url "${LIVE_E2E_WEB_URL}" \
@@ -1285,6 +1298,7 @@ run_locked_python delivery_toolchain/e2e/check_live_e2e_gate.py \
   --gcp-project "${GCP_PROJECT}" \
   --worker-deadline-seconds "${ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS:-600}" \
   --release-profile "${ODP_RELEASE_PROFILE:-full}" \
+  "${FULL_ACCEPTANCE_ARGS[@]}" \
   --output "${LIVE_E2E_REPORT}"
 fi
 

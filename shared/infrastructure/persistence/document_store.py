@@ -126,6 +126,20 @@ class SqliteDocumentStore:
             )
             return bool(getattr(cur, "rowcount", 0) > 0)
 
+    def replace_version(self, collection: str, doc_id: str, obj: Any, *, expected_version: int) -> bool:
+        """CAS the persisted aggregate's actual version; no synthetic row version."""
+        with self.engine.lock, self.engine.transaction():
+            row = self.engine.query_one(
+                "SELECT data FROM durable_documents WHERE collection = ? AND doc_id = ?",
+                (collection, doc_id),
+            )
+            if row is None or getattr(pickle.loads(row["data"]), "version", None) != expected_version:
+                return False
+            cursor = self.engine.execute(
+                "UPDATE durable_documents SET data = ? WHERE collection = ? AND doc_id = ? AND data = ?",
+                (pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL), collection, doc_id, row["data"]),
+            )
+            return cursor.rowcount == 1
     def compare_and_put(
         self,
         collection: str,

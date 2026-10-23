@@ -25,9 +25,16 @@ from shared.jobs.queue import (
     check_job_feature_flag,
 )
 
+COMMAND_PROOF = {"reason": "Synthetic operational command reason", "riskAcknowledged": True}
+
 
 @pytest.fixture(autouse=True)
-def reset_registry_before_test():
+def reset_registry_before_test(monkeypatch):
+    # Explicit local POC fixture identities; never production approver evidence.
+    monkeypatch.setenv("ODP_PRODUCT_MODE", "poc")
+    monkeypatch.setenv("ODP_DEPLOY_ENV", "test")
+    for name in ("ODP_RELEASE_PROFILE", "ODP_AUTH_MODE", "ODP_AUTH_OIDC_ENABLED", "ODP_REQUIRE_LIVE_DATA"):
+        monkeypatch.delenv(name, raising=False)
     reset_global_registry()
     yield
     reset_global_registry()
@@ -35,7 +42,7 @@ def reset_registry_before_test():
 
 def test_admin_feature_flags_list_and_get():
     app = create_app()
-    client = TestClient(app)
+    client = TestClient(app, headers={"x-subject-id": "unit-flag-admin", "x-roles": "platform_admin"})
 
     # 1. List admin feature flags
     res = client.get("/api/v1/admin/feature-flags")
@@ -60,35 +67,35 @@ def test_admin_feature_flags_list_and_get():
 
 def test_admin_feature_flag_dual_approval_workflow():
     app = create_app()
-    client = TestClient(app)
+    client = TestClient(app, headers={"x-subject-id": "unit-flag-admin", "x-roles": "platform_admin"})
     key = "high_risk.priceops.execute"
 
     # Attempt to enable with 0 approvals -> 403
-    res_fail0 = client.post(f"/api/v1/admin/feature-flags/{key}/enable", json={"approvals": []})
+    res_fail0 = client.post(f"/api/v1/admin/feature-flags/{key}/enable", json={**COMMAND_PROOF, **({"approvals": []})})
     assert res_fail0.status_code == 403
     assert "distinct approvals" in res_fail0.json()["detail"]
 
     # Attempt to enable with 1 approval -> 403
-    res_fail1 = client.post(f"/api/v1/admin/feature-flags/{key}/enable", json={"approvals": ["alice"]})
+    res_fail1 = client.post(f"/api/v1/admin/feature-flags/{key}/enable", json={**COMMAND_PROOF, **({"approvals": ["alice"]})})
     assert res_fail1.status_code == 403
 
     # Add approvals step by step via /approve endpoint
-    res_appr1 = client.post(f"/api/v1/admin/feature-flags/{key}/approve", json={"approver": "alice"})
+    res_appr1 = client.post(f"/api/v1/admin/feature-flags/{key}/approve", json={**COMMAND_PROOF, **({"approver": "alice"})})
     assert res_appr1.status_code == 200
     assert res_appr1.json()["flag"]["approved_by"] == ["alice"]
 
-    res_appr2 = client.post(f"/api/v1/admin/feature-flags/{key}/approve", json={"approver": "bob"})
+    res_appr2 = client.post(f"/api/v1/admin/feature-flags/{key}/approve", json={**COMMAND_PROOF, **({"approver": "bob"})})
     assert res_appr2.status_code == 200
     assert sorted(res_appr2.json()["flag"]["approved_by"]) == ["alice", "bob"]
 
     # Now enable with dual approval -> 200 Success
-    res_enable = client.post(f"/api/v1/admin/feature-flags/{key}/enable")
+    res_enable = client.post(f"/api/v1/admin/feature-flags/{key}/enable", json=COMMAND_PROOF)
     assert res_enable.status_code == 200
     assert res_enable.json()["flag"]["enabled"] is True
     assert res_enable.json()["flag"]["is_active"] is True
 
     # Disable via Kill-Switch -> 200 Success
-    res_disable = client.post(f"/api/v1/admin/feature-flags/{key}/disable")
+    res_disable = client.post(f"/api/v1/admin/feature-flags/{key}/disable", json=COMMAND_PROOF)
     assert res_disable.status_code == 200
     assert res_disable.json()["flag"]["enabled"] is False
     assert res_disable.json()["flag"]["is_active"] is False
@@ -96,7 +103,7 @@ def test_admin_feature_flag_dual_approval_workflow():
 
 def test_admin_register_custom_feature_flag():
     app = create_app()
-    client = TestClient(app)
+    client = TestClient(app, headers={"x-subject-id": "unit-flag-admin", "x-roles": "platform_admin"})
 
     new_flag_payload = {
         "key": "custom.experimental_feature",
@@ -105,12 +112,12 @@ def test_admin_register_custom_feature_flag():
         "high_risk": False,
         "readiness": "experimental",
     }
-    res_reg = client.post("/api/v1/admin/feature-flags", json=new_flag_payload)
+    res_reg = client.post("/api/v1/admin/feature-flags", json={**COMMAND_PROOF, **(new_flag_payload)})
     assert res_reg.status_code == 200
     assert res_reg.json()["flag"]["key"] == "custom.experimental_feature"
 
     # Low risk flag can be enabled immediately with 0 approvals
-    res_enable = client.post("/api/v1/admin/feature-flags/custom.experimental_feature/enable")
+    res_enable = client.post("/api/v1/admin/feature-flags/custom.experimental_feature/enable", json=COMMAND_PROOF)
     assert res_enable.status_code == 200
     assert res_enable.json()["flag"]["enabled"] is True
 
@@ -157,7 +164,7 @@ def test_three_layers_shared_flag_state():
     """Verify that UI (API read), API security engine, and Job queue all share the exact same flag state."""
 
     app = create_app()
-    client = TestClient(app)
+    client = TestClient(app, headers={"x-subject-id": "unit-flag-admin", "x-roles": "platform_admin"})
     reg = default_registry()
     key = "high_risk.netplan.approve"
 
@@ -170,9 +177,9 @@ def test_three_layers_shared_flag_state():
         check_job_feature_flag("netplan.approve", flags=reg)
 
     # Enable flag via Admin API with dual approval
-    client.post(f"/api/v1/admin/feature-flags/{key}/approve", json={"approver": "exec_1"})
-    client.post(f"/api/v1/admin/feature-flags/{key}/approve", json={"approver": "exec_2"})
-    enable_res = client.post(f"/api/v1/admin/feature-flags/{key}/enable")
+    client.post(f"/api/v1/admin/feature-flags/{key}/approve", json={**COMMAND_PROOF, **({"approver": "exec_1"})})
+    client.post(f"/api/v1/admin/feature-flags/{key}/approve", json={**COMMAND_PROOF, **({"approver": "exec_2"})})
+    enable_res = client.post(f"/api/v1/admin/feature-flags/{key}/enable", json=COMMAND_PROOF)
     assert enable_res.status_code == 200
 
     # Layer 1 (UI API): reflects ACTIVE
@@ -183,7 +190,7 @@ def test_three_layers_shared_flag_state():
     check_job_feature_flag("netplan.approve", flags=reg)
 
     # Trigger emergency Kill-Switch via Admin API
-    disable_res = client.post(f"/api/v1/admin/feature-flags/{key}/disable")
+    disable_res = client.post(f"/api/v1/admin/feature-flags/{key}/disable", json=COMMAND_PROOF)
     assert disable_res.status_code == 200
 
     # Layer 1 (UI API): reflects DISABLED

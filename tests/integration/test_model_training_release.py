@@ -60,6 +60,7 @@ from tests.integration._learninghub_fixtures import (
     model_card,
     model_version,
 )
+from tests.integration._model_publish_flag_fixture import enable_model_publish
 
 
 class FakeGcsTransport:
@@ -1143,6 +1144,7 @@ def test_promote_first_success_and_identical_replay_share_one_durable_release() 
     assert spec.production_release_enabled
     assert spec.model_name == DEFAULT_MODEL_NAME
     application = _promotion_application()
+    enable_model_publish(application.service, tenant_id="tenant-modeling")
     repository = application.service.repository
     version = "2026.07.24.1"
     _register_promotable_candidate(application, version)
@@ -1191,6 +1193,7 @@ def test_promote_first_success_and_identical_replay_share_one_durable_release() 
 def test_promote_rejects_reusing_an_approval_for_a_different_command() -> None:
     spec = MODEL_SPECS["forecastops"]
     application = _promotion_application()
+    enable_model_publish(application.service, tenant_id="tenant-modeling")
     version = "2026.07.24.1"
     _register_promotable_candidate(application, version)
     application.promote(
@@ -1225,6 +1228,7 @@ def test_promote_replay_rejects_post_commit_approval_mutation(
 ) -> None:
     spec = MODEL_SPECS["forecastops"]
     application = _promotion_application()
+    enable_model_publish(application.service, tenant_id="tenant-modeling")
     version = "2026.07.24.1"
     _register_promotable_candidate(application, version)
     approval = _approval(model_version=version)
@@ -1247,6 +1251,7 @@ def test_promote_replay_rejects_post_commit_approval_mutation(
 def test_promote_replay_rejects_mutated_persisted_approval_digest() -> None:
     spec = MODEL_SPECS["forecastops"]
     application = _promotion_application()
+    enable_model_publish(application.service, tenant_id="tenant-modeling")
     repository = application.service.repository
     version = "2026.07.24.1"
     _register_promotable_candidate(application, version)
@@ -1279,6 +1284,7 @@ def test_promote_replay_rejects_mutated_persisted_approval_digest() -> None:
 def test_promote_incomplete_saga_replay_requires_operator_recovery() -> None:
     spec = MODEL_SPECS["forecastops"]
     application = _promotion_application()
+    enable_model_publish(application.service, tenant_id="tenant-modeling")
     version = "2026.07.24.1"
     _register_promotable_candidate(application, version)
     application.promote(
@@ -1303,6 +1309,7 @@ def test_promote_rejects_stale_release_revision_without_mutation() -> None:
     spec = MODEL_SPECS["forecastops"]
     repository = _RacedReleaseRepository()
     application = _promotion_application(repository)
+    enable_model_publish(application.service, tenant_id="tenant-modeling")
     first_version = "2026.07.24.1"
     _register_promotable_candidate(application, first_version)
     application.promote(

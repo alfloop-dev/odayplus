@@ -11,8 +11,8 @@ write guard still applies and no tenant's state can reach another's.
 The projection is honest by construction:
 
 * no stores means an empty state, never seed data;
-* a light with no canonical KPI source stays ``green`` (no adverse signal) and
-  the store records that dimension's source as ``None``;
+* absent health observations stay ``None`` with explicit slot availability;
+  an empty issue queue is not measured equipment health;
 * issues are derived only from open, non-green ForecastOps alerts.
 
 Re-running is idempotent. Stores are re-projected every run, but an issue that
@@ -37,10 +37,10 @@ from typing import Any
 
 from modules.opsboard.application.store_ops import (
     _LIGHT_DIMENSIONS,
-    _SEVERITY_WEIGHT,
     _STORE_OPS_WRITE_ATTEMPTS,
     StoreOpsConcurrentWriteConflict,
     StoreOpsLiveDataUnavailable,
+    project_store_ops_health,
 )
 
 #: Audit ids are ``AUD-OPS-<ordinal>``; the demo fixture owns 7001/7002, so a
@@ -51,18 +51,16 @@ _ISSUE_PREFIX = "ISS-FC-"
 _EVIDENCE_PREFIX = "EV-FC-"
 _OPEN_ALERT_STATUSES = frozenset({"open", "acknowledged", "in_progress"})
 _INACTIVE_STORE_STATUSES = frozenset({"closed", "transferred"})
-_CLOSED_ISSUE_STATUSES = frozenset({"closed"})
 
 # ForecastOps has four alert levels; the Store Ops light only has three.
 _ALERT_LEVEL_TO_LIGHT = {"red": "red", "orange": "yellow", "yellow": "yellow", "green": "green"}
 _ALERT_LEVEL_TO_SEVERITY = {"red": "critical", "orange": "high", "yellow": "medium"}
 _SEVERITY_SLA_HOURS = {"critical": 4, "high": 8, "medium": 24, "low": 72}
-_LIGHT_RANK = {"green": 0, "yellow": 1, "red": 2}
 
 #: Canonical source per four-light dimension; ``None`` = no canonical KPI yet.
 _LIGHT_SOURCES: dict[str, str | None] = {
     "demand": "forecastops.alerts",
-    "operations": "opsboard.store_ops.issues",
+    "operations": None,
     "staffing": None,
     "margin": None,
 }
@@ -135,9 +133,9 @@ def _project_store(store: Any) -> dict[str, Any]:
         "district": str(_value(store, "region_code", "")),
         "city": "",
         "manager": "",
-        "lights": {dimension: "green" for dimension in _LIGHT_DIMENSIONS},
+        "lights": {dimension: None for dimension in _LIGHT_DIMENSIONS},
         "lightSources": dict(_LIGHT_SOURCES),
-        "riskScore": 0,
+        "riskScore": None,
     }
 
 
@@ -176,7 +174,7 @@ def _alert_issue(alert: Any, store: Mapping[str, Any]) -> tuple[dict[str, Any], 
         "updatedAt": opened_at,
         "evidenceIds": [evidence_id],
         "summary": summary,
-        "sourceRef": {"kind": "forecastops.alert", "id": alert_id},
+        "sourceRef": {"kind": "forecastops.alert", "id": alert_id, "alertLevel": level},
     }
     evidence = {
         "id": evidence_id,
@@ -186,23 +184,11 @@ def _alert_issue(alert: Any, store: Mapping[str, Any]) -> tuple[dict[str, Any], 
         "sourceLabel": "ForecastOps",
         "summary": summary,
         "polarity": "supporting",
-        "confidence": 1.0,
+        "confidence": None,
         "occurredAt": opened_at,
+        "sourceRef": {"kind": "forecastops.alert", "id": alert_id, "alertLevel": level},
     }
     return issue, evidence
-
-
-def _worst(lights: Iterable[str]) -> str:
-    return max(lights, key=lambda light: _LIGHT_RANK[light], default="green")
-
-
-def _operations_light(issues: Iterable[Mapping[str, Any]]) -> str:
-    worst = "green"
-    for issue in issues:
-        severity = str(issue.get("severity", ""))
-        light = "red" if severity in {"critical", "high"} else "yellow"
-        worst = _worst((worst, light))
-    return worst
 
 
 def project_store_ops_state(
@@ -212,6 +198,7 @@ def project_store_ops_state(
     existing_state: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     """Pure projection: canonical rows + previous state -> next Store Ops state."""
+    stores = list(stores)
     previous = copy.deepcopy(dict(existing_state)) if existing_state else empty_store_ops_state()
     issues: list[dict[str, Any]] = list(previous.get("issues", []))
     evidence: list[dict[str, Any]] = list(previous.get("evidence", []))
@@ -225,7 +212,6 @@ def project_store_ops_state(
         if str(_value(store, "store_status", "")).lower() in _INACTIVE_STORE_STATUSES:
             continue
         projected = _project_store(store)
-        demand_lights: list[str] = []
         for alert in sorted(
             alerts_by_store.get(projected["id"], ()),
             key=lambda row: (_iso(_value(row, "opened_at")), str(_value(row, "alert_id"))),
@@ -235,7 +221,6 @@ def project_store_ops_state(
             level = str(_value(alert, "alert_level", "")).lower()
             if level not in _ALERT_LEVEL_TO_LIGHT:
                 continue
-            demand_lights.append(_ALERT_LEVEL_TO_LIGHT[level])
             if level == "green":
                 continue
             issue, item = _alert_issue(alert, projected)
@@ -245,27 +230,14 @@ def project_store_ops_state(
             if item["id"] not in known_evidence_ids:
                 evidence.append(item)
                 known_evidence_ids.add(item["id"])
-        projected["lights"]["demand"] = _worst(demand_lights)
         projected_stores.append(projected)
 
     store_names = {store["id"]: store["name"] for store in projected_stores}
-    open_issues_by_store: dict[str, list[dict[str, Any]]] = {}
     for issue in issues:
         store_id = str(issue.get("storeId"))
         if store_id in store_names:
             issue["storeName"] = store_names[store_id]
-        if str(issue.get("status")) not in _CLOSED_ISSUE_STATUSES:
-            open_issues_by_store.setdefault(store_id, []).append(issue)
-
-    for store in projected_stores:
-        open_issues = open_issues_by_store.get(store["id"], [])
-        store["lights"]["operations"] = _operations_light(open_issues)
-        store["riskScore"] = min(
-            100,
-            sum(_SEVERITY_WEIGHT.get(str(issue.get("severity")), 0) * 10 for issue in open_issues),
-        )
-
-    return {
+    return project_store_ops_health({
         "stores": projected_stores,
         "issues": issues,
         "evidence": evidence,
@@ -275,7 +247,9 @@ def project_store_ops_state(
             int(previous.get("nextAuditOrdinal") or MATERIALIZED_AUDIT_ORDINAL_START),
             MATERIALIZED_AUDIT_ORDINAL_START,
         ),
-    }
+    }, alerts_by_store=alerts_by_store, tenant_id=next(
+        (str(_value(store, "tenant_id")) for store in stores), None,
+    ))
 
 
 def materialize_store_ops_state(
@@ -305,7 +279,7 @@ def materialize_store_ops_state(
         stores = [
             store
             for store in store_repository.list_stores(tenant_id=tenant)
-            if str(_value(store, "tenant_id", tenant)) == tenant
+            if _value(store, "tenant_id") == tenant
         ]
     except Exception as exc:
         raise StoreOpsLiveDataUnavailable(
@@ -318,7 +292,7 @@ def materialize_store_ops_state(
             alerts_by_store[store_id] = [
                 alert
                 for alert in forecastops_repository.list_alerts_by_store(tenant, store_id)
-                if str(_value(alert, "tenant_id", tenant)) == tenant
+                if _value(alert, "tenant_id") == tenant and _value(alert, "store_id") == store_id
             ]
         except Exception as exc:
             raise StoreOpsLiveDataUnavailable(

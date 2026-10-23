@@ -1,0 +1,23 @@
+<!doctype html><html lang="zh-Hant"><meta charset="utf-8">
+<title>Operator Listing 的登入身分與重播綁定</title>
+<style>body{max-width:1000px;margin:40px auto;padding:0 20px;font:16px/1.65 sans-serif;color:#173148}h1,h2{line-height:1.3}table{border-collapse:collapse;width:100%}td,th{border:1px solid #cad6df;padding:10px;text-align:left;vertical-align:top}code{overflow-wrap:anywhere}aside{border-left:5px solid #ae7b22;padding:15px;background:#fff4df}</style>
+<h1>Operator Listing 的登入身分與重播綁定</h1>
+<p>工程候選，待獨立 source/task review；不是正式上線批准。依據 Assisted Listing authorization matrix 的角色、所有權與雙人覆核規則，以及跨契約的稽核／冪等要求。</p>
+<h2>必須消除的來源錯誤</h2>
+<p>舊 HTTP handler 接受 <code>body.actorName or principal.subject_id</code>，而 service 把該值用作 owner、submitter、audit actor 與 promotion proposer。受控重現中，登入 subject 101 填 actorName 102，實際提交者 fresh GET 得 403，102 卻得到 200。</p>
+<h2>八個寫入入口</h2>
+<table><tr><th>入口</th><th>新的身分來源</th></tr>
+<tr><td>Listing convert／merge／archive</td><td>登入 subject 與 verified platform role；client actorName／actorRoleId 不作授權或稽核事實。</td></tr>
+<tr><td>Intake submit／correct／decide／retry／promote</td><td>相同的登入身分綁定；提交／重試的 tenant 來自 verified scope，promotion proposer 不從舊 display name 猜測。</td></tr></table>
+<p>既有 action、parent resource 與五個範圍軸的授權仍在服務呼叫之前執行。第一提案者由持久化 source proposer／submitter 讀取；<code>X-First-Actor-Id</code> 不能取代它。Promotion domain actor 使用實際角色對應，不把所有人一律標成 staff。</p>
+<p><code>seed_fixtures=false</code> 的 service 在重播前要求非空 UUID actor／tenant 與 canonical platform role；租戶必須與 service 的實際 tenant binding 相同。缺少身分時不再填虛構姓名或預設 production tenant。fixture mode 的既有 synthetic identifiers 僅用於隔離測試，不能當作真實帳戶、UAT 或准入證據。</p>
+<h2>呼叫者與請求內容的重播邊界</h2>
+<p>收據以租戶 repository、實際 actor、action、key 綁定；request SHA-256 包含 resource ID、目標、欄位、原因與風險確認等實際命令內容。相同 actor／key 改變內容回 <code>IDEMPOTENCY_CONFLICT</code>，不重新執行；不同 actor 的 key 不共享收據。client display/persona 欄位不會改變 actor binding 或指紋。</p>
+<p>新的 <code>IntakeIdempotencyRecord</code> 保存 <code>actor_subject_id</code> 與 <code>request_sha256</code>，重新建構 service 後仍檢查。沒有這些來源證據的舊收據回 <code>UNBOUND_LEGACY_REPLAY</code>，原資料保留，不從姓名推導 UUID、補造 proof 或再執行。歷史對帳與切換仍需批准。</p>
+<p>重複 URL 的既有收件在保存新收據／回傳之前重新接受完整 resource scope 與 ownership 檢查；提交重播也讀取當前父收件來授權，不能用舊成功 envelope 的 scope 代替目前範圍。正式 service 缺少該授權 context 時回 <code>INTAKE_SCOPE_CONTEXT_REQUIRED</code>。重播入口的 HTTP guard 每次重新驗證登入、session 與角色，撤權不能靠 cache 取回舊成功。</p>
+<h2>重試與前端</h2>
+<p>Retry 接受 <code>Idempotency-Key</code>；正式模式與其他 governed writes 一樣要求 key/correlation context。typed client 與 intake transport 傳遞該 key，caller 可重用明確 key；未指定時 transport 產生新命令 key。舊 UI 的四個提交流程不再把角色 label 當人名送出。這沒有建立新的業務政策或授予角色。</p>
+<h2>驗證範圍與仍待完成項目</h2>
+<p>測試包括真實簽章 token 驗證、server principal map、local account/session/current roles、偽造 claims/headers/body、不同 actor 同 key、內容衝突、私有 duplicate、各入口 attribution、UUID production checks、durable restart 與不可自動歸屬的 legacy receipt。所有 identity、records、policies 均為明示隔離 synthetic inputs。</p>
+<aside>完整系統仍需 Operator/v1 canonical Intake UUID 與 Workflow physical owner 整合、真正 correction/review/job audit 與 outbox/WORM delivery、account display lookup、歷史對帳、完整 UI 稿比對、六角色實際 UAT、正式資料／政策／模型、獨立審查與當前 Gate 0–6 GO。既有 Operator envelope、IN 顯示 ID 或 audit presentation ID 不能當作 physical canonical 關聯已完成。不得以本文件或局部測試宣告正式驗收。</aside>
+</html>

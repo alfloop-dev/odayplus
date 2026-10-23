@@ -1,6 +1,8 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { getPathMatch } from "next/dist/shared/lib/router/utils/path-match";
 import { describe, expect, it } from "vitest";
+import nextConfig from "../../../next.config.mjs";
 
 function collectPageFiles(directory: string, prefix = ""): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -42,11 +44,18 @@ const RETIRED_HREFS = [
 ] as const;
 
 describe("canonical production routes", () => {
-  it("keeps only the three canonical executable pages", () => {
+  it("keeps the ten implemented canonical executable pages including native AVM", () => {
     expect(collectPageFiles(resolve(process.cwd(), "src/app")).sort()).toEqual([
       "franchisee/page.tsx",
       "intake/[intakeId]/page.tsx",
+      "notifications/page.tsx",
+      "notifications/reports/[reportId]/page.tsx",
       "operator/page.tsx",
+      "settings/notifications/page.tsx",
+      "tasks/[taskId]/page.tsx",
+      "tasks/page.tsx",
+      "w/dealroom/cases/[caseId]/page.tsx",
+      "w/dealroom/cases/page.tsx",
     ]);
   });
 
@@ -71,8 +80,37 @@ describe("canonical production routes", () => {
     expect(source).toContain('destination: "/operator?ws=growth"');
     expect(source).toContain('destination: "/operator?ws=govern"');
     expect(source).toContain(
-      '{ source: "/w/:path*", destination: "/operator"',
+      '{ source: "/w/:path((?!dealroom/cases(?:/[^/]+)?/?$).*)", destination: "/operator"',
     );
+  });
+
+  it("keeps original Task, Notification and AVM routes out of actual redirects", async () => {
+    if (typeof nextConfig.redirects !== "function") throw new Error("Canonical Next redirects factory is required");
+    const redirects = await nextConfig.redirects();
+    for (const pathname of [
+      "/notifications", "/notifications/", "/notifications/reports/report-1",
+      "/settings/notifications", "/tasks", "/tasks/", "/tasks/task-1",
+      "/w/dealroom/cases", "/w/dealroom/cases/", "/w/dealroom/cases/case-1", "/w/dealroom/cases/case-1/",
+    ]) {
+      expect(redirects.filter((rule: { source: string }) => getPathMatch(rule.source)(pathname)), pathname).toEqual([]);
+    }
+  });
+
+  it("preserves actual redirects for all remaining retired workspace URL shapes", async () => {
+    if (typeof nextConfig.redirects !== "function") throw new Error("Canonical Next redirects factory is required");
+    const redirects = await nextConfig.redirects();
+    for (const [pathname, destination] of [
+      ["/w", "/operator"], ["/w/", "/operator"],
+      ["/w/retired", "/operator"], ["/w/retired/child", "/operator"],
+      ["/w/dealroom/legacy", "/operator"], ["/w/dealroom/cases/case-1/legacy", "/operator"],
+      ["/w/expansion/legacy", "/operator?ws=network"],
+      ["/w/operations/interventions", "/operator?ws=today&tab=interventions"],
+      ["/w/operations/interventions/case-1", "/operator?ws=today&tab=interventions&entity=:interventionId"],
+    ]) {
+      const rule = redirects.find((candidate: { source: string }) => getPathMatch(candidate.source)(pathname));
+      expect(rule?.destination, pathname).toBe(destination);
+      expect(rule?.permanent, pathname).toBe(true);
+    }
   });
 
   it("removes the old root frame and sends recovery links to /operator", () => {
@@ -141,10 +179,12 @@ describe("canonical production routes", () => {
       "utf8",
     );
 
+    const commandOwner = readFileSync(resolve(process.cwd(), "features/operator/OperatorShellCommandPalette.tsx"), "utf8");
     for (const href of RETIRED_HREFS) {
       expect(source).not.toContain(href);
+      expect(commandOwner).not.toContain(href);
     }
-    expect(source).toContain('href: "/operator"');
+    expect(commandOwner).toContain('href: "/operator"');
   });
 
   it("renders the durable intake route instead of redirecting away from it", () => {

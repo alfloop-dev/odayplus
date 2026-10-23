@@ -11,6 +11,8 @@ NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES = (
     ".command-receipt",
 )
 
+AUDIT_DELIVERY_JOB_TYPES = ("canonical-audit-delivery", "store-ops-audit-delivery", "durable-audit-delivery", "retained-evidence-delivery")
+
 
 def is_non_executable_receipt_job_type(job_type: str) -> bool:
     """Return whether a durable queue row is evidence rather than worker work."""
@@ -63,9 +65,12 @@ JOB_FEATURE_FLAG_MAP: dict[str, str] = {
 def resolve_job_feature_flag_key(job_type: str, payload: dict[str, Any] | None = None) -> str | None:
     """Resolve the feature flag key for a given job type or payload."""
 
+    canonical = JOB_FEATURE_FLAG_MAP.get(job_type)
+    if canonical is not None:
+        return canonical
     if payload and "feature_flag" in payload:
         return str(payload["feature_flag"])
-    return JOB_FEATURE_FLAG_MAP.get(job_type)
+    return None
 
 
 def check_job_feature_flag(
@@ -94,6 +99,8 @@ class JobRequest:
     job_type: str
     payload: dict[str, Any]
     idempotency_key: str | None = None
+    # Internal reservation identity for transaction-owned workflow jobs.
+    job_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -141,7 +148,8 @@ class JobRecord:
 
 
 class InMemoryJobQueue:
-    def __init__(self) -> None:
+    def __init__(self, *, flags: Any = None) -> None:
+        self._flags = flags
         self._jobs: dict[str, JobRecord] = {}
         self._idempotency_index: dict[str, str] = {}
         self._reservation_lock = RLock()
@@ -158,7 +166,7 @@ class InMemoryJobQueue:
     def enqueue(self, request: JobRequest, *, correlation_id: str) -> tuple[JobRecord, bool]:
         with self._reservation_lock:
             # Enforce kill-switch / feature flag check at enqueue time
-            check_job_feature_flag(request.job_type, request.payload)
+            check_job_feature_flag(request.job_type, request.payload, flags=self._flags)
 
             if request.idempotency_key:
                 existing_job_id = self._idempotency_index.get(request.idempotency_key)
@@ -170,7 +178,10 @@ class InMemoryJobQueue:
                 payload=request.payload,
                 correlation_id=correlation_id,
                 idempotency_key=request.idempotency_key,
+                **({"job_id": request.job_id} if request.job_id else {}),
             )
+            if record.job_id in self._jobs:
+                raise ValueError("Job identity is already reserved")
             self._jobs[record.job_id] = record
             if request.idempotency_key:
                 self._idempotency_index[request.idempotency_key] = record.job_id
@@ -187,7 +198,10 @@ class InMemoryJobQueue:
         now = datetime.now(UTC)
 
         # Sort by creation time to act as a FIFO queue
-        for record in sorted(self._jobs.values(), key=lambda r: r.created_at):
+        for record in sorted(
+            self._jobs.values(),
+            key=lambda r: (r.job_type not in AUDIT_DELIVERY_JOB_TYPES, r.created_at, r.job_id),
+        ):
             if is_non_executable_receipt_job_type(record.job_type):
                 continue
             is_eligible = record.status == JobStatus.QUEUED or (
@@ -197,7 +211,7 @@ class InMemoryJobQueue:
             )
             if is_eligible:
                 try:
-                    check_job_feature_flag(record.job_type, record.payload)
+                    check_job_feature_flag(record.job_type, record.payload, flags=self._flags)
                 except NonRetryableJobError as exc:
                     new_record = dataclasses.replace(
                         record,
@@ -324,16 +338,34 @@ class InMemoryJobQueue:
             self._jobs[job_id] = updated
             return updated
 
-    def claim_next(self, worker_id: str = "worker-1") -> JobRecord | None:
+    def claim_next(self, worker_id: str = "worker-1", *, audit_only: bool = False) -> JobRecord | None:
         with self._reservation_lock:
             now = datetime.now(UTC)
-            for job_id, record in self._jobs.items():
+            for record in sorted(
+                self._jobs.values(),
+                key=lambda r: (r.job_type not in AUDIT_DELIVERY_JOB_TYPES, r.created_at, r.job_id),
+            ):
+                job_id = record.job_id
                 is_eligible = record.status == JobStatus.QUEUED or (
                     record.status == JobStatus.RUNNING
                     and record.lease_expires_at is not None
                     and record.lease_expires_at < now
                 )
-                if is_eligible and not is_non_executable_receipt_job_type(record.job_type):
+                if (
+                    is_eligible
+                    and not is_non_executable_receipt_job_type(record.job_type)
+                    and (not audit_only or record.job_type in AUDIT_DELIVERY_JOB_TYPES)
+                ):
+                    try:
+                        check_job_feature_flag(record.job_type, record.payload, flags=self._flags)
+                    except NonRetryableJobError as exc:
+                        from dataclasses import replace
+                        self._jobs[job_id] = replace(
+                            record, status=JobStatus.FAILED,
+                            delivery_state=JobDeliveryState.DEAD_LETTER,
+                            version=record.version + 1, error_message=str(exc),
+                        )
+                        continue
                     updated = JobRecord(
                         job_type=record.job_type,
                         payload=record.payload,
