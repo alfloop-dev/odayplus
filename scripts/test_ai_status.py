@@ -2557,6 +2557,37 @@ class SourceAuthorReviewIndependenceTests(unittest.TestCase):
         self.assertEqual(self.task["approved_head"], self.head)
         self.assertEqual(self.task["owner"], "Claude")
 
+    def test_an_author_named_by_one_agent_id_and_another_display_name_is_refused(self) -> None:
+        """`Codex` as agent `codex`'s id and agent `writer`'s display name is two actors.
+
+        The range, head, base and remote are genuine, and Claude finalized it.
+        In this fleet `writer` shares Codex2's pool, so resolving the author by
+        id alone would let Codex2 approve work that may be its own pool's.
+        """
+        self.submit()
+        self.task["reviewer"] = "Codex2"
+        collision = json.loads(json.dumps(ai_status.merged_orchestrator_config()))
+        agents = collision["agents"]
+        agents["codex"]["display_name"] = "Primary"
+        agents["writer"] = dict(agents["codex2"], display_name="Codex")
+        with mock.patch.object(ai_status, "merged_orchestrator_config", return_value=collision):
+            self.assert_refused_without_mutation(
+                "Codex2", ai_status.command_approve, [self.TASK_ID, "LGTM"],
+                r"source author 'Codex' is not a registered agent",
+            )
+            self.task["status"] = "in_progress"
+            self.task.pop("review_submission")
+            self.assert_refused_without_mutation(
+                "Claude", ai_status.command_submit_review, [self.TASK_ID, "4242", "Ready"],
+                r"source author 'Codex' is not a registered agent",
+            )
+
+        # Without the collision, the same genuine range is independently reviewable.
+        self.submit()
+        self.run_as("Codex2", ai_status.command_approve, [self.TASK_ID, "Independent review passed"])
+        self.assertEqual(self.task["status"], "review_approved")
+        self.assertEqual(self.task["owner"], "Claude")
+
     def test_forged_source_record_does_not_override_git(self) -> None:
         self.submit()
         submission = self.task["review_submission"]

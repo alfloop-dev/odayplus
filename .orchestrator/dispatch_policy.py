@@ -189,25 +189,29 @@ class ReviewSourceIdentity(NamedTuple):
 def _registered_actor_id(config: dict[str, Any], name: str) -> str:
     """The configured agent id a recorded actor name refers to, or empty.
 
-    A name is registered when it is an agent id, or the configured display name
-    of exactly one logical (non-slot) agent. Anything else -- including a label
-    that merely resembles a registered one -- is unknown, not guessed.
+    A name is registered when it is an agent id, the configured display name of
+    a logical (non-slot) agent, or both -- provided every one of those matches
+    is the same agent. Adapters record `LLM-Agent` as the display name, so an
+    id match does not outrank a display-name match: `Codex` naming agent
+    `codex` by id and agent `writer` by display name is two actors, and picking
+    either would drop the other's pool. Such a conflict, and anything else --
+    including a label that merely resembles a registered one -- is unknown, not
+    guessed.
     """
     agents = config.get("agents", {}) or {}
-    agent_id = normalize_agent_id(name)
-    if agent_id and isinstance(agents.get(agent_id), dict):
-        return agent_id
     wanted = str(name or "").strip().casefold()
     if not wanted:
         return ""
-    matches = [
-        str(key)
+    agent_id = normalize_agent_id(name)
+    matches = {agent_id} if agent_id and isinstance(agents.get(agent_id), dict) else set()
+    matches.update(
+        normalize_agent_id(str(key))
         for key, agent in agents.items()
         if isinstance(agent, dict)
         and not str(agent.get("dispatch_slot_for") or agent.get("dispatch_slot_for_pool") or "").strip()
         and str(agent.get("display_name") or agent.get("name") or "").strip().casefold() == wanted
-    ]
-    return normalize_agent_id(matches[0]) if len(matches) == 1 else ""
+    )
+    return next(iter(matches)) if len(matches) == 1 else ""
 
 
 def _registered_actor_pool(config: dict[str, Any], name: str) -> str:

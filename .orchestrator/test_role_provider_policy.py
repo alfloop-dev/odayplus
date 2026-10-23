@@ -2551,3 +2551,100 @@ def test_a_rewritten_source_record_is_refused_before_any_queue_selects_a_reviewe
             is None
         )
     persist.assert_not_called()
+
+
+def _display_name_collision_config() -> dict[str, Any]:
+    """A valid fleet in which `Codex` is one agent's id and another's display name.
+
+    Adapters record `LLM-Agent` as the display name, so a commit signed `Codex`
+    here may come from `writer`, which runs in `codex_lupin` -- the pool of the
+    independently registered `Codex2`. Agent `codex` itself is `Primary`.
+    """
+    config = build_config()
+    config["agents"]["codex"]["display_name"] = "Primary"
+    config["agents"]["writer"] = {
+        "display_name": "Codex",
+        "provider": "codex",
+        "adapter": "codex",
+        "account_pool": "codex_lupin",
+    }
+    return config
+
+
+def test_an_actor_named_by_one_agent_id_and_another_display_name_is_refused_before_any_queue() -> None:
+    """An id match does not silently outrank a conflicting display-name match.
+
+    Genuine range, head, base and remote; Codex wrote it and Claude finalized.
+    Resolving `Codex` to agent `codex` alone would leave out `writer`'s pool,
+    and Codex2 in that pool would then pass as independent. Both readings are
+    registered, so the actor is ambiguous: no pool is chosen, every reviewer is
+    refused, and neither the normalizer nor either failover selects one.
+    """
+    config = _display_name_collision_config()
+    task = _finalized_by_claude(config, "Codex")
+    for field in ("source_head", "source_base", "remote_sha"):
+        assert task["review_submission"][field]
+    assert task["review_submission"]["submitted_by"] == "Claude"
+
+    source = task_review_source_identity(config, task)
+    assert "source author 'Codex' is not a registered agent" in str(source.error)
+    assert source.source_authors == ("Codex",)
+    assert not source.pools
+    for reviewer in ("Codex2", "Primary", "writer", "Codex", "Antigravity"):
+        assert review_source_block_reason(config, task, reviewer) == source.error, reviewer
+
+    issues = supervisor.task_assignment_integrity_issues(config, {}, dict(task))
+    assert any(issue.startswith("review_source_unresolved:") for issue in issues), issues
+    with mock.patch.object(
+        supervisor, "get_agent_reassignment_candidates", lambda *a, **k: ["Codex2", "Antigravity", "Primary"]
+    ):
+        assert _run_repair(config, task, pin_author=True) == []
+
+    config["account_pools"]["codex_bjoe"]["state"] = "paused"
+    unavailable = dict(task, reviewer="Primary")
+    state: dict[str, Any] = {"active_workers": {}, "outstanding_deliveries": {}}
+    with mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist:
+        assert dispatch_engine.reassign_unavailable_reviewers(config, state, {"tasks": [unavailable]}) is False
+    persist.assert_not_called()
+
+    worker = {"task_id": "T-SOURCE", "agent_id": "codex", "retry_count": 2}
+    with (
+        mock.patch("supervisor.load_status", return_value={"tasks": [unavailable]}),
+        mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist,
+        mock.patch("supervisor.write_activity_log"),
+        mock.patch.object(
+            supervisor, "get_agent_reassignment_candidates", lambda *a, **k: ["Codex2", "Antigravity"]
+        ),
+    ):
+        assert (
+            worker_failure_policy.maybe_reassign_task_after_worker_failure(
+                config, {}, worker, "terminal error", terminal=True
+            )
+            is None
+        )
+    persist.assert_not_called()
+
+
+def test_unambiguous_ids_and_display_aliases_still_resolve_beside_a_collision() -> None:
+    """Only the colliding label is refused; every unique spelling keeps its pool."""
+    config = _display_name_collision_config()
+
+    by_alias = _finalized_by_claude(config, "Primary")
+    source = task_review_source_identity(config, by_alias)
+    assert source.error is None
+    assert source.pools == frozenset({"codex_bjoe", "claude_main"})
+    assert review_source_block_reason(config, by_alias, "Codex2") is None
+    assert "codex_bjoe" in str(review_source_block_reason(config, by_alias, "codex_bjoe_slot_1"))
+
+    by_id = _finalized_by_claude(config, "writer")
+    source = task_review_source_identity(config, by_id)
+    assert source.error is None
+    assert source.pools == frozenset({"codex_lupin", "claude_main"})
+    assert "codex_lupin" in str(review_source_block_reason(config, by_id, "Codex2"))
+    assert review_source_block_reason(config, by_id, "Primary") is None
+
+    # Without the collision, the same `Codex` range has its one genuine pool.
+    plain = build_config()
+    task = _finalized_by_claude(plain, "Codex")
+    assert task_review_source_identity(plain, task).pools == frozenset({"codex_bjoe", "claude_main"})
+    assert review_source_block_reason(plain, task, "Codex2") is None
