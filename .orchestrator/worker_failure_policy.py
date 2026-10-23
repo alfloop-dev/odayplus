@@ -28,6 +28,7 @@ from dispatch_policy import (
     role_provider_block_reason,
 )
 from dispatch_policy import DEFAULT_FROZEN_CLOSEOUT_STATUSES, task_closeout_is_frozen, task_review_source_identity
+from dispatch_policy import review_source_block_reason
 from dispatch_policy import is_human_gate_agent
 from dispatch_policy import agent_provider_identity_ids as dispatch_policy_agent_provider_identity_ids
 from provider_runtime import configured_provider_binary, provider_config_entry
@@ -53,6 +54,7 @@ def _sync_supervisor_scope() -> None:
         "ROLE_HELPER", "ROLE_OWNER", "ROLE_REVIEWER", "dispatch_reason_role",
         "role_provider_block_reason", "dispatch_policy_agent_provider_identity_ids",
         "task_closeout_is_frozen", "DEFAULT_FROZEN_CLOSEOUT_STATUSES", "task_review_source_identity",
+        "review_source_block_reason",
         "is_human_gate_agent",
         "worker_writer_pids", "worker_writers_are_alive", "terminate_worker_writers",
         "_settle_fenced_sibling_worker", "fence_account_pool_workers",
@@ -2801,6 +2803,13 @@ def first_viable_agent(
                 continue
             if task is not None and not agent_can_take_task(config, name, task, role=role):
                 continue
+            # The pool exclusions above are the caller's; whether this name may
+            # review the submitted work at all is the common source rule's, the
+            # same one dispatch readiness and the approval ask. A raw pool
+            # lookup resolves an id that another agent also displays as its
+            # name to one pool and admits it; the common rule refuses it.
+            if task is not None and role == "reviewer" and review_source_block_reason(config, task, name):
+                continue
             viable.append(name)
 
     if not viable:
@@ -2862,6 +2871,8 @@ def has_configured_reassignment_candidates(
             if agent_account_pool_id(config, name) in excluded_pool_ids:
                 continue
             if not agent_can_take_task(config, name, task, role=role):
+                continue
+            if task is not None and role == "reviewer" and review_source_block_reason(config, task, name):
                 continue
             return True
     return False

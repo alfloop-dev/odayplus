@@ -2648,3 +2648,119 @@ def test_unambiguous_ids_and_display_aliases_still_resolve_beside_a_collision() 
     task = _finalized_by_claude(plain, "Codex")
     assert task_review_source_identity(plain, task).pools == frozenset({"codex_bjoe", "claude_main"})
     assert review_source_block_reason(plain, task, "Codex2") is None
+
+
+def _ambiguous_reviewer_candidate_config() -> dict[str, Any]:
+    """The collision fleet with an unambiguous source and a colliding fallback.
+
+    `Codex` is agent `codex`'s id (pool `codex_bjoe`) and `writer`'s display
+    name (pool `codex_lupin`, the pool of source author Codex2). Codex4 is the
+    current reviewer in its own pool; its configured fallback names `Codex`
+    first and the genuinely independent Codex5 second.
+    """
+    config = _display_name_collision_config()
+    config["account_pools"]["codex_charlie"] = {"enabled": True, "max_concurrent": 1}
+    config["account_pools"]["codex_delta"] = {"enabled": True, "max_concurrent": 1}
+    for agent_id, display, pool in (("codex4", "Codex4", "codex_charlie"), ("codex5", "Codex5", "codex_delta")):
+        config["agents"][agent_id] = {
+            "display_name": display,
+            "provider": "codex",
+            "adapter": "codex",
+            "account_pool": pool,
+        }
+    config["worker_reassignment"] = {
+        "enabled": True,
+        "reviewer_fallbacks": {"Codex4": ["Codex", "Codex5"]},
+        "owner_fallbacks": {"Claude": ["Claude2", "Antigravity"]},
+        "review_churn": {"enabled": True, "reassign_after_reopens": 2},
+    }
+    return config
+
+
+def test_failover_applies_the_common_rule_to_an_ambiguous_reviewer_candidate() -> None:
+    """A reviewer candidate is admitted by the common rule, not a raw pool lookup.
+
+    Genuine range, head, base and remote; Codex2 wrote it and Claude finalized,
+    so the source is unambiguous and excludes `codex_lupin` and `claude_main`.
+    The raw lookup resolves the fallback `Codex` to agent `codex` in
+    `codex_bjoe` and admits it, yet the common rule refuses `Codex` because
+    `writer` -- in the source pool -- answers to it too. Worker-failure
+    failover, review churn and both normalizers must pass over it before
+    anything is persisted and select the independent Codex5; with Codex5 gone
+    from the fallbacks nothing is persisted at all.
+    """
+    config = _ambiguous_reviewer_candidate_config()
+    task = _finalized_by_claude(config, "Codex2", reviewer="Codex4")
+    source = task_review_source_identity(config, task)
+    assert source.error is None
+    assert source.pools == frozenset({"codex_lupin", "claude_main"})
+    assert task["review_submission"]["submitted_by"] == "Claude"
+    # The raw lookup alone would admit `Codex`; the common rule does not.
+    assert supervisor.agent_account_pool_id(config, "Codex") == "codex_bjoe"
+    assert "is not a registered agent" in str(review_source_block_reason(config, task, "Codex"))
+    assert review_source_block_reason(config, task, "Codex5") is None
+
+    def worker_failover(candidate_task: dict[str, Any]) -> tuple[Any, Any]:
+        worker = {"task_id": "T-SOURCE", "agent_id": "codex4", "retry_count": 2}
+        with (
+            mock.patch("supervisor.load_status", return_value={"tasks": [candidate_task]}),
+            mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist,
+            mock.patch("supervisor.write_activity_log"),
+        ):
+            reassigned = worker_failure_policy.maybe_reassign_task_after_worker_failure(
+                config, {}, worker, "terminal error", terminal=True
+            )
+        return reassigned, persist
+
+    reassigned, persist = worker_failover(dict(task))
+    assert reassigned == "Codex5"
+    assert persist.call_args.kwargs["new_owner"] == "Claude"
+    assert persist.call_args.kwargs["new_reviewer"] == "Codex5"
+    assert persist.call_args.kwargs["handoff_to"] == "Codex5"
+
+    # Review churn rotates the owner; Codex4 is paused, so the reviewer moves
+    # through the same configured fallbacks.
+    config["account_pools"]["codex_charlie"]["state"] = "paused"
+    churning = dict(task, status="in_progress", review_reopen_count=2)
+    with (
+        mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+        mock.patch.object(supervisor, "write_activity_log"),
+    ):
+        assert supervisor.reassign_tasks_after_review_churn(config, {}, {"tasks": [churning]}) is True
+    assert persist.call_args.kwargs["new_owner"] == "Antigravity"
+    assert persist.call_args.kwargs["new_reviewer"] == "Codex5"
+
+    # The unavailable-reviewer normalizer reaches the same answer.
+    state: dict[str, Any] = {"active_workers": {}, "outstanding_deliveries": {}}
+    unavailable = dict(task)
+    with (
+        mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist,
+        mock.patch("supervisor.write_activity_log"),
+    ):
+        assert dispatch_engine.reassign_unavailable_reviewers(config, state, {"tasks": [unavailable]}) is True
+    assert persist.call_args.kwargs["new_reviewer"] == "Codex5"
+
+    # With the ambiguous name the only candidate left, no path persists a reviewer.
+    config["account_pools"]["codex_charlie"].pop("state")
+    config["worker_reassignment"]["reviewer_fallbacks"] = {"Codex4": ["Codex"]}
+    del config["agents"]["codex5"]
+    reassigned, persist = worker_failover(dict(task))
+    assert reassigned is None
+    persist.assert_not_called()
+
+    config["account_pools"]["codex_charlie"]["state"] = "paused"
+    with (
+        mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+        mock.patch.object(supervisor, "write_activity_log"),
+    ):
+        supervisor.reassign_tasks_after_review_churn(config, {}, {"tasks": [dict(churning)]})
+    assert all(call.kwargs.get("new_reviewer") != "Codex" for call in persist.call_args_list)
+    with mock.patch("supervisor.persist_task_reassignment", return_value=True) as persist:
+        assert dispatch_engine.reassign_unavailable_reviewers(config, state, {"tasks": [dict(task)]}) is False
+    persist.assert_not_called()
+    assert worker_failure_policy.first_viable_agent(
+        config, ["Codex"], set(), task=task, role="reviewer"
+    ) is None
+    assert not worker_failure_policy.has_configured_reassignment_candidates(
+        config, ["Codex"], set(), task=task, role="reviewer"
+    )
