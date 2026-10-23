@@ -2464,6 +2464,7 @@ class SourceAuthorReviewIndependenceTests(unittest.TestCase):
             ],
             "handoffs": [],
             "blockers": [],
+            "agents": [],
             "workload": {},
             "workload_summary": {},
         }
@@ -2699,6 +2700,79 @@ class SourceAuthorReviewIndependenceTests(unittest.TestCase):
         self.assertEqual(self.task["approved_head"], self.head)
         self.assertEqual(self.task["last_approved_by"], "Codex2")
         self.assertEqual(self.task["owner"], "Claude")
+
+    def assign_as(self, actor: str, metadata: dict[str, Any]) -> None:
+        with mock.patch.dict(os.environ, {"TASK_METADATA_JSON": json.dumps(metadata)}, clear=False):
+            self.run_as(actor, ai_status.command_assign, [self.TASK_ID, "Claude", "Codex2"])
+
+    def test_assignment_metadata_cannot_name_the_signer_of_an_old_approval(self) -> None:
+        """Codex2 never signed; `assign` must not be able to say it did.
+
+        The real range still has Codex as its author and Claude as owner and
+        submitter. The only approval of the head is Codex's own, then an
+        unsigned legacy one. Claude reassigns Codex2 through the ordinary
+        `assign` command and writes Codex2 in as the signer, then restores: the
+        Git rescan is untouched and would pass Codex2, so the refusal has to come
+        from the assignment, before anything is written.
+        """
+        submission = dict(self.submit())
+        self.task.update(
+            {
+                "status": "in_progress",
+                "last_approved_head": self.head,
+                "last_approved_by": "Codex",
+                "review_notes_zh": ["舊核准"],
+            }
+        )
+        for forged in (
+            {"last_approved_by": "Codex2"},
+            {"last_approved_by": "Codex2", "priority": "P1"},
+            {"status": "review_approved", "approved_head": self.head},
+            {"last_reopened_by": None},
+            {"review_submission": {**submission, "source_authors": ["Claude"]}},
+        ):
+            with self.subTest(forged=sorted(forged)):
+                before = json.loads(json.dumps(self.state))
+                with self.assertRaisesRegex(SystemExit, r"may not set review provenance"):
+                    self.assign_as("Claude", forged)
+                self.assertEqual(self.state, before)
+
+        # The reassignment itself is still ordinary; the signer stays Codex's.
+        self.assign_as("Claude", {"priority": "P1"})
+        self.assertEqual(self.task["reviewer"], "Codex2")
+        self.assertEqual(self.task["last_approved_by"], "Codex")
+        self.assertEqual(self.task["review_submission"], submission)
+        self.assert_refused_without_mutation(
+            "Claude", ai_status.command_restore_approved, [self.TASK_ID, "restore"],
+            r"reviewer Codex is itself a source author",
+        )
+        # An unsigned legacy approval cannot be signed through assignment either.
+        self.task.pop("last_approved_by")
+        before = json.loads(json.dumps(self.state))
+        with self.assertRaisesRegex(SystemExit, r"may not set review provenance \['last_approved_by'\]"):
+            self.assign_as("Claude", {"last_approved_by": "Codex2"})
+        self.assertEqual(self.state, before)
+        self.assert_refused_without_mutation(
+            "Claude", ai_status.command_restore_approved, [self.TASK_ID, "restore"],
+            r"does not record which reviewer signed it",
+        )
+
+    def test_assignment_metadata_cannot_clear_a_reviewer_reopen(self) -> None:
+        """A genuine Codex2 approval that Codex2 then rejected stays rejected."""
+        self.submit()
+        self.task["reviewer"] = "Codex2"
+        self.run_as("Codex2", ai_status.command_approve, [self.TASK_ID, "Independent review passed"])
+        self.run_as("Codex2", ai_status.command_reopen, [self.TASK_ID, "found a defect"])
+        self.assertEqual(self.task["last_reopened_by"], "Codex2")
+        self.task["review_notes_zh"] = ["獨立核准"]
+        before = json.loads(json.dumps(self.state))
+        with self.assertRaisesRegex(SystemExit, r"may not set review provenance \['last_reopened_by'\]"):
+            self.assign_as("Claude", {"last_reopened_by": None})
+        self.assertEqual(self.state, before)
+        self.assert_refused_without_mutation(
+            "Claude", ai_status.command_restore_approved, [self.TASK_ID, "restore"],
+            r"reopened by the reviewer",
+        )
 
     def test_merged_recovery_cannot_name_an_interior_commit_as_its_base(self) -> None:
         """After the merge, every source commit is in `dev`; only `dev`'s own tip is a base.

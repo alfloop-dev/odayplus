@@ -3804,6 +3804,27 @@ def collect_done_delivery_metadata(
     return delivery
 
 
+# Fields that record what the review lifecycle did: who signed which head, the
+# freeze, the reviewer's notes and reopen, the submitted source range, and the
+# status they add up to. Only `submit_review`, `approve`, `reopen`,
+# `restore_approved_head` and their kin write them, each after its own checks.
+# `restore_approved` re-grants authority from exactly these records, so an
+# assignment -- which any registered caller may invoke for a task it owns --
+# must not be able to write one: naming a different signer would make an old
+# same-source or unsigned approval look independent without anyone reviewing.
+REVIEW_PROVENANCE_FIELDS = frozenset(
+    {
+        "status",
+        "approved_head",
+        "last_approved_head",
+        "last_approved_by",
+        "review_notes_zh",
+        "review_submission",
+        "last_reopened_by",
+    }
+)
+
+
 def task_metadata_from_env() -> dict[str, Any]:
     metadata = parse_json_env("TASK_METADATA_JSON")
     explicit_fields = {
@@ -6307,6 +6328,14 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
     title = args[3] if len(args) > 3 else os.environ.get("TASK_TITLE")
     summary_zh = os.environ.get("TASK_SUMMARY_ZH")
     metadata = task_metadata_from_env()
+    provenance_fields = sorted(REVIEW_PROVENANCE_FIELDS.intersection(metadata))
+    if provenance_fields:
+        raise SystemExit(
+            f"Cannot assign {task_id}: TASK_METADATA_JSON may not set review provenance "
+            f"{provenance_fields}; those record what a reviewer or submission actually did and "
+            "are written only by the review lifecycle commands. Run `re_review` so an "
+            "independent reviewer signs the head. 未寫入任何 assignment。"
+        )
     requested_dependencies = parse_csv_env("TASK_DEPENDS_ON")
     task = get_task(state, task_id)
     if task is not None and "TASK_DEPENDS_ON" in os.environ:
