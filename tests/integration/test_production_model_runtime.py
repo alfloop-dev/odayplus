@@ -54,7 +54,8 @@ from modules.sitescore.application.reporting import SiteScoreReportService
 from modules.sitescore.domain import SITESCORE_FEATURE_VERSION, score_sites
 from product_ops.modeling.contracts import MODEL_SPECS
 
-NOW = datetime(2026, 7, 24, 10, 0, tzinfo=UTC)
+# Keep the shared live fixture fresh while preserving one timestamp per run.
+NOW = datetime.now(UTC)
 SITESCORE_MODEL_NAME = PRODUCTION_MODEL_CONTRACTS["sitescore"].model_name or ""
 
 
