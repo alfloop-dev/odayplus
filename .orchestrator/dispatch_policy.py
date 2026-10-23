@@ -275,6 +275,32 @@ def _git_succeeds(repo_root: Path, *args: str) -> bool:
     return proc.returncode == 0
 
 
+def _git_output(repo_root: Path, *args: str) -> str | None:
+    try:
+        proc = subprocess.run(["git", *args], cwd=repo_root, capture_output=True, text=True, check=False)
+    except OSError:
+        return None
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def _is_integration_point(repo_root: Path, commit: str, target_ref: str) -> bool:
+    """Whether `commit` was itself a tip of `target_ref`, not merely merged into it.
+
+    Once a branch is merged, every one of its commits is in the target's
+    history, so ancestry alone would accept a commit from the middle of the
+    delivered range as its base. The integration line is the target's
+    first-parent chain: walking it back from the tip, stopping at whatever
+    `commit` already contains, must end exactly on `commit`.
+    """
+    chain = _git_output(repo_root, "rev-list", "--first-parent", "--parents", target_ref, "--not", commit)
+    if chain is None:
+        return False
+    if not chain:
+        return _git_output(repo_root, "rev-parse", "--verify", "--quiet", f"{target_ref}^{{commit}}") == commit
+    last = chain.splitlines()[-1].split()
+    return len(last) > 1 and last[1].lower() == commit
+
+
 def _inspect_delivery_identity(repo_root: Path, **kwargs: Any) -> Any:
     """The delivery-identity scanner `submit_review` validates a range with."""
     git_dir = Path(__file__).resolve().parents[1] / "delivery_toolchain" / "git"
@@ -286,7 +312,7 @@ def _inspect_delivery_identity(repo_root: Path, **kwargs: Any) -> Any:
 
 
 #: Ranges whose Git authorship has already been established. Commits are
-#: immutable and a base that is in the integration history stays there, so a
+#: immutable and a commit the integration line stood on stays on it, so a
 #: positive answer cannot go stale; a refusal is not cached and is asked again.
 _IMMUTABLE_SOURCE_AUTHORS: dict[tuple[str, ...], tuple[str, ...]] = {}
 
@@ -299,11 +325,13 @@ def immutable_review_source_authors(
     The board's `review_submission` is a record anyone with write access to the
     status file could edit, so no reviewer path takes its `source_authors` on
     trust -- not the approval, and not the queue that decides which reviewer is
-    dispatched in the first place. The recorded base must be in the
-    integration history -- otherwise it could be moved up to hide earlier
-    commits -- and the range from it to the recorded head is scanned again
-    with the same delivery-identity scanner submission used. The recorded
-    authors must be exactly what that scan finds.
+    dispatched in the first place. The recorded base must be a commit the
+    integration branch itself stood on -- and, for a merged submission, the
+    first parent of its recorded merge commit, which is what submission read
+    the range from -- otherwise it could be moved up to hide earlier commits.
+    The range from it to the recorded head is scanned again with the same
+    delivery-identity scanner submission used. The recorded authors must be
+    exactly what that scan finds.
     """
     task_id = str(task.get("id") or "").strip()
     source_base = str(submission.get("source_base") or "").strip().lower()
@@ -315,7 +343,11 @@ def immutable_review_source_authors(
     base_branch = delivery_merge_target_branch(config, repository_id)
     expected_branch = task_branch_name(task, task_id)
     actual_branch = str(submission.get("branch") or "").strip() or None
-    key = (str(repo_root), base_branch, task_id, source_base, source_head, expected_branch, actual_branch or "")
+    merge_commit = str(submission.get("merge_commit") or "").strip().lower()
+    key = (
+        str(repo_root), base_branch, task_id, source_base, source_head, expected_branch, actual_branch or "",
+        merge_commit,
+    )
     actual = _IMMUTABLE_SOURCE_AUTHORS.get(key)
     if actual is None:
         target_ref = f"origin/{base_branch}"
@@ -323,6 +355,27 @@ def immutable_review_source_authors(
             target_ref = base_branch
         if not _git_succeeds(repo_root, "merge-base", "--is-ancestor", source_base, target_ref):
             return (), f"the recorded source base {source_base[:12]} is not in {target_ref} history"
+        # After a merge, a commit from inside the delivered range is in that
+        # history too; only a commit the integration line itself stood on is
+        # a base submission could have read the range from.
+        if not _is_integration_point(repo_root, source_base, target_ref):
+            return (), (
+                f"the recorded source base {source_base[:12]} is not a commit {target_ref} stood on; "
+                "a commit merged in from a branch cannot be the range's base"
+            )
+        # A merged submission was read from its merge commit's first parent,
+        # and that is the only base its record can name.
+        if merge_commit:
+            pre_merge_base = (
+                _git_output(repo_root, "rev-parse", "--verify", "--quiet", f"{merge_commit}^1^{{commit}}")
+                if _SHA_RE.fullmatch(merge_commit)
+                else None
+            )
+            if (pre_merge_base or "").lower() != source_base:
+                return (), (
+                    f"the recorded source base {source_base[:12]} is not the pre-merge base of the "
+                    f"recorded merge commit {merge_commit[:12]}"
+                )
         scan = _inspect_delivery_identity(
             repo_root,
             task_id=task_id,

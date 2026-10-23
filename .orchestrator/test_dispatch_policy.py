@@ -2102,6 +2102,105 @@ def test_review_queue_reads_a_full_sha_base_as_that_commit_on_a_cold_cache(tmp_p
             )
 
 
+def test_review_queue_refuses_an_interior_commit_as_the_base_of_a_merged_range(tmp_path: Path) -> None:
+    """After the merge, ancestry cannot tell the base from a commit of the range.
+
+    Codex writes `C` on `B`, Claude adds `H`, and the PR merges into `dev` as
+    `M` with `M^1 == B`; the task branch is gone. Merged recovery records
+    `B..H` and both authors. Keeping the real head, remote, branch, merge and
+    submitter but naming `C` as the base leaves `C..H` -- Claude alone, a
+    valid range, with `C` now in `dev` history -- and Codex out of every
+    excluded pool. Neither the queue nor the normalizer may accept it, on a
+    cold cache; the complete record still dispatches independent Codex2.
+    """
+    cfg = _register_ci_failure_actors(_base_test_config())
+    repo = tmp_path / "source-git"
+    task_id = "TASK-SOURCE-REV-003"
+    repo.mkdir(parents=True)
+    _git(repo, "init", "-q", "-b", "dev")
+    _git(repo, "config", "user.email", "worker@pantheon.local")
+    _git(repo, "config", "user.name", "Worker")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "bootstrap")
+    base = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "-b", f"task/{task_id}")
+    for author, label in (("Codex", "source change"), ("Claude", "finalizer change")):
+        _git(
+            repo, "commit", "-q", "--allow-empty", "-m",
+            f"{task_id}: {label}\n\nLLM-Agent: {author}\nTask-ID: {task_id}\nReviewer: Codex2\n",
+        )
+    interior = _git(repo, "rev-parse", "HEAD~1")
+    head = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "dev")
+    _git(repo, "merge", "--no-ff", "-q", "-m", "Merge pull request #103", head)
+    merge_commit = _git(repo, "rev-parse", "dev")
+    _git(repo, "update-ref", "refs/remotes/origin/dev", "dev")
+    _git(repo, "branch", "-D", f"task/{task_id}")
+    assert _git(repo, "rev-parse", f"{merge_commit}^1") == base
+    # The forged base is in the integration history: ancestry alone admits it.
+    _git(repo, "merge-base", "--is-ancestor", interior, "origin/dev")
+    assert not [key for key in dispatch_policy._IMMUTABLE_SOURCE_AUTHORS if key[0] == str(repo)]
+    cfg["coordination"] = {"repositories": {"pantheon": {"local_path": str(repo)}}}
+    cfg["branch_workflow"] = {"dev_branch": "dev"}
+    genuine = {
+        "pr_number": 103,
+        "branch": f"task/{task_id}",
+        "base_branch": "dev",
+        "remote_sha": head,
+        "merge_commit": merge_commit,
+        "source_head": head,
+        "source_base": base,
+        "source_authors": ["Codex", "Claude"],
+        "submitted_by": "Claude",
+    }
+    interior_base = dict(genuine, source_base=interior, source_authors=["Claude"])
+    task = {
+        "id": task_id,
+        "priority": "P1",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "depends_on": [],
+    }
+
+    def probes() -> ExitStack:
+        stack = ExitStack()
+        stack.enter_context(mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=head))
+        stack.enter_context(
+            mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success"))
+        )
+        return stack
+
+    with mock.patch.object(dispatch_policy, "immutable_review_source_authors", _READ_SOURCE_AUTHORS_FROM_GIT):
+        for label, submission in (
+            ("interior base", interior_base),
+            ("interior base, merge dropped", {k: v for k, v in interior_base.items() if k != "merge_commit"}),
+            # The base is a real `dev` tip, but not the one this merge was made on.
+            ("base of another merge", dict(genuine, source_base=merge_commit, merge_commit=merge_commit)),
+        ):
+            forged = dict(task, review_submission=submission)
+            reason = str(dispatch_policy.review_source_block_reason(cfg, forged, "Codex"))
+            assert "is not a commit origin/dev stood on" in reason or "pre-merge base" in reason, (label, reason)
+            with probes():
+                assert dispatch_engine.is_task_review_dispatch_eligible(cfg, forged, "Codex") is False, label
+                assert (
+                    supervisor.dispatch_priority_for_task(cfg, forged, "Codex", task_map={task_id: forged}) is None
+                ), label
+            issues = supervisor.task_assignment_integrity_issues(cfg, {}, forged)
+            assert any(issue.startswith("review_source_unresolved:") for issue in issues), (label, issues)
+        assert ("Claude",) not in [
+            authors for key, authors in dispatch_policy._IMMUTABLE_SOURCE_AUTHORS.items() if key[0] == str(repo)
+        ]
+
+        independent = dict(task, reviewer="Codex2", review_submission=genuine)
+        with probes():
+            assert dispatch_engine.is_task_review_dispatch_eligible(cfg, independent, "Codex") is False
+            assert dispatch_engine.is_task_review_dispatch_eligible(cfg, independent, "Codex2") is True
+            assert (
+                supervisor.dispatch_priority_for_task(cfg, independent, "Codex2", task_map={task_id: independent})
+                == 0
+            )
+
+
 def test_genuine_review_state_dispatches_reviewer() -> None:
     cfg = _base_test_config()
     task = {

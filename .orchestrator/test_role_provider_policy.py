@@ -17,6 +17,7 @@ import json
 import os
 import subprocess
 import sys
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -2243,6 +2244,74 @@ def test_normalizer_does_not_repair_a_review_whose_source_is_unknown() -> None:
         supervisor, "get_agent_reassignment_candidates", lambda *a, **k: ["Codex2", "Codex"]
     ):
         assert _run_repair(config, task, pin_author=True) == []
+
+
+def test_a_reassigned_reviewer_does_not_inherit_an_old_source_author_approval() -> None:
+    """Reopen, normalizer, restore: the approval is still the one its signer gave.
+
+    Codex wrote the range and Claude finalized it. An approval an older build
+    recorded -- signed by Codex, naming no signer -- survives the owner's
+    reopen together with the submission. The normalizer then replaces Codex
+    with independent Codex2, which is right for the next review, but Codex2
+    has signed nothing: restoring has to refuse before any write. Codex2
+    actually approving the same head, and the owner restoring that after a
+    spurious reopen, still works.
+    """
+    import ai_status
+
+    config = _pool_alias_config()
+    task = _finalized_by_claude(config, "Codex", status="review_approved", review_notes_zh=["舊核准"])
+    head = task["review_submission"]["remote_sha"]
+    task.update(approved_head=head, last_approved_head=head)
+    state = {"tasks": [task], "handoffs": [], "blockers": []}
+
+    def as_actor(actor: str) -> ExitStack:
+        # `_run_repair` stops every active patch when it returns, so each CLI
+        # step enters its own.
+        stack = ExitStack()
+        for patch in (
+            mock.patch.object(ai_status, "current_actor_validated", return_value=actor),
+            mock.patch.object(ai_status, "merged_orchestrator_config", return_value=config),
+            mock.patch.object(ai_status, "resolve_task_sha", return_value=head),
+            mock.patch.object(ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+            mock.patch.object(ai_status, "append_log"),
+            mock.patch.object(ai_status, "sync_all"),
+        ):
+            stack.enter_context(patch)
+        return stack
+
+    with as_actor("Claude"):
+        ai_status.command_reopen(state, [task["id"], "spurious downgrade"])
+    assert task["status"] == "in_progress"
+    assert task["last_approved_head"] == head and task["review_submission"]["remote_sha"] == head
+
+    changes = _run_repair(config, task, pin_author=True)
+    assert changes == [("Claude", "Codex2")], changes
+    task["reviewer"] = changes[0][1]
+
+    for signer, pattern in ((None, "does not record which reviewer signed it"), ("Codex", "is itself a source author")):
+        if signer:
+            task["last_approved_by"] = signer
+        before = json.loads(json.dumps(state))
+        with as_actor("Claude"), pytest.raises(SystemExit, match=pattern):
+            ai_status.command_restore_approved(state, [task["id"], "restore"])
+        assert state == before
+
+    # The genuine path: Codex2 signs the head itself, then a spurious reopen
+    # is restored on that signature.
+    task.pop("last_approved_by")
+    task["status"] = "review"
+    with as_actor("Codex2"):
+        ai_status.command_approve(state, [task["id"], "independent review"])
+    assert task["last_approved_by"] == "Codex2"
+    with as_actor("Claude"):
+        ai_status.command_reopen(state, [task["id"], "spurious downgrade"])
+    assert _run_repair(config, task, pin_author=True) == []
+    with as_actor("Claude"):
+        ai_status.command_restore_approved(state, [task["id"], "restore"])
+    assert task["status"] == "review_approved"
+    assert task["approved_head"] == head
+    assert task["owner"] == "Claude"
 
 
 def test_reviewer_failover_skips_the_author_pool_alias_for_a_finalized_branch() -> None:

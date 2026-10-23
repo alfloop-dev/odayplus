@@ -7646,6 +7646,8 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
     - actor is the owner
     - current status is in_progress
     - task has review_notes_zh (evidence of a prior approval)
+    - the reviewer who signed `last_approved_head` is recorded and still
+      independent of the submitted work
     """
     if len(args) < 2:
         raise SystemExit("Usage: restore_approved <task-id> <message>")
@@ -7716,11 +7718,22 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
         )
     # Restoring re-grants the earlier approval's authority, so that approval has
     # to pass what `approve` checks today: an approval a same-source reviewer
-    # signed, or one a human gate has since overtaken, is not restored.
+    # signed, or one a human gate has since overtaken, is not restored. It is
+    # judged by the reviewer who signed it -- assigning a different reviewer
+    # since does not make someone else's old signature independent -- and an
+    # approval that does not record its signer cannot be judged at all.
     gate_reason = task_unresolved_human_or_independent_gate_reason(task)
     if gate_reason:
         raise SystemExit(f"Cannot restore {task_id}: {gate_reason}. No restore was recorded.")
-    source_reason = review_source_independence_block_reason(task, reviewer, last_approved_head)
+    signer = canonical_agent_name(task.get("last_approved_by"))
+    if not signer:
+        raise SystemExit(
+            f"Cannot restore {task_id}: the approval of {last_approved_head[:8]} does not record "
+            "which reviewer signed it, so its independence cannot be checked. Run "
+            f"`re_review {task_id} <reason>` so an independent reviewer signs the head. "
+            "No restore was recorded."
+        )
+    source_reason = review_source_independence_block_reason(task, signer, last_approved_head)
     if source_reason:
         raise SystemExit(f"Cannot restore {task_id}: {source_reason}. No restore was recorded.")
 
@@ -7827,6 +7840,7 @@ def command_restore_approved_head(state: dict[str, Any], args: list[str]) -> Non
     timestamp = iso_now()
     task["approved_head"] = requested_sha
     task["last_approved_head"] = requested_sha
+    task["last_approved_by"] = actor
     task["last_update"] = timestamp
     task["next"] = message
     append_log(
@@ -8199,7 +8213,10 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
     # `last_approved_head` is the durable record of the last commit a reviewer
     # actually stamped: it is never popped, so `restore_approved` can re-freeze a
     # spurious supervisor downgrade without the owner getting to name the head.
+    # The reviewer who signed it is recorded with it: a restore re-grants that
+    # signature, not one from whoever is assigned to review later.
     task["last_approved_head"] = approved_sha
+    task["last_approved_by"] = actor
 
     review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
     if review_notes:

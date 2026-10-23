@@ -16720,7 +16720,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         """Positive control for the two refusals above: a genuinely spurious
         downgrade still recovers, and it recovers *with* the freeze intact."""
         approved = "1111111122222222333333334444444455555555"
-        state = self._restore_state(id="FREEZE-TEST-021C", last_approved_head=approved)
+        state = self._restore_state(id="FREEZE-TEST-021C", last_approved_head=approved, last_approved_by="Claude")
         task = ai_status.get_task(state, "FREEZE-TEST-021C")
         ai_status.clear_ai_status_caches()
         with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
