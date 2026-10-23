@@ -732,6 +732,64 @@ def test_real_fixture_installs_negative_on_same_opt_in_owner_recorder(tmp_path, 
             assert records[0]["sql"] == {} and records[0]["stages"] == {}
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("fail", [False, True])
+def test_real_fixture_observes_parser_admission_without_changing_outcome(
+    tmp_path, monkeypatch, enabled, fail,
+):
+    from modules.listing.application.native_intake_parser import NativeIntakeParserOwner
+    from modules.listing.application.native_intake_parser_policy import NativeParserConflict
+
+    recorder, records = _memory_recorder(tmp_path)
+    calls, constructions = [], []
+    result = object()
+    incoming = NativeParserConflict("do-not-record-parser-error")
+    arguments = tuple("do-not-record-" + name for name in ("tenant", "intake", "snapshot", "release"))
+
+    def construct(output, case):
+        constructions.append((output, case))
+        return recorder
+
+    def admit(self, tenant, intake_id, snapshot_id, release_id, *, expected_version):
+        calls.append((self, tenant, intake_id, snapshot_id, release_id, expected_version))
+        if fail:
+            raise incoming
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(diagnostics, "NativeCommandDiagnostics", construct)
+        patch.setattr(NativeIntakeParserOwner, "admit", admit)
+        if enabled:
+            patch.setenv("ODP_NATIVE_SQL_PROFILE", "1")
+        else:
+            patch.delenv("ODP_NATIVE_SQL_PROFILE", raising=False)
+        request = SimpleNamespace(
+            node=SimpleNamespace(nodeid="tests/integration/test_native_matching_case_command_postgresql.py::case"),
+            config=SimpleNamespace(rootpath=tmp_path),
+        )
+        fixture = diagnostics.native_command_diagnostics.__wrapped__(request, patch)
+        next(fixture)
+        owner = object.__new__(NativeIntakeParserOwner)
+        try:
+            if fail:
+                with pytest.raises(NativeParserConflict) as caught:
+                    owner.admit(*arguments, expected_version=43)
+                assert caught.value is incoming
+            else:
+                assert owner.admit(*arguments, expected_version=43) is result
+        finally:
+            with pytest.raises(StopIteration):
+                next(fixture)
+        assert calls == [(owner, *arguments, 43)]
+        assert len(constructions) == len(records) == int(enabled)
+        if enabled:
+            assert records[0]["operation"] == "NativeIntakeParserOwner.admit"
+            assert records[0]["sql"] == {} and records[0]["stages"] == {}
+            assert "do-not-record" not in json.dumps(records)
+            if fail:
+                assert records[0]["error_class"] == "NativeParserConflict"
+
+
 def test_shared_sql_and_stage_keep_both_scopes_with_one_factual_window(tmp_path, monkeypatch):
     outer, outer_records = _memory_recorder(tmp_path)
     inner, inner_records = _memory_recorder(tmp_path)

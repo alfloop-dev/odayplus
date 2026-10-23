@@ -441,6 +441,11 @@ def native_command_diagnostics(request, monkeypatch):
     from modules.listing.application.native_intake_assisted_entry_source import (
         NativeAssistedEntrySourceProof,
     )
+    from modules.listing.application.native_intake_parser import NativeIntakeParserOwner
+    from modules.listing.application.native_intake_parser_input import NativeParserManualInputReader
+    from modules.listing.application.native_intake_parser_prerequisites import (
+        NativeParserAdmissionPrerequisites,
+    )
     from modules.listing.application.native_intake_pending_commands import (
         NativeIntakeCommandBudget,
         NativeIntakePendingCommands,
@@ -460,6 +465,8 @@ def native_command_diagnostics(request, monkeypatch):
     for name in ("query", "query_one", "execute"):
         monkeypatch.setattr(PostgresEngine, name, recorder.sql(getattr(PostgresEngine, name)))
     for cls, name in [(NativeIntakeCommandBudget, "__call__"), (NativeIntakePendingCommands, "require_clear"),
+            (NativeParserAdmissionPrerequisites, "verify"), (NativeParserManualInputReader, "read"),
+            (NativeIntakeParserOwner, "_confirm"),
             (NativeAssistedEntrySourceProof, "parent"), (NativeIntakeSourcePolicyRecheckOwner, "_waiting"),
             (NativeIntakeSourcePolicyRecheckOwner, "_request_event"),
             (NativeIntakeSourcePolicyRecheckOwner, "_root_identity"),
@@ -468,6 +475,7 @@ def native_command_diagnostics(request, monkeypatch):
             (NativeIntakeRetrievalIO, "_finish")]:
         monkeypatch.setattr(cls, name, recorder.stage(getattr(cls, name), cls.__name__ + "." + name))
     for cls, name in [(NativeAssistedEntryRequestOwner, "request"), (NativeIntakeSourcePolicyRecheckOwner, "request"),
+            (NativeIntakeParserOwner, "admit"),
             (NativeIntakeSourcePolicyRecheckOwner, "admit_event"),
             (NativeIntakeIdentityOwner, "confirm_exact_case"),
             (NativeIntakeSourcePolicyRecheckOwner, "execute"), (NativeIntakeRetrievalOwner, "execute"),
