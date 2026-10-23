@@ -12,6 +12,7 @@ const OPERATOR_API_ROLES: Record<string, string> = {
   csLead: "operations_manager",
   supportLead: "operations_manager",
   "expansion-manager": "expansion_user,site_reviewer",
+  "expansion-staff": "expansion_user",
   expansionManager: "expansion_user,site_reviewer",
   "field-lead": "regional_supervisor",
   facilitiesLead: "regional_supervisor",

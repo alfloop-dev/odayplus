@@ -67,3 +67,55 @@ export function buildNetworkTabHref(
     : "";
   return `${pathname}${query ? `?${query}` : ""}${normalizedHash}`;
 }
+
+export const CANDIDATE_SELECTION_PARAM = "candidate";
+export const REVIEW_SELECTION_PARAM = "review";
+
+export function parseReviewSelection(params: { toString(): string }): { id: string | null; invalid: boolean } {
+  const values = new URLSearchParams(params.toString()).getAll(REVIEW_SELECTION_PARAM);
+  if (!values.length) return { id: null, invalid: false };
+  if (!values[0].trim() || values.some((value) => value !== values[0])) return { id: null, invalid: true };
+  return { id: values[0], invalid: false };
+}
+
+/** The exact workflow candidate is reloadable only within its read chain. */
+export function isCandidateWorkflowTab(tabIndex: number): boolean {
+  return tabIndex >= 2 && tabIndex <= 5;
+}
+
+export function candidateWorkflowNavigationParams(
+  tabIndex: number,
+  existing: { toString(): string },
+  currentCandidateId: string | null,
+  extraParams?: Record<string, string>,
+): URLSearchParams {
+  const explicitCandidate = extraParams?.[CANDIDATE_SELECTION_PARAM];
+  const candidateId = isCandidateWorkflowTab(tabIndex)
+    ? explicitCandidate || (extraParams?.zone ? null : currentCandidateId) : null;
+  const params = candidateId ? candidateNavigationParams(candidateId, existing) : new URLSearchParams(existing.toString());
+  params.delete(REVIEW_SELECTION_PARAM);
+  params.delete(CANDIDATE_SELECTION_PARAM);
+  params.delete("zone");
+  for (const [key, value] of Object.entries(extraParams ?? {})) params.set(key, value);
+  if (tabIndex !== 2 || candidateId) params.delete("zone");
+  if (candidateId) params.set(CANDIDATE_SELECTION_PARAM, candidateId);
+  else params.delete(CANDIDATE_SELECTION_PARAM);
+  return params;
+}
+
+export function parseCandidateSelection(params: { toString(): string }): { id: string | null; invalid: boolean } {
+  const values = new URLSearchParams(params.toString()).getAll(CANDIDATE_SELECTION_PARAM);
+  if (!values.length) return { id: null, invalid: false };
+  if (!values[0].trim() || values.some((value) => value !== values[0])) return { id: null, invalid: true };
+  return { id: values[0], invalid: false };
+}
+
+/** Candidate and intake selection have separate URL owners. */
+export function candidateNavigationParams(candidateId: string, existing: { toString(): string }): URLSearchParams {
+  const params = new URLSearchParams(existing.toString());
+  for (const key of ["zone", "selected", "dialog", "section", "field", "decision", "receipt", "compare", REVIEW_SELECTION_PARAM]) {
+    params.delete(key);
+  }
+  params.set(CANDIDATE_SELECTION_PARAM, candidateId);
+  return params;
+}

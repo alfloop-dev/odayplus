@@ -337,8 +337,22 @@ def test_production_avm_reloads_and_executes_real_oss_artifacts(
 
     import modules.avm.application.production as production_module
     from apps.api.oday_api import main as app_module
-    from shared.infrastructure.persistence import build_persistence
-    from tests.integration._authz import AVM_HEADERS
+    from apps.api.oday_api.security import dependencies
+    from modules.opsboard.auth import AuthBoundaryConfig, AuthenticationBoundary
+    from shared.domain.models import AddressLocation, Brand, Store, Tenant
+    from shared.infrastructure.persistence import (
+        DurableAVMRepository,
+        PostgresDocumentStore,
+        build_persistence,
+    )
+    from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
+    from tests.security.test_feature_flag_admin_authorization import (
+        ISSUER,
+        SIGNING_KEY,
+    )
+    from tests.security.test_feature_flag_admin_authorization import (
+        _headers as signed_headers,
+    )
 
     monkeypatch.delenv("ODP_AVM_ARTIFACT_SCHEMA_VERSION", raising=False)
     if artifact_schema == "valuation-view-v2":
@@ -365,11 +379,46 @@ def test_production_avm_reloads_and_executes_real_oss_artifacts(
     bundle = build_persistence(mode="postgresql")
     request.addfinalizer(bundle.engine.close)
     monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
-    repository = bundle.avm_repository
+    # The real Main now requires a signed current tenant owner even at the
+    # original /avm alias. Keep the real PG bundle/model bootstrap and supply
+    # its canonical master data, not a global document or a forged Principal.
+    tenant = bundle.tenant_repository.save_tenant(Tenant(tenant_name="Synthetic AVM OSS contract"))
+    tenant_id = tenant.tenant_id
+    brand = bundle.brand_repository.save_brand(Brand(
+        tenant_id=tenant_id, brand_code="avm-oss-contract", brand_name="Synthetic AVM OSS brand",
+    ))
+
+    def canonical_store(label):
+        address = bundle.address_location_repository.save_address(AddressLocation(
+            tenant_id=tenant_id, raw_address=f"Synthetic AVM OSS {label}",
+        ))
+        return bundle.store_repository.save_store(Store(
+            tenant_id=tenant_id, brand_id=brand.brand_id, address_id=address.address_id,
+            store_name=label, store_status="open", region_code="north", is_current=True,
+        )).store_id
+
+    boundary = AuthenticationBoundary(AuthBoundaryConfig(
+        issuer=ISSUER, audiences=frozenset({"unit-feature-api"}),
+        signing_keys={SIGNING_KEY.kid: SIGNING_KEY},
+        principal_mappings={
+            "fixture-worker": {"roles": ["finance_legal"], "scope": {
+                "tenant_id": tenant_id, "brand_ids": [brand.brand_id],
+                "region_ids": ["north"], "modules": ["avm", "operator_console"],
+            }},
+            "fixture-operator": {"roles": ["operations_manager", "expansion_user"], "scope": {
+                "tenant_id": tenant_id, "brand_ids": [brand.brand_id],
+                "region_ids": ["north"], "modules": ["avm", "operator_console"],
+            }},
+        },
+    ), audit_log=bundle.audit_log)
+    monkeypatch.setattr(dependencies, "default_boundary", lambda: boundary)
+    monkeypatch.setattr("apps.api.app.routes._native_request_owner.default_boundary", lambda: boundary)
+    repository = DurableAVMRepository(TenantScopedDocumentStore(PostgresDocumentStore(bundle.engine), tenant_id))
     app = app_module.create_app(avm_repository=repository, persistence=bundle)
     assert app.state.production_model_capabilities["avm"]["available"], app.state.production_model_capabilities["avm"]
     original_cost_input = {
         **_input(),
+        "store_id": canonical_store("native-bootstrap"),
         "equipment_depreciation_basis": "original_cost",
         "equipment_original_cost": 100_000.0,
         "useful_life_months": 84,
@@ -379,7 +428,7 @@ def test_production_avm_reloads_and_executes_real_oss_artifacts(
         "depreciation_effective_date": "2026-07-01",
     }
     case = AVMService(repository=repository).create_case(original_cost_input, created_by="fixture-finance", correlation_id="bootstrap-case")
-    client = TestClient(app, headers=AVM_HEADERS)
+    client = TestClient(app, headers=signed_headers("fixture-worker", correlation_id="bootstrap-value"))
     response = client.post(f"/avm/cases/{case.case_id}/value", json={"actor": "fixture-worker"})
     assert response.status_code == 200, response.text
     assert response.json()["feature_version"] == artifact_schema
@@ -396,15 +445,10 @@ def test_production_avm_reloads_and_executes_real_oss_artifacts(
 
     # The same production deployment controls must reach the tenant-scoped
     # Operator write path, including when Finance cutover evidence is absent.
-    from shared.infrastructure.persistence import DurableAVMRepository
-    from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
-    from tests.integration.test_operator_canonical_wiring import _headers
-
-    tenant_id = "rollback-tenant"
     operator_repository = DurableAVMRepository(TenantScopedDocumentStore(app.state.operator_document_store, tenant_id))
     historical_service = AVMService(repository=operator_repository, production_executor=executor, runtime_mode="production")
     historical_case = historical_service.create_case(
-        {**original_cost_input, "store_id": "issued-before-rollback"},
+        {**original_cost_input, "store_id": canonical_store("issued-before-rollback")},
         created_by="finance", correlation_id="historical-v1",
     )
     historical_report = historical_service.value(historical_case.case_id, actor="finance", correlation_id="historical-v1")
@@ -419,21 +463,28 @@ def test_production_avm_reloads_and_executes_real_oss_artifacts(
             payload["depreciation_version_pin"] = AVM_DEPRECIATION_VERSION
         monkeypatch.setenv("ODP_AVM_DEPRECIATION_ROLLBACK_RECEIPT_JSON", "{" if receipt_mode == "malformed" else json.dumps(payload))
         deployed_app = app_module.create_app(avm_repository=repository, persistence=bundle)
-        store_id = f"operator-rollback-{receipt_mode}"
+        store_id = canonical_store(f"operator-rollback-{receipt_mode}")
         data = {**original_cost_input, "store_id": store_id}
-        api_case = AVMService(repository=repository).create_case(data, created_by="finance", correlation_id=store_id)
+        # Both aliases now share this tenant partition. Distinct real stores
+        # keep the native and Operator cases unambiguous to the rebalance owner.
+        api_case = AVMService(repository=repository).create_case(
+            {**data, "store_id": canonical_store(f"native-rollback-{receipt_mode}")},
+            created_by="finance", correlation_id=store_id,
+        )
         operator_case = AVMService(repository=operator_repository).create_case(data, created_by="finance", correlation_id=store_id)
         with TestClient(deployed_app) as deployed_client:
             requested = deployed_client.post(
                 f"/api/v1/operator/network-rebalance/stores/{store_id}/avm/request",
-                headers=_headers(tenant_id, idempotency_key=f"request-{receipt_mode}"),
+                headers={**signed_headers("fixture-operator", correlation_id=f"request-{receipt_mode}"),
+                         "Idempotency-Key": f"request-{receipt_mode}"},
                 json={"actorRoleId": "operationsManager"},
             )
             assert requested.status_code == 200, requested.text
-            api_response = deployed_client.post(f"/avm/cases/{api_case.case_id}/value", headers=AVM_HEADERS, json={"actor": "fixture-worker"})
+            api_response = deployed_client.post(f"/avm/cases/{api_case.case_id}/value", headers=signed_headers("fixture-worker", correlation_id=f"native-value-{receipt_mode}"), json={"actor": "fixture-worker"})
             operator_response = deployed_client.post(
                 f"/api/v1/operator/network-rebalance/stores/{store_id}/avm/complete",
-                headers=_headers(tenant_id, idempotency_key=f"complete-{receipt_mode}"),
+                headers={**signed_headers("fixture-operator", correlation_id=f"complete-{receipt_mode}"),
+                         "Idempotency-Key": f"complete-{receipt_mode}"},
                 json={"actorRoleId": "operationsManager"},
             )
             if receipt_mode == "valid":

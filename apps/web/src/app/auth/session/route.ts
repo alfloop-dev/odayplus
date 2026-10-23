@@ -14,7 +14,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const session = await readWebSession(
     request.cookies.get(webSessionCookieName)?.value,
   ).catch(() => null);
-  if (!session) {
+  if (
+    !session ||
+    typeof session.accountId !== "string" ||
+    session.accountId.trim().length === 0
+  ) {
     return NextResponse.json(
       {
         error: {
@@ -27,7 +31,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   const response = NextResponse.json(
-    { subject: session.subject, expiresAt: session.expiresAt },
+    { subject: session.accountId, expiresAt: session.expiresAt },
     { headers: { "cache-control": "no-store" } },
   );
   if (session.legacyUpgrade) {

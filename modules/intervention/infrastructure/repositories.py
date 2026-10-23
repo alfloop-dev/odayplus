@@ -14,6 +14,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
+from modules.intervention.application.approval_contract import require_positive_intervention_version
 from modules.intervention.domain.lifecycle import (
     ACTIVE_INTERVENTION_STATUSES,
     Intervention,
@@ -61,6 +62,43 @@ class InMemoryInterventionRepository:
                 )
             self._by_id[intervention.intervention_id] = intervention
             return intervention
+
+    def save_expected(
+        self, intervention: Intervention, *, expected_version: int, expected_status: InterventionStatus
+    ) -> Intervention:
+        if type(expected_version) is not int or expected_version < 1:
+            raise InterventionError("stale update: expected version must be a positive integer")
+        with self.atomic():
+            current = self.get(intervention.intervention_id)
+            if current is not None:
+                require_positive_intervention_version(current.version)
+            require_positive_intervention_version(intervention.version)
+            if (current is None or current.version != expected_version
+                    or current.status != expected_status
+                    or intervention.version != expected_version + 1
+                    or intervention.store_id != current.store_id
+                    or intervention.created_by != current.created_by):
+                raise InterventionError("stale update: approval snapshot changed")
+            return self.save(intervention)
+
+    def save_transition(self, intervention: Intervention, *, transition) -> Intervention:
+        from modules.intervention.application.lifecycle_command_contract import (
+            validate_native_transition,
+        )
+        from shared.api.idempotency import request_fingerprint
+        with self.atomic():
+            current = self.get(intervention.intervention_id)
+            if current is None or request_fingerprint(current.to_dict()) != request_fingerprint(transition.original.to_dict()):
+                raise InterventionError("stale update: lifecycle snapshot changed")
+            validate_native_transition(transition.original, intervention, command=transition.command,
+                actor=transition.actor_subject_id, correlation_id=transition.correlation_id)
+            return self.save(intervention)
+
+    def create_if_absent(self, intervention: Intervention) -> Intervention:
+        with self.atomic():
+            if self.get(intervention.intervention_id) is not None:
+                raise InterventionError("stale update: linked intervention already exists")
+            return self.save(intervention)
 
     @contextmanager
     def atomic(self) -> Iterator[None]:

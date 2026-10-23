@@ -48,6 +48,66 @@
       "task_id": "ODP-AVM-QUALITY-NULLABLE-001",
       "reason": "AVM ValuationInput.quality_score was changed from float = 1.0 (defaulting to perfect score on absent) to nullable float | None = None fail-closed across API, domain, DB, client, and valuation card.",
       "migration": "Callers can explicitly supply a measured quality_score or omit / send null to represent unmeasured quality, which will not fabricate a perfect quality valuation card."
+    },
+    {
+      "signature": "request.type:POST /api/v1/interventions/{intervention_id}/approve:actor",
+      "task_id": "ODP-SYS-ACCEPT-261011",
+      "reason": "The previously required string actor contract is widened to optional/nullable to reflect the already admitted strict approval protocol: authority comes from the current authenticated Principal; a supplied legacy actor conveys no authority. Existing string callers remain accepted subject to the existing strict context guards.",
+      "migration": "Strict callers authenticate and send the existing expected_version, If-Match, If-Actor-Match, expectedActorSubjectId, expectedTenantId, review_context, Idempotency-Key and X-Correlation-ID; actor may be omitted and a supplied actor is ignored for authority. Ordinary compatibility callers must retain a required nonblank actor."
+    },
+    {
+      "signature": "request.required:POST /api/v1/admin/feature-flags:reason",
+      "task_id": "ODP-SYS-ACCEPT-261011",
+      "reason": "Feature-flag administration requires an explicit operational reason and separate risk confirmation before every actual mutation. Required proof is now declared in the generated schema and the coordinated existing UI sends it; missing evidence must not silently mutate a high-risk flag.",
+      "migration": "Authenticate with the existing authorized principal and send JSON reason (trimmed, nonempty) plus riskAcknowledged: true. Keep the existing key/owner/high_risk/expires_on registration fields. The existing operator UI is migrated in the same increment. Confirmation does not replace two distinct authenticated approvers; production clients must not invent approver/approvals names. Bodyless or empty-object commands now return 422; migrate API clients before enabling this release."
+    },
+    {
+      "signature": "request.required:POST /api/v1/admin/feature-flags:riskAcknowledged",
+      "task_id": "ODP-SYS-ACCEPT-261011",
+      "reason": "Feature-flag administration requires an explicit operational reason and separate risk confirmation before every actual mutation. Required proof is now declared in the generated schema and the coordinated existing UI sends it; missing evidence must not silently mutate a high-risk flag.",
+      "migration": "Authenticate with the existing authorized principal and send JSON reason (trimmed, nonempty) plus riskAcknowledged: true. Keep the existing key/owner/high_risk/expires_on registration fields. The existing operator UI is migrated in the same increment. Confirmation does not replace two distinct authenticated approvers; production clients must not invent approver/approvals names. Bodyless or empty-object commands now return 422; migrate API clients before enabling this release."
+    },
+    {
+      "signature": "request.required:POST /api/v1/admin/feature-flags/{key}/approve:reason",
+      "task_id": "ODP-SYS-ACCEPT-261011",
+      "reason": "Feature-flag administration requires an explicit operational reason and separate risk confirmation before every actual mutation. Required proof is now declared in the generated schema and the coordinated existing UI sends it; missing evidence must not silently mutate a high-risk flag.",
+      "migration": "Authenticate with the existing authorized principal and send JSON reason (trimmed, nonempty; at least 10 characters for approval) plus riskAcknowledged: true. The existing operator UI is migrated in the same increment. Confirmation does not replace two distinct authenticated approvers; production clients must not invent approver/approvals names. Bodyless or empty-object commands now return 422; migrate API clients before enabling this release."
+    },
+    {
+      "signature": "request.required:POST /api/v1/admin/feature-flags/{key}/approve:riskAcknowledged",
+      "task_id": "ODP-SYS-ACCEPT-261011",
+      "reason": "Feature-flag administration requires an explicit operational reason and separate risk confirmation before every actual mutation. Required proof is now declared in the generated schema and the coordinated existing UI sends it; missing evidence must not silently mutate a high-risk flag.",
+      "migration": "Authenticate with the existing authorized principal and send JSON reason (trimmed, nonempty; at least 10 characters for approval) plus riskAcknowledged: true. The existing operator UI is migrated in the same increment. Confirmation does not replace two distinct authenticated approvers; production clients must not invent approver/approvals names. Bodyless or empty-object commands now return 422; migrate API clients before enabling this release."
+    },
+    {
+      "signature": "request.type:POST /api/v1/admin/feature-flags/{key}/approve:approver",
+      "task_id": "ODP-SYS-ACCEPT-261011",
+      "reason": "The production approval actor is the authenticated principal. Nullable optional approver documents that clients should omit this legacy display/POC field; the conservative contract classifier treats this widening as a type break. Supplying names still grants no production authority.",
+      "migration": "Production clients omit approver, authenticate normally, and send the required reason/riskAcknowledged proof. Explicit nonproduction POC callers may retain their existing approver string; null/omitted never fabricates a second independent approval."
+    },
+    {
+      "signature": "request.required:POST /api/v1/admin/feature-flags/{key}/disable:reason",
+      "task_id": "ODP-SYS-ACCEPT-261011",
+      "reason": "Feature-flag administration requires an explicit operational reason and separate risk confirmation before every actual mutation. Required proof is now declared in the generated schema and the coordinated existing UI sends it; missing evidence must not silently mutate a high-risk flag.",
+      "migration": "Authenticate with the existing authorized principal and send JSON reason (trimmed, nonempty) plus riskAcknowledged: true. The existing operator UI is migrated in the same increment. Confirmation does not replace two distinct authenticated approvers; production clients must not invent approver/approvals names. Bodyless or empty-object commands now return 422; migrate API clients before enabling this release."
+    },
+    {
+      "signature": "request.required:POST /api/v1/admin/feature-flags/{key}/disable:riskAcknowledged",
+      "task_id": "ODP-SYS-ACCEPT-261011",
+      "reason": "Feature-flag administration requires an explicit operational reason and separate risk confirmation before every actual mutation. Required proof is now declared in the generated schema and the coordinated existing UI sends it; missing evidence must not silently mutate a high-risk flag.",
+      "migration": "Authenticate with the existing authorized principal and send JSON reason (trimmed, nonempty) plus riskAcknowledged: true. The existing operator UI is migrated in the same increment. Confirmation does not replace two distinct authenticated approvers; production clients must not invent approver/approvals names. Bodyless or empty-object commands now return 422; migrate API clients before enabling this release."
+    },
+    {
+      "signature": "request.required:POST /api/v1/admin/feature-flags/{key}/enable:reason",
+      "task_id": "ODP-SYS-ACCEPT-261011",
+      "reason": "Feature-flag administration requires an explicit operational reason and separate risk confirmation before every actual mutation. Required proof is now declared in the generated schema and the coordinated existing UI sends it; missing evidence must not silently mutate a high-risk flag.",
+      "migration": "Authenticate with the existing authorized principal and send JSON reason (trimmed, nonempty) plus riskAcknowledged: true. The existing operator UI is migrated in the same increment. Confirmation does not replace two distinct authenticated approvers; production clients must not invent approver/approvals names. Bodyless or empty-object commands now return 422; migrate API clients before enabling this release."
+    },
+    {
+      "signature": "request.required:POST /api/v1/admin/feature-flags/{key}/enable:riskAcknowledged",
+      "task_id": "ODP-SYS-ACCEPT-261011",
+      "reason": "Feature-flag administration requires an explicit operational reason and separate risk confirmation before every actual mutation. Required proof is now declared in the generated schema and the coordinated existing UI sends it; missing evidence must not silently mutate a high-risk flag.",
+      "migration": "Authenticate with the existing authorized principal and send JSON reason (trimmed, nonempty) plus riskAcknowledged: true. The existing operator UI is migrated in the same increment. Confirmation does not replace two distinct authenticated approvers; production clients must not invent approver/approvals names. Bodyless or empty-object commands now return 422; migrate API clients before enabling this release."
     }
   ]
 }

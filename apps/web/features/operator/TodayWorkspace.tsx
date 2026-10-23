@@ -1,472 +1,94 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { StatusBadge, type Tone } from "./components";
-import type { WorkspaceId } from "./navigation";
+import { StatusBadge } from "./components";
+import { STORE_OPS_STATUS_LABELS } from "./storeOpsViewModel";
+import type { OperatorShellEnvelope, ShellAuditEvent, ShellTarget } from "./shellEnvelope";
 import styles from "./operator.module.css";
 
-export type ShellTarget = {
-  entityId?: string;
-  tab?: string;
-  workspace: WorkspaceId;
-};
+// Preserve the existing public imports while keeping Console's data boundary pure.
+export { normalizeShellEnvelope } from "./shellEnvelope";
+export type { ShellTarget, ShellRole, ShellWorkspace, ShellMetric, ShellQueueItem, ShellDecision, ShellRiskRow, ShellAuditEvent, ShellNotification, ShellSearchItem, ShellCounts, OperatorShellEnvelope } from "./shellEnvelope";
 
-export type ShellRole = {
-  id: string;
-  label: string;
-  subtitle: string;
-  allowedWorkspaces: WorkspaceId[];
-  heroName?: string;
-};
+const auditTimeFormat = new Intl.DateTimeFormat("zh-TW", {
+  timeZone: "Asia/Taipei",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
 
-export type ShellWorkspace = {
-  id: WorkspaceId;
-  label: string;
-  shortLabel: string;
-  description: string;
-  allowed?: boolean;
-};
-
-export type ShellMetric = {
-  label: string;
-  value: string;
-  delta?: string;
-  meta?: string;
-  tone?: Tone;
-};
-
-export type ShellQueueItem = {
-  id: string;
-  title: string;
-  description?: string;
-  meta: string;
-  owner: string;
-  status: string;
-  time: string;
-  tone?: Tone;
-  workspace: WorkspaceId;
-  target: ShellTarget;
-};
-
-export type ShellDecision = {
-  id: string;
-  title: string;
-  meta: string;
-  status: string;
-  cta: string;
-  tone?: Tone;
-  target: ShellTarget;
-};
-
-export type ShellRiskRow = {
-  label: string;
-  score: number;
-  signal: string;
-  tone?: Tone;
-};
-
-export type ShellAuditEvent = {
-  actor: string;
-  category: string;
-  detail: string;
-  time: string;
-};
-
-export type ShellNotification = {
-  id?: string;
-  title: string;
-  detail: string;
-  tone?: Tone;
-  target?: ShellTarget;
-};
-
-export type ShellSearchItem = {
-  id: string;
-  entityId: string;
-  label: string;
-  description: string;
-  keywords?: string;
-  target: ShellTarget;
-};
-
-export type ShellCounts = {
-  notifications: number;
-  approvals: number;
-  taskCenter: number;
-  critical: number;
-  search: number;
-};
-
-export type OperatorShellEnvelope = {
-  meta: {
-    generatedAt?: string;
-    correlationId?: string | null;
-    role: ShellRole;
-    counts: ShellCounts;
-    source?: string;
-  };
-  navigation: {
-    roles: ShellRole[];
-    workspaces: ShellWorkspace[];
-    allowedWorkspaces: WorkspaceId[];
-    allowedTabs?: { network: string[] };
-  };
-  header: {
-    counts: ShellCounts;
-    taskCenter?: { label: string; count: number };
-  };
-  today: {
-    hero: {
-      name: string;
-      roleLabel: string;
-      scope: string;
-      dateLabel: string;
-    };
-    kpis: ShellMetric[];
-    queue: ShellQueueItem[];
-    decisions: ShellDecision[];
-    riskRows: ShellRiskRow[];
-    auditFeed: ShellAuditEvent[];
-  };
-  search: {
-    items: ShellSearchItem[];
-    count: number;
-  };
-  notifications: ShellNotification[];
-  approvals: ShellDecision[];
-  workQueue: ShellQueueItem[];
-  kpis: ShellMetric[];
-  decisions: ShellDecision[];
-  riskRows: ShellRiskRow[];
-  auditFeed: ShellAuditEvent[];
-};
-
-const fallbackEnvelope: OperatorShellEnvelope = {
-  meta: {
-    role: {
-      id: "ops-lead",
-      label: "營運主管",
-      subtitle: "全域監控、跨域指派與核准",
-      allowedWorkspaces: ["today", "store", "growth", "network", "govern"],
-      heroName: "林承翰",
-    },
-    counts: {
-      approvals: 0,
-      critical: 0,
-      notifications: 0,
-      search: 0,
-      taskCenter: 0,
-    },
-    source: "fallback",
-  },
-  navigation: {
-    allowedWorkspaces: ["today", "store", "growth", "network", "govern"],
-    roles: [],
-    workspaces: [],
-  },
-  header: {
-    counts: {
-      approvals: 0,
-      critical: 0,
-      notifications: 0,
-      search: 0,
-      taskCenter: 0,
-    },
-  },
-  today: {
-    hero: {
-      dateLabel: "2026/07/05 ・週日",
-      name: "林承翰",
-      roleLabel: "營運主管",
-      scope: "全品牌・12 門市・北北桃",
-    },
-    auditFeed: [],
-    decisions: [],
-    kpis: [],
-    queue: [],
-    riskRows: [],
-  },
-  approvals: [],
-  auditFeed: [],
-  decisions: [],
-  kpis: [],
-  notifications: [],
-  riskRows: [],
-  search: { count: 0, items: [] },
-  workQueue: [],
-};
-
-const emptyEnvelope: OperatorShellEnvelope = {
-  meta: {
-    role: {
-      id: "",
-      label: "",
-      subtitle: "",
-      allowedWorkspaces: [],
-    },
-    counts: {
-      approvals: 0,
-      critical: 0,
-      notifications: 0,
-      search: 0,
-      taskCenter: 0,
-    },
-  },
-  navigation: {
-    allowedWorkspaces: [],
-    roles: [],
-    workspaces: [],
-  },
-  header: {
-    counts: {
-      approvals: 0,
-      critical: 0,
-      notifications: 0,
-      search: 0,
-      taskCenter: 0,
-    },
-  },
-  today: {
-    hero: {
-      dateLabel: "",
-      name: "",
-      roleLabel: "",
-      scope: "",
-    },
-    auditFeed: [],
-    decisions: [],
-    kpis: [],
-    queue: [],
-    riskRows: [],
-  },
-  approvals: [],
-  auditFeed: [],
-  decisions: [],
-  kpis: [],
-  notifications: [],
-  riskRows: [],
-  search: { count: 0, items: [] },
-  workQueue: [],
-};
-
-function isObject(value: unknown): value is Record<string, any> {
-  return typeof value === "object" && value !== null;
+function auditTimeLabel(value: string): string {
+  // Package 10's activity rail uses a compact clock label. Live audit records
+  // carry ISO instants; preserve those instants on <time> rather than allowing
+  // an unbounded timestamp column to squeeze the event into a vertical strip.
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(value)) return value;
+  const instant = new Date(value);
+  return Number.isNaN(instant.getTime()) ? value : auditTimeFormat.format(instant);
 }
 
-function normalizeTarget(value: unknown, fallbackWorkspace: WorkspaceId = "today"): ShellTarget {
-  if (!isObject(value)) return { workspace: fallbackWorkspace };
-  const workspace = typeof value.workspace === "string" ? (value.workspace as WorkspaceId) : fallbackWorkspace;
-  return {
-    entityId: typeof value.entityId === "string" ? value.entityId : undefined,
-    tab: typeof value.tab === "string" ? value.tab : undefined,
-    workspace,
-  };
+const interventionStatusLabels: Record<string, string> = {
+  CANDIDATE: "候選", ELIGIBILITY_CHECKING: "適用性檢查中", ELIGIBLE: "符合適用條件",
+  INELIGIBLE: "不符適用條件", ACTION_PROPOSED: "已提出處置", CONFLICT_CHECKING: "衝突檢查中",
+  PENDING_APPROVAL: "待核准", APPROVED: "已核准", REJECTED: "已駁回", EXECUTING: "執行中",
+  OBSERVING: "觀察中", EVALUATING: "評估中", COMPLETED: "已完成", CLOSED: "已結束",
+  STOPPED: "已停止", ROLLED_BACK: "已回復",
+};
+
+const interventionKindLabels: Record<string, string> = {
+  PRICE_CHANGE: "價格調整", AD_CAMPAIGN: "廣告活動", PROMOTION: "促銷活動", CRM_RECALL: "顧客回流",
+  MAINTENANCE: "設備維護", CLEANING: "清潔", OPENING_CAMPAIGN: "開幕活動", EXTERNAL_SHOCK: "外部衝擊",
+};
+
+function statusLabel(value: string): string {
+  if (Object.hasOwn(STORE_OPS_STATUS_LABELS, value)) return STORE_OPS_STATUS_LABELS[value as keyof typeof STORE_OPS_STATUS_LABELS];
+  return Object.hasOwn(interventionStatusLabels, value) ? interventionStatusLabels[value] : value;
 }
 
-function normalizeRole(
-  value: unknown,
-  fallbackRole: ShellRole = fallbackEnvelope.meta.role,
-): ShellRole {
-  if (!isObject(value)) return fallbackRole;
-  return {
-    allowedWorkspaces: Array.isArray(value.allowedWorkspaces)
-      ? (value.allowedWorkspaces.filter((item: unknown) => typeof item === "string") as WorkspaceId[])
-      : fallbackRole.allowedWorkspaces,
-    heroName: typeof value.heroName === "string" ? value.heroName : undefined,
-    id: typeof value.id === "string" ? value.id : fallbackRole.id,
-    label: typeof value.label === "string" ? value.label : fallbackRole.label,
-    subtitle: typeof value.subtitle === "string" ? value.subtitle : "",
-  };
+function interventionLabel(value: string): string {
+  const kind = /^(\w+) intervention$/.exec(value)?.[1];
+  return kind && Object.hasOwn(interventionKindLabels, kind) ? `${interventionKindLabels[kind]}干預` : value;
 }
 
-function normalizeMetric(value: unknown): ShellMetric | null {
-  if (!isObject(value) || typeof value.label !== "string") return null;
-  return {
-    delta: typeof value.delta === "string" ? value.delta : undefined,
-    label: value.label,
-    meta: typeof value.meta === "string" ? value.meta : undefined,
-    tone: typeof value.tone === "string" ? (value.tone as Tone) : "neutral",
-    value: String(value.value ?? ""),
-  };
+function subjectLabel(value: string): string {
+  // A subject identifier is not a person's display name. Keep the full ID in
+  // the title while making the queue and activity rail readable.
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+    ? `帳號 ${value.slice(0, 4)}…${value.slice(-4)}` : value;
 }
 
-function normalizeQueueItem(value: unknown): ShellQueueItem | null {
-  if (!isObject(value) || typeof value.id !== "string" || typeof value.title !== "string") return null;
-  const workspace = typeof value.workspace === "string" ? (value.workspace as WorkspaceId) : "today";
-  return {
-    description: typeof value.description === "string" ? value.description : undefined,
-    id: value.id,
-    meta: typeof value.meta === "string" ? value.meta : "",
-    owner: typeof value.owner === "string" ? value.owner : "",
-    status: typeof value.status === "string" ? value.status : "",
-    target: normalizeTarget(value.target, workspace),
-    time: typeof value.time === "string" ? value.time : "",
-    title: value.title,
-    tone: typeof value.tone === "string" ? (value.tone as Tone) : "neutral",
-    workspace,
-  };
+function queueTimeLabel(value: string): string {
+  // Preserve the source offset; this display does not choose a business timezone
+  // or recompute an SLA from an unrelated created-at field.
+  const parts = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):\d{2}(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/.exec(value);
+  if (!parts || Number.isNaN(new Date(value).getTime())) return value;
+  const zone = parts[6] === "Z" || parts[6] === "+00:00" ? "UTC" : `UTC${parts[6]}`;
+  return `${parts[2]}/${parts[3]} ${parts[4]}:${parts[5]} ${zone}`;
 }
 
-function normalizeDecision(value: unknown): ShellDecision | null {
-  if (!isObject(value) || typeof value.id !== "string" || typeof value.title !== "string") return null;
-  return {
-    cta: typeof value.cta === "string" ? value.cta : "Open",
-    id: value.id,
-    meta: typeof value.meta === "string" ? value.meta : "",
-    status: typeof value.status === "string" ? value.status : "",
-    target: normalizeTarget(value.target, "govern"),
-    title: value.title,
-    tone: typeof value.tone === "string" ? (value.tone as Tone) : "neutral",
-  };
+function auditCategoryLabel(value: string): string {
+  if (value === "security.authorization") return "權限檢查";
+  return value === "security.authentication" ? "身分驗證" : value;
 }
 
-function normalizeRisk(value: unknown): ShellRiskRow | null {
-  if (!isObject(value) || typeof value.label !== "string") return null;
-  return {
-    label: value.label,
-    score: Number(value.score ?? 0),
-    signal: typeof value.signal === "string" ? value.signal : "",
-    tone: typeof value.tone === "string" ? (value.tone as Tone) : "neutral",
-  };
-}
-
-function normalizeAudit(value: unknown): ShellAuditEvent | null {
-  if (!isObject(value) || typeof value.detail !== "string") return null;
-  return {
-    actor: typeof value.actor === "string" ? value.actor : "system",
-    category: typeof value.category === "string" ? value.category : "Audit",
-    detail: value.detail,
-    time: typeof value.time === "string" ? value.time : "",
-  };
-}
-
-function normalizeNotification(value: unknown): ShellNotification | null {
-  if (!isObject(value) || typeof value.title !== "string") return null;
-  return {
-    detail: typeof value.detail === "string" ? value.detail : "",
-    id: typeof value.id === "string" ? value.id : value.title,
-    target: isObject(value.target) ? normalizeTarget(value.target) : undefined,
-    title: value.title,
-    tone: typeof value.tone === "string" ? (value.tone as Tone) : "neutral",
-  };
-}
-
-function normalizeSearch(value: unknown): ShellSearchItem | null {
-  if (!isObject(value) || typeof value.id !== "string" || typeof value.label !== "string") return null;
-  return {
-    description: typeof value.description === "string" ? value.description : "",
-    entityId: typeof value.entityId === "string" ? value.entityId : value.id,
-    id: value.id,
-    keywords: typeof value.keywords === "string" ? value.keywords : undefined,
-    label: value.label,
-    target: normalizeTarget(value.target),
-  };
-}
-
-function normalizeList<T>(value: unknown, normalizer: (item: unknown) => T | null): T[] {
-  if (!Array.isArray(value)) return [];
-  return value.map(normalizer).filter((item): item is T => item !== null);
-}
-
-export function normalizeShellEnvelope(
-  payload?: unknown,
-  options: { allowFixtureFallback?: boolean } = {},
-): OperatorShellEnvelope {
-  const baseEnvelope =
-    options.allowFixtureFallback === false ? emptyEnvelope : fallbackEnvelope;
-  if (!isObject(payload)) return baseEnvelope;
-  const role = normalizeRole(
-    isObject(payload.meta) ? payload.meta.role : undefined,
-    baseEnvelope.meta.role,
-  );
-  const counts = isObject(payload.meta) && isObject(payload.meta.counts) ? payload.meta.counts : {};
-  const today = isObject(payload.today) ? payload.today : {};
-  const navigation = isObject(payload.navigation) ? payload.navigation : {};
-  const header = isObject(payload.header) ? payload.header : {};
-  const headerCounts = isObject(header.counts) ? header.counts : counts;
-  const kpis = normalizeList(today.kpis ?? payload.kpis, normalizeMetric);
-  const queue = normalizeList(today.queue ?? payload.workQueue, normalizeQueueItem);
-  const decisions = normalizeList(today.decisions ?? payload.decisions, normalizeDecision);
-  const riskRows = normalizeList(today.riskRows ?? payload.riskRows, normalizeRisk);
-  const auditFeed = normalizeList(today.auditFeed ?? payload.auditFeed, normalizeAudit);
-  const notifications = normalizeList(payload.notifications, normalizeNotification);
-  const searchItems = normalizeList(isObject(payload.search) ? payload.search.items : [], normalizeSearch);
-  const normalizedCounts = {
-    approvals: Number(headerCounts.approvals ?? counts.approvals ?? decisions.length),
-    critical: Number(headerCounts.critical ?? counts.critical ?? queue.filter((item) => item.tone === "danger").length),
-    notifications: Number(headerCounts.notifications ?? counts.notifications ?? notifications.length),
-    search: Number(headerCounts.search ?? counts.search ?? searchItems.length),
-    taskCenter: Number(headerCounts.taskCenter ?? counts.taskCenter ?? queue.length),
-  };
-
-  return {
-    approvals: decisions,
-    auditFeed,
-    decisions,
-    header: {
-      counts: normalizedCounts,
-      taskCenter: isObject(header.taskCenter)
-        ? { count: Number(header.taskCenter.count ?? normalizedCounts.taskCenter), label: String(header.taskCenter.label ?? "Task Center") }
-        : { count: normalizedCounts.taskCenter, label: "Task Center" },
-    },
-    kpis,
-    meta: {
-      correlationId: isObject(payload.meta) && typeof payload.meta.correlationId === "string" ? payload.meta.correlationId : null,
-      counts: normalizedCounts,
-      generatedAt: isObject(payload.meta) && typeof payload.meta.generatedAt === "string" ? payload.meta.generatedAt : undefined,
-      role,
-      source: isObject(payload.meta) && typeof payload.meta.source === "string" ? payload.meta.source : undefined,
-    },
-    navigation: {
-      allowedTabs: {
-        network: isObject(navigation.allowedTabs) && Array.isArray(navigation.allowedTabs.network)
-          ? navigation.allowedTabs.network.filter((tab: unknown): tab is string => typeof tab === "string")
-          : [],
-      },
-      allowedWorkspaces: Array.isArray(navigation.allowedWorkspaces)
-        ? (navigation.allowedWorkspaces.filter((item: unknown) => typeof item === "string") as WorkspaceId[])
-        : role.allowedWorkspaces,
-      roles: normalizeList(navigation.roles, (item) =>
-        normalizeRole(item, baseEnvelope.meta.role),
-      ),
-      workspaces: normalizeList(navigation.workspaces, (item) => {
-        if (!isObject(item) || typeof item.id !== "string") return null;
-        return {
-          allowed: typeof item.allowed === "boolean" ? item.allowed : role.allowedWorkspaces.includes(item.id as WorkspaceId),
-          description: typeof item.description === "string" ? item.description : "",
-          id: item.id as WorkspaceId,
-          label: typeof item.label === "string" ? item.label : item.id,
-          shortLabel: typeof item.shortLabel === "string" ? item.shortLabel : item.id,
-        };
-      }),
-    },
-    notifications,
-    riskRows,
-    search: { count: searchItems.length, items: searchItems },
-    today: {
-      auditFeed,
-      decisions,
-      hero: {
-        dateLabel: isObject(today.hero) && typeof today.hero.dateLabel === "string" ? today.hero.dateLabel : baseEnvelope.today.hero.dateLabel,
-        name: isObject(today.hero) && typeof today.hero.name === "string" ? today.hero.name : role.heroName ?? baseEnvelope.today.hero.name,
-        roleLabel: isObject(today.hero) && typeof today.hero.roleLabel === "string" ? today.hero.roleLabel : role.label,
-        scope: isObject(today.hero) && typeof today.hero.scope === "string" ? today.hero.scope : baseEnvelope.today.hero.scope,
-      },
-      kpis,
-      queue,
-      riskRows,
-    },
-    workQueue: queue,
-  };
+function auditDetailLabel(event: ShellAuditEvent): string {
+  // Authorization to approve is not a completed business approval. Only map
+  // these exact security-event forms, retaining every original value in title.
+  if (event.category === "security.authentication" && event.detail === "authenticate auth/local: success") return "本機登入驗證成功";
+  if (event.category !== "security.authorization") return event.detail;
+  const parts = /^(view|approve) (operator_console|intervention(?:\/[^: ]+)?): (allow|deny)$/.exec(event.detail);
+  if (!parts) return event.detail;
+  const action = parts[1] === "approve" ? "核准" : "檢視";
+  const resource = parts[2] === "operator_console" ? "營運工作台" : "干預";
+  return `${resource}${action}權限：${parts[3] === "allow" ? "允許" : "拒絕"}`;
 }
 
 export function TodayWorkspace({
   envelope,
-  onApprovalDecision,
   onTargetSelect,
 }: {
   envelope: OperatorShellEnvelope;
-  onApprovalDecision: (approvalId: string, status: "approved" | "rejected" | "returned", payload: Record<string, string>) => void;
+  /** Compatibility for callers; Home decisions always enter the full owner review. */
+  onApprovalDecision?: (approvalId: string, status: "approved" | "rejected" | "returned", payload: Record<string, string>) => void;
   onTargetSelect: (target: ShellTarget, label: string) => void;
 }) {
   const today = envelope.today;
@@ -503,7 +125,7 @@ export function TodayWorkspace({
       >
         {today.kpis.length ? (
           today.kpis.map((metric) => (
-            <article className={styles.todayKpiCard} data-tone={metric.tone ?? "neutral"} key={metric.label}>
+            <article className={styles.todayKpiCard} data-tone={metric.tone ?? "neutral"} data-availability={metric.availability} key={metric.label}>
               <span className={styles.todayKpiLabel}>
                 <i aria-hidden="true" />
                 {metric.label}
@@ -550,7 +172,7 @@ export function TodayWorkspace({
                     <span className={styles.todayQueueMain}>
                       <span className={styles.todayQueueTitle}>
                         <small>{item.id}</small>
-                        <strong>{item.title}</strong>
+                        <strong title={item.title}>{interventionLabel(item.title)}</strong>
                       </span>
                       <span className={styles.todayQueueContext}>
                         {item.description ? <span>{item.description}</span> : null}
@@ -558,12 +180,12 @@ export function TodayWorkspace({
                       </span>
                     </span>
                     <span className={styles.todayQueueState}>
-                      {item.status ? <StatusBadge tone={item.tone}>{item.status}</StatusBadge> : null}
-                      {item.time ? <time>{item.time}</time> : null}
+                      {item.status ? <StatusBadge tone={item.tone}>{statusLabel(item.status)}</StatusBadge> : null}
+                      {item.time ? <time dateTime={queueTimeLabel(item.time) === item.time ? undefined : item.time} title={item.time}>{queueTimeLabel(item.time)}</time> : null}
                     </span>
                     <span className={styles.todayQueueOwner}>
                       <small>Owner</small>
-                      <strong>{item.owner || "未指派"}</strong>
+                      <strong title={item.owner}>{subjectLabel(item.owner) || "未指派"}</strong>
                     </span>
                     <span className={styles.todayQueueCta}>前往處理 →</span>
                   </button>
@@ -598,21 +220,15 @@ export function TodayWorkspace({
                       type="button"
                     >
                       <span className={styles.todayDecisionTopline}>
-                        <StatusBadge tone={decision.tone}>{decision.status}</StatusBadge>
-                        <small>{decision.meta}</small>
+                        <StatusBadge tone={decision.tone}>{statusLabel(decision.status)}</StatusBadge>
+                        <small title={decision.meta}>{Object.hasOwn(interventionKindLabels, decision.meta) ? interventionKindLabels[decision.meta] : decision.meta}</small>
                       </span>
-                      <strong>{decision.title}</strong>
+                      <strong title={decision.title}>{decision.title === "Intervention approval" ? "干預核准" : decision.title}</strong>
                     </button>
                     <button
                       aria-label="核准"
                       className={styles.todayDecisionAction}
-                      onClick={() =>
-                        onApprovalDecision(decision.id, "approved", {
-                          actorName: today.hero.name,
-                          actorRoleId: envelope.meta.role.id,
-                          reason: `Approved from Today rail for ${decision.id}`,
-                        })
-                      }
+                      onClick={() => onTargetSelect(decision.target, decision.id)}
                       type="button"
                     >
                       {decision.cta || "進行核准"} →
@@ -640,7 +256,7 @@ export function TodayWorkspace({
                     const y = 22 + (index % 4) * 19;
                     return (
                       <i
-                        aria-label={`${row.label} 風險分數 ${row.score}`}
+                        aria-label={`${interventionLabel(row.label)} 風險分數 ${row.score}`}
                         data-tone={row.tone ?? "neutral"}
                         key={row.label}
                         role="img"
@@ -658,7 +274,7 @@ export function TodayWorkspace({
                   {today.riskRows.map((row) => (
                     <div key={row.label}>
                       <i aria-hidden="true" data-tone={row.tone ?? "neutral"} />
-                      <strong>{row.label}</strong>
+                      <strong title={row.label}>{interventionLabel(row.label)}</strong>
                       <span>{row.signal}</span>
                     </div>
                   ))}
@@ -681,9 +297,11 @@ export function TodayWorkspace({
               {today.auditFeed.length ? (
                 today.auditFeed.map((event) => (
                   <article key={`${event.time}-${event.category}-${event.detail}`}>
-                    <time>{event.time}</time>
+                    <time dateTime={event.time} title={event.time}>{auditTimeLabel(event.time)}</time>
                     <p>
-                      <strong>{event.actor}</strong> {event.detail} <b>{event.category}</b>
+                      <strong title={event.actor}>{subjectLabel(event.actor)}</strong>{" "}
+                      <span title={event.detail}>{auditDetailLabel(event)}</span>{" "}
+                      <b title={event.category}>{auditCategoryLabel(event.category)}</b>
                     </p>
                   </article>
                 ))

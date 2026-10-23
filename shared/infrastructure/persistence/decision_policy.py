@@ -13,7 +13,7 @@ _POLICY_COLUMNS = (
     "policy_version_id, policy_label, policy_id, policy_version, "
     "policy_kind, tenant_id, effective_from, effective_to, "
     "change_reason, rollback_policy_version, parameters, "
-    "declared_inputs, approved_by, owner_role"
+    "declared_inputs, approved_by, owner_role, approved_at"
 )
 
 
@@ -41,7 +41,7 @@ class SqlDecisionPolicyRepository:
             SELECT policy_version_id, policy_label, policy_id, policy_version,
                    policy_kind, tenant_id, effective_from, effective_to,
                    change_reason, rollback_policy_version, parameters,
-                   declared_inputs, approved_by, owner_role
+                   declared_inputs, approved_by, owner_role, approved_at
             FROM workflow.decision_policies
             WHERE policy_kind = ?
               AND tenant_id = ?
@@ -65,7 +65,7 @@ class SqlDecisionPolicyRepository:
             SELECT policy_version_id, policy_label, policy_id, policy_version,
                    policy_kind, tenant_id, effective_from, effective_to,
                    change_reason, rollback_policy_version, parameters,
-                   declared_inputs, approved_by, owner_role
+                   declared_inputs, approved_by, owner_role, approved_at
             FROM workflow.decision_policies
             WHERE policy_version_id = ?
             LIMIT 1
@@ -78,6 +78,8 @@ class SqlDecisionPolicyRepository:
 
 
 def _row_to_policy(row: Any) -> DecisionPolicy:
+    # sqlite3.Row supports keys/indexing, but not Mapping.get.
+    row = dict(row)
     return DecisionPolicy(
         policy_version_id=str(row["policy_version_id"]),
         policy_label=str(row["policy_label"]),
@@ -101,6 +103,7 @@ def _row_to_policy(row: Any) -> DecisionPolicy:
         ),
         approved_by=str(row["approved_by"] or ""),
         owner_role=str(row["owner_role"] or ""),
+        approved_at=_parse_datetime(row["approved_at"]) if row.get("approved_at") is not None else None,
     )
 
 

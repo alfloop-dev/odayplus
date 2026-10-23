@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, StatusBadge } from "./components";
+import { Button, StatusBadge } from "./componentPrimitives";
 import {
   classifyLoadFailure,
   unavailableDataMessage,

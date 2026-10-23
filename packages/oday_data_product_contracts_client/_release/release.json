@@ -49,7 +49,7 @@
       "verified_against_consumer_contract": "odayplus.data-platform-product-client.v1"
     }
   },
-  "content_digest": "139d75f59fd1d39d9d28e4d9671246ebb5d4c0478ed6d4e36efae60208017b13",
+  "content_digest": "388e5145e9bf106683168cefc0663caad4419acbcab376554e1d2d137d383af9",
   "contract_catalog": [
     {
       "category": "source_evidence",
@@ -120,7 +120,7 @@
       "contract_version": "1.0.0",
       "description": "Canonical contract schemas for published componentized product-neutral site market context (emgi.site-market-context.v1) across identity, catchment, demand, POI, competitor, rent, listing, mobility, traffic, event, and coverage components in EMGI v0.4.1.",
       "document_model": "oday_data_platform.products.site_context.models.SiteMarketContextDocument",
-      "model_schema_sha256": "143548bcc7b4fc83376d862a61502b0923aa3d8d7e95c2ee8c1c7619d5adb96f",
+      "model_schema_sha256": "7725bb3129216f2d08945d2cbfcf30035ed4e2d0a058933a289e2fecd748e3df",
       "producer_task_id": "DPF-DP-SITE-CONTEXT-001",
       "schema_file": "schemas/site-market-context.schema.json",
       "sha256": "4b433cf747c0f89d423e42a2ba3bd53119e2af1cacc2b2e83045214aab5c0300"

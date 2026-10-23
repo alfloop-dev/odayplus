@@ -40,7 +40,8 @@ export type StoreOpsTriagePayload = StoreOpsWorkflowPayloadBase & {
 };
 
 export type StoreOpsAssignPayload = StoreOpsWorkflowPayloadBase & {
-  ownerRoleId: OperatorRoleId;
+  /** Native manual assignee label; it conveys no principal grant. */
+  ownerRoleId: string;
   ownerName: string;
   slaDueAt: string;
   handoffNote: string;
@@ -140,7 +141,8 @@ export type StoreOpsReplyReviewPayload = StoreOpsWorkflowPayloadBase & {
 };
 
 export type StoreOpsTransferPayload = StoreOpsWorkflowPayloadBase & {
-  targetRoleId: OperatorRoleId;
+  /** Native manual target label; it conveys no principal grant. */
+  targetRoleId: string;
   targetOwnerName: string;
   reason: string;
   handoffNote: string;

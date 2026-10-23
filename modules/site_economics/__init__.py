@@ -28,6 +28,8 @@ from modules.site_economics.domain.formats import (
     build_default_g3_compact_v1,
 )
 from modules.site_economics.domain.models import (
+    CapitalAssetKind,
+    CapitalAssetSpec,
     CensoringType,
     DecisionAssessment,
     EconomicsDecision,
@@ -66,6 +68,8 @@ __all__ = [
     "CONTRACT_CATEGORY",
     "CONTRACT_ID",
     "CONTRACT_VERSION",
+    "CapitalAssetKind",
+    "CapitalAssetSpec",
     "CensoringType",
     "DEFAULT_FORMAT_REGISTRY",
     "DecisionAssessment",

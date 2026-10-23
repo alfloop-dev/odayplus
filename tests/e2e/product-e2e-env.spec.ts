@@ -1,4 +1,5 @@
 import { expect, request as playwrightRequest, test } from "@playwright/test";
+import { createHash } from "node:crypto";
 
 const API_BASE_URL = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";
 const headers = {
@@ -40,9 +41,29 @@ test("Product E2E environment exposes durable API, seeded evidence, and source s
 
   const exports = await api.get(
     `${API_BASE_URL}/audit/evidence/exports?program_id=product-e2e-subsidy`,
+    { headers: { "x-subject-id": "product-e2e-seed" } },
   );
   expect(exports.status()).toBe(200);
-  expect((await exports.json()).exports.length).toBeGreaterThan(0);
+  const exportRows = (await exports.json()).exports;
+  expect(exportRows.length).toBeGreaterThan(0);
+  const download = await api.get(
+    `${API_BASE_URL}/audit/evidence/exports/${exportRows[0].export_id}/download`,
+    { headers: { "x-subject-id": "product-e2e-seed" } },
+  );
+  expect(download.status()).toBe(200);
+  expect(download.headers()["content-type"]).toBe("application/zip");
+  expect(download.headers()["cache-control"]).toBe("private, no-store");
+  const archive = await download.body();
+  expect(archive.subarray(0, 4).toString("hex")).toBe("504b0304");
+  expect(createHash("sha256").update(archive).digest("hex")).toBe(download.headers()["x-artifact-sha256"]);
+  const otherActorExports = await api.get(
+    `${API_BASE_URL}/audit/evidence/exports?program_id=product-e2e-subsidy`,
+  );
+  expect(otherActorExports.status()).toBe(200);
+  expect((await otherActorExports.json()).exports).toEqual([]);
+  expect((await api.get(
+    `${API_BASE_URL}/audit/evidence/exports/${exportRows[0].export_id}/download`,
+  )).status()).toBe(404);
 
   await api.dispose();
 });

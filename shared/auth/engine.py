@@ -54,6 +54,14 @@ class AuthorizationEngine:
         self._flags = flags if flags is not None else default_registry()
         self._policies = policies
 
+    def with_flags(self, flags: FeatureFlagRegistry) -> AuthorizationEngine:
+        """Request-local composition preserving this engine audit/policies."""
+        return AuthorizationEngine(audit_log=self._audit, flags=flags, policies=self._policies)
+
+    @property
+    def feature_flags(self) -> FeatureFlagRegistry:
+        return self._flags
+
     @property
     def audit_log(self) -> AuditRecorder:
         return self._audit

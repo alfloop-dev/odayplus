@@ -10,9 +10,10 @@ Routes (all under /operator/governance):
   POST /evidence-package     — export an Evidence Package, recording scope,
                               range, format, actor, correlation, retention
 
-Auth: write endpoints require the intervention guards passed from operator.py
-(decisions → APPROVE, export → CREATE); read endpoints are open (oversight
-surface).  Idempotency-Key is handled by the service; X-Correlation-Id is read
+Auth: operator.py requires Operator Console access plus the existing domain
+permission (decisions → intervention:APPROVE, export → audit:EXPORT). Reads
+require the supplied Operator view guard. Idempotency-Key is handled by the
+service; X-Correlation-Id is read
 from request.state.correlation_id.
 
 The snapshot also carries ``actionAuthority``: what the authenticated principal
@@ -36,6 +37,7 @@ from apps.api.app.routes.operator_modules.live_service import resolve_service
 from modules.opsboard.application.governance import (
     DECISION_ACTIONS,
     GovernanceConflict,
+    GovernanceExportUnavailable,
     GovernanceNotFound,
     GovernancePolicyError,
     GovernanceService,
@@ -45,7 +47,7 @@ from shared.auth import Action, Principal, rbac_allows
 # The resource/action pairs the operator.py write guards demand for
 # POST /decisions and POST /evidence-package.
 DECISION_PERMISSION = ("intervention", Action.APPROVE)
-EVIDENCE_EXPORT_PERMISSION = ("intervention", Action.CREATE)
+EVIDENCE_EXPORT_PERMISSION = ("audit", Action.EXPORT)
 
 
 def action_authority(request: Request) -> dict[str, Any]:
@@ -125,18 +127,32 @@ def create_governance_sub_router(
     require_decision_permission_fn: Any = None,
     require_export_permission_fn: Any = None,
     service_resolver: Any = None,
+    read_service_resolver: Any = None,
+    snapshot_reader: Any = None,
 ) -> APIRouter:
     """Return the Govern sub-router wired to a shared GovernanceService."""
     router = APIRouter(prefix="/governance", tags=["operator-governance"])
 
+    def verified_actor(request: Request) -> tuple[Principal, str]:
+        principal = getattr(request.state, "operator_principal", None)
+        role = getattr(request.state, "operator_role_id", None)
+        if not isinstance(principal, Principal) or not principal.authenticated or not principal.tenant_id:
+            raise HTTPException(status_code=401, detail="AUTHENTICATED_ACTOR_REQUIRED")
+        if not role:
+            raise HTTPException(status_code=401, detail="VERIFIED_ROLE_REQUIRED")
+        return principal, role
+
     read_deps: list[Any] = (
         [Depends(require_view_permission_fn)] if require_view_permission_fn else []
     )
+    def command_authority_unconfigured() -> None:
+        raise HTTPException(status_code=403, detail="GOVERNANCE_COMMAND_AUTHORITY_UNCONFIGURED")
+
     decision_deps: list[Any] = (
-        [Depends(require_decision_permission_fn)] if require_decision_permission_fn else []
+        [Depends(require_decision_permission_fn or command_authority_unconfigured)]
     )
     export_deps: list[Any] = (
-        [Depends(require_export_permission_fn)] if require_export_permission_fn else []
+        [Depends(require_export_permission_fn or command_authority_unconfigured)]
     )
 
     # ------------------------------------------------------------------
@@ -148,7 +164,7 @@ def create_governance_sub_router(
         request: Request,
         x_operator_role: str | None = Header(default=None, alias="X-Operator-Role"),
     ) -> dict[str, Any]:
-        snapshot = resolve_service(request, service, service_resolver).snapshot(
+        snapshot = snapshot_reader(request) if snapshot_reader is not None else resolve_service(request, service, read_service_resolver or service_resolver).snapshot(
             role_id=getattr(request.state, "operator_role_id", None) or x_operator_role,
             correlation_id=request.state.correlation_id,
         )
@@ -156,8 +172,8 @@ def create_governance_sub_router(
 
     @router.get("/evidence-packages", dependencies=read_deps)
     def list_evidence_packages(request: Request) -> dict[str, Any]:
-        snap = resolve_service(
-            request, service, service_resolver
+        snap = snapshot_reader(request) if snapshot_reader is not None else resolve_service(
+            request, service, read_service_resolver or service_resolver
         ).snapshot(correlation_id=request.state.correlation_id)
         items = snap["evidencePackages"]
         return {
@@ -177,14 +193,39 @@ def create_governance_sub_router(
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ) -> dict[str, Any]:
         try:
+            principal, role = verified_actor(request)
+            replay_only = False
+            if snapshot_reader is not None or read_service_resolver is not None:
+                visible = snapshot_reader(request) if snapshot_reader is not None else resolve_service(request, service, read_service_resolver).snapshot()
+                # Native owner rows are a read projection, not a Govern
+                # ApprovalRecord or authority to use the generic command.
+                if any(row["id"] == body.approvalId and row.get("module") == "Store Ops"
+                       and (row.get("actionAuthority") or {}).get("decide") is False
+                       for row in visible["approvals"]):
+                    raise GovernanceNotFound("approval unavailable")
+                if not any(row["id"] == body.approvalId for row in visible["approvals"]):
+                    # Only the actual scoped read owner may prove historical
+                    # Growth parent visibility and an exact prior command. A
+                    # snapshot callback or unscoped command receipt cannot.
+                    if read_service_resolver is None or not resolve_service(
+                        request, service, read_service_resolver
+                    ).has_visible_growth_decision_receipt(
+                        approval_id=body.approvalId, action=body.action, reason=body.reason,
+                        role=role, actor_name=principal.subject_id, tenant_id=principal.tenant_id,
+                        idempotency_key=idempotency_key,
+                    ):
+                        raise GovernanceNotFound("approval unavailable")
+                    replay_only = True
             return resolve_service(request, service, service_resolver).decide(
                 approval_id=body.approvalId,
                 action=body.action,
                 reason=body.reason,
-                role=body.role,
-                actor_name=body.actorName,
+                role=role,
+                actor_name=principal.subject_id,
+                tenant_id=principal.tenant_id,
                 idempotency_key=idempotency_key,
                 correlation_id=request.state.correlation_id,
+                **({"replay_only": True} if replay_only else {}),
             )
         except GovernancePolicyError as exc:
             raise HTTPException(
@@ -201,20 +242,29 @@ def create_governance_sub_router(
         request: Request,
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ) -> dict[str, Any]:
-        return resolve_service(
-            request, service, service_resolver
-        ).export_evidence_package(
-            date_from=body.dateFrom,
-            date_to=body.dateTo,
-            modules=body.modules,
-            contents=body.contents,
-            fmt=body.format,
-            role=body.role,
-            actor_name=body.actorName,
-            retention_policy=body.retentionPolicy,
-            idempotency_key=idempotency_key,
-            correlation_id=request.state.correlation_id,
-        )
+        try:
+            principal, role = verified_actor(request)
+            return resolve_service(
+                request, service, service_resolver
+            ).export_evidence_package(
+                date_from=body.dateFrom,
+                date_to=body.dateTo,
+                modules=body.modules,
+                contents=body.contents,
+                fmt=body.format,
+                role=role,
+                actor_name=principal.subject_id,
+                tenant_id=principal.tenant_id,
+                retention_policy=body.retentionPolicy,
+                idempotency_key=idempotency_key,
+                correlation_id=request.state.correlation_id,
+            )
+        except GovernanceExportUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except GovernancePolicyError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except GovernanceConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return router
 

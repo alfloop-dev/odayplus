@@ -120,6 +120,18 @@ def test_scheduler_enqueue_then_worker_claim_execute_success(legacy_fetch_mode) 
     assert worker.run_once() is False
 
 
+def test_idle_worker_loop_exports_metrics_without_claiming_a_job(monkeypatch) -> None:
+    from apps.worker.oday_worker import main as runtime
+
+    worker = ODayWorker(persistence=build_persistence(), audit_only=True)
+    stop = threading.Event()
+    exports = []
+    monkeypatch.setattr(worker, "export_metrics", lambda: exports.append(True))
+    monkeypatch.setattr(runtime.time, "sleep", lambda seconds: stop.set())
+    worker.loop(stop_event=stop)
+    assert exports == [True]
+
+
 def test_worker_forecast_job_claims_and_succeeds() -> None:
     """A forecast job is claimed, executed against the repository, and succeeds."""
     bundle = build_persistence()

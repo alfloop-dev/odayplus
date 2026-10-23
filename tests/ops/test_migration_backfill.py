@@ -45,6 +45,8 @@ def test_migration_plan_indexes_revision_hashes_and_rollback() -> None:
         "0020",
         "0021",
         "0022",
+        "0023",
+        "0024",
     ]
     assert len(plan.manifest_sha256) == 64
     assert all(len(step.sha256) == 64 for step in plan.steps)
@@ -58,6 +60,32 @@ def test_migration_plan_indexes_revision_hashes_and_rollback() -> None:
         if asset.role == "sql"
     } == {"infra/db/migrations/000014_avm_deal_outcomes.sql"}
     assert len(deal_outcome_step.sha256) == 64
+
+
+def test_intake_policy_calendar_ddl_is_in_the_deployment_manifest() -> None:
+    from hashlib import sha256
+    from pathlib import Path
+
+    plan = build_migration_plan(environment="dev")
+    step = next(step for step in plan.steps if step.revision == "0023")
+    assert step.path.endswith("0023_intake_policy_calendar_kinds.py")
+    assets = [asset for asset in step.assets if asset.role == "sql"]
+    assert len(assets) == 1
+    assert assets[0].path == "infra/db/migrations/000029_intake_policy_calendar_kinds.sql"
+    assert assets[0].sha256 == sha256(Path(assets[0].path).read_bytes()).hexdigest()
+
+
+def test_intake_audit_retention_ddl_is_in_the_deployment_manifest() -> None:
+    from hashlib import sha256
+    from pathlib import Path
+
+    plan = build_migration_plan(environment="dev")
+    step = next(step for step in plan.steps if step.revision == "0024")
+    assert step.path.endswith("0024_intake_audit_retention_kind.py")
+    assets = [asset for asset in step.assets if asset.role == "sql"]
+    assert len(assets) == 1
+    assert assets[0].path == "infra/db/migrations/000030_intake_audit_retention_kind.sql"
+    assert assets[0].sha256 == sha256(Path(assets[0].path).read_bytes()).hexdigest()
 
 
 def test_forecastops_feedback_ddl_is_reachable_from_alembic_head() -> None:

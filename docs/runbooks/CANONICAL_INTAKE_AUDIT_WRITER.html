@@ -1,0 +1,15 @@
+<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><title>Canonical Intake audit writer 工程契約</title>
+<style>body{max-width:980px;margin:32px auto;font:16px/1.7 sans-serif;color:#173148}table{border-collapse:collapse;width:100%}td,th{border:1px solid #cad6df;padding:10px;text-align:left}</style>
+<h1>規格指定 PostgreSQL audit.audit_events 的實體 writer</h1>
+<p>CanonicalPostgresAuditLog 是 canonical owner 切換所需的基礎儲存元件。它直接寫入已審 DDL 的 audit.audit_events；沒有更改 normative DDL、回填舊紀錄或宣稱 Identity 執行完成。</p>
+<table><tr><th>契約</th><th>實作</th></tr>
+<tr><td>交易</td><td>使用 PostgresEngine 同一條已綁定的 connection/transaction。呼叫者在業務 transaction 內 append；業務、audit 共同 rollback，必須在外層 commit 後才回傳成功 HTTP 收據。</td></tr>
+<tr><td>租戶</td><td>UUID tenant 必填，SET LOCAL app.tenant_id 執行 RLS。已綁定其他租戶的 transaction 拒絕改綁。實際 app role 必須 NOSUPERUSER、NOBYPASSRLS；不能以 superuser 通過測試充當正式隔離。</td></tr>
+<tr><td>順序及完整性</td><td>每租戶 transaction advisory lock 保護 sequence/hash chain。Immutable column payload 使用 shared canonical JSON/SHA-256。每次 append 驗證 tail 與 predecessor；verify_chain 驗證完整已保存序列。不同 payload 的同 audit ID 拒絕；不重算或接管未知舊格式。</td></tr>
+<tr><td>JSON 值與隱私</td><td>SQL JSONB 顯式轉 text 後 decode，避免 engine 把 JSON object 與 JSON string 混淆。NaN/非 JSON 值拒絕；DENIED/MASKED 不接受 before/after 敏感值。</td></tr>
+<tr><td>Actor 與 retention</td><td>Canonical UUID human subject 或實際 service principal 必填；這是內部儲存層，caller 必須從 verified principal/worker context 組裝 facts，不能直接接 request body。retained_until 是已解析的 server policy 值，無 production 年數預設，timezone-naive 或非正向 deadline 拒絕。</td></tr>
+<tr><td>權限</td><td>Writer app role 只需 audit SELECT/INSERT，沒有 UPDATE/DELETE。Legal-hold 及 retention facts 是原事件事實；後續 hold/release 由獨立 governed records 表達。worm_object_uri 是外部送達 metadata，不納入事件事實 hash。</td></tr>
+</table>
+<p>本階段沒有把現有 tenant-envelope workflow_audits 自動搬進 canonical table。Canonical Intake/Correction/Decision owner、批准的歷史 mapping、production retention provider 與 command wiring 仍須完成。這個 writer 沒有開放新 HTTP endpoint、沒有自動啟用正式寫入。</p>
+<p>WORM delivery 不由這個 SQL writer完成，worm_object_uri 仍為 NULL。需要真正的外部 object-create、delivery receipt、重播／故障邊界與 retention/IAM 驗收；不能把 DB commit 等同 WORM delivered。</p>
+<p>測試使用明示 synthetic UUID、90-day test policy 與獨立 PG16/PostGIS。直接實體表、非 superuser RLS、SELECT/INSERT only role、交易失敗、new connection restart、concurrent connections、JSON round trip 與 hash tamper 都是工程證據，未代替六角色正式 UAT、獨立來源審查或發布 Gate。</p></html>

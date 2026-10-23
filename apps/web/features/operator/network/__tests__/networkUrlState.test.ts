@@ -48,3 +48,30 @@ describe("Network URL state", () => {
     );
   });
 });
+
+describe("exact candidate URLs", () => {
+  it("removes stale intake selection and conflicting zone while preserving inbox filters", async () => {
+    const { candidateNavigationParams, parseCandidateSelection } = await import("../networkUrlState");
+    const params = candidateNavigationParams("candidate/with space", new URLSearchParams(
+      "ws=network&selected=old-intake&dialog=decide&receipt=old-receipt&section=promotion&field=rent&decision=revise&compare=true&zone=wrong&sourceId=recorded&flag=a&flag=b",
+    ));
+    expect(parseCandidateSelection(params)).toEqual({ id: "candidate/with space", invalid: false });
+    for (const key of ["selected", "dialog", "receipt", "section", "field", "decision", "compare", "zone"]) expect(params.has(key)).toBe(false);
+    expect(params.get("sourceId")).toBe("recorded");
+    expect(params.getAll("flag")).toEqual(["a", "b"]);
+    expect(params.toString()).toContain("candidate=candidate%2Fwith+space");
+  });
+
+  it.each(["candidate=first&candidate=second", "candidate="])("refuses ambiguous or empty exact selection: %s", async (query) => {
+    const { parseCandidateSelection } = await import("../networkUrlState");
+    expect(parseCandidateSelection(new URLSearchParams(query))).toEqual({ id: null, invalid: true });
+  });
+
+  it("restores the exact ID on reload without reusing the intake selected key", async () => {
+    const { candidateNavigationParams, parseCandidateSelection } = await import("../networkUrlState");
+    const href = buildNetworkTabHref("/operator", 2, candidateNavigationParams("recorded-candidate", new URLSearchParams("ws=network")));
+    const restored = new URL(href, "https://operator.example.test");
+    expect(parseCandidateSelection(restored.searchParams)).toEqual({ id: "recorded-candidate", invalid: false });
+    expect(restored.searchParams.has("selected")).toBe(false);
+  });
+});

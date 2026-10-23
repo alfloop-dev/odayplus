@@ -4,6 +4,8 @@ from datetime import UTC, datetime
 
 import pytest
 
+from tests.integration._model_publish_flag_fixture import enable_model_publish
+
 pytest.importorskip(
     "catboost",
     reason="production training lifecycle requires the configured CatBoost OSS engine",
@@ -215,6 +217,7 @@ def _register_candidate(service: LearningHubService, result: TrainingPipelineRes
 
 def test_feature_training_artifacts_are_reproducible_and_promotion_is_bound(db_path) -> None:
     engine, service, artifacts = _build_durable(db_path)
+    enable_model_publish(service, tenant_id='tenant-modeling')
     try:
         snapshot = service.register_dataset_snapshot(
             _rows(),
@@ -339,6 +342,7 @@ def test_segment_acceptance_failure_rejects_governed_release(db_path) -> None:
 
 def test_monitoring_comparison_restart_safety_and_governed_rollback(db_path) -> None:
     engine, service, artifacts = _build_durable(db_path)
+    enable_model_publish(service, tenant_id='tenant-modeling')
     try:
         ds1 = service.register_dataset_snapshot(
             _rows("pos-20260701"),
@@ -439,6 +443,7 @@ def test_monitoring_comparison_restart_safety_and_governed_rollback(db_path) -> 
         engine.close()
 
     restarted, service2, _ = _build_durable(db_path)
+    enable_model_publish(service2, tenant_id='tenant-modeling')
     try:
         stored_requests = service2.repository.list_retraining_requests(MODEL_NAME)
         assert {request.trigger_type for request in stored_requests} == {

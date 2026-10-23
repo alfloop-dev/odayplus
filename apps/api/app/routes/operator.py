@@ -118,6 +118,8 @@ def create_operator_router(
     *,
     audit_log: InMemoryAuditLog | None = None,
     document_store: Any | None = None,
+    job_queue: Any | None = None,
+    feature_flags: Any | None = None,
     state_service: OperatorStateService | None = None,
     growth_service: GrowthService | None = None,
     listing_repository: Any | None = None,
@@ -126,8 +128,12 @@ def create_operator_router(
     sitescore_decision_repository_for_tenant: Any | None = None,
     avm_repository_for_tenant: Any | None = None,
     netplan_repository_for_tenant: Any | None = None,
+    netplan_candidate_snapshot_for_tenant: Any | None = None,
     priceops_repository_for_tenant: Any | None = None,
+    priceops_store_repository: Any | None = None,
+    priceops_brand_repository: Any | None = None,
     model_runtime: Any | None = None,
+    score_execution_service: Any | None = None,
     avm_production_executor: Any | None = None,
     avm_depreciation_version_pin: str | None = None,
     avm_rollback_receipt: DepreciationRollbackReceipt | None = None,
@@ -136,7 +142,10 @@ def create_operator_router(
     netplan_approval_verifier: Any | None = None,
     evidence_store: Any | None = None,
     intake_repository: Any | None = None,
+    intake_workflow_store: Any | None = None,
+    intake_workflow_policy: Any | None = None,
     live_repository: OperatorLiveRepositoryProtocol | None = None,
+    fixture_issue_repository: Any | None = None,
     identity_user_role_service: Any | None = None,
     require_live_data: bool = False,
     persistence_mode: str = "memory",
@@ -192,6 +201,8 @@ def create_operator_router(
     # router accepts only a state service backed by the injected live
     # repository; fixture services can never cross this composition boundary.
     effective_require_live_data = require_live_data or (live_repository is not None)
+    local_growth_service = None
+    local_governance_service = None
     if effective_require_live_data:
         svc = (
             state_service
@@ -204,12 +215,97 @@ def create_operator_router(
             )
         )
     else:
+        from modules.opsboard.application.governance import GovernanceService
+
+        local_growth_service = growth_service or GrowthService()
+        local_governance_service = GovernanceService(growth_service=local_growth_service)
         svc = state_service or OperatorStateService(
             persistence_mode=persistence_mode,
             provider_mode=provider_mode,
+            fixture_issue_repository=fixture_issue_repository,
+            fixture_approval_reader=lambda role_id: local_governance_service.snapshot(role_id=role_id)["approvals"],
         )
 
     router = APIRouter(prefix="/operator", tags=["operator"])
+
+    from apps.api.app.routes.operator_modules.area_planning_drafts import (
+        create_area_planning_draft_sub_router,
+    )
+    from modules.opsboard.application.area_planning_draft_owner import (
+        AREA_PLANNING_DRAFT_RESOURCE,
+        AreaPlanningDraftOwner,
+    )
+
+    area_planning_zone_reader = None
+
+    def area_planning_owner_for_request(request: Request):
+        principal = request.state.operator_principal
+        if not callable(netplan_repository_for_tenant) or not callable(area_planning_zone_reader):
+            raise HTTPException(503, "AREA_PLANNING_DURABLE_OWNER_UNAVAILABLE")
+        return AreaPlanningDraftOwner(
+            principal=principal,
+            native_repository=netplan_repository_for_tenant(principal.tenant_id),
+            audit_log=active_audit_log, queue=job_queue,
+            heat_zone_reader=lambda: area_planning_zone_reader(request),
+            candidate_snapshot_reader=netplan_candidate_snapshot_for_tenant,
+            correlation_id=request.state.correlation_id,
+        )
+
+    router.include_router(create_area_planning_draft_sub_router(
+        require_view=require_operator_permission(AREA_PLANNING_DRAFT_RESOURCE, Action.VIEW, engine=authz_engine),
+        require_create=require_operator_permission(AREA_PLANNING_DRAFT_RESOURCE, Action.CREATE, engine=authz_engine),
+        require_update=require_operator_permission(AREA_PLANNING_DRAFT_RESOURCE, Action.UPDATE, engine=authz_engine),
+        owner_for_request=area_planning_owner_for_request,
+    ))
+
+    # FinanceLegal is an existing AVM principal, not an Operator display persona.
+    # Reuse its native type permission/session guard, then admit actual objects.
+    from apps.api.app.routes.operator_modules.avm_dealroom import create_avm_dealroom_router
+    from apps.api.oday_api.runtime_mode import live_data_required
+    from apps.api.oday_api.security.dependencies import default_boundary
+    from modules.opsboard.application.avm_dealroom import ScopedAVMDealRoom
+
+    avm_boundary = default_boundary()
+
+    def avm_permission(action):
+        native_guard = require_permission("avm", action, engine=authz_engine, boundary=avm_boundary)
+
+        def guarded(request: Request):
+            # A formal app never degrades to header trust. A factory resolved
+            # without a boundary cannot silently adopt another app's boundary.
+            if avm_boundary is None and (live_data_required() or default_boundary() is not None):
+                raise HTTPException(503, "AVM_AUTHENTICATION_OWNER_UNAVAILABLE")
+            if avm_boundary is not None and getattr(avm_boundary, "_session_service", None) is None and default_boundary() is not avm_boundary:
+                raise HTTPException(503, "AVM_AUTHENTICATION_OWNER_UNAVAILABLE")
+            if not getattr(request.state, "correlation_id", None):
+                from uuid import uuid4
+                # Preserve the server middleware's trace when present. This
+                # fallback is local to the scoped AVM guard, not a new caller
+                # identity or a global authentication policy change.
+                request.state.correlation_id = request.headers.get("X-Correlation-Id") or str(uuid4())
+            return native_guard(request)
+
+        return guarded
+
+    def avm_dealroom_for_request(request: Request):
+        principal = request.state.operator_principal
+        if not principal.tenant_id or not callable(avm_repository_for_tenant):
+            raise HTTPException(503, "AVM_DEALROOM_OWNER_UNAVAILABLE")
+        return ScopedAVMDealRoom(
+            principal=principal, repository=avm_repository_for_tenant(principal.tenant_id),
+            stores=priceops_store_repository, brands=priceops_brand_repository,
+            audit_log=active_audit_log, queue=job_queue,
+            correlation_id=getattr(request.state, "correlation_id", None) or request.headers.get("X-Correlation-Id", ""),
+            production_executor=avm_production_executor,
+            depreciation_version_pin=avm_depreciation_version_pin, rollback_receipt=avm_rollback_receipt,
+            force_production=effective_require_live_data or live_data_required(),
+        )
+
+    router.include_router(create_avm_dealroom_router(
+        factory=avm_dealroom_for_request, require_view=avm_permission(Action.VIEW),
+        require_create=avm_permission(Action.CREATE), require_approve=avm_permission(Action.APPROVE),
+        require_export=avm_permission(Action.EXPORT),
+    ))
 
     # ------------------------------------------------------------------
     # Import sub-routers from operator_modules/ — the only composition
@@ -298,6 +394,7 @@ def create_operator_router(
             action=action,
             resource=ResourceDescriptor(
                 type="franchisee_portal",
+                module="franchisee_portal",
                 resource_id=effective_store,
                 tenant_id=principal.scope.tenant_id,
                 store_id=effective_store,
@@ -391,6 +488,7 @@ def create_operator_router(
             envelope = _live_read(
                 "operator.envelope",
                 svc.get_today,
+                read_projection=lambda state: pending_state_for_request(request, state),
                 **_context(
                     request,
                     x_operator_role=x_operator_role,
@@ -415,6 +513,7 @@ def create_operator_router(
                 "operator.search",
                 svc.search,
                 q,
+                read_projection=lambda state: pending_state_for_request(request, state),
                 **_context(
                     request,
                     x_operator_role=x_operator_role,
@@ -487,8 +586,90 @@ def create_operator_router(
                     "operator_shell_tenant_scope",
                     message="verified tenant scope is required for the production shell",
                 )
+            class RequestProjectedState:
+                # This adapter and its principal live for one HTTP request.
+                # Never bind a request closure to the router-lifetime service.
+                def __getattr__(self, name: str) -> Any:
+                    return getattr(svc, name)
+
+                def get_today(self, **kwargs: Any) -> dict[str, Any]:
+                    return svc.get_today(**kwargs, read_projection=lambda state: pending_state_for_request(request, state))
+
+                def get_work_queue(self, **kwargs: Any) -> list[dict[str, Any]]:
+                    return self.get_today(**kwargs)["workQueue"]
+
+                def get_task_center(self, **kwargs: Any) -> dict[str, Any]:
+                    def project(state: dict[str, Any]) -> dict[str, Any]:
+                        from apps.api.oday_api.security.dependencies import (
+                            operator_permission_decision,
+                        )
+                        from modules.opsboard.application.operator_tasks import (
+                            admit_task_center_records,
+                        )
+                        from shared.auth import DataClassification
+
+                        principal = request.state.operator_principal
+
+                        def can_read(resource_type: str) -> bool:
+                            return operator_permission_decision(
+                                principal,
+                                ResourceDescriptor(type=resource_type, tenant_id=principal.tenant_id,
+                                                   module="operator_console", data_classification=DataClassification.CONFIDENTIAL),
+                                Action.VIEW,
+                                scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE if resource_type in {"listing", "sitescore"} else None,
+                            ).allowed
+
+                        def can_approve(resource_type: str) -> bool:
+                            return operator_permission_decision(
+                                principal,
+                                ResourceDescriptor(type=resource_type, tenant_id=principal.tenant_id,
+                                                   module="operator_console", data_classification=DataClassification.CONFIDENTIAL),
+                                Action.APPROVE,
+                            ).allowed
+
+                        return admit_task_center_records(
+                            pending_state_for_request(request, state), principal=principal,
+                            store_repository=priceops_store_repository, brand_repository=priceops_brand_repository,
+                            listing_snapshot_reader=lambda: listing_resolver(request).snapshot(tenant_id=principal.tenant_id),
+                            can_read=can_read, can_approve=can_approve,
+                        )
+
+                    return svc.get_task_center(**kwargs, read_projection=project)
+
+                def admit_franchisee_reports(self, reports: list[dict[str, Any]], audit_events: list[dict[str, Any]]) -> dict[str, Any]:
+                    from apps.api.oday_api.security.dependencies import operator_permission_decision
+                    from modules.opsboard.application.operator_franchisee_reports import (
+                        admit_supervisor_reports,
+                    )
+                    from shared.auth import DataClassification
+
+                    principal = request.state.operator_principal
+
+                    def can_read(resource_type: str) -> bool:
+                        return operator_permission_decision(
+                            principal,
+                            ResourceDescriptor(type=resource_type, tenant_id=principal.tenant_id,
+                                               module="operator_console", data_classification=DataClassification.CONFIDENTIAL),
+                            Action.VIEW,
+                        ).allowed
+
+                    return admit_supervisor_reports(reports, audit_events, principal=principal,
+                        store_repository=priceops_store_repository, brand_repository=priceops_brand_repository,
+                        can_read=can_read)
+
+                def search(self, query: str, **kwargs: Any) -> dict[str, Any]:
+                    return svc.search(query, **kwargs, read_projection=lambda state: pending_state_for_request(request, state))
+
+            # Only franchisee routes supply this already-authorized store.
+            # Their store-task portal reads the original native state and has
+            # no dependency on Operator-only pending review owners.
+            state_reader = (
+                svc
+                if effective_store_id is not None
+                else cast(OperatorStateService, RequestProjectedState())
+            )
             scoped_state = TenantBoundOperatorStateService(
-                svc,
+                state_reader,
                 tenant_id=tenant_id,
                 brand_ids=cast(tuple[str, ...], context["brand_ids"]),
                 region_ids=cast(tuple[str, ...], context["region_ids"]),
@@ -574,6 +755,7 @@ def create_operator_router(
         from shared.infrastructure.persistence.operator_domains import (
             DurableOperatorDomainStateRepository,
         )
+        from shared.infrastructure.persistence.repositories import DurableApprovalRepository
         from shared.workflow.sitescore import SiteScoreDecisionWorkflow
 
         def require_tenant_repository(
@@ -629,6 +811,25 @@ def create_operator_router(
             document_store,
             "network-listings",
         )
+        listing_write_guard = None
+        if getattr(document_store.engine, "dialect", None) == "postgresql":
+            from shared.audit.backlog import (
+                AuditBacklogBlocked,
+                AuditBacklogUnavailable,
+                CanonicalAuditBacklog,
+            )
+
+            listing_backlog = CanonicalAuditBacklog(document_store.engine)
+
+            def listing_write_guard(tenant_id: str) -> None:
+                try:
+                    listing_backlog.require_available(tenant_id)
+                except (AuditBacklogBlocked, AuditBacklogUnavailable) as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="BACKPRESSURE_ACTIVE",
+                        headers={"Retry-After": "30"},
+                    ) from exc
         scoring_state_repository = DurableOperatorDomainStateRepository(
             document_store,
             "network-scoring",
@@ -650,6 +851,22 @@ def create_operator_router(
             "governance",
         )
 
+        def live_intake_repository(tenant_id: str) -> Any:
+            legacy = DurableAssistedIntakeRepository(
+                TenantScopedDocumentStore(document_store, tenant_id)
+            )
+            if allow_test_reset:
+                return legacy
+            if intake_workflow_store is None:
+                raise HTTPException(503, "INTAKE_WORKFLOW_STORE_UNAVAILABLE")
+            from shared.infrastructure.persistence.operator_intake_workflow import (
+                OperatorIntakeWorkflowRepository,
+            )
+
+            return OperatorIntakeWorkflowRepository(
+                intake_workflow_store, legacy, tenant_id, intake_workflow_policy,
+            )
+
         listing_resolver = DurableTenantServiceResolver(
             listing_state_repository,
             factory=lambda state, tenant_id: NetworkListingService(
@@ -658,15 +875,17 @@ def create_operator_router(
                     "listing_repository",
                     tenant_id,
                 ),
-                intake_repository=DurableAssistedIntakeRepository(
-                    TenantScopedDocumentStore(document_store, tenant_id)
-                ),
+                intake_repository=live_intake_repository(tenant_id),
                 initial_state=state,
                 # Canonical fixture state may exist only behind the explicit
                 # test-reset gate (ODP_E2E_MODE): production keeps the durable
                 # listing aggregate fail-closed empty until real intake writes.
                 seed_fixtures=allow_test_reset,
                 tenant_id=tenant_id,
+                high_risk_write_guard=listing_write_guard,
+                review_decision_repository=require_tenant_repository(
+                    sitescore_decision_repository_for_tenant, "sitescore_decision_repository", tenant_id,
+                ),
             ),
             exporter=lambda service: service.export_state(),
             mutating_methods={
@@ -681,24 +900,41 @@ def create_operator_router(
                 "promote_intake",
             },
         )
+        from modules.listing.application.candidate_score_context import CandidateScoreContextReader
+
         scoring_resolver = DurableTenantServiceResolver(
             scoring_state_repository,
-            factory=lambda state, tenant_id: NetworkScoringService(
-                initial_state=state,
-                seed_fixtures=False,
-                listing_repository=require_tenant_repository(
-                    listing_repository_for_tenant,
-                    "listing_repository",
-                    tenant_id,
+            factory=lambda state, tenant_id: (
+                lambda listing_repository: NetworkScoringService(
+                    initial_state=state,
+                    seed_fixtures=False,
+                    listing_repository=listing_repository,
+                    current_context_reader=CandidateScoreContextReader(
+                        tenant_id=tenant_id, repository=listing_repository,
+                        engine=document_store.engine, store=intake_workflow_store,
+                    ),
+                    sitescore_repository=require_tenant_repository(
+                        sitescore_repository_for_tenant,
+                        "sitescore_repository",
+                        tenant_id,
+                    ),
+                    model_runtime=require_model_runtime(),
+                    current_model_admission=getattr(
+                        getattr(score_execution_service, "repository", None), "model_admission", None,
+                    ),
+                    execution_service=score_execution_service,
+                    # The resolver creates a new service for every invocation.
+                    # snapshot observes current authority itself; defer the
+                    # otherwise duplicate constructor observation. Non-read
+                    # methods/export still load canonical data before using it.
+                    defer_canonical_refresh=True,
+                    require_canonical=True,
+                    tenant_id=tenant_id,
+                )
+            )(
+                require_tenant_repository(
+                    listing_repository_for_tenant, "listing_repository", tenant_id,
                 ),
-                sitescore_repository=require_tenant_repository(
-                    sitescore_repository_for_tenant,
-                    "sitescore_repository",
-                    tenant_id,
-                ),
-                model_runtime=require_model_runtime(),
-                require_canonical=True,
-                tenant_id=tenant_id,
             ),
             exporter=lambda service: service.export_state(),
             mutating_methods={
@@ -708,34 +944,39 @@ def create_operator_router(
                 "set_compare_set",
             },
         )
+        def review_service_factory(state: dict[str, Any] | None, tenant_id: str) -> NetworkReviewService:
+            decision_repository = require_tenant_repository(
+                sitescore_decision_repository_for_tenant, "sitescore_decision_repository", tenant_id,
+            )
+            scoped_store = TenantScopedDocumentStore(document_store, tenant_id)
+            candidate_service = NetworkListingService(
+                listing_repository=require_tenant_repository(listing_repository_for_tenant, "listing_repository", tenant_id),
+                intake_repository=DurableAssistedIntakeRepository(scoped_store),
+                seed_fixtures=False, tenant_id=tenant_id, review_decision_repository=decision_repository,
+            )
+            def audit_delivery_factory(tenant: str):
+                from shared.audit.durable_delivery import DurableAuditDelivery
+                from shared.infrastructure.persistence.job_queue import DurableJobQueue
+                # Older router callers can share the existing SQL queue table;
+                # production supplies the worker's same-engine queue instance.
+                queue = job_queue if job_queue is not None else DurableJobQueue(document_store.engine)
+                return DurableAuditDelivery(document_store.engine, tenant, queue, active_audit_log._worm_sink)
+            return NetworkReviewService(
+                initial_state=state, seed_fixtures=False, require_canonical=True,
+                decision_repository=decision_repository,
+                sitescore_repository=require_tenant_repository(sitescore_repository_for_tenant, "sitescore_repository", tenant_id),
+                decision_workflow=SiteScoreDecisionWorkflow(audit_log=active_audit_log, store=decision_repository,
+                                                          approval_store=DurableApprovalRepository(scoped_store)),
+                candidate_workflow_service=candidate_service, audit_delivery_factory=audit_delivery_factory,
+                feature_flags=feature_flags, job_queue=job_queue,
+            )
+
         review_resolver = DurableTenantServiceResolver(
             review_state_repository,
-            factory=lambda state, tenant_id: (
-                lambda decision_repository, sitescore_repository: NetworkReviewService(
-                    initial_state=state,
-                    seed_fixtures=False,
-                    decision_repository=decision_repository,
-                    sitescore_repository=sitescore_repository,
-                    decision_workflow=SiteScoreDecisionWorkflow(
-                        audit_log=active_audit_log,
-                        store=decision_repository,
-                    ),
-                    require_canonical=True,
-                )
-            )(
-                require_tenant_repository(
-                    sitescore_decision_repository_for_tenant,
-                    "sitescore_decision_repository",
-                    tenant_id,
-                ),
-                require_tenant_repository(
-                    sitescore_repository_for_tenant,
-                    "sitescore_repository",
-                    tenant_id,
-                ),
-            ),
+            factory=review_service_factory,
             exporter=lambda service: service.export_state(),
-            mutating_methods={"reset", "decide_review"},
+            mutating_methods={"reset", "decide_review", "submit_review", "submit_native_report", "decide_native_review"},
+            transactional_mutations=True,
         )
 
         def write_governance_approval(
@@ -788,6 +1029,7 @@ def create_operator_router(
                 require_canonical=True,
             ),
             exporter=lambda service: service.export_state(),
+            transactional_mutations=True,
             mutating_methods={
                 "reset",
                 "request_avm",
@@ -822,20 +1064,64 @@ def create_operator_router(
             },
         )
 
+        def priceops_read_owner(request: Request) -> Any:
+            from apps.api.app.routes.priceops import priceops_plan_in_scope
+            from modules.opsboard.application.priceops_read_scope import (
+                ScopedPriceOpsReadRepository,
+            )
+
+            principal = request.state.operator_principal
+            owner = require_tenant_repository(priceops_repository_for_tenant, "priceops_repository", principal.tenant_id)
+            scope = principal.scope
+            if (scope.brand_ids or scope.region_ids or scope.store_ids) and (
+                priceops_store_repository is None or priceops_brand_repository is None
+            ):
+                from fastapi import HTTPException
+
+                raise HTTPException(status_code=503, detail={
+                    "code": "PRICEOPS_STORE_BINDING_UNAVAILABLE",
+                    "message": "Canonical pricing ownership is unavailable",
+                })
+            plans = [plan for plan in owner.list_plans() if priceops_plan_in_scope(
+                plan, principal, store_repository=priceops_store_repository,
+                brand_repository=priceops_brand_repository, require_tenant=True,
+                scope_module="operator_console",
+            )]
+            return ScopedPriceOpsReadRepository(owner, plans)
+
+        def growth_read_service(request: Request) -> GrowthService:
+            from modules.opsboard.application.priceops_read_scope import project_growth_read_state
+
+            tenant_id = request.state.operator_principal.tenant_id
+            owner = priceops_read_owner(request)
+            state = project_growth_read_state(growth_state_repository.load(tenant_id), owner.list_plans())
+            return GrowthService(initial_state=state, audit_log=active_audit_log, seed_fixtures=False,
+                                 priceops_repository=owner, tenant_id=tenant_id, require_canonical=True)
+
         def governance_factory(
             state: dict[str, Any] | None,
             tenant_id: str,
+            *,
+            read_owner: Any | None = None,
         ) -> GovernanceService:
+            from modules.opsboard.application.priceops_read_scope import (
+                project_governance_read_state,
+                project_growth_read_state,
+            )
+
+            growth_state = growth_state_repository.load(tenant_id)
+            if read_owner is not None:
+                growth_state = project_growth_read_state(growth_state, read_owner.list_plans())
+                state = project_governance_read_state(state, read_owner.list_plans(), growth_state)
+            priceops_owner = read_owner if read_owner is not None else require_tenant_repository(
+                priceops_repository_for_tenant, "priceops_repository", tenant_id,
+            )
             return GovernanceService(
                 growth_service=GrowthService(
-                    initial_state=growth_state_repository.load(tenant_id),
+                    initial_state=growth_state,
                     audit_log=active_audit_log,
                     seed_fixtures=False,
-                    priceops_repository=require_tenant_repository(
-                        priceops_repository_for_tenant,
-                        "priceops_repository",
-                        tenant_id,
-                    ),
+                    priceops_repository=priceops_owner,
                     tenant_id=tenant_id,
                     require_canonical=True,
                 ),
@@ -846,6 +1132,7 @@ def create_operator_router(
                     "sitescore_decision_repository",
                     tenant_id,
                 ),
+                sitescore_approval_repository=DurableApprovalRepository(TenantScopedDocumentStore(document_store, tenant_id)),
                 avm_repository=require_tenant_repository(
                     avm_repository_for_tenant,
                     "avm_repository",
@@ -856,11 +1143,7 @@ def create_operator_router(
                     "netplan_repository",
                     tenant_id,
                 ),
-                priceops_repository=require_tenant_repository(
-                    priceops_repository_for_tenant,
-                    "priceops_repository",
-                    tenant_id,
-                ),
+                priceops_repository=priceops_owner,
                 tenant_id=tenant_id,
                 require_canonical=True,
             )
@@ -885,9 +1168,126 @@ def create_operator_router(
             after_save=save_governance_growth,
         )
 
+        def governance_read_service(request: Request) -> GovernanceService:
+            tenant_id = request.state.operator_principal.tenant_id
+            return governance_factory(governance_state_repository.load(tenant_id), tenant_id,
+                                      read_owner=priceops_read_owner(request))
+
+        def pending_network_scope_snapshot(request: Request) -> dict[str, Any]:
+            # Use the existing canonical Review parent reader. Reading a
+            # committed candidate's scope does not submit or operate Intake,
+            # and must not instantiate its unrelated command workflow owner.
+            tenant_id = request.state.operator_principal.tenant_id
+            return NetworkListingService(
+                listing_repository=require_tenant_repository(
+                    listing_repository_for_tenant, "listing_repository", tenant_id,
+                ),
+                intake_repository=DurableAssistedIntakeRepository(TenantScopedDocumentStore(document_store, tenant_id)),
+                seed_fixtures=False, tenant_id=tenant_id,
+                review_decision_repository=require_tenant_repository(
+                    sitescore_decision_repository_for_tenant, "sitescore_decision_repository", tenant_id,
+                ),
+            ).snapshot(tenant_id=tenant_id)
+
+        def pending_snapshot_for_request(
+            request: Request, native_state: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            from modules.opsboard.application.operator_pending_projection import (
+                project_pending_snapshot,
+            )
+
+            # This cache belongs to the verified request, never a shared service
+            # or a mutable actor closure retained across requests.
+            cached = getattr(request.state, "operator_pending_snapshot", None)
+            if cached is not None:
+                return cached
+            try:
+                principal = request.state.operator_principal
+                context = _live_operator_request_context(request)
+                if native_state is None:
+                    if svc.live_repository is None:
+                        raise OperatorLiveRepositoryError("native pending read owner is unavailable")
+                    native_state = svc.live_repository.load_state(
+                        tenant_id=principal.tenant_id,
+                        brand_ids=context["brand_ids"], region_ids=context["region_ids"],
+                        store_ids=context["store_ids"],
+                    )
+                snapshot = governance_read_service(request).snapshot(
+                    role_id=context["role_id"], correlation_id=context["correlation_id"],
+                )
+                projected = project_pending_snapshot(
+                    snapshot, native_state, principal=principal,
+                    listing_snapshot_reader=lambda: pending_network_scope_snapshot(request),
+                    sitescore_owner=require_tenant_repository(sitescore_decision_repository_for_tenant, "sitescore_decision_repository", principal.tenant_id),
+                    avm_owner=require_tenant_repository(avm_repository_for_tenant, "avm_repository", principal.tenant_id),
+                    netplan_owner=require_tenant_repository(netplan_repository_for_tenant, "netplan_repository", principal.tenant_id),
+                    store_repository=priceops_store_repository,
+                    brand_repository=priceops_brand_repository,
+                )
+            except HTTPException:
+                raise
+            except Exception as exc:
+                raise HTTPException(status_code=503, detail={
+                    "code": "OPERATOR_PENDING_OWNER_UNAVAILABLE",
+                    "state": "unavailable",
+                    "message": "Canonical pending review ownership is unavailable",
+                }) from exc
+            request.state.operator_pending_snapshot = projected
+            return projected
+
+        def pending_state_for_request(request: Request, state: dict[str, Any]) -> dict[str, Any]:
+            from modules.opsboard.application.operator_pending_projection import (
+                project_pending_state,
+            )
+
+            projected = project_pending_state(state, pending_snapshot_for_request(request, state))
+            if _live_operator_request_context(request)["role_id"] == "marketing-manager":
+                # Reuse the Growth HTTP read owner: tenant state is projected
+                # against the current principal's canonical PriceOps parents.
+                # Never retain this owner or its facts on the shared service.
+                projected["todayGrowth"] = None
+                try:
+                    growth_owner = growth_read_service(request)
+                    projected["todayGrowth"] = {
+                        "actions": growth_owner.list_actions(),
+                        "approvals": growth_owner.list_approvals(),
+                    }
+                except Exception:
+                    # A missing/invalid source is unknown, never fixture or 0.
+                    # The original pending-owner failures above remain 503.
+                    pass
+            return projected
+
+        def pending_governance_snapshot(request: Request) -> dict[str, Any]:
+            return {key: value for key, value in pending_snapshot_for_request(request).items()
+                    if not key.startswith("_")}
+
         def network_read_scope_snapshot(request: Request) -> dict[str, Any]:
             principal = request.state.operator_principal
             return listing_resolver(request).snapshot(tenant_id=principal.tenant_id)
+
+        require_zone_read = require_operator_permission(
+            "heatzone", Action.VIEW, engine=authz_engine,
+            scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE,
+        )
+
+        def canonical_heat_zone_source(request: Request) -> dict[str, Any]:
+            # Check the native domain read grant before resolving its repository.
+            # An unavailable HeatZone source must not erase permitted Radar rows.
+            try:
+                principal = require_zone_read(request)
+                reader = getattr(svc.live_repository, "load_heat_zones", None)
+                if not callable(reader):
+                    return {}
+                return reader(tenant_id=principal.tenant_id)
+            except HTTPException as exc:
+                if exc.status_code == 401:
+                    raise
+                return {}
+            except Exception:
+                return {}
+
+        area_planning_zone_reader = canonical_heat_zone_source
 
         router.include_router(
             create_network_listings_sub_router(
@@ -903,6 +1303,7 @@ def create_operator_router(
                 ),
                 audit_log=active_audit_log,
                 service_resolver=listing_resolver,
+                heat_zone_reader=canonical_heat_zone_source,
                 allow_reset=allow_test_reset,
             )
         )
@@ -919,18 +1320,23 @@ def create_operator_router(
                     "sitescore", Action.EXECUTE, engine=authz_engine
                 ),
                 service_resolver=scoring_resolver,
+                execution_service=score_execution_service,
                 read_scope_snapshot_fn=network_read_scope_snapshot,
                 allow_reset=allow_test_reset,
             )
         )
         router.include_router(
             create_network_review_sub_router(
-                NetworkReviewService(seed_fixtures=False),
+                NetworkReviewService(seed_fixtures=False, feature_flags=feature_flags, job_queue=job_queue),
+                audit_log=active_audit_log,
                 require_view_permission_fn=require_operator_permission(
                     "sitescore",
                     Action.VIEW,
                     engine=authz_engine,
                     scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE,
+                ),
+                require_submit_permission_fn=require_operator_permission(
+                    "sitescore", Action.EXECUTE, engine=authz_engine
                 ),
                 require_decide_permission_fn=require_operator_permission(
                     "sitescore", Action.APPROVE, engine=authz_engine
@@ -940,6 +1346,36 @@ def create_operator_router(
                 allow_reset=allow_test_reset,
             )
         )
+        from apps.api.app.routes.operator_modules.netplan_builder import (
+            create_netplan_builder_router,
+        )
+        from modules.opsboard.application.netplan_builder import CanonicalNetPlanBuilder
+
+        def netplan_builder_for_request(request: Request):
+            principal = request.state.operator_principal
+            return CanonicalNetPlanBuilder(
+                principal=principal,
+                scenario_repository=require_tenant_repository(
+                    netplan_repository_for_tenant, "netplan_repository", principal.tenant_id),
+                state_repository=rebalance_state_repository,
+                rebalance_factory=rebalance_resolver._factory,
+                store_repository=priceops_store_repository,
+                brand_repository=priceops_brand_repository,
+                listing_snapshot_reader=lambda: listing_resolver(request).snapshot(tenant_id=principal.tenant_id),
+                audit_log=active_audit_log, job_queue=job_queue, policy_repository=netplan_policy_repository,
+                feature_flags=feature_flags,
+                correlation_id=request.state.correlation_id,
+                role_id=request.state.operator_role_id,
+            )
+
+        router.include_router(create_netplan_builder_router(
+            factory=netplan_builder_for_request,
+            require_view=require_operator_permission("netplan", Action.VIEW, engine=authz_engine,
+                                                     scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE),
+            require_edit=require_operator_permission("netplan", Action.CREATE, engine=authz_engine),
+            require_solve=require_operator_permission("netplan", Action.EXECUTE, engine=authz_engine),
+            require_decide=require_operator_permission("netplan", Action.APPROVE, engine=authz_engine),
+        ))
         router.include_router(
             create_network_rebalance_sub_router(
                 NetworkRebalanceService(seed_fixtures=False),
@@ -963,7 +1399,14 @@ def create_operator_router(
                 require_permission_fn=require_operator_permission(
                     "intervention", Action.CREATE, engine=authz_engine
                 ),
+                require_approval_permission_fn=require_operator_permission(
+                    "intervention", Action.APPROVE, engine=authz_engine
+                ),
+                require_transition_permission_fn=require_operator_permission(
+                    "intervention", Action.EXECUTE, engine=authz_engine
+                ),
                 service_resolver=growth_resolver,
+                read_service_resolver=growth_read_service,
             )
         )
         router.include_router(
@@ -974,9 +1417,11 @@ def create_operator_router(
                     "intervention", Action.APPROVE, engine=authz_engine
                 ),
                 require_export_permission_fn=require_operator_permission(
-                    "intervention", Action.CREATE, engine=authz_engine
+                    "audit", Action.EXPORT, engine=authz_engine
                 ),
                 service_resolver=governance_resolver,
+                read_service_resolver=governance_read_service,
+                snapshot_reader=pending_governance_snapshot,
             )
         )
         from apps.api.app.routes.operator_modules.users_roles import (
@@ -1106,13 +1551,19 @@ def create_operator_router(
     # allowlist. Candidate/Review/Approval/Decision/Audit sync atomically.
     router.include_router(
         create_network_review_sub_router(
-            NetworkReviewService(),
-            read_scope_snapshot_fn=local_network_read_scope_snapshot,
+            NetworkReviewService(
+                feature_flags=feature_flags, job_queue=job_queue,
+                business_engine=getattr(document_store, "engine", None),
+            ),
+            audit_log=active_audit_log,            read_scope_snapshot_fn=local_network_read_scope_snapshot,
             require_view_permission_fn=require_operator_permission(
                 "sitescore",
                 Action.VIEW,
                 engine=authz_engine,
                 scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE,
+            ),
+            require_submit_permission_fn=require_operator_permission(
+                "sitescore", Action.EXECUTE, engine=authz_engine
             ),
             require_decide_permission_fn=require_operator_permission(
                 "sitescore", Action.APPROVE, engine=authz_engine
@@ -1177,13 +1628,19 @@ def create_operator_router(
     )
 
     # Growth — reads require Operator Console view, writes require intervention CREATE.
-    growth_svc = growth_service or GrowthService()
+    growth_svc = local_growth_service
     router.include_router(
         create_growth_sub_router(
             growth_svc,
             require_view_permission_fn=operator_view_guard,
             require_permission_fn=require_operator_permission(
                 "intervention", Action.CREATE, engine=authz_engine
+            ),
+            require_approval_permission_fn=require_operator_permission(
+                "intervention", Action.APPROVE, engine=authz_engine
+            ),
+            require_transition_permission_fn=require_operator_permission(
+                "intervention", Action.EXECUTE, engine=authz_engine
             ),
         )
     )
@@ -1194,17 +1651,15 @@ def create_operator_router(
     from apps.api.app.routes.operator_modules.governance import (
         create_governance_sub_router,
     )
-    from modules.opsboard.application.governance import GovernanceService
-
     router.include_router(
         create_governance_sub_router(
-            GovernanceService(growth_service=growth_svc),
+            local_governance_service,
             require_view_permission_fn=operator_view_guard,
             require_decision_permission_fn=require_operator_permission(
                 "intervention", Action.APPROVE, engine=authz_engine
             ),
             require_export_permission_fn=require_operator_permission(
-                "intervention", Action.CREATE, engine=authz_engine
+                "audit", Action.EXPORT, engine=authz_engine
             ),
         )
     )

@@ -168,6 +168,67 @@ catalog_additions:
     consumers: [audit_projection, evidence_verifier, export_notification]
     retention_days: 30
 
+  - event_type: sitescore.execution_requested
+    event_version: 1
+    producer: sitescore_execution_service
+    transaction_owner: sitescore.execution_requests
+    aggregate_type: sitescore_execution_request
+    partition_key: tenant_id:execution_request_id
+    ordering_scope: one_execution_request
+    schema_ref: '#/payloads/SiteScoreExecutionChangedV1'
+    sensitive_fields: []
+    consumers: [operator_console_projection, audit_projection]
+    retention_days: 14
+
+  - event_type: sitescore.execution_failed
+    event_version: 1
+    producer: sitescore_worker
+    transaction_owner: sitescore.execution_requests
+    aggregate_type: sitescore_execution_request
+    partition_key: tenant_id:execution_request_id
+    ordering_scope: one_execution_request
+    schema_ref: '#/payloads/SiteScoreExecutionChangedV1'
+    sensitive_fields: []
+    consumers: [operator_console_projection, audit_projection]
+    retention_days: 30
+
+  - event_type: sitescore.execution_completed
+    event_version: 1
+    producer: sitescore_worker
+    transaction_owner: sitescore.execution_requests
+    aggregate_type: sitescore_execution_request
+    partition_key: tenant_id:execution_request_id
+    ordering_scope: one_execution_request
+    schema_ref: '#/payloads/SiteScoreExecutionChangedV1'
+    sensitive_fields: []
+    consumers: [operator_console_projection, audit_projection]
+    retention_days: 30
+
+
+  - event_type: adlift.campaign_approved
+    event_version: 1
+    producer: adlift_native_budget_authority
+    transaction_owner: adlift.native_budget_authority
+    aggregate_type: adlift_campaign
+    partition_key: tenant_id:campaign_id
+    ordering_scope: one_campaign_budget
+    schema_ref: '#/payloads/AdLiftCampaignApprovedV1'
+    sensitive_fields: []
+    consumers: [campaign_projection]
+    retention_days: 30
+
+  - event_type: adlift.campaign_execution_requested
+    event_version: 1
+    producer: adlift_native_budget_authority
+    transaction_owner: adlift.native_budget_authority
+    aggregate_type: adlift_campaign
+    partition_key: tenant_id:campaign_id
+    ordering_scope: one_campaign_budget
+    schema_ref: '#/payloads/AdLiftCampaignExecutionRequestedV1'
+    sensitive_fields: []
+    consumers: [marketing_platform_dispatcher]
+    retention_days: 30
+
 payloads:
   AssignmentStateChangedV1:
     type: object
@@ -279,6 +340,22 @@ payloads:
       content_sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
       watermark: {type: string}
       expires_at: {type: string, format: date-time}
+
+  # Technical execution-owner protocol; this does not grant model/source use.
+  SiteScoreExecutionChangedV1:
+    type: object
+    additionalProperties: false
+    required: [execution_request_id, candidate_site_id, job_id, request_version, status, base_report_id, base_report_version, result_report_id, result_report_version]
+    properties:
+      execution_request_id: {type: string, format: uuid}
+      candidate_site_id: {type: string, format: uuid}
+      job_id: {type: string, format: uuid}
+      request_version: {type: integer, minimum: 1}
+      status: {type: string, enum: [QUEUED, RUNNING, RETRYING, SUCCEEDED, FAILED, DEAD_LETTER, CANCELLED]}
+      base_report_id: {type: string}
+      base_report_version: {type: integer, minimum: 1}
+      result_report_id: {type: [string, 'null']}
+      result_report_version: {type: [integer, 'null'], minimum: 1}
 
 base_payload_completion_gate:
   rule: Every payload entry in the base v1 catalog must be expanded to a complete JSON Schema with type, additionalProperties, required, and properties before implementation approval.

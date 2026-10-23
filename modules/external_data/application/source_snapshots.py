@@ -879,31 +879,16 @@ def build_source_snapshot_service(persistence: Any, doc_store: Any = None) -> So
                 return tenant_meta.get("residency_mode", "TW_ONLY")
         return "TW_ONLY"
 
-    # Default to the real GCS store if credentials/token or explicit gcs setting is present.
-    # Fail closed when explicit gcs is requested or in production env but no credentials exist.
-    has_gcs_credentials = bool(
-        os.environ.get("GOOGLE_OAUTH_ACCESS_TOKEN", "").strip()
-        or os.environ.get("ODP_AUDIT_WORM_GCS_TOKEN", "").strip()
-        or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
-    )
-    explicit_store = os.environ.get("ODP_OBJECT_STORE")
-    odp_env = (os.environ.get("ODP_ENV", "").strip().lower() or os.environ.get("ODAY_ENV", "").strip().lower())
-    is_prod_env = odp_env in ("production", "prod")
+    from apps.api.oday_api.runtime_mode import live_data_required
 
-    if explicit_store == "gcs" or is_prod_env:
-        if not has_gcs_credentials:
-            raise RuntimeError(
-                "GcsObjectStore required in production (or explicitly via ODP_OBJECT_STORE) but no GCS credentials/tokens found in environment."
-            )
+    # Production obtains its identity from the metadata service at authorized
+    # object I/O. Environment token/key-file presence is not workload authority.
+    explicit_store = os.environ.get("ODP_OBJECT_STORE", "").strip().lower()
+    local_oauth = bool(os.environ.get("GOOGLE_OAUTH_ACCESS_TOKEN", "").strip())
+    if live_data_required() or explicit_store == "gcs" or (not explicit_store and local_oauth):
         object_store = GcsObjectStore(tenant_residency_resolver=residency_resolver)
-    elif explicit_store == "in_memory":
-        object_store = InMemoryObjectStore(tenant_residency_resolver=residency_resolver)
     else:
-        # Implicit selection based on credential availability
-        if has_gcs_credentials:
-            object_store = GcsObjectStore(tenant_residency_resolver=residency_resolver)
-        else:
-            object_store = InMemoryObjectStore(tenant_residency_resolver=residency_resolver)
+        object_store = InMemoryObjectStore(tenant_residency_resolver=residency_resolver)
 
     return SourceSnapshotService(
         db_conn=db_conn,

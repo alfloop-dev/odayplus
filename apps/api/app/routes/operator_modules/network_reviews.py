@@ -26,7 +26,7 @@ from collections.abc import Callable
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 
 from apps.api.app.routes._common import reset_allowed_guard
 from apps.api.app.routes.operator_modules.live_service import resolve_service
@@ -65,12 +65,55 @@ class ReviewDecisionPayload(BaseModel):
         return normalized
 
 
+class ReviewSubmissionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expectedReportId: str = Field(min_length=1)
+    expectedReportVersion: StrictInt = Field(gt=0)
+    expectedLatestReportId: str = Field(min_length=1)
+    expectedLatestReportVersion: StrictInt = Field(gt=0)
+    decisionId: str | None
+    expectedDecisionVersion: StrictInt | None = Field(default=None, gt=0)
+    expectedCandidateReviewId: str | None
+    expectedCandidateState: str = Field(min_length=1)
+    expectedCandidateDigest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    submissionSummary: str = Field(min_length=1)
+    reviewerGroupId: str = Field(min_length=1)
+    expectedActorSubjectId: str = Field(min_length=1)
+    expectedTenantId: str = Field(min_length=1)
+
+    @field_validator("submissionSummary")
+    @classmethod
+    def substantive_summary(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("submissionSummary must be explicitly recorded")
+        return value
+
+
+class BoundReviewDecisionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    decision: str
+    reason: str
+    conditions: str = ""
+    requiredData: list[str] = Field(default_factory=list)
+    overrideAck: bool = False
+    expectedCandidateId: str = Field(min_length=1)
+    expectedCandidateDigest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expectedDecisionVersion: StrictInt = Field(gt=0)
+    expectedReportId: str = Field(min_length=1)
+    expectedReportVersion: StrictInt = Field(gt=0)
+    expectedApprovalId: str = Field(min_length=1)
+    expectedActorSubjectId: str = Field(min_length=1)
+    expectedTenantId: str = Field(min_length=1)
+
+
 def create_network_review_sub_router(
     service: NetworkReviewService,
     *,
     require_view_permission_fn: Callable[..., Any],
     require_decide_permission_fn: Callable[..., Any],
+    require_submit_permission_fn: Callable[..., Any] | None = None,
     service_resolver: Callable[[Request], Any] | None = None,
+    audit_log: Any = None,
     allow_reset: bool = True,
     read_scope_snapshot_fn: Callable[[Request], dict[str, Any]] | None = None,
 ) -> APIRouter:
@@ -103,6 +146,85 @@ def create_network_review_sub_router(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=exc.to_detail(),
             ) from exc
+
+    def submission_error(exc: Exception) -> HTTPException:
+        code = (404 if isinstance(exc, NetworkReviewNotFound) else
+                403 if isinstance(exc, NetworkReviewRoleError) else
+                503 if isinstance(exc, NetworkReviewRuntimeUnavailable) else 409)
+        return HTTPException(code, detail=str(exc))
+
+    @router.get("/{review_id}/decision-context", dependencies=[Depends(require_view_permission_fn)])
+    def decision_context(review_id: str, candidateId: str, request: Request):
+        try:
+            return resolve_service(request, service, service_resolver).decision_context(
+                review_id=review_id, candidate_id=candidateId, principal=request.state.operator_principal)
+        except (NetworkReviewNotFound, NetworkReviewRoleError, NetworkReviewConflict, NetworkReviewRuntimeUnavailable) as exc:
+            raise submission_error(exc) from exc
+
+    @router.post("/{review_id}/decision", dependencies=[Depends(require_decide_permission_fn)])
+    def bound_decision(review_id: str, body: BoundReviewDecisionPayload, request: Request,
+                       if_match: str | None = Header(default=None, alias="If-Match"),
+                       if_actor_match: str | None = Header(default=None, alias="If-Actor-Match"),
+                       idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+                       correlation_id: str | None = Header(default=None, alias="X-Correlation-Id")):
+        principal = request.state.operator_principal
+        if not if_match or not if_actor_match or not idempotency_key or not idempotency_key.strip():
+            raise HTTPException(428, detail="DECISION_PRECONDITIONS_REQUIRED")
+        if if_match != f'W/"{body.expectedDecisionVersion}"':
+            raise HTTPException(409, detail="DECISION_VERSION_CONFLICT")
+        if if_actor_match != principal.subject_id or body.expectedActorSubjectId != principal.subject_id:
+            raise HTTPException(409, detail="ACTOR_CONTEXT_CONFLICT")
+        if body.expectedTenantId != principal.tenant_id:
+            raise HTTPException(409, detail="TENANT_CONTEXT_CONFLICT")
+        actor_role = Role.SITE_REVIEWER if principal.has_role(Role.SITE_REVIEWER) else Role.EXECUTIVE
+        if not principal.has_role(actor_role):
+            raise HTTPException(403, detail="reviewer role required")
+        target = body.model_dump(include={"expectedCandidateId", "expectedCandidateDigest", "expectedDecisionVersion",
+            "expectedReportId", "expectedReportVersion", "expectedApprovalId"})
+        try:
+            return resolve_service(request, service, service_resolver).decide_review(
+                review_id=review_id, decision=body.decision, reason=body.reason, conditions=body.conditions,
+                required_data=body.requiredData, override_ack=body.overrideAck,
+                actor_role_id=actor_role.value, actor_name=principal.subject_id, principal=principal,
+                expected_target=target, idempotency_key=idempotency_key, correlation_id=correlation_id)
+        except NetworkReviewPolicyError as exc:
+            raise HTTPException(422, detail=str(exc)) from exc
+        except NetworkReviewRoleError as exc:
+            if audit_log is not None:
+                from apps.api.oday_api.security.dependencies import record_review_owner_denial
+                record_review_owner_denial(request, audit_log=audit_log, resource_id=review_id, reason=str(exc))
+            raise HTTPException(403, detail=str(exc)) from exc
+        except (NetworkReviewNotFound, NetworkReviewConflict, NetworkReviewRuntimeUnavailable) as exc:
+            raise submission_error(exc) from exc
+
+    @router.get("/candidates/{candidate_id}/submission-context",
+                dependencies=[Depends(require_submit_permission_fn or require_decide_permission_fn)])
+    def submission_context(candidate_id: str, request: Request, decisionId: str | None = None):
+        try:
+            return resolve_service(request, service, service_resolver).submission_context(
+                candidate_id=candidate_id, principal=request.state.operator_principal, decision_id=decisionId)
+        except (NetworkReviewNotFound, NetworkReviewRoleError, NetworkReviewConflict, NetworkReviewRuntimeUnavailable) as exc:
+            raise submission_error(exc) from exc
+
+    @router.post("/candidates/{candidate_id}/submit",
+                 dependencies=[Depends(require_submit_permission_fn or require_decide_permission_fn)])
+    def submit_review(candidate_id: str, body: ReviewSubmissionPayload, request: Request,
+                      idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+                      correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
+                      if_actor_match: str | None = Header(default=None, alias="If-Actor-Match")):
+        principal = request.state.operator_principal
+        if if_actor_match != principal.subject_id or body.expectedActorSubjectId != principal.subject_id:
+            raise HTTPException(409, detail="ACTOR_CONTEXT_CONFLICT")
+        if body.expectedTenantId != principal.tenant_id:
+            raise HTTPException(409, detail="TENANT_CONTEXT_CONFLICT")
+        target = body.model_dump(exclude={"expectedActorSubjectId", "expectedTenantId", "submissionSummary", "reviewerGroupId"})
+        try:
+            return resolve_service(request, service, service_resolver).submit_review(
+                candidate_id=candidate_id, principal=principal, target=target,
+                idempotency_key=idempotency_key, correlation_id=correlation_id,
+                submission_summary=body.submissionSummary, reviewer_group_id=body.reviewerGroupId)
+        except (NetworkReviewNotFound, NetworkReviewRoleError, NetworkReviewConflict, NetworkReviewRuntimeUnavailable) as exc:
+            raise submission_error(exc) from exc
 
     @router.post(
         "/reset",
@@ -147,10 +269,14 @@ def create_network_review_sub_router(
                 actor_name=principal.subject_id,
                 idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
+                principal=principal,
             )
         except NetworkReviewNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except NetworkReviewRoleError as exc:
+            if audit_log is not None:
+                from apps.api.oday_api.security.dependencies import record_review_owner_denial
+                record_review_owner_denial(request, audit_log=audit_log, resource_id=review_id, reason=str(exc))
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
         except NetworkReviewConflict as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc

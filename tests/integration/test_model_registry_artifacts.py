@@ -51,6 +51,7 @@ from shared.infrastructure.persistence import (
     SqliteDocumentStore,
     SqliteEngine,
 )
+from tests.integration._model_publish_flag_fixture import enable_model_publish
 
 MODEL_NAME = "forecast_revenue_interval"
 SNAPSHOT_TIME = datetime(2026, 6, 27, 8, 0, tzinfo=UTC)
@@ -235,6 +236,7 @@ def _release(service: LearningHubService, **kwargs):
 
 def test_full_lifecycle_promote_rollback_survives_restart(db_path) -> None:
     engine, service, artifacts = _build_durable(db_path)
+    enable_model_publish(service, tenant_id='tenant-modeling')
     try:
         v1, _ = _prepare_candidate(service, artifacts, "1.0.0")
         v2, _ = _prepare_candidate(service, artifacts, "1.1.0")
@@ -433,6 +435,7 @@ def test_artifact_content_addressing_and_tamper_evidence(db_path) -> None:
 
 def test_registry_evidence_manifest_is_audit_complete(db_path) -> None:
     engine, service, artifacts = _build_durable(db_path)
+    enable_model_publish(service, tenant_id='tenant-modeling')
     try:
         v1, _ = _prepare_candidate(service, artifacts, "1.0.0")
         _release(

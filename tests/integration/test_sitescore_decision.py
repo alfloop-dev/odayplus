@@ -23,6 +23,11 @@ from shared.workflow.sitescore import (
     SiteScoreDecisionWorkflow,
 )
 from tests.integration._authz import SITESCORE_HEADERS
+from tests.integration._operation_flag_fixtures import (
+    SITE_GO_FLAG,
+    enable_operation_flag,
+    new_operation_flags,
+)
 
 SNAPSHOT_TIME = datetime(2026, 6, 27, 8, 0, tzinfo=UTC)
 PREDICTION_TIME = datetime(2026, 6, 27, 9, 0, tzinfo=UTC)
@@ -221,7 +226,19 @@ def test_decision_workflow_reject_and_request_revision_paths() -> None:
 
 
 def test_sitescore_api_scores_reports_and_runs_decision_loop() -> None:
-    client = TestClient(create_app(), headers=SITESCORE_HEADERS)
+    from dataclasses import replace
+
+    from shared.infrastructure.persistence.factory import _memory_bundle
+    from shared.jobs.queue import InMemoryJobQueue
+
+    owner, _ = new_operation_flags()
+    bundle = replace(
+        _memory_bundle(),
+        feature_flag_registry=owner,
+        job_queue=InMemoryJobQueue(flags=owner),
+    )
+    enable_operation_flag(owner, key=SITE_GO_FLAG, tenant_id=SITESCORE_HEADERS["x-tenant-id"])
+    client = TestClient(create_app(persistence=bundle), headers=SITESCORE_HEADERS)
 
     score_response = client.post(
         "/sitescore/score-jobs",
@@ -270,6 +287,7 @@ def test_sitescore_api_scores_reports_and_runs_decision_loop() -> None:
     open_response = client.post(
         "/sitescore/decisions",
         json={"report_id": report_id, "created_by": "analyst-a"},
+        headers={"x-subject-id": "analyst-a"},
     )
     assert open_response.status_code == 201
     decision_id = open_response.json()["decision_id"]
@@ -279,12 +297,14 @@ def test_sitescore_api_scores_reports_and_runs_decision_loop() -> None:
     missing_reason = client.post(
         f"/sitescore/decisions/{decision_id}/decision",
         json={"action": "APPROVE", "actor": "director-b"},
+        headers={"x-subject-id": "director-b"},
     )
     assert missing_reason.status_code == 422
 
     approve = client.post(
         f"/sitescore/decisions/{decision_id}/decision",
         json={"action": "APPROVE", "actor": "director-b", "reason": "符合展店標準"},
+        headers={"x-subject-id": "director-b"},
     )
     assert approve.status_code == 200
     approve_body = approve.json()

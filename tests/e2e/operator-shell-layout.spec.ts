@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { openOperatorWorkspace } from "./_operatorPersona";
 
 /**
  * Real-CSS geometry guard for the shared Operator header (audit
@@ -23,8 +24,13 @@ type HeaderGeometry = {
   viewport: number;
 };
 
-async function measureHeader(page: Page): Promise<HeaderGeometry> {
-  return page.evaluate(() => {
+// This function is self-contained because Playwright serializes it into
+// the browser. The controlled CSS comparison temporarily swaps child Nodes
+// and restores the same Nodes before yielding to React's next task.
+function measureHeaderInDocument(compareWithGate: boolean): {
+  current: HeaderGeometry; gated?: HeaderGeometry;
+} {
+  const measure = (): HeaderGeometry => {
     const header = document.querySelector<HTMLElement>('[data-screen-label="Top Navigation"]');
     const inner = document.querySelector<HTMLElement>('[data-testid="operator-topbar-inner"]');
     const badge = document.querySelector<HTMLElement>('[data-testid="operator-environment-badge"]');
@@ -52,11 +58,29 @@ async function measureHeader(page: Page): Promise<HeaderGeometry> {
       offscreenControls,
       viewport,
     };
-  });
+  };
+  const current = measure();
+  if (!compareWithGate) return { current };
+  const main = document.querySelector('[data-testid="operator-console"] > main');
+  if (!main) throw new Error("operator workspace not rendered");
+  const originalChildren = Array.from(main.childNodes);
+  const gate = document.createElement("section");
+  gate.dataset.testid = "operator-data-unavailable";
+  gate.dataset.status = "error";
+  try {
+    main.replaceChildren(gate);
+    return { current, gated: measure() };
+  } finally {
+    main.replaceChildren(...originalChildren);
+  }
+}
+
+async function measureHeader(page: Page): Promise<HeaderGeometry> {
+  return (await page.evaluate(measureHeaderInDocument, false)).current;
 }
 
 async function openWorkspace(page: Page, workspace: string) {
-  await page.goto(`/operator?ws=${workspace}`);
+  await openOperatorWorkspace(page, workspace);
   await expect(page.getByTestId("operator-topbar-inner")).toBeVisible();
   await expect(page.locator('[data-testid="operator-console"] > main')).not.toBeEmpty();
 }
@@ -78,6 +102,8 @@ test.describe("Operator shared header layout", () => {
         (time) => `external-fetch:listing.partner_feed:blocked:${time}:e34f2117-de4b-478c-82fd-13c4ef428d42`,
       );
       const title = "External ingestion requires review";
+      const auditActor = "17e9cb99-db46-4a07-8e61-6bf9b22cf5d2";
+      const auditTime = "2026-10-11T15:53:07.811458+00:00";
       await page.route(/\/api\/v1\/operator\/(bootstrap|today)(\?.*)?$/, async (route) => {
         const response = await route.fetch();
         expect(response.status()).toBe(200);
@@ -88,6 +114,10 @@ test.describe("Operator shared header layout", () => {
           description: "External provider fetch is disabled for this deployment.",
           meta: "listing.partner_feed", status: "failed", owner: "Data Operations",
         }));
+        envelope.today.auditFeed = [{
+          actor: auditActor, time: auditTime,
+          detail: "view operator_console: allow", category: "security.authorization",
+        }];
         await route.fulfill({ response, json: envelope });
       });
       await page.setViewportSize({ width, height: 900 });
@@ -120,6 +150,18 @@ test.describe("Operator shared header layout", () => {
         });
       }));
       expect(geometry.flat().filter((label) => !label.readable), "clipped identifier/title text").toEqual([]);
+      const audit = page.getByTestId("operator-audit-feed").locator("article").first();
+      await expect(audit.locator("time")).toHaveText("23:53");
+      await expect(audit.locator("time")).toHaveAttribute("datetime", auditTime);
+      await expect(audit.locator("time")).toHaveAttribute("title", auditTime);
+      await expect(audit.locator("p strong")).toHaveText("帳號 17e9…f5d2");
+      await expect(audit.locator("p strong")).toHaveAttribute("title", auditActor);
+      const auditGeometry = await audit.evaluate((row) => ({
+        rowWidth: row.getBoundingClientRect().width,
+        textWidth: row.querySelector("p")!.getBoundingClientRect().width,
+      }));
+      expect(auditGeometry.textWidth, "audit text squeezed by the timestamp column")
+        .toBeGreaterThan(auditGeometry.rowWidth * 0.65);
       expect((await measureHeader(page)).docScrollWidth).toBeLessThanOrEqual(width);
       await testInfo.attach(`today-long-identifiers-${width}`, {
         body: await page.screenshot({ fullPage: true }), contentType: "image/png",
@@ -162,6 +204,24 @@ test.describe("Operator shared header layout", () => {
         expect(reference.innerWidth).toBe(1720);
         expect(reference.innerX).toBe((width - 1720) / 2);
       }
+
+      // Native focus/anchor scrolling must leave controls below the sticky
+      // header, including its taller wrapped mobile/tablet form. A low-height
+      // viewport supplies genuine scrolling space without modifying the DOM.
+      await page.setViewportSize({ width, height: 360 });
+      await openWorkspace(page, "network");
+      await page.evaluate(() => document.fonts.ready);
+      const radarTab = page.getByTestId("network-tab-1");
+      await expect(radarTab).toBeVisible();
+      await radarTab.evaluate((element) => element.scrollIntoView({ block: "start", behavior: "instant" }));
+      const scrolled = await radarTab.evaluate((element) => ({
+        controlTop: element.getBoundingClientRect().top,
+        headerBottom: document.querySelector('[data-screen-label="Top Navigation"]')!.getBoundingClientRect().bottom,
+      }));
+      expect(scrolled.controlTop, "native scrolling placed the tab under the sticky header")
+        .toBeGreaterThanOrEqual(scrolled.headerBottom);
+      await radarTab.click();
+      await expect(radarTab).toHaveAttribute("aria-selected", "true");
     });
   }
 
@@ -239,26 +299,32 @@ test.describe("Operator shared header layout", () => {
         // Measure the row holding the workspace title, not the workspace box: a
         // second padding layer keeps the box in place but moves its content.
         const title = page.locator(titleSelector).first();
-        await expect(title).toBeVisible();
-        const { rowX, shellContentX, rowWidth, shellContentWidth } = await title.evaluate((element) => {
-          const shell = document.querySelector('[data-testid="operator-console"] > main') as HTMLElement;
-          const style = getComputedStyle(shell);
-          const shellBox = shell.getBoundingClientRect();
-          const row = element.parentElement!.getBoundingClientRect();
-          const left = parseFloat(style.paddingLeft);
-          return {
-            rowX: row.x,
-            rowWidth: row.width,
-            shellContentX: shellBox.x + left,
-            shellContentWidth: shellBox.width - left - parseFloat(style.paddingRight),
-          };
-        });
-        // The shell already applies the Package 10 container padding at every
-        // breakpoint; workspaces must not pad again.
-        expect(Math.round(rowX), `${workspace} title row x at ${width}px`).toBe(Math.round(shellContentX));
-        expect(Math.round(rowWidth), `${workspace} title row width at ${width}px`).toBeGreaterThanOrEqual(
-          Math.round(shellContentWidth) - 4,
-        );
+        // Bootstrap can replace the fixture workspace between the locator's
+        // visibility check and evaluation. Measure the current connected row
+        // within the existing assertion window, retaining both exact bounds.
+        await expect(async () => {
+          await expect(title).toBeVisible();
+          const { rowX, shellContentX, rowWidth, shellContentWidth } = await title.evaluate((element) => {
+            if (!element.isConnected) throw new Error("workspace title was replaced during bootstrap");
+            const shell = document.querySelector('[data-testid="operator-console"] > main') as HTMLElement;
+            const style = getComputedStyle(shell);
+            const shellBox = shell.getBoundingClientRect();
+            const row = element.parentElement!.getBoundingClientRect();
+            const left = parseFloat(style.paddingLeft);
+            return {
+              rowX: row.x,
+              rowWidth: row.width,
+              shellContentX: shellBox.x + left,
+              shellContentWidth: shellBox.width - left - parseFloat(style.paddingRight),
+            };
+          });
+          // The shell already applies the Package 10 container padding at every
+          // breakpoint; workspaces must not pad again.
+          expect(Math.round(rowX), `${workspace} title row x at ${width}px`).toBe(Math.round(shellContentX));
+          expect(Math.round(rowWidth), `${workspace} title row width at ${width}px`).toBeGreaterThanOrEqual(
+            Math.round(shellContentWidth) - 4,
+          );
+        }).toPass({ timeout: 5_000 });
       }
     }
 
@@ -298,9 +364,20 @@ test.describe("Operator shared header layout", () => {
     await page.goto("/operator?ws=network&tab=radar");
     const search = page.getByTestId("intake-search-input");
     await expect(search).toBeVisible({ timeout: 30_000 });
-    const boxes = await Promise.all(
+    // Measure in one browser JavaScript turn to exclude mixed render samples.
+    const boxes = await page.evaluate(() =>
       ["intake-search-input", "intake-filter-method", "intake-filter-stage", "intake-filter-outcome"].map(
-        async (id) => page.getByTestId(id).boundingBox(),
+        (id) => {
+          const matches = document.querySelectorAll(`[data-testid="${id}"]`);
+          if (matches.length !== 1) throw new Error(`expected exactly one ${id}, found ${matches.length}`);
+          const element = matches[0];
+          if (!(element instanceof HTMLElement)) throw new Error(`expected HTMLElement for ${id}`);
+          const rect = element.getBoundingClientRect();
+          if (getComputedStyle(element).visibility !== "visible" || !(rect.width > 0 && rect.height > 0)) {
+            throw new Error(`expected visible, non-empty box for ${id}`);
+          }
+          return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+        },
       ),
     );
     const [searchBox, ...selects] = boxes.map((box) => box!);
@@ -314,16 +391,17 @@ test.describe("Operator shared header layout", () => {
   test("header does not change when workspace content is replaced by a data gate", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await openWorkspace(page, "today");
-    const withContent = await measureHeader(page);
-
-    // Same controlled experiment as the audit: remove the Today content node.
-    await page.evaluate(() => {
-      const main = document.querySelector('[data-testid="operator-console"] > main');
-      if (main) main.innerHTML = '<section data-testid="operator-data-unavailable" data-status="error"></section>';
-    });
-    const withoutContent = await measureHeader(page);
+    // Isolate the audit's CSS question in one browser JavaScript turn.
+    // Preserve the original Node objects and restore them in finally before
+    // React can commit another bootstrap render. This controlled comparison
+    // does not claim a real API failure or authenticated data-gate transition.
+    const { current: withContent, gated: withoutContent } = await page.evaluate(
+      measureHeaderInDocument, true,
+    );
 
     expect(withoutContent).toEqual(withContent);
+    await expect(page.getByTestId("operator-topbar-inner")).toBeVisible();
+    await expect(page.locator('[data-testid="operator-console"] > main')).not.toBeEmpty();
   });
 });
 
@@ -406,10 +484,14 @@ test.describe("Network Find Areas Package 10 layout", () => {
     for (const height of g.lensHeights) expect(height).toBeLessThanOrEqual(34);
     expect(g.legend).toContain("HeatZone ≥ 80");
     expect(g.legend).not.toMatch(/High lens fit|Watch tradeoff|Risk pressure/);
-    // Zone detail: 22px score, seven facts, one filled primary and five outlined actions.
+    // Package 10 has one primary, URL intake and four secondary actions.
     expect(g.bigScoreFont).toBe("22px");
     expect(g.factRows).toBe(7);
+    expect(g.actions.map((action) => action.text)).toContain("＋ 從網址新增物件（帶入本區）");
     expect(g.actions).toHaveLength(6);
+    expect(g.actions.slice(3).map((action) => action.text)).toEqual([
+      "指派找點任務", "建立物件搜尋條件", "加入季度展店計畫",
+    ]);
     expect(g.actions[0].bg).toBe("rgb(46, 58, 151)");
     for (const action of g.actions.slice(1)) expect(action.bg).not.toBe("rgb(46, 58, 151)");
   });

@@ -15,6 +15,8 @@ import {
   operatorCandidateToMapSite,
   operatorHeatZoneToMapZone,
   operatorListingToMapListing,
+  operatorRecordedHeatZoneToMapZone,
+  operatorRecordedMapFreshness,
 } from "./heatZoneMapAdapters";
 import { GeocoderSearchPanel } from "./geocoder";
 import type { GeocodeAuditEvent } from "./geocoder";
@@ -70,9 +72,9 @@ export type FindAreasPanelProps = {
   onToggleTracked: () => void;
   onSourceListings: () => void;
   onAddListingFromUrl: () => void;
-  onViewCandidates: () => void;
-  onScoreCandidate: () => void;
-  onSubmitReview: () => void;
+  onOpenSurvey?: (targetId: string) => void;
+  onOpenListingSearch?: () => void;
+  onOpenAreaPlanning?: () => void;
 };
 
 export function FindAreasPanel({
@@ -86,31 +88,40 @@ export function FindAreasPanel({
   listings,
   onAddListingFromUrl,
   onChangeLens,
-  onScoreCandidate,
   onSelectZone,
   onSourceListings,
-  onSubmitReview,
+  onOpenSurvey,
+  onOpenListingSearch,
+  onOpenAreaPlanning,
   onToggleTracked,
-  onViewCandidates,
   selectedZone,
   viewModel,
 }: FindAreasPanelProps) {
-  const mapZones = useMemo<MapHeatZone[]>(() => heatZones.map(operatorHeatZoneToMapZone), [heatZones]);
+  const mapZones = useMemo<MapHeatZone[]>(
+    () => fixturesAllowed ? heatZones.map(operatorHeatZoneToMapZone)
+      : heatZones.flatMap((zone) => {
+        const recorded = operatorRecordedHeatZoneToMapZone(zone);
+        return recorded ? [recorded] : [];
+      }),
+    [fixturesAllowed, heatZones],
+  );
+  const mapFreshness = useMemo(() => fixturesAllowed ? OPERATOR_MAP_FRESHNESS
+    : operatorRecordedMapFreshness(mapZones), [fixturesAllowed, mapZones]);
   const mapListings = useMemo<MapListing[]>(
-    () => listings.map((l, i) => operatorListingToMapListing(l, heatZones, i)),
-    [listings, heatZones],
+    () => listings.map((l, i) => operatorListingToMapListing(l, heatZones, i, fixturesAllowed)),
+    [listings, heatZones, fixturesAllowed],
   );
   const mapCandidates = useMemo<MapCandidateSite[]>(
-    () => candidates.map((c, i) => operatorCandidateToMapSite(c, heatZones, i)),
-    [candidates, heatZones],
+    () => candidates.map(operatorCandidateToMapSite),
+    [candidates],
   );
   const lensScores = useMemo<HeatZoneLensScore[]>(
     () =>
-      viewModel.zones.map((zone) => ({
+      viewModel.zones.flatMap((zone) => zone.lensPoints === null ? [] : [{
         id: zone.id,
         label: zone.label.replace(ZONE_NAME_SUFFIX, ""),
         points: zone.lensPoints,
-      })),
+      }]),
     [viewModel.zones],
   );
   const selectedMapZoneId = selectedZone?.id ?? heatZones[0]?.id ?? "";
@@ -183,11 +194,16 @@ export function FindAreasPanel({
 
       <div className={styles.center}>
         <div className={styles.mapFrame} data-testid="find-areas-map-frame">
+          {!fixturesAllowed && heatZones.some((zone) => !zone.mapEvidence) ? (
+            <p data-testid="find-areas-map-geometry-unavailable" role="status">
+              地圖 geometry 尚未可用；列表仍可用於審查。
+            </p>
+          ) : null}
           <HeatZoneMap
             caption={`HeatZone Lens：${lensName}`}
             candidates={mapCandidates}
             dataSource={fixturesAllowed ? "fixture" : "api"}
-            freshness={OPERATOR_MAP_FRESHNESS}
+            freshness={mapFreshness}
             layerQuery={FIND_AREAS_MAP_LAYERS}
             lensScores={lensScores}
             listings={mapListings}
@@ -206,7 +222,7 @@ export function FindAreasPanel({
             {viewModel.rankedZones.map((zone) => (
               <button
                 aria-current={selectedZone?.id === zone.id ? "true" : undefined}
-                aria-label={`${zone.label} ${zone.lensPoints} 分`}
+                aria-label={`${zone.label} ${zone.lensPoints === null ? "未評估" : `${zone.lensPoints} 分`}`}
                 className={styles.trayCard}
                 data-zone-id={zone.id}
                 key={zone.id}
@@ -215,8 +231,8 @@ export function FindAreasPanel({
               >
                 <span className={styles.trayCardTop}>
                   <strong>{zone.label}</strong>
-                  <span className={styles.score} data-tier={zone.lensTier}>
-                    {zone.lensPoints}
+                  <span className={zone.lensPoints === null ? undefined : styles.score} data-tier={zone.lensTier ?? undefined}>
+                    {zone.lensPoints ?? "未評估"}
                   </span>
                 </span>
                 <span className={styles.trayMeta}>
@@ -255,16 +271,16 @@ export function FindAreasPanel({
                 <h3 id="find-areas-detail-title">{selectedZone.label}</h3>
                 {isSelectedTracked ? <span className={styles.trackedPill}>追蹤中</span> : null}
                 <span
-                  aria-label={`${lensName} ${selectedZone.lensPoints} 分`}
-                  className={styles.bigScore}
+                  aria-label={`${lensName} ${selectedZone.lensPoints === null ? "未評估" : `${selectedZone.lensPoints} 分`}`}
+                  className={selectedZone.lensPoints === null ? undefined : styles.bigScore}
                   data-testid="find-areas-zone-score"
-                  data-tier={selectedZone.lensTier}
+                  data-tier={selectedZone.lensTier ?? undefined}
                 >
-                  {selectedZone.lensPoints}
+                  {selectedZone.lensPoints ?? "未評估"}
                 </span>
               </div>
               <p className={styles.detailSub}>
-                {selectedZone.id} · HeatZone 綜合 {selectedZone.overallPoints} · Lens：{lensName}
+                {selectedZone.id} · HeatZone 綜合 {selectedZone.overallPoints ?? "未評估"} · Lens：{lensName}
               </p>
             </header>
 
@@ -321,20 +337,18 @@ export function FindAreasPanel({
               >
                 {isSelectedTracked ? "✓ 已追蹤（點擊移除）" : "加入追蹤"}
               </button>
-              <button className={styles.secondaryAction} onClick={onViewCandidates} type="button">
-                查看本區候選點（{selectedZone.candidateCount}）
+              <button className={styles.secondaryAction} disabled={!onOpenSurvey}
+                title={onOpenSurvey ? undefined : "熱區任務服務未接通"}
+                onClick={() => onOpenSurvey?.(selectedZone.id)} type="button">指派找點任務</button>
+              <button className={styles.secondaryAction} disabled={!onOpenListingSearch}
+                onClick={onOpenListingSearch}
+                title={onOpenListingSearch ? undefined : "目前無法建立物件搜尋條件"} type="button">
+                建立物件搜尋條件
               </button>
-              <button
-                className={styles.secondaryAction}
-                disabled={!selectedZone.bestCandidate}
-                onClick={onScoreCandidate}
-                title={selectedZone.bestCandidate ? undefined : "本區尚無候選點"}
-                type="button"
-              >
-                {selectedZone.bestCandidate ? `評分最佳候選點（${selectedZone.bestCandidate.id}）` : "評分最佳候選點"}
-              </button>
-              <button className={styles.secondaryAction} onClick={onSubmitReview} type="button">
-                送出審核
+              <button className={styles.secondaryAction} disabled={!onOpenAreaPlanning}
+                onClick={onOpenAreaPlanning}
+                title={onOpenAreaPlanning ? undefined : "目前無法加入季度展店計畫"} type="button">
+                加入季度展店計畫
               </button>
             </div>
           </>

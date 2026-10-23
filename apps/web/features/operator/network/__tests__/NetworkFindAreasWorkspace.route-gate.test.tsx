@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
 import type { ApiBinding } from "../../../../src/lib/api/binding";
@@ -28,6 +28,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 const radarProps = vi.hoisted(() => ({ calls: [] as Array<Record<string, unknown>> }));
+const reviewPanelControl = vi.hoisted(() => ({ latest: null as unknown }));
 
 vi.mock("../ListingRadarPanel", () => ({
   ListingRadarPanel: (props: Record<string, unknown>) => {
@@ -39,15 +40,17 @@ vi.mock("../ListingRadarPanel", () => ({
 vi.mock("../ReviewPanel", async (importOriginal) => ({
   // The workspace counts through the real queue selector; only the panel is stubbed.
   resolveEffectiveReviews: (await importOriginal<typeof import("../ReviewPanel")>()).resolveEffectiveReviews,
-  ReviewPanel: ({ canDecide, reviews, onDecide }: ComponentProps<typeof import("../ReviewPanel").ReviewPanel>) => (
-    <div data-testid="review-authority" data-can-decide={String(canDecide)}>
+  ReviewPanel: (props: ComponentProps<typeof import("../ReviewPanel").ReviewPanel>) => {
+    reviewPanelControl.latest = props;
+    const { canDecide, reviews, onDecide } = props;
+    return <div data-testid="review-authority" data-can-decide={String(canDecide)}>
       {canDecide && reviews[0] ? (
         <button onClick={() => onDecide?.(reviews[0].id, "GO", {
           reason: "Reviewed", conditions: "", requiredData: "", overrideAck: false,
         })} type="button">Submit test review decision</button>
       ) : null}
-    </div>
-  ),
+    </div>;
+  },
 }));
 
 function unavailableBinding<T>(): ApiBinding<T> {
@@ -62,6 +65,57 @@ function unavailableBinding<T>(): ApiBinding<T> {
 
 const unavailableCandidates = unavailableBinding<Candidate>();
 const unavailableHeatZones = unavailableBinding<OperatorHeatZone>();
+
+// Actual legacy Review producer row; preserve the local mock IDs/status/count assertions.
+const legacyReviewPrerequisites = {
+  "id": "RV-702",
+  "candidateId": "CS-1001",
+  "candidateTitle": "信義松仁候選點",
+  "zoneLabel": "信義松仁 86",
+  "recommendation": "GO",
+  "score": 82,
+  "risk": "回本 22 個月 · 週末停車不易",
+  "requestedBy": "王若寧（拓展）",
+  "reviewerRole": "選址審核 / Site Reviewer",
+  "submittedAt": "2026-07-13 09:20",
+  "dueAt": "2026-07-16 18:00",
+  "payback": "22 個月",
+  "m12P50": "NT$428K",
+  "rentReasonableness": "合理（區間 P45）",
+  "cannibalization": "4%（低）",
+  "sourceListingId": "L-2024",
+  "fieldVisit": "已完成（現勘照片 6 張）",
+  "brokerContact": "已聯絡（王仲介）",
+  "notes": "住宅＋商辦混合，夜間洗烘需求強；既有店 650m 稀釋僅 4%。",
+  "modelVersion": "SiteScore v2.3",
+  "datasetSnapshotId": "FS-20260704-0600",
+  "compareText": "P1 主推（GO 82，領先板橋府中 6 分）",
+  "candidateStatus": "pendingreview",
+  "eventChips": [
+    "SiteScore v2.3",
+    "Dataset FS-20260704-0600",
+    "現勘完成",
+    "比較 P1"
+  ],
+  "history": [
+    {
+      "t": "2026-07-04 06:10",
+      "v": "SiteScore 完成 GO 82"
+    },
+    {
+      "t": "2026-07-13 09:20",
+      "v": "王若寧送審（拓展）"
+    }
+  ],
+  "status": "pending",
+  "statusLabel": "待審核",
+  "decision": null,
+  "candidateStatusLabel": "待審核",
+  "candidateMissingData": [],
+  "pending": true,
+  "decided": false,
+  "overrideAvailable": true
+};
 
 // The canonical envelope (shared/api/errors.py) a guarded read answers with.
 function forbiddenResponse(correlationId: string, resource: string) {
@@ -108,6 +162,7 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     navigation.search = "ws=network&tab=radar";
     navigation.push.mockReset();
     radarProps.calls.length = 0;
+    reviewPanelControl.latest = null;
     window.history.replaceState(null, "", "/operator?ws=network&tab=radar");
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
     vi.stubGlobal(
@@ -120,6 +175,109 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+  });
+
+  it.each([
+    ["response", "URL"], ["JSON", "URL"],
+    ["response", "tenant context"], ["JSON", "tenant context"],
+  ] as const)("restarts all guarded background reads after %s is pending across a %s change", async (pendingStage, change) => {
+    const paths = ["network-listings", "network-scoring", "network-rebalance", "network-reviews"];
+    const counts = new Map<string, number>();
+    const pending: Array<() => void> = [];
+    let jsonReads = 0;
+    const previousTenant = sessionStorage.getItem("oday.operator.tenant");
+    const respond = (value: unknown) => new Response(JSON.stringify(value), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const path = paths.find(path => String(input).includes(path));
+      if (!path) return Promise.resolve(new Response("{}", { status: 404 }));
+      const count = (counts.get(path) ?? 0) + 1;counts.set(path, count);
+      if (count > 1) return Promise.resolve(forbiddenResponse(`corr-current-${path}`, path));
+      if (pendingStage === "response") return new Promise<Response>(resolve => {
+        pending.push(() => resolve(respond({ source: "api", supersededPayload: path })));
+      });
+      const response = respond({ source: "api" });
+      vi.spyOn(response, "json").mockImplementation(() => {
+        jsonReads += 1;
+        return new Promise(resolve => pending.push(() => resolve({ source: "api", supersededPayload: path })));
+      });
+      return Promise.resolve(response);
+    }));
+    // Only the lifecycle predicate is doubled. No cookie or principal is injected;
+    // the workspace still captures its actual URL and observed-scope generation.
+    const createAuthenticatedReadGuard = (current: () => boolean) => async () => current();
+    const props = { activeRoleId: "platform-admin" as const, selectedHeatZoneId: "live-zone", createAuthenticatedReadGuard };
+    try {
+      if (change === "tenant context") {
+        navigation.search = "ws=network&tab=compare";
+        window.history.replaceState(null, "", "/operator?ws=network&tab=compare");
+      }
+      const view = render(<NetworkFindAreasWorkspace {...props} />);
+      await waitFor(() => expect(paths.every(path => counts.get(path) === 1)).toBe(true));
+      if (pendingStage === "JSON") await waitFor(() => expect(jsonReads).toBe(4));
+      navigation.search = "ws=network&tab=compare";
+      window.history.replaceState(null, "", "/operator?ws=network&tab=compare");
+      if (change === "tenant context") {
+        // This branch already started on Compare: the URL is unchanged,
+        // so the new observed context itself must replace the old read.
+        sessionStorage.setItem("oday.operator.tenant", "observed-new-tenant");
+      }
+      view.rerender(<NetworkFindAreasWorkspace {...props} />);
+      await waitFor(() => expect(paths.every(path => counts.get(path) === 2)).toBe(true));
+      // A later refusal is authoritative; finishing the old reads must not
+      // overwrite its correlation or present the old payload as a fresh frame.
+      const correlation = await screen.findByTestId("operator-data-unavailable-correlation");
+      await waitFor(() => expect(correlation).toHaveTextContent("corr-current-network-scoring"));
+      await act(async () => { pending.forEach(resolve => resolve()); });
+      expect(correlation).toHaveTextContent("corr-current-network-scoring");
+      expect(paths.map(path => counts.get(path))).toEqual([2, 2, 2, 2]);
+      expect(screen.queryByText("supersededPayload")).toBeNull();
+    } finally {
+      if (previousTenant === null) sessionStorage.removeItem("oday.operator.tenant");
+      else sessionStorage.setItem("oday.operator.tenant", previousTenant);
+    }
+  });
+
+  it.each(["ready", "denied"] as const)("withholds the previous %s Rebalance frame while a new observed tenant context is pending", async previous => {
+    const previousTenant = sessionStorage.getItem("oday.operator.tenant");
+    sessionStorage.setItem("oday.operator.tenant", "observed-context-A");
+    let rebalanceReads = 0;
+    let resolveCurrent: (response: Response) => void = () => undefined;
+    const pending = new Promise<Response>(resolve => { resolveCurrent = resolve; });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      if (String(input).endsWith("/network-rebalance")) {
+        rebalanceReads += 1;
+        if (rebalanceReads > 1) return pending;
+        return Promise.resolve(previous === "denied" ? forbiddenResponse("corr-prior-rebalance", "operator_network")
+          : new Response(JSON.stringify({ source: "api", stores: [{ id: "prior-context-only" }] }), {
+            status: 200, headers: { "Content-Type": "application/json" },
+          }));
+      }
+      return Promise.resolve(forbiddenResponse("corr-unrelated-read", "operator_network"));
+    }));
+    const createAuthenticatedReadGuard = (current: () => boolean) => async () => current();
+    const props = { activeRoleId: "platform-admin" as const, selectedHeatZoneId: "live-zone", createAuthenticatedReadGuard };
+    try {
+      const view = render(<NetworkFindAreasWorkspace {...props} />);
+      const summary = screen.getByLabelText("展店與店網摘要");
+      const count = within(summary).getByText("重配候選", { exact: false });
+      await waitFor(() => expect(count).toHaveAttribute("data-count-state", previous === "ready" ? "known" : "unread"));
+      if (previous === "ready") expect(summary).toHaveTextContent("1 重配候選");
+      sessionStorage.setItem("oday.operator.tenant", "observed-context-B");
+      view.rerender(<NetworkFindAreasWorkspace {...props} />);
+      // This is a synchronous render assertion: stale counts are withheld before
+      // the replacement HTTP response, including while that response is pending.
+      expect(count).toHaveAttribute("data-count-state", "pending");
+      expect(summary).not.toHaveTextContent("1 重配候選");
+      await waitFor(() => expect(rebalanceReads).toBe(2));
+      await act(async () => { resolveCurrent(forbiddenResponse("corr-current-rebalance", "operator_network")); });
+      expect(count).toHaveAttribute("data-count-state", "unread");
+      expect(summary).not.toHaveTextContent("1 重配候選");
+    } finally {
+      if (previousTenant === null) sessionStorage.removeItem("oday.operator.tenant");
+      else sessionStorage.setItem("oday.operator.tenant", previousTenant);
+    }
   });
 
   it("shows only auditor+admin readable tabs and never preloads the three refused endpoints", async () => {
@@ -215,7 +373,7 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     ["ops-lead", "false"],
     ["pm-audit", "false"],
     ["platform-admin", "false"],
-  ] as const)("presents review authority for %s without impersonation", (roleId, canDecide) => {
+  ] as const)("presents fixture-compatible role eligibility for %s without impersonation", (roleId, canDecide) => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
     navigation.search = "ws=network&tab=review";
     render(<NetworkFindAreasWorkspace activeRoleId={roleId} initialTabId="review" />);
@@ -288,21 +446,19 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     expect(fetchMock.mock.calls.every(([url]) => !/\/(users|roles)\b/.test(String(url)))).toBe(true);
   });
 
-  it.each(["empty", "denied"])("uses the %s dedicated Review reload's source for count and gate", async (result) => {
+  // Dedicated READ/count/gate controls. A fresh mount models a page reload;
+  // production legacy /decide success is no longer a prerequisite or claim.
+  it.each(["empty", "denied"])("READ_ONLY: uses the %s dedicated Review reread's source for count and gate", async (result) => {
     navigation.search = "ws=network&tab=review";
-    let decided = false;
+    let reread = false;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = String(input);
       const respond = (body: unknown) => new Response(JSON.stringify(body), {
         status: 200, headers: { "Content-Type": "application/json" },
       });
-      if (url.endsWith("/decide")) {
-        decided = true;
-        return respond({});
-      }
       if (url.endsWith("/network-reviews")) {
-        if (decided && result === "denied") return forbiddenResponse("corr-reviews-reload-403", "sitescore");
-        return respond({ source: "api", reviews: decided ? [] : [{ id: "REV-LIVE-1", status: "pending" }] });
+        if (reread && result === "denied") return forbiddenResponse("corr-reviews-reload-403", "sitescore");
+        return respond({ source: "api", reviews: reread ? [] : [{ ...legacyReviewPrerequisites, id: "REV-LIVE-1", status: "pending" }] });
       }
       if (url.includes("/network-listings")) return respond({
         source: "api", heatZones: [], listingSources: [], candidates: [],
@@ -318,14 +474,18 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
       return new Response("{}", { status: 404 });
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(<NetworkFindAreasWorkspace activeRoleId="expansion-manager"
-      liveCandidates={unavailableCandidates} liveHeatZones={unavailableHeatZones} />);
+    const workspace = <NetworkFindAreasWorkspace activeRoleId="expansion-manager"
+      liveCandidates={unavailableCandidates} liveHeatZones={unavailableHeatZones} />;
+    const first = render(workspace);
 
-    const state = screen.getByLabelText("展店與店網摘要");
+    let state = screen.getByLabelText("展店與店網摘要");
     await waitFor(() => expect(state).toHaveTextContent("1 今日新物件"));
     await waitFor(() => expect(state).toHaveTextContent("1 待審 Review"));
     expect(screen.getByTestId("network-tab-count-5")).toHaveTextContent("1");
-    fireEvent.click(screen.getByRole("button", { name: "Submit test review decision" }));
+    first.unmount();
+    reread = true;
+    render(workspace);
+    state = screen.getByLabelText("展店與店網摘要");
     await waitFor(() => expect(state).toHaveTextContent(`${result === "empty" ? 0 : 2} 待審 Review`));
     const gate = screen.getByTestId("operator-data-unavailable");
     if (result === "empty") {
@@ -339,7 +499,33 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     }
     expect(within(state).getByText("待審 Review", { exact: false })).toHaveAttribute("data-count-state", "known");
     expect(screen.queryByTestId("review-authority")).toBeNull();
-    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+  });
+
+  it("production noncanonical review refuses a direct legacy callback without a business POST", async () => {
+    navigation.search = "ws=network&tab=review";
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input);
+      const response = (body: unknown) => new Response(JSON.stringify(body), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      });
+      if (url.endsWith("/network-reviews")) return response({ source: "api", reviews: [legacyReviewPrerequisites] });
+      if (url.includes("network-listings")) return response({ source: "api", listings: [], candidates: [], siteReviews: [] });
+      if (url.endsWith("/network-scoring")) return response({ source: "api", candidates: [] });
+      if (url.endsWith("/network-rebalance")) return response({ source: "api", stores: [] });
+      return new Response("{}", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<NetworkFindAreasWorkspace activeRoleId="expansion-manager"
+      liveCandidates={unavailableCandidates} liveHeatZones={unavailableHeatZones} />);
+    await waitFor(() => expect(screen.getByTestId("review-authority")).toHaveAttribute("data-can-decide", "false"));
+    const props = reviewPanelControl.latest as ComponentProps<typeof import("../ReviewPanel").ReviewPanel>;
+    expect(props.onRequestDecision?.(legacyReviewPrerequisites.id, "GO")).toBe(false);
+    expect(await props.onDecide?.(legacyReviewPrerequisites.id, "GO", {
+      reason: "Direct callback cannot grant production native authority", conditions: "", requiredData: "", overrideAck: false,
+    })).toBe(false);
+    expect(screen.queryByRole("button", { name: "Submit test review decision" })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
   });
 
   it("cold-opens Radar even when every unrelated Network snapshot is unavailable", async () => {

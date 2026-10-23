@@ -801,3 +801,26 @@ def test_documentation_states_the_single_auth_mode_contract() -> None:
     terraform_readme = (TERRAFORM_ROOT / "README.md").read_text(encoding="utf-8")
     assert "service_auth_issuer" in terraform_readme
     assert 'when `auth_mode = "oidc"`' in terraform_readme
+
+
+def test_terraform_web_local_audiences_match_api_not_cloud_run_transport() -> None:
+    """Static HCL wiring invariant, not Terraform evaluation or deployed authentication."""
+    main_tf = (TERRAFORM_ROOT / "main.tf").read_text(encoding="utf-8")
+    web_env = _hcl_block(main_tf, "web_plain_env = merge(")
+    api_env = _hcl_block(main_tf, "fixed_runtime_env = ")
+    api_local = re.search(r"^\s*ODP_AUTH_LOCAL_AUDIENCES\s*=\s*(.+)$", api_env, re.MULTILINE)
+    assert api_local is not None
+    local_expression = api_local.group(1).strip()
+    assert local_expression == 'join(",", local.service_auth_audiences)'
+
+    for name in ("ODP_AUTH_LOCAL_AUDIENCES", "ODP_AUTH_AUDIENCES"):
+        web_local = re.search(rf"^\s*{name}\s*=\s*(.+)$", web_env, re.MULTILINE)
+        assert web_local is not None, name
+        assert web_local.group(1).strip() == local_expression, name
+
+    base_url = re.search(r"^\s*ODP_API_BASE_URL\s*=\s*(.+)$", web_env, re.MULTILINE)
+    transport = re.search(r"^\s*ODP_API_SERVICE_AUDIENCE\s*=\s*(.+)$", web_env, re.MULTILINE)
+    assert base_url is not None
+    assert transport is not None
+    assert transport.group(1).strip() == base_url.group(1).strip() == "google_cloud_run_v2_service.api.uri"
+    assert transport.group(1).strip() != local_expression

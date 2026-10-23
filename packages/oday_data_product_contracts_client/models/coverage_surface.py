@@ -2,7 +2,7 @@
 #
 # Contract:  emgi.coverage-surface.v1 (decision_product, v1.0.0)
 # Release:   oday-data-product-contracts.v0.4.1
-# Producer:  alfloop-dev/oday-data-platform@245aa00e417b6f8450baa608e8976584e00be6fc
+# Producer:  alfloop-dev/oday-data-platform@606c35f26a47df9eae7667eaeb82f5eebf75fa22
 # Schema:    schemas/coverage-surface.schema.json
 # Digest:    d127f9dc57b38a70fbba9d55132bb561ad5127ae30eeeb8e31ae1408ae09896c
 """Canonical contract schemas for published domain coverage surfaces (emgi.coverage-surface.v1) and addressable data gap products (emgi.data-gap.v1) across space, time, freshness, and readiness reasons in EMGI v0.4.1."""

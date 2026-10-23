@@ -19,6 +19,7 @@ const FORWARDED_REQUEST_HEADERS = [
   "accept",
   "accept-language",
   "content-type",
+  "if-actor-match",
   "if-match",
   "idempotency-key",
   "x-correlation-id",
@@ -41,6 +42,9 @@ const FORWARDED_RESPONSE_HEADERS = [
   "retry-after",
   "www-authenticate",
   "x-correlation-id",
+  "x-avm-export-id",
+  "x-content-sha256",
+  "x-content-type-options",
 ] as const;
 
 const UPSTREAM_TIMEOUT_MS = 10_000;

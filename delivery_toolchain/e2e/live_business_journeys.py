@@ -868,7 +868,7 @@ JOURNEYS: tuple[JourneySpec, ...] = (
             write="decision",
             list_path="auditRows",
             match={
-                "category": "approval", "correlationId": "corr-{record.approval_id}",
+                "category": "approval", "correlationId": "{correlation.decision}",
                 "actor": "{account.primary}", "action": "{governance.audit_action}",
                 "entityRef": "{captured.governance_entity_ref}",
             },
@@ -1149,7 +1149,7 @@ def governance_outcome(action: str, body: Mapping[str, Any]) -> dict[str, str]:
         "status": {"approve": "approved", "return": "returned", "reject": "rejected"}.get(action, ""),
         "final_decision": {"approve": "Approved", "return": "Returned", "reject": "Rejected"}.get(action, ""),
         "audit_action": {"approve": "決策核准", "return": "決策退回", "reject": "決策駁回"}.get(action, ""),
-        "reason": str(body.get("reason") or "").strip() or "符合風險與預算規範",
+        "reason": str(body.get("reason") or "").strip(),
     }
 
 
@@ -1508,6 +1508,10 @@ def journey_scope(
                 if _present(body.get("approval_receipt_id")) and body["approval_receipt_id"] != entry.get("approval_ref"):
                     blockers.append(("named-approval", "decision approval_receipt_id differs from scope"))
             if spec.journey_id == "governance" and key == "decision":
+                # The receipt already requires an authored decision reason.
+                # Refuse an incomplete scope before arming real mutations.
+                if not isinstance(body.get("reason"), str) or not body["reason"].strip():
+                    blockers.append(("scope-authorization", "governance decision requires a non-empty authored reason"))
                 if _present(body.get("actorName")) and body["actorName"] != account_ids.get("primary"):
                     blockers.append(("scope-authorization", "governance actorName must bind the authenticated account UUID"))
                 if isinstance(body.get("reason"), str) and body["reason"] != body["reason"].strip():
@@ -3290,7 +3294,7 @@ def journey_receipt_problems(spec: JourneySpec, entry: Mapping[str, Any]) -> lis
             and audit_row.get("category") == "approval" and audit_row.get("actor") == account
             and audit_row.get("action") == expected["audit_action"]
             and audit_row.get("entityRef") == captures.get("governance_entity_ref")
-            and audit_row.get("correlationId") == f"corr-{records.get('approval_id')}"
+            and audit_row.get("correlationId") == _as_dict(entry.get("correlation_ids")).get("decision")
             and str(audit_row.get("reason") or "") == authorized.get("audit_reason")
             and any(isinstance(ref, dict) and ref.get("write") == "decision" and ref.get("event_id") == audit_id for ref in entry.get("audit_refs") or [])
         )

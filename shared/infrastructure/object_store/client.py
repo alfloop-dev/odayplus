@@ -14,6 +14,8 @@ import urllib.parse
 import urllib.request
 from typing import Any, Protocol
 
+from shared.infrastructure.object_store.workload_identity import MetadataObjectStoreCredentials
+
 
 class ResidencyDeniedError(ValueError):
     """Raised when request attempts to write/read to/from a bucket violating tenant residency policy."""
@@ -223,6 +225,11 @@ class InMemoryObjectStore:
         return [k for k in bucket_data.keys() if k.startswith(prefix)]
 
 
+class _NoObjectStoreRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 class GcsObjectStore:
     """Production GCS object store client utilizing urllib.request.
 
@@ -232,6 +239,8 @@ class GcsObjectStore:
     def __init__(self, tenant_residency_resolver: Any = None, timeout_seconds: float = 10.0) -> None:
         self._resolver = tenant_residency_resolver
         self._timeout_seconds = timeout_seconds
+        self._credentials = MetadataObjectStoreCredentials(timeout_seconds=timeout_seconds)
+        self._opener = urllib.request.build_opener(_NoObjectStoreRedirect())
 
     def _get_residency(self, tenant_id: str) -> str:
         if self._resolver:
@@ -250,10 +259,15 @@ class GcsObjectStore:
             )
 
     def _get_token(self) -> str:
-        token = os.environ.get("ODP_AUDIT_WORM_GCS_TOKEN", "").strip() or os.environ.get("GOOGLE_OAUTH_ACCESS_TOKEN", "").strip()
-        if not token:
-            raise RuntimeError("GCS storage requires GOOGLE_OAUTH_ACCESS_TOKEN or ODP_AUDIT_WORM_GCS_TOKEN")
-        return token
+        # Explicit local OAuth tools remain usable; live snapshots always use
+        # the runtime metadata identity, never an audit writer or ambient ADC.
+        token = os.environ.get("GOOGLE_OAUTH_ACCESS_TOKEN", "").strip()
+        if token:
+            from apps.api.oday_api.runtime_mode import live_data_required
+
+            if not live_data_required():
+                return token
+        return self._credentials.token()
 
     def upload_object(
         self,
@@ -291,7 +305,7 @@ class GcsObjectStore:
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout_seconds) as response:
+            with self._opener.open(request, timeout=self._timeout_seconds) as response:
                 body = json.loads(response.read().decode("utf-8"))
                 generation = int(body.get("generation", 0))
         except urllib.error.HTTPError as exc:
@@ -324,7 +338,7 @@ class GcsObjectStore:
             headers={"Authorization": f"Bearer {token}"},
         )
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout_seconds) as response:
+            with self._opener.open(request, timeout=self._timeout_seconds) as response:
                 return response.read()
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
@@ -356,7 +370,7 @@ class GcsObjectStore:
             headers={"Authorization": f"Bearer {token}"},
         )
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout_seconds) as response:
+            with self._opener.open(request, timeout=self._timeout_seconds) as response:
                 response.read()
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
@@ -384,7 +398,7 @@ class GcsObjectStore:
             headers={"Authorization": f"Bearer {token}"},
         )
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout_seconds) as response:
+            with self._opener.open(request, timeout=self._timeout_seconds) as response:
                 body = json.loads(response.read().decode("utf-8"))
                 metadata = body.get("metadata", {})
                 sha256 = metadata.get("sha256", "")
@@ -417,7 +431,7 @@ class GcsObjectStore:
             headers={"Authorization": f"Bearer {token}"},
         )
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout_seconds) as response:
+            with self._opener.open(request, timeout=self._timeout_seconds) as response:
                 body = json.loads(response.read().decode("utf-8"))
                 items = body.get("items", [])
                 return [item["name"] for item in items if "name" in item]

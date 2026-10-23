@@ -21,20 +21,26 @@ export function parseUrlState(
     }
   }
 
-  const compareVal = params.get("compare");
+  // Conflicting repeated navigation values are not a deterministic target.
+  const get = (key: string) => {
+    const values = params.getAll(key);
+    return values.length && values.every((value) => value === values[0]) ? values[0] : null;
+  };
+
+  const compareVal = get("compare");
 
   return {
     filters: {
       stage: (params.get("stage") as any) || undefined,
       matchOutcome: (params.get("outcome") as any) || undefined,
       sourceId: params.get("source") || undefined,
-      heatZoneId: params.get("hz") || undefined,
+      heatZoneId: get("hz") ?? undefined,
     },
     sort: (params.get("sort") as any) || undefined,
     view: (params.get("view") as "list" | "map") || undefined,
-    selectedId: params.get("selected") || null,
-    dialog: (params.get("dialog") as any) || null,
-    activeSection: params.get("section") || null,
+    selectedId: get("selected") || null,
+    dialog: (["add", "detail", "fix", "decide", "assignmentSla"].includes(get("dialog") ?? "") ? get("dialog") : null) as IntakeUrlState["dialog"],
+    activeSection: get("section") || null,
     fixFieldKey: params.get("field") || null,
     decisionKind: (params.get("decision") as any) || null,
     receiptId: params.get("receipt") || null,
@@ -73,7 +79,7 @@ export function serializeUrlState(
     if (state.filters.stage) params.set("stage", state.filters.stage);
     if (state.filters.matchOutcome) params.set("outcome", state.filters.matchOutcome);
     if (state.filters.sourceId) params.set("source", state.filters.sourceId);
-    if (state.filters.heatZoneId) params.set("hz", state.filters.heatZoneId);
+    if (state.filters.heatZoneId !== undefined) params.set("hz", state.filters.heatZoneId);
   }
   if (state.sort) params.set("sort", state.sort);
   if (state.view) params.set("view", state.view);
