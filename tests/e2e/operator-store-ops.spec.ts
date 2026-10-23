@@ -172,6 +172,9 @@ test("ISS-1024 lifecycle writes through Store Ops API and reloads updated state"
 
   await page.goto("/operator");
   await page.getByRole("button", { name: /門市營運|Store Ops/ }).click();
+  await expect(
+    page.locator('[data-screen-label="Store Ops 門市營運"]'),
+  ).toBeVisible();
 
   await page.getByRole("button", { exact: true, name: "完成 Triage" }).click();
   await page.getByRole("dialog")
@@ -255,6 +258,10 @@ test("camera evidence remains locked until permitted purpose is submitted", asyn
 
   await page.goto("/operator");
   await page.getByRole("button", { name: /門市營運|Store Ops/ }).click();
+  await expect(page).toHaveURL(/[?&]ws=store(&|$)/);
+  await expect(
+    page.locator('[data-screen-label="Store Ops 門市營運"]'),
+  ).toBeVisible();
   await expect(page.getByText("影像鎖定 • 需授權")).toBeVisible();
 
   await page.getByText("點擊填寫調閱目的").click();

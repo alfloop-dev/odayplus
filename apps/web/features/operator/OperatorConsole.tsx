@@ -545,7 +545,11 @@ export function OperatorConsole({
       : WORKSPACES;
   }, [shellEnvelope.navigation.workspaces]);
 
-  useEffect(() => {
+  // A layout effect validates the workspace in the same commit that changed
+  // the grants. As a passive effect it could run after the browser had already
+  // delivered a click, and its snapshot workspace would overwrite that newer,
+  // permitted selection while the URL kept it.
+  useLayoutEffect(() => {
     // Preferences express intent, not authority. Wait for bootstrap before
     // validating them: principal grants can differ from the static persona.
     if (!hasHydratedPreferences || (!fixturesAllowed && shellDataStatus !== "ready")) return;
