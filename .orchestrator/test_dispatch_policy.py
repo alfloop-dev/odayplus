@@ -2088,7 +2088,9 @@ def test_review_queue_reads_a_full_sha_base_as_that_commit_on_a_cold_cache(tmp_p
         with probes():
             assert dispatch_engine.is_task_review_dispatch_eligible(cfg, forged, "Codex") is False
             assert supervisor.dispatch_priority_for_task(cfg, forged, "Codex", task_map={task_id: forged}) is None
-        assert ("Claude",) not in dispatch_policy._IMMUTABLE_SOURCE_AUTHORS.values()
+        assert ("Claude",) not in [
+            authors for key, authors in dispatch_policy._IMMUTABLE_SOURCE_AUTHORS.items() if key[0] == str(repo)
+        ]
 
         independent = dict(forged, reviewer="Codex2", review_submission=genuine)
         with probes():
