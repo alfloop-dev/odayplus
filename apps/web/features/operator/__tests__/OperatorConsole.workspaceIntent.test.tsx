@@ -6,11 +6,12 @@ import { OperatorConsole } from "../OperatorConsole";
 const delayedPreference = vi.hoisted(() => ({ enabled: false, mode: "fixture", status: "fixture", pending: null as (() => void) | null }));
 vi.mock("react", async (original) => {
   const react = await original<typeof import("react")>();
-  return { ...react, useEffect: (effect: import("react").EffectCallback, deps?: import("react").DependencyList) => {
-    // Release the real component's pending preference effect at the ordering
-    // observed in the CI trace: after the click writes Network, before its
-    // React state update commits. Other hooks use their normal lifecycle.
-    react.useEffect(() => {
+  return { ...react, useLayoutEffect: (effect: import("react").EffectCallback, deps?: import("react").DependencyList) => {
+    // Release the real component's pending preference layout effect at the
+    // ordering observed in the CI trace: after the click writes Network,
+    // before its React state update commits. Other hooks use their normal
+    // lifecycle.
+    react.useLayoutEffect(() => {
       if (delayedPreference.enabled && deps?.length === 6 && deps[1] === "today"
         && deps[2] === delayedPreference.mode && deps[4] === true && deps[5] === delayedPreference.status) {
         delayedPreference.pending = effect;

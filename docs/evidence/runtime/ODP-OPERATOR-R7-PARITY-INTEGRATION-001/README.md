@@ -74,6 +74,19 @@ dev 側的 9 檔裡，6 檔自動合併：
 - 修法：用 `uv lock --upgrade-package pypdf==6.21.1` 只升級 pypdf（PyPI 標示的最小修正版），再以原 generator 重產 `NOTICE-THIRD-PARTY.md` 與 `docs/evidence/sbom.json`。
 - 本機 `make dependency-audit`：PASS，216 個相依。
 
+### 送審後的追加 commit：#1583 第一輪 CI 的 node／unit 紅燈
+
+CI run 39812391674（head `61ae630c`）除上面的 security 外還有兩項紅：
+
+1. **product-node**：只有 `OperatorConsole.workspaceIntent.test.tsx` 兩例（fixture、authenticated）失敗，訊息 `expected null to be type of 'function'`。
+   - 原因：這支測試來自 #1470，攔的是 `useEffect`。dev 的 ODP-OPERATOR-WORKSPACE-RESET-261021（#1581）已把偏好驗證改成 `useLayoutEffect`，deps 順序不變，所以測試永遠攔不到那個 effect。
+   - 修法：測試改攔 `useLayoutEffect`，比對條件（6 個 deps、`today`、模式、hydrated、狀態）不變。元件與 `workspaceIntent` guard 都沒改，沒有回退 dev 的修正。
+   - 本機：修正後 2/2 通過。暫時拿掉元件的 `if (workspaceIntent.current !== activeWorkspaceId) return;` 再跑，兩例都失敗（`expected 'today' to be 'network'`），之後已還原元件。
+2. **product-lint-unit**：14 個 SiteScore 測試都是 `feature snapshot is stale`。
+   - 原因：`test_sitescore_production_runtime.py` 與 `tests/integration/test_production_model_runtime.py` 的 `NOW` 固定在 2026-07-24。`modules/sitescore/domain/scoring.py` 用牆鐘和 `SITESCORE_FEATURE_MAX_AGE`（90 天）檢查新鮮度，所以 2026-10-22 之後就過期。dev 上這兩支測試也是同樣的固定日期。`test_intake_score_worker.py` 匯入同一個 `NOW`。
+   - 修法：只把兩個 fixture 的 `NOW` 改成「牆鐘減 1 小時」，寫法與 open PR #1565 對同兩檔的改法逐字相同，避免出現兩套做法。正式程式的時間檢查、90 天門檻、未來時間拒絕都沒改。
+   - 本機：`uv run --frozen pytest modules/sitescore/tests/test_intake_score_worker.py modules/sitescore/tests/test_sitescore_production_runtime.py tests/integration/test_production_model_runtime.py tests/unit/test_candidate_score_context.py` exit 0。
+
 dev 上沒有與 #1470 同名、已單獨合併的 task，所以沒有「以 dev 為準而丟掉 #1470 內容」的檔案。
 
 ## 本 commit tree 與「codex head merge origin/dev」的對照
