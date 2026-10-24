@@ -1,0 +1,307 @@
+{
+  "task_id": "XR-EXT-OSS-FINAL-AUDIT-001",
+  "actor": "Claude",
+  "repository": "alfloop-dev/odayplus",
+  "cwd": "/tmp/pantheon-worker-worktrees/pantheon/xr-ext-oss-final-audit-001",
+  "measured_head_sha": "0b292ab298223cce9700ca2d5ca3aa04bd335cf3",
+  "measured_head_tree": "082a1e22a11a6e50eaec586a579b271c87b7d742",
+  "revision_semantics": "The parent HEAD identifies repository ancestry. Changed evidence is bound by actual worktree input hashes, not claimed committed at HEAD. Each input additionally records its worktree blob oid against HEAD so committed and uncommitted inputs are distinguishable.",
+  "worktree_status_at_capture": [],
+  "tool": {
+    "path": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/capture_verification.py",
+    "sha256": "781e714255be6fe556881f5c1e6f7c22b5c70c8f7efac3aae09ff15e71ac7c2e",
+    "bytes": 11093,
+    "worktree_blob_oid": "1c37469b46daea7f46d28ef7a1f69315360ed768",
+    "head_blob_oid": "1c37469b46daea7f46d28ef7a1f69315360ed768",
+    "committed_at_head": true
+  },
+  "interpreter": {
+    "executable": "/usr/bin/python3",
+    "version": "3.12.3"
+  },
+  "input_files": {
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/README.md": {
+      "sha256": "a12a84903c258824d55ffbc4b53a39915041184d20b8539f861b478712f2a2b1",
+      "bytes": 47736,
+      "worktree_blob_oid": "3dcf7551fa58d62848fee3c3cbdf23fd0419fcf1",
+      "head_blob_oid": "3dcf7551fa58d62848fee3c3cbdf23fd0419fcf1",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/__pycache__/capture_verification.cpython-312.pyc": {
+      "sha256": "8552caa0e44eff00fb6787d670c8b6b1b6b10b7f53873ab446d6ce047da69957",
+      "bytes": 16827,
+      "worktree_blob_oid": "a949619ddd8b2d85f15942ab228f1bbef688101f",
+      "head_blob_oid": null,
+      "committed_at_head": false
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/acceptance-reconciliation.json": {
+      "sha256": "902745d5d3802c324546f1256c523ceb26372c571c200bfc380f31411d0c8aa3",
+      "bytes": 85481,
+      "worktree_blob_oid": "3802d5bc27e29505efb867ee2f8b29bc29af6f8a",
+      "head_blob_oid": "3802d5bc27e29505efb867ee2f8b29bc29af6f8a",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/capture_verification.py": {
+      "sha256": "781e714255be6fe556881f5c1e6f7c22b5c70c8f7efac3aae09ff15e71ac7c2e",
+      "bytes": 11093,
+      "worktree_blob_oid": "1c37469b46daea7f46d28ef7a1f69315360ed768",
+      "head_blob_oid": "1c37469b46daea7f46d28ef7a1f69315360ed768",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/dependency-input-snapshot.json": {
+      "sha256": "540e4c56a43c3cf0b27ed01261f85d8445a7ef127fc5bfccd9822d672cbf2db6",
+      "bytes": 4231,
+      "worktree_blob_oid": "e45b3127bb65d00d353d3ab9a3499aa3d461f6f5",
+      "head_blob_oid": "e45b3127bb65d00d353d3ab9a3499aa3d461f6f5",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/historical-receipts/dag-observations.json": {
+      "sha256": "ae8920be0648d70083b056caaaffe25300ac640280021a84d87550922c2fa08c",
+      "bytes": 14183,
+      "worktree_blob_oid": "9642ce24e4eeca8a1866a7cff85bfb715d32ba90",
+      "head_blob_oid": "9642ce24e4eeca8a1866a7cff85bfb715d32ba90",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/raw-command-receipts.json": {
+      "sha256": "63fb5aa14c4f0eb2b8bd701af9493a9a677bb652cbfdcf639d42ee6a92b1ffba",
+      "bytes": 267862,
+      "worktree_blob_oid": "782c699710d6e5dcd7fba8776931135d1769f97d",
+      "head_blob_oid": "782c699710d6e5dcd7fba8776931135d1769f97d",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/requery-20260920/canonical-status-query.stdout.json": {
+      "sha256": "9a89265e6d71bdc622065b18e5e5d449a174ad6b7c04d2b4e28c3cb9c0ac3b40",
+      "bytes": 93338,
+      "worktree_blob_oid": "feaecd547ffdabf60c7c6e7678b7b938df7b5450",
+      "head_blob_oid": "feaecd547ffdabf60c7c6e7678b7b938df7b5450",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/requery-20260920/fresh-canonical-dag-20260921.stdout.json": {
+      "sha256": "6b8fa315fdb1d7b32a962f6ec8d636a2b97c6dbe7219d7956802342c538b70c0",
+      "bytes": 5631,
+      "worktree_blob_oid": "2951e7788461d7ef100d8ce921c2740b3ab46144",
+      "head_blob_oid": "2951e7788461d7ef100d8ce921c2740b3ab46144",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/requery-20260920/fresh-canonical-dag.stdout.json": {
+      "sha256": "f1fe26c989197a48a2b09bf5774fe07c2615c99112862b6b7f172063834141a9",
+      "bytes": 5632,
+      "worktree_blob_oid": "2e7105e5b6fa86e749ca9884520fe49df923ed5c",
+      "head_blob_oid": "2e7105e5b6fa86e749ca9884520fe49df923ed5c",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/requery-20260920/gh-api-ci-artifacts.stdout.json": {
+      "sha256": "244563f989470892c537c9a4622920af0d228ee4528f7d00c64a06d6cd95856c",
+      "bytes": 32,
+      "worktree_blob_oid": "ccd036f15290ec2e42695f742d9edf63354be932",
+      "head_blob_oid": "ccd036f15290ec2e42695f742d9edf63354be932",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/requery-20260920/gh-api-ci-runs.stdout.json": {
+      "sha256": "09fc35a9e5a2275df407bcdb648b2da028a4fb878d9e956e031f55d6c020a672",
+      "bytes": 53879,
+      "worktree_blob_oid": "58afd22d6e2461e107a23ae2090fbf35b62480fc",
+      "head_blob_oid": "58afd22d6e2461e107a23ae2090fbf35b62480fc",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/requery-20260920/gh-api-consumer-snapshot-readback-receipt.stdout.json": {
+      "sha256": "79f0e3a2bc79b4298d0243cd6b662f5a8e32963b6766ecd59d0113ce7413e24a",
+      "bytes": 6580,
+      "worktree_blob_oid": "80e233111a4c3419c67df21106996d843e57e424",
+      "head_blob_oid": "80e233111a4c3419c67df21106996d843e57e424",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/requery-20260920/gh-api-disabled-sources-policy.stdout.json": {
+      "sha256": "cc4308919f9b444988c68db66d75f143d69e8205f0b6cfc592aba817c8d19e21",
+      "bytes": 18198,
+      "worktree_blob_oid": "0ccd5572247f271649a7743be1da967356fdfd82",
+      "head_blob_oid": "0ccd5572247f271649a7743be1da967356fdfd82",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/requery-20260920/gh-api-docs-dir.stdout.json": {
+      "sha256": "b19dc4af9eb021434b203149e93d3f1a44287be9377726c2775f01182ae664c7",
+      "bytes": 4768,
+      "worktree_blob_oid": "d37d5a975933eed6f0781ef8909d8d93d62c0674",
+      "head_blob_oid": "d37d5a975933eed6f0781ef8909d8d93d62c0674",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/requery-20260920/gh-api-docs-evidence-dir.stdout.json": {
+      "sha256": "112eae92176a8095358f28c33d1b8d3849299f86622e2f06faf82942616d72b1",
+      "bytes": 3789,
+      "worktree_blob_oid": "96bdc42a5892504d1e9e1963a9c8258d46cf1923",
+      "head_blob_oid": "96bdc42a5892504d1e9e1963a9c8258d46cf1923",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/requery-20260920/gh-api-egress-off-dir.stdout.json": {
+      "sha256": "9abb0310e1b3094f7929bce96c4f44ff32c197d493e9e8f58cab768eec43be6c",
+      "bytes": 8842,
+      "worktree_blob_oid": "3a57e9ce326706dd58c394a02288003d567bb6ed",
+      "head_blob_oid": "3a57e9ce326706dd58c394a02288003d567bb6ed",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/requery-20260920/gh-api-emgi-cutover-receipt.stdout.json": {
+      "sha256": "1ca9ecb80b5cea737f4d32c79758a12ac730dd64822d01d1be1b828f46571741",
+      "bytes": 27785,
+      "worktree_blob_oid": "325c22bc2e69ba8c566e94d2bc1ddb24ef0c7d79",
+      "head_blob_oid": "325c22bc2e69ba8c566e94d2bc1ddb24ef0c7d79",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/requery-20260920/gh-api-evidence-completion-dir.stdout.json": {
+      "sha256": "c6f542c1d47e53523e6927e30595405f46d194548b11b462c82c29c25e10ad8e",
+      "bytes": 28087,
+      "worktree_blob_oid": "f015f14f3c5aabac7082dfe3d20fc832ea0e9953",
+      "head_blob_oid": "f015f14f3c5aabac7082dfe3d20fc832ea0e9953",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/requery-20260920/gh-api-evidence-gap-audits-dir.stdout.json": {
+      "sha256": "b20c23b4d48fdc33df1504b54496bd087f88977dc9f8e3c35ec10538d506f38f",
+      "bytes": 1099,
+      "worktree_blob_oid": "7b61b508ef2a7e235c86ae9af8b5c6853ef187d0",
+      "head_blob_oid": "7b61b508ef2a7e235c86ae9af8b5c6853ef187d0",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/requery-20260920/gh-api-final-evidence-dir.stdout.json": {
+      "sha256": "6f07ee702bbc09045421ba8dc84a982d0c4949005c27fa227df47eecef920315",
+      "bytes": 7199,
+      "worktree_blob_oid": "4d8851ce968ffc3510195dec8c378a7dc9cac24a",
+      "head_blob_oid": "4d8851ce968ffc3510195dec8c378a7dc9cac24a",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/requery-20260920/gh-api-gap-manifest.stdout.json": {
+      "sha256": "15e19df672c693cb4e5d654a69336d27ec8aa0fa51c2f98670169ed83bd5306a",
+      "bytes": 165622,
+      "worktree_blob_oid": "515bb5ea7adea11a1036023de60b852990d107a4",
+      "head_blob_oid": "515bb5ea7adea11a1036023de60b852990d107a4",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/requery-20260920/gh-api-one-shot-live-receipt.stdout.json": {
+      "sha256": "6c5d20a323299f84764ec9cfa09e4770d5e77d11bce135b50e1c8ade1e1fe4b2",
+      "bytes": 4571,
+      "worktree_blob_oid": "7c5620796ce25a111b8b26ce516a2462390c47c4",
+      "head_blob_oid": "7c5620796ce25a111b8b26ce516a2462390c47c4",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/requery-20260920/gh-api-post-test-egress-off-receipt.stdout.json": {
+      "sha256": "1d258f45c98f4a00af40d354fcb3b0d1caaf1b355b9dc00f3fa27f1020869387",
+      "bytes": 4976,
+      "worktree_blob_oid": "6f2386a54ca7fb6c8343e7872b3aaa91beeeb456",
+      "head_blob_oid": "6f2386a54ca7fb6c8343e7872b3aaa91beeeb456",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/requery-20260920/gh-api-repo-root-dir.stdout.json": {
+      "sha256": "549639a38804e1096232d6e908ad1751ccac28ffcc1dab60ebc09ae6ca2cd07d",
+      "bytes": 18214,
+      "worktree_blob_oid": "56d25a5ade69bd9455c156ca2fcdeb9e1e36a506",
+      "head_blob_oid": "56d25a5ade69bd9455c156ca2fcdeb9e1e36a506",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/requery-20260920/gh-api-runtime-cutover-dir.stdout.json": {
+      "sha256": "74a2118deabd7c510ad2b39b89a9143b647c934c65fc9c28f88f4e273a4bbe02",
+      "bytes": 2766,
+      "worktree_blob_oid": "ddbf369e7214b38601eed6c9c4cd01c3807d5e27",
+      "head_blob_oid": "ddbf369e7214b38601eed6c9c4cd01c3807d5e27",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/requery-20260920/gh-api-runtime-workload-audit.stdout.json": {
+      "sha256": "696826480b6be5b8a2fd394a3a241bd2725c2039629db979b88a4716f5b601ae",
+      "bytes": 4922,
+      "worktree_blob_oid": "0867dba8368d86d2795f8f32fe88cbe02621f401",
+      "head_blob_oid": "0867dba8368d86d2795f8f32fe88cbe02621f401",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/requery-20260920/gh-api-scripts-dir.stdout.json": {
+      "sha256": "feb6d2479ef47328ee299591e77b24cac08dda5f3152ae513cefa90489acbe28",
+      "bytes": 18291,
+      "worktree_blob_oid": "e0d337b39abe06b9ec62643fe2038f9c57739d32",
+      "head_blob_oid": "e0d337b39abe06b9ec62643fe2038f9c57739d32",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/verification-20260913/command-1.stderr.txt": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "worktree_blob_oid": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "head_blob_oid": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/verification-20260913/command-1.stdout.txt": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "worktree_blob_oid": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "head_blob_oid": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/verification-20260913/command-2.stderr.txt": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "worktree_blob_oid": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "head_blob_oid": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/verification-20260913/command-2.stdout.txt": {
+      "sha256": "10115521958ea001044dc803b630c9d6e7e94feed4fb8dfa26677ba7135f925b",
+      "bytes": 6354,
+      "worktree_blob_oid": "cf783bca3ee5ca5d38e54de68e81dca047120077",
+      "head_blob_oid": "cf783bca3ee5ca5d38e54de68e81dca047120077",
+      "committed_at_head": true
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/verification-20260913/receipt.json": {
+      "sha256": "ffdc43f3a7792bdfeb76bb054f061b8c2bb510c25b00463b9a588c0b3542db12",
+      "bytes": 4099,
+      "worktree_blob_oid": "b31976cac15aa203b79913af397f8d1c9f9aca13",
+      "head_blob_oid": "b31976cac15aa203b79913af397f8d1c9f9aca13",
+      "committed_at_head": true
+    }
+  },
+  "retry_reason": "Review-17 P1: the 2026-09-21T10:48:08Z DFS observation preserved only an excerpt; complete stdout/stderr, terminal exit, argv and execution-time input hashes cannot be recovered from any commit; single narrow re-capture of capture_verification.py --check with full stream retention. No historical suites rerun.",
+  "commands": [
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check",
+        "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
+        "--",
+        "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001"
+      ],
+      "started_at": "2026-09-21T13:12:50.742248+00:00",
+      "completed_at": "2026-09-21T13:12:50.760689+00:00",
+      "duration_seconds": 0.018360739,
+      "duration_source": "time.monotonic_ns around subprocess.run",
+      "exit_code": 0,
+      "stdout": {
+        "raw_result_ref": "verification-20260921/command-1.stdout.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stderr": {
+        "raw_result_ref": "verification-20260921/command-1.stderr.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    {
+      "argv": [
+        "/usr/bin/python3",
+        "/tmp/pantheon-worker-worktrees/pantheon/xr-ext-oss-final-audit-001/docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/capture_verification.py",
+        "--check"
+      ],
+      "started_at": "2026-09-21T13:12:50.761532+00:00",
+      "completed_at": "2026-09-21T13:12:50.829094+00:00",
+      "duration_seconds": 0.067540356,
+      "duration_source": "time.monotonic_ns around subprocess.run",
+      "exit_code": 0,
+      "stdout": {
+        "raw_result_ref": "verification-20260921/command-2.stdout.txt",
+        "sha256": "6f8a8d7a09709b3f1afad7360bc3527d4f81fd4e109ae7ce12d533ae76ebc706",
+        "bytes": 12241
+      },
+      "stderr": {
+        "raw_result_ref": "verification-20260921/command-2.stderr.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    }
+  ],
+  "inputs_unchanged_after_execution": true,
+  "all_commands_succeeded": true
+}
