@@ -37,6 +37,7 @@ _PRAGMA_TABLE_INFO = re.compile(
     r"^\s*PRAGMA\s+table_info\(\s*([a-zA-Z_][a-zA-Z0-9_.]*)\s*\)\s*;?\s*$",
     re.IGNORECASE,
 )
+_QMARK_SQL_TOKEN = re.compile(r"'(?:''|[^'])*(?:'|$)|\"(?:\"\"|[^\"])*(?:\"|$)|\?")
 _REQUIRED_RELATIONS = (
     "odp_runtime.durable_sequences",
     "odp_runtime.durable_audit_events",
@@ -420,30 +421,10 @@ def _validate_database_url(database_url: str) -> str:
 
 
 def _convert_qmark_placeholders(sql: str) -> str:
-    """Convert SQLite qmark parameters without touching quoted SQL text."""
-
-    converted: list[str] = []
-    quote: str | None = None
-    index = 0
-    while index < len(sql):
-        char = sql[index]
-        if quote is not None:
-            converted.append(char)
-            if char == quote:
-                if index + 1 < len(sql) and sql[index + 1] == quote:
-                    converted.append(sql[index + 1])
-                    index += 1
-                else:
-                    quote = None
-        elif char in {"'", '"'}:
-            quote = char
-            converted.append(char)
-        elif char == "?":
-            converted.append("%s")
-        else:
-            converted.append(char)
-        index += 1
-    return "".join(converted)
+    """Convert qmark parameters while preserving quoted SQL, including escapes."""
+    return _QMARK_SQL_TOKEN.sub(
+        lambda token: "%s" if token[0] == "?" else token[0], sql,
+    )
 
 
 def _normalize_row(row: Any) -> dict[str, Any]:
