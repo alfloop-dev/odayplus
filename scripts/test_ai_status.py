@@ -2877,6 +2877,82 @@ class SourceAuthorReviewIndependenceTests(unittest.TestCase):
         self.assertEqual(self.task["approved_head"], head)
         self.assertEqual(self.task["owner"], "Claude")
 
+    def test_same_head_resubmission_keeps_authors_dev_took_part_of(self) -> None:
+        """`dev` merging in only Codex's `C` must not drop Codex from the open review.
+
+        Claude adds `H` on top of the branch and submits `B..H`: Codex and
+        Claude. Another integration merge `M` then brings `C` -- and only `C`
+        -- into `dev` while the PR stays open at `H`. Rescanning from the new
+        tip reads `M..H`, Claude alone. The ordinary same-head resubmission
+        keeps the submitted range, so Codex is still refused before any write;
+        a record naming `M` as the base is refused as well, on a cold cache;
+        and independent Codex2 still approves with every original gate.
+        """
+        head = self.commit("final.txt", f"{self.TASK_ID}: finalizer change", "Claude")
+        self.run_as("Claude", ai_status.command_submit_review, [self.TASK_ID, "4242", "Ready"], head=head)
+        submitted = dict(self.task["review_submission"])
+        base = self.git("rev-parse", "dev")
+        self.assertEqual(
+            (submitted["source_base"], submitted["source_head"], submitted["source_authors"]),
+            (base, head, ["Codex", "Claude"]),
+        )
+
+        self.git("checkout", "-q", "dev")
+        self.git("merge", "--no-ff", "-q", "-m", "Merge pull request #4300 (integration)", self.codex_commit)
+        integration_merge = self.git("rev-parse", "dev")
+        self.git("update-ref", "refs/remotes/origin/dev", "dev")
+        self.git("checkout", "-q", self.BRANCH)
+        self.assertEqual(self.git("rev-parse", f"{integration_merge}^1"), base)
+        # The scanner alone, from the new tip, no longer sees Codex.
+        narrowed = ai_status.inspect_delivery_identity(
+            self.repo, task_id=self.TASK_ID, base="dev", head=head,
+            expected_branch=self.BRANCH, actual_branch=self.BRANCH,
+        )
+        self.assertEqual((narrowed.errors, list(narrowed.source_agents)), ([], ["Claude"]))
+
+        with mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+            self.run_as("Claude", ai_status.command_submit_review, [self.TASK_ID, "4242", "Ready again"], head=head)
+        self.assertEqual(self.task["status"], "review")
+        self.assertEqual(self.task["review_submission"], submitted)
+        with mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+            self.assert_refused_without_mutation(
+                "Codex", ai_status.command_approve, [self.TASK_ID, "LGTM"],
+                r"reviewer Codex is itself a source author", head=head,
+            )
+
+        for label, forged in (
+            ("integration merge as base", dict(submitted, source_base=integration_merge, source_authors=["Claude"])),
+            ("integration merge as base, authors kept", dict(submitted, source_base=integration_merge)),
+        ):
+            with self.subTest(label=label), mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+                self.task["review_submission"] = forged
+                self.task["reviewer"] = "Codex"
+                self.assert_refused_without_mutation(
+                    "Codex", ai_status.command_approve, [self.TASK_ID, "LGTM"],
+                    r"already contains part of the submitted range", head=head,
+                )
+                self.assertNotIn(("Claude",), dispatch_policy._IMMUTABLE_SOURCE_AUTHORS.values())
+
+        # A first submission read from that tip cannot record the narrowed range either.
+        self.task.update({"status": "in_progress"})
+        self.task.pop("review_submission")
+        with mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+            self.assert_refused_without_mutation(
+                "Claude", ai_status.command_submit_review, [self.TASK_ID, "4242", "Ready"],
+                r"already contains part of the submitted range", head=head,
+            )
+
+        self.task.update({"status": "review", "reviewer": "Codex2", "review_submission": dict(submitted)})
+        with mock.patch.dict(dispatch_policy._IMMUTABLE_SOURCE_AUTHORS, clear=True):
+            with self.assertRaisesRegex(SystemExit, r"required CI status is 'pending'"):
+                self.run_as("Codex2", ai_status.command_approve, [self.TASK_ID, "LGTM"], head=head, ci="pending")
+            self.assertEqual(self.task["status"], "review")
+            self.run_as("Codex2", ai_status.command_approve, [self.TASK_ID, "Independent review"], head=head)
+        self.assertEqual(self.task["status"], "review_approved")
+        self.assertEqual(self.task["approved_head"], head)
+        self.assertEqual(self.task["owner"], "Claude")
+        self.assertEqual(self.task["review_submission"]["source_authors"], ["Codex", "Claude"])
+
 
 class ToolingCloseoutTests(unittest.TestCase):
     """Real Git, identity, scope and archival checks; only GitHub is synthetic."""

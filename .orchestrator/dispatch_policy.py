@@ -333,7 +333,9 @@ def immutable_review_source_authors(
     integration branch itself stood on -- and, for a merged submission, the
     first parent of its recorded merge commit, which is what submission read
     the range from -- otherwise it could be moved up to hide earlier commits.
-    The range from it to the recorded head is scanned again with the same
+    Nor may it be a later tip that merged in part of the range: wherever it
+    meets the head has to be on the integration line too. The range from it
+    to the recorded head is scanned again with the same
     delivery-identity scanner submission used. The recorded authors must be
     exactly what that scan finds.
     """
@@ -379,6 +381,22 @@ def immutable_review_source_authors(
                 return (), (
                     f"the recorded source base {source_base[:12]} is not the pre-merge base of the "
                     f"recorded merge commit {merge_commit[:12]}"
+                )
+        # The base is also wrong when the integration line reached it by
+        # merging in only part of the submitted work: a later tip that took
+        # the source commit `C` but not the head `H` reads `base..H` without
+        # `C`, and its author drops out of every excluded pool. The head joins
+        # a faithful base where that base's own line stood, so every point
+        # where they meet has to be an integration point as well. Commits Git
+        # cannot relate at all are left to the scan below, which refuses a
+        # head it cannot read and drops no author from unrelated history.
+        merge_bases = _git_output(repo_root, "merge-base", "--all", source_base, source_head)
+        for merge_base in (merge_bases or "").split():
+            if not _is_integration_point(repo_root, merge_base.lower(), target_ref):
+                return (), (
+                    f"the recorded source base {source_base[:12]} already contains part of the submitted "
+                    f"range to {source_head[:12]} through a merged branch, so it would drop that part's "
+                    f"authors; merge {target_ref} into the task branch before submitting"
                 )
         scan = _inspect_delivery_identity(
             repo_root,

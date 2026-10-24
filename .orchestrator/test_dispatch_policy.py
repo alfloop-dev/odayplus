@@ -2201,6 +2201,103 @@ def test_review_queue_refuses_an_interior_commit_as_the_base_of_a_merged_range(t
             )
 
 
+def test_review_queue_refuses_an_integration_tip_that_took_part_of_the_open_range(tmp_path: Path) -> None:
+    """`dev` merging in only Codex's `C` does not make `M..H` the submitted range.
+
+    Codex writes `C` on `B`, Claude adds `H`, and the open PR is submitted as
+    `B..H` with both authors. Another integration merge `M` (`M^1 == B`) then
+    brings `C` alone into `dev`; `M` is a real `dev` tip and `M..H` a valid
+    range whose only author is Claude. A record naming `M` as its base -- with
+    the real head, remote, branch and submitter -- is refused by the queue and
+    the normalizer on a cold cache, so Codex is never selected; the submitted
+    `B..H` record still excludes Codex and dispatches independent Codex2.
+    """
+    cfg = _register_ci_failure_actors(_base_test_config())
+    repo = tmp_path / "source-git"
+    task_id = "TASK-SOURCE-REV-004"
+    repo.mkdir(parents=True)
+    _git(repo, "init", "-q", "-b", "dev")
+    _git(repo, "config", "user.email", "worker@pantheon.local")
+    _git(repo, "config", "user.name", "Worker")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "bootstrap")
+    base = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "-b", f"task/{task_id}")
+    for author, label in (("Codex", "source change"), ("Claude", "finalizer change")):
+        _git(
+            repo, "commit", "-q", "--allow-empty", "-m",
+            f"{task_id}: {label}\n\nLLM-Agent: {author}\nTask-ID: {task_id}\nReviewer: Codex2\n",
+        )
+    source_commit = _git(repo, "rev-parse", "HEAD~1")
+    head = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "dev")
+    _git(repo, "merge", "--no-ff", "-q", "-m", "Merge pull request #105 (integration)", source_commit)
+    integration_merge = _git(repo, "rev-parse", "dev")
+    _git(repo, "update-ref", "refs/remotes/origin/dev", "dev")
+    assert _git(repo, "rev-parse", f"{integration_merge}^1") == base
+    assert not [key for key in dispatch_policy._IMMUTABLE_SOURCE_AUTHORS if key[0] == str(repo)]
+    cfg["coordination"] = {"repositories": {"pantheon": {"local_path": str(repo)}}}
+    cfg["branch_workflow"] = {"dev_branch": "dev"}
+    submitted = {
+        "pr_number": 105,
+        "branch": f"task/{task_id}",
+        "base_branch": "dev",
+        "remote_sha": head,
+        "source_head": head,
+        "source_base": base,
+        "source_authors": ["Codex", "Claude"],
+        "submitted_by": "Claude",
+    }
+    task = {
+        "id": task_id,
+        "priority": "P1",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "depends_on": [],
+    }
+
+    def probes() -> ExitStack:
+        stack = ExitStack()
+        stack.enter_context(mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=head))
+        stack.enter_context(
+            mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success"))
+        )
+        return stack
+
+    with mock.patch.object(dispatch_policy, "immutable_review_source_authors", _READ_SOURCE_AUTHORS_FROM_GIT):
+        for label, submission in (
+            ("integration tip as base", dict(submitted, source_base=integration_merge, source_authors=["Claude"])),
+            ("integration tip as base, authors kept", dict(submitted, source_base=integration_merge)),
+        ):
+            forged = dict(task, review_submission=submission)
+            reason = str(dispatch_policy.review_source_block_reason(cfg, forged, "Codex"))
+            assert "already contains part of the submitted range" in reason, (label, reason)
+            with probes():
+                assert dispatch_engine.is_task_review_dispatch_eligible(cfg, forged, "Codex") is False, label
+                assert (
+                    supervisor.dispatch_priority_for_task(cfg, forged, "Codex", task_map={task_id: forged}) is None
+                ), label
+            issues = supervisor.task_assignment_integrity_issues(cfg, {}, forged)
+            assert any(issue.startswith("review_source_unresolved:") for issue in issues), (label, issues)
+        assert ("Claude",) not in [
+            authors for key, authors in dispatch_policy._IMMUTABLE_SOURCE_AUTHORS.items() if key[0] == str(repo)
+        ]
+
+        same_source = dict(task, review_submission=submitted)
+        assert "reviewer Codex is itself a source author" in str(
+            dispatch_policy.review_source_block_reason(cfg, same_source, "Codex")
+        )
+        independent = dict(task, reviewer="Codex2", review_submission=submitted)
+        with probes():
+            assert dispatch_engine.is_task_review_dispatch_eligible(cfg, same_source, "Codex") is False
+            assert dispatch_engine.is_task_review_dispatch_eligible(cfg, independent, "Codex") is False
+            assert dispatch_engine.is_task_review_dispatch_eligible(cfg, independent, "Codex2") is True
+            assert (
+                supervisor.dispatch_priority_for_task(cfg, independent, "Codex2", task_map={task_id: independent})
+                == 0
+            )
+
+
 def test_genuine_review_state_dispatches_reviewer() -> None:
     cfg = _base_test_config()
     task = {
