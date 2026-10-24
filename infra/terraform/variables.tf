@@ -505,3 +505,53 @@ variable "pubsub_max_delivery_attempts" {
     error_message = "pubsub_max_delivery_attempts must be between 5 and 100."
   }
 }
+
+variable "monitoring_notification_emails" {
+  type        = set(string)
+  description = "Email addresses that receive Cloud Monitoring alerts; one email notification channel is created per address. Never commit personal addresses; supply them through the environment's tfvars. Production requires this or monitoring_notification_channel_ids."
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for email in var.monitoring_notification_emails :
+      can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", email))
+    ])
+    error_message = "monitoring_notification_emails must contain only email addresses."
+  }
+}
+
+variable "monitoring_notification_channel_ids" {
+  type        = set(string)
+  description = "Existing Cloud Monitoring notification channel resource names (projects/<project>/notificationChannels/<id>), for example a paging integration owned outside Terraform."
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for channel in var.monitoring_notification_channel_ids :
+      can(regex("^projects/[^/]+/notificationChannels/[0-9]+$", channel))
+    ])
+    error_message = "monitoring_notification_channel_ids must be projects/<project>/notificationChannels/<numeric id> resource names."
+  }
+}
+
+variable "monitoring_api_uptime_host" {
+  type        = string
+  description = "Host that external uptime checkers can reach for the API /platform/health check, authenticated with the Monitoring service agent OIDC token. Empty skips the API uptime check; production requires it. The Terraform API ingress is internal-load-balancer only, so the run.app host is not reachable unless ingress or a load balancer provides a path."
+  default     = ""
+
+  validation {
+    condition     = var.monitoring_api_uptime_host == "" || can(regex("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$", var.monitoring_api_uptime_host))
+    error_message = "monitoring_api_uptime_host must be empty or a bare lowercase host name without scheme, port, or path."
+  }
+}
+
+variable "monitoring_cloud_sql_max_connections" {
+  type        = number
+  description = "Effective PostgreSQL max_connections of the Cloud SQL instance; the connection saturation alert fires above 80% of it. Null skips that condition; production requires it."
+  default     = null
+
+  validation {
+    condition     = var.monitoring_cloud_sql_max_connections == null || try(var.monitoring_cloud_sql_max_connections >= 10, false)
+    error_message = "monitoring_cloud_sql_max_connections must be null or at least 10."
+  }
+}
