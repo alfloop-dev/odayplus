@@ -13,8 +13,14 @@ from modules.listing.application.native_intake_assisted_entry_policy import (
 from modules.listing.application.native_intake_assisted_entry_source import (
     NativeAssistedEntrySourceProof,
 )
+from modules.listing.application.native_intake_pending_commands import (
+    NativeIntakeCommandBudget,
+)
 from modules.listing.application.native_intake_requester_authority import (
     current_native_assisted_principal,
+)
+from modules.listing.application.native_intake_source_policy import (
+    NativeIntakeSourcePolicyOwner,
 )
 from modules.listing.application.native_intake_source_policy_recheck import (
     SIGNING_KEY_ENV,
@@ -103,6 +109,9 @@ def retire_settings(monkeypatch):
 def test_exact_read_proof_survives_retired_key_and_positive_original_verifier_stays_strict(past_manual, monkeypatch, all_settings):
     recheck, graph, ids, _, result, checked = past_manual
     before = state(recheck[0])
+    with graph.transaction(ids["tenant"]):
+        current_producer = recheck[1]._source_producer(ids["tenant"], checked["outbox_event_id"], lambda: None)
+        assert NativeIntakeSourcePolicyOwner(graph)._event(ids["tenant"], checked["outbox_event_id"]) == current_producer
     if all_settings:
         retire_settings(monkeypatch)
     else:
@@ -112,6 +121,8 @@ def test_exact_read_proof_survives_retired_key_and_positive_original_verifier_st
     with graph.transaction(ids["tenant"]):
         with pytest.raises(NativeIntakeSourcePolicyRecheckUnavailable):
             recheck[1]._source_producer(ids["tenant"], checked["outbox_event_id"], lambda: None)
+        with pytest.raises(NativeIntakeSourcePolicyRecheckUnavailable):
+            NativeIntakeSourcePolicyOwner(graph)._event(ids["tenant"], checked["outbox_event_id"])
     proof = history(past_manual)
     assert proof.root_identity_event_id == checked["root_identity_event_id"]
     assert proof.event_id == result["outbox_event_id"] and state(recheck[0]) == before
@@ -119,7 +130,16 @@ def test_exact_read_proof_survives_retired_key_and_positive_original_verifier_st
 
 def test_full_read_proof_honours_the_same_750ms_root_budget(past_manual, monkeypatch):
     retire_settings(monkeypatch)
-    assert history(past_manual, bounded=True).event_sha256
+    expected = history(past_manual, bounded=True)
+    assert expected.event_sha256
+    recheck, graph, ids, _, result, _ = past_manual
+    intake = native_row(recheck[0][0], result["intake_id"])
+    with graph.transaction(ids["tenant"]):
+        source = NativeAssistedEntrySourceProof(graph)
+        budget = NativeIntakeCommandBudget(source.source)
+        bounds = budget.deadline, budget._monotonic_deadline
+        assert source.current_parent(intake, before=budget) == expected
+        assert (budget.deadline, budget._monotonic_deadline) == bounds
 
 
 def test_deep_history_sql_reads_retain_the_callers_budget_even_without_an_explicit_inner_callback(past_manual, monkeypatch):

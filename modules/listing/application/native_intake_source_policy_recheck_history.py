@@ -212,16 +212,12 @@ class _HistoricalSourcePolicyOwner(NativeIntakeSourcePolicyOwner):
     All original source execution classes and their HMAC checks are unchanged.
     """
 
+    def _recheck_producer(self, view, tenant, event_id, before):
+        return NativeHistoricalRecheckProof(view).source_producer(tenant, event_id, before)
+
     def _event(self, tenant, event_id, *, before=None):
         before = before if before is not None else _native_producer_noop
-        view = self._producer_reads(before)
-        row = view._one("SELECT payload FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?",
-                        (tenant, _uuid(event_id)))
-        event = _object(row["payload"])
-        if event.get("actor_ref") == NATIVE_INTAKE_SOURCE_POLICY_RECHECK_JOB_TYPE:
-            proven = NativeHistoricalRecheckProof(view).source_producer(tenant, event_id, before)
-        else:
-            proven = super()._event(tenant, event_id, before=before)
+        proven = super()._event(tenant, event_id, before=before)
         # Capture the actual verified return value, never a substitute from
         # caller-supplied payload metadata. This is not a read cache: _event
         # always executes its complete proof before assigning this value.

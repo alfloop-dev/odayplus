@@ -199,13 +199,9 @@ class NativeIntakeSourcePolicyOwner:
             "SELECT * FROM workflow.outbox_events WHERE tenant_id=? AND event_id=?", (tenant, _uuid(event_id))))
         event = _object(row["payload"])
         if event.get("actor_ref") == "native-intake-source-policy-recheck":
-            from modules.listing.application.native_intake_source_policy_recheck import (
-                NativeIntakeSourcePolicyRecheckOwner,
-            )
-
             if discovery is not None:
                 discovery.finish()
-            return NativeIntakeSourcePolicyRecheckOwner(view)._source_producer(tenant, event_id, before if before is not None else _native_producer_noop)
+            return self._recheck_producer(view, tenant, event_id, before if before is not None else _native_producer_noop)
         if (validate_event(event) or row["event_type"] != "intake.state_changed"
                 or event.get("event_type") != row["event_type"]
                 or event.get("producer") != "listing_intake_service"
@@ -242,6 +238,13 @@ class NativeIntakeSourcePolicyOwner:
         if discovery is not None:
             discovery.finish()
         return row, event, hashlib.sha256(_json(event).encode()).hexdigest(), {"result": prior, "payload": payload}
+
+    def _recheck_producer(self, view, tenant, event_id, before):
+        from modules.listing.application.native_intake_source_policy_recheck import (
+            NativeIntakeSourcePolicyRecheckOwner,
+        )
+
+        return NativeIntakeSourcePolicyRecheckOwner(view)._source_producer(tenant, event_id, before)
 
 
     def _input_binding(self, intake: dict, event: dict, expected_version: int, producer: dict, *,
