@@ -441,6 +441,9 @@ def native_command_diagnostics(request, monkeypatch):
     from modules.listing.application.native_intake_assisted_entry_source import (
         NativeAssistedEntrySourceProof,
     )
+    from modules.listing.application.native_intake_command_withdrawal import (
+        NativeIntakeCommandWithdrawalOwner,
+    )
     from modules.listing.application.native_intake_parser import NativeIntakeParserOwner
     from modules.listing.application.native_intake_parser_input import NativeParserManualInputReader
     from modules.listing.application.native_intake_parser_io import NativeIntakeParserIO
@@ -477,6 +480,7 @@ def native_command_diagnostics(request, monkeypatch):
             (NativeIntakeRetrievalIO, "_finish")]:
         monkeypatch.setattr(cls, name, recorder.stage(getattr(cls, name), cls.__name__ + "." + name))
     for cls, name in [(NativeAssistedEntryRequestOwner, "request"), (NativeIntakeSourcePolicyRecheckOwner, "request"),
+            (NativeIntakeCommandWithdrawalOwner, "cancel"),
             (NativeIntakeParserOwner, "admit"),
             (NativeIntakeParserIO, "read_and_parse"),
             (NativeIntakeSourcePolicyRecheckOwner, "admit_event"),
