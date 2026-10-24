@@ -67,6 +67,29 @@ def source_policy_case(identity_case, monkeypatch, record_property):
     return identity_case, owner
 
 
+@contextmanager
+def _independent_source_policy_graph(graph, database):
+    """Use the same real database with a separately owned engine and pool."""
+    from modules.listing.application.intake_audit import CanonicalIntakeAuditSink
+    from shared.audit.canonical_delivery import CanonicalAuditDelivery
+    from shared.audit.canonical_postgresql import CanonicalPostgresAuditLog
+    from shared.infrastructure.persistence.identity_graph_sql import (
+        CanonicalIdentityGraphRepository,
+    )
+    from shared.infrastructure.persistence.job_queue import DurableJobQueue
+    from shared.infrastructure.persistence.postgresql import PostgresEngine
+
+    reopened = PostgresEngine(database.url(), bootstrap=False, validate_schema=False)
+    try:
+        queue = DurableJobQueue(reopened)
+        writer = CanonicalPostgresAuditLog(reopened)
+        sink = CanonicalIntakeAuditSink(writer, graph.audit_sink.retention,
+            CanonicalAuditDelivery(writer, queue, graph.audit_sink.delivery.sink))
+        yield CanonicalIdentityGraphRepository(reopened, queue, sink)
+    finally:
+        reopened.close()
+
+
 def drive_upstream(case, receipt, owner):
     """Consume only the upstream command's own durable bounded retry schedule."""
     identity, source_owner = case
@@ -632,15 +655,6 @@ def test_two_real_connections_reserve_one_occurrence_job(source_policy_case, rec
     import threading
     from concurrent.futures import ThreadPoolExecutor
 
-    from modules.listing.application.intake_audit import CanonicalIntakeAuditSink
-    from shared.audit.canonical_delivery import CanonicalAuditDelivery
-    from shared.audit.canonical_postgresql import CanonicalPostgresAuditLog
-    from shared.infrastructure.persistence.identity_graph_sql import (
-        CanonicalIdentityGraphRepository,
-    )
-    from shared.infrastructure.persistence.job_queue import DurableJobQueue
-    from shared.infrastructure.persistence.postgresql import PostgresEngine
-
     identity, owner = source_policy_case
     graph, ids, _, db = identity[0][0]
     _, producer, _ = prepare(source_policy_case, admit=False)
@@ -659,19 +673,11 @@ def test_two_real_connections_reserve_one_occurrence_job(source_policy_case, rec
 
     # Engine roots hold their process lock through commit. Independent engines
     # let the original barrier exercise the database reservation race.
-    reopened = PostgresEngine(db.url(), bootstrap=False, validate_schema=False)
-    try:
-        queue = DurableJobQueue(reopened)
-        writer = CanonicalPostgresAuditLog(reopened)
-        sink = CanonicalIntakeAuditSink(writer, graph.audit_sink.retention,
-            CanonicalAuditDelivery(writer, queue, graph.audit_sink.delivery.sink))
-        fresh_graph = CanonicalIdentityGraphRepository(reopened, queue, sink)
+    with _independent_source_policy_graph(graph, db) as fresh_graph:
         fresh_owner = NativeIntakeSourcePolicyOwner(fresh_graph)
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = [f.result(timeout=8) for f in [
                 pool.submit(attempt, graph, owner), pool.submit(attempt, fresh_graph, fresh_owner)]]
-    finally:
-        reopened.close()
     assert len({r[0] for r in results}) == 2 and all(r[0] for r in results)
     accepted = [r[1] for r in results if r[1] is not None]
     assert accepted and all(r == accepted[0] for r in accepted), results
@@ -768,14 +774,6 @@ def test_source_lock_wait_uses_the_remaining_command_deadline(source_policy_case
 
 
 def test_fresh_engine_reads_a_policy_receipt_after_current_source_changes(source_policy_case):
-    from modules.listing.application.intake_audit import CanonicalIntakeAuditSink
-    from shared.audit.canonical_delivery import CanonicalAuditDelivery
-    from shared.audit.canonical_postgresql import CanonicalPostgresAuditLog
-    from shared.infrastructure.persistence.identity_graph_sql import (
-        CanonicalIdentityGraphRepository,
-    )
-    from shared.infrastructure.persistence.job_queue import DurableJobQueue
-    from shared.infrastructure.persistence.postgresql import PostgresEngine
     from tests.integration.test_canonical_intakes_postgresql import snapshot
 
     identity, owner = source_policy_case
@@ -785,18 +783,10 @@ def test_fresh_engine_reads_a_policy_receipt_after_current_source_changes(source
     sql_patch(source_policy_case, "kill_switch=true,version=version+1")
     before = snapshot(identity[0][0])
     graph.engine.close()
-    reopened = PostgresEngine(db.url(), bootstrap=False, validate_schema=False)
-    try:
-        queue = DurableJobQueue(reopened)
-        writer = CanonicalPostgresAuditLog(reopened)
-        sink = CanonicalIntakeAuditSink(writer, graph.audit_sink.retention,
-            CanonicalAuditDelivery(writer, queue, graph.audit_sink.delivery.sink))
-        fresh_graph = CanonicalIdentityGraphRepository(reopened, queue, sink)
-        assert NativeIntakeSourcePolicyOwner(fresh_graph).execute(queue.get(receipt["job_id"])) == result
+    with _independent_source_policy_graph(graph, db) as fresh_graph:
+        assert NativeIntakeSourcePolicyOwner(fresh_graph).execute(fresh_graph.queue.get(receipt["job_id"])) == result
         assert snapshot((fresh_graph, ids, old_delivery, db)) == before
-        assert writer.verify_chain(ids["tenant"]).ok
-    finally:
-        reopened.close()
+        assert fresh_graph.audit_sink.writer.verify_chain(ids["tenant"]).ok
 
 
 def test_native_worker_renews_before_SQL_without_racing_policy_audit(source_policy_case, monkeypatch):
@@ -1103,7 +1093,7 @@ def test_new_upstream_driver_consumes_a_real_induced_serialization_retry(source_
     from modules.listing.application.native_intake_start import NativeIntakeStartOwner
 
     identity, source_owner = source_policy_case
-    graph, _, _, _ = identity[0][0]
+    graph, _, _, db = identity[0][0]
     # The actual default worker remains in use at 10ms. A separate real
     # connection deliberately updates its physical lease after the SQL root
     # has read it, independently of the worker's pre-command lease handoff.
@@ -1116,30 +1106,31 @@ def test_new_upstream_driver_consumes_a_real_induced_serialization_retry(source_
 
     source_owner.record_upstream_retry = observed
 
-    def committed(self, delivery, tenant, generation):
-        result = original(self, delivery, tenant, generation)
-        if result is None and once[0]:
-            once[0] = False
-            assert self.engine is graph.engine and self.queue is graph.queue
-            pids.append(graph.engine.query_one("SELECT pg_backend_pid() AS pid")["pid"])
+    with _independent_source_policy_graph(graph, db) as renewal_graph:
+        def committed(self, delivery, tenant, generation):
+            result = original(self, delivery, tenant, generation)
+            if result is None and once[0]:
+                once[0] = False
+                assert self.engine is graph.engine and self.queue is graph.queue
+                pids.append(graph.engine.query_one("SELECT pg_backend_pid() AS pid")["pid"])
 
-            def renew():
-                with graph.transaction(tenant):
-                    pid = graph.engine.query_one("SELECT pg_backend_pid() AS pid")["pid"]
-                    current = graph.queue.get(delivery.job_id)
-                    graph.queue.heartbeat(delivery.job_id, expected_version=current.version, fence_token=current.fence_token)
-                    return pid
+                def renew():
+                    with renewal_graph.transaction(tenant):
+                        pid = renewal_graph.engine.query_one("SELECT pg_backend_pid() AS pid")["pid"]
+                        current = renewal_graph.queue.get(delivery.job_id)
+                        renewal_graph.queue.heartbeat(delivery.job_id, expected_version=current.version, fence_token=current.fence_token)
+                        return pid
 
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                pids.append(pool.submit(renew).result(timeout=3))
-        return result
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    pids.append(pool.submit(renew).result(timeout=3))
+            return result
 
-    monkeypatch.setattr(NativeIntakeStartOwner, "_committed_result", committed)
-    _, _, receipt = prepare(source_policy_case)
-    assert len(pids) == 2 and pids[0] != pids[1]
-    assert any(r["job_type"] == "native-intake-start" and r["last_error"]["error_class"] == "SerializationFailure" for r in retries)
-    record_property("actual_upstream_serialization_backend_pids", ",".join(str(p) for p in pids))
-    assert source_owner.execute(claim(source_policy_case, receipt))["processing_state"] == "RETRIEVING"
+        monkeypatch.setattr(NativeIntakeStartOwner, "_committed_result", committed)
+        _, _, receipt = prepare(source_policy_case)
+        assert len(pids) == 2 and pids[0] != pids[1]
+        assert any(r["job_type"] == "native-intake-start" and r["last_error"]["error_class"] == "SerializationFailure" for r in retries)
+        record_property("actual_upstream_serialization_backend_pids", ",".join(str(p) for p in pids))
+        assert source_owner.execute(claim(source_policy_case, receipt))["processing_state"] == "RETRIEVING"
 
 
 @pytest.mark.parametrize("terminal", [False, True])
