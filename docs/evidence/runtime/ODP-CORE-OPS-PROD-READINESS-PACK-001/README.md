@@ -5,7 +5,7 @@
 > 這裡沒有任何簽署、核准、收據、digest 或 run ID 是本 task 產生的；所有簽名欄都留白。
 
 - Task：ODP-CORE-OPS-PROD-READINESS-PACK-001
-- 準備者：Claude（LLM agent）· Reviewer：Codex2
+- 準備者：Claude（LLM agent）· Reviewer：Codex
 - 依據的程式基線：`origin/dev` @ `5d761526fa76e6f0fd3c4042b0de558997e7c8db`（2026-10-24 讀取）
 - 待合併的相關變更：PR #1565（branch `task/ODP-CORE-OPS-FIRST-RELEASE-ROLLBACK-001`，讀取時 head `d248118cbc20df6d3ba578288cd1895e782ed9ac`）。本包一律標為「**待合併（pending merge）**」，不當作已上線行為。
 
@@ -66,6 +66,7 @@
 - **沒有任何 live E2E gate 通過紀錄**，staging、production、core-ops 都沒有。
 - **沒有效能量測、UAT 簽核、production 備份讀回或還原演練。**
 - **production 告警與值班路由不存在。** Terraform 沒有任何 Cloud Monitoring 資源，詳見 `monitoring-oncall-plan.md`。
+- **production deploy job 在現行 workflow 下會在 commit 之後失敗。** production 的 `capture-state` 把 `--project`、`--region` 放在子命令之後（`.github/workflows/deploy-dev.yml:1609-1615`），但 CLI 要求它們放在子命令之前（`product_ops/deployment/bluegreen_release.py:985-989`）。argparse 會以 exit 2 結束，這時流量已經切到 100%（`deploy_cloud_run_waji.sh:1305`）。`deploy` job 結果是 failure，`staging_closeout` 被 skip（`deploy-dev.yml:1681`）。這是既有 blocker，修正屬於另一個 task，詳見 `deployment-plan.md` §5 第 1 點。
 - **production watch receipt 沒有程式產生它。** `staging_closeout` 只會讀它（`.github/workflows/deploy-dev.yml:1793-1798`）。
 - **首次 production release 的回滾語意仍待合併。** PR #1565 尚未合併。
 

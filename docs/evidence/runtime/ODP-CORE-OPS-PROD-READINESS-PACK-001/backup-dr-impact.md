@@ -58,7 +58,9 @@ production 的現況是否已經改變，本包**未驗證**。
 | WORM bucket | 開啟 versioning 與 CMEK；`retention_period = var.retention_period_seconds`；`is_locked = var.lock_retention_policy` | `infra/terraform/audit/main.tf:16-36` |
 | 鎖定 | 只在 prod 鎖定（`lock_retention_policy = local.is_prod`） | `infra/terraform/storage.tf:82` |
 | 保存期 | 預設約 7 年；prod 下限 `220752000` 秒 | `audit/variables.tf:30`；`checks.tf:138-143` |
-| 應用層保存證明 | 只是整合測試；production 持久化接線與排程 retention sweep 都列為後續項 | `docs/evidence/AUDIT_EVIDENCE_RETENTION_PROOF.md:111-113`、`:117-118` |
+| 應用層保存證明 | 只有整合測試（`docs/evidence/AUDIT_EVIDENCE_RETENTION_PROOF.md:60-90`） | 同左 |
+| 應用層持久化接線 | **已存在**。PostgreSQL 模式下 `_postgres_bundle` 以同一個 WORM sink 建立 `DurableAuditLog`、`DurableEvidenceBundleStore` 與 canonical intake audit delivery；`build_persistence` 在 PostgreSQL 模式走這條路；API 啟動時取用這個 bundle 的 `audit_log` 與 `evidence_store`。production 模式下沒有 GCS sink URI，或缺 writer／recovery service account 時，會 fail closed。`AUDIT_EVIDENCE_RETENTION_PROOF.md:111-113` 仍把這項列為後續項，已過時 | `shared/infrastructure/persistence/factory.py:609-632`、`:709-725`；`apps/api/oday_api/main.py:180`、`:254-260`；`shared/audit/worm.py:450-480` |
+| 尚未驗證 | production 實際的 sink 設定、WORM bucket retention 讀回、資料實際保存的效果；排程 retention sweep（repo 內只找到手動 API `POST /evidence/retention/purge`，沒有排程呼叫它）；部署環境的 decision log receipt | `AUDIT_EVIDENCE_RETENTION_PROOF.md:117-118`；`apps/api/app/routes/audit.py:505-515` |
 | production WORM bucket 讀回 | repo 內**找不到** | |
 | workflow 變數 | deploy job 讀取 `ODP_AUDIT_WORM_SINK_URI` 與相關 SA | `deploy-dev.yml:1216-1218` |
 

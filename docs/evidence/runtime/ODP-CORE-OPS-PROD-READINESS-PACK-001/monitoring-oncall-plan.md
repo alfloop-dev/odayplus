@@ -51,6 +51,7 @@ Runtime Release 的 production 部署是用 `gcloud` 直接部署，不執行 Te
 ### 1.4 watch window 的程式
 
 - `bluegreen_release.py` 寫明「Start watch window」是呼叫者的責任，沒有 `watch` 子命令（`product_ops/deployment/bluegreen_release.py:852-863`、`:989-1047`）。
+- 以現行 workflow，production deploy job 會在 `capture-state` 那一步 failure，`staging_closeout` 因此被 skip，根本不會讀 watch receipt（`deploy-dev.yml:1609-1615`、`:1681`；見 `deployment-plan.md` §5 第 1 點）。下面描述的是這個 job 實際執行時的行為。
 - `staging_closeout` 只會**驗證** watch receipt：它讀 `vars.ODP_PRODUCTION_WATCH_CLOSEOUT_URI`，呼叫 `verify_watch_window_receipt`（`.github/workflows/deploy-dev.yml:1695`、`:1793-1798`）。驗證內容是：
   - `release_sha` 必須相符；
   - 狀態必須是 `WATCH_PASSED`；

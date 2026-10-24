@@ -76,12 +76,13 @@
   - 觸發條件是 PROD-OPS-05 的寬鬆初始值，而且只是人工判斷依據（`:301-309`）。
   - rollback owner 是 Human/Ops（`:307`）。
   - 回滾順序：暫停 scheduler → Web 與 API 切回 blue → job 改回 blue digest → snapshot pointer → 驗證舊版能讀新 schema → rollback smoke → 保留證據並開 incident（`:311-319`）。
-  - 工具是 `bluegreen_release.py rollback --api-service --web-service --state-file ...`（`product_ops/deployment/bluegreen_release.py:1011-1018`）。
+  - 工具是 `bluegreen_release.py`。`--dry-run`、`--project`、`--region` 是主 parser 的全域參數，必須放在子命令**之前**，其中 `--project`、`--region` 必填（`product_ops/deployment/bluegreen_release.py:985-989`）。正確形式是 `python3 product_ops/deployment/bluegreen_release.py --project <PROJECT> --region <REGION> rollback --api-service <API> --web-service <WEB> --state-file <STATE>`（子命令參數見 `:1011-1018`）。
 - **缺口：`--state-file` 沒有來源。**
-  - workflow 的 `capture-state` 在**切換之後**執行，寫入 `${RUNNER_TEMP}/prod-bluegreen-state`（`deploy-dev.yml:1604-1619`），不在上傳清單內（`:1638-1671`）。
+  - workflow 的 `capture-state` 把 `--project`、`--region` 放在子命令之後（`deploy-dev.yml:1609-1615`），argparse 會以 exit 2 結束，**不會寫出任何 state 檔**，`deploy` job 因此 failure，`staging_closeout` 被 skip（`:1681`；詳見 `deployment-plan.md` §5 第 1 點）。這是既有 blocker，修正屬於另一個 task。
+  - 即使參數順序修正，這一步也是在**切換之後**執行，讀到的是 green 的狀態，寫入 `${RUNNER_TEMP}/prod-bluegreen-state`（`:1604-1619`），不在上傳清單內（`:1638-1671`）。
   - 部署腳本自己的 traffic snapshot 是暫存檔，結束時就刪除（`deploy_cloud_run_waji.sh:357-367`）。
   - 結果是 workflow 結束後，沒有任何保存下來的「切換前 blue 狀態」可以當 state file。
-  - 操作者必須在 dispatch 前自行執行 `capture-state` 並保存結果，或從 Cloud Run revision 歷史重建。這個做法**未驗證、未演練**，需要人工決定程序。
+  - 操作者必須在 dispatch 前自行執行 `capture-state` 並保存結果，或從 Cloud Run revision 歷史重建。自行執行時同樣要把全域參數放在前面：`python3 product_ops/deployment/bluegreen_release.py --project <PROJECT> --region <REGION> capture-state --release-id <ID> --api-service <API> --web-service <WEB> --output-dir <DIR>`（`bluegreen_release.py:985-999`）。這個做法**未驗證、未演練**，需要人工決定程序。
 
 ## 4. 資料與 schema
 
@@ -105,7 +106,7 @@
 1. 在 staging 以 core-ops candidate 跑完 10 個 stage，取得 `rollback_rehearsal` 的實際 receipt。
 2. 刻意讓 staging deploy 在 live gate 前失敗一次，驗證 `hold` 與 receipt。這是 PR #1565 合併後的 staging 語意。
 3. 決定並演練 §2.4 的「首次 release commit 後下線」程序。
-4. 決定並演練 §3 的 blue state 保存方式，以及 `bluegreen_release.py rollback --dry-run`（該 CLI 支援 `--dry-run`，`bluegreen_release.py:985`）。
+4. 決定並演練 §3 的 blue state 保存方式，以及 rollback 的 dry run。`--dry-run` 是全域參數，要放在子命令之前：`python3 product_ops/deployment/bluegreen_release.py --dry-run --project <PROJECT> --region <REGION> rollback --api-service <API> --web-service <WEB> --state-file <STATE>`（`bluegreen_release.py:985-989`、`:1011-1018`）。寫成 `rollback --dry-run …` 會被 argparse 拒絕。
 
 ## 6. 簽核（留白）
 
@@ -114,4 +115,5 @@
 | 本回滾計畫已審閱 | | Release owner | | □ 核准 □ 附條件 □ 退回 |
 | 首次 release commit 後的下線程序（§2.4） | | Human/Ops | | □ 選 (a) □ 選 (b) □ 選 (c) □ 其他 |
 | blue state 保存方式（§3） | | Human/Ops | | |
+| workflow `capture-state` blocker 的處置（§3；`deployment-plan.md` §5 第 1 點） | | Release owner + Human/Ops | | □ 上線前另開 task 修正 □ 具名接受並採人工收尾 |
 | rollback owner | | Human/Ops | | |

@@ -197,14 +197,15 @@ risk_owner：＿＿＿＿  approved_by：＿＿＿＿  approved_at：＿＿＿�
 - **建議決策者**：負責人。
 - **狀態**：UNSIGNED。簽署：＿＿＿＿
 
-### HD-21 回滾程序的兩個缺口
+### HD-21 回滾程序與 production 收尾的三個缺口
 
 - **決定什麼**：
   1. 首次 release commit 後要下線時採哪個選項，見 `rollback-plan.md` §2.4；
-  2. 後續 release 的 blue state 如何保存，見 `rollback-plan.md` §3。
+  2. 後續 release 的 blue state 如何保存，見 `rollback-plan.md` §3；
+  3. 既有 blocker：workflow 的 production `capture-state` 參數順序錯誤，deploy job 會在流量已切到 100% 之後 failure，`staging_closeout` 被 skip。要在 production GO 前另開 task 修正 workflow（會讓既有 candidate 失效，需重新建置），還是具名接受「production 已上線但 run 失敗、staging 由人工收尾」的路徑。見 `deployment-plan.md` §5 第 1 點。
 
-  兩者都要在 staging 演練。
-- **依據**：`rollback-plan.md`。
+  前兩項要在 staging 演練。
+- **依據**：`rollback-plan.md`；`deployment-plan.md` §5；`deploy-dev.yml:1609-1615`、`:1681`；`bluegreen_release.py:985-989`。
 - **建議決策者**：Release owner + Human/Ops。
 - **狀態**：UNSIGNED。簽署：＿＿＿＿
 
@@ -272,8 +273,10 @@ GO 簽署：＿＿＿＿  日期：＿＿＿＿  candidate SHA：＿＿＿＿  m
 
 ### HD-28 staging closeout 與清理（或延長 hold）
 
-- **決定什麼**：watch receipt 上傳之後，重跑或確認 `staging_closeout`；或者延長 staging hold，延長時要附 owner 與原因，上限 168 小時。
-- **依據**：`deploy-dev.yml:1678-1813`；`deployment-plan.md` §5 第 1 點；`staging_lifecycle.py:62`。
+- **決定什麼**：
+  - 以現行 workflow，`staging_closeout` 會因 deploy job failure 而被 skip（`deployment-plan.md` §5 第 1 點），staging 不會自動清理。要決定由誰、用什麼程序清理 staging，或延長 hold，延長時要附 owner 與原因，上限 168 小時。
+  - 第 1 點修正之後，`staging_closeout` 會在 deploy 成功後立即執行，並要求 watch receipt 已存在（`deployment-plan.md` §5 第 2 點）。要決定 watch receipt 上傳之後如何重跑或確認 `staging_closeout`。
+- **依據**：`deploy-dev.yml:1678-1813`、`:1681`；`deployment-plan.md` §5 第 1、2 點；`staging_lifecycle.py:62`。
 - **建議決策者**：Human/Ops。
 - **狀態**：UNSIGNED。簽署：＿＿＿＿
 

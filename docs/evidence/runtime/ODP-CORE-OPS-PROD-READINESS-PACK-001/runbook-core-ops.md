@@ -56,7 +56,7 @@
 |---|---|---|
 | `release-admission-receipt-production` | lease 驗證結果、`manifest_digest`、`release_profile` | `deploy-dev.yml:1069-1075` |
 | `runtime-release-production-validation` | preflight、smoke、migration compatibility、`live-e2e-gate.json`、job validation | `deploy-dev.yml:1638-1671` |
-| `runtime-release-production-staging-closeout-receipts` | staging closeout、watch receipt、cleanup | `deploy-dev.yml:1815-1824` |
+| `runtime-release-production-staging-closeout-receipts` | staging closeout、watch receipt、cleanup。以現行 workflow，`staging_closeout` 會被 skip，這份 artifact 不會出現（`deployment-plan.md` §5 第 1 點） | `deploy-dev.yml:1681`、`:1815-1824` |
 
 ## 3. 營運人員看到的畫面（模型被拒絕時）
 

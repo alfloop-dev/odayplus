@@ -21,6 +21,8 @@ registry 目前停在 dev candidate `6140d0ef…`，`stage: candidate-built`，`
 
 **結論：在完成 `human-decisions-checklist.md` 的對應決策並把 receipt 寫入 registry 之前，以下步驟到 Step 4 就會被 admission 拒絕。**
 
+**另一個既有 blocker：即使 admission 通過，以 `origin/dev` 現行 workflow，production deploy job 會在流量已切到 100% 之後的步驟 17 失敗，步驟 19 的 staging closeout 會被 skip（§5 第 1 點）。** 修正屬於另一個 task。
+
 ## 1. core-ops 的晉升路徑
 
 - core-ops 只能以 dev 或 staging 為建置目標（`docs/design/ODP_CORE_OPS_RELEASE_PROFILE.md:58`）。
@@ -57,9 +59,9 @@ registry 目前停在 dev candidate `6140d0ef…`，`stage: candidate-built`，`
 | 14 | **0% 讀回（candidate smoke）**：對 tagged candidate revision 跑 release-aware smoke，比對 `--expected-sha` | 同上 | 無 | `deploy_cloud_run_waji.sh:1171-1182` |
 | 15 | **切換**：先把兩個 scheduler trigger 指向 candidate job，再把 API、Web 依序切到 100%。首次 release 時，Web 在這一步才開放 `allUsers` | 同上 | 無（沒有中途人工確認點） | `deploy_cloud_run_waji.sh:1184-1198`；`cloud_run_release_traffic.sh:259-268` |
 | 16 | **Live E2E gate**：對 production custom domain 執行 `check_live_e2e_gate.py --release-profile core-ops`。core-ops 不帶 `--require-full-acceptance`。通過才設 `DEPLOYMENT_COMMITTED=true`；失敗時走 EXIT trap 回復 | 同上 | 無 | `deploy_cloud_run_waji.sh:1211-1305`、`:1286-1303` |
-| 17 | **Blue-green 狀態讀取**：`bluegreen_release.py capture-state`，只斷言 `release_id` 與 traffic 結構非空 | `deploy` job | 注意：讀到的是**切換後**的狀態，存在 `RUNNER_TEMP`，**不會**上傳成 artifact（見 `rollback-plan.md` §3） | `deploy-dev.yml:1604-1619`、`:1638-1671` |
+| 17 | **Blue-green 狀態讀取（現行程式會失敗）**：workflow 呼叫 `bluegreen_release.py capture-state`，但把 `--project`、`--region` 放在子命令**之後**。CLI 把這兩個參數定義成子命令**之前**的必要全域參數，所以 argparse 會以 exit 2 結束，不會寫出任何 state 檔，這一步失敗，`deploy` job 結果是 failure。這時部署腳本已經在前一個 step 設定 `DEPLOYMENT_COMMITTED=true` 並正常結束，production 已經 100% 承接新版，**不會**自動回復 | `deploy` job | 見 §5 第 1 點。即使參數順序修正，讀到的也是**切換後**的狀態，存在 `RUNNER_TEMP`，**不會**上傳成 artifact（見 `rollback-plan.md` §3） | `deploy-dev.yml:1438`、`:1604-1619`、`:1638-1671`；`bluegreen_release.py:985-989`、`:1056`；`deploy_cloud_run_waji.sh:1305` |
 | 18 | **Watch window**：人工監看 | **人工**；repo 內沒有任何 watch 自動化 | watch owner 與 rollback owner 必須在線，見 `monitoring-oncall-plan.md` | `docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:265-266`、`:288-296` |
-| 19 | **Staging closeout**：deploy 成功後**立即**執行，綁定 `staging` environment。先讀 `vars.ODP_PRODUCTION_WATCH_CLOSEOUT_URI` 指向的 watch receipt 並驗證，通過才清理 staging | `staging_closeout` job | 需要有人產生並上傳 watch receipt，見 §5 | `deploy-dev.yml:1678-1813`；`shared/observability/watch_window.py:694-734` |
+| 19 | **Staging closeout**：只在 `needs.deploy.result == 'success'` 時執行，綁定 `staging` environment。執行時先讀 `vars.ODP_PRODUCTION_WATCH_CLOSEOUT_URI` 指向的 watch receipt 並驗證，通過才清理 staging。**以現行程式，步驟 17 會讓 deploy job failure，所以這個 job 會被 skip**，根本不會讀 watch receipt，也不會清理 staging | `staging_closeout` job | staging 需由人工處理（`human-decisions-checklist.md` HD-28）。watch receipt 的產生者也不存在，見 §5 | `deploy-dev.yml:1678-1813`、`:1681`；`shared/observability/watch_window.py:694-734` |
 
 ## 3. 每一步由誰觸發、誰簽署
 
@@ -93,19 +95,32 @@ registry 目前停在 dev candidate `6140d0ef…`，`stage: candidate-built`，`
 
 ## 5. 已知的程式與流程缺口（本 task 只記錄，不修改）
 
-1. **watch receipt 沒有任何產生者。**
-   - `staging_closeout` 在 deploy 成功後立即執行，並要求 `ODP_PRODUCTION_WATCH_CLOSEOUT_URI` 已有綁定本 SHA、狀態 `WATCH_PASSED`、至少 15 分鐘的 receipt（`deploy-dev.yml:1681`、`:1793-1798`；`watch_window.py:710-734`）。
+程式修正屬於另一個 task。本 task 只動本資料夾，不改 workflow 或程式。
+
+1. **既有 blocker：production 的 `capture-state` 參數順序錯誤，deploy job 在 commit 之後必定 failure。**
+   - workflow 的寫法是 `bluegreen_release.py capture-state --release-id … --api-service … --web-service … --project … --region … --output-dir …`（`deploy-dev.yml:1609-1615`）。
+   - CLI 把 `--dry-run`、`--project`、`--region` 定義在主 parser，`--project`、`--region` 是 `required=True`，子命令在其後（`bluegreen_release.py:985-989`），`main` 以 `parser.parse_args` 解析（`:1056`）。放在子命令之後的 `--project`、`--region` 不會被主 parser 收到。
+   - 本 task 以 `origin/dev` 的 `_build_parser()` 離線解析上述參數順序，結果是 `the following arguments are required: --project, --region`、`SystemExit 2`。改成 `--project … --region … capture-state …` 就能解析。這只是 argparse 層的離線檢查，沒有呼叫 GCP。
+   - 實際失敗路徑：
+     - 部署腳本（`deploy-dev.yml:1438` 的 step）已經切換 100% 流量、通過 live E2E gate，並設定 `DEPLOYMENT_COMMITTED=true`（`deploy_cloud_run_waji.sh:1305`），正常結束。
+     - 下一個 production step 的 `capture-state` 以 exit 2 失敗，沒有寫出 `api-traffic.json`、`web-traffic.json`、`release-state.json`，後面的 `test -s` 與斷言都不會執行。
+     - `deploy` job 結果是 failure。`Upload deployment validation reports` 是 `if: always()`，仍會上傳 validation 報告（`:1638-1671`）。
+     - `staging_closeout` 的條件是 `needs.deploy.result == 'success'`（`:1681`），所以被 **skip**。不會讀 watch receipt，也不會清理 staging。
+   - 影響：production 實際已經在新版上運作，但 workflow run 是紅的。部署腳本的 EXIT trap 已經結束，不會因為這一步失敗而回復。staging 不會被這次 run 清理。
+   - 處置：production GO 前要由另一個 task 修正 workflow 並重新產生 candidate，或者具名接受這個失敗路徑與人工收尾程序（`human-decisions-checklist.md` HD-21 第 3 點、HD-28）。注意：修改 workflow 不是 evidence-only 變更，會讓已建置的 candidate 失效（`deploy-dev.yml:744-756`）。
+2. **watch receipt 沒有任何產生者。**
+   - `staging_closeout` 執行時，要求 `ODP_PRODUCTION_WATCH_CLOSEOUT_URI` 已有綁定本 SHA、狀態 `WATCH_PASSED`、至少 15 分鐘的 receipt（`deploy-dev.yml:1793-1798`；`watch_window.py:710-734`）。
    - repo 內唯一呼叫 `record_deployment_watch_window_status` 的地方，是 fail-closed 的負向測試（`product_ops/deployment/validate_cloud_run_live_deployment.py:617-634`）。
-   - 推論：第一次 production deploy 後，`staging_closeout` 幾乎一定會因為找不到 receipt 而失敗，staging 不會被清理。production 本身不受影響，因為這個 job 綁定 staging 身分、不碰 production。之後如何補跑屬於人工決定，**未驗證**。
-2. **watch 期間沒有自動回滾。** 部署腳本一旦設定 `DEPLOYMENT_COMMITTED=true`，就不再自動回復（`deploy_cloud_run_waji.sh:368-376`、`:1305`）。PROD-OPS-05 的門檻只是人工判斷依據（`EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:296`）。
-3. **切換時沒有暫停排程。** scheduler trigger 在切換**前**就指向 candidate job，沒有「暫停、one-shot、再恢復」的程序（`deploy_cloud_run_waji.sh:1184-1191`）。規劃 §8.3 寫的是先 one-shot 再恢復（`EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:283-288`）。
-4. **production 沒有 deploy 前的備份步驟。** workflow 的 production 路徑沒有 SQL 備份、export 或 PITR 讀回。
+   - 推論：以現行程式，`staging_closeout` 會先因第 1 點被 skip。第 1 點修正之後，`staging_closeout` 會在 deploy 成功後立即執行，這時幾乎一定會因為找不到 receipt 而失敗，staging 仍不會被清理。這個 job 綁定 staging 身分、不碰 production。之後如何補跑屬於人工決定，**未驗證**。
+3. **watch 期間沒有自動回滾。** 部署腳本一旦設定 `DEPLOYMENT_COMMITTED=true`，就不再自動回復（`deploy_cloud_run_waji.sh:368-376`、`:1305`）。PROD-OPS-05 的門檻只是人工判斷依據（`EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:296`）。
+4. **切換時沒有暫停排程。** scheduler trigger 在切換**前**就指向 candidate job，沒有「暫停、one-shot、再恢復」的程序（`deploy_cloud_run_waji.sh:1184-1191`）。規劃 §8.3 寫的是先 one-shot 再恢復（`EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:283-288`）。
+5. **production 沒有 deploy 前的備份步驟。** workflow 的 production 路徑沒有 SQL 備份、export 或 PITR 讀回。
 
 ## 6. 規劃文件與程式不一致（以程式為準）
 
 | 文件說法 | 程式實際 |
 |---|---|
-| `GCP_DEPLOY_GUIDE.md:226`：production 用 `bluegreen_release.py` 執行 blue→green 100% 切換 | 切換是 `deploy_cloud_run_waji.sh` 呼叫 `cloud_run_release_traffic.sh` 的 `promote_service_traffic`（`:1193`、`:1198`）。`bluegreen_release.py` 在 workflow 中只用到 `capture-state`（`deploy-dev.yml:1609`） |
+| `GCP_DEPLOY_GUIDE.md:226`：production 用 `bluegreen_release.py` 執行 blue→green 100% 切換 | 切換是 `deploy_cloud_run_waji.sh` 呼叫 `cloud_run_release_traffic.sh` 的 `promote_service_traffic`（`:1193`、`:1198`）。`bluegreen_release.py` 在 workflow 中只用到 `capture-state`（`deploy-dev.yml:1609`），而且以現行參數順序會失敗（§5 第 1 點） |
 | `ENVIRONMENTS.md:38` 寫 staging 演練是「9-stage」 | 現在是 10 個 stage，多了 `live_e2e_gate`（`staging_lifecycle.py:2685-2698`） |
 | 規劃 §8.3 第 4、5 步：worker／scheduler 先 one-shot 驗證，再恢復 trigger | scheduler trigger 在流量切換前直接 upsert 到 candidate job（`deploy_cloud_run_waji.sh:1184-1191`） |
 | 規劃 §8.2：先部署 data platform green | Runtime Release 的 production 路徑不部署 data platform。data platform 屬於另一個 repo 與流程（`EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:450`），本包**未驗證**其狀態 |
