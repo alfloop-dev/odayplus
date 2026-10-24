@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-a61a195a16fc28344c2af62cdb4aad0e",
+  "serialNumber": "urn:uuid:sha256-b31dda958fcc6c7e95c51324f849ed4c",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-23T14:54:39.617966+00:00",
+    "timestamp": "2026-10-24T01:28:24.245743+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,21 +16,21 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@8682f863d9ea4a0b266da23a35f495ed10e802d9",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@8682f863d9ea4a0b266da23a35f495ed10e802d9"
+      "purl": "pkg:generic/alfloop-dev/odayplus@41b66282b4328b4cc13037499b66441fa172608f",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@41b66282b4328b4cc13037499b66441fa172608f"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "8682f863d9ea4a0b266da23a35f495ed10e802d9"
+        "value": "41b66282b4328b4cc13037499b66441fa172608f"
       },
       {
         "name": "sbom-hash",
-        "value": "a61a195a16fc28344c2af62cdb4aad0ea0439e3fe8e375ae1f09bb84227c60af"
+        "value": "b31dda958fcc6c7e95c51324f849ed4c34577b82bf88e2f192a301b6bcccc196"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:5b8cf1ff5e1a5d772c23ec8f44e812e7a485c023425b68a0b60e1baf473fd680"
+        "value": "sha256:867d23be53fa08bacc057a1bac5c287901093db8ec4895be3821b30f369d5ee3"
       },
       {
         "name": "container-base-images",
@@ -1802,10 +1802,10 @@
     },
     {
       "name": "@next/env",
-      "version": "15.5.27",
+      "version": "15.5.28",
       "type": "library",
-      "purl": "pkg:npm/@next/env@15.5.27",
-      "bom-ref": "pkg:npm/@next/env@15.5.27",
+      "purl": "pkg:npm/@next/env@15.5.28",
+      "bom-ref": "pkg:npm/@next/env@15.5.28",
       "scope": "required",
       "licenses": [
         {
@@ -1817,7 +1817,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "WC5hvVqiuFOcRyz6gKPeJkiVvSMf3scNeAV49CdWtVqxmUlzh8UKR6YHt9yiNkh8LngtzqSlVz07/Ma3ZAzchA=="
+          "content": "xxW5EBI8fMPuVTPBW7LL980IRbuDXlbkUAwp9DDhtb4Lnich3nJ13uYpvrX4VE74hWPf6AvHHAMmGCidcHjbfg=="
         }
       ],
       "supplier": {
@@ -1826,10 +1826,10 @@
     },
     {
       "name": "@next/eslint-plugin-next",
-      "version": "15.5.27",
+      "version": "15.5.28",
       "type": "library",
-      "purl": "pkg:npm/@next/eslint-plugin-next@15.5.27",
-      "bom-ref": "pkg:npm/@next/eslint-plugin-next@15.5.27",
+      "purl": "pkg:npm/@next/eslint-plugin-next@15.5.28",
+      "bom-ref": "pkg:npm/@next/eslint-plugin-next@15.5.28",
       "scope": "optional",
       "licenses": [
         {
@@ -1841,16 +1841,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "a94xlzvOLaULh4Fzcvj9B2hwIOtPHJW75gghkXiJ8s1Jk0eo00UknrDVhx04Y+8ARu9ds13vy/jHg5u/PdVGqw=="
+          "content": "EsR/G+skBFfu8Z35P6V/yuu4IV8zkZXIssGOgIRD0ZXqB4CTEuEHQC1ySOQi31u4xjmgHVAdG1RT3QAasRmcZA=="
         }
       ]
     },
     {
       "name": "@next/swc-darwin-arm64",
-      "version": "15.5.27",
+      "version": "15.5.28",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-darwin-arm64@15.5.27",
-      "bom-ref": "pkg:npm/@next/swc-darwin-arm64@15.5.27",
+      "purl": "pkg:npm/@next/swc-darwin-arm64@15.5.28",
+      "bom-ref": "pkg:npm/@next/swc-darwin-arm64@15.5.28",
       "scope": "required",
       "licenses": [
         {
@@ -1862,16 +1862,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "fBA9QurmK4+uj4wNhmRTuO5zMVRaBHCvp6H93zTG/5i6Yi6TewbvbesXB8YQNj8T99Cwrow87hHiFV6wL/hyMA=="
+          "content": "dPoQYXcfSIqx5o+TOXVXO7kONK5qbtNRDeiTfII0bT3puGIT6VF5e0QwmxNZfEZ5Zety5f3m9P/p4xqwfiLlPg=="
         }
       ]
     },
     {
       "name": "@next/swc-darwin-x64",
-      "version": "15.5.27",
+      "version": "15.5.28",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-darwin-x64@15.5.27",
-      "bom-ref": "pkg:npm/@next/swc-darwin-x64@15.5.27",
+      "purl": "pkg:npm/@next/swc-darwin-x64@15.5.28",
+      "bom-ref": "pkg:npm/@next/swc-darwin-x64@15.5.28",
       "scope": "required",
       "licenses": [
         {
@@ -1883,16 +1883,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "FGZwJwry8qZNHxD/nfwrCwCHHrqx6epqItkkxbYcBQEQ2uw5S43bY83fQB5zbAsZE7TELMjoYkbhsQ4oKM7wwg=="
+          "content": "RgCJ7buBivTH+6sddqaVm+/v8kwMHlFkobvdt3DfETutws5HrxnToMIWSN9X3MZ3aAi7BbKrGZZWUDQLEycXqw=="
         }
       ]
     },
     {
       "name": "@next/swc-linux-arm64-gnu",
-      "version": "15.5.27",
+      "version": "15.5.28",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-linux-arm64-gnu@15.5.27",
-      "bom-ref": "pkg:npm/@next/swc-linux-arm64-gnu@15.5.27",
+      "purl": "pkg:npm/@next/swc-linux-arm64-gnu@15.5.28",
+      "bom-ref": "pkg:npm/@next/swc-linux-arm64-gnu@15.5.28",
       "scope": "required",
       "licenses": [
         {
@@ -1904,16 +1904,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "GQulAaJYNF1RYuatlsw9/uzbKz4if2V7Ic9nVO+P0ljYPm4yBRTFIl6g5YkKTw40lMLbpy9edLoH44g3jSHMYA=="
+          "content": "OHXQe13olE59aKe++zHavGcJPh5SLHXi6Anret3BBeq1+qhSuOJDNAli/EDDfxs6UTqA4Qddo4uyYry2slyjiQ=="
         }
       ]
     },
     {
       "name": "@next/swc-linux-arm64-musl",
-      "version": "15.5.27",
+      "version": "15.5.28",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-linux-arm64-musl@15.5.27",
-      "bom-ref": "pkg:npm/@next/swc-linux-arm64-musl@15.5.27",
+      "purl": "pkg:npm/@next/swc-linux-arm64-musl@15.5.28",
+      "bom-ref": "pkg:npm/@next/swc-linux-arm64-musl@15.5.28",
       "scope": "required",
       "licenses": [
         {
@@ -1925,16 +1925,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "URFFsUmu8Pi0/1qdnUI7tx7keZw1Mt5zHfrIX1RfDG9Nih8DYxK54WZsDJUX2ZTlii1jgotL7qcbwKnSAES6xQ=="
+          "content": "nTB7bB6vfn4ezCJNYP43ukt2o8L3+WxKF/sTcTxepdXsJh3SM9RhlU7wrZYbH7L4HO5M87dqDTwm8587vAkCiw=="
         }
       ]
     },
     {
       "name": "@next/swc-linux-x64-gnu",
-      "version": "15.5.27",
+      "version": "15.5.28",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-linux-x64-gnu@15.5.27",
-      "bom-ref": "pkg:npm/@next/swc-linux-x64-gnu@15.5.27",
+      "purl": "pkg:npm/@next/swc-linux-x64-gnu@15.5.28",
+      "bom-ref": "pkg:npm/@next/swc-linux-x64-gnu@15.5.28",
       "scope": "required",
       "licenses": [
         {
@@ -1946,16 +1946,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "aJp74z7uvU5jQhyH7lyk+4qSRcTdKbKT9NQE3jiO9kWYkoHZjKi0zzHDbCoZ+v2sJDEiJ/z58R0UlWMGWNF3HA=="
+          "content": "WXCfVI32rW3xCusoUX1RpZKtyChWU2Zwe27JUDmM3KrXwcDNc9vV4zEq0GKFAURnuQ/Ouo/XqPvB0yh445XZCg=="
         }
       ]
     },
     {
       "name": "@next/swc-linux-x64-musl",
-      "version": "15.5.27",
+      "version": "15.5.28",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-linux-x64-musl@15.5.27",
-      "bom-ref": "pkg:npm/@next/swc-linux-x64-musl@15.5.27",
+      "purl": "pkg:npm/@next/swc-linux-x64-musl@15.5.28",
+      "bom-ref": "pkg:npm/@next/swc-linux-x64-musl@15.5.28",
       "scope": "required",
       "licenses": [
         {
@@ -1967,16 +1967,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "ILl2bQ8MbpvyMpY8AXljb3BXs0MJSC8HXZ6QV5AWpVS7ZELqNPtrHvhUk+SNarvjvICXX8bCS287TCi+gUFVYg=="
+          "content": "Miq+NDb/HWsXuxseYxMM6fuEOQXgTziarkKIRpVKCn8W69cEfhQaQr+90pO+u4q2CbJR2wzXmUuCFyZaJs/Nng=="
         }
       ]
     },
     {
       "name": "@next/swc-win32-arm64-msvc",
-      "version": "15.5.27",
+      "version": "15.5.28",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-win32-arm64-msvc@15.5.27",
-      "bom-ref": "pkg:npm/@next/swc-win32-arm64-msvc@15.5.27",
+      "purl": "pkg:npm/@next/swc-win32-arm64-msvc@15.5.28",
+      "bom-ref": "pkg:npm/@next/swc-win32-arm64-msvc@15.5.28",
       "scope": "required",
       "licenses": [
         {
@@ -1988,16 +1988,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "1MB9Rh5y8TOPN2x7naNTJNkCZQav9c70AI7EBYXxsEewwOffC4DjjwBwKf20NBvcA+u+5jDv7nVmHxunlP2d7Q=="
+          "content": "5LR79lemgDlgxvG7MQJ+zHCkVcrUoQuO7CiIvq3I58vNW4goSOE2b+19Z6FujRWMouvni4gvudYFuFuNxolGWA=="
         }
       ]
     },
     {
       "name": "@next/swc-win32-x64-msvc",
-      "version": "15.5.27",
+      "version": "15.5.28",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-win32-x64-msvc@15.5.27",
-      "bom-ref": "pkg:npm/@next/swc-win32-x64-msvc@15.5.27",
+      "purl": "pkg:npm/@next/swc-win32-x64-msvc@15.5.28",
+      "bom-ref": "pkg:npm/@next/swc-win32-x64-msvc@15.5.28",
       "scope": "required",
       "licenses": [
         {
@@ -2009,7 +2009,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "XtYgpGOswgnyBWXzOEG6q9RhvnSw0CEZ0MbWqCsl5PISgt9EzvJvNW5mU5n1PsphX/lnamzxjgQXH2GUJL8nqg=="
+          "content": "GNipvXUYROSTf4PXEyH95FrWImIB5zdaK6uEOg0RP1/X2drnvoMwiBkJ0VWdzX7w3iiBm3y5g2TxkKDGVTOQcg=="
         }
       ]
     },
@@ -7080,10 +7080,10 @@
     },
     {
       "name": "eslint-config-next",
-      "version": "15.5.27",
+      "version": "15.5.28",
       "type": "library",
-      "purl": "pkg:npm/eslint-config-next@15.5.27",
-      "bom-ref": "pkg:npm/eslint-config-next@15.5.27",
+      "purl": "pkg:npm/eslint-config-next@15.5.28",
+      "bom-ref": "pkg:npm/eslint-config-next@15.5.28",
       "scope": "optional",
       "licenses": [
         {
@@ -7095,7 +7095,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "SlpZ5Ch1bM+GNHxahIoCy5OVgbpIHzHoGQDjHo6vEhxvYMukWYVo++AEh9RWYaIxH1i38PO7ArzSdmTruswOew=="
+          "content": "FQkDceHNJVfMa2rKbBQKyVILq7nG/zd2TxKsjecJAIv/dOcqaZynK5shwQCt6qrZFFae/EukOFggSP0jtNSLAA=="
         }
       ]
     },
@@ -12356,10 +12356,10 @@
     },
     {
       "name": "next",
-      "version": "15.5.27",
+      "version": "15.5.28",
       "type": "library",
-      "purl": "pkg:npm/next@15.5.27",
-      "bom-ref": "pkg:npm/next@15.5.27",
+      "purl": "pkg:npm/next@15.5.28",
+      "bom-ref": "pkg:npm/next@15.5.28",
       "scope": "required",
       "licenses": [
         {
@@ -12371,7 +12371,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "F82CrlPZ8GRxBH9RIIoR3qU1t5RT3dv1K8moe8SjlDEquiFipvEI13R1Om90TaUOEwShkWCMlg8+gvTNzfMhvg=="
+          "content": "JjhLBBY1PNnuwPtcZ7t8yxVeJVYvD2Jyp633J+gRCNbzSt7N0E+xqCf6uQiff3+3qmUkwcF/ksfSsK1xsZ76Tw=="
         }
       ]
     },
@@ -18608,7 +18608,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@8682f863d9ea4a0b266da23a35f495ed10e802d9",
+      "ref": "pkg:generic/alfloop-dev/odayplus@41b66282b4328b4cc13037499b66441fa172608f",
       "dependsOn": [
         "pkg:npm/@deck.gl/core@9.3.7",
         "pkg:npm/@deck.gl/layers@9.3.7",
@@ -18618,7 +18618,7 @@
         "pkg:npm/argon2@0.45.1",
         "pkg:npm/h3-js@4.5.0",
         "pkg:npm/maplibre-gl@6.9.0",
-        "pkg:npm/next@15.5.27",
+        "pkg:npm/next@15.5.28",
         "pkg:npm/pg@8.23.0",
         "pkg:npm/react-dom@18.3.1",
         "pkg:npm/react@18.3.1",
@@ -18979,7 +18979,7 @@
       ]
     },
     {
-      "ref": "pkg:npm/@next/eslint-plugin-next@15.5.27",
+      "ref": "pkg:npm/@next/eslint-plugin-next@15.5.28",
       "dependsOn": [
         "pkg:npm/fast-glob@3.3.1"
       ]
@@ -19707,9 +19707,9 @@
       ]
     },
     {
-      "ref": "pkg:npm/eslint-config-next@15.5.27",
+      "ref": "pkg:npm/eslint-config-next@15.5.28",
       "dependsOn": [
-        "pkg:npm/@next/eslint-plugin-next@15.5.27",
+        "pkg:npm/@next/eslint-plugin-next@15.5.28",
         "pkg:npm/@rushstack/eslint-patch@1.16.1",
         "pkg:npm/@typescript-eslint/eslint-plugin@8.65.0",
         "pkg:npm/@typescript-eslint/parser@8.65.0",
@@ -20283,9 +20283,9 @@
       ]
     },
     {
-      "ref": "pkg:npm/next@15.5.27",
+      "ref": "pkg:npm/next@15.5.28",
       "dependsOn": [
-        "pkg:npm/@next/env@15.5.27",
+        "pkg:npm/@next/env@15.5.28",
         "pkg:npm/@swc/helpers@0.5.15",
         "pkg:npm/caniuse-lite@1.0.30001806",
         "pkg:npm/postcss@8.5.28",
