@@ -105,6 +105,8 @@ def create_app():
         avm_repository_for_tenant=lambda tenant: bundle._scoped_repository("avm_repository", tenant),
         netplan_repository_for_tenant=lambda tenant: bundle._scoped_repository("netplan_repository", tenant),
         priceops_repository_for_tenant=lambda tenant: bundle._scoped_repository("priceops_repository", tenant),
+        priceops_store_repository=bundle.store_repository,
+        priceops_brand_repository=bundle.brand_repository,
         intake_workflow_store=bundle.assisted_intake_store,
         intake_workflow_policy=bundle.assisted_intake_workflow_policy,
         model_runtime=read_runtime,

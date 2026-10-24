@@ -212,7 +212,7 @@ def run_native_identity_browser(database, ids, parsed, match_case, private_dir, 
         api = launch([str(Path(os.sys.executable)), "-m", "uvicorn", "tests.support.intake_score_browser_server:app",
             "--host", "127.0.0.1", "--port", str(api_port)], api_env, "api")
         ready(api_url + "/_synthetic/health", api)
-        web = launch(["npm", "run", "dev", "--workspace=@oday-plus/web", "--", "-p", str(web_port),
+        web = launch(["npm", "run", "start", "--workspace=@oday-plus/web", "--", "-p", str(web_port),
             "--hostname", "127.0.0.1"], web_env, "web")
         ready(web_url + "/login", web)
         worker_bundle = build_persistence(mode="postgresql")
