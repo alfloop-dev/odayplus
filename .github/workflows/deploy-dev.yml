@@ -919,13 +919,24 @@ jobs:
 
       # The binding gate covers variable presence; this covers the one shape
       # requirement it cannot express -- lease state must be shared, not local.
+      # Production's store, when staging is handed it as first-release lineage,
+      # is held to the same shape: a runner-local directory or a bare bucket is
+      # not production's history. Unset, it is not passed and the verifier
+      # refuses a staging first release on its own.
       - name: Validate shared lease store configuration
         env:
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_LEASE_STATE_URI: ${{ vars.ODP_RELEASE_LEASE_STATE_URI }}
+          PRODUCTION_LEASE_STATE_URI: ${{ vars.ODP_PRODUCTION_RELEASE_LEASE_STATE_URI }}
         run: |
           set -euo pipefail
           if [[ ! "${RELEASE_LEASE_STATE_URI}" =~ ^gs://[^/]+/.+ ]]; then
             echo "Error: durable lease admission requires a shared gs://bucket/prefix state URI." >&2
+            exit 1
+          fi
+          if [ "${RELEASE_ENVIRONMENT}" = "staging" ] && [ -n "${PRODUCTION_LEASE_STATE_URI:-}" ] \
+            && [[ ! "${PRODUCTION_LEASE_STATE_URI}" =~ ^gs://[^/]+/.+ ]]; then
+            echo "Error: ODP_PRODUCTION_RELEASE_LEASE_STATE_URI must be production's shared gs://bucket/prefix lease store." >&2
             exit 1
           fi
 

@@ -590,7 +590,10 @@ class LeaseStateStore:
             return None
         try:
             record = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            # Bytes that are not UTF-8 are as unreadable as bytes that are not
+            # JSON. Left unwrapped, UnicodeDecodeError escapes every caller that
+            # catches LeaseStateError and the verifier dies without a receipt.
             raise LeaseStateError(f"lease state record {path} is unreadable: {exc}") from exc
         # A record that exists but is not an object (``null``, a list, a bare
         # string) is damage, not absence. Returning None here would let
@@ -687,7 +690,7 @@ class LeaseStateStore:
             try:
                 try:
                     record = json.loads(handle.read())
-                except json.JSONDecodeError as exc:
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                     raise LeaseStateError(f"lease state record {path} is unreadable: {exc}") from exc
                 if not isinstance(record, dict):
                     raise LeaseStateError(f"lease state record {path} is malformed")
