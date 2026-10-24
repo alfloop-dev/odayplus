@@ -14,13 +14,26 @@ schema v2 要求每個 release 綁定上一個已核准 release，讓「要回�
   不寫檔，並要求改走既有的 rollback 綁定。
 * ``--manifest``（admission 階段）：拿已放行的 manifest 重讀一次 target。build
   當下的讀回不能代表 deploy 當下仍然成立，也不能代表那份 readback 真的來自這個
-  target，所以 lease 被消費之前會在這裡重驗一次。
+  target，所以 lease 被消費之前會在這裡重驗一次。寫出的 receipt 帶
+  ``observed_at`` 與 manifest digest，``check_runtime_admission.py`` 在消費 lease
+  前驗它（缺失、過期、環境不符、digest 不符、target 已有資源都拒絕）。
+
+可讀回的環境（ODP-CORE-OPS-FIRST-RELEASE-ROLLBACK-001）：
+
+* dev：長期存在的 service／job 名稱（job 帶 ``-r-<sha12>``），build 與 admission
+  都讀。
+* staging：ephemeral，每個 release 一個 ``stg-<slug>-<hash>`` namespace。名稱由
+  ``--staging-release-id`` 推導（不接受 ``--target``），build 與 admission 都讀。
+* production：只在 admission 讀（``--manifest``）。production 不是首次 release 的
+  建置目標，它只接收 staging 封存的 manifest，所以 build 從來沒有讀過它；
+  admission 用 production 自己的身分讀回，獨立驗證。
 
 `gcloud` 失敗一律視為「無法斷定」而不是「不存在」。查不到跟查不動是兩件事，把
 後者讀成前者，正好會在權限壞掉時放行一個假的 initial release。
 
-readback 內容刻意不含時間或 run id：manifest_digest 綁著它，同一個 release SHA
-重跑 build 必須逐位元重現同一份 handoff。
+build 階段的 readback 內容刻意不含時間或 run id：manifest_digest 綁著它，同一個
+release SHA 重跑 build 必須逐位元重現同一份 handoff。admission receipt 則必須帶
+時間：它要證明的是「現在」。
 """
 
 from __future__ import annotations
@@ -29,6 +42,7 @@ import argparse
 import json
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -37,18 +51,28 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from delivery_toolchain.release.release_manifest import (  # noqa: E402
+    INITIAL_RELEASE_ADMISSIBLE_ENVIRONMENTS,
     INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS,
     INITIAL_RELEASE_PROBE_COMMAND,
     INITIAL_RELEASE_READBACK_KIND,
     INITIAL_RELEASE_TARGET_INVENTORY,
+    INITIAL_RELEASE_VERIFICATION_KIND,
+    initial_release_admission_recovery,
     initial_release_readback_payload,
     initial_release_recovery_errors,
+    initial_release_verification_errors,
     load_manifest,
     release_candidate_job_name,
+    staging_release_target_names,
     validate_release_admission,
 )
 
-VERIFICATION_KIND = "initial-release-recovery-verification"
+VERIFICATION_KIND = INITIAL_RELEASE_VERIFICATION_KIND
+
+#: Every environment a first-release record can be admitted into.
+PROBEABLE_ENVIRONMENTS = tuple(
+    sorted({env for envs in INITIAL_RELEASE_ADMISSIBLE_ENVIRONMENTS.values() for env in envs})
+)
 
 #: ``gcloud run services list`` 與 ``gcloud run jobs list`` 讀的是不同的資源
 #: 集合，這裡把 component 對應到它該問的那一個。
@@ -137,8 +161,13 @@ def probe_target_absence(
     targets: dict[str, str],
     candidate_sha: str,
     gcloud: str = "gcloud",
+    staging_release_id: str | None = None,
 ) -> dict[str, Any]:
-    """讀回整個部署 target，全空才回傳 readback；任何一個存在就 raise。"""
+    """讀回整個部署 target，全空才回傳 readback；任何一個存在就 raise。
+
+    staging 的 target 名稱只能由 ``staging_release_id`` 推導；呼叫端給的
+    ``targets`` 在 staging 一律拒絕，避免讀回一個這個 release 不會部署的名稱。
+    """
 
     errors: list[str] = []
     if not isinstance(candidate_sha, str) or not candidate_sha:
@@ -148,13 +177,28 @@ def probe_target_absence(
         )
     elif not (len(candidate_sha) == 40 and all(char in "0123456789abcdef" for char in candidate_sha)):
         errors.append("candidate_sha 必須是 40 字元小寫 git SHA。")
-    if target_environment not in INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS:
+    if target_environment not in PROBEABLE_ENVIRONMENTS:
         errors.append(
             f"initial-release recovery 只適用於 "
-            f"{list(INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS)}，"
-            f"不是 {target_environment!r}；staging 與 production 維持既有的 "
-            "rollback 綁定要求。"
+            f"{list(PROBEABLE_ENVIRONMENTS)}，"
+            f"不是 {target_environment!r}。"
         )
+    if target_environment == "staging":
+        if targets:
+            errors.append(
+                "staging 的 target 名稱由 --staging-release-id 推導，不接受 --target；"
+                "ephemeral staging 沒有長期存在的 service／job 名稱。"
+            )
+        try:
+            targets = staging_release_target_names(staging_release_id)
+        except ValueError:
+            errors.append(
+                "staging 讀回需要 --staging-release-id，才能讀回這個 release 會建立的 "
+                "release-scoped 名稱。"
+            )
+            targets = {}
+    elif staging_release_id is not None:
+        errors.append("--staging-release-id 只適用於 staging。")
     for field, value in (("project", project), ("region", region)):
         if not str(value).strip():
             errors.append(f"缺少 {field}；沒有 target 座標就沒有可稽核的讀回。")
@@ -179,7 +223,8 @@ def probe_target_absence(
 
     resolved_targets = dict(targets)
     for component, resource_kind in INITIAL_RELEASE_TARGET_INVENTORY:
-        if resource_kind == "cloud-run-job":
+        # Staging Jobs are release-scoped by namespace and carry no SHA suffix.
+        if resource_kind == "cloud-run-job" and target_environment != "staging":
             try:
                 resolved_targets[component] = release_candidate_job_name(
                     targets[component], candidate_sha
@@ -254,12 +299,18 @@ def verify_manifest_recovery(
     region: str,
     targets: dict[str, str],
     gcloud: str = "gcloud",
+    staging_release_id: str | None = None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """在 deploy 前重驗 initial-release admission，回傳可稽核 receipt。
 
     build 當下讀到的空 target 不代表 deploy 當下仍然是空的，也不代表那份
     readback 真的來自這個 target。重讀一次是這條分支唯一無法被偽造的部分，所以
     它排在 lease 被消費之前。
+
+    environment 等於封存的建置目標時，重讀結果必須與封存的 readback 一致；
+    production（staging 封存的 manifest 晉升而來）則是 build 從未讀過的
+    target，重讀結果單獨驗證：五個 target 全部不存在。
     """
 
     recovery = manifest.get("initial_release_recovery")
@@ -276,15 +327,26 @@ def verify_manifest_recovery(
         candidate_sha=manifest.get("candidate_sha"),
         components=manifest.get("components"),
         environment=environment,
+        release_id=manifest.get("release_id"),
     )
     errors.extend(
         error
         for error in validate_release_admission(manifest, environment=environment)
         if error not in errors
     )
+    if (
+        environment == "staging"
+        and staging_release_id is not None
+        and staging_release_id != manifest.get("release_id")
+    ):
+        errors.append(
+            f"--staging-release-id {staging_release_id!r} 與 manifest.release_id "
+            f"{manifest.get('release_id')!r} 不一致；只能讀回這個 release 的 namespace。"
+        )
     if errors:
         raise ProbeError(errors)
 
+    observed_at = (now or datetime.now(UTC)).astimezone(UTC).replace(microsecond=0)
     fresh = probe_target_absence(
         target_environment=environment,
         project=project,
@@ -292,30 +354,51 @@ def verify_manifest_recovery(
         targets=targets,
         candidate_sha=manifest.get("candidate_sha"),
         gcloud=gcloud,
+        staging_release_id=(
+            manifest.get("release_id") if environment == "staging" else None
+        ),
     )
-    recorded_payload = initial_release_readback_payload(recovery.get("absence_readback"))
-    if initial_release_readback_payload(fresh) != recorded_payload:
-        raise ProbeError(
-            [
-                "deploy 前重讀的 target readback 與 manifest 記錄的不一致；"
-                "被放行的 readback 必須就是這個 target 現在的狀態。"
-            ]
+    if environment == recovery.get("target_environment"):
+        recorded_payload = initial_release_readback_payload(
+            recovery.get("absence_readback")
         )
+        if initial_release_readback_payload(fresh) != recorded_payload:
+            raise ProbeError(
+                [
+                    "deploy 前重讀的 target readback 與 manifest 記錄的不一致；"
+                    "被放行的 readback 必須就是這個 target 現在的狀態。"
+                ]
+            )
 
-    return {
+    # The recovery this admission commits to is what the manifest states for the
+    # environment being admitted: a staging seal promoted into production states
+    # production's own recovery in promotion_recovery.
+    stated_recovery = initial_release_admission_recovery(recovery, environment)
+    stated_method, stated_actions = stated_recovery or (None, None)
+    receipt = {
         "schema_version": 1,
         "kind": VERIFICATION_KIND,
+        "environment": environment,
+        "observed_at": observed_at.isoformat(),
         "release_id": manifest.get("release_id"),
         "candidate_sha": manifest.get("candidate_sha"),
         "manifest_digest": manifest.get("manifest_digest"),
         "target_environment": recovery.get("target_environment"),
-        "recovery_method": recovery.get("recovery_method"),
-        "recovery_actions": list(recovery.get("recovery_actions") or []),
+        "recovery_method": stated_method,
+        "recovery_actions": list(stated_actions or []),
         "rollback_target_available": recovery.get("rollback_target_available"),
         "binding_digest": recovery.get("binding_digest"),
         "verified_absent": True,
         "absence_readback": fresh,
     }
+    # The same predicate check_runtime_admission.py applies, so a receipt this
+    # script writes is never one the verifier would refuse.
+    receipt_errors = initial_release_verification_errors(
+        receipt, manifest=manifest, environment=environment, now=observed_at
+    )
+    if receipt_errors:
+        raise ProbeError(receipt_errors)
+    return receipt
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -336,6 +419,14 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "Deploy target resource name, e.g. api=oday-plus-api. The resource "
             "kind is taken from the release toolchain inventory, never supplied here."
+        ),
+    )
+    parser.add_argument(
+        "--staging-release-id",
+        default=None,
+        help=(
+            "Ephemeral staging release id (e.g. odp-<sha12>). Staging target names "
+            "are derived from it; --target is refused for staging."
         ),
     )
     parser.add_argument("--gcloud", default="gcloud")
@@ -385,6 +476,7 @@ def main(argv: list[str] | None = None) -> int:
                 region=args.region,
                 targets=targets,
                 gcloud=args.gcloud,
+                staging_release_id=args.staging_release_id,
             )
             if args.receipt is not None:
                 _write_json(args.receipt, receipt)
@@ -397,6 +489,14 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
 
+        if args.environment not in INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS:
+            raise ProbeError(
+                [
+                    f"{args.environment!r} 不是首次 release 的建置目標"
+                    f"（{list(INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS)}）；production 只接收 "
+                    "staging 封存並演練過的 manifest，只在 admission 以 --manifest 讀回。"
+                ]
+            )
         readback = probe_target_absence(
             target_environment=args.environment,
             project=args.project,
@@ -404,6 +504,7 @@ def main(argv: list[str] | None = None) -> int:
             targets=targets,
             candidate_sha=args.candidate_sha,
             gcloud=args.gcloud,
+            staging_release_id=args.staging_release_id,
         )
     except ProbeError as exc:
         print("無法採用 initial-release recovery：", file=sys.stderr)
