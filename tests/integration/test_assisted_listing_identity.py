@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -96,6 +97,26 @@ def test_tenant_isolation_applies_to_source_and_reference_queries() -> None:
         resolver.resolve_source(IdentityKey("listing", "feed", "same", "tenant-b"))
     with pytest.raises(IdentityNotFoundError):
         resolver.resolve_listing("tenant-b", "same")
+
+
+@contextmanager
+def independent_canonical_graph(graph, database):
+    """Use the same real database with a separately owned engine and pool."""
+    from modules.listing.application.intake_audit import CanonicalIntakeAuditSink
+    from shared.audit.canonical_delivery import CanonicalAuditDelivery
+    from shared.audit.canonical_postgresql import CanonicalPostgresAuditLog
+    from shared.infrastructure.persistence.job_queue import DurableJobQueue
+    from shared.infrastructure.persistence.postgresql import PostgresEngine
+
+    reopened = PostgresEngine(database.url(), bootstrap=False, validate_schema=False)
+    try:
+        queue = DurableJobQueue(reopened)
+        writer = CanonicalPostgresAuditLog(reopened)
+        sink = CanonicalIntakeAuditSink(writer, graph.audit_sink.retention,
+            CanonicalAuditDelivery(writer, queue, graph.audit_sink.delivery.sink))
+        yield CanonicalIdentityGraphRepository(reopened, queue, sink)
+    finally:
+        reopened.close()
 
 
 @pytest.fixture

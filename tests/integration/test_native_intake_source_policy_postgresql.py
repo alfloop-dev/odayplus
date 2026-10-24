@@ -27,6 +27,7 @@ from shared.audit.errors import CanonicalAuditUnavailable
 from shared.domain.events import validate_event
 from shared.infrastructure.persistence.factory import PersistenceBundle
 from shared.jobs.queue import JobDeliveryState, JobFenceRejectedError, JobStatus
+from tests.integration.test_assisted_listing_identity import independent_canonical_graph
 from tests.integration.test_native_intake_identity_postgresql import (
     canonical_graph as canonical_graph,
 )
@@ -65,29 +66,6 @@ def source_policy_case(identity_case, monkeypatch, record_property):
     owner = NativeIntakeSourcePolicyOwner(graph)
     owner.record_upstream_retry = record_property
     return identity_case, owner
-
-
-@contextmanager
-def _independent_source_policy_graph(graph, database):
-    """Use the same real database with a separately owned engine and pool."""
-    from modules.listing.application.intake_audit import CanonicalIntakeAuditSink
-    from shared.audit.canonical_delivery import CanonicalAuditDelivery
-    from shared.audit.canonical_postgresql import CanonicalPostgresAuditLog
-    from shared.infrastructure.persistence.identity_graph_sql import (
-        CanonicalIdentityGraphRepository,
-    )
-    from shared.infrastructure.persistence.job_queue import DurableJobQueue
-    from shared.infrastructure.persistence.postgresql import PostgresEngine
-
-    reopened = PostgresEngine(database.url(), bootstrap=False, validate_schema=False)
-    try:
-        queue = DurableJobQueue(reopened)
-        writer = CanonicalPostgresAuditLog(reopened)
-        sink = CanonicalIntakeAuditSink(writer, graph.audit_sink.retention,
-            CanonicalAuditDelivery(writer, queue, graph.audit_sink.delivery.sink))
-        yield CanonicalIdentityGraphRepository(reopened, queue, sink)
-    finally:
-        reopened.close()
 
 
 def drive_upstream(case, receipt, owner):
@@ -673,7 +651,7 @@ def test_two_real_connections_reserve_one_occurrence_job(source_policy_case, rec
 
     # Engine roots hold their process lock through commit. Independent engines
     # let the original barrier exercise the database reservation race.
-    with _independent_source_policy_graph(graph, db) as fresh_graph:
+    with independent_canonical_graph(graph, db) as fresh_graph:
         fresh_owner = NativeIntakeSourcePolicyOwner(fresh_graph)
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = [f.result(timeout=8) for f in [
@@ -783,7 +761,7 @@ def test_fresh_engine_reads_a_policy_receipt_after_current_source_changes(source
     sql_patch(source_policy_case, "kill_switch=true,version=version+1")
     before = snapshot(identity[0][0])
     graph.engine.close()
-    with _independent_source_policy_graph(graph, db) as fresh_graph:
+    with independent_canonical_graph(graph, db) as fresh_graph:
         assert NativeIntakeSourcePolicyOwner(fresh_graph).execute(fresh_graph.queue.get(receipt["job_id"])) == result
         assert snapshot((fresh_graph, ids, old_delivery, db)) == before
         assert fresh_graph.audit_sink.writer.verify_chain(ids["tenant"]).ok
@@ -1106,7 +1084,7 @@ def test_new_upstream_driver_consumes_a_real_induced_serialization_retry(source_
 
     source_owner.record_upstream_retry = observed
 
-    with _independent_source_policy_graph(graph, db) as renewal_graph:
+    with independent_canonical_graph(graph, db) as renewal_graph:
         def committed(self, delivery, tenant, generation):
             result = original(self, delivery, tenant, generation)
             if result is None and once[0]:

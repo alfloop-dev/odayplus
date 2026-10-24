@@ -26,6 +26,7 @@ from shared.domain.events import validate_event
 from shared.infrastructure.persistence.factory import PersistenceBundle
 from shared.infrastructure.persistence.postgresql import PostgresEngine
 from shared.jobs.queue import JobFenceRejectedError, JobStatus
+from tests.integration.test_assisted_listing_identity import independent_canonical_graph
 from tests.integration.test_canonical_intakes_postgresql import (
     canonical_graph as canonical_graph,
 )
@@ -353,26 +354,28 @@ def test_corrupt_admission_receipt_is_not_replayed(start_case, field):
 
 def test_two_real_connections_cannot_admit_the_same_submission_twice(start_case, record_property):
     case, _, _, owner = start_case
-    graph, ids, _, _ = case
+    graph, ids, _, db = case
     submission = submitted(start_case)
     barrier = threading.Barrier(2)
 
-    def attempt():
+    def attempt(active_graph, active_owner):
         pid = None
         try:
-            with graph.transaction(ids["tenant"]):
-                graph.engine.query_one("SELECT set_config('statement_timeout','5000ms',true)")
-                pid = graph.engine.query_one("SELECT pg_backend_pid() AS pid")["pid"]
+            with active_graph.transaction(ids["tenant"]):
+                active_graph.engine.query_one("SELECT set_config('statement_timeout','5000ms',true)")
+                pid = active_graph.engine.query_one("SELECT pg_backend_pid() AS pid")["pid"]
                 barrier.wait(timeout=5)
-                receipt = owner.admit_event(ids["tenant"], submission["outbox_event_id"])
+                receipt = active_owner.admit_event(ids["tenant"], submission["outbox_event_id"])
             return pid, receipt, None, None
         except Exception as error:
             return (pid, None, getattr(error, "sqlstate", type(error).__name__),
                     getattr(getattr(error, "diag", None), "constraint_name", None))
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = [executor.submit(attempt) for _ in range(2)]
-        outcomes = [future.result(timeout=12) for future in futures]
+    with independent_canonical_graph(graph, db) as fresh_graph:
+        fresh_owner = NativeIntakeStartOwner(fresh_graph)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(attempt, graph, owner), executor.submit(attempt, fresh_graph, fresh_owner)]
+            outcomes = [future.result(timeout=12) for future in futures]
     assert len({row[0] for row in outcomes}) == 2 and all(row[0] for row in outcomes)
     record_property("actual_postgresql_backend_pids", ",".join(str(row[0]) for row in outcomes))
     receipts = [row[1] for row in outcomes if row[1] is not None]

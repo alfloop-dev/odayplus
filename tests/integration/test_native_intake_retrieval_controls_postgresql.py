@@ -34,6 +34,7 @@ from modules.listing.application.native_intake_retrieval_quota import (
 from shared.auth import Role
 from shared.jobs.queue import JobFenceRejectedError, JobRequest
 from tests.integration.test_assisted_listing_identity import canonical_graph as canonical_graph
+from tests.integration.test_assisted_listing_identity import independent_canonical_graph
 from tests.integration.test_native_intake_requester_authority_postgresql import (
     authority as authority,
 )
@@ -149,21 +150,28 @@ def test_quota_expiry_outlives_io_and_cleanup_and_unreaped_cannot_release(quota_
         assert graph.engine.query_one("SELECT reservation_id FROM intake.native_retrieval_inflight_slots WHERE reservation_id=?", (reservation.reservation_id,))
 
 
-def test_racing_tenants_never_overbook_global_slot(quota_case):
+def test_racing_tenants_never_overbook_global_slot(quota_case, record_property):
+    graph, ids, db, source = quota_case
+    pids = []
     barrier = threading.Barrier(2)
 
-    def attempt():
-        barrier.wait(timeout=3)
+    def attempt(active_case):
+        active_graph, tenant = active_case[0], str(uuid4())
         try:
-            return reserve(quota_case, str(uuid4()), limit=1)
+            with active_graph.transaction(tenant):
+                pids.append(active_graph.engine.query_one("SELECT pg_backend_pid() AS pid")["pid"])
+                barrier.wait(timeout=3)
+                return reserve(active_case, tenant, limit=1)
         except Exception as error:
             assert isinstance(error, NativeRetrievalQuotaExceeded) or getattr(error, "sqlstate", None) in {"40001", "40P01"}
             return None
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(pool.map(lambda _: attempt(), range(2)))
+    with independent_canonical_graph(graph, db) as fresh_graph:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(attempt, (quota_case, (fresh_graph, ids, db, source))))
+    assert len(pids) == len(set(pids)) == 2 and all(pids)
+    record_property("actual_postgresql_backend_pids", ",".join(str(pid) for pid in pids))
     assert sum(r is not None for r in results) == 1
-    graph, ids, _, _ = quota_case
     with graph.transaction(ids["tenant"]):
         assert graph.engine.query_one("SELECT count(*) AS count FROM intake.native_retrieval_inflight_slots")["count"] == 1
 
