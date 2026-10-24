@@ -314,6 +314,11 @@ else:
             else repository or InMemoryPriceOpsRepository()
         )
         active_audit_log = audit_log or InMemoryAuditLog()
+        tenant_scope_required = (
+            durable_commands_required
+            or production_required
+            or getattr(active_audit_log, "_worm_sink", None) is not None
+        )
         authz_engine = build_engine(audit_log=active_audit_log)
         local_job_queue = None if durable_commands_required else InMemoryJobQueue()
         composition_error: ProductionExecutionConfigurationError | None = None
@@ -441,12 +446,12 @@ else:
                         },
                     )
                 return str(value)
-            if durable_commands_required or production_required:
+            if tenant_scope_required:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail={
                         "code": "TENANT_SCOPE_REQUIRED",
-                        "message": "PriceOps production commands require tenant scope",
+                        "message": "PriceOps commands require verified tenant scope",
                     },
                 )
             return "__local__"
@@ -464,7 +469,7 @@ else:
         def plan_in_scope(plan: Any, principal: Any, *, read_cache: dict[tuple[str, str], Any] | None = None) -> bool:
             return priceops_plan_in_scope(plan, principal, store_repository=store_repository,
                                           brand_repository=brand_repository, production_required=production_required,
-                                          require_tenant=durable_commands_required or production_required, read_cache=read_cache)
+                                          require_tenant=tenant_scope_required, read_cache=read_cache)
 
         def require_proposal_scope(body: PriceOpsPlanPayload, request: Request) -> None:
             principal = request.state.operator_principal
