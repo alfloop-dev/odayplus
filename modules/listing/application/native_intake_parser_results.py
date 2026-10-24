@@ -233,13 +233,13 @@ def commit_parser_output(owner, delivery, leases, observed):
         for event in (completed, changed):
             before()
             owner.graph._outbox(event)
-            # The shared writer persists the full envelope but leaves this
-            # optional transport column empty. Bind our newly created rows
-            # to the same exact cause inside this owned transaction.
+            # Check actual persistence after the writer. A skipped or changed
+            # insert must still roll back this owned output transaction.
             before()
-            if owner.engine.execute("UPDATE workflow.outbox_events SET causation_id=? "
-                    "WHERE tenant_id=? AND event_id=? AND causation_id IS NULL",
-                    (event.causation_id, leases.tenant, event.event_id)).rowcount != 1:
+            if not owner.engine.query_one("SELECT event_id FROM workflow.outbox_events "
+                    "WHERE tenant_id=? AND event_id=? AND causation_id IS NOT DISTINCT FROM ? "
+                    "AND sensitive_fields=?::text[]",
+                    (leases.tenant, event.event_id, event.causation_id, list(event.sensitive_fields))):
                 raise JobFenceRejectedError("NATIVE_PARSER_OUTPUT_OUTBOX_METADATA_REJECTED")
         for current_action, current_id, previous in (
                 ("parser.run_completed.v1", parser_audit_id, {"parser_run_id": run["parser_run_id"], "status": "RUNNING"}),

@@ -299,11 +299,12 @@ class CanonicalIdentityGraphRepository:
         # independent of the server's audit retention policy.
         self.engine.execute(
             "INSERT INTO workflow.outbox_events (tenant_id,event_id,event_type,event_version,aggregate_type,"
-            "aggregate_id,aggregate_version,partition_key,payload,correlation_id,occurred_at,retention_until) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "aggregate_id,aggregate_version,partition_key,payload,sensitive_fields,correlation_id,causation_id,occurred_at,retention_until) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?::text[],?,?,?,?)",
             (event.tenant_id, event.event_id, event.event_type, event.event_version, event.aggregate_type,
              event.aggregate_id, event.aggregate_version, event.partition_key, _json(event.to_dict()),
-             event.correlation_id, event.occurred_at.isoformat(), (event.occurred_at + timedelta(days=30)).isoformat()),
+             list(event.sensitive_fields), event.correlation_id, event.causation_id,
+             event.occurred_at.isoformat(), (event.occurred_at + timedelta(days=30)).isoformat()),
         )
 
     def _match_event(self, tenant: str, decision: dict, *, status: str, case_version: int,

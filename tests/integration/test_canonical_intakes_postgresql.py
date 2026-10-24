@@ -93,9 +93,13 @@ def test_native_submission_is_atomic_durable_and_never_claims_processing(canonic
     transition = next(row for row in after["intake.intake_stage_transitions"] if row["transition_id"] == receipt["transition_id"])
     assert transition["from_state"] is None and transition["to_state"] == "SUBMITTED"
     assert transition["actor_subject_id"] == ids["actor"] and transition["resulting_version"] == 1
-    event = next(row for row in after["workflow.outbox_events"] if row["event_id"] == receipt["outbox_event_id"])["payload"]
+    event_row = next(row for row in after["workflow.outbox_events"] if row["event_id"] == receipt["outbox_event_id"])
+    event = event_row["payload"]
     event = json.loads(event) if isinstance(event, str) else event
     assert validate_event(event) == [] and event["event_type"] == "intake.submitted"
+    assert event_row["causation_id"] == event["causation_id"]
+    sensitive = event_row["sensitive_fields"]
+    assert (json.loads(sensitive) if isinstance(sensitive, str) else sensitive) == event["sensitive_fields"]
     assert "original_url" not in event["payload"]
     assert graph.audit_sink.writer.verify_chain(ids["tenant"]).ok
     replay = client.post("/api/v1/canonical-intakes", headers=headers, json=body)

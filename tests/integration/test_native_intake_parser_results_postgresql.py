@@ -142,6 +142,17 @@ def test_conflicting_outbox_cause_rolls_back_run_jobs_events_audits_and_intake(p
     assert persisted(case) == previous
 
 
+def test_missing_outbox_write_rolls_back_run_jobs_events_audits_and_intake(parser_io_case, monkeypatch):
+    case, io, leases, delivery = parser_io_case
+    owner = case[0]
+    observed = io.read_and_parse()
+    previous = persisted(case)
+    monkeypatch.setattr(owner.graph, "_outbox", lambda _event: None)
+    with pytest.raises(JobFenceRejectedError, match="^NATIVE_PARSER_OUTPUT_OUTBOX_METADATA_REJECTED$"):
+        commit_parser_output(owner, delivery, leases, observed)
+    assert persisted(case) == previous
+
+
 @pytest.mark.parametrize("damage", ["unresolved", "child_fence", "download_digest", "observation_ids"])
 def test_unresolved_or_substituted_output_journal_cannot_commit_positive_facts(parser_io_case, damage):
     case, io, leases, delivery = parser_io_case

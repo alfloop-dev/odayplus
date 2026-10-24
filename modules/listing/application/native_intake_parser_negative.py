@@ -155,9 +155,10 @@ def _publish(owner, event, before):
     before()
     owner.graph._outbox(event)
     before()
-    if owner.engine.execute("UPDATE workflow.outbox_events SET causation_id=?,sensitive_fields=?::text[] "
-            "WHERE tenant_id=? AND event_id=? AND causation_id IS NULL AND sensitive_fields='{}'::text[]",
-            (event.causation_id, event.sensitive_fields, event.tenant_id, event.event_id)).rowcount != 1:
+    if not owner.engine.query_one("SELECT event_id FROM workflow.outbox_events "
+            "WHERE tenant_id=? AND event_id=? AND causation_id IS NOT DISTINCT FROM ? "
+            "AND sensitive_fields=?::text[]",
+            (event.tenant_id, event.event_id, event.causation_id, list(event.sensitive_fields))):
         raise JobFenceRejectedError("NATIVE_PARSER_NEGATIVE_OUTBOX_METADATA_REJECTED")
 
 

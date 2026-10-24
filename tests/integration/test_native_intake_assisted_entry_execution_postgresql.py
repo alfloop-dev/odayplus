@@ -196,6 +196,17 @@ def test_actual_manual_json_snapshot_proposal_links_human_transition_and_both_ev
             assisted[2]["tenant"], result["source_snapshot_id"], result["intake_id"])
         assert {key: actual[key] for key in SNAPSHOT_FIELDS} == result["native_snapshot_proof"]["snapshot_fields"]
         assert actual["observed_at"] == actual["captured_at"] and actual["observed_at"] is not None
+        events = owner.engine.query("SELECT causation_id,sensitive_fields,payload FROM workflow.outbox_events "
+            "WHERE tenant_id=? AND event_id=ANY(?::uuid[])",
+            (assisted[2]["tenant"], [result["outbox_event_id"], result["snapshot_created_event_id"]]))
+        assert len(events) == 2
+        for row in events:
+            event = json.loads(row["payload"]) if isinstance(row["payload"], str) else row["payload"]
+            assert row["causation_id"] == event["causation_id"] == result["request_id"]
+            sensitive = row["sensitive_fields"]
+            assert (json.loads(sensitive) if isinstance(sensitive, str) else sensitive) == event["sensitive_fields"]
+            if event["event_type"] == "snapshot.manual_entry_created":
+                assert event["sensitive_fields"] == ["payload.object_uri"]
         rows = owner.engine.query("SELECT * FROM intake.human_corrections WHERE tenant_id=? AND intake_id=?",
             (assisted[2]["tenant"], result["intake_id"]))
         assert len(rows) == 3 and all(r["status"] == "PROPOSED" and r["reviewed_by"] is None
