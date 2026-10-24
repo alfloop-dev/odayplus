@@ -1,6 +1,7 @@
 """Real HTTP/SQL proposal and withdrawal journals with synthetic grants only."""
 
 import json
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import replace
@@ -328,6 +329,29 @@ def test_manual_withdrawal_is_a_fresh_negative_action_and_preserves_every_propos
         fresh = command(assisted, key="synthetic-new-request-after-withdrawal-002")
         assert fresh.status_code == 202, fresh.text
         assert set(fresh.json()["correction_ids"]).isdisjoint(response.json()["correction_ids"])
+
+
+def test_withdrawal_retains_original_deadline_after_current_authority_read(assisted, monkeypatch):
+    from modules.listing.application import native_intake_command_withdrawal as withdrawal
+
+    requested = command(assisted)
+    assert requested.status_code == 202, requested.text
+    before = snapshot(assisted)
+    original = withdrawal.current_native_command_withdrawal_principal
+    reads = []
+
+    def delayed(*args, **kwargs):
+        principal = original(*args, **kwargs)
+        reads.append(True)
+        time.sleep(0.8)
+        return principal
+
+    monkeypatch.setattr(withdrawal, "current_native_command_withdrawal_principal", delayed)
+    response = withdraw(assisted, requested.json())
+    assert reads == [True]
+    assert response.status_code == 409, response.text
+    assert response.json() == {"detail": "NATIVE_ASSISTED_CURRENT_PROOF_CONFLICT"}
+    assert snapshot(assisted) == before
 
 
 @pytest.mark.parametrize("tamper", ["producer", "schema", "request_hash", "audit", "retention"])

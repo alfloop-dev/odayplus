@@ -33,6 +33,9 @@ from modules.listing.application.native_intake_source_policy import (
     NativeIntakeSourcePolicyOwner,
     _object,
 )
+from modules.listing.application.native_intake_source_policy_budget import (
+    NativeSourcePolicyAdmissionBudget,
+)
 from modules.listing.application.native_intake_source_policy_recheck_history import (
     NativeHistoricalRecheckProof,
 )
@@ -57,10 +60,11 @@ class NativeIntakeCommandWithdrawalOwner:
         event_id = cancellation_id(request_id, tenant, actor, request_kind, key_sha)
         with self.graph.transaction(tenant):
             deadline = self.source._clock() + timedelta(milliseconds=750)
-
-            def before():
-                self.source._admission_budget(deadline)
-
+            # Share the existing deadline adapter and its source-family error
+            # mapping. Pure proof checks consume the same root time; every SQL
+            # boundary still installs fresh database timeouts.
+            self.source._admission_budget(deadline)
+            before = NativeSourcePolicyAdmissionBudget(self.source, sql_deadline=deadline)
             before()
             intake = self.graph._one("SELECT * FROM intake.intakes WHERE tenant_id=? AND intake_id=? "
                 "AND deleted_at IS NULL FOR UPDATE", (tenant, intake_id))
