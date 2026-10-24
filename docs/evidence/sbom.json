@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-5f61dcc9d58c24f0722d2aa69e217f8c",
+  "serialNumber": "urn:uuid:sha256-10598764e7326fbfd4fc37975b2127d4",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-24T00:33:05.823754+00:00",
+    "timestamp": "2026-10-24T07:33:07.465357+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,21 +16,21 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@254cebdaa07f8bd697f906f65825727bb664db6e",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@254cebdaa07f8bd697f906f65825727bb664db6e"
+      "purl": "pkg:generic/alfloop-dev/odayplus@b4eb8bf979615d73ef4280bac183b8e7dc5fa81f",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@b4eb8bf979615d73ef4280bac183b8e7dc5fa81f"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "254cebdaa07f8bd697f906f65825727bb664db6e"
+        "value": "b4eb8bf979615d73ef4280bac183b8e7dc5fa81f"
       },
       {
         "name": "sbom-hash",
-        "value": "5f61dcc9d58c24f0722d2aa69e217f8ce60bc6b792cda8f5937d284cb1987f20"
+        "value": "10598764e7326fbfd4fc37975b2127d456aeec30f15754ae0d6a0ca670435341"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:ebfeff99d00a78d4574369bd0afb7b3d5721146ba727debb24b5ad3172be5220"
+        "value": "sha256:a72a6f20fc78b5726add2815a03fa0315278fb8d04ed723401773d8a43dbef28"
       },
       {
         "name": "container-base-images",
@@ -959,7 +959,10 @@
           "alg": "SHA-512",
           "content": "6zXKeE/p39I1AmA3cJG35eyBGNqNddLnUXjhwBnsGjFPWqf5VKkDBEqaEkPDoTEtkxwi2vv8Tcr2mDyP4So7Fg=="
         }
-      ]
+      ],
+      "supplier": {
+        "name": "Lovell Fuller <npm@lovell.info>"
+      }
     },
     {
       "name": "@img/sharp-linux-arm",
@@ -1130,7 +1133,10 @@
           "alg": "SHA-512",
           "content": "4KOphqB035HrVdqLZfCgMzzERrQkkzOwRhl4OAkRO1YCldbaFjySXMaK534Mo0V+LndnlJk+sbUyLeU0ULyD1A=="
         }
-      ]
+      ],
+      "supplier": {
+        "name": "Lovell Fuller <npm@lovell.info>"
+      }
     },
     {
       "name": "@img/sharp-wasm32",
@@ -1805,10 +1811,10 @@
     },
     {
       "name": "@next/env",
-      "version": "15.5.27",
+      "version": "15.5.28",
       "type": "library",
-      "purl": "pkg:npm/@next/env@15.5.27",
-      "bom-ref": "pkg:npm/@next/env@15.5.27",
+      "purl": "pkg:npm/@next/env@15.5.28",
+      "bom-ref": "pkg:npm/@next/env@15.5.28",
       "scope": "required",
       "licenses": [
         {
@@ -1820,7 +1826,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "WC5hvVqiuFOcRyz6gKPeJkiVvSMf3scNeAV49CdWtVqxmUlzh8UKR6YHt9yiNkh8LngtzqSlVz07/Ma3ZAzchA=="
+          "content": "xxW5EBI8fMPuVTPBW7LL980IRbuDXlbkUAwp9DDhtb4Lnich3nJ13uYpvrX4VE74hWPf6AvHHAMmGCidcHjbfg=="
         }
       ],
       "supplier": {
@@ -1844,10 +1850,10 @@
     },
     {
       "name": "@next/swc-darwin-arm64",
-      "version": "15.5.27",
+      "version": "15.5.28",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-darwin-arm64@15.5.27",
-      "bom-ref": "pkg:npm/@next/swc-darwin-arm64@15.5.27",
+      "purl": "pkg:npm/@next/swc-darwin-arm64@15.5.28",
+      "bom-ref": "pkg:npm/@next/swc-darwin-arm64@15.5.28",
       "scope": "required",
       "licenses": [
         {
@@ -1859,16 +1865,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "fBA9QurmK4+uj4wNhmRTuO5zMVRaBHCvp6H93zTG/5i6Yi6TewbvbesXB8YQNj8T99Cwrow87hHiFV6wL/hyMA=="
+          "content": "dPoQYXcfSIqx5o+TOXVXO7kONK5qbtNRDeiTfII0bT3puGIT6VF5e0QwmxNZfEZ5Zety5f3m9P/p4xqwfiLlPg=="
         }
       ]
     },
     {
       "name": "@next/swc-darwin-x64",
-      "version": "15.5.27",
+      "version": "15.5.28",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-darwin-x64@15.5.27",
-      "bom-ref": "pkg:npm/@next/swc-darwin-x64@15.5.27",
+      "purl": "pkg:npm/@next/swc-darwin-x64@15.5.28",
+      "bom-ref": "pkg:npm/@next/swc-darwin-x64@15.5.28",
       "scope": "required",
       "licenses": [
         {
@@ -1880,16 +1886,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "FGZwJwry8qZNHxD/nfwrCwCHHrqx6epqItkkxbYcBQEQ2uw5S43bY83fQB5zbAsZE7TELMjoYkbhsQ4oKM7wwg=="
+          "content": "RgCJ7buBivTH+6sddqaVm+/v8kwMHlFkobvdt3DfETutws5HrxnToMIWSN9X3MZ3aAi7BbKrGZZWUDQLEycXqw=="
         }
       ]
     },
     {
       "name": "@next/swc-linux-arm64-gnu",
-      "version": "15.5.27",
+      "version": "15.5.28",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-linux-arm64-gnu@15.5.27",
-      "bom-ref": "pkg:npm/@next/swc-linux-arm64-gnu@15.5.27",
+      "purl": "pkg:npm/@next/swc-linux-arm64-gnu@15.5.28",
+      "bom-ref": "pkg:npm/@next/swc-linux-arm64-gnu@15.5.28",
       "scope": "required",
       "licenses": [
         {
@@ -1901,16 +1907,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "GQulAaJYNF1RYuatlsw9/uzbKz4if2V7Ic9nVO+P0ljYPm4yBRTFIl6g5YkKTw40lMLbpy9edLoH44g3jSHMYA=="
+          "content": "OHXQe13olE59aKe++zHavGcJPh5SLHXi6Anret3BBeq1+qhSuOJDNAli/EDDfxs6UTqA4Qddo4uyYry2slyjiQ=="
         }
       ]
     },
     {
       "name": "@next/swc-linux-arm64-musl",
-      "version": "15.5.27",
+      "version": "15.5.28",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-linux-arm64-musl@15.5.27",
-      "bom-ref": "pkg:npm/@next/swc-linux-arm64-musl@15.5.27",
+      "purl": "pkg:npm/@next/swc-linux-arm64-musl@15.5.28",
+      "bom-ref": "pkg:npm/@next/swc-linux-arm64-musl@15.5.28",
       "scope": "required",
       "licenses": [
         {
@@ -1922,16 +1928,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "URFFsUmu8Pi0/1qdnUI7tx7keZw1Mt5zHfrIX1RfDG9Nih8DYxK54WZsDJUX2ZTlii1jgotL7qcbwKnSAES6xQ=="
+          "content": "nTB7bB6vfn4ezCJNYP43ukt2o8L3+WxKF/sTcTxepdXsJh3SM9RhlU7wrZYbH7L4HO5M87dqDTwm8587vAkCiw=="
         }
       ]
     },
     {
       "name": "@next/swc-linux-x64-gnu",
-      "version": "15.5.27",
+      "version": "15.5.28",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-linux-x64-gnu@15.5.27",
-      "bom-ref": "pkg:npm/@next/swc-linux-x64-gnu@15.5.27",
+      "purl": "pkg:npm/@next/swc-linux-x64-gnu@15.5.28",
+      "bom-ref": "pkg:npm/@next/swc-linux-x64-gnu@15.5.28",
       "scope": "required",
       "licenses": [
         {
@@ -1943,16 +1949,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "aJp74z7uvU5jQhyH7lyk+4qSRcTdKbKT9NQE3jiO9kWYkoHZjKi0zzHDbCoZ+v2sJDEiJ/z58R0UlWMGWNF3HA=="
+          "content": "WXCfVI32rW3xCusoUX1RpZKtyChWU2Zwe27JUDmM3KrXwcDNc9vV4zEq0GKFAURnuQ/Ouo/XqPvB0yh445XZCg=="
         }
       ]
     },
     {
       "name": "@next/swc-linux-x64-musl",
-      "version": "15.5.27",
+      "version": "15.5.28",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-linux-x64-musl@15.5.27",
-      "bom-ref": "pkg:npm/@next/swc-linux-x64-musl@15.5.27",
+      "purl": "pkg:npm/@next/swc-linux-x64-musl@15.5.28",
+      "bom-ref": "pkg:npm/@next/swc-linux-x64-musl@15.5.28",
       "scope": "required",
       "licenses": [
         {
@@ -1964,16 +1970,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "ILl2bQ8MbpvyMpY8AXljb3BXs0MJSC8HXZ6QV5AWpVS7ZELqNPtrHvhUk+SNarvjvICXX8bCS287TCi+gUFVYg=="
+          "content": "Miq+NDb/HWsXuxseYxMM6fuEOQXgTziarkKIRpVKCn8W69cEfhQaQr+90pO+u4q2CbJR2wzXmUuCFyZaJs/Nng=="
         }
       ]
     },
     {
       "name": "@next/swc-win32-arm64-msvc",
-      "version": "15.5.27",
+      "version": "15.5.28",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-win32-arm64-msvc@15.5.27",
-      "bom-ref": "pkg:npm/@next/swc-win32-arm64-msvc@15.5.27",
+      "purl": "pkg:npm/@next/swc-win32-arm64-msvc@15.5.28",
+      "bom-ref": "pkg:npm/@next/swc-win32-arm64-msvc@15.5.28",
       "scope": "required",
       "licenses": [
         {
@@ -1985,16 +1991,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "1MB9Rh5y8TOPN2x7naNTJNkCZQav9c70AI7EBYXxsEewwOffC4DjjwBwKf20NBvcA+u+5jDv7nVmHxunlP2d7Q=="
+          "content": "5LR79lemgDlgxvG7MQJ+zHCkVcrUoQuO7CiIvq3I58vNW4goSOE2b+19Z6FujRWMouvni4gvudYFuFuNxolGWA=="
         }
       ]
     },
     {
       "name": "@next/swc-win32-x64-msvc",
-      "version": "15.5.27",
+      "version": "15.5.28",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-win32-x64-msvc@15.5.27",
-      "bom-ref": "pkg:npm/@next/swc-win32-x64-msvc@15.5.27",
+      "purl": "pkg:npm/@next/swc-win32-x64-msvc@15.5.28",
+      "bom-ref": "pkg:npm/@next/swc-win32-x64-msvc@15.5.28",
       "scope": "required",
       "licenses": [
         {
@@ -2006,7 +2012,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "XtYgpGOswgnyBWXzOEG6q9RhvnSw0CEZ0MbWqCsl5PISgt9EzvJvNW5mU5n1PsphX/lnamzxjgQXH2GUJL8nqg=="
+          "content": "GNipvXUYROSTf4PXEyH95FrWImIB5zdaK6uEOg0RP1/X2drnvoMwiBkJ0VWdzX7w3iiBm3y5g2TxkKDGVTOQcg=="
         }
       ]
     },
@@ -7080,10 +7086,10 @@
     },
     {
       "name": "eslint-config-next",
-      "version": "15.5.27",
+      "version": "15.5.28",
       "type": "library",
-      "purl": "pkg:npm/eslint-config-next@15.5.27",
-      "bom-ref": "pkg:npm/eslint-config-next@15.5.27",
+      "purl": "pkg:npm/eslint-config-next@15.5.28",
+      "bom-ref": "pkg:npm/eslint-config-next@15.5.28",
       "scope": "optional",
       "licenses": [
         {
@@ -7095,7 +7101,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "SlpZ5Ch1bM+GNHxahIoCy5OVgbpIHzHoGQDjHo6vEhxvYMukWYVo++AEh9RWYaIxH1i38PO7ArzSdmTruswOew=="
+          "content": "FQkDceHNJVfMa2rKbBQKyVILq7nG/zd2TxKsjecJAIv/dOcqaZynK5shwQCt6qrZFFae/EukOFggSP0jtNSLAA=="
         }
       ]
     },
@@ -7719,10 +7725,10 @@
     },
     {
       "name": "filelock",
-      "version": "3.32.0",
+      "version": "4.2.1",
       "type": "library",
-      "purl": "pkg:pypi/filelock@3.32.0",
-      "bom-ref": "pkg:pypi/filelock@3.32.0",
+      "purl": "pkg:pypi/filelock@4.2.1",
+      "bom-ref": "pkg:pypi/filelock@4.2.1",
       "scope": "required",
       "licenses": [
         {
@@ -7734,11 +7740,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "7be2ad23a14607ccc71808e68fe30848aeace7058ace17852f68e2a68e310402"
+          "content": "c4c937ccac2a813cee448e662a56366cfb374c0f8702e75f295c412cc1c5d5a3"
         },
         {
           "alg": "SHA256",
-          "content": "d396bea984af47333ef05e50eae7eff88c84256de6112aea0ec48a233c064fe3"
+          "content": "7be2662e9e826b9bba28afc0f843a123280d799a2ea44bb5d35ccec67905ae44"
         }
       ]
     },
@@ -11956,10 +11962,10 @@
     },
     {
       "name": "mlflow",
-      "version": "3.16.0",
+      "version": "3.17.2",
       "type": "library",
-      "purl": "pkg:pypi/mlflow@3.16.0",
-      "bom-ref": "pkg:pypi/mlflow@3.16.0",
+      "purl": "pkg:pypi/mlflow@3.17.2",
+      "bom-ref": "pkg:pypi/mlflow@3.17.2",
       "scope": "required",
       "licenses": [
         {
@@ -11971,20 +11977,20 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "e39d3e4dd13aab864f821a3c3d871eb5e2db3d4557e60db8592f23cbafa1e830"
+          "content": "3fcdb58c683362763bf1cb124eea800b4e3253e16cb5e3adf5b5e562af1fdf2b"
         },
         {
           "alg": "SHA256",
-          "content": "c4ac5e8634aacad1a3d7d5a1a31be9279593ebd48b84272843682db11970cf71"
+          "content": "4e44c03791beb518d8b0a40b0982d958c2634d902f46d67d7907c82107f21fac"
         }
       ]
     },
     {
       "name": "mlflow-skinny",
-      "version": "3.16.0",
+      "version": "3.17.2",
       "type": "library",
-      "purl": "pkg:pypi/mlflow-skinny@3.16.0",
-      "bom-ref": "pkg:pypi/mlflow-skinny@3.16.0",
+      "purl": "pkg:pypi/mlflow-skinny@3.17.2",
+      "bom-ref": "pkg:pypi/mlflow-skinny@3.17.2",
       "scope": "required",
       "licenses": [
         {
@@ -11996,20 +12002,20 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "f02330c33f231fc19312bc35c64206e1504a63838fbabdac4b1882d6416bd2b8"
+          "content": "5f2a0812d019a8f517a58f1377922f75af4f42832be30c8f1441005b51288596"
         },
         {
           "alg": "SHA256",
-          "content": "ff4e676eb469d769efc27036f9cb804e0709c125a2645a3902743d917b3771ae"
+          "content": "31be9190494212ccd94774170fd06f6fe04d209aae3923eefd16f9bf7830d63c"
         }
       ]
     },
     {
       "name": "mlflow-tracing",
-      "version": "3.16.0",
+      "version": "3.17.2",
       "type": "library",
-      "purl": "pkg:pypi/mlflow-tracing@3.16.0",
-      "bom-ref": "pkg:pypi/mlflow-tracing@3.16.0",
+      "purl": "pkg:pypi/mlflow-tracing@3.17.2",
+      "bom-ref": "pkg:pypi/mlflow-tracing@3.17.2",
       "scope": "required",
       "licenses": [
         {
@@ -12021,11 +12027,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "2b7c8ec19233868b965b141dd3c20f92e5bbdcdaf90f41ae1d2e6b6d1c04e785"
+          "content": "35da9f6cc450feae7173941d0d119391f6fe3a41973c0a28ae4a021e6e285c99"
         },
         {
           "alg": "SHA256",
-          "content": "383b920d5421f8f596a73bbc698f065ac62c4277146d2bdb2352096ec528bcb2"
+          "content": "1502aa892144cbe93b0c2a706b9564011be92903bbb343d19038dcd322ae5e7c"
         }
       ]
     },
@@ -12260,10 +12266,10 @@
     },
     {
       "name": "next",
-      "version": "15.5.27",
+      "version": "15.5.28",
       "type": "library",
-      "purl": "pkg:npm/next@15.5.27",
-      "bom-ref": "pkg:npm/next@15.5.27",
+      "purl": "pkg:npm/next@15.5.28",
+      "bom-ref": "pkg:npm/next@15.5.28",
       "scope": "required",
       "licenses": [
         {
@@ -12275,7 +12281,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "F82CrlPZ8GRxBH9RIIoR3qU1t5RT3dv1K8moe8SjlDEquiFipvEI13R1Om90TaUOEwShkWCMlg8+gvTNzfMhvg=="
+          "content": "JjhLBBY1PNnuwPtcZ7t8yxVeJVYvD2Jyp633J+gRCNbzSt7N0E+xqCf6uQiff3+3qmUkwcF/ksfSsK1xsZ76Tw=="
         }
       ]
     },
@@ -15936,10 +15942,10 @@
     },
     {
       "name": "setuptools",
-      "version": "83.0.0",
+      "version": "84.1.0",
       "type": "library",
-      "purl": "pkg:pypi/setuptools@83.0.0",
-      "bom-ref": "pkg:pypi/setuptools@83.0.0",
+      "purl": "pkg:pypi/setuptools@84.1.0",
+      "bom-ref": "pkg:pypi/setuptools@84.1.0",
       "scope": "required",
       "licenses": [
         {
@@ -15951,11 +15957,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "025bccbbf0fa05b6192bc64ae1e7b16e001fd6d6d4d5de03c97b1c1ade523bef"
+          "content": "23657205b63d4d31395ab917815247f694aafad28cd21316bf5fd45a51048ea0"
         },
         {
           "alg": "SHA256",
-          "content": "29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3"
+          "content": "5231689c6ac8156cd155cfb98c3fd6fb252c3e7e9bd3d78b64d3c55f132624c9"
         }
       ],
       "supplier": {
@@ -18491,7 +18497,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@254cebdaa07f8bd697f906f65825727bb664db6e",
+      "ref": "pkg:generic/alfloop-dev/odayplus@b4eb8bf979615d73ef4280bac183b8e7dc5fa81f",
       "dependsOn": [
         "pkg:npm/@deck.gl/core@9.3.7",
         "pkg:npm/@deck.gl/layers@9.3.7",
@@ -18501,7 +18507,7 @@
         "pkg:npm/argon2@0.45.1",
         "pkg:npm/h3-js@4.5.0",
         "pkg:npm/maplibre-gl@6.9.0",
-        "pkg:npm/next@15.5.27",
+        "pkg:npm/next@15.5.28",
         "pkg:npm/pg@8.23.0",
         "pkg:npm/react-dom@18.3.1",
         "pkg:npm/react@18.3.1",
@@ -18523,7 +18529,7 @@
         "pkg:pypi/jsonschema@4.26.0",
         "pkg:pypi/lifelines@0.30.3",
         "pkg:pypi/lightgbm@4.7.0",
-        "pkg:pypi/mlflow@3.16.0",
+        "pkg:pypi/mlflow@3.17.2",
         "pkg:pypi/mlforecast@1.1.0",
         "pkg:pypi/numpy@2.5.1",
         "pkg:pypi/openapi-spec-validator@0.9.0",
@@ -19578,7 +19584,7 @@
       ]
     },
     {
-      "ref": "pkg:npm/eslint-config-next@15.5.27",
+      "ref": "pkg:npm/eslint-config-next@15.5.28",
       "dependsOn": [
         "pkg:npm/@next/eslint-plugin-next@15.5.27-oday.1",
         "pkg:npm/@rushstack/eslint-patch@1.16.1",
@@ -20125,9 +20131,9 @@
       ]
     },
     {
-      "ref": "pkg:npm/next@15.5.27",
+      "ref": "pkg:npm/next@15.5.28",
       "dependsOn": [
-        "pkg:npm/@next/env@15.5.27",
+        "pkg:npm/@next/env@15.5.28",
         "pkg:npm/@swc/helpers@0.5.15",
         "pkg:npm/caniuse-lite@1.0.30001806",
         "pkg:npm/postcss@8.5.28",
@@ -20953,7 +20959,7 @@
         "pkg:pypi/dagster-pipes@1.13.15",
         "pkg:pypi/dagster-shared@1.13.15",
         "pkg:pypi/docstring-parser@0.18.0",
-        "pkg:pypi/filelock@3.32.0",
+        "pkg:pypi/filelock@4.2.1",
         "pkg:pypi/grpcio-health-checking@1.81.1",
         "pkg:pypi/grpcio@1.83.0",
         "pkg:pypi/jinja2@3.1.6",
@@ -21023,7 +21029,7 @@
         "pkg:pypi/requirements-parser@0.13.1",
         "pkg:pypi/rich-argparse@1.8.0",
         "pkg:pypi/semver@3.0.4",
-        "pkg:pypi/setuptools@83.0.0",
+        "pkg:pypi/setuptools@84.1.0",
         "pkg:pypi/simplejson@4.1.1",
         "pkg:pypi/sqlglot@30.13.0",
         "pkg:pypi/tenacity@9.1.4",
@@ -21322,7 +21328,7 @@
       ]
     },
     {
-      "ref": "pkg:pypi/mlflow@3.16.0",
+      "ref": "pkg:pypi/mlflow@3.17.2",
       "dependsOn": [
         "pkg:pypi/aiohttp@3.14.4",
         "pkg:pypi/alembic@1.18.5",
@@ -21334,8 +21340,8 @@
         "pkg:pypi/gunicorn@26.0.0",
         "pkg:pypi/huey@3.3.0",
         "pkg:pypi/matplotlib@3.11.1",
-        "pkg:pypi/mlflow-skinny@3.16.0",
-        "pkg:pypi/mlflow-tracing@3.16.0",
+        "pkg:pypi/mlflow-skinny@3.17.2",
+        "pkg:pypi/mlflow-tracing@3.17.2",
         "pkg:pypi/numpy@2.5.1",
         "pkg:pypi/pandas@2.3.3",
         "pkg:pypi/pyarrow@24.0.0",
@@ -21347,7 +21353,7 @@
       ]
     },
     {
-      "ref": "pkg:pypi/mlflow-skinny@3.16.0",
+      "ref": "pkg:pypi/mlflow-skinny@3.17.2",
       "dependsOn": [
         "pkg:pypi/anyio@4.14.2",
         "pkg:pypi/cachetools@7.1.6",
@@ -21373,7 +21379,7 @@
       ]
     },
     {
-      "ref": "pkg:pypi/mlflow-tracing@3.16.0",
+      "ref": "pkg:pypi/mlflow-tracing@3.17.2",
       "dependsOn": [
         "pkg:pypi/cachetools@7.1.6",
         "pkg:pypi/databricks-sdk@0.122.0",
@@ -21425,7 +21431,7 @@
         "pkg:pypi/httpx@0.28.1",
         "pkg:pypi/lifelines@0.30.3",
         "pkg:pypi/lightgbm@4.7.0",
-        "pkg:pypi/mlflow@3.16.0",
+        "pkg:pypi/mlflow@3.17.2",
         "pkg:pypi/mlforecast@1.1.0",
         "pkg:pypi/numpy@2.5.1",
         "pkg:pypi/optuna@4.9.0",
@@ -21525,7 +21531,7 @@
         "pkg:pypi/joblib@1.5.3",
         "pkg:pypi/numpy@2.5.1",
         "pkg:pypi/scipy@1.18.0",
-        "pkg:pypi/setuptools@83.0.0"
+        "pkg:pypi/setuptools@84.1.0"
       ]
     },
     {
