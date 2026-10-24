@@ -112,6 +112,8 @@ def test_exact_read_proof_survives_retired_key_and_positive_original_verifier_st
     with graph.transaction(ids["tenant"]):
         current_producer = recheck[1]._source_producer(ids["tenant"], checked["outbox_event_id"], lambda: None)
         assert NativeIntakeSourcePolicyOwner(graph)._event(ids["tenant"], checked["outbox_event_id"]) == current_producer
+        assert NativeHistoricalRecheckProof(recheck[1].source._producer_reads(lambda: None)).source_producer(
+            ids["tenant"], checked["outbox_event_id"], lambda: None) == current_producer
     if all_settings:
         retire_settings(monkeypatch)
     else:
@@ -123,6 +125,8 @@ def test_exact_read_proof_survives_retired_key_and_positive_original_verifier_st
             recheck[1]._source_producer(ids["tenant"], checked["outbox_event_id"], lambda: None)
         with pytest.raises(NativeIntakeSourcePolicyRecheckUnavailable):
             NativeIntakeSourcePolicyOwner(graph)._event(ids["tenant"], checked["outbox_event_id"])
+        assert NativeHistoricalRecheckProof(recheck[1].source._producer_reads(lambda: None)).source_producer(
+            ids["tenant"], checked["outbox_event_id"], lambda: None) == current_producer
     proof = history(past_manual)
     assert proof.root_identity_event_id == checked["root_identity_event_id"]
     assert proof.event_id == result["outbox_event_id"] and state(recheck[0]) == before

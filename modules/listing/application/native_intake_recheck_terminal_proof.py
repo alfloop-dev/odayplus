@@ -48,8 +48,11 @@ class NativeRecheckTerminalProof:
             self.reject()
         history = NativeHistoricalRecheckProof(self.graph)
         if job["status"] == "SUCCEEDED":
-            result = history._committed_result(delivery, tenant, payload.get("delivery_generation"), before=before)
-            if (result is None or result["request_id"] != original["event_id"]
+            verified = history._committed_result(delivery, tenant, payload.get("delivery_generation"), before=before)
+            if verified is None:
+                self.reject()
+            result, _ = verified
+            if (result["request_id"] != original["event_id"]
                     or result["intake_id"] != data["intake_id"]):
                 self.reject()
             return {"job_id": job["job_id"], "status": "SUCCEEDED", "audit_event_id": result["audit_event_id"],

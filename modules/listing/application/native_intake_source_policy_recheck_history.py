@@ -96,13 +96,14 @@ class NativeHistoricalRecheckProof:
         return receipt
 
     def _committed_result(self, delivery, tenant, generation, *, before=_native_producer_noop):
+        """Return the receipt and its origin producer after the full proof."""
         before()
         job = self.engine.query_one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?", (tenant, delivery.job_id))
         if job is None or job["status"] != "SUCCEEDED":
             return None
         payload, result = _object(job["payload"]), _object(job["result"])
         self._admission_receipt(job, payload, before)
-        self._origin._admitted_request(job, payload, before)
+        _, original = self._origin._admitted_request(job, payload, before)
         before()
         current = self.queue.get(delivery.job_id)
         keys = {"job_id", "request_id", "intake_id", "processing_state", "version", "transition_id", "audit_event_id",
@@ -168,7 +169,7 @@ class NativeHistoricalRecheckProof:
                 or event.get("causation_id") != payload["event_id"] or event.get("payload") != expected
                 or _time(row["occurred_at"]) != _time(event["occurred_at"])):
             raise JobFenceRejectedError("NATIVE_RECHECK_TERMINAL_EVIDENCE_CONFLICT")
-        return result
+        return result, original
 
     def source_producer(self, tenant, event_id, before):
         """Constant-depth evidence for a child policy job, without live grants."""
@@ -191,11 +192,17 @@ class NativeHistoricalRecheckProof:
         if type(generation) is not int or generation < 1:
             raise JobFenceRejectedError("NATIVE_RECHECK_HISTORY_GENERATION_REJECTED")
         bound_tenant = delivery.payload.get("tenant_id") if isinstance(delivery.payload, dict) else None
-        result = self._committed_result(delivery, tenant, generation, before=before)
-        if (bound_tenant != tenant or result is None or result["outbox_event_id"] != event_id
+        verified = self._committed_result(delivery, tenant, generation, before=before)
+        if bound_tenant != tenant or verified is None:
+            raise NativeIntakeSourcePolicyRecheckConflict("NATIVE_RECHECK_PRODUCER_PROOF_CONFLICT")
+        result, original = verified
+        if (result["outbox_event_id"] != event_id
                 or result["intake_id"] != row["aggregate_id"]):
             raise NativeIntakeSourcePolicyRecheckConflict("NATIVE_RECHECK_PRODUCER_PROOF_CONFLICT")
-        _, original = self._origin._root_identity(tenant, result["root_identity_event_id"], before)
+        # This invocation already authenticated the exact origin as part of
+        # the full receipt proof. Keep the final budget boundary without
+        # repeating that same historical read or borrowing present authority.
+        before()
         waiting = ({k: payload[k] for k in ("waiting_state", "waiting_source_policy")}
                    if "waiting_state" in payload else {})
         return row, event, hashlib.sha256(_json(event).encode()).hexdigest(), {
