@@ -578,7 +578,7 @@ def create_canonical_identity_decisions_router(store) -> APIRouter:
         with _identity_errors(request):
             principal, repo = context(request)
             with repo.graph.transaction(principal.tenant_id):
-                selected = repo.get(principal.tenant_id, str(decision_id))
+                selected = repo.get(principal.tenant_id, str(decision_id), for_update=False)
                 decision, case, parent = selected["decision"], selected["match_case"], selected["intake"]
                 authorize(request, principal, repo, parent)
                 plan = recorded_plan(decision)
@@ -604,7 +604,7 @@ def create_canonical_identity_decisions_router(store) -> APIRouter:
             principal, repo = context(request)
             with repo.graph.transaction(principal.tenant_id):
                 controls = IdentityJobControls(repo.graph)
-                selected = controls.context(principal.tenant_id, str(decision_id))
+                selected = controls.context(principal.tenant_id, str(decision_id), for_update=False)
                 authorize(request, principal, repo, selected["intake"])
                 response.headers["ETag"] = f'W/"{selected["job"]["version"]}"'
                 return controls.summary(selected)

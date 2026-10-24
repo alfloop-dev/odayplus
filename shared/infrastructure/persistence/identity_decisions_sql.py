@@ -149,11 +149,12 @@ class CanonicalIdentityDecisionRepository:
             **({"service_principal": service_principal, "actor_role": "SVC_INTAKE"} if service_principal else {}),
         }, {name: intake[name] for name in ("tenant_id", "brand_id", "region_id", "assigned_area_id", "heat_zone_id")})
 
-    def get(self, tenant: str, decision_id: str) -> dict:
+    def get(self, tenant: str, decision_id: str, *, for_update: bool = True) -> dict:
+        """Read one tenant snapshot; command callers retain their row locks."""
         with self.graph.transaction(tenant):
             decision = self.graph._one("SELECT * FROM identity.match_decisions WHERE tenant_id=? AND match_decision_id=?",
                 (tenant, _uuid(decision_id)))
-            case, intake = self.graph._case(tenant, decision["match_case_id"])
+            case, intake = self.graph._case(tenant, decision["match_case_id"], for_update=for_update)
             return {"decision": decision, "match_case": case, "intake": intake}
 
     def require_approval(self, tenant, decision, *, error_code="IDENTITY_DECISION_NOT_APPROVED"):

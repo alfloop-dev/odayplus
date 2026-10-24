@@ -263,3 +263,98 @@ def test_native_job_read_and_cancel_enforce_current_principal(canonical_graph, i
     if change != "governance":
         assert client.get(path + "/job").status_code == expected
     assert _state(canonical_graph) == before
+
+
+@pytest.mark.parametrize("read_kind", ["decision", "job"])
+def test_native_identity_read_keeps_snapshot_across_concurrent_row_updates(
+    canonical_graph, identity_api, monkeypatch, record_property, read_kind,
+):
+    graph, ids, _, database = canonical_graph
+    client, _, _ = identity_api
+    receipt, path = _approved(canonical_graph, identity_api)
+    decision_before = client.get(path)
+    assert decision_before.status_code == 200, decision_before.text
+    target = path if read_kind == "decision" else path + "/job"
+    before = client.get(target)
+    assert before.status_code == 200, before.text
+    original = graph.engine.query_one
+    once, pids, updated = [True], [], []
+
+    def read_during_commit(statement, params=()):
+        row = original(statement, params)
+        first_read = ("FROM identity.match_decisions" in statement if read_kind == "decision" else
+                      "SELECT job_id FROM workflow.jobs" in statement)
+        if once[0] and first_read and tuple(params) == (ids["tenant"], receipt["decision_id"]):
+            once[0] = False
+            connection = graph.engine._local.connection
+            assert original("SHOW transaction_isolation")["transaction_isolation"] == "serializable"
+            pids.append(original("SELECT pg_backend_pid() AS pid")["pid"])
+            # Commit real tuple updates after the reader has its snapshot.
+            # Values remain unchanged: no business transition or audit is forged.
+            with database.connect() as writer, writer.transaction():
+                pids.append(writer.execute("SELECT pg_backend_pid()").fetchone()[0])
+                writer.execute("SET LOCAL lock_timeout='1s'")
+                for sql, values in (
+                    ("UPDATE identity.match_cases SET version=version WHERE tenant_id=%s AND match_case_id=%s",
+                     (ids["tenant"], receipt["match_case_id"])),
+                    ("UPDATE intake.intakes SET version=version WHERE tenant_id=%s AND intake_id=%s",
+                     (ids["tenant"], decision_before.json()["intake_id"])),
+                    ("UPDATE workflow.jobs SET version=version WHERE tenant_id=%s AND job_id=%s",
+                     (ids["tenant"], receipt["job_id"])),
+                    ("UPDATE odp_runtime.durable_jobs SET version=version WHERE job_id=%s", (receipt["job_id"],)),
+                ):
+                    assert writer.execute(sql, values).rowcount == 1
+                    updated.append(sql.split()[1])
+            assert graph.engine._local.connection is connection
+            assert original("SELECT pg_backend_pid() AS pid")["pid"] == pids[0]
+        return row
+
+    with monkeypatch.context() as patch:
+        patch.setattr(graph.engine, "query_one", read_during_commit)
+        result = client.get(target)
+    assert once == [False] and len(pids) == len(set(pids)) == 2
+    record_property("actual_postgresql_backend_pids", ",".join(str(pid) for pid in pids))
+    record_property("concurrently_updated_rows", ",".join(updated))
+    assert result.status_code == 200, result.text
+    assert result.json() == before.json()
+    assert result.headers["etag"] == before.headers["etag"]
+    assert client.get(target).json() == before.json()
+
+
+def test_native_identity_mutation_contexts_keep_original_row_locks(canonical_graph, identity_api, record_property):
+    from psycopg.errors import LockNotAvailable
+
+    from modules.listing.application.identity_job_controls import IdentityJobControls
+    from shared.infrastructure.persistence.identity_decisions_sql import (
+        CanonicalIdentityDecisionRepository,
+    )
+
+    graph, ids, _, database = canonical_graph
+    receipt, path = _approved(canonical_graph, identity_api)
+    observed = identity_api[0].get(path)
+    assert observed.status_code == 200, observed.text
+    intake_id = observed.json()["intake_id"]
+    decisions = CanonicalIdentityDecisionRepository(graph)
+    controls = IdentityJobControls(graph)
+    case_update = ("UPDATE identity.match_cases SET version=version WHERE tenant_id=%s AND match_case_id=%s",
+                   (ids["tenant"], receipt["match_case_id"]))
+    intake_update = ("UPDATE intake.intakes SET version=version WHERE tenant_id=%s AND intake_id=%s",
+                     (ids["tenant"], intake_id))
+    locked = []
+    for name, owner, updates in (
+        ("decision", decisions.get, (case_update, intake_update)),
+        ("cancellation", controls.context, (
+            ("UPDATE odp_runtime.durable_jobs SET version=version WHERE job_id=%s", (receipt["job_id"],)),
+            ("UPDATE workflow.jobs SET version=version WHERE tenant_id=%s AND job_id=%s",
+             (ids["tenant"], receipt["job_id"])), case_update, intake_update)),
+    ):
+        with graph.transaction(ids["tenant"]):
+            selected = owner(ids["tenant"], receipt["decision_id"])
+            assert selected["intake"]["intake_id"] == intake_id
+            for sql, values in updates:
+                with database.connect() as writer, pytest.raises(LockNotAvailable), writer.transaction():
+                    writer.execute("SET LOCAL lock_timeout='100ms'")
+                    writer.execute(sql, values)
+                locked.append(name + ":" + sql.split()[1])
+    assert len(locked) == 6
+    record_property("mutation_locked_rows", ",".join(locked))
