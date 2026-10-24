@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, time, timedelta
@@ -25,11 +26,16 @@ from modules.sitescore.domain import (
 from product_ops.modeling.contracts import MODEL_SPECS, DataBounds
 from product_ops.modeling.install_views import (
     ELIGIBILITY_PREREQUISITE_SQL,
+    MODEL_READY_SQL_PATH,
     ModelReadyViewInstaller,
     ModelReadyViewInstallError,
 )
 from product_ops.modeling.release import prepare_model_rows
-from product_ops.modeling.storage import LoadedModelReadyRows
+from product_ops.modeling.storage import (
+    LoadedModelReadyRows,
+    ModelReadyDataError,
+    PostgresModelReadySource,
+)
 
 MODEL_READY_SQL = (
     Path(__file__).parents[2] / "product_ops/modeling/sql/model_ready_views.sql"
@@ -181,7 +187,13 @@ def _insert_run(
     name: str,
     source_kind: str,
     partition_key: str,
-    finished_at: datetime,
+    finished_at: datetime | None,
+    status: str = "SUCCEEDED",
+    processed_count: int = 0,
+    valid_loaded: int = 0,
+    quarantined_count: int = 0,
+    reconciled: bool = True,
+    partition_complete: bool = True,
 ) -> UUID:
     run_id = _id(f"run:{name}")
     connection.execute(
@@ -190,9 +202,20 @@ def _insert_run(
             run_id, source_kind, partition_key, status,
             processed_count, valid_loaded, quarantined_count,
             reconciled, partition_complete, finished_at
-        ) VALUES (%s, %s, %s, 'SUCCEEDED', 0, 0, 0, TRUE, TRUE, %s)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
-        (run_id, source_kind, partition_key, finished_at),
+        (
+            run_id,
+            source_kind,
+            partition_key,
+            status,
+            processed_count,
+            valid_loaded,
+            quarantined_count,
+            reconciled,
+            partition_complete,
+            finished_at,
+        ),
     )
     return run_id
 
@@ -814,6 +837,302 @@ def test_postgresql_views_compute_real_causal_labels_and_isolate_tenants(
             ).fetchone()
             assert eligible is False
             assert exclusion == "LABEL_90D_PARTITION_COVERAGE_INCOMPLETE"
+
+
+FORECAST_FIRST_DAY = date(2025, 6, 1)
+FORECAST_TARGET_DAY = FORECAST_FIRST_DAY + timedelta(days=28)
+FORECAST_PRIOR_DAY = FORECAST_FIRST_DAY + timedelta(days=20)
+
+
+def _seed_forecast_history(connection) -> tuple[UUID, UUID, dict[date, UUID]]:
+    """One store with 29 contiguous order days, each loaded and EOF-proven by
+    its own daily partition run, so the last day has a full 28-day history."""
+    tenant_id, store_id, _ = _insert_store(
+        connection,
+        tenant="forecast",
+        store="store",
+        opened_on=date(2024, 1, 1),
+    )
+    daily_runs: dict[date, UUID] = {}
+    for offset in range(29):
+        day = FORECAST_FIRST_DAY + timedelta(days=offset)
+        daily_runs[day] = _insert_run(
+            connection,
+            name=f"forecast-orders:{day.isoformat()}",
+            source_kind="orders",
+            partition_key=day.isoformat(),
+            finished_at=_at(day, 23),
+            processed_count=1,
+            valid_loaded=1,
+        )
+        _insert_transaction(
+            connection,
+            tenant_id=tenant_id,
+            store_id=store_id,
+            name=f"forecast:{day.isoformat()}",
+            event_time=_at(day, 10),
+            amount=100.0 + offset,
+            daily_runs=daily_runs,
+        )
+    return tenant_id, store_id, daily_runs
+
+
+def _forecast_rows(connection, tenant_id: UUID, store_id: UUID) -> dict[date, dict[str, Any]]:
+    rows = _rows_as_dicts(
+        connection,
+        """
+        SELECT date, is_training_eligible, exclusion_reason, daily_net_revenue,
+               label_maturity_time, feature_snapshot_time, prediction_origin_time,
+               source_snapshot_ids
+        FROM model_ready.forecast_training_view
+        WHERE tenant_id = %s AND store_id = %s
+        ORDER BY date
+        """,
+        (tenant_id, store_id),
+    )
+    return {row["date"]: row for row in rows}
+
+
+def _forecast_target(connection, tenant_id: UUID, store_id: UUID) -> tuple[bool, str | None]:
+    row = _forecast_rows(connection, tenant_id, store_id)[FORECAST_TARGET_DAY]
+    return row["is_training_eligible"], row["exclusion_reason"]
+
+
+def _set_run(connection, run_id: UUID, assignment: str) -> None:
+    connection.execute(
+        f"UPDATE data_plane.ingestion_runs SET {assignment} WHERE run_id = %s",  # nosec B608
+        (run_id,),
+    )
+
+
+def test_postgresql_forecast_view_admits_only_eof_proven_target_and_prior_partitions(
+    intake_blank_db,
+) -> None:
+    spec = MODEL_SPECS["forecastops"]
+    bounds = DataBounds(
+        _at(FORECAST_FIRST_DAY, 0),
+        _at(FORECAST_TARGET_DAY + timedelta(days=1), 0),
+        10,
+    )
+    expected_query_sha256 = hashlib.sha256(
+        (
+            f"{spec.relation}|{','.join(spec.required_columns)}|"
+            f"{bounds.start.isoformat()}|{bounds.end.isoformat()}|{bounds.max_rows}"
+        ).encode()
+    ).hexdigest()
+
+    with intake_blank_db.connect() as connection:
+        _install_minimal_authoritative_schema(connection)
+        tenant_id, store_id, daily_runs = _seed_forecast_history(connection)
+        client = _PsycopgInstallationClient(connection)
+        installed = ModelReadyViewInstaller(client).install()
+        digest = hashlib.sha256(MODEL_READY_SQL_PATH.read_bytes()).hexdigest()
+        assert installed["sql_sha256"] == digest
+        assert installed["forecast"]["view_version"] == spec.expected_view_version
+        assert installed["forecast"]["installer_sha256"] == digest
+        source = PostgresModelReadySource(client)
+        target_run = daily_runs[FORECAST_TARGET_DAY]
+        prior_run = daily_runs[FORECAST_PRIOR_DAY]
+
+        def assert_target_refused(reason: str) -> None:
+            assert _forecast_target(connection, tenant_id, store_id) == (False, reason)
+            with pytest.raises(ModelReadyDataError, match="not trainable"):
+                source.load(spec, bounds)
+
+        # Complete positive through the original installed contract and loader.
+        baseline = _forecast_rows(connection, tenant_id, store_id)
+        target = baseline[FORECAST_TARGET_DAY]
+        assert target["is_training_eligible"] is True
+        assert target["exclusion_reason"] is None
+        assert target["daily_net_revenue"] == pytest.approx(128.0)
+        assert target["label_maturity_time"] == _at(
+            FORECAST_TARGET_DAY + timedelta(days=1), 0
+        )
+        assert len(target["source_snapshot_ids"]) == 29
+        assert [day for day, row in baseline.items() if row["is_training_eligible"]] == [
+            FORECAST_TARGET_DAY
+        ]
+        loaded = source.load(spec, bounds)
+        assert loaded.relation == "model_ready.forecast_training_view"
+        assert loaded.bounds == bounds
+        assert loaded.query_sha256 == expected_query_sha256
+        assert len(loaded.rows) == 1
+        (loaded_row,) = loaded.rows
+        assert loaded_row["view_version"] == spec.expected_view_version
+        assert loaded_row["tenant_id"] == tenant_id
+        assert loaded_row["store_id"] == store_id
+        assert loaded_row["date"] == FORECAST_TARGET_DAY
+        assert loaded_row["label_maturity_time"] == target["label_maturity_time"]
+
+        # A reconciled, succeeded target chunk that stopped at its record bound
+        # is not a complete day: its revenue must not become an admitted label.
+        target_negatives = (
+            ("partition_complete = FALSE", "SOURCE_RUN_NOT_COMPLETE"),
+            ("status = 'RUNNING', finished_at = NULL", "SOURCE_RUN_NOT_COMPLETE"),
+            ("status = 'FAILED'", "SOURCE_RUN_NOT_COMPLETE"),
+            ("status = 'RECONCILIATION_FAILED', reconciled = FALSE", "SOURCE_RUN_NOT_COMPLETE"),
+            ("reconciled = FALSE", "SOURCE_RUN_NOT_COMPLETE"),
+            ("quarantined_count = 1, processed_count = 2", "SOURCE_RUN_NOT_COMPLETE"),
+        )
+        for assignment, reason in target_negatives:
+            with connection.transaction(force_rollback=True):
+                _set_run(connection, target_run, assignment)
+                assert_target_refused(reason)
+
+        # Missing lineage for one of the target day's transactions cannot be
+        # hidden by the lineage of another transaction on the same day.
+        with connection.transaction(force_rollback=True):
+            connection.execute(
+                """
+                INSERT INTO core.transactions (
+                    transaction_id, store_id, event_time, observation_time,
+                    ingested_at, net_amount, currency, transaction_status
+                ) VALUES (%s, %s, %s, %s, %s, 7, 'TWD', 'succeeded')
+                """,
+                (
+                    _id("transaction:forecast:target-without-lineage"),
+                    store_id,
+                    _at(FORECAST_TARGET_DAY, 11),
+                    _at(FORECAST_TARGET_DAY, 12),
+                    _at(FORECAST_TARGET_DAY, 13),
+                ),
+            )
+            assert_target_refused("SOURCE_LINEAGE_INCOMPLETE")
+
+        # Every one of the 28 prior feature days is protected as well; a
+        # complete target alone cannot admit an incomplete prior input.
+        prior_negatives = (
+            "partition_complete = FALSE",
+            "status = 'RUNNING', finished_at = NULL",
+            "status = 'FAILED'",
+            "reconciled = FALSE",
+            "quarantined_count = 1, processed_count = 2",
+        )
+        for assignment in prior_negatives:
+            with connection.transaction(force_rollback=True):
+                _set_run(connection, prior_run, assignment)
+                assert_target_refused("PRIOR_SOURCE_NOT_COMPLETE")
+        with connection.transaction(force_rollback=True):
+            connection.execute(
+                "DELETE FROM data_plane.canonical_lineage WHERE canonical_id = %s",
+                (_id(f"transaction:forecast:{FORECAST_PRIOR_DAY.isoformat()}"),),
+            )
+            assert_target_refused("PRIOR_SOURCE_NOT_COMPLETE")
+
+        # Completion evidence must come from an orders partition whose window
+        # covers the target date and that reached EOF after the target chunk.
+        unrelated_completions = (
+            ("trade", FORECAST_TARGET_DAY.isoformat(), _at(FORECAST_TARGET_DAY + timedelta(days=2), 6)),
+            ("orders", (FORECAST_TARGET_DAY + timedelta(days=1)).isoformat(), _at(FORECAST_TARGET_DAY + timedelta(days=2), 6)),
+            ("orders", f"{FORECAST_FIRST_DAY.isoformat()}__{FORECAST_TARGET_DAY.isoformat()}", _at(FORECAST_TARGET_DAY + timedelta(days=2), 6)),
+            ("orders", FORECAST_TARGET_DAY.isoformat(), _at(FORECAST_TARGET_DAY, 22)),
+        )
+        for index, (source_kind, partition_key, finished_at) in enumerate(unrelated_completions):
+            with connection.transaction(force_rollback=True):
+                _set_run(connection, target_run, "partition_complete = FALSE")
+                _insert_run(
+                    connection,
+                    name=f"forecast-unrelated-completion:{index}",
+                    source_kind=source_kind,
+                    partition_key=partition_key,
+                    finished_at=finished_at,
+                )
+                assert_target_refused("SOURCE_RUN_NOT_COMPLETE")
+
+        # Bounded resume: the earlier chunk stays partial, and a zero-new-row
+        # resume of the same partition reaches EOF later. The day is admitted,
+        # but only from the EOF proof onwards -- never retroactively.
+        target_eof_at = _at(FORECAST_TARGET_DAY + timedelta(days=3), 6)
+        with connection.transaction(force_rollback=True):
+            _set_run(connection, target_run, "partition_complete = FALSE")
+            _insert_run(
+                connection,
+                name="forecast-target-resume-eof",
+                source_kind="orders",
+                partition_key=FORECAST_TARGET_DAY.isoformat(),
+                finished_at=target_eof_at,
+            )
+            resumed = _forecast_rows(connection, tenant_id, store_id)[FORECAST_TARGET_DAY]
+            assert resumed["is_training_eligible"] is True
+            assert resumed["exclusion_reason"] is None
+            assert resumed["daily_net_revenue"] == pytest.approx(128.0)
+            assert resumed["label_maturity_time"] == target_eof_at
+            assert resumed["feature_snapshot_time"] == target_eof_at
+            assert resumed["prediction_origin_time"] == target_eof_at + timedelta(microseconds=1)
+            (resumed_row,) = source.load(spec, bounds).rows
+            assert resumed_row["label_maturity_time"] == target_eof_at
+
+        # A resumed chain that quarantined a record before reaching EOF has
+        # silently dropped a transaction and cannot prove the day complete.
+        with connection.transaction(force_rollback=True):
+            _set_run(connection, target_run, "partition_complete = FALSE")
+            _insert_run(
+                connection,
+                name="forecast-target-quarantined-chunk",
+                source_kind="orders",
+                partition_key=FORECAST_TARGET_DAY.isoformat(),
+                finished_at=_at(FORECAST_TARGET_DAY + timedelta(days=1), 6),
+                processed_count=1,
+                quarantined_count=1,
+                partition_complete=False,
+            )
+            _insert_run(
+                connection,
+                name="forecast-target-resume-eof-after-quarantine",
+                source_kind="orders",
+                partition_key=FORECAST_TARGET_DAY.isoformat(),
+                finished_at=target_eof_at,
+            )
+            assert_target_refused("SOURCE_RUN_NOT_COMPLETE")
+
+        # A multi-day backfill partition whose window covers the date is the
+        # same original partition authority as a daily one.
+        backfill_key = (
+            f"{(FORECAST_TARGET_DAY - timedelta(days=3)).isoformat()}__"
+            f"{(FORECAST_TARGET_DAY + timedelta(days=1)).isoformat()}"
+        )
+        with connection.transaction(force_rollback=True):
+            _set_run(connection, target_run, "partition_complete = FALSE")
+            _insert_run(
+                connection,
+                name="forecast-target-backfill-eof",
+                source_kind="orders",
+                partition_key=backfill_key,
+                finished_at=target_eof_at,
+            )
+            assert _forecast_target(connection, tenant_id, store_id) == (True, None)
+
+        # Late completion of one prior day moves the feature clock of exactly
+        # the rows whose 28-day window contains that day.
+        prior_eof_at = _at(FORECAST_TARGET_DAY + timedelta(days=5), 6)
+        with connection.transaction(force_rollback=True):
+            _set_run(connection, prior_run, "partition_complete = FALSE")
+            assert_target_refused("PRIOR_SOURCE_NOT_COMPLETE")
+            _insert_run(
+                connection,
+                name="forecast-prior-resume-eof",
+                source_kind="orders",
+                partition_key=FORECAST_PRIOR_DAY.isoformat(),
+                finished_at=prior_eof_at,
+            )
+            late = _forecast_rows(connection, tenant_id, store_id)
+            assert late[FORECAST_PRIOR_DAY]["label_maturity_time"] == prior_eof_at
+            target = late[FORECAST_TARGET_DAY]
+            assert target["is_training_eligible"] is True
+            assert target["label_maturity_time"] == baseline[FORECAST_TARGET_DAY][
+                "label_maturity_time"
+            ]
+            assert target["feature_snapshot_time"] == prior_eof_at
+            assert target["prediction_origin_time"] == prior_eof_at + timedelta(microseconds=1)
+            for day, row in late.items():
+                if day < FORECAST_PRIOR_DAY:
+                    assert row["feature_snapshot_time"] == baseline[day]["feature_snapshot_time"]
+                else:
+                    assert row["feature_snapshot_time"] == prior_eof_at
+            (late_row,) = source.load(spec, bounds).rows
+            assert late_row["feature_snapshot_time"] == prior_eof_at
+
+        assert _forecast_rows(connection, tenant_id, store_id) == baseline
 
 
 def test_postgresql_install_validation_failure_rolls_back_ddl_and_registry(
