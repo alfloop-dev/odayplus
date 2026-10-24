@@ -4,7 +4,7 @@
 - 依據：`task/ODP-CORE-OPS-PROD-READINESS-PACK-001` 的 `rollback-plan.md` §3、`deployment-plan.md` §2 步驟 17／19 與 §5、`backup-dr-impact.md` §6
 - 本 task **沒有**觸發任何 workflow、沒有呼叫 gcloud 或任何 GCP API、沒有開 PR，也沒有修改 `docs/evidence/gates/RELEASE_GATE_REGISTRY.json`。以下所有「雲端行為」都只經過假 `gcloud` 的本機測試，**未在 production 實際執行過**。
 
-行號以本 branch 的 HEAD 為準。
+§2／§3 的行號以 base advance 之前的 commit `2d9648a26` 為準。base advance（§5）之後，`.github/workflows/deploy-dev.yml` 中本 task 的每一處行號都**往後移 36 行**（例如 `Capture pre-switch production blue-green state` 從 `:1426` 移到 `:1462`，`staging_closeout` 的 `id: watch-receipt` 從 `:1935` 移到 `:1971`）；`bluegreen_release.py` 與測試檔的行號不變。
 
 ## 1. 三項缺陷的驗證結果
 
@@ -140,3 +140,14 @@ python3 product_ops/deployment/bluegreen_release.py \
 5. **延後之後重跑 closeout。** 由有 `staging` environment 核准權的人，在 watch receipt 寫入後、30 天內，重跑該 job。
 6. **blue-green rollback 程序。** §2.1 的下載與 rollback 指令**未演練**。建議先在 staging 以 `--dry-run` 走一次。首次 production release commit 之後的下線方式，仍待 `rollback-plan.md` §2.4 的決策。
 7. 本修改沒有任何一部分在 GitHub Actions 或 GCP 上實際執行過。第一次 production dispatch 就是第一次實際執行。
+
+## 5. Base advance 到 `origin/dev`（2026-10-24）
+
+- 以 merge（不是 rebase）把 `origin/dev` `4f89378ec`（PR #1591）併入本 branch，merge commit `4561da4fa`（第一親 `2d9648a26`、第二親 `4f89378ec`）。
+- 合併前 `git merge-tree --write-tree` 預覽為乾淨合併、沒有衝突；合併後 `HEAD^{tree}` 與預覽 tree `0be1330c2` 逐位元相同，`origin/dev` 是 HEAD 的祖先。
+- dev 這段期間對本 task 檔案的唯一修改是 `.github/workflows/deploy-dev.yml`（PR #1565，`ODP-CORE-OPS-FIRST-RELEASE-ROLLBACK-001`）：`initial_release_recovery` 的說明文字、build 與 deploy job 的 `probe_release_target_absence.py` 在 staging 改用 `--staging-release-id`／不帶 `--target`，以及 admission 在 staging 首次 release 時多讀 production lease store。這些都在本 task 的 step 之前（合併後的 `:146`、`:481-499`、`:967-985`、`:1041-1081`），與三項修正沒有重疊的行，也沒有改變本 task 依賴的行為：
+  - 修正 (1)：以 `initial_release_recovery` 進行的 production 首次 release，dev 的修改沒有改變 production 的 absence probe（仍用長期 service 名稱，只有 staging 改用 release-scoped 名稱）；本 task 的 pre-switch capture 在那種情況下記錄兩個 service 都不存在，兩者一致。
+  - 修正 (2)：`staging_closeout` job 本身沒有被 dev 修改；staging digest == production digest 的檢查不變。
+  - 修正 (3)：dev 沒有在 production deploy job 加入任何 Cloud SQL 相關步驟，不需要取捨。
+- 因此沒有任何「與 dev 衝突、以 dev 為準」的取捨。dev 同時新增的 `tests/release/test_first_release_staging_production.py` 與 `docs/evidence/runtime/ODP-CORE-OPS-PROD-READINESS-PACK-001/` 未被本 task 修改。
+- 宣告的 verification 由 `task_verification.py run` 在最終 head 執行一次，receipt 在 supervisor evidence store；exit code 與耗時以送審後的 task note 公布，本文件不內嵌（內嵌會讓 head 前進、receipt 失效）。
