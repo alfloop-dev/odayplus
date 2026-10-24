@@ -15,6 +15,7 @@ memory persistence.
 | Cloud Storage | Separate CMEK-encrypted, versioned artifact and source-snapshot buckets plus the WORM audit-evidence module. |
 | Pub/Sub | CMEK job topic, ordered subscription, bounded retry, DLQ topic/subscription, regional persistence. |
 | IAM | Separate API, worker, audit-writer, and audit-retention identities with resource-level grants. |
+| Cloud Monitoring | `monitoring.tf`: Web `/login` uptime check, optional API `/platform/health` uptime check (Monitoring service agent OIDC), alert policies for uptime failure, API/Web 5xx ratio, API p95 latency (3.0 s ratified budget), failed Cloud Run job executions, and Cloud SQL CPU/disk/connection saturation. Notification targets come only from variables. |
 | VPC | Custom regional subnet, Direct VPC egress, Private Service Access, default-deny egress firewall with restricted RFC1918 and Google API CIDR allow rules, no Cloud NAT, no Cloud SQL public IPv4. |
 
 Use `/liveness` for Cloud Run probes and external process checks. Google lists
@@ -38,6 +39,9 @@ A production plan fails when any of the following is true:
   local, stub, replay, sandbox, development, latest, placeholder, example, or TODO markers;
 - Cloud SQL production capacity, PITR, backup retention, private networking,
   regional HA, CMEK, or deletion protection is weakened by this module.
+- no alert notification target (`monitoring_notification_emails` or
+  `monitoring_notification_channel_ids`), no `monitoring_api_uptime_host`, or no
+  `monitoring_cloud_sql_max_connections` is supplied.
 
 The authoritative blocker is
 `terraform_data.production_contract.lifecycle.precondition`. Terraform `check`
@@ -90,6 +94,12 @@ Values, approvals, and secret payloads are owned outside Terraform:
 10. DNS, managed HTTPS, and Cloud Armor policy when a custom Web origin is used.
     The module deploys the Web BFF while leaving the API at
     internal/load-balancer ingress.
+11. Alert notification targets (on-call email addresses or existing
+    notification channel ids), an API host that Cloud Monitoring uptime checkers
+    can reach (the API ingress is internal/load-balancer only, so the run.app
+    host is not reachable by itself), and the Cloud SQL instance's effective
+    `max_connections`. See
+    `docs/evidence/runtime/ODP-PROD-MONITORING-ALERTING-001/README.md`.
 
 The application WORM/object-store client must use Cloud Run workload identity
 or metadata-server ADC. Do not create or inject service-account JSON keys or

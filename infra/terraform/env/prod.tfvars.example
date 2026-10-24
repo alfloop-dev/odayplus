@@ -53,3 +53,10 @@ api_invoker_members = [
 web_invoker_members = [
   "allUsers",
 ]
+
+# Alert routing (ODP-PROD-MONITORING-ALERTING-001). Supply at least one target;
+# never commit personal addresses.
+monitoring_notification_emails       = []
+monitoring_notification_channel_ids  = ["projects/REPLACE_WITH_PRODUCTION_PROJECT_ID/notificationChannels/REPLACE_WITH_CHANNEL_ID"]
+monitoring_api_uptime_host           = "REPLACE_WITH_API_HOST_REACHABLE_BY_UPTIME_CHECKERS"
+monitoring_cloud_sql_max_connections = 0 # REPLACE_WITH_EFFECTIVE_MAX_CONNECTIONS
