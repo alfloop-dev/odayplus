@@ -31,10 +31,12 @@ from __future__ import annotations
 import copy
 import json
 import os
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+import yaml
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
 from delivery_toolchain.release import check_runtime_admission, release_manifest
@@ -1207,6 +1209,103 @@ def test_mutation_returning_a_null_record_would_admit_over_a_corrupt_history(
     assert store.get(lease["lease_id"])["state"] == STATE_CONSUMED
 
 
+# Bytes that are not UTF-8 are damage of the same kind. ``read_text`` raises
+# UnicodeDecodeError, which is neither OSError nor JSONDecodeError; unwrapped it
+# escaped every caller that catches LeaseStateError and the verifier exited
+# with a traceback and no admission receipt.
+NOT_UTF8 = b"\xff\xfe{}"
+
+
+def test_the_directory_store_refuses_a_record_that_is_not_utf8(tmp_path: Path) -> None:
+    store = LeaseStateStore(tmp_path / "leases")
+    lease_id = "lease-" + "0" * 32
+    (tmp_path / "leases" / f"{lease_id}.json").write_bytes(NOT_UTF8)
+
+    with pytest.raises(LeaseStateError, match="is unreadable"):
+        store.get(lease_id)
+    with pytest.raises(LeaseStateError, match="is unreadable"):
+        store.list_records()
+    with pytest.raises(LeaseStateError, match="is unreadable"):
+        store.find_leases_for_task(TASK_ID)
+
+
+def test_a_lease_record_overwritten_with_invalid_utf8_is_not_transitioned(
+    tmp_path: Path,
+) -> None:
+    private_pem, _ = generate_keypair()
+    lease = build_lease(
+        task_id=TASK_ID, release_id="odp-bad-bytes", candidate_sha=SHA,
+        manifest_digest=THIS, target_environment="production",
+        allowed_action="deploy",
+        private_key=load_pem_private_key(private_pem, password=None),
+    )
+    store = LeaseStateStore(tmp_path / "leases")
+    store.record_issued(lease)
+    path = tmp_path / "leases" / f"{lease['lease_id']}.json"
+    path.write_bytes(NOT_UTF8)
+
+    with pytest.raises(LeaseStateError, match="is unreadable"):
+        store.consume(lease, consumed_by="admission")
+    with pytest.raises(LeaseStateError, match="is unreadable"):
+        store.revoke(lease, reason="operator")
+    assert path.read_bytes() == NOT_UTF8
+
+
+def _plant_not_utf8_production_record(tmp_path: Path, environment: str) -> None:
+    # Where _admit keeps production's store for each admission environment.
+    production_dir = tmp_path / ("leases" if environment == "production" else "production-leases")
+    production_dir.mkdir()
+    (production_dir / f"lease-{'f' * 32}.json").write_bytes(NOT_UTF8)
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_an_invalid_utf8_production_record_refuses_admission_with_a_receipt(
+    tmp_path: Path, staging_manifest: dict, environment: str
+) -> None:
+    _plant_not_utf8_production_record(tmp_path, environment)
+    code, result, lease, store = _admit(
+        tmp_path, staging_manifest, environment=environment,
+        receipt=_fresh(staging_manifest, environment),
+    )
+
+    assert code != 0
+    assert result["admitted"] is False
+    assert any(
+        "cannot read production lease history" in e and "is unreadable" in e
+        for e in result["errors"]
+    ), result["errors"]
+    assert store.get(lease["lease_id"])["state"] == STATE_ISSUED
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_mutation_without_the_utf8_wrap_the_verifier_dies_without_a_receipt(
+    tmp_path: Path, staging_manifest: dict, monkeypatch: pytest.MonkeyPatch,
+    environment: str,
+) -> None:
+    """The refusal above is the wrap's doing: unwrapped, nothing is recorded."""
+
+    def old_get(self, lease_id):
+        path = self._path(lease_id)
+        if not path.exists():
+            return None
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise LeaseStateError(f"lease state record {path} is unreadable: {exc}") from exc
+        if not isinstance(record, dict):
+            raise LeaseStateError(f"lease state record {path} is malformed")
+        return record
+
+    _plant_not_utf8_production_record(tmp_path, environment)
+    monkeypatch.setattr(LeaseStateStore, "get", old_get)
+    with pytest.raises(UnicodeDecodeError):
+        _admit(
+            tmp_path, staging_manifest, environment=environment,
+            receipt=_fresh(staging_manifest, environment),
+        )
+    assert not (tmp_path / "receipt.json").exists()
+
+
 def test_production_refuses_a_lineage_store_other_than_its_own(
     tmp_path: Path, staging_manifest: dict
 ) -> None:
@@ -1477,3 +1576,101 @@ def test_the_workflow_passes_the_admission_readback_to_the_verifier() -> None:
     assert os.path.basename(
         "${RELEASE_RECEIPT_DIR}/initial-release-recovery-receipt.json"
     ) in workflow
+
+
+def _lease_store_validation_step() -> dict:
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
+    )
+    steps = workflow["jobs"]["admission"]["steps"]
+    names = [step.get("name") for step in steps if isinstance(step, dict)]
+    # Refused before the admission step that consumes the lease.
+    assert names.index("Validate shared lease store configuration") < names.index(
+        "Validate supervisor release admission"
+    )
+    return next(
+        step for step in steps
+        if isinstance(step, dict) and step.get("name") == "Validate shared lease store configuration"
+    )
+
+
+def _run_lease_store_validation(environment: str, production_uri: str | None) -> subprocess.CompletedProcess:
+    step = _lease_store_validation_step()
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "RELEASE_ENVIRONMENT": environment,
+        "RELEASE_LEASE_STATE_URI": "gs://odayplus-runtime-20260825-release-leases/leases",
+    }
+    if production_uri is not None:
+        env["PRODUCTION_LEASE_STATE_URI"] = production_uri
+    return subprocess.run(
+        ["bash", "-c", step["run"]], env=env, capture_output=True, text=True, check=False
+    )
+
+
+def test_the_lineage_store_is_validated_from_the_staging_environment_s_variable() -> None:
+    step = _lease_store_validation_step()
+    assert step["env"]["RELEASE_ENVIRONMENT"] == "${{ inputs.environment }}"
+    assert step["env"]["PRODUCTION_LEASE_STATE_URI"] == (
+        "${{ vars.ODP_PRODUCTION_RELEASE_LEASE_STATE_URI }}"
+    )
+
+
+@pytest.mark.parametrize(
+    "production_uri",
+    [".", "/home/runner/production-leases", "gs://odayplus-prod-20260826-release-leases",
+     "gs://odayplus-prod-20260826-release-leases/", "gs:///leases",
+     "file:///production-leases", " "],
+    ids=["cwd", "local-dir", "bare-bucket", "empty-prefix", "no-bucket", "file-uri", "blank"],
+)
+def test_staging_refuses_a_production_lineage_store_that_is_not_shared(
+    production_uri: str,
+) -> None:
+    result = _run_lease_store_validation("staging", production_uri)
+
+    assert result.returncode == 1
+    assert "ODP_PRODUCTION_RELEASE_LEASE_STATE_URI must be production's shared" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "environment,production_uri",
+    [
+        ("staging", "gs://odayplus-prod-20260826-release-leases/leases"),
+        # Unset: not passed; the verifier refuses a staging first release itself
+        # (test_staging_without_trustworthy_production_history_is_refused_unspent).
+        ("staging", None),
+        ("staging", ""),
+        # Only staging hands this store to the verifier.
+        ("production", "."),
+        ("dev", "."),
+    ],
+    ids=["staging-gs", "staging-unset", "staging-empty", "production-ignores", "dev-ignores"],
+)
+def test_the_lineage_shape_check_admits_a_shared_store_or_none(
+    environment: str, production_uri: str | None
+) -> None:
+    result = _run_lease_store_validation(environment, production_uri)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_production_admissions_are_serialised_by_the_workflow_concurrency_group() -> None:
+    """The premise that makes the non-atomic lineage read and consume safe.
+
+    Two production deploy runs share one group and never interleave, so the
+    later one reads production's lineage only after the earlier one consumed
+    its lease, and is refused (design doc §5.7).
+    """
+
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
+    )
+    concurrency = workflow["concurrency"]
+    assert concurrency["group"] == (
+        "runtime-release-${{ inputs.environment }}-"
+        "${{ inputs.phase == 'build' && 'build' || 'deploy' }}"
+    )
+    assert concurrency["cancel-in-progress"] is False
+    # The lease-consuming jobs do not opt out into a group of their own.
+    for job in ("admission", "automatic_admission", "deploy"):
+        assert "concurrency" not in workflow["jobs"][job]
