@@ -31,7 +31,65 @@ COMMENT ON TABLE model_ready.view_contracts IS
     'Fail-closed registry for versioned model-ready relations and outcome readiness.';
 
 CREATE OR REPLACE VIEW model_ready.forecast_training_view AS
-WITH transaction_source AS (
+WITH authoritative_order_partitions AS (
+    -- EOF proof for one bounded order partition, using the authoritative
+    -- order-run predicate of candidate_site_view/heatzone_training_view and the
+    -- UTC dates its window reads ('YYYY-MM-DD' daily or 'start__end' backfill).
+    -- A resumed chunk that stopped at its record bound is legitimate once a
+    -- later run of the same partition reaches EOF, but no chunk of that
+    -- partition may have quarantined, dropped or failed to reconcile a record.
+    SELECT
+        completion.finished_at,
+        scope.partition_start,
+        scope.partition_end
+    FROM data_plane.ingestion_runs AS completion
+    CROSS JOIN LATERAL (
+        SELECT
+            CASE
+                WHEN completion.partition_key ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+                    THEN completion.partition_key::date
+                WHEN completion.partition_key
+                    ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}__[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+                    THEN split_part(completion.partition_key, '__', 1)::date
+                ELSE NULL
+            END AS partition_start,
+            CASE
+                WHEN completion.partition_key ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+                    THEN completion.partition_key::date + 1
+                WHEN completion.partition_key
+                    ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}__[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+                    THEN split_part(completion.partition_key, '__', 2)::date
+                ELSE NULL
+            END AS partition_end
+    ) AS scope
+    WHERE completion.source_kind = 'orders'
+      AND completion.status = 'SUCCEEDED'
+      AND completion.reconciled
+      AND completion.partition_complete
+      AND completion.quarantined_count = 0
+      AND completion.processed_count = completion.valid_loaded
+      AND completion.finished_at IS NOT NULL
+      AND scope.partition_start < scope.partition_end
+      AND NOT EXISTS (
+          SELECT 1
+          FROM data_plane.ingestion_runs AS chunk
+          WHERE chunk.source_kind = completion.source_kind
+            AND chunk.partition_key = completion.partition_key
+            AND chunk.finished_at <= completion.finished_at
+            AND (
+                chunk.quarantined_count > 0
+                OR chunk.status = 'RECONCILIATION_FAILED'
+                OR (
+                    chunk.status = 'SUCCEEDED'
+                    AND (
+                        NOT chunk.reconciled
+                        OR chunk.processed_count <> chunk.valid_loaded
+                    )
+                )
+            )
+      )
+),
+transaction_source AS (
     SELECT
         store.tenant_id,
         txn.transaction_id,
@@ -96,19 +154,24 @@ transaction_daily AS (
                 source_txn.ingested_at
             )
         ) AS source_available_at,
+        -- bool_and ignores NULL, so a transaction without lineage rows must
+        -- be folded to FALSE rather than vanish from the daily verdict.
         coalesce(
-            bool_and(cardinality(source_txn.source_snapshot_ids) > 0),
+            bool_and(coalesce(cardinality(source_txn.source_snapshot_ids), 0) > 0),
             FALSE
         )
             AS lineage_complete,
         coalesce(
             bool_and(
-                source_txn.observation_time >= source_txn.event_time
-                AND source_txn.ingested_at >= source_txn.observation_time
-                AND source_txn.source_run_complete
+                coalesce(
+                    source_txn.observation_time >= source_txn.event_time
+                    AND source_txn.ingested_at >= source_txn.observation_time
+                    AND source_txn.source_run_complete,
+                    FALSE
+                )
             ),
             FALSE
-        ) AS source_run_complete,
+        ) AS transaction_runs_complete,
         daily_source_ids.source_snapshot_ids,
         max(source_txn.source_run_finished_at) AS source_run_finished_at
     FROM transaction_source AS source_txn
@@ -123,15 +186,43 @@ transaction_daily AS (
         (source_txn.event_time AT TIME ZONE 'UTC')::date,
         daily_source_ids.source_snapshot_ids
 ),
+daily_partition_proof AS (
+    -- A day's revenue is complete only after an order partition covering that
+    -- date reached EOF no earlier than the last run that loaded the day's
+    -- transactions; that proof's finish is when the complete label exists.
+    SELECT
+        transaction_daily.tenant_id,
+        transaction_daily.store_id,
+        transaction_daily.date,
+        min(proof.finished_at) AS finished_at
+    FROM transaction_daily
+    INNER JOIN authoritative_order_partitions AS proof
+        ON proof.partition_start <= transaction_daily.date
+       AND proof.partition_end > transaction_daily.date
+       AND proof.finished_at >= transaction_daily.source_run_finished_at
+    GROUP BY
+        transaction_daily.tenant_id,
+        transaction_daily.store_id,
+        transaction_daily.date
+),
 mature_daily AS (
     SELECT
         transaction_daily.*,
+        (
+            transaction_daily.transaction_runs_complete
+            AND partition_proof.finished_at IS NOT NULL
+        ) AS source_run_complete,
         greatest(
-            source_available_at,
-            source_run_finished_at,
-            (date + 1)::timestamp AT TIME ZONE 'UTC'
+            transaction_daily.source_available_at,
+            transaction_daily.source_run_finished_at,
+            partition_proof.finished_at,
+            (transaction_daily.date + 1)::timestamp AT TIME ZONE 'UTC'
         ) AS label_maturity_time
     FROM transaction_daily
+    LEFT JOIN daily_partition_proof AS partition_proof
+        ON partition_proof.tenant_id = transaction_daily.tenant_id
+       AND partition_proof.store_id = transaction_daily.store_id
+       AND partition_proof.date = transaction_daily.date
 ),
 point_in_time AS (
     SELECT
@@ -141,6 +232,7 @@ point_in_time AS (
         causal.rolling_mean_7,
         causal.rolling_mean_28,
         causal.prior_day_count_28,
+        causal.prior_complete_day_count_28,
         causal.prior_feature_maturity_time,
         lineage_window.source_snapshot_ids AS lineage_window_snapshot_ids
     FROM mature_daily AS target
@@ -154,6 +246,9 @@ point_in_time AS (
                 FILTER (WHERE prior.date >= target.date - 7) AS rolling_mean_7,
             avg(prior.daily_net_revenue) AS rolling_mean_28,
             count(*)::integer AS prior_day_count_28,
+            count(*) FILTER (
+                WHERE prior.lineage_complete AND prior.source_run_complete
+            )::integer AS prior_complete_day_count_28,
             max(prior.label_maturity_time) AS prior_feature_maturity_time
         FROM mature_daily AS prior
         WHERE prior.tenant_id = target.tenant_id
@@ -206,6 +301,7 @@ SELECT
         AND source_run_complete
         AND cardinality(lineage_window_snapshot_ids) > 0
         AND prior_day_count_28 = 28
+        AND prior_complete_day_count_28 = 28
         AND revenue_lag_1 IS NOT NULL
         AND revenue_lag_7 IS NOT NULL
         AND rolling_mean_7 IS NOT NULL
@@ -220,6 +316,8 @@ SELECT
         WHEN NOT lineage_complete THEN 'SOURCE_LINEAGE_INCOMPLETE'
         WHEN NOT source_run_complete THEN 'SOURCE_RUN_NOT_COMPLETE'
         WHEN cardinality(lineage_window_snapshot_ids) = 0 THEN 'SOURCE_LINEAGE_MISSING'
+        WHEN prior_complete_day_count_28 <> prior_day_count_28
+            THEN 'PRIOR_SOURCE_NOT_COMPLETE'
         WHEN prior_day_count_28 <> 28 THEN 'INSUFFICIENT_28_DAY_HISTORY'
         WHEN revenue_lag_1 IS NULL OR revenue_lag_7 IS NULL
             THEN 'DAILY_HISTORY_GAP'

@@ -18,6 +18,31 @@ def _view_body(sql: str, relation: str, next_marker: str) -> str:
     return sql[start:end]
 
 
+def test_forecast_sql_requires_eof_proven_partitions_for_target_and_prior_days() -> None:
+    sql = MODEL_READY_SQL_PATH.read_text(encoding="utf-8")
+    body = _view_body(
+        sql,
+        "model_ready.forecast_training_view",
+        "CREATE OR REPLACE VIEW model_ready.candidate_site_view",
+    )
+
+    assert "completion.source_kind = 'orders'" in body
+    assert "completion.reconciled" in body
+    assert "completion.partition_complete" in body
+    assert "completion.quarantined_count = 0" in body
+    assert "completion.processed_count = completion.valid_loaded" in body
+    assert "chunk.partition_key = completion.partition_key" in body
+    assert "proof.partition_start <= transaction_daily.date" in body
+    assert "proof.partition_end > transaction_daily.date" in body
+    assert "proof.finished_at >= transaction_daily.source_run_finished_at" in body
+    assert "partition_proof.finished_at,\n" in body
+    assert "AND prior_complete_day_count_28 = 28" in body
+    assert "'PRIOR_SOURCE_NOT_COMPLETE'" in body
+    # A per-chunk completion flag would reject legitimately resumed partitions.
+    assert "bool_and(ingestion.partition_complete" not in body
+    assert "'forecast-training-view-v2'::text AS view_version" in body
+
+
 def test_sitescore_sql_has_fixed_mature_horizon_and_strict_prior_features() -> None:
     sql = MODEL_READY_SQL_PATH.read_text(encoding="utf-8")
     body = _view_body(
