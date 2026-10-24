@@ -766,6 +766,8 @@ def _production_like_bundle(persistence_module: Any, engine: Any) -> Any:
     audit_module = importlib.import_module(
         "shared.infrastructure.persistence.audit_log"
     )
+    queue_module = importlib.import_module("shared.infrastructure.persistence.job_queue")
+    outbox_module = importlib.import_module("shared.infrastructure.persistence.outbox")
     # Offline composition only: construct the actual same-engine audit adapter
     # from declared schema metadata. No audit write or live readiness is proven.
     return replace(
@@ -773,6 +775,8 @@ def _production_like_bundle(persistence_module: Any, engine: Any) -> Any:
         mode="postgresql",
         engine=engine,
         audit_log=audit_module.DurableAuditLog(engine),
+        job_queue=queue_module.DurableJobQueue(engine),
+        outbox_repository=outbox_module.DurableOutboxRepository(engine),
         assisted_intake_store=intake_module.DurableAssistedIntakeStore(
             SimpleNamespace(engine=engine)
         ),

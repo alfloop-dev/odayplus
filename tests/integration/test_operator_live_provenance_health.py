@@ -11,7 +11,6 @@ Verifies the remediation of Deploy Dev run 30680943677 failure semantics from or
 
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -40,6 +39,8 @@ class MockPostgresEngine:
     Replaces direct mutation of SqliteEngine.is_production attributes while ensuring
     the persistence bundle cleanly identifies as PostgreSQL 16 production engine.
     """
+
+    dialect = "postgresql"
 
     def __init__(self, delegate_engine: Any) -> None:
         self._delegate = delegate_engine
@@ -86,14 +87,11 @@ def _live_connectivity_probe(**_kwargs: Any) -> Any:
 
 
 def _production_backed_bundle(path: Path) -> Any:
+    from tests.production_composition_binding import bind_offline_score_participants
+
     bundle = _durable_bundle(path)
     mock_engine = MockPostgresEngine(bundle.engine)
-    return replace(
-        bundle,
-        engine=mock_engine,
-        mode="postgresql",
-        assisted_intake_store=SimpleNamespace(),
-    )
+    return bind_offline_score_participants(bundle, engine=mock_engine)
 
 
 def test_operator_live_provenance_reports_live_data_mode_when_postgresql_ready(tmp_path: Path) -> None:

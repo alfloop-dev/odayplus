@@ -477,6 +477,20 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
   test("real HeatZone map stays nonblank and synchronized to selected zone and lens", async ({
     page,
   }) => {
+    test.info().annotations.push({
+      type: "scope",
+      description: "MapLibre rendering of the explicit HZ-01 operator fixture; synthetic scoring rows belong to a separate dataset.",
+    });
+    // The gate also seeds a different synthetic H3 scoring dataset. Mark that
+    // API response truthfully so it cannot replace this test's operator fixture.
+    await page.route("**/api/v1/heatzones**", async (route) => {
+      const response = await route.fetch();
+      if (response.ok()) {
+        await route.fulfill({ response, json: { ...await response.json(), source: "fixture" } });
+      } else {
+        await route.fulfill({ response });
+      }
+    });
     const workerResponses: { url: string; status: number }[] = [];
     const pageErrors: string[] = [];
 
