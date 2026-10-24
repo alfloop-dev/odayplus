@@ -98,18 +98,20 @@ class NativeParserTerminalHistory:
     def _parent_input(self, tenant, binding, before):
         """Full genuine parent proof, with no fabricated historical Intake."""
         original = binding["original_input"]
+        parent_job_id = native_intake_uuid(original["parent_job_id"])
         before()
-        job = self.graph._one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
-            (tenant, original["parent_job_id"]))
-        before()
-        physical = self.queue.get(job["job_id"])
+        physical = self.queue.get(parent_job_id)
+        if physical is None or physical.job_id != parent_job_id:
+            _reject()
         actual_tenant, generation = assisted_delivery_identity(physical)
         if actual_tenant != tenant:
             _reject()
         proven = self.parent.committed_result_with_command(physical, tenant, generation, before=before)
         if proven is None:
             _reject()
-        result, command = proven
+        result, command, job = proven
+        if job["job_id"] != parent_job_id or job["tenant_id"] != tenant:
+            _reject()
         payload = _object(job["payload"])
         snapshot = _object(result["native_snapshot_proof"]["snapshot_fields"])
         ids = tuple(sorted((row["field_path"], ident)

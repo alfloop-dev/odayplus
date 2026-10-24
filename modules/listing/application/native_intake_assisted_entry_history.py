@@ -57,18 +57,21 @@ class NativeAssistedEntryHistory:
         proven = self.committed_result_with_command(delivery, tenant, generation, before=before)
         return None if proven is None else proven[0]
 
-    def committed_result_with_command(self, delivery, tenant, generation, *, before):
+    def committed_result_with_command(self, delivery, tenant, generation, *, before, lock_job=False):
         """Authenticate success, including after later independent review.
 
         No current configuration, key, source permission or human role is
         consulted. This result never permits storage IO or an Intake write.
         The caller owns its bounded SERIALIZABLE tenant root. Return the
-        command already checked by this complete proof, without caching it
-        or requiring a second query for the same immutable proposal values.
+        command and actual business row checked by this complete proof. The
+        positive parser input retains its existing shared job lock here;
+        other history callers retain the original nonlocking read. Nothing
+        is cached across invocations or used as a current authority grant.
         """
         before()
-        job = self.engine.query_one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?",
-            (tenant, delivery.job_id))
+        statement = ("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=? FOR SHARE"
+            if lock_job is True else "SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?")
+        job = self.engine.query_one(statement, (tenant, delivery.job_id))
         if job is None or job["status"] != "SUCCEEDED":
             return None
         payload, result = _object(job["payload"]), _object(job["result"])
@@ -166,7 +169,7 @@ class NativeAssistedEntryHistory:
         before()
         if rows is not None:
             rows.finish()
-        return result, command
+        return result, command, job
 
     def _snapshot(self, job, payload, result, at, before):
         proof = _object(result["native_snapshot_proof"])

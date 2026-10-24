@@ -96,20 +96,21 @@ class NativeParserManualInputReader:
                 "AND actor_subject_id IS NOT NULL LIMIT 2", (tenant, intake_id, intake["version"]))
             if len(rows) != 1:
                 _reject()
+            parent_job_id = native_intake_uuid(rows[0]["job_id"])
             before()
-            job = self.graph._one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=? FOR SHARE",
-                (tenant, rows[0]["job_id"]))
-            before()
-            delivery = self.queue.get(job["job_id"])
-            if delivery is None:
+            delivery = self.queue.get(parent_job_id)
+            if delivery is None or delivery.job_id != parent_job_id:
                 _reject()
             actual_tenant, generation = assisted_delivery_identity(delivery)
             if actual_tenant != tenant:
                 _reject()
-            proven = self.history.committed_result_with_command(delivery, tenant, generation, before=before)
+            proven = self.history.committed_result_with_command(
+                delivery, tenant, generation, before=before, lock_job=True)
             if proven is None:
                 _reject()
-            result, command = proven
+            result, command, job = proven
+            if job["job_id"] != parent_job_id or job["tenant_id"] != tenant:
+                _reject()
             payload = _object(job["payload"])
             if (result["intake_id"] != intake_id or result["version"] != intake["version"]
                     or result["source_snapshot_id"] != rows[0]["source_snapshot_id"]

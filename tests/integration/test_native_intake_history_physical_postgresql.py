@@ -86,7 +86,8 @@ def test_complete_legacy_and_native_history_match_with_two_fewer_physical_reads(
     job, delivery = _manual(case)
     original = _persisted(case)
     results, traces = [], []
-    for budget_type in (NativeIntakeCommandBudget, NativeParserCommandBudget):
+    for budget_type, lock_job in ((NativeIntakeCommandBudget, False),
+            (NativeParserCommandBudget, False), (NativeParserCommandBudget, True)):
         with owner.graph.transaction(ids["tenant"]):
             budget = budget_type(owner.clock)
             bounds = budget.deadline, budget._monotonic_deadline
@@ -94,17 +95,33 @@ def test_complete_legacy_and_native_history_match_with_two_fewer_physical_reads(
             with monkeypatch.context() as patch:
                 calls = _observe(case, patch)
                 results.append(NativeAssistedEntryHistory(owner.graph).committed_result_with_command(
-                    delivery, ids["tenant"], 1, before=budget))
+                    delivery, ids["tenant"], 1, before=budget, lock_job=lock_job))
             assert owner.engine._local.root_transaction is root
             assert (budget.deadline, budget._monotonic_deadline) == bounds
             traces.append(calls)
-    assert results[0] is not None and results[0] == results[1]
+    assert results[0] is not None and results[0] == results[1] == results[2]
+    assert results[0][2] == job
+    job_sql = "SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?"
+    job_params = ids["tenant"], job["job_id"]
+    for calls in traces[:2]:
+        assert [(s, p) for s, p in calls if s in {job_sql, job_sql + " FOR SHARE"}
+            and p == job_params] == [(job_sql, job_params)]
+    assert [(s, p) for s, p in traces[2] if s in {job_sql, job_sql + " FOR SHARE"}
+        and p == job_params] == [(job_sql + " FOR SHARE", job_params)]
     # Independent actual queue SQL and exact genuine manual job parameters.
     get_sql = "SELECT * FROM durable_jobs WHERE job_id = ?"
     assert sum(s == get_sql and p == (job["job_id"],) for s, p in traces[0]) == 2
     assert not any(s == get_sql and p == (job["job_id"],) for s, p in traces[1])
     assert not any(s == _SETTINGS_PHYSICAL_SQL for s, _ in traces[0])
     assert [p for s, p in traces[1] if s == _SETTINGS_PHYSICAL_SQL] == [(job["job_id"], ids["tenant"])]
+    # A reference to a missing business row never becomes a successful proof,
+    # including after a genuine result and when the parser requests its lock.
+    missing = replace(delivery, job_id=str(uuid4()))
+    for lock_job in (False, True):
+        with owner.graph.transaction(ids["tenant"]):
+            assert NativeAssistedEntryHistory(owner.graph).committed_result_with_command(
+                missing, ids["tenant"], 1, before=NativeParserCommandBudget(owner.clock),
+                lock_job=lock_job) is None
     assert _persisted(case) == original
 
 
