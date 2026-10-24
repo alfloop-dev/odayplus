@@ -1486,18 +1486,417 @@ def test_sources_off_probe_persists_and_validates_the_runtime_receipt() -> None:
     )
 
 
-def test_production_bluegreen_verification_gated_on_production_environment() -> None:
-    """Production blue-green verification runs in deploy job when environment is production."""
-    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
-    deploy_steps = parsed["jobs"]["deploy"]["steps"]
-    prod_steps = [
-        step
-        for step in deploy_steps
-        if isinstance(step, dict) and "bluegreen_release.py" in str(step.get("run", ""))
-    ]
-    assert len(prod_steps) == 1
-    step = prod_steps[0]
-    assert step.get("if") == "${{ inputs.environment == 'production' }}"
+# --------------------------------------------------------------------------
+# ODP-PROD-DEPLOY-SAFETY-001: production pre-switch state, pre-migration
+# backup, and a staging closeout that defers instead of failing the release.
+#
+# The step scripts are executed against a fake `gcloud` on PATH, so the tests
+# exercise the shell the hosted runner would run, not a restatement of it.
+# --------------------------------------------------------------------------
+
+PROD_RELEASE_SHA = "a" * 40
+PROD_STATE_STEP = "Capture pre-switch production blue-green state"
+PROD_STATE_UPLOAD = "Publish pre-switch production blue-green state"
+PROD_BACKUP_STEP = "Take pre-migration production Cloud SQL backup"
+PROD_BACKUP_UPLOAD = "Publish production pre-migration Cloud SQL backup record"
+DEPLOY_SCRIPT_STEP = "Deploy Cloud Run by immutable digest"
+WATCH_STEP = "Read and verify production watch receipt with staging identity"
+CLOSEOUT_CLEANUP_STEP = "Cleanup staging after verified production watch closeout"
+
+FAKE_GCLOUD = r"""#!/usr/bin/env bash
+# Records every call; behaviour comes from FAKE_* variables set by the test.
+printf '%s\n' "$*" >> "${FAKE_GCLOUD_LOG}"
+case "$1 $2 $3" in
+  "run services list")
+    for arg in "$@"; do
+      case "${arg}" in
+        --filter=metadata.name=*)
+          name="${arg#--filter=metadata.name=}"
+          [ -n "${FAKE_LIST_FAIL:-}" ] && { echo "permission denied" >&2; exit 1; }
+          case " ${FAKE_PRESENT_SERVICES:-} " in *" ${name} "*) echo "${name}" ;; esac
+          ;;
+      esac
+    done
+    exit 0 ;;
+  "run services describe")
+    cat "${FAKE_DESCRIBE_DIR}/$4.json"; exit 0 ;;
+  "sql backups create")
+    [ -n "${FAKE_BACKUP_CREATE_FAIL:-}" ] && { echo "operation failed" >&2; exit 1; }
+    for arg in "$@"; do
+      case "${arg}" in --description=*) printf '%s' "${arg#--description=}" > "${FAKE_DESCRIPTION_FILE}" ;; esac
+    done
+    exit 0 ;;
+  "sql backups list")
+    python3 - <<'PY'
+import json, os
+description = open(os.environ["FAKE_DESCRIPTION_FILE"]).read() if os.path.exists(os.environ["FAKE_DESCRIPTION_FILE"]) else ""
+rows = [{"id": "1700000000000", "status": "SUCCESSFUL", "type": "AUTOMATED", "description": ""}]
+if description:
+    rows.append({
+        "id": "1729760000000",
+        "status": os.environ.get("FAKE_BACKUP_STATUS", "SUCCESSFUL"),
+        "type": "ON_DEMAND",
+        "description": description,
+        "windowStartTime": "2026-10-24T00:00:00Z",
+        "endTime": "2026-10-24T00:01:00Z",
+    })
+print(json.dumps(rows))
+PY
+    exit 0 ;;
+  "storage objects describe")
+    case "${FAKE_WATCH_RECEIPT:-absent}" in
+      absent) echo "ERROR: (gcloud.storage.objects.describe) gs://watch/receipt.json not found: 404." >&2; exit 1 ;;
+      forbidden) echo "ERROR: HTTPError 403: caller does not have storage.objects.get access" >&2; exit 1 ;;
+      *) echo "receipt.json"; exit 0 ;;
+    esac ;;
+esac
+if [ "$1 $2" = "storage cp" ]; then
+  cp "${FAKE_WATCH_RECEIPT}" "$4"; exit 0
+fi
+echo "unexpected gcloud call: $*" >&2
+exit 2
+"""
+
+FAKE_UV = """#!/usr/bin/env bash
+# `uv run --frozen python ...` -> the test interpreter, from the repository root.
+[ "$1" = run ] && shift
+[ "$1" = --frozen ] && shift
+[ "$1" = python ] && shift
+exec "${FAKE_PYTHON}" "$@"
+"""
+
+
+def _deploy_job() -> dict:
+    return _release_jobs()["deploy"]
+
+
+def _step_index(job: dict, name: str) -> int:
+    return next(index for index, step in enumerate(_job_steps(job)) if step.get("name") == name)
+
+
+@pytest.fixture
+def fake_cloud(tmp_path: Path) -> dict[str, object]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "gcloud").write_text(FAKE_GCLOUD, encoding="utf-8")
+    (bin_dir / "gcloud").chmod(0o755)
+    (bin_dir / "uv").write_text(FAKE_UV, encoding="utf-8")
+    (bin_dir / "uv").chmod(0o755)
+    runner_temp = tmp_path / "runner-temp"
+    runner_temp.mkdir()
+    receipts = tmp_path / "receipts"
+    describe_dir = tmp_path / "describe"
+    describe_dir.mkdir()
+    env = {
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "HOME": str(tmp_path),
+        "PYTHONPATH": str(ROOT),
+        "FAKE_PYTHON": sys.executable,
+        "FAKE_GCLOUD_LOG": str(tmp_path / "gcloud.log"),
+        "FAKE_DESCRIBE_DIR": str(describe_dir),
+        "FAKE_DESCRIPTION_FILE": str(tmp_path / "backup-description"),
+        "RUNNER_TEMP": str(runner_temp),
+        "RELEASE_RECEIPT_DIR": str(receipts),
+        "GITHUB_OUTPUT": str(tmp_path / "github-output"),
+        "GITHUB_STEP_SUMMARY": str(tmp_path / "step-summary"),
+        "GITHUB_RUN_ID": "4242",
+        "GITHUB_RUN_ATTEMPT": "1",
+        "ODAY_RELEASE_SHA": PROD_RELEASE_SHA,
+        "MANIFEST_DIGEST": "sha256:" + "b" * 64,
+        "GCP_PROJECT": "oday-prod",
+        "GCP_REGION": "asia-east1",
+        "GCP_CLOUD_SQL_INSTANCE": "oday-prod:asia-east1:oday-prod-sql",
+        "API_SERVICE": "odp-api",
+        "WEB_SERVICE": "odp-web",
+    }
+    return {"env": env, "tmp": tmp_path, "receipts": receipts, "describe_dir": describe_dir}
+
+
+def _run_step(job: dict, name: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", "-c", str(_named_step(job, name)["run"])],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _outputs(fake: dict[str, object]) -> dict[str, str]:
+    path = Path(fake["env"]["GITHUB_OUTPUT"])  # type: ignore[index]
+    if not path.exists():
+        return {}
+    return dict(line.split("=", 1) for line in path.read_text(encoding="utf-8").splitlines() if "=" in line)
+
+
+def _gcloud_calls(fake: dict[str, object]) -> list[str]:
+    log = Path(fake["env"]["FAKE_GCLOUD_LOG"])  # type: ignore[index]
+    return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+
+
+def _describe(fake: dict[str, object], service: str, traffic: list[dict[str, object]]) -> None:
+    description = {
+        "metadata": {"name": service},
+        "spec": {"template": {"spec": {"containers": [{"env": [{"name": "ODP_TENANT_ID", "value": "tenant-secret-value"}]}]}}},
+        "status": {"url": f"https://{service}.run.app", "traffic": traffic},
+    }
+    (fake["describe_dir"] / f"{service}.json").write_text(json.dumps(description), encoding="utf-8")  # type: ignore[operator]
+
+
+def test_production_pre_switch_state_is_captured_and_published_before_the_cutover() -> None:
+    job = _deploy_job()
+    steps = _job_steps(job)
+    capture = _named_step(job, PROD_STATE_STEP)
+    upload = _named_step(job, PROD_STATE_UPLOAD)
+    deploy_index = _step_index(job, DEPLOY_SCRIPT_STEP)
+
+    assert capture.get("if") == "${{ inputs.environment == 'production' }}"
+    assert upload.get("if") == "${{ inputs.environment == 'production' }}"
+    assert _step_index(job, PROD_STATE_STEP) < _step_index(job, PROD_STATE_UPLOAD) < deploy_index
+    # Nothing re-captures "blue" after the switch: that recorded green.
+    after_deploy = [step for step in steps[deploy_index + 1 :] if "bluegreen_release.py" in str(step.get("run", ""))]
+    assert after_deploy == []
+    assert sum("bluegreen_release.py" in str(step.get("run", "")) for step in steps) == 1
+    # A capture failure must stop the deploy: no continue-on-error, no always().
+    assert "continue-on-error" not in capture
+    assert "always()" not in str(capture.get("if"))
+
+    run = str(capture["run"])
+    assert '--output-dir "${state_dir}"' in run
+    assert 'state_dir="${RELEASE_RECEIPT_DIR}/production-bluegreen-state"' in run
+    assert "RUNNER_TEMP" not in run
+    # Top-level options precede the subcommand, or argparse refuses the call.
+    assert run.index('--project "${GCP_PROJECT}"') < run.index("capture-state")
+
+    assert upload["uses"] == "actions/upload-artifact@v4"
+    assert upload["with"]["name"] == (
+        "production-bluegreen-prerelease-state-${{ inputs.release_sha }}-${{ github.run_attempt }}"
+    )
+    assert upload["with"]["path"] == ".odp_data/release/production-bluegreen-state/"
+    assert upload["with"]["if-no-files-found"] == "error"
+    assert upload["with"]["retention-days"] == 90
+
+
+def test_pre_switch_capture_step_writes_a_redacted_relocatable_rollback_input(
+    fake_cloud: dict[str, object],
+) -> None:
+    env = dict(fake_cloud["env"])  # type: ignore[arg-type]
+    env["FAKE_PRESENT_SERVICES"] = "odp-api odp-web"
+    _describe(fake_cloud, "odp-api", [{"revisionName": "odp-api-00007", "percent": 100}])
+    _describe(fake_cloud, "odp-web", [{"revisionName": "odp-web-00007", "percent": 100}])
+
+    result = _run_step(_deploy_job(), PROD_STATE_STEP, env)
+
+    assert result.returncode == 0, result.stderr
+    state_dir = fake_cloud["receipts"] / "production-bluegreen-state"  # type: ignore[operator]
+    state = json.loads((state_dir / "release-state.json").read_text(encoding="utf-8"))
+    assert state["release_id"] == "odp-" + PROD_RELEASE_SHA[:12]
+    assert state["api_traffic_snapshot_path"] == "api-traffic.json"
+    for name in ("api-traffic.json", "web-traffic.json", "release-state.json"):
+        assert "tenant-secret-value" not in (state_dir / name).read_text(encoding="utf-8")
+    assert _outputs(fake_cloud)["previous_release_present"] == "true"
+    # Read-only: the capture never mutates production.
+    assert all(" list " in f" {call} " or " describe " in f" {call} " for call in _gcloud_calls(fake_cloud))
+
+
+def test_pre_switch_capture_step_admits_a_first_release_with_no_blue(
+    fake_cloud: dict[str, object],
+) -> None:
+    env = dict(fake_cloud["env"])  # type: ignore[arg-type]
+    env["FAKE_PRESENT_SERVICES"] = ""
+
+    result = _run_step(_deploy_job(), PROD_STATE_STEP, env)
+
+    assert result.returncode == 0, result.stderr
+    state_dir = fake_cloud["receipts"] / "production-bluegreen-state"  # type: ignore[operator]
+    api = json.loads((state_dir / "api-traffic.json").read_text(encoding="utf-8"))
+    assert api["exists"] is False
+    assert _outputs(fake_cloud)["previous_release_present"] == "false"
+
+
+@pytest.mark.parametrize(
+    ("present", "api_traffic", "list_fail"),
+    [
+        pytest.param("odp-api", [{"revisionName": "odp-api-1", "percent": 100}], "", id="half-present-target"),
+        pytest.param(
+            "odp-api odp-web",
+            [{"revisionName": "odp-api-1", "percent": 60}],
+            "",
+            id="unrestorable-traffic-split",
+        ),
+        pytest.param("odp-api odp-web", [{"revisionName": "odp-api-1", "percent": 100}], "1", id="lookup-error"),
+    ],
+)
+def test_pre_switch_capture_step_fails_closed(
+    fake_cloud: dict[str, object], present: str, api_traffic: list[dict[str, object]], list_fail: str
+) -> None:
+    env = dict(fake_cloud["env"])  # type: ignore[arg-type]
+    env["FAKE_PRESENT_SERVICES"] = present
+    env["FAKE_LIST_FAIL"] = list_fail
+    _describe(fake_cloud, "odp-api", api_traffic)
+    _describe(fake_cloud, "odp-web", [{"revisionName": "odp-web-1", "percent": 100}])
+
+    result = _run_step(_deploy_job(), PROD_STATE_STEP, env)
+
+    assert result.returncode != 0
+    assert "previous_release_present" not in _outputs(fake_cloud)
+
+
+def test_production_backup_precedes_migrations_and_is_published() -> None:
+    job = _deploy_job()
+    backup = _named_step(job, PROD_BACKUP_STEP)
+    upload = _named_step(job, PROD_BACKUP_UPLOAD)
+
+    assert backup.get("id") == "prod-sql-backup"
+    assert backup.get("if") == "${{ inputs.environment == 'production' }}"
+    assert "continue-on-error" not in backup
+    # The deploy script runs the migration job; the backup must exist first.
+    assert _step_index(job, PROD_STATE_UPLOAD) < _step_index(job, PROD_BACKUP_STEP)
+    assert _step_index(job, PROD_BACKUP_STEP) < _step_index(job, DEPLOY_SCRIPT_STEP)
+    run = str(backup["run"])
+    assert "gcloud sql backups create" in run
+    assert '--instance="${sql_instance}"' in run
+    assert "gcloud sql backups list" in run
+    assert '"SUCCESSFUL"' in run
+
+    assert upload["with"]["name"] == (
+        "production-predeploy-cloud-sql-backup-${{ inputs.release_sha }}-${{ github.run_attempt }}"
+    )
+    assert upload["with"]["path"] == ".odp_data/release/production-predeploy-cloud-sql-backup.json"
+    assert upload["with"]["if-no-files-found"] == "error"
+    assert "steps.prod-sql-backup.outcome == 'success'" in upload["if"]
+    assert job["outputs"]["production_backup_id"] == "${{ steps.prod-sql-backup.outputs.backup_id }}"
+
+
+def test_backup_is_production_only_and_dev_auto_deploy_is_unchanged() -> None:
+    job = _deploy_job()
+    for name in (PROD_STATE_STEP, PROD_STATE_UPLOAD, PROD_BACKUP_STEP, PROD_BACKUP_UPLOAD):
+        assert "inputs.environment == 'production'" in str(_named_step(job, name).get("if"))
+    backups = [step for step in _job_steps(job) if "gcloud sql backups create" in str(step.get("run", ""))]
+    assert len(backups) == 1
+
+
+def test_backup_step_records_the_confirmed_backup_id(fake_cloud: dict[str, object]) -> None:
+    env = dict(fake_cloud["env"])  # type: ignore[arg-type]
+
+    result = _run_step(_deploy_job(), PROD_BACKUP_STEP, env)
+
+    assert result.returncode == 0, result.stderr
+    assert _outputs(fake_cloud)["backup_id"] == "1729760000000"
+    receipt = json.loads(
+        (fake_cloud["receipts"] / "production-predeploy-cloud-sql-backup.json").read_text(encoding="utf-8")  # type: ignore[operator]
+    )
+    assert receipt["backup_id"] == "1729760000000"
+    assert receipt["status"] == "SUCCESSFUL"
+    assert receipt["type"] == "ON_DEMAND"
+    assert receipt["release_sha"] == PROD_RELEASE_SHA
+    assert receipt["instance"] == "oday-prod-sql"
+    assert receipt["description"] == f"odp-predeploy-{PROD_RELEASE_SHA[:12]}-run-4242-1"
+    create = next(call for call in _gcloud_calls(fake_cloud) if call.startswith("sql backups create"))
+    assert "--instance=oday-prod-sql" in create
+    assert "--project=oday-prod" in create
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        pytest.param({"FAKE_BACKUP_CREATE_FAIL": "1"}, id="create-fails"),
+        pytest.param({"FAKE_BACKUP_STATUS": "FAILED"}, id="backup-not-successful"),
+        pytest.param({"FAKE_BACKUP_STATUS": "RUNNING"}, id="backup-not-finished"),
+        pytest.param({"GCP_CLOUD_SQL_INSTANCE": "other-project:asia-east1:oday-prod-sql"}, id="foreign-instance"),
+        pytest.param({"GCP_CLOUD_SQL_INSTANCE": "oday-prod-sql"}, id="bare-instance-name"),
+        pytest.param({"GCP_CLOUD_SQL_INSTANCE": ""}, id="unbound-instance"),
+    ],
+)
+def test_backup_step_fails_closed_without_a_confirmed_backup(
+    fake_cloud: dict[str, object], override: dict[str, str]
+) -> None:
+    env = dict(fake_cloud["env"])  # type: ignore[arg-type]
+    env.update(override)
+
+    result = _run_step(_deploy_job(), PROD_BACKUP_STEP, env)
+
+    assert result.returncode != 0
+    assert "backup_id" not in _outputs(fake_cloud)
+    assert not (fake_cloud["receipts"] / "production-predeploy-cloud-sql-backup.json").exists()  # type: ignore[operator]
+    if "GCP_CLOUD_SQL_INSTANCE" in override:
+        assert _gcloud_calls(fake_cloud) == []
+
+
+def test_staging_closeout_defers_cleanup_until_a_watch_receipt_exists() -> None:
+    closeout = _release_jobs()["staging_closeout"]
+    watch = _named_step(closeout, WATCH_STEP)
+    cleanup = _named_step(closeout, CLOSEOUT_CLEANUP_STEP)
+
+    assert watch.get("id") == "watch-receipt"
+    assert "continue-on-error" not in watch
+    assert cleanup.get("if") == "${{ steps.watch-receipt.outputs.verified == 'true' }}"
+    assert closeout["outputs"]["watch_verified"] == "${{ steps.watch-receipt.outputs.verified }}"
+    # The staging-digest == production-digest binding runs on every attempt,
+    # including one that defers, and before anything is deleted.
+    bundle_index = _step_index(closeout, "Read staging recovery bundle with staging identity")
+    assert bundle_index < _step_index(closeout, WATCH_STEP) < _step_index(closeout, CLOSEOUT_CLEANUP_STEP)
+    bundle = _named_step(closeout, "Read staging recovery bundle with staging identity")
+    assert 'tf["manifest_digest"] == os.environ["MANIFEST_DIGEST"]' in str(bundle["run"])
+    assert "if" not in bundle
+    upload = _named_step(closeout, "Upload staging closeout receipts")
+    assert upload["with"]["name"].endswith("-${{ github.run_attempt }}")
+
+
+def test_staging_closeout_absent_watch_receipt_defers_without_deleting(
+    fake_cloud: dict[str, object],
+) -> None:
+    env = dict(fake_cloud["env"])  # type: ignore[arg-type]
+    env.update(
+        ODP_PRODUCTION_WATCH_CLOSEOUT_URI="gs://watch/receipt.json",
+        STAGING_WATCH_RECEIPT=str(fake_cloud["tmp"] / "watch.json"),  # type: ignore[operator]
+        STAGING_RELEASE_ID="odp-" + PROD_RELEASE_SHA[:12],
+        FAKE_WATCH_RECEIPT="absent",
+    )
+
+    result = _run_step(_release_jobs()["staging_closeout"], WATCH_STEP, env)
+
+    assert result.returncode == 0, result.stderr
+    assert _outputs(fake_cloud)["verified"] == "false"
+    assert "Staging closeout deferred" in result.stdout
+    assert not any(call.startswith("storage cp") for call in _gcloud_calls(fake_cloud))
+
+
+def test_staging_closeout_storage_errors_still_fail_closed(fake_cloud: dict[str, object]) -> None:
+    env = dict(fake_cloud["env"])  # type: ignore[arg-type]
+    env.update(
+        ODP_PRODUCTION_WATCH_CLOSEOUT_URI="gs://watch/receipt.json",
+        STAGING_WATCH_RECEIPT=str(fake_cloud["tmp"] / "watch.json"),  # type: ignore[operator]
+        STAGING_RELEASE_ID="odp-" + PROD_RELEASE_SHA[:12],
+        FAKE_WATCH_RECEIPT="forbidden",
+    )
+
+    result = _run_step(_release_jobs()["staging_closeout"], WATCH_STEP, env)
+
+    assert result.returncode != 0
+    assert "verified" not in _outputs(fake_cloud)
+
+
+def test_staging_closeout_present_but_invalid_watch_receipt_fails(fake_cloud: dict[str, object]) -> None:
+    receipt = fake_cloud["tmp"] / "stored-receipt.json"  # type: ignore[operator]
+    receipt.write_text(
+        json.dumps({"release_sha": "c" * 40, "status": "WATCH_PASSED", "status_code": 1}),
+        encoding="utf-8",
+    )
+    env = dict(fake_cloud["env"])  # type: ignore[arg-type]
+    env.update(
+        ODP_PRODUCTION_WATCH_CLOSEOUT_URI="gs://watch/receipt.json",
+        STAGING_WATCH_RECEIPT=str(fake_cloud["tmp"] / "watch.json"),  # type: ignore[operator]
+        STAGING_RELEASE_ID="odp-" + PROD_RELEASE_SHA[:12],
+        FAKE_WATCH_RECEIPT=str(receipt),
+    )
+
+    result = _run_step(_release_jobs()["staging_closeout"], WATCH_STEP, env)
+
+    assert result.returncode != 0
+    assert "Release SHA mismatch" in result.stderr
+    assert "verified" not in _outputs(fake_cloud)
 
 
 # --------------------------------------------------------------------------

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -28,6 +29,8 @@ from product_ops.deployment.bluegreen_release import (
     resume_schedulers,
     switch_job_digests,
 )
+
+TRAFFIC_HELPER = Path(__file__).resolve().parents[2] / "product_ops/deployment/cloud_run_traffic.py"
 
 # ---------------------------------------------------------------------------
 # Data model and serialization tests
@@ -220,6 +223,10 @@ def test_resolve_tagged_target(mock_gcloud: MagicMock) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _listed(name: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess([], 0, stdout=f"{name}\n", stderr="")
+
+
 @patch("product_ops.deployment.bluegreen_release._run_gcloud")
 def test_capture_traffic_snapshot(mock_gcloud: MagicMock, tmp_path: Path) -> None:
     svc = ServiceTarget(service="odp-api", project="p", region="r")
@@ -231,26 +238,147 @@ def test_capture_traffic_snapshot(mock_gcloud: MagicMock, tmp_path: Path) -> Non
     assert res_dry.dry_run is True
     assert not out_file.exists()
 
-    # Gcloud failure
-    mock_gcloud.return_value = subprocess.CompletedProcess([], 1, stdout="", stderr="error")
+    # Listing failure is not mistaken for an absent service
+    mock_gcloud.side_effect = [subprocess.CompletedProcess([], 1, stdout="", stderr="error")]
+    res_list_fail = capture_traffic_snapshot(svc, out_file)
+    assert res_list_fail.success is False
+    assert "Failed to list" in res_list_fail.message
+    assert not out_file.exists()
+
+    # Ambiguous lookup
+    mock_gcloud.side_effect = [_listed("odp-api\nodp-api-2")]
+    res_ambiguous = capture_traffic_snapshot(svc, out_file)
+    assert res_ambiguous.success is False
+    assert "ambiguous" in res_ambiguous.message
+
+    # Gcloud describe failure
+    mock_gcloud.side_effect = [
+        _listed("odp-api"),
+        subprocess.CompletedProcess([], 1, stdout="", stderr="error"),
+    ]
     res_fail = capture_traffic_snapshot(svc, out_file)
     assert res_fail.success is False
     assert "Failed to describe" in res_fail.message
 
     # Invalid JSON
-    mock_gcloud.return_value = subprocess.CompletedProcess([], 0, stdout="invalid", stderr="")
+    mock_gcloud.side_effect = [
+        _listed("odp-api"),
+        subprocess.CompletedProcess([], 0, stdout="invalid", stderr=""),
+    ]
     res_bad = capture_traffic_snapshot(svc, out_file)
     assert res_bad.success is False
     assert "Invalid JSON" in res_bad.message
 
-    # Success
-    mock_gcloud.return_value = subprocess.CompletedProcess(
-        [], 0, stdout='{"status": {"traffic": []}}', stderr=""
-    )
+    # No traffic block
+    mock_gcloud.side_effect = [
+        _listed("odp-api"),
+        subprocess.CompletedProcess([], 0, stdout='{"status": {}}', stderr=""),
+    ]
+    res_no_traffic = capture_traffic_snapshot(svc, out_file)
+    assert res_no_traffic.success is False
+    assert "status.traffic" in res_no_traffic.message
+    assert not out_file.exists()
+
+    # Success keeps only what rollback needs, never the env block or secrets
+    description = {
+        "metadata": {"name": "odp-api"},
+        "spec": {
+            "template": {
+                "spec": {
+                    "containers": [
+                        {
+                            "env": [
+                                {"name": "ODP_TENANT_ID", "value": "tenant-prod"},
+                                {
+                                    "name": "DB",
+                                    "valueFrom": {"secretKeyRef": {"name": "db-url", "key": "latest"}},
+                                },
+                            ]
+                        }
+                    ]
+                }
+            }
+        },
+        "status": {
+            "url": "https://odp-api.run.app",
+            "traffic": [{"revisionName": "odp-api-00001", "percent": 100}],
+        },
+    }
+    mock_gcloud.side_effect = [
+        _listed("odp-api"),
+        subprocess.CompletedProcess([], 0, stdout=json.dumps(description), stderr=""),
+    ]
     res_ok = capture_traffic_snapshot(svc, out_file)
     assert res_ok.success is True
-    assert out_file.exists()
-    assert json.loads(out_file.read_text(encoding="utf-8")) == {"status": {"traffic": []}}
+    assert res_ok.details["exists"] is True
+    written = json.loads(out_file.read_text(encoding="utf-8"))
+    assert written == {
+        "schema_version": 1,
+        "kind": "cloud-run-service-traffic-snapshot",
+        "exists": True,
+        "service": "odp-api",
+        "status": {
+            "url": "https://odp-api.run.app",
+            "traffic": [{"revisionName": "odp-api-00001", "percent": 100}],
+        },
+    }
+    assert "tenant-prod" not in out_file.read_text(encoding="utf-8")
+    assert "db-url" not in out_file.read_text(encoding="utf-8")
+    traffic = subprocess.run(
+        [sys.executable, str(TRAFFIC_HELPER), "restore-arg", f"--description={out_file}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert traffic.stdout.strip() == "odp-api-00001=100"
+
+
+@patch("product_ops.deployment.bluegreen_release._run_gcloud")
+def test_capture_traffic_snapshot_records_a_first_release_as_absent(
+    mock_gcloud: MagicMock, tmp_path: Path
+) -> None:
+    """Production's first release has no blue; capture must say so, not fail."""
+
+    svc = ServiceTarget(service="odp-web", project="p", region="r")
+    out_file = tmp_path / "web.json"
+    mock_gcloud.side_effect = [subprocess.CompletedProcess([], 0, stdout="", stderr="")]
+
+    res = capture_traffic_snapshot(svc, out_file)
+
+    assert res.success is True
+    assert res.details["exists"] is False
+    assert mock_gcloud.call_count == 1
+    assert json.loads(out_file.read_text(encoding="utf-8")) == {
+        "schema_version": 1,
+        "kind": "cloud-run-service-traffic-snapshot",
+        "exists": False,
+        "service": "odp-web",
+    }
+    exists = subprocess.run(
+        [sys.executable, str(TRAFFIC_HELPER), "exists", f"--description={out_file}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert exists.stdout.strip() == "false"
+
+
+@patch("product_ops.deployment.bluegreen_release._run_gcloud")
+def test_restore_refuses_an_absent_snapshot_instead_of_claiming_a_rollback(
+    mock_gcloud: MagicMock, tmp_path: Path
+) -> None:
+    svc = ServiceTarget(service="odp-api", project="p", region="r")
+    snapshot = tmp_path / "api.json"
+    snapshot.write_text(
+        json.dumps({"exists": False, "service": "odp-api", "schema_version": 1}),
+        encoding="utf-8",
+    )
+
+    res = restore_traffic_from_snapshot(svc, snapshot)
+
+    assert res.success is False
+    assert "initial release" in res.message
+    mock_gcloud.assert_not_called()
 
 
 @patch("product_ops.deployment.bluegreen_release._run_gcloud")
@@ -706,6 +834,12 @@ def test_cli_capture_state(
     assert code == 0
     state_file = tmp_path / "release-state.json"
     assert state_file.exists()
+    # Paths are relative to the state file so the uploaded artifact directory
+    # is a complete rollback input wherever it is downloaded.
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    assert state["api_traffic_snapshot_path"] == "api-traffic.json"
+    assert state["web_traffic_snapshot_path"] == "web-traffic.json"
+    assert state["data_platform_pointer_snapshot_path"] == "data-platform-pointer.json"
 
 
 @patch("product_ops.deployment.bluegreen_release.capture_traffic_snapshot")
@@ -895,3 +1029,71 @@ def test_cli_restore_pointer(mock_rest: MagicMock, tmp_path: Path) -> None:
         ]
     )
     assert code == 0
+
+
+@patch("product_ops.deployment.bluegreen_release.execute_rollback")
+def test_cli_rollback_resolves_snapshots_next_to_the_downloaded_state_file(
+    mock_rb: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The release artifact is downloaded somewhere else than the runner wrote it."""
+
+    downloaded = tmp_path / "production-bluegreen-prerelease-state"
+    downloaded.mkdir()
+    state_file = downloaded / "release-state.json"
+    state_file.write_text(
+        ReleaseState(
+            release_id="odp-abcdefabcdef",
+            api_traffic_snapshot_path="api-traffic.json",
+            web_traffic_snapshot_path="web-traffic.json",
+            data_platform_pointer_snapshot_path="data-platform-pointer.json",
+        ).to_json(),
+        encoding="utf-8",
+    )
+    elsewhere = tmp_path / "operator-cwd"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    mock_rb.return_value = [OperationResult(success=True, operation="rb", message="ok")]
+
+    code = main(
+        [
+            "--dry-run",
+            "--project=my-p",
+            "--region=asia-east1",
+            "rollback",
+            "--api-service=api",
+            "--web-service=web",
+            "--state-file",
+            str(state_file),
+        ]
+    )
+
+    assert code == 0
+    kwargs = mock_rb.call_args.kwargs
+    assert kwargs["api_snapshot_path"] == downloaded.resolve() / "api-traffic.json"
+    assert kwargs["web_snapshot_path"] == downloaded.resolve() / "web-traffic.json"
+    assert kwargs["data_platform_pointer_path"] == downloaded.resolve() / "data-platform-pointer.json"
+    # The recorded state stays relative after a rollback rewrites it.
+    assert json.loads(state_file.read_text(encoding="utf-8"))["api_traffic_snapshot_path"] == "api-traffic.json"
+
+
+@patch("product_ops.deployment.bluegreen_release.execute_rollback")
+def test_cli_rollback_refuses_a_state_without_traffic_snapshots(
+    mock_rb: MagicMock, tmp_path: Path
+) -> None:
+    state_file = tmp_path / "release-state.json"
+    state_file.write_text(ReleaseState(release_id="rel-1").to_json(), encoding="utf-8")
+
+    code = main(
+        [
+            "--project=my-p",
+            "--region=asia-east1",
+            "rollback",
+            "--api-service=api",
+            "--web-service=web",
+            "--state-file",
+            str(state_file),
+        ]
+    )
+
+    assert code == 1
+    mock_rb.assert_not_called()
