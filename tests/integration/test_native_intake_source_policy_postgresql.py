@@ -632,24 +632,46 @@ def test_two_real_connections_reserve_one_occurrence_job(source_policy_case, rec
     import threading
     from concurrent.futures import ThreadPoolExecutor
 
+    from modules.listing.application.intake_audit import CanonicalIntakeAuditSink
+    from shared.audit.canonical_delivery import CanonicalAuditDelivery
+    from shared.audit.canonical_postgresql import CanonicalPostgresAuditLog
+    from shared.infrastructure.persistence.identity_graph_sql import (
+        CanonicalIdentityGraphRepository,
+    )
+    from shared.infrastructure.persistence.job_queue import DurableJobQueue
+    from shared.infrastructure.persistence.postgresql import PostgresEngine
+
     identity, owner = source_policy_case
-    graph, ids, _, _ = identity[0][0]
+    graph, ids, _, db = identity[0][0]
     _, producer, _ = prepare(source_policy_case, admit=False)
     barrier = threading.Barrier(2)
 
-    def attempt():
+    def attempt(active_graph, active_owner):
         pid = None
         try:
-            with graph.transaction(ids["tenant"]):
-                pid = graph.engine.query_one("SELECT pg_backend_pid() AS pid")["pid"]
+            with active_graph.transaction(ids["tenant"]):
+                pid = active_graph.engine.query_one("SELECT pg_backend_pid() AS pid")["pid"]
                 barrier.wait(timeout=5)
-                receipt = owner.admit_event(ids["tenant"], producer["outbox_event_id"])
+                receipt = active_owner.admit_event(ids["tenant"], producer["outbox_event_id"])
             return pid, receipt, None, None
         except Exception as error:
             return pid, None, getattr(error, "sqlstate", type(error).__name__), getattr(getattr(error, "diag", None), "constraint_name", None)
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        results = [f.result(timeout=8) for f in [pool.submit(attempt), pool.submit(attempt)]]
+    # Engine roots hold their process lock through commit. Independent engines
+    # let the original barrier exercise the database reservation race.
+    reopened = PostgresEngine(db.url(), bootstrap=False, validate_schema=False)
+    try:
+        queue = DurableJobQueue(reopened)
+        writer = CanonicalPostgresAuditLog(reopened)
+        sink = CanonicalIntakeAuditSink(writer, graph.audit_sink.retention,
+            CanonicalAuditDelivery(writer, queue, graph.audit_sink.delivery.sink))
+        fresh_graph = CanonicalIdentityGraphRepository(reopened, queue, sink)
+        fresh_owner = NativeIntakeSourcePolicyOwner(fresh_graph)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = [f.result(timeout=8) for f in [
+                pool.submit(attempt, graph, owner), pool.submit(attempt, fresh_graph, fresh_owner)]]
+    finally:
+        reopened.close()
     assert len({r[0] for r in results}) == 2 and all(r[0] for r in results)
     accepted = [r[1] for r in results if r[1] is not None]
     assert accepted and all(r == accepted[0] for r in accepted), results
