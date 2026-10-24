@@ -61,6 +61,7 @@ locals {
     "compute.googleapis.com",
     "iam.googleapis.com",
     "iamcredentials.googleapis.com",
+    "monitoring.googleapis.com",
     "pubsub.googleapis.com",
     "run.googleapis.com",
     "secretmanager.googleapis.com",
@@ -243,6 +244,7 @@ locals {
       var.web_base_url,
       local.auth_issuer,
       local.auth_jwks_uri,
+      var.monitoring_api_uptime_host,
     ],
     local.auth_audiences,
     local.oidc_enabled ? [
@@ -251,6 +253,8 @@ locals {
     ] : [],
     tolist(var.api_invoker_members),
     tolist(var.web_invoker_members),
+    tolist(var.monitoring_notification_emails),
+    tolist(var.monitoring_notification_channel_ids),
     values(var.model_runtime_config),
     flatten([
       for ref in values(var.model_secret_refs) :
