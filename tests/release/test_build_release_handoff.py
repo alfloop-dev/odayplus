@@ -1643,15 +1643,29 @@ def test_a_readback_that_skips_a_deploy_target_is_not_proof_of_an_empty_one() ->
     assert any("missing: scheduler" in error for error in excinfo.value.errors)
 
 
-@pytest.mark.parametrize("environment", ["staging", "production", None])
-def test_staging_and_production_keep_the_rollback_requirement(environment) -> None:
-    """A bootstrap allowance for dev must not become a way into production."""
+@pytest.mark.parametrize("environment", ["production", None])
+def test_production_is_never_sealed_as_a_first_release_build_target(environment) -> None:
+    """Production only receives the manifest staging sealed and rehearsed.
+
+    ODP-CORE-OPS-FIRST-RELEASE-ROLLBACK-001 opened staging as a first-release
+    build target; production stays out of the build-target set, so a first
+    production release can only be the staging-sealed manifest.
+    """
 
     with pytest.raises(HandoffError) as excinfo:
         first_release(target_environment=environment)
     assert any(
         "initial-release recovery 只適用於" in error for error in excinfo.value.errors
     )
+
+
+def test_a_staging_first_release_refuses_a_readback_of_long_lived_names() -> None:
+    """Ephemeral staging is read back by its release-scoped names, not dev's."""
+
+    with pytest.raises(HandoffError) as excinfo:
+        first_release(target_environment="staging")
+    errors = excinfo.value.errors
+    assert any("target_environment is 'dev'" in error for error in errors)
 
 
 def test_an_enabled_source_may_not_bootstrap_through_this_branch() -> None:
