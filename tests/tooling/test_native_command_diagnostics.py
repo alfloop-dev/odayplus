@@ -734,10 +734,12 @@ def test_real_fixture_installs_negative_on_same_opt_in_owner_recorder(tmp_path, 
 
 @pytest.mark.parametrize("enabled", [False, True])
 @pytest.mark.parametrize("fail", [False, True])
+@pytest.mark.parametrize("operation", ["admit", "read_and_parse"])
 def test_real_fixture_observes_parser_admission_without_changing_outcome(
-    tmp_path, monkeypatch, enabled, fail,
+    tmp_path, monkeypatch, enabled, fail, operation,
 ):
     from modules.listing.application.native_intake_parser import NativeIntakeParserOwner
+    from modules.listing.application.native_intake_parser_io import NativeIntakeParserIO
     from modules.listing.application.native_intake_parser_policy import NativeParserConflict
 
     recorder, records = _memory_recorder(tmp_path)
@@ -756,9 +758,19 @@ def test_real_fixture_observes_parser_admission_without_changing_outcome(
             raise incoming
         return result
 
+    def read_and_parse(self):
+        calls.append((self,))
+        if fail:
+            raise incoming
+        return result
+
+    cls, original = ((NativeIntakeParserOwner, admit) if operation == "admit"
+                     else (NativeIntakeParserIO, read_and_parse))
+    args = arguments if operation == "admit" else ()
+    kwargs = {"expected_version": 43} if operation == "admit" else {}
     with monkeypatch.context() as patch:
         patch.setattr(diagnostics, "NativeCommandDiagnostics", construct)
-        patch.setattr(NativeIntakeParserOwner, "admit", admit)
+        patch.setattr(cls, operation, original)
         if enabled:
             patch.setenv("ODP_NATIVE_SQL_PROFILE", "1")
         else:
@@ -769,21 +781,21 @@ def test_real_fixture_observes_parser_admission_without_changing_outcome(
         )
         fixture = diagnostics.native_command_diagnostics.__wrapped__(request, patch)
         next(fixture)
-        owner = object.__new__(NativeIntakeParserOwner)
+        owner = object.__new__(cls)
         try:
             if fail:
                 with pytest.raises(NativeParserConflict) as caught:
-                    owner.admit(*arguments, expected_version=43)
+                    getattr(owner, operation)(*args, **kwargs)
                 assert caught.value is incoming
             else:
-                assert owner.admit(*arguments, expected_version=43) is result
+                assert getattr(owner, operation)(*args, **kwargs) is result
         finally:
             with pytest.raises(StopIteration):
                 next(fixture)
-        assert calls == [(owner, *arguments, 43)]
+        assert calls == ([(owner, *arguments, 43)] if operation == "admit" else [(owner,)])
         assert len(constructions) == len(records) == int(enabled)
         if enabled:
-            assert records[0]["operation"] == "NativeIntakeParserOwner.admit"
+            assert records[0]["operation"] == cls.__name__ + "." + operation
             assert records[0]["sql"] == {} and records[0]["stages"] == {}
             assert "do-not-record" not in json.dumps(records)
             if fail:

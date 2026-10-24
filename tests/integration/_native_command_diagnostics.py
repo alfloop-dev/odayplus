@@ -443,6 +443,7 @@ def native_command_diagnostics(request, monkeypatch):
     )
     from modules.listing.application.native_intake_parser import NativeIntakeParserOwner
     from modules.listing.application.native_intake_parser_input import NativeParserManualInputReader
+    from modules.listing.application.native_intake_parser_io import NativeIntakeParserIO
     from modules.listing.application.native_intake_parser_prerequisites import (
         NativeParserAdmissionPrerequisites,
     )
@@ -467,6 +468,7 @@ def native_command_diagnostics(request, monkeypatch):
     for cls, name in [(NativeIntakeCommandBudget, "__call__"), (NativeIntakePendingCommands, "require_clear"),
             (NativeParserAdmissionPrerequisites, "verify"), (NativeParserManualInputReader, "read"),
             (NativeIntakeParserOwner, "_confirm"),
+            (NativeIntakeParserIO, "_intent"), (NativeIntakeParserIO, "_finish"),
             (NativeAssistedEntrySourceProof, "parent"), (NativeIntakeSourcePolicyRecheckOwner, "_waiting"),
             (NativeIntakeSourcePolicyRecheckOwner, "_request_event"),
             (NativeIntakeSourcePolicyRecheckOwner, "_root_identity"),
@@ -476,6 +478,7 @@ def native_command_diagnostics(request, monkeypatch):
         monkeypatch.setattr(cls, name, recorder.stage(getattr(cls, name), cls.__name__ + "." + name))
     for cls, name in [(NativeAssistedEntryRequestOwner, "request"), (NativeIntakeSourcePolicyRecheckOwner, "request"),
             (NativeIntakeParserOwner, "admit"),
+            (NativeIntakeParserIO, "read_and_parse"),
             (NativeIntakeSourcePolicyRecheckOwner, "admit_event"),
             (NativeIntakeIdentityOwner, "confirm_exact_case"),
             (NativeIntakeSourcePolicyRecheckOwner, "execute"), (NativeIntakeRetrievalOwner, "execute"),
