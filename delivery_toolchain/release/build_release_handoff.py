@@ -486,8 +486,8 @@ def build_handoff(
             errors.append(
                 "initial-release recovery 只適用於 "
                 f"{list(INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS)}，"
-                f"不是 {target_environment!r}；staging 與 production 仍必須綁定上一核准 "
-                "release。"
+                f"不是 {target_environment!r}；production 不會被封存為首次 release 的建置 "
+                "目標，只接收 staging 封存並演練過的同一份 manifest。"
             )
         if enabled_sources:
             eligible = False
@@ -507,6 +507,7 @@ def build_handoff(
                 candidate_sha=release_sha,
                 components=manifest_components,
                 environment=target_environment,
+                release_id=effective_release_id,
             )
             if recovery_errors:
                 errors.extend(
