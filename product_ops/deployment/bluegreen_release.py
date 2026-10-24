@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import base64
 import copy
+import importlib.util
 import json
 import logging
 import subprocess
@@ -304,6 +305,21 @@ def resolve_tagged_target(
 # ---------------------------------------------------------------------------
 
 
+def _traffic_snapshot_contract() -> Any:
+    """Load ``cloud_run_traffic.py``, the one owner of the snapshot shape.
+
+    The deploy script and this module must agree on what an absent service
+    looks like, so the marker is not restated here.
+    """
+    path = Path(__file__).resolve().with_name("cloud_run_traffic.py")
+    spec = importlib.util.spec_from_file_location("odp_cloud_run_traffic", path)
+    if spec is None or spec.loader is None:  # pragma: no cover - packaging error
+        raise RuntimeError(f"cannot load the Cloud Run traffic contract from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def capture_traffic_snapshot(
     target: ServiceTarget,
     output_path: Path,
@@ -313,8 +329,57 @@ def capture_traffic_snapshot(
     """Capture the current traffic allocation for a Cloud Run service.
 
     The snapshot is written as a JSON file suitable for ``restore_arg``
-    in ``cloud_run_traffic.py``.
+    in ``cloud_run_traffic.py``.  Only ``status.url`` and ``status.traffic``
+    are kept: the raw ``describe`` payload carries the deployed env block and
+    secret selectors, and this snapshot is published as a release artifact.
+    A service that does not exist yet (first release) is recorded with the
+    explicit absence marker instead of failing.
     """
+    listing = _run_gcloud(
+        [
+            "run",
+            "services",
+            "list",
+            *target.gcloud_args(),
+            f"--filter=metadata.name={target.service}",
+            "--format=value(metadata.name)",
+        ],
+        dry_run=dry_run,
+    )
+    if dry_run:
+        return OperationResult(
+            success=True,
+            operation="capture_traffic_snapshot",
+            message=f"[DRY-RUN] Would capture {target.service} traffic to {output_path}",
+            dry_run=True,
+        )
+    if listing.returncode != 0:
+        return OperationResult(
+            success=False,
+            operation="capture_traffic_snapshot",
+            message=f"Failed to list {target.service}: {listing.stderr.strip()}",
+            details={"returncode": listing.returncode},
+        )
+    existing = listing.stdout.strip()
+    if not existing:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(_traffic_snapshot_contract().absent_snapshot(target.service), indent=2),
+            encoding="utf-8",
+        )
+        return OperationResult(
+            success=True,
+            operation="capture_traffic_snapshot",
+            message=f"{target.service} does not exist yet; recorded it as absent in {output_path}",
+            details={"path": str(output_path), "exists": False},
+        )
+    if existing != target.service:
+        return OperationResult(
+            success=False,
+            operation="capture_traffic_snapshot",
+            message=f"Cloud Run service lookup for {target.service} was ambiguous: {existing}",
+        )
+
     result = _run_gcloud(
         [
             "run",
@@ -324,17 +389,8 @@ def capture_traffic_snapshot(
             *target.gcloud_args(),
             "--format=json",
         ],
-        dry_run=dry_run,
         capture_json=True,
     )
-    if dry_run:
-        return OperationResult(
-            success=True,
-            operation="capture_traffic_snapshot",
-            message=f"[DRY-RUN] Would capture {target.service} traffic to {output_path}",
-            dry_run=True,
-        )
-
     if result.returncode != 0:
         return OperationResult(
             success=False,
@@ -352,13 +408,29 @@ def capture_traffic_snapshot(
             message=f"Invalid JSON from gcloud describe: {exc}",
         )
 
+    status = description.get("status") if isinstance(description, dict) else None
+    traffic = status.get("traffic") if isinstance(status, dict) else None
+    if not isinstance(traffic, list):
+        return OperationResult(
+            success=False,
+            operation="capture_traffic_snapshot",
+            message=f"{target.service} description is missing status.traffic",
+        )
+
+    snapshot = {
+        "schema_version": 1,
+        "kind": "cloud-run-service-traffic-snapshot",
+        "exists": True,
+        "service": target.service,
+        "status": {"url": str(status.get("url") or ""), "traffic": traffic},
+    }
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(description, indent=2), encoding="utf-8")
+    output_path.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
     return OperationResult(
         success=True,
         operation="capture_traffic_snapshot",
         message=f"Captured {target.service} traffic snapshot to {output_path}",
-        details={"path": str(output_path)},
+        details={"path": str(output_path), "exists": True},
     )
 
 
@@ -435,6 +507,23 @@ def restore_traffic_from_snapshot(
             success=False,
             operation="restore_traffic_from_snapshot",
             message=f"Snapshot file not found: {snapshot_path}",
+        )
+    try:
+        recorded = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return OperationResult(
+            success=False,
+            operation="restore_traffic_from_snapshot",
+            message=f"Snapshot file is unreadable: {exc}",
+        )
+    if isinstance(recorded, dict) and not _traffic_snapshot_contract().is_present(recorded):
+        return OperationResult(
+            success=False,
+            operation="restore_traffic_from_snapshot",
+            message=(
+                f"{target.service} did not exist before this release (initial release); "
+                "there is no previous revision to roll back to"
+            ),
         )
 
     try:
@@ -1086,7 +1175,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(r.to_dict(), indent=2))
         if not r.success:
             return 1
-        state.api_traffic_snapshot_path = str(output_dir / "api-traffic.json")
+        state.api_traffic_snapshot_path = "api-traffic.json"
 
         # Capture Web traffic
         r = capture_traffic_snapshot(
@@ -1097,7 +1186,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(r.to_dict(), indent=2))
         if not r.success:
             return 1
-        state.web_traffic_snapshot_path = str(output_dir / "web-traffic.json")
+        state.web_traffic_snapshot_path = "web-traffic.json"
 
         # Optional data platform pointer capture
         if getattr(args, "selector_label", "") and getattr(args, "snapshot_id", ""):
@@ -1116,7 +1205,7 @@ def main(argv: list[str] | None = None) -> int:
                 "snapshot_id": pointer.snapshot_id,
                 "namespace": pointer.namespace,
             }
-            state.data_platform_pointer_snapshot_path = str(pointer_path)
+            state.data_platform_pointer_snapshot_path = pointer_path.name
 
         # Write release state
         state_path = output_dir / "release-state.json"
@@ -1151,6 +1240,16 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "rollback":
         state = ReleaseState.from_json(args.state_file.read_text(encoding="utf-8"))
+        # capture-state records snapshot paths relative to the state file, so
+        # the directory downloaded from the release run's artifact is usable
+        # as-is on any machine. Older absolute paths still resolve unchanged.
+        state_dir = args.state_file.resolve().parent
+        if not state.api_traffic_snapshot_path or not state.web_traffic_snapshot_path:
+            print("Error: release state records no API/Web traffic snapshot", file=sys.stderr)
+            return 1
+        pointer_path = getattr(args, "data_platform_pointer", None)
+        if pointer_path is None and state.data_platform_pointer_snapshot_path:
+            pointer_path = state_dir / state.data_platform_pointer_snapshot_path
         schedulers = [
             SchedulerTarget(job_name=j, project=args.project, location=args.region)
             for j in getattr(args, "scheduler_jobs", [])
@@ -1158,11 +1257,11 @@ def main(argv: list[str] | None = None) -> int:
         results = execute_rollback(
             api_target=api_target,
             web_target=web_target,
-            api_snapshot_path=Path(state.api_traffic_snapshot_path),
-            web_snapshot_path=Path(state.web_traffic_snapshot_path),
+            api_snapshot_path=state_dir / state.api_traffic_snapshot_path,
+            web_snapshot_path=state_dir / state.web_traffic_snapshot_path,
             scheduler_targets=schedulers,
             blue_job_digest=args.blue_job_digest,
-            data_platform_pointer_path=getattr(args, "data_platform_pointer", None),
+            data_platform_pointer_path=pointer_path,
             release_state=state,
             dry_run=args.dry_run,
         )
