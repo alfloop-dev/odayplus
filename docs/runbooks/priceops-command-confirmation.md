@@ -40,6 +40,22 @@ Concurrent startup exposed schema bootstrap races. PostgreSQL serializes its run
 
 The compatible native dependency profile and required execution checks are recorded in [native-solver-profile.md](native-solver-profile.md).
 
+## Shared PriceOps owner and existing tenant partitions
+
+The main application gives native PriceOps, Growth and Governance the same selected PriceOps repository. Growth and Governance filter its plans using the verified tenant. They must not construct a new `TenantScopedDocumentStore`: that changes `priceops.plans` into `priceops.plans.tenant.<sha256(tenant)>`, hiding native API writes and losing the repository's existing canonical exploration binding. Native tenant, store, brand, region, clearance, action and independent-approver checks continue to apply.
+
+Derived Growth and Governance reads also check each complete plan against the verified caller's object scope and actual current store/brand masters before generating rows, freshness, counts and summaries. A mixed plan with any excluded item is excluded as a whole, matching the native plan contract. Missing evidence for assigned-area or heat-zone restrictions remains a denial. The original Operator read guard verifies `operator_console` scope and its original reader roles; viewing Growth or Govern does not additionally require a native PriceOps operation grant or the `priceops` scope module. Native routes retain their own original `priceops` module and role checks. Confidential classification remains required.
+
+Growth action, source recommendation, approval and decision relationships are projected from these visible parents in fresh read copies. Hidden target IDs and retries are refused before business mutation or receipt replay. The normal unfiltered tenant mutation owner persists successful visible writes, preserving hidden records and existing idempotency receipts. Read projections and shrinking current-master visibility never replace saved aggregate state. Other Governance module owners retain their existing contracts.
+
+Before deploying this composition change, the database owner must inventory both namespaces for every affected tenant. Existing production tenant-partition records have not been inspected or migrated by this source change. Do not assume either an empty database or an already completed migration. Reads do not move records or silently combine owners.
+
+For a tenant, derive the suffix with the existing `TenantScopedDocumentStore` rule. Inventory the exact plan collection and related scenario, writeback, simulation, optimization, approval, observation window, execution, rollback, handoff, label and evaluation collections. Check each plan's nonempty tenant against the selected tenant and each related record's actual `plan_id` against those plans. Inventory exploration gates, exploration decisions and activation receipts separately; document rows cannot establish canonical workflow/pricing authorization and must not be converted into approved SQL authority.
+
+The reviewed copy must run with the affected writers fenced, within one database transaction, after a backup and a fresh inventory. For each target `(collection, doc_id)`, an existing row must match the original payload bytes and its group, sequence and correlation metadata; any difference, foreign tenant, orphan relation or unresolved exploration authority stops the whole copy. Copy missing rows into the original base collection while preserving payload, relationship metadata and creation time. Allocate destination ordinals through the existing sequence owner. Never update or delete a source row, overwrite a target, rewrite a creator, generate an approval, or repair a conflict by choosing one tenant's record.
+
+After the copy, re-read both namespaces, compare all source payload hashes and copied destination hashes, and confirm an idempotent repeat adds nothing. Verify same-tenant native plan/comparison and Growth reads against the same owner, plus cross-tenant and restricted-store refusal. Keep the source partition until the database owner separately approves retirement. Production IAM, actual inventory, conflict resolution, PostgreSQL transaction/lock verification, copy execution and rollback evidence remain launch requirements when affected records exist. The isolated SQLite regression proves the source composition and HTTP scope contract; it does not prove a production data migration.
+
 
 ## Verified creator and independent approval
 

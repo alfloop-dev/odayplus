@@ -1,0 +1,2608 @@
+{
+  "kind": "Actual native ObservationWindow/resolver/datetime AST precise-time memory controls",
+  "nativeSourceSHA256": "cc19fa07444296f16ec35a920026ec56172530785ac8bc4d2e89d34f1fec3a00",
+  "nativeWindowASTSHA256": "0df5fe6a5d2dc28be0e6256c9aa64b61ad8eedf3a5a8cd11ccab5dde675e6000",
+  "nativeDecoratorAST": "dataclass(frozen=True)",
+  "actualDecoratorReapplied": true,
+  "nativeResolverASTSHA256": "c9c52f147d761eaafcdbd7491b343705e61ce4a74eec27d5cdaa708aa5cfcb03",
+  "originalPeerBoundaryInput": {
+    "path": "/tmp/odayplus-native-intervention-approval-ui-independent-peer-v2-20261014/native-microsecond-boundary-memory-input-v1.json",
+    "sha256": "345f63a9d6fcc83da8323f52d27c48a4c030f5223fcb0e2c4da5b85bc33f5f47"
+  },
+  "rows": [
+    {
+      "name": "Exact independent genuine_pre_maturity_L0",
+      "projection": {
+        "intervention_id": "f1169c71-150e-488c-8393-b1bbae542c51",
+        "store_id": "synthetic-intervention-store",
+        "kind": "PRICE_CHANGE",
+        "status": "EVALUATING",
+        "trigger_ref": "synthetic-alert",
+        "expected_outcome": "synthetic margin review",
+        "planned_start": "2026-10-14T08:39:36.790799+00:00",
+        "planned_end": "2026-10-21T08:39:36.790799+00:00",
+        "window_spec": {
+          "outcome_window_days": 21,
+          "maturity_buffer_days": 7
+        },
+        "created_by": "synthetic-int-creator",
+        "created_at": "2026-10-14T08:39:37.109965+00:00",
+        "policy_version": "intervention-lifecycle-policy-v1",
+        "action_spec": {
+          "price_change_pct": -5,
+          "rollback_plan": "restore"
+        },
+        "eligibility": {
+          "eligible": true,
+          "checked_at": "2026-10-14T08:39:37.158861+00:00",
+          "reasons": [
+            "synthetic eligibility"
+          ]
+        },
+        "conflict": {
+          "has_conflict": false,
+          "checked_at": "2026-10-14T08:39:37.243712+00:00",
+          "conflicting_ids": [],
+          "conflicting_kinds": [],
+          "resolved": true,
+          "resolution_reason": "",
+          "blocks_approval": false
+        },
+        "approval": {
+          "approved": true,
+          "actor_id": "synthetic-int-reviewer",
+          "decision_reason": "synthetic justified approval",
+          "approved_at": "2026-10-14T08:39:37.415020+00:00",
+          "policy_version": "intervention-lifecycle-policy-v1"
+        },
+        "execution": {
+          "execution_id": "intervention-exec-528c9e09-ff1c-4b00-ad49-d62c7176e2f2",
+          "executor": "synthetic-int-reviewer",
+          "executed_at": "2026-10-14T08:39:37.000900+00:00",
+          "status": "EXECUTED",
+          "correlation_id": "3a245434-9a9c-4a14-9494-3599c62bd5e3"
+        },
+        "observation_window": {
+          "opened_at": "2026-10-14T08:39:37.000900+00:00",
+          "outcome_window_days": 21,
+          "maturity_buffer_days": 7,
+          "outcome_window_end": "2026-11-04T08:39:37.000900+00:00",
+          "label_maturity_time": "2026-11-11T08:39:37.000900+00:00"
+        },
+        "outcome": {
+          "collected_at": "2026-10-14T08:39:37.510725+00:00",
+          "incremental_revenue": 123.0,
+          "incremental_gross_margin": 45.0,
+          "has_control_group": true,
+          "pretrend_status": "PASS",
+          "treatment_store_count": 4,
+          "control_store_count": 4,
+          "evaluation_method": "DID",
+          "randomized": false,
+          "ad_spend": 10.0,
+          "iromi": 4.5,
+          "measurement_method": "panel_did"
+        },
+        "effect": {
+          "evaluated_at": "2026-11-11T08:39:37.000800+00:00",
+          "evidence_level": "L0",
+          "can_claim_effect": false,
+          "can_claim_causal": false,
+          "incremental_revenue": 0,
+          "incremental_gross_margin": 0,
+          "iromi": null,
+          "evaluation_method": "DID",
+          "pretrend_status": "PASS",
+          "recommendation": "INCONCLUSIVE",
+          "observation_mature": false,
+          "limitations": [
+            "observation_window_not_mature"
+          ]
+        },
+        "close": null,
+        "assigned_to": null,
+        "assigned_at": null,
+        "assigned_by": null,
+        "assignment_role": null,
+        "predecessor_id": null,
+        "replacement_id": null,
+        "adjustment": null,
+        "version": 10,
+        "history": [
+          {
+            "from_status": "CANDIDATE",
+            "to_status": "ELIGIBLE",
+            "actor": "synthetic-int-creator",
+            "action": "check_eligibility",
+            "reason": "eligible",
+            "at": "2026-10-14T08:39:37.158893+00:00",
+            "correlation_id": "c8f1c74c-527f-4e3b-83ed-2d25dc62cc00"
+          },
+          {
+            "from_status": "ELIGIBLE",
+            "to_status": "ACTION_PROPOSED",
+            "actor": "synthetic-int-creator",
+            "action": "propose_action",
+            "reason": "action candidate built",
+            "at": "2026-10-14T08:39:37.199688+00:00",
+            "correlation_id": "5cf2b6af-b847-4c46-9152-27ba88905da7"
+          },
+          {
+            "from_status": "ACTION_PROPOSED",
+            "to_status": "CONFLICT_CHECKING",
+            "actor": "synthetic-int-creator",
+            "action": "check_conflict",
+            "reason": "no conflict",
+            "at": "2026-10-14T08:39:37.243732+00:00",
+            "correlation_id": "3b6cf4e6-7ca8-4d9b-af5c-d39ef7546cb3"
+          },
+          {
+            "from_status": "CONFLICT_CHECKING",
+            "to_status": "PENDING_APPROVAL",
+            "actor": "synthetic-int-creator",
+            "action": "submit_for_approval",
+            "reason": "submitted for approval",
+            "at": "2026-10-14T08:39:37.288771+00:00",
+            "correlation_id": "f1e91851-b9b9-4448-b7c3-fa1e58cca8cd"
+          },
+          {
+            "from_status": "PENDING_APPROVAL",
+            "to_status": "APPROVED",
+            "actor": "synthetic-int-reviewer",
+            "action": "approve",
+            "reason": "synthetic justified approval",
+            "at": "2026-10-14T08:39:37.415039+00:00",
+            "correlation_id": "86b9bdf4-c838-49d7-b161-39239dc87be2"
+          },
+          {
+            "from_status": "APPROVED",
+            "to_status": "EXECUTING",
+            "actor": "synthetic-int-reviewer",
+            "action": "execute",
+            "reason": "execution coordinated",
+            "at": "2026-10-14T08:39:37.475971+00:00",
+            "correlation_id": "3a245434-9a9c-4a14-9494-3599c62bd5e3"
+          },
+          {
+            "from_status": "EXECUTING",
+            "to_status": "OBSERVING",
+            "actor": "synthetic-int-reviewer",
+            "action": "start_observation",
+            "reason": "observation window opened",
+            "at": "2026-10-14T08:39:37.476028+00:00",
+            "correlation_id": "3a245434-9a9c-4a14-9494-3599c62bd5e3"
+          },
+          {
+            "from_status": "OBSERVING",
+            "to_status": "OBSERVING",
+            "actor": "synthetic-int-reviewer",
+            "action": "collect_outcome",
+            "reason": "outcome collected",
+            "at": "2026-10-14T08:39:37.510753+00:00",
+            "correlation_id": "cf4f63b3-a5d5-4dbb-afb6-b7bc4e15cca5"
+          },
+          {
+            "from_status": "OBSERVING",
+            "to_status": "EVALUATING",
+            "actor": "synthetic-int-reviewer",
+            "action": "evaluate_effect",
+            "reason": "effect evaluation started",
+            "at": "2026-10-14T08:39:37.549264+00:00",
+            "correlation_id": "13ac51e6-d090-40c5-8a8f-755e08dcd09c"
+          }
+        ],
+        "feature_version": "intervention-feature-v1",
+        "read_at": "2026-10-14T08:39:37.590803+00:00",
+        "review_context": {
+          "schema_version": 1,
+          "intervention_id": "f1169c71-150e-488c-8393-b1bbae542c51",
+          "store_id": "synthetic-intervention-store",
+          "tenant_id": "00000000-0000-0000-0000-000000000001",
+          "actor_subject_id": "synthetic-int-reviewer",
+          "version": 10,
+          "policy_version": "intervention-lifecycle-policy-v1",
+          "snapshot_sha256": "881c93b497d6ff7d74c693ca3864e9712cbfeb51b6eb86411dbaacc8e06d0dd2"
+        },
+        "creator_verification": "authenticated_principal",
+        "approval_permissions": {
+          "approve": false,
+          "reject": false,
+          "approve_refusal": "PENDING_APPROVAL_REQUIRED",
+          "reject_refusal": "PENDING_APPROVAL_REQUIRED"
+        },
+        "approval_audit": {
+          "event_id": "c37b85d0-6bc1-48f4-a87f-fb164f5defd0",
+          "actor": "synthetic-int-reviewer",
+          "action": "approve",
+          "reason": "synthetic justified approval",
+          "policy_version": "intervention-lifecycle-policy-v1",
+          "correlation_id": "86b9bdf4-c838-49d7-b161-39239dc87be2",
+          "occurred_at": "2026-10-14T08:39:37.428718+00:00"
+        }
+      },
+      "currentClockISO": "2026-11-11T08:39:37.000800+00:00",
+      "currentClockLowerBoundMs": 1794386377000,
+      "expectedParseAccepted": true,
+      "expectedEffectClaim": false,
+      "expectedCausalClaim": false,
+      "expectedWindowMatureNow": false,
+      "exactIndependentPremisePreserved": true,
+      "memoryProjectionNotPersistedNativeProducer": true
+    },
+    {
+      "name": "Exact independent contradictory_pre_maturity_L3",
+      "projection": {
+        "intervention_id": "f1169c71-150e-488c-8393-b1bbae542c51",
+        "store_id": "synthetic-intervention-store",
+        "kind": "PRICE_CHANGE",
+        "status": "EVALUATING",
+        "trigger_ref": "synthetic-alert",
+        "expected_outcome": "synthetic margin review",
+        "planned_start": "2026-10-14T08:39:36.790799+00:00",
+        "planned_end": "2026-10-21T08:39:36.790799+00:00",
+        "window_spec": {
+          "outcome_window_days": 21,
+          "maturity_buffer_days": 7
+        },
+        "created_by": "synthetic-int-creator",
+        "created_at": "2026-10-14T08:39:37.109965+00:00",
+        "policy_version": "intervention-lifecycle-policy-v1",
+        "action_spec": {
+          "price_change_pct": -5,
+          "rollback_plan": "restore"
+        },
+        "eligibility": {
+          "eligible": true,
+          "checked_at": "2026-10-14T08:39:37.158861+00:00",
+          "reasons": [
+            "synthetic eligibility"
+          ]
+        },
+        "conflict": {
+          "has_conflict": false,
+          "checked_at": "2026-10-14T08:39:37.243712+00:00",
+          "conflicting_ids": [],
+          "conflicting_kinds": [],
+          "resolved": true,
+          "resolution_reason": "",
+          "blocks_approval": false
+        },
+        "approval": {
+          "approved": true,
+          "actor_id": "synthetic-int-reviewer",
+          "decision_reason": "synthetic justified approval",
+          "approved_at": "2026-10-14T08:39:37.415020+00:00",
+          "policy_version": "intervention-lifecycle-policy-v1"
+        },
+        "execution": {
+          "execution_id": "intervention-exec-528c9e09-ff1c-4b00-ad49-d62c7176e2f2",
+          "executor": "synthetic-int-reviewer",
+          "executed_at": "2026-10-14T08:39:37.000900+00:00",
+          "status": "EXECUTED",
+          "correlation_id": "3a245434-9a9c-4a14-9494-3599c62bd5e3"
+        },
+        "observation_window": {
+          "opened_at": "2026-10-14T08:39:37.000900+00:00",
+          "outcome_window_days": 21,
+          "maturity_buffer_days": 7,
+          "outcome_window_end": "2026-11-04T08:39:37.000900+00:00",
+          "label_maturity_time": "2026-11-11T08:39:37.000900+00:00"
+        },
+        "outcome": {
+          "collected_at": "2026-10-14T08:39:37.510725+00:00",
+          "incremental_revenue": 123.0,
+          "incremental_gross_margin": 45.0,
+          "has_control_group": true,
+          "pretrend_status": "PASS",
+          "treatment_store_count": 4,
+          "control_store_count": 4,
+          "evaluation_method": "DID",
+          "randomized": false,
+          "ad_spend": 10.0,
+          "iromi": 4.5,
+          "measurement_method": "panel_did"
+        },
+        "effect": {
+          "evaluated_at": "2026-11-11T08:39:37.000800+00:00",
+          "evidence_level": "L3",
+          "can_claim_effect": true,
+          "can_claim_causal": true,
+          "incremental_revenue": 120,
+          "incremental_gross_margin": 60,
+          "iromi": null,
+          "evaluation_method": "DID",
+          "pretrend_status": "PASS",
+          "recommendation": "INCONCLUSIVE",
+          "observation_mature": true,
+          "limitations": [
+            "observation_window_not_mature"
+          ]
+        },
+        "close": null,
+        "assigned_to": null,
+        "assigned_at": null,
+        "assigned_by": null,
+        "assignment_role": null,
+        "predecessor_id": null,
+        "replacement_id": null,
+        "adjustment": null,
+        "version": 10,
+        "history": [
+          {
+            "from_status": "CANDIDATE",
+            "to_status": "ELIGIBLE",
+            "actor": "synthetic-int-creator",
+            "action": "check_eligibility",
+            "reason": "eligible",
+            "at": "2026-10-14T08:39:37.158893+00:00",
+            "correlation_id": "c8f1c74c-527f-4e3b-83ed-2d25dc62cc00"
+          },
+          {
+            "from_status": "ELIGIBLE",
+            "to_status": "ACTION_PROPOSED",
+            "actor": "synthetic-int-creator",
+            "action": "propose_action",
+            "reason": "action candidate built",
+            "at": "2026-10-14T08:39:37.199688+00:00",
+            "correlation_id": "5cf2b6af-b847-4c46-9152-27ba88905da7"
+          },
+          {
+            "from_status": "ACTION_PROPOSED",
+            "to_status": "CONFLICT_CHECKING",
+            "actor": "synthetic-int-creator",
+            "action": "check_conflict",
+            "reason": "no conflict",
+            "at": "2026-10-14T08:39:37.243732+00:00",
+            "correlation_id": "3b6cf4e6-7ca8-4d9b-af5c-d39ef7546cb3"
+          },
+          {
+            "from_status": "CONFLICT_CHECKING",
+            "to_status": "PENDING_APPROVAL",
+            "actor": "synthetic-int-creator",
+            "action": "submit_for_approval",
+            "reason": "submitted for approval",
+            "at": "2026-10-14T08:39:37.288771+00:00",
+            "correlation_id": "f1e91851-b9b9-4448-b7c3-fa1e58cca8cd"
+          },
+          {
+            "from_status": "PENDING_APPROVAL",
+            "to_status": "APPROVED",
+            "actor": "synthetic-int-reviewer",
+            "action": "approve",
+            "reason": "synthetic justified approval",
+            "at": "2026-10-14T08:39:37.415039+00:00",
+            "correlation_id": "86b9bdf4-c838-49d7-b161-39239dc87be2"
+          },
+          {
+            "from_status": "APPROVED",
+            "to_status": "EXECUTING",
+            "actor": "synthetic-int-reviewer",
+            "action": "execute",
+            "reason": "execution coordinated",
+            "at": "2026-10-14T08:39:37.475971+00:00",
+            "correlation_id": "3a245434-9a9c-4a14-9494-3599c62bd5e3"
+          },
+          {
+            "from_status": "EXECUTING",
+            "to_status": "OBSERVING",
+            "actor": "synthetic-int-reviewer",
+            "action": "start_observation",
+            "reason": "observation window opened",
+            "at": "2026-10-14T08:39:37.476028+00:00",
+            "correlation_id": "3a245434-9a9c-4a14-9494-3599c62bd5e3"
+          },
+          {
+            "from_status": "OBSERVING",
+            "to_status": "OBSERVING",
+            "actor": "synthetic-int-reviewer",
+            "action": "collect_outcome",
+            "reason": "outcome collected",
+            "at": "2026-10-14T08:39:37.510753+00:00",
+            "correlation_id": "cf4f63b3-a5d5-4dbb-afb6-b7bc4e15cca5"
+          },
+          {
+            "from_status": "OBSERVING",
+            "to_status": "EVALUATING",
+            "actor": "synthetic-int-reviewer",
+            "action": "evaluate_effect",
+            "reason": "effect evaluation started",
+            "at": "2026-10-14T08:39:37.549264+00:00",
+            "correlation_id": "13ac51e6-d090-40c5-8a8f-755e08dcd09c"
+          }
+        ],
+        "feature_version": "intervention-feature-v1",
+        "read_at": "2026-10-14T08:39:37.590803+00:00",
+        "review_context": {
+          "schema_version": 1,
+          "intervention_id": "f1169c71-150e-488c-8393-b1bbae542c51",
+          "store_id": "synthetic-intervention-store",
+          "tenant_id": "00000000-0000-0000-0000-000000000001",
+          "actor_subject_id": "synthetic-int-reviewer",
+          "version": 10,
+          "policy_version": "intervention-lifecycle-policy-v1",
+          "snapshot_sha256": "881c93b497d6ff7d74c693ca3864e9712cbfeb51b6eb86411dbaacc8e06d0dd2"
+        },
+        "creator_verification": "authenticated_principal",
+        "approval_permissions": {
+          "approve": false,
+          "reject": false,
+          "approve_refusal": "PENDING_APPROVAL_REQUIRED",
+          "reject_refusal": "PENDING_APPROVAL_REQUIRED"
+        },
+        "approval_audit": {
+          "event_id": "c37b85d0-6bc1-48f4-a87f-fb164f5defd0",
+          "actor": "synthetic-int-reviewer",
+          "action": "approve",
+          "reason": "synthetic justified approval",
+          "policy_version": "intervention-lifecycle-policy-v1",
+          "correlation_id": "86b9bdf4-c838-49d7-b161-39239dc87be2",
+          "occurred_at": "2026-10-14T08:39:37.428718+00:00"
+        }
+      },
+      "currentClockISO": "2026-11-11T08:39:37.000800+00:00",
+      "currentClockLowerBoundMs": 1794386377000,
+      "expectedParseAccepted": false,
+      "expectedEffectClaim": false,
+      "expectedCausalClaim": false,
+      "expectedWindowMatureNow": false,
+      "exactIndependentPremisePreserved": true,
+      "memoryProjectionNotPersistedNativeProducer": true
+    },
+    {
+      "name": "Genuine preboundary L0",
+      "projection": {
+        "intervention_id": "113b64e3-849c-4b95-8285-cd1f5d5b8ae5",
+        "store_id": "synthetic-intervention-store",
+        "kind": "PRICE_CHANGE",
+        "status": "COMPLETED",
+        "trigger_ref": "synthetic-alert",
+        "expected_outcome": "synthetic margin review",
+        "planned_start": "2026-10-14T08:39:38.122909+00:00",
+        "planned_end": "2026-10-21T08:39:38.122909+00:00",
+        "window_spec": {
+          "outcome_window_days": 1,
+          "maturity_buffer_days": 1
+        },
+        "created_by": "synthetic-int-creator",
+        "created_at": "2026-10-14T08:39:38.243498+00:00",
+        "policy_version": "intervention-lifecycle-policy-v1",
+        "action_spec": {
+          "price_change_pct": -5,
+          "rollback_plan": "restore"
+        },
+        "eligibility": {
+          "eligible": true,
+          "checked_at": "2026-10-14T08:39:38.285834+00:00",
+          "reasons": [
+            "synthetic eligibility"
+          ]
+        },
+        "conflict": {
+          "has_conflict": false,
+          "checked_at": "2026-10-14T08:39:38.363372+00:00",
+          "conflicting_ids": [],
+          "conflicting_kinds": [],
+          "resolved": true,
+          "resolution_reason": "",
+          "blocks_approval": false
+        },
+        "approval": {
+          "approved": true,
+          "actor_id": "synthetic-int-reviewer",
+          "decision_reason": "synthetic justified approval",
+          "approved_at": "2026-10-14T08:39:38.538313+00:00",
+          "policy_version": "intervention-lifecycle-policy-v1"
+        },
+        "execution": {
+          "execution_id": "intervention-exec-acb4f092-5da2-4abf-b587-b456f4fcc9d7",
+          "executor": "synthetic-int-reviewer",
+          "executed_at": "2026-11-09T08:39:37.000900+00:00",
+          "status": "EXECUTED",
+          "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+        },
+        "observation_window": {
+          "opened_at": "2026-11-09T08:39:37.000900+00:00",
+          "outcome_window_days": 1,
+          "maturity_buffer_days": 1,
+          "outcome_window_end": "2026-11-10T08:39:37.000900+00:00",
+          "label_maturity_time": "2026-11-11T08:39:37.000900+00:00"
+        },
+        "outcome": {
+          "collected_at": "2026-10-14T08:39:38.610621+00:00",
+          "incremental_revenue": 123.0,
+          "incremental_gross_margin": 45.0,
+          "has_control_group": true,
+          "pretrend_status": "PASS",
+          "treatment_store_count": 4,
+          "control_store_count": 4,
+          "evaluation_method": "DID",
+          "randomized": false,
+          "ad_spend": 10.0,
+          "iromi": 4.5,
+          "measurement_method": "panel_did"
+        },
+        "effect": {
+          "evaluated_at": "2026-11-11T08:39:37.000800+00:00",
+          "evidence_level": "L0",
+          "can_claim_effect": false,
+          "can_claim_causal": false,
+          "incremental_revenue": 0,
+          "incremental_gross_margin": 0,
+          "iromi": null,
+          "evaluation_method": "DID",
+          "pretrend_status": "PASS",
+          "recommendation": "SCALE",
+          "observation_mature": false,
+          "limitations": [
+            "observation_window_not_mature"
+          ]
+        },
+        "close": null,
+        "assigned_to": null,
+        "assigned_at": null,
+        "assigned_by": null,
+        "assignment_role": null,
+        "predecessor_id": null,
+        "replacement_id": null,
+        "adjustment": null,
+        "version": 11,
+        "history": [
+          {
+            "from_status": "CANDIDATE",
+            "to_status": "ELIGIBLE",
+            "actor": "synthetic-int-creator",
+            "action": "check_eligibility",
+            "reason": "eligible",
+            "at": "2026-10-14T08:39:38.285847+00:00",
+            "correlation_id": "19daa977-830c-4f2d-b485-040f6450f0f1"
+          },
+          {
+            "from_status": "ELIGIBLE",
+            "to_status": "ACTION_PROPOSED",
+            "actor": "synthetic-int-creator",
+            "action": "propose_action",
+            "reason": "action candidate built",
+            "at": "2026-10-14T08:39:38.323779+00:00",
+            "correlation_id": "423c7f93-7c1f-4309-8750-31ce42e9ccff"
+          },
+          {
+            "from_status": "ACTION_PROPOSED",
+            "to_status": "CONFLICT_CHECKING",
+            "actor": "synthetic-int-creator",
+            "action": "check_conflict",
+            "reason": "no conflict",
+            "at": "2026-10-14T08:39:38.363393+00:00",
+            "correlation_id": "d238c4f3-524d-43d5-824a-e45a0d83594a"
+          },
+          {
+            "from_status": "CONFLICT_CHECKING",
+            "to_status": "PENDING_APPROVAL",
+            "actor": "synthetic-int-creator",
+            "action": "submit_for_approval",
+            "reason": "submitted for approval",
+            "at": "2026-10-14T08:39:38.406700+00:00",
+            "correlation_id": "afe399b2-9fcf-4fd2-9819-1516a71bf743"
+          },
+          {
+            "from_status": "PENDING_APPROVAL",
+            "to_status": "APPROVED",
+            "actor": "synthetic-int-reviewer",
+            "action": "approve",
+            "reason": "synthetic justified approval",
+            "at": "2026-10-14T08:39:38.538331+00:00",
+            "correlation_id": "482e13ea-1d6d-496c-98c8-c1ce548adaa0"
+          },
+          {
+            "from_status": "APPROVED",
+            "to_status": "EXECUTING",
+            "actor": "synthetic-int-reviewer",
+            "action": "execute",
+            "reason": "execution coordinated",
+            "at": "2026-10-14T08:39:38.580002+00:00",
+            "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+          },
+          {
+            "from_status": "EXECUTING",
+            "to_status": "OBSERVING",
+            "actor": "synthetic-int-reviewer",
+            "action": "start_observation",
+            "reason": "observation window opened",
+            "at": "2026-10-14T08:39:38.580068+00:00",
+            "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+          },
+          {
+            "from_status": "OBSERVING",
+            "to_status": "OBSERVING",
+            "actor": "synthetic-int-reviewer",
+            "action": "collect_outcome",
+            "reason": "outcome collected",
+            "at": "2026-10-14T08:39:38.610648+00:00",
+            "correlation_id": "c87b619c-7c3d-4454-a97d-ceb5cb420353"
+          },
+          {
+            "from_status": "OBSERVING",
+            "to_status": "EVALUATING",
+            "actor": "synthetic-int-reviewer",
+            "action": "evaluate_effect",
+            "reason": "effect evaluation started",
+            "at": "2026-10-14T08:39:38.655065+00:00",
+            "correlation_id": "59d57526-2b55-4ff1-ae45-218733755da1"
+          },
+          {
+            "from_status": "EVALUATING",
+            "to_status": "COMPLETED",
+            "actor": "synthetic-int-reviewer",
+            "action": "complete",
+            "reason": "evidence L3",
+            "at": "2026-10-14T08:39:38.655126+00:00",
+            "correlation_id": "59d57526-2b55-4ff1-ae45-218733755da1"
+          }
+        ],
+        "feature_version": "intervention-feature-v1",
+        "read_at": "2026-11-11T08:39:37.000800+00:00",
+        "review_context": {
+          "schema_version": 1,
+          "intervention_id": "113b64e3-849c-4b95-8285-cd1f5d5b8ae5",
+          "store_id": "synthetic-intervention-store",
+          "tenant_id": "00000000-0000-0000-0000-000000000001",
+          "actor_subject_id": "synthetic-int-reviewer",
+          "version": 11,
+          "policy_version": "intervention-lifecycle-policy-v1",
+          "snapshot_sha256": "832d433c5b7bac22f000d094f0da87ba7efe07d4bf82aae8ffd84865f9a35370"
+        },
+        "creator_verification": "authenticated_principal",
+        "approval_permissions": {
+          "approve": false,
+          "reject": false,
+          "approve_refusal": "PENDING_APPROVAL_REQUIRED",
+          "reject_refusal": "PENDING_APPROVAL_REQUIRED"
+        },
+        "approval_audit": {
+          "event_id": "f16ae75c-55ad-4a54-8145-61e379dd3fc2",
+          "actor": "synthetic-int-reviewer",
+          "action": "approve",
+          "reason": "synthetic justified approval",
+          "policy_version": "intervention-lifecycle-policy-v1",
+          "correlation_id": "482e13ea-1d6d-496c-98c8-c1ce548adaa0",
+          "occurred_at": "2026-10-14T08:39:38.545600+00:00"
+        }
+      },
+      "currentClockISO": "2026-11-11T08:39:37.000800+00:00",
+      "currentClockLowerBoundMs": 1794386377000,
+      "nativeMatureAsOfEvaluation": false,
+      "nativeWindowMatureAtActualClock": false,
+      "expectedParseAccepted": true,
+      "expectedEffectClaim": false,
+      "expectedCausalClaim": false,
+      "expectedWindowMatureNow": false,
+      "memoryProjectionNotPersistedNativeProducer": true
+    },
+    {
+      "name": "Legitimate mature record at boundary with current coarse clock",
+      "projection": {
+        "intervention_id": "113b64e3-849c-4b95-8285-cd1f5d5b8ae5",
+        "store_id": "synthetic-intervention-store",
+        "kind": "PRICE_CHANGE",
+        "status": "COMPLETED",
+        "trigger_ref": "synthetic-alert",
+        "expected_outcome": "synthetic margin review",
+        "planned_start": "2026-10-14T08:39:38.122909+00:00",
+        "planned_end": "2026-10-21T08:39:38.122909+00:00",
+        "window_spec": {
+          "outcome_window_days": 1,
+          "maturity_buffer_days": 1
+        },
+        "created_by": "synthetic-int-creator",
+        "created_at": "2026-10-14T08:39:38.243498+00:00",
+        "policy_version": "intervention-lifecycle-policy-v1",
+        "action_spec": {
+          "price_change_pct": -5,
+          "rollback_plan": "restore"
+        },
+        "eligibility": {
+          "eligible": true,
+          "checked_at": "2026-10-14T08:39:38.285834+00:00",
+          "reasons": [
+            "synthetic eligibility"
+          ]
+        },
+        "conflict": {
+          "has_conflict": false,
+          "checked_at": "2026-10-14T08:39:38.363372+00:00",
+          "conflicting_ids": [],
+          "conflicting_kinds": [],
+          "resolved": true,
+          "resolution_reason": "",
+          "blocks_approval": false
+        },
+        "approval": {
+          "approved": true,
+          "actor_id": "synthetic-int-reviewer",
+          "decision_reason": "synthetic justified approval",
+          "approved_at": "2026-10-14T08:39:38.538313+00:00",
+          "policy_version": "intervention-lifecycle-policy-v1"
+        },
+        "execution": {
+          "execution_id": "intervention-exec-acb4f092-5da2-4abf-b587-b456f4fcc9d7",
+          "executor": "synthetic-int-reviewer",
+          "executed_at": "2026-11-09T08:39:37.000900+00:00",
+          "status": "EXECUTED",
+          "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+        },
+        "observation_window": {
+          "opened_at": "2026-11-09T08:39:37.000900+00:00",
+          "outcome_window_days": 1,
+          "maturity_buffer_days": 1,
+          "outcome_window_end": "2026-11-10T08:39:37.000900+00:00",
+          "label_maturity_time": "2026-11-11T08:39:37.000900+00:00"
+        },
+        "outcome": {
+          "collected_at": "2026-10-14T08:39:38.610621+00:00",
+          "incremental_revenue": 123.0,
+          "incremental_gross_margin": 45.0,
+          "has_control_group": true,
+          "pretrend_status": "PASS",
+          "treatment_store_count": 4,
+          "control_store_count": 4,
+          "evaluation_method": "DID",
+          "randomized": false,
+          "ad_spend": 10.0,
+          "iromi": 4.5,
+          "measurement_method": "panel_did"
+        },
+        "effect": {
+          "evaluated_at": "2026-11-11T08:39:37.000900+00:00",
+          "evidence_level": "L3",
+          "can_claim_effect": true,
+          "can_claim_causal": true,
+          "incremental_revenue": 123,
+          "incremental_gross_margin": 45,
+          "iromi": 4.5,
+          "evaluation_method": "DID",
+          "pretrend_status": "PASS",
+          "recommendation": "SCALE",
+          "observation_mature": true,
+          "limitations": []
+        },
+        "close": null,
+        "assigned_to": null,
+        "assigned_at": null,
+        "assigned_by": null,
+        "assignment_role": null,
+        "predecessor_id": null,
+        "replacement_id": null,
+        "adjustment": null,
+        "version": 11,
+        "history": [
+          {
+            "from_status": "CANDIDATE",
+            "to_status": "ELIGIBLE",
+            "actor": "synthetic-int-creator",
+            "action": "check_eligibility",
+            "reason": "eligible",
+            "at": "2026-10-14T08:39:38.285847+00:00",
+            "correlation_id": "19daa977-830c-4f2d-b485-040f6450f0f1"
+          },
+          {
+            "from_status": "ELIGIBLE",
+            "to_status": "ACTION_PROPOSED",
+            "actor": "synthetic-int-creator",
+            "action": "propose_action",
+            "reason": "action candidate built",
+            "at": "2026-10-14T08:39:38.323779+00:00",
+            "correlation_id": "423c7f93-7c1f-4309-8750-31ce42e9ccff"
+          },
+          {
+            "from_status": "ACTION_PROPOSED",
+            "to_status": "CONFLICT_CHECKING",
+            "actor": "synthetic-int-creator",
+            "action": "check_conflict",
+            "reason": "no conflict",
+            "at": "2026-10-14T08:39:38.363393+00:00",
+            "correlation_id": "d238c4f3-524d-43d5-824a-e45a0d83594a"
+          },
+          {
+            "from_status": "CONFLICT_CHECKING",
+            "to_status": "PENDING_APPROVAL",
+            "actor": "synthetic-int-creator",
+            "action": "submit_for_approval",
+            "reason": "submitted for approval",
+            "at": "2026-10-14T08:39:38.406700+00:00",
+            "correlation_id": "afe399b2-9fcf-4fd2-9819-1516a71bf743"
+          },
+          {
+            "from_status": "PENDING_APPROVAL",
+            "to_status": "APPROVED",
+            "actor": "synthetic-int-reviewer",
+            "action": "approve",
+            "reason": "synthetic justified approval",
+            "at": "2026-10-14T08:39:38.538331+00:00",
+            "correlation_id": "482e13ea-1d6d-496c-98c8-c1ce548adaa0"
+          },
+          {
+            "from_status": "APPROVED",
+            "to_status": "EXECUTING",
+            "actor": "synthetic-int-reviewer",
+            "action": "execute",
+            "reason": "execution coordinated",
+            "at": "2026-10-14T08:39:38.580002+00:00",
+            "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+          },
+          {
+            "from_status": "EXECUTING",
+            "to_status": "OBSERVING",
+            "actor": "synthetic-int-reviewer",
+            "action": "start_observation",
+            "reason": "observation window opened",
+            "at": "2026-10-14T08:39:38.580068+00:00",
+            "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+          },
+          {
+            "from_status": "OBSERVING",
+            "to_status": "OBSERVING",
+            "actor": "synthetic-int-reviewer",
+            "action": "collect_outcome",
+            "reason": "outcome collected",
+            "at": "2026-10-14T08:39:38.610648+00:00",
+            "correlation_id": "c87b619c-7c3d-4454-a97d-ceb5cb420353"
+          },
+          {
+            "from_status": "OBSERVING",
+            "to_status": "EVALUATING",
+            "actor": "synthetic-int-reviewer",
+            "action": "evaluate_effect",
+            "reason": "effect evaluation started",
+            "at": "2026-10-14T08:39:38.655065+00:00",
+            "correlation_id": "59d57526-2b55-4ff1-ae45-218733755da1"
+          },
+          {
+            "from_status": "EVALUATING",
+            "to_status": "COMPLETED",
+            "actor": "synthetic-int-reviewer",
+            "action": "complete",
+            "reason": "evidence L3",
+            "at": "2026-10-14T08:39:38.655126+00:00",
+            "correlation_id": "59d57526-2b55-4ff1-ae45-218733755da1"
+          }
+        ],
+        "feature_version": "intervention-feature-v1",
+        "read_at": "2026-11-11T08:39:37.000900+00:00",
+        "review_context": {
+          "schema_version": 1,
+          "intervention_id": "113b64e3-849c-4b95-8285-cd1f5d5b8ae5",
+          "store_id": "synthetic-intervention-store",
+          "tenant_id": "00000000-0000-0000-0000-000000000001",
+          "actor_subject_id": "synthetic-int-reviewer",
+          "version": 11,
+          "policy_version": "intervention-lifecycle-policy-v1",
+          "snapshot_sha256": "832d433c5b7bac22f000d094f0da87ba7efe07d4bf82aae8ffd84865f9a35370"
+        },
+        "creator_verification": "authenticated_principal",
+        "approval_permissions": {
+          "approve": false,
+          "reject": false,
+          "approve_refusal": "PENDING_APPROVAL_REQUIRED",
+          "reject_refusal": "PENDING_APPROVAL_REQUIRED"
+        },
+        "approval_audit": {
+          "event_id": "f16ae75c-55ad-4a54-8145-61e379dd3fc2",
+          "actor": "synthetic-int-reviewer",
+          "action": "approve",
+          "reason": "synthetic justified approval",
+          "policy_version": "intervention-lifecycle-policy-v1",
+          "correlation_id": "482e13ea-1d6d-496c-98c8-c1ce548adaa0",
+          "occurred_at": "2026-10-14T08:39:38.545600+00:00"
+        }
+      },
+      "currentClockISO": "2026-11-11T08:39:37.000900+00:00",
+      "currentClockLowerBoundMs": 1794386377000,
+      "nativeMatureAsOfEvaluation": true,
+      "nativeWindowMatureAtActualClock": true,
+      "expectedParseAccepted": true,
+      "expectedEffectClaim": false,
+      "expectedCausalClaim": false,
+      "expectedWindowMatureNow": false,
+      "memoryProjectionNotPersistedNativeProducer": true
+    },
+    {
+      "name": "Legitimate mature record after boundary inside same millisecond",
+      "projection": {
+        "intervention_id": "113b64e3-849c-4b95-8285-cd1f5d5b8ae5",
+        "store_id": "synthetic-intervention-store",
+        "kind": "PRICE_CHANGE",
+        "status": "COMPLETED",
+        "trigger_ref": "synthetic-alert",
+        "expected_outcome": "synthetic margin review",
+        "planned_start": "2026-10-14T08:39:38.122909+00:00",
+        "planned_end": "2026-10-21T08:39:38.122909+00:00",
+        "window_spec": {
+          "outcome_window_days": 1,
+          "maturity_buffer_days": 1
+        },
+        "created_by": "synthetic-int-creator",
+        "created_at": "2026-10-14T08:39:38.243498+00:00",
+        "policy_version": "intervention-lifecycle-policy-v1",
+        "action_spec": {
+          "price_change_pct": -5,
+          "rollback_plan": "restore"
+        },
+        "eligibility": {
+          "eligible": true,
+          "checked_at": "2026-10-14T08:39:38.285834+00:00",
+          "reasons": [
+            "synthetic eligibility"
+          ]
+        },
+        "conflict": {
+          "has_conflict": false,
+          "checked_at": "2026-10-14T08:39:38.363372+00:00",
+          "conflicting_ids": [],
+          "conflicting_kinds": [],
+          "resolved": true,
+          "resolution_reason": "",
+          "blocks_approval": false
+        },
+        "approval": {
+          "approved": true,
+          "actor_id": "synthetic-int-reviewer",
+          "decision_reason": "synthetic justified approval",
+          "approved_at": "2026-10-14T08:39:38.538313+00:00",
+          "policy_version": "intervention-lifecycle-policy-v1"
+        },
+        "execution": {
+          "execution_id": "intervention-exec-acb4f092-5da2-4abf-b587-b456f4fcc9d7",
+          "executor": "synthetic-int-reviewer",
+          "executed_at": "2026-11-09T08:39:37.000900+00:00",
+          "status": "EXECUTED",
+          "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+        },
+        "observation_window": {
+          "opened_at": "2026-11-09T08:39:37.000900+00:00",
+          "outcome_window_days": 1,
+          "maturity_buffer_days": 1,
+          "outcome_window_end": "2026-11-10T08:39:37.000900+00:00",
+          "label_maturity_time": "2026-11-11T08:39:37.000900+00:00"
+        },
+        "outcome": {
+          "collected_at": "2026-10-14T08:39:38.610621+00:00",
+          "incremental_revenue": 123.0,
+          "incremental_gross_margin": 45.0,
+          "has_control_group": true,
+          "pretrend_status": "PASS",
+          "treatment_store_count": 4,
+          "control_store_count": 4,
+          "evaluation_method": "DID",
+          "randomized": false,
+          "ad_spend": 10.0,
+          "iromi": 4.5,
+          "measurement_method": "panel_did"
+        },
+        "effect": {
+          "evaluated_at": "2026-11-11T08:39:37.000950+00:00",
+          "evidence_level": "L3",
+          "can_claim_effect": true,
+          "can_claim_causal": true,
+          "incremental_revenue": 123,
+          "incremental_gross_margin": 45,
+          "iromi": 4.5,
+          "evaluation_method": "DID",
+          "pretrend_status": "PASS",
+          "recommendation": "SCALE",
+          "observation_mature": true,
+          "limitations": []
+        },
+        "close": null,
+        "assigned_to": null,
+        "assigned_at": null,
+        "assigned_by": null,
+        "assignment_role": null,
+        "predecessor_id": null,
+        "replacement_id": null,
+        "adjustment": null,
+        "version": 11,
+        "history": [
+          {
+            "from_status": "CANDIDATE",
+            "to_status": "ELIGIBLE",
+            "actor": "synthetic-int-creator",
+            "action": "check_eligibility",
+            "reason": "eligible",
+            "at": "2026-10-14T08:39:38.285847+00:00",
+            "correlation_id": "19daa977-830c-4f2d-b485-040f6450f0f1"
+          },
+          {
+            "from_status": "ELIGIBLE",
+            "to_status": "ACTION_PROPOSED",
+            "actor": "synthetic-int-creator",
+            "action": "propose_action",
+            "reason": "action candidate built",
+            "at": "2026-10-14T08:39:38.323779+00:00",
+            "correlation_id": "423c7f93-7c1f-4309-8750-31ce42e9ccff"
+          },
+          {
+            "from_status": "ACTION_PROPOSED",
+            "to_status": "CONFLICT_CHECKING",
+            "actor": "synthetic-int-creator",
+            "action": "check_conflict",
+            "reason": "no conflict",
+            "at": "2026-10-14T08:39:38.363393+00:00",
+            "correlation_id": "d238c4f3-524d-43d5-824a-e45a0d83594a"
+          },
+          {
+            "from_status": "CONFLICT_CHECKING",
+            "to_status": "PENDING_APPROVAL",
+            "actor": "synthetic-int-creator",
+            "action": "submit_for_approval",
+            "reason": "submitted for approval",
+            "at": "2026-10-14T08:39:38.406700+00:00",
+            "correlation_id": "afe399b2-9fcf-4fd2-9819-1516a71bf743"
+          },
+          {
+            "from_status": "PENDING_APPROVAL",
+            "to_status": "APPROVED",
+            "actor": "synthetic-int-reviewer",
+            "action": "approve",
+            "reason": "synthetic justified approval",
+            "at": "2026-10-14T08:39:38.538331+00:00",
+            "correlation_id": "482e13ea-1d6d-496c-98c8-c1ce548adaa0"
+          },
+          {
+            "from_status": "APPROVED",
+            "to_status": "EXECUTING",
+            "actor": "synthetic-int-reviewer",
+            "action": "execute",
+            "reason": "execution coordinated",
+            "at": "2026-10-14T08:39:38.580002+00:00",
+            "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+          },
+          {
+            "from_status": "EXECUTING",
+            "to_status": "OBSERVING",
+            "actor": "synthetic-int-reviewer",
+            "action": "start_observation",
+            "reason": "observation window opened",
+            "at": "2026-10-14T08:39:38.580068+00:00",
+            "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+          },
+          {
+            "from_status": "OBSERVING",
+            "to_status": "OBSERVING",
+            "actor": "synthetic-int-reviewer",
+            "action": "collect_outcome",
+            "reason": "outcome collected",
+            "at": "2026-10-14T08:39:38.610648+00:00",
+            "correlation_id": "c87b619c-7c3d-4454-a97d-ceb5cb420353"
+          },
+          {
+            "from_status": "OBSERVING",
+            "to_status": "EVALUATING",
+            "actor": "synthetic-int-reviewer",
+            "action": "evaluate_effect",
+            "reason": "effect evaluation started",
+            "at": "2026-10-14T08:39:38.655065+00:00",
+            "correlation_id": "59d57526-2b55-4ff1-ae45-218733755da1"
+          },
+          {
+            "from_status": "EVALUATING",
+            "to_status": "COMPLETED",
+            "actor": "synthetic-int-reviewer",
+            "action": "complete",
+            "reason": "evidence L3",
+            "at": "2026-10-14T08:39:38.655126+00:00",
+            "correlation_id": "59d57526-2b55-4ff1-ae45-218733755da1"
+          }
+        ],
+        "feature_version": "intervention-feature-v1",
+        "read_at": "2026-11-11T08:39:37.000950+00:00",
+        "review_context": {
+          "schema_version": 1,
+          "intervention_id": "113b64e3-849c-4b95-8285-cd1f5d5b8ae5",
+          "store_id": "synthetic-intervention-store",
+          "tenant_id": "00000000-0000-0000-0000-000000000001",
+          "actor_subject_id": "synthetic-int-reviewer",
+          "version": 11,
+          "policy_version": "intervention-lifecycle-policy-v1",
+          "snapshot_sha256": "832d433c5b7bac22f000d094f0da87ba7efe07d4bf82aae8ffd84865f9a35370"
+        },
+        "creator_verification": "authenticated_principal",
+        "approval_permissions": {
+          "approve": false,
+          "reject": false,
+          "approve_refusal": "PENDING_APPROVAL_REQUIRED",
+          "reject_refusal": "PENDING_APPROVAL_REQUIRED"
+        },
+        "approval_audit": {
+          "event_id": "f16ae75c-55ad-4a54-8145-61e379dd3fc2",
+          "actor": "synthetic-int-reviewer",
+          "action": "approve",
+          "reason": "synthetic justified approval",
+          "policy_version": "intervention-lifecycle-policy-v1",
+          "correlation_id": "482e13ea-1d6d-496c-98c8-c1ce548adaa0",
+          "occurred_at": "2026-10-14T08:39:38.545600+00:00"
+        }
+      },
+      "currentClockISO": "2026-11-11T08:39:37.000950+00:00",
+      "currentClockLowerBoundMs": 1794386377000,
+      "nativeMatureAsOfEvaluation": true,
+      "nativeWindowMatureAtActualClock": true,
+      "expectedParseAccepted": true,
+      "expectedEffectClaim": false,
+      "expectedCausalClaim": false,
+      "expectedWindowMatureNow": false,
+      "memoryProjectionNotPersistedNativeProducer": true
+    },
+    {
+      "name": "Mature record verified at next clock millisecond",
+      "projection": {
+        "intervention_id": "113b64e3-849c-4b95-8285-cd1f5d5b8ae5",
+        "store_id": "synthetic-intervention-store",
+        "kind": "PRICE_CHANGE",
+        "status": "COMPLETED",
+        "trigger_ref": "synthetic-alert",
+        "expected_outcome": "synthetic margin review",
+        "planned_start": "2026-10-14T08:39:38.122909+00:00",
+        "planned_end": "2026-10-21T08:39:38.122909+00:00",
+        "window_spec": {
+          "outcome_window_days": 1,
+          "maturity_buffer_days": 1
+        },
+        "created_by": "synthetic-int-creator",
+        "created_at": "2026-10-14T08:39:38.243498+00:00",
+        "policy_version": "intervention-lifecycle-policy-v1",
+        "action_spec": {
+          "price_change_pct": -5,
+          "rollback_plan": "restore"
+        },
+        "eligibility": {
+          "eligible": true,
+          "checked_at": "2026-10-14T08:39:38.285834+00:00",
+          "reasons": [
+            "synthetic eligibility"
+          ]
+        },
+        "conflict": {
+          "has_conflict": false,
+          "checked_at": "2026-10-14T08:39:38.363372+00:00",
+          "conflicting_ids": [],
+          "conflicting_kinds": [],
+          "resolved": true,
+          "resolution_reason": "",
+          "blocks_approval": false
+        },
+        "approval": {
+          "approved": true,
+          "actor_id": "synthetic-int-reviewer",
+          "decision_reason": "synthetic justified approval",
+          "approved_at": "2026-10-14T08:39:38.538313+00:00",
+          "policy_version": "intervention-lifecycle-policy-v1"
+        },
+        "execution": {
+          "execution_id": "intervention-exec-acb4f092-5da2-4abf-b587-b456f4fcc9d7",
+          "executor": "synthetic-int-reviewer",
+          "executed_at": "2026-11-09T08:39:37.000900+00:00",
+          "status": "EXECUTED",
+          "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+        },
+        "observation_window": {
+          "opened_at": "2026-11-09T08:39:37.000900+00:00",
+          "outcome_window_days": 1,
+          "maturity_buffer_days": 1,
+          "outcome_window_end": "2026-11-10T08:39:37.000900+00:00",
+          "label_maturity_time": "2026-11-11T08:39:37.000900+00:00"
+        },
+        "outcome": {
+          "collected_at": "2026-10-14T08:39:38.610621+00:00",
+          "incremental_revenue": 123.0,
+          "incremental_gross_margin": 45.0,
+          "has_control_group": true,
+          "pretrend_status": "PASS",
+          "treatment_store_count": 4,
+          "control_store_count": 4,
+          "evaluation_method": "DID",
+          "randomized": false,
+          "ad_spend": 10.0,
+          "iromi": 4.5,
+          "measurement_method": "panel_did"
+        },
+        "effect": {
+          "evaluated_at": "2026-11-11T08:39:37.000900+00:00",
+          "evidence_level": "L3",
+          "can_claim_effect": true,
+          "can_claim_causal": true,
+          "incremental_revenue": 123,
+          "incremental_gross_margin": 45,
+          "iromi": 4.5,
+          "evaluation_method": "DID",
+          "pretrend_status": "PASS",
+          "recommendation": "SCALE",
+          "observation_mature": true,
+          "limitations": []
+        },
+        "close": null,
+        "assigned_to": null,
+        "assigned_at": null,
+        "assigned_by": null,
+        "assignment_role": null,
+        "predecessor_id": null,
+        "replacement_id": null,
+        "adjustment": null,
+        "version": 11,
+        "history": [
+          {
+            "from_status": "CANDIDATE",
+            "to_status": "ELIGIBLE",
+            "actor": "synthetic-int-creator",
+            "action": "check_eligibility",
+            "reason": "eligible",
+            "at": "2026-10-14T08:39:38.285847+00:00",
+            "correlation_id": "19daa977-830c-4f2d-b485-040f6450f0f1"
+          },
+          {
+            "from_status": "ELIGIBLE",
+            "to_status": "ACTION_PROPOSED",
+            "actor": "synthetic-int-creator",
+            "action": "propose_action",
+            "reason": "action candidate built",
+            "at": "2026-10-14T08:39:38.323779+00:00",
+            "correlation_id": "423c7f93-7c1f-4309-8750-31ce42e9ccff"
+          },
+          {
+            "from_status": "ACTION_PROPOSED",
+            "to_status": "CONFLICT_CHECKING",
+            "actor": "synthetic-int-creator",
+            "action": "check_conflict",
+            "reason": "no conflict",
+            "at": "2026-10-14T08:39:38.363393+00:00",
+            "correlation_id": "d238c4f3-524d-43d5-824a-e45a0d83594a"
+          },
+          {
+            "from_status": "CONFLICT_CHECKING",
+            "to_status": "PENDING_APPROVAL",
+            "actor": "synthetic-int-creator",
+            "action": "submit_for_approval",
+            "reason": "submitted for approval",
+            "at": "2026-10-14T08:39:38.406700+00:00",
+            "correlation_id": "afe399b2-9fcf-4fd2-9819-1516a71bf743"
+          },
+          {
+            "from_status": "PENDING_APPROVAL",
+            "to_status": "APPROVED",
+            "actor": "synthetic-int-reviewer",
+            "action": "approve",
+            "reason": "synthetic justified approval",
+            "at": "2026-10-14T08:39:38.538331+00:00",
+            "correlation_id": "482e13ea-1d6d-496c-98c8-c1ce548adaa0"
+          },
+          {
+            "from_status": "APPROVED",
+            "to_status": "EXECUTING",
+            "actor": "synthetic-int-reviewer",
+            "action": "execute",
+            "reason": "execution coordinated",
+            "at": "2026-10-14T08:39:38.580002+00:00",
+            "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+          },
+          {
+            "from_status": "EXECUTING",
+            "to_status": "OBSERVING",
+            "actor": "synthetic-int-reviewer",
+            "action": "start_observation",
+            "reason": "observation window opened",
+            "at": "2026-10-14T08:39:38.580068+00:00",
+            "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+          },
+          {
+            "from_status": "OBSERVING",
+            "to_status": "OBSERVING",
+            "actor": "synthetic-int-reviewer",
+            "action": "collect_outcome",
+            "reason": "outcome collected",
+            "at": "2026-10-14T08:39:38.610648+00:00",
+            "correlation_id": "c87b619c-7c3d-4454-a97d-ceb5cb420353"
+          },
+          {
+            "from_status": "OBSERVING",
+            "to_status": "EVALUATING",
+            "actor": "synthetic-int-reviewer",
+            "action": "evaluate_effect",
+            "reason": "effect evaluation started",
+            "at": "2026-10-14T08:39:38.655065+00:00",
+            "correlation_id": "59d57526-2b55-4ff1-ae45-218733755da1"
+          },
+          {
+            "from_status": "EVALUATING",
+            "to_status": "COMPLETED",
+            "actor": "synthetic-int-reviewer",
+            "action": "complete",
+            "reason": "evidence L3",
+            "at": "2026-10-14T08:39:38.655126+00:00",
+            "correlation_id": "59d57526-2b55-4ff1-ae45-218733755da1"
+          }
+        ],
+        "feature_version": "intervention-feature-v1",
+        "read_at": "2026-11-11T08:39:37.001000+00:00",
+        "review_context": {
+          "schema_version": 1,
+          "intervention_id": "113b64e3-849c-4b95-8285-cd1f5d5b8ae5",
+          "store_id": "synthetic-intervention-store",
+          "tenant_id": "00000000-0000-0000-0000-000000000001",
+          "actor_subject_id": "synthetic-int-reviewer",
+          "version": 11,
+          "policy_version": "intervention-lifecycle-policy-v1",
+          "snapshot_sha256": "832d433c5b7bac22f000d094f0da87ba7efe07d4bf82aae8ffd84865f9a35370"
+        },
+        "creator_verification": "authenticated_principal",
+        "approval_permissions": {
+          "approve": false,
+          "reject": false,
+          "approve_refusal": "PENDING_APPROVAL_REQUIRED",
+          "reject_refusal": "PENDING_APPROVAL_REQUIRED"
+        },
+        "approval_audit": {
+          "event_id": "f16ae75c-55ad-4a54-8145-61e379dd3fc2",
+          "actor": "synthetic-int-reviewer",
+          "action": "approve",
+          "reason": "synthetic justified approval",
+          "policy_version": "intervention-lifecycle-policy-v1",
+          "correlation_id": "482e13ea-1d6d-496c-98c8-c1ce548adaa0",
+          "occurred_at": "2026-10-14T08:39:38.545600+00:00"
+        }
+      },
+      "currentClockISO": "2026-11-11T08:39:37.001000+00:00",
+      "currentClockLowerBoundMs": 1794386377001,
+      "nativeMatureAsOfEvaluation": true,
+      "nativeWindowMatureAtActualClock": true,
+      "expectedParseAccepted": true,
+      "expectedEffectClaim": true,
+      "expectedCausalClaim": true,
+      "expectedWindowMatureNow": true,
+      "memoryProjectionNotPersistedNativeProducer": true
+    },
+    {
+      "name": "UTC offset before boundary",
+      "projection": {
+        "intervention_id": "113b64e3-849c-4b95-8285-cd1f5d5b8ae5",
+        "store_id": "synthetic-intervention-store",
+        "kind": "PRICE_CHANGE",
+        "status": "COMPLETED",
+        "trigger_ref": "synthetic-alert",
+        "expected_outcome": "synthetic margin review",
+        "planned_start": "2026-10-14T08:39:38.122909+00:00",
+        "planned_end": "2026-10-21T08:39:38.122909+00:00",
+        "window_spec": {
+          "outcome_window_days": 1,
+          "maturity_buffer_days": 1
+        },
+        "created_by": "synthetic-int-creator",
+        "created_at": "2026-10-14T08:39:38.243498+00:00",
+        "policy_version": "intervention-lifecycle-policy-v1",
+        "action_spec": {
+          "price_change_pct": -5,
+          "rollback_plan": "restore"
+        },
+        "eligibility": {
+          "eligible": true,
+          "checked_at": "2026-10-14T08:39:38.285834+00:00",
+          "reasons": [
+            "synthetic eligibility"
+          ]
+        },
+        "conflict": {
+          "has_conflict": false,
+          "checked_at": "2026-10-14T08:39:38.363372+00:00",
+          "conflicting_ids": [],
+          "conflicting_kinds": [],
+          "resolved": true,
+          "resolution_reason": "",
+          "blocks_approval": false
+        },
+        "approval": {
+          "approved": true,
+          "actor_id": "synthetic-int-reviewer",
+          "decision_reason": "synthetic justified approval",
+          "approved_at": "2026-10-14T08:39:38.538313+00:00",
+          "policy_version": "intervention-lifecycle-policy-v1"
+        },
+        "execution": {
+          "execution_id": "intervention-exec-acb4f092-5da2-4abf-b587-b456f4fcc9d7",
+          "executor": "synthetic-int-reviewer",
+          "executed_at": "2026-11-09T08:39:37.000900+00:00",
+          "status": "EXECUTED",
+          "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+        },
+        "observation_window": {
+          "opened_at": "2026-11-09T08:39:37.000900+00:00",
+          "outcome_window_days": 1,
+          "maturity_buffer_days": 1,
+          "outcome_window_end": "2026-11-10T08:39:37.000900+00:00",
+          "label_maturity_time": "2026-11-11T08:39:37.000900+00:00"
+        },
+        "outcome": {
+          "collected_at": "2026-10-14T08:39:38.610621+00:00",
+          "incremental_revenue": 123.0,
+          "incremental_gross_margin": 45.0,
+          "has_control_group": true,
+          "pretrend_status": "PASS",
+          "treatment_store_count": 4,
+          "control_store_count": 4,
+          "evaluation_method": "DID",
+          "randomized": false,
+          "ad_spend": 10.0,
+          "iromi": 4.5,
+          "measurement_method": "panel_did"
+        },
+        "effect": {
+          "evaluated_at": "2026-11-11T16:39:37.000800+08:00",
+          "evidence_level": "L0",
+          "can_claim_effect": false,
+          "can_claim_causal": false,
+          "incremental_revenue": 0,
+          "incremental_gross_margin": 0,
+          "iromi": null,
+          "evaluation_method": "DID",
+          "pretrend_status": "PASS",
+          "recommendation": "SCALE",
+          "observation_mature": false,
+          "limitations": [
+            "observation_window_not_mature"
+          ]
+        },
+        "close": null,
+        "assigned_to": null,
+        "assigned_at": null,
+        "assigned_by": null,
+        "assignment_role": null,
+        "predecessor_id": null,
+        "replacement_id": null,
+        "adjustment": null,
+        "version": 11,
+        "history": [
+          {
+            "from_status": "CANDIDATE",
+            "to_status": "ELIGIBLE",
+            "actor": "synthetic-int-creator",
+            "action": "check_eligibility",
+            "reason": "eligible",
+            "at": "2026-10-14T08:39:38.285847+00:00",
+            "correlation_id": "19daa977-830c-4f2d-b485-040f6450f0f1"
+          },
+          {
+            "from_status": "ELIGIBLE",
+            "to_status": "ACTION_PROPOSED",
+            "actor": "synthetic-int-creator",
+            "action": "propose_action",
+            "reason": "action candidate built",
+            "at": "2026-10-14T08:39:38.323779+00:00",
+            "correlation_id": "423c7f93-7c1f-4309-8750-31ce42e9ccff"
+          },
+          {
+            "from_status": "ACTION_PROPOSED",
+            "to_status": "CONFLICT_CHECKING",
+            "actor": "synthetic-int-creator",
+            "action": "check_conflict",
+            "reason": "no conflict",
+            "at": "2026-10-14T08:39:38.363393+00:00",
+            "correlation_id": "d238c4f3-524d-43d5-824a-e45a0d83594a"
+          },
+          {
+            "from_status": "CONFLICT_CHECKING",
+            "to_status": "PENDING_APPROVAL",
+            "actor": "synthetic-int-creator",
+            "action": "submit_for_approval",
+            "reason": "submitted for approval",
+            "at": "2026-10-14T08:39:38.406700+00:00",
+            "correlation_id": "afe399b2-9fcf-4fd2-9819-1516a71bf743"
+          },
+          {
+            "from_status": "PENDING_APPROVAL",
+            "to_status": "APPROVED",
+            "actor": "synthetic-int-reviewer",
+            "action": "approve",
+            "reason": "synthetic justified approval",
+            "at": "2026-10-14T08:39:38.538331+00:00",
+            "correlation_id": "482e13ea-1d6d-496c-98c8-c1ce548adaa0"
+          },
+          {
+            "from_status": "APPROVED",
+            "to_status": "EXECUTING",
+            "actor": "synthetic-int-reviewer",
+            "action": "execute",
+            "reason": "execution coordinated",
+            "at": "2026-10-14T08:39:38.580002+00:00",
+            "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+          },
+          {
+            "from_status": "EXECUTING",
+            "to_status": "OBSERVING",
+            "actor": "synthetic-int-reviewer",
+            "action": "start_observation",
+            "reason": "observation window opened",
+            "at": "2026-10-14T08:39:38.580068+00:00",
+            "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+          },
+          {
+            "from_status": "OBSERVING",
+            "to_status": "OBSERVING",
+            "actor": "synthetic-int-reviewer",
+            "action": "collect_outcome",
+            "reason": "outcome collected",
+            "at": "2026-10-14T08:39:38.610648+00:00",
+            "correlation_id": "c87b619c-7c3d-4454-a97d-ceb5cb420353"
+          },
+          {
+            "from_status": "OBSERVING",
+            "to_status": "EVALUATING",
+            "actor": "synthetic-int-reviewer",
+            "action": "evaluate_effect",
+            "reason": "effect evaluation started",
+            "at": "2026-10-14T08:39:38.655065+00:00",
+            "correlation_id": "59d57526-2b55-4ff1-ae45-218733755da1"
+          },
+          {
+            "from_status": "EVALUATING",
+            "to_status": "COMPLETED",
+            "actor": "synthetic-int-reviewer",
+            "action": "complete",
+            "reason": "evidence L3",
+            "at": "2026-10-14T08:39:38.655126+00:00",
+            "correlation_id": "59d57526-2b55-4ff1-ae45-218733755da1"
+          }
+        ],
+        "feature_version": "intervention-feature-v1",
+        "read_at": "2026-11-11T08:39:37.000800+00:00",
+        "review_context": {
+          "schema_version": 1,
+          "intervention_id": "113b64e3-849c-4b95-8285-cd1f5d5b8ae5",
+          "store_id": "synthetic-intervention-store",
+          "tenant_id": "00000000-0000-0000-0000-000000000001",
+          "actor_subject_id": "synthetic-int-reviewer",
+          "version": 11,
+          "policy_version": "intervention-lifecycle-policy-v1",
+          "snapshot_sha256": "832d433c5b7bac22f000d094f0da87ba7efe07d4bf82aae8ffd84865f9a35370"
+        },
+        "creator_verification": "authenticated_principal",
+        "approval_permissions": {
+          "approve": false,
+          "reject": false,
+          "approve_refusal": "PENDING_APPROVAL_REQUIRED",
+          "reject_refusal": "PENDING_APPROVAL_REQUIRED"
+        },
+        "approval_audit": {
+          "event_id": "f16ae75c-55ad-4a54-8145-61e379dd3fc2",
+          "actor": "synthetic-int-reviewer",
+          "action": "approve",
+          "reason": "synthetic justified approval",
+          "policy_version": "intervention-lifecycle-policy-v1",
+          "correlation_id": "482e13ea-1d6d-496c-98c8-c1ce548adaa0",
+          "occurred_at": "2026-10-14T08:39:38.545600+00:00"
+        }
+      },
+      "currentClockISO": "2026-11-11T08:39:37.000800+00:00",
+      "currentClockLowerBoundMs": 1794386377000,
+      "nativeMatureAsOfEvaluation": false,
+      "nativeWindowMatureAtActualClock": false,
+      "expectedParseAccepted": true,
+      "expectedEffectClaim": false,
+      "expectedCausalClaim": false,
+      "expectedWindowMatureNow": false,
+      "memoryProjectionNotPersistedNativeProducer": true
+    },
+    {
+      "name": "Negative offset after boundary",
+      "projection": {
+        "intervention_id": "113b64e3-849c-4b95-8285-cd1f5d5b8ae5",
+        "store_id": "synthetic-intervention-store",
+        "kind": "PRICE_CHANGE",
+        "status": "COMPLETED",
+        "trigger_ref": "synthetic-alert",
+        "expected_outcome": "synthetic margin review",
+        "planned_start": "2026-10-14T08:39:38.122909+00:00",
+        "planned_end": "2026-10-21T08:39:38.122909+00:00",
+        "window_spec": {
+          "outcome_window_days": 1,
+          "maturity_buffer_days": 1
+        },
+        "created_by": "synthetic-int-creator",
+        "created_at": "2026-10-14T08:39:38.243498+00:00",
+        "policy_version": "intervention-lifecycle-policy-v1",
+        "action_spec": {
+          "price_change_pct": -5,
+          "rollback_plan": "restore"
+        },
+        "eligibility": {
+          "eligible": true,
+          "checked_at": "2026-10-14T08:39:38.285834+00:00",
+          "reasons": [
+            "synthetic eligibility"
+          ]
+        },
+        "conflict": {
+          "has_conflict": false,
+          "checked_at": "2026-10-14T08:39:38.363372+00:00",
+          "conflicting_ids": [],
+          "conflicting_kinds": [],
+          "resolved": true,
+          "resolution_reason": "",
+          "blocks_approval": false
+        },
+        "approval": {
+          "approved": true,
+          "actor_id": "synthetic-int-reviewer",
+          "decision_reason": "synthetic justified approval",
+          "approved_at": "2026-10-14T08:39:38.538313+00:00",
+          "policy_version": "intervention-lifecycle-policy-v1"
+        },
+        "execution": {
+          "execution_id": "intervention-exec-acb4f092-5da2-4abf-b587-b456f4fcc9d7",
+          "executor": "synthetic-int-reviewer",
+          "executed_at": "2026-11-09T08:39:37.000900+00:00",
+          "status": "EXECUTED",
+          "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+        },
+        "observation_window": {
+          "opened_at": "2026-11-09T08:39:37.000900+00:00",
+          "outcome_window_days": 1,
+          "maturity_buffer_days": 1,
+          "outcome_window_end": "2026-11-10T08:39:37.000900+00:00",
+          "label_maturity_time": "2026-11-11T08:39:37.000900+00:00"
+        },
+        "outcome": {
+          "collected_at": "2026-10-14T08:39:38.610621+00:00",
+          "incremental_revenue": 123.0,
+          "incremental_gross_margin": 45.0,
+          "has_control_group": true,
+          "pretrend_status": "PASS",
+          "treatment_store_count": 4,
+          "control_store_count": 4,
+          "evaluation_method": "DID",
+          "randomized": false,
+          "ad_spend": 10.0,
+          "iromi": 4.5,
+          "measurement_method": "panel_did"
+        },
+        "effect": {
+          "evaluated_at": "2026-11-11T03:09:37.000950-05:30",
+          "evidence_level": "L3",
+          "can_claim_effect": true,
+          "can_claim_causal": true,
+          "incremental_revenue": 123,
+          "incremental_gross_margin": 45,
+          "iromi": 4.5,
+          "evaluation_method": "DID",
+          "pretrend_status": "PASS",
+          "recommendation": "SCALE",
+          "observation_mature": true,
+          "limitations": []
+        },
+        "close": null,
+        "assigned_to": null,
+        "assigned_at": null,
+        "assigned_by": null,
+        "assignment_role": null,
+        "predecessor_id": null,
+        "replacement_id": null,
+        "adjustment": null,
+        "version": 11,
+        "history": [
+          {
+            "from_status": "CANDIDATE",
+            "to_status": "ELIGIBLE",
+            "actor": "synthetic-int-creator",
+            "action": "check_eligibility",
+            "reason": "eligible",
+            "at": "2026-10-14T08:39:38.285847+00:00",
+            "correlation_id": "19daa977-830c-4f2d-b485-040f6450f0f1"
+          },
+          {
+            "from_status": "ELIGIBLE",
+            "to_status": "ACTION_PROPOSED",
+            "actor": "synthetic-int-creator",
+            "action": "propose_action",
+            "reason": "action candidate built",
+            "at": "2026-10-14T08:39:38.323779+00:00",
+            "correlation_id": "423c7f93-7c1f-4309-8750-31ce42e9ccff"
+          },
+          {
+            "from_status": "ACTION_PROPOSED",
+            "to_status": "CONFLICT_CHECKING",
+            "actor": "synthetic-int-creator",
+            "action": "check_conflict",
+            "reason": "no conflict",
+            "at": "2026-10-14T08:39:38.363393+00:00",
+            "correlation_id": "d238c4f3-524d-43d5-824a-e45a0d83594a"
+          },
+          {
+            "from_status": "CONFLICT_CHECKING",
+            "to_status": "PENDING_APPROVAL",
+            "actor": "synthetic-int-creator",
+            "action": "submit_for_approval",
+            "reason": "submitted for approval",
+            "at": "2026-10-14T08:39:38.406700+00:00",
+            "correlation_id": "afe399b2-9fcf-4fd2-9819-1516a71bf743"
+          },
+          {
+            "from_status": "PENDING_APPROVAL",
+            "to_status": "APPROVED",
+            "actor": "synthetic-int-reviewer",
+            "action": "approve",
+            "reason": "synthetic justified approval",
+            "at": "2026-10-14T08:39:38.538331+00:00",
+            "correlation_id": "482e13ea-1d6d-496c-98c8-c1ce548adaa0"
+          },
+          {
+            "from_status": "APPROVED",
+            "to_status": "EXECUTING",
+            "actor": "synthetic-int-reviewer",
+            "action": "execute",
+            "reason": "execution coordinated",
+            "at": "2026-10-14T08:39:38.580002+00:00",
+            "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+          },
+          {
+            "from_status": "EXECUTING",
+            "to_status": "OBSERVING",
+            "actor": "synthetic-int-reviewer",
+            "action": "start_observation",
+            "reason": "observation window opened",
+            "at": "2026-10-14T08:39:38.580068+00:00",
+            "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+          },
+          {
+            "from_status": "OBSERVING",
+            "to_status": "OBSERVING",
+            "actor": "synthetic-int-reviewer",
+            "action": "collect_outcome",
+            "reason": "outcome collected",
+            "at": "2026-10-14T08:39:38.610648+00:00",
+            "correlation_id": "c87b619c-7c3d-4454-a97d-ceb5cb420353"
+          },
+          {
+            "from_status": "OBSERVING",
+            "to_status": "EVALUATING",
+            "actor": "synthetic-int-reviewer",
+            "action": "evaluate_effect",
+            "reason": "effect evaluation started",
+            "at": "2026-10-14T08:39:38.655065+00:00",
+            "correlation_id": "59d57526-2b55-4ff1-ae45-218733755da1"
+          },
+          {
+            "from_status": "EVALUATING",
+            "to_status": "COMPLETED",
+            "actor": "synthetic-int-reviewer",
+            "action": "complete",
+            "reason": "evidence L3",
+            "at": "2026-10-14T08:39:38.655126+00:00",
+            "correlation_id": "59d57526-2b55-4ff1-ae45-218733755da1"
+          }
+        ],
+        "feature_version": "intervention-feature-v1",
+        "read_at": "2026-11-11T08:39:37.001000+00:00",
+        "review_context": {
+          "schema_version": 1,
+          "intervention_id": "113b64e3-849c-4b95-8285-cd1f5d5b8ae5",
+          "store_id": "synthetic-intervention-store",
+          "tenant_id": "00000000-0000-0000-0000-000000000001",
+          "actor_subject_id": "synthetic-int-reviewer",
+          "version": 11,
+          "policy_version": "intervention-lifecycle-policy-v1",
+          "snapshot_sha256": "832d433c5b7bac22f000d094f0da87ba7efe07d4bf82aae8ffd84865f9a35370"
+        },
+        "creator_verification": "authenticated_principal",
+        "approval_permissions": {
+          "approve": false,
+          "reject": false,
+          "approve_refusal": "PENDING_APPROVAL_REQUIRED",
+          "reject_refusal": "PENDING_APPROVAL_REQUIRED"
+        },
+        "approval_audit": {
+          "event_id": "f16ae75c-55ad-4a54-8145-61e379dd3fc2",
+          "actor": "synthetic-int-reviewer",
+          "action": "approve",
+          "reason": "synthetic justified approval",
+          "policy_version": "intervention-lifecycle-policy-v1",
+          "correlation_id": "482e13ea-1d6d-496c-98c8-c1ce548adaa0",
+          "occurred_at": "2026-10-14T08:39:38.545600+00:00"
+        }
+      },
+      "currentClockISO": "2026-11-11T08:39:37.001000+00:00",
+      "currentClockLowerBoundMs": 1794386377001,
+      "nativeMatureAsOfEvaluation": true,
+      "nativeWindowMatureAtActualClock": true,
+      "expectedParseAccepted": true,
+      "expectedEffectClaim": false,
+      "expectedCausalClaim": false,
+      "expectedWindowMatureNow": true,
+      "memoryProjectionNotPersistedNativeProducer": true
+    },
+    {
+      "name": "Fractional positive timezone seconds before boundary",
+      "projection": {
+        "intervention_id": "113b64e3-849c-4b95-8285-cd1f5d5b8ae5",
+        "store_id": "synthetic-intervention-store",
+        "kind": "PRICE_CHANGE",
+        "status": "COMPLETED",
+        "trigger_ref": "synthetic-alert",
+        "expected_outcome": "synthetic margin review",
+        "planned_start": "2026-10-14T08:39:38.122909+00:00",
+        "planned_end": "2026-10-21T08:39:38.122909+00:00",
+        "window_spec": {
+          "outcome_window_days": 1,
+          "maturity_buffer_days": 1
+        },
+        "created_by": "synthetic-int-creator",
+        "created_at": "2026-10-14T08:39:38.243498+00:00",
+        "policy_version": "intervention-lifecycle-policy-v1",
+        "action_spec": {
+          "price_change_pct": -5,
+          "rollback_plan": "restore"
+        },
+        "eligibility": {
+          "eligible": true,
+          "checked_at": "2026-10-14T08:39:38.285834+00:00",
+          "reasons": [
+            "synthetic eligibility"
+          ]
+        },
+        "conflict": {
+          "has_conflict": false,
+          "checked_at": "2026-10-14T08:39:38.363372+00:00",
+          "conflicting_ids": [],
+          "conflicting_kinds": [],
+          "resolved": true,
+          "resolution_reason": "",
+          "blocks_approval": false
+        },
+        "approval": {
+          "approved": true,
+          "actor_id": "synthetic-int-reviewer",
+          "decision_reason": "synthetic justified approval",
+          "approved_at": "2026-10-14T08:39:38.538313+00:00",
+          "policy_version": "intervention-lifecycle-policy-v1"
+        },
+        "execution": {
+          "execution_id": "intervention-exec-acb4f092-5da2-4abf-b587-b456f4fcc9d7",
+          "executor": "synthetic-int-reviewer",
+          "executed_at": "2026-11-09T08:39:37.000900+00:00",
+          "status": "EXECUTED",
+          "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+        },
+        "observation_window": {
+          "opened_at": "2026-11-09T08:39:37.000900+00:00",
+          "outcome_window_days": 1,
+          "maturity_buffer_days": 1,
+          "outcome_window_end": "2026-11-10T08:39:37.000900+00:00",
+          "label_maturity_time": "2026-11-11T08:39:37.000900+00:00"
+        },
+        "outcome": {
+          "collected_at": "2026-10-14T08:39:38.610621+00:00",
+          "incremental_revenue": 123.0,
+          "incremental_gross_margin": 45.0,
+          "has_control_group": true,
+          "pretrend_status": "PASS",
+          "treatment_store_count": 4,
+          "control_store_count": 4,
+          "evaluation_method": "DID",
+          "randomized": false,
+          "ad_spend": 10.0,
+          "iromi": 4.5,
+          "measurement_method": "panel_did"
+        },
+        "effect": {
+          "evaluated_at": "2026-11-11T08:39:38.000950+00:00:01.000100",
+          "evidence_level": "L0",
+          "can_claim_effect": false,
+          "can_claim_causal": false,
+          "incremental_revenue": 0,
+          "incremental_gross_margin": 0,
+          "iromi": null,
+          "evaluation_method": "DID",
+          "pretrend_status": "PASS",
+          "recommendation": "SCALE",
+          "observation_mature": false,
+          "limitations": [
+            "observation_window_not_mature"
+          ]
+        },
+        "close": null,
+        "assigned_to": null,
+        "assigned_at": null,
+        "assigned_by": null,
+        "assignment_role": null,
+        "predecessor_id": null,
+        "replacement_id": null,
+        "adjustment": null,
+        "version": 11,
+        "history": [
+          {
+            "from_status": "CANDIDATE",
+            "to_status": "ELIGIBLE",
+            "actor": "synthetic-int-creator",
+            "action": "check_eligibility",
+            "reason": "eligible",
+            "at": "2026-10-14T08:39:38.285847+00:00",
+            "correlation_id": "19daa977-830c-4f2d-b485-040f6450f0f1"
+          },
+          {
+            "from_status": "ELIGIBLE",
+            "to_status": "ACTION_PROPOSED",
+            "actor": "synthetic-int-creator",
+            "action": "propose_action",
+            "reason": "action candidate built",
+            "at": "2026-10-14T08:39:38.323779+00:00",
+            "correlation_id": "423c7f93-7c1f-4309-8750-31ce42e9ccff"
+          },
+          {
+            "from_status": "ACTION_PROPOSED",
+            "to_status": "CONFLICT_CHECKING",
+            "actor": "synthetic-int-creator",
+            "action": "check_conflict",
+            "reason": "no conflict",
+            "at": "2026-10-14T08:39:38.363393+00:00",
+            "correlation_id": "d238c4f3-524d-43d5-824a-e45a0d83594a"
+          },
+          {
+            "from_status": "CONFLICT_CHECKING",
+            "to_status": "PENDING_APPROVAL",
+            "actor": "synthetic-int-creator",
+            "action": "submit_for_approval",
+            "reason": "submitted for approval",
+            "at": "2026-10-14T08:39:38.406700+00:00",
+            "correlation_id": "afe399b2-9fcf-4fd2-9819-1516a71bf743"
+          },
+          {
+            "from_status": "PENDING_APPROVAL",
+            "to_status": "APPROVED",
+            "actor": "synthetic-int-reviewer",
+            "action": "approve",
+            "reason": "synthetic justified approval",
+            "at": "2026-10-14T08:39:38.538331+00:00",
+            "correlation_id": "482e13ea-1d6d-496c-98c8-c1ce548adaa0"
+          },
+          {
+            "from_status": "APPROVED",
+            "to_status": "EXECUTING",
+            "actor": "synthetic-int-reviewer",
+            "action": "execute",
+            "reason": "execution coordinated",
+            "at": "2026-10-14T08:39:38.580002+00:00",
+            "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+          },
+          {
+            "from_status": "EXECUTING",
+            "to_status": "OBSERVING",
+            "actor": "synthetic-int-reviewer",
+            "action": "start_observation",
+            "reason": "observation window opened",
+            "at": "2026-10-14T08:39:38.580068+00:00",
+            "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+          },
+          {
+            "from_status": "OBSERVING",
+            "to_status": "OBSERVING",
+            "actor": "synthetic-int-reviewer",
+            "action": "collect_outcome",
+            "reason": "outcome collected",
+            "at": "2026-10-14T08:39:38.610648+00:00",
+            "correlation_id": "c87b619c-7c3d-4454-a97d-ceb5cb420353"
+          },
+          {
+            "from_status": "OBSERVING",
+            "to_status": "EVALUATING",
+            "actor": "synthetic-int-reviewer",
+            "action": "evaluate_effect",
+            "reason": "effect evaluation started",
+            "at": "2026-10-14T08:39:38.655065+00:00",
+            "correlation_id": "59d57526-2b55-4ff1-ae45-218733755da1"
+          },
+          {
+            "from_status": "EVALUATING",
+            "to_status": "COMPLETED",
+            "actor": "synthetic-int-reviewer",
+            "action": "complete",
+            "reason": "evidence L3",
+            "at": "2026-10-14T08:39:38.655126+00:00",
+            "correlation_id": "59d57526-2b55-4ff1-ae45-218733755da1"
+          }
+        ],
+        "feature_version": "intervention-feature-v1",
+        "read_at": "2026-11-11T08:39:37.001000+00:00",
+        "review_context": {
+          "schema_version": 1,
+          "intervention_id": "113b64e3-849c-4b95-8285-cd1f5d5b8ae5",
+          "store_id": "synthetic-intervention-store",
+          "tenant_id": "00000000-0000-0000-0000-000000000001",
+          "actor_subject_id": "synthetic-int-reviewer",
+          "version": 11,
+          "policy_version": "intervention-lifecycle-policy-v1",
+          "snapshot_sha256": "832d433c5b7bac22f000d094f0da87ba7efe07d4bf82aae8ffd84865f9a35370"
+        },
+        "creator_verification": "authenticated_principal",
+        "approval_permissions": {
+          "approve": false,
+          "reject": false,
+          "approve_refusal": "PENDING_APPROVAL_REQUIRED",
+          "reject_refusal": "PENDING_APPROVAL_REQUIRED"
+        },
+        "approval_audit": {
+          "event_id": "f16ae75c-55ad-4a54-8145-61e379dd3fc2",
+          "actor": "synthetic-int-reviewer",
+          "action": "approve",
+          "reason": "synthetic justified approval",
+          "policy_version": "intervention-lifecycle-policy-v1",
+          "correlation_id": "482e13ea-1d6d-496c-98c8-c1ce548adaa0",
+          "occurred_at": "2026-10-14T08:39:38.545600+00:00"
+        }
+      },
+      "currentClockISO": "2026-11-11T08:39:37.001000+00:00",
+      "currentClockLowerBoundMs": 1794386377001,
+      "nativeMatureAsOfEvaluation": false,
+      "nativeWindowMatureAtActualClock": true,
+      "expectedParseAccepted": true,
+      "expectedEffectClaim": false,
+      "expectedCausalClaim": false,
+      "expectedWindowMatureNow": true,
+      "memoryProjectionNotPersistedNativeProducer": true
+    },
+    {
+      "name": "Fractional negative timezone seconds after boundary",
+      "projection": {
+        "intervention_id": "113b64e3-849c-4b95-8285-cd1f5d5b8ae5",
+        "store_id": "synthetic-intervention-store",
+        "kind": "PRICE_CHANGE",
+        "status": "COMPLETED",
+        "trigger_ref": "synthetic-alert",
+        "expected_outcome": "synthetic margin review",
+        "planned_start": "2026-10-14T08:39:38.122909+00:00",
+        "planned_end": "2026-10-21T08:39:38.122909+00:00",
+        "window_spec": {
+          "outcome_window_days": 1,
+          "maturity_buffer_days": 1
+        },
+        "created_by": "synthetic-int-creator",
+        "created_at": "2026-10-14T08:39:38.243498+00:00",
+        "policy_version": "intervention-lifecycle-policy-v1",
+        "action_spec": {
+          "price_change_pct": -5,
+          "rollback_plan": "restore"
+        },
+        "eligibility": {
+          "eligible": true,
+          "checked_at": "2026-10-14T08:39:38.285834+00:00",
+          "reasons": [
+            "synthetic eligibility"
+          ]
+        },
+        "conflict": {
+          "has_conflict": false,
+          "checked_at": "2026-10-14T08:39:38.363372+00:00",
+          "conflicting_ids": [],
+          "conflicting_kinds": [],
+          "resolved": true,
+          "resolution_reason": "",
+          "blocks_approval": false
+        },
+        "approval": {
+          "approved": true,
+          "actor_id": "synthetic-int-reviewer",
+          "decision_reason": "synthetic justified approval",
+          "approved_at": "2026-10-14T08:39:38.538313+00:00",
+          "policy_version": "intervention-lifecycle-policy-v1"
+        },
+        "execution": {
+          "execution_id": "intervention-exec-acb4f092-5da2-4abf-b587-b456f4fcc9d7",
+          "executor": "synthetic-int-reviewer",
+          "executed_at": "2026-11-09T08:39:37.000900+00:00",
+          "status": "EXECUTED",
+          "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+        },
+        "observation_window": {
+          "opened_at": "2026-11-09T08:39:37.000900+00:00",
+          "outcome_window_days": 1,
+          "maturity_buffer_days": 1,
+          "outcome_window_end": "2026-11-10T08:39:37.000900+00:00",
+          "label_maturity_time": "2026-11-11T08:39:37.000900+00:00"
+        },
+        "outcome": {
+          "collected_at": "2026-10-14T08:39:38.610621+00:00",
+          "incremental_revenue": 123.0,
+          "incremental_gross_margin": 45.0,
+          "has_control_group": true,
+          "pretrend_status": "PASS",
+          "treatment_store_count": 4,
+          "control_store_count": 4,
+          "evaluation_method": "DID",
+          "randomized": false,
+          "ad_spend": 10.0,
+          "iromi": 4.5,
+          "measurement_method": "panel_did"
+        },
+        "effect": {
+          "evaluated_at": "2026-11-11T08:39:36.000850-00:00:01.000100",
+          "evidence_level": "L3",
+          "can_claim_effect": true,
+          "can_claim_causal": true,
+          "incremental_revenue": 123,
+          "incremental_gross_margin": 45,
+          "iromi": 4.5,
+          "evaluation_method": "DID",
+          "pretrend_status": "PASS",
+          "recommendation": "SCALE",
+          "observation_mature": true,
+          "limitations": []
+        },
+        "close": null,
+        "assigned_to": null,
+        "assigned_at": null,
+        "assigned_by": null,
+        "assignment_role": null,
+        "predecessor_id": null,
+        "replacement_id": null,
+        "adjustment": null,
+        "version": 11,
+        "history": [
+          {
+            "from_status": "CANDIDATE",
+            "to_status": "ELIGIBLE",
+            "actor": "synthetic-int-creator",
+            "action": "check_eligibility",
+            "reason": "eligible",
+            "at": "2026-10-14T08:39:38.285847+00:00",
+            "correlation_id": "19daa977-830c-4f2d-b485-040f6450f0f1"
+          },
+          {
+            "from_status": "ELIGIBLE",
+            "to_status": "ACTION_PROPOSED",
+            "actor": "synthetic-int-creator",
+            "action": "propose_action",
+            "reason": "action candidate built",
+            "at": "2026-10-14T08:39:38.323779+00:00",
+            "correlation_id": "423c7f93-7c1f-4309-8750-31ce42e9ccff"
+          },
+          {
+            "from_status": "ACTION_PROPOSED",
+            "to_status": "CONFLICT_CHECKING",
+            "actor": "synthetic-int-creator",
+            "action": "check_conflict",
+            "reason": "no conflict",
+            "at": "2026-10-14T08:39:38.363393+00:00",
+            "correlation_id": "d238c4f3-524d-43d5-824a-e45a0d83594a"
+          },
+          {
+            "from_status": "CONFLICT_CHECKING",
+            "to_status": "PENDING_APPROVAL",
+            "actor": "synthetic-int-creator",
+            "action": "submit_for_approval",
+            "reason": "submitted for approval",
+            "at": "2026-10-14T08:39:38.406700+00:00",
+            "correlation_id": "afe399b2-9fcf-4fd2-9819-1516a71bf743"
+          },
+          {
+            "from_status": "PENDING_APPROVAL",
+            "to_status": "APPROVED",
+            "actor": "synthetic-int-reviewer",
+            "action": "approve",
+            "reason": "synthetic justified approval",
+            "at": "2026-10-14T08:39:38.538331+00:00",
+            "correlation_id": "482e13ea-1d6d-496c-98c8-c1ce548adaa0"
+          },
+          {
+            "from_status": "APPROVED",
+            "to_status": "EXECUTING",
+            "actor": "synthetic-int-reviewer",
+            "action": "execute",
+            "reason": "execution coordinated",
+            "at": "2026-10-14T08:39:38.580002+00:00",
+            "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+          },
+          {
+            "from_status": "EXECUTING",
+            "to_status": "OBSERVING",
+            "actor": "synthetic-int-reviewer",
+            "action": "start_observation",
+            "reason": "observation window opened",
+            "at": "2026-10-14T08:39:38.580068+00:00",
+            "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+          },
+          {
+            "from_status": "OBSERVING",
+            "to_status": "OBSERVING",
+            "actor": "synthetic-int-reviewer",
+            "action": "collect_outcome",
+            "reason": "outcome collected",
+            "at": "2026-10-14T08:39:38.610648+00:00",
+            "correlation_id": "c87b619c-7c3d-4454-a97d-ceb5cb420353"
+          },
+          {
+            "from_status": "OBSERVING",
+            "to_status": "EVALUATING",
+            "actor": "synthetic-int-reviewer",
+            "action": "evaluate_effect",
+            "reason": "effect evaluation started",
+            "at": "2026-10-14T08:39:38.655065+00:00",
+            "correlation_id": "59d57526-2b55-4ff1-ae45-218733755da1"
+          },
+          {
+            "from_status": "EVALUATING",
+            "to_status": "COMPLETED",
+            "actor": "synthetic-int-reviewer",
+            "action": "complete",
+            "reason": "evidence L3",
+            "at": "2026-10-14T08:39:38.655126+00:00",
+            "correlation_id": "59d57526-2b55-4ff1-ae45-218733755da1"
+          }
+        ],
+        "feature_version": "intervention-feature-v1",
+        "read_at": "2026-11-11T08:39:37.001000+00:00",
+        "review_context": {
+          "schema_version": 1,
+          "intervention_id": "113b64e3-849c-4b95-8285-cd1f5d5b8ae5",
+          "store_id": "synthetic-intervention-store",
+          "tenant_id": "00000000-0000-0000-0000-000000000001",
+          "actor_subject_id": "synthetic-int-reviewer",
+          "version": 11,
+          "policy_version": "intervention-lifecycle-policy-v1",
+          "snapshot_sha256": "832d433c5b7bac22f000d094f0da87ba7efe07d4bf82aae8ffd84865f9a35370"
+        },
+        "creator_verification": "authenticated_principal",
+        "approval_permissions": {
+          "approve": false,
+          "reject": false,
+          "approve_refusal": "PENDING_APPROVAL_REQUIRED",
+          "reject_refusal": "PENDING_APPROVAL_REQUIRED"
+        },
+        "approval_audit": {
+          "event_id": "f16ae75c-55ad-4a54-8145-61e379dd3fc2",
+          "actor": "synthetic-int-reviewer",
+          "action": "approve",
+          "reason": "synthetic justified approval",
+          "policy_version": "intervention-lifecycle-policy-v1",
+          "correlation_id": "482e13ea-1d6d-496c-98c8-c1ce548adaa0",
+          "occurred_at": "2026-10-14T08:39:38.545600+00:00"
+        }
+      },
+      "currentClockISO": "2026-11-11T08:39:37.001000+00:00",
+      "currentClockLowerBoundMs": 1794386377001,
+      "nativeMatureAsOfEvaluation": true,
+      "nativeWindowMatureAtActualClock": true,
+      "expectedParseAccepted": true,
+      "expectedEffectClaim": false,
+      "expectedCausalClaim": false,
+      "expectedWindowMatureNow": true,
+      "memoryProjectionNotPersistedNativeProducer": true
+    },
+    {
+      "name": "Future as-of record preserved against stale earlier read observation",
+      "projection": {
+        "intervention_id": "113b64e3-849c-4b95-8285-cd1f5d5b8ae5",
+        "store_id": "synthetic-intervention-store",
+        "kind": "PRICE_CHANGE",
+        "status": "COMPLETED",
+        "trigger_ref": "synthetic-alert",
+        "expected_outcome": "synthetic margin review",
+        "planned_start": "2026-10-14T08:39:38.122909+00:00",
+        "planned_end": "2026-10-21T08:39:38.122909+00:00",
+        "window_spec": {
+          "outcome_window_days": 1,
+          "maturity_buffer_days": 1
+        },
+        "created_by": "synthetic-int-creator",
+        "created_at": "2026-10-14T08:39:38.243498+00:00",
+        "policy_version": "intervention-lifecycle-policy-v1",
+        "action_spec": {
+          "price_change_pct": -5,
+          "rollback_plan": "restore"
+        },
+        "eligibility": {
+          "eligible": true,
+          "checked_at": "2026-10-14T08:39:38.285834+00:00",
+          "reasons": [
+            "synthetic eligibility"
+          ]
+        },
+        "conflict": {
+          "has_conflict": false,
+          "checked_at": "2026-10-14T08:39:38.363372+00:00",
+          "conflicting_ids": [],
+          "conflicting_kinds": [],
+          "resolved": true,
+          "resolution_reason": "",
+          "blocks_approval": false
+        },
+        "approval": {
+          "approved": true,
+          "actor_id": "synthetic-int-reviewer",
+          "decision_reason": "synthetic justified approval",
+          "approved_at": "2026-10-14T08:39:38.538313+00:00",
+          "policy_version": "intervention-lifecycle-policy-v1"
+        },
+        "execution": {
+          "execution_id": "intervention-exec-acb4f092-5da2-4abf-b587-b456f4fcc9d7",
+          "executor": "synthetic-int-reviewer",
+          "executed_at": "2026-11-09T08:39:37.000900+00:00",
+          "status": "EXECUTED",
+          "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+        },
+        "observation_window": {
+          "opened_at": "2026-11-09T08:39:37.000900+00:00",
+          "outcome_window_days": 1,
+          "maturity_buffer_days": 1,
+          "outcome_window_end": "2026-11-10T08:39:37.000900+00:00",
+          "label_maturity_time": "2026-11-11T08:39:37.000900+00:00"
+        },
+        "outcome": {
+          "collected_at": "2026-10-14T08:39:38.610621+00:00",
+          "incremental_revenue": 123.0,
+          "incremental_gross_margin": 45.0,
+          "has_control_group": true,
+          "pretrend_status": "PASS",
+          "treatment_store_count": 4,
+          "control_store_count": 4,
+          "evaluation_method": "DID",
+          "randomized": false,
+          "ad_spend": 10.0,
+          "iromi": 4.5,
+          "measurement_method": "panel_did"
+        },
+        "effect": {
+          "evaluated_at": "2026-11-11T08:39:37.000900+00:00",
+          "evidence_level": "L3",
+          "can_claim_effect": true,
+          "can_claim_causal": true,
+          "incremental_revenue": 123,
+          "incremental_gross_margin": 45,
+          "iromi": 4.5,
+          "evaluation_method": "DID",
+          "pretrend_status": "PASS",
+          "recommendation": "SCALE",
+          "observation_mature": true,
+          "limitations": []
+        },
+        "close": null,
+        "assigned_to": null,
+        "assigned_at": null,
+        "assigned_by": null,
+        "assignment_role": null,
+        "predecessor_id": null,
+        "replacement_id": null,
+        "adjustment": null,
+        "version": 11,
+        "history": [
+          {
+            "from_status": "CANDIDATE",
+            "to_status": "ELIGIBLE",
+            "actor": "synthetic-int-creator",
+            "action": "check_eligibility",
+            "reason": "eligible",
+            "at": "2026-10-14T08:39:38.285847+00:00",
+            "correlation_id": "19daa977-830c-4f2d-b485-040f6450f0f1"
+          },
+          {
+            "from_status": "ELIGIBLE",
+            "to_status": "ACTION_PROPOSED",
+            "actor": "synthetic-int-creator",
+            "action": "propose_action",
+            "reason": "action candidate built",
+            "at": "2026-10-14T08:39:38.323779+00:00",
+            "correlation_id": "423c7f93-7c1f-4309-8750-31ce42e9ccff"
+          },
+          {
+            "from_status": "ACTION_PROPOSED",
+            "to_status": "CONFLICT_CHECKING",
+            "actor": "synthetic-int-creator",
+            "action": "check_conflict",
+            "reason": "no conflict",
+            "at": "2026-10-14T08:39:38.363393+00:00",
+            "correlation_id": "d238c4f3-524d-43d5-824a-e45a0d83594a"
+          },
+          {
+            "from_status": "CONFLICT_CHECKING",
+            "to_status": "PENDING_APPROVAL",
+            "actor": "synthetic-int-creator",
+            "action": "submit_for_approval",
+            "reason": "submitted for approval",
+            "at": "2026-10-14T08:39:38.406700+00:00",
+            "correlation_id": "afe399b2-9fcf-4fd2-9819-1516a71bf743"
+          },
+          {
+            "from_status": "PENDING_APPROVAL",
+            "to_status": "APPROVED",
+            "actor": "synthetic-int-reviewer",
+            "action": "approve",
+            "reason": "synthetic justified approval",
+            "at": "2026-10-14T08:39:38.538331+00:00",
+            "correlation_id": "482e13ea-1d6d-496c-98c8-c1ce548adaa0"
+          },
+          {
+            "from_status": "APPROVED",
+            "to_status": "EXECUTING",
+            "actor": "synthetic-int-reviewer",
+            "action": "execute",
+            "reason": "execution coordinated",
+            "at": "2026-10-14T08:39:38.580002+00:00",
+            "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+          },
+          {
+            "from_status": "EXECUTING",
+            "to_status": "OBSERVING",
+            "actor": "synthetic-int-reviewer",
+            "action": "start_observation",
+            "reason": "observation window opened",
+            "at": "2026-10-14T08:39:38.580068+00:00",
+            "correlation_id": "768bb31f-c159-4418-a06b-16e3b08c4984"
+          },
+          {
+            "from_status": "OBSERVING",
+            "to_status": "OBSERVING",
+            "actor": "synthetic-int-reviewer",
+            "action": "collect_outcome",
+            "reason": "outcome collected",
+            "at": "2026-10-14T08:39:38.610648+00:00",
+            "correlation_id": "c87b619c-7c3d-4454-a97d-ceb5cb420353"
+          },
+          {
+            "from_status": "OBSERVING",
+            "to_status": "EVALUATING",
+            "actor": "synthetic-int-reviewer",
+            "action": "evaluate_effect",
+            "reason": "effect evaluation started",
+            "at": "2026-10-14T08:39:38.655065+00:00",
+            "correlation_id": "59d57526-2b55-4ff1-ae45-218733755da1"
+          },
+          {
+            "from_status": "EVALUATING",
+            "to_status": "COMPLETED",
+            "actor": "synthetic-int-reviewer",
+            "action": "complete",
+            "reason": "evidence L3",
+            "at": "2026-10-14T08:39:38.655126+00:00",
+            "correlation_id": "59d57526-2b55-4ff1-ae45-218733755da1"
+          }
+        ],
+        "feature_version": "intervention-feature-v1",
+        "read_at": "2026-10-14T08:39:38.689836+00:00",
+        "review_context": {
+          "schema_version": 1,
+          "intervention_id": "113b64e3-849c-4b95-8285-cd1f5d5b8ae5",
+          "store_id": "synthetic-intervention-store",
+          "tenant_id": "00000000-0000-0000-0000-000000000001",
+          "actor_subject_id": "synthetic-int-reviewer",
+          "version": 11,
+          "policy_version": "intervention-lifecycle-policy-v1",
+          "snapshot_sha256": "832d433c5b7bac22f000d094f0da87ba7efe07d4bf82aae8ffd84865f9a35370"
+        },
+        "creator_verification": "authenticated_principal",
+        "approval_permissions": {
+          "approve": false,
+          "reject": false,
+          "approve_refusal": "PENDING_APPROVAL_REQUIRED",
+          "reject_refusal": "PENDING_APPROVAL_REQUIRED"
+        },
+        "approval_audit": {
+          "event_id": "f16ae75c-55ad-4a54-8145-61e379dd3fc2",
+          "actor": "synthetic-int-reviewer",
+          "action": "approve",
+          "reason": "synthetic justified approval",
+          "policy_version": "intervention-lifecycle-policy-v1",
+          "correlation_id": "482e13ea-1d6d-496c-98c8-c1ce548adaa0",
+          "occurred_at": "2026-10-14T08:39:38.545600+00:00"
+        }
+      },
+      "currentClockISO": "2026-11-12T08:39:37.000900+00:00",
+      "currentClockLowerBoundMs": 1794472777000,
+      "nativeMatureAsOfEvaluation": true,
+      "nativeWindowMatureAtActualClock": true,
+      "expectedParseAccepted": true,
+      "expectedEffectClaim": false,
+      "expectedCausalClaim": false,
+      "expectedWindowMatureNow": true,
+      "memoryProjectionNotPersistedNativeProducer": true
+    }
+  ],
+  "comparisons": [
+    {
+      "name": "Original precise before",
+      "a": "2026-11-11T08:39:37.000800+00:00",
+      "b": "2026-11-11T08:39:37.000900+00:00",
+      "expected": -1,
+      "actualNativeDatetimeComparison": true
+    },
+    {
+      "name": "Boundary equality UTC Z alias",
+      "a": "2026-11-11T08:39:37.000900Z",
+      "b": "2026-11-11T08:39:37.000900+00:00",
+      "expected": 0,
+      "actualNativeDatetimeComparison": true
+    },
+    {
+      "name": "Precise after",
+      "a": "2026-11-11T08:39:37.000950+00:00",
+      "b": "2026-11-11T08:39:37.000900+00:00",
+      "expected": 1,
+      "actualNativeDatetimeComparison": true
+    },
+    {
+      "name": "Positive offset equivalence",
+      "a": "2026-11-11T16:39:37.000900+08:00",
+      "b": "2026-11-11T08:39:37.000900+00:00",
+      "expected": 0,
+      "actualNativeDatetimeComparison": true
+    },
+    {
+      "name": "Negative offset equivalence",
+      "a": "2026-11-11T03:09:37.000900-05:30",
+      "b": "2026-11-11T08:39:37.000900+00:00",
+      "expected": 0,
+      "actualNativeDatetimeComparison": true
+    },
+    {
+      "name": "Midnight offset crosses day",
+      "a": "2026-11-12T00:09:37.000900+15:30",
+      "b": "2026-11-11T08:39:37.000900+00:00",
+      "expected": 0,
+      "actualNativeDatetimeComparison": true
+    },
+    {
+      "name": "Fractional offset equivalence",
+      "a": "2026-11-11T08:39:38.001000+00:00:01.000100",
+      "b": "2026-11-11T08:39:37.000900+00:00",
+      "expected": 0,
+      "actualNativeDatetimeComparison": true
+    },
+    {
+      "name": "Negative fractional offset equivalence",
+      "a": "2026-11-11T08:39:36.000800-00:00:01.000100",
+      "b": "2026-11-11T08:39:37.000900+00:00",
+      "expected": 0,
+      "actualNativeDatetimeComparison": true
+    },
+    {
+      "name": "Native subsecond-only offset equivalence",
+      "a": "2026-11-11T08:39:37.001000+00:00:00.000100",
+      "b": "2026-11-11T08:39:37.000900+00:00",
+      "expected": 0,
+      "actualNativeDatetimeComparison": true
+    },
+    {
+      "name": "Leap year below 100",
+      "a": "0004-02-29T00:00:00+00:00",
+      "b": "0004-03-01T00:00:00+00:00",
+      "expected": -1,
+      "actualNativeDatetimeComparison": true
+    },
+    {
+      "name": "Year one valid",
+      "a": "0001-01-01T00:00:00+00:00",
+      "b": "0001-01-02T00:00:00+00:00",
+      "expected": -1,
+      "actualNativeDatetimeComparison": true
+    },
+    {
+      "name": "Year9999 offset conversion",
+      "a": "9999-12-31T23:59:59.999999+08:00",
+      "b": "9999-12-31T23:59:59.999999+00:00",
+      "expected": -1,
+      "actualNativeDatetimeComparison": true
+    }
+  ],
+  "invalidISOInstants": [
+    "2026-02-30T00:00:00Z",
+    "1900-02-29T00:00:00Z",
+    "2026-11-11T24:00:00Z",
+    "2026-11-11T08:39:60Z",
+    "2026-11-11T08:39:37+24:00",
+    "2026-11-11T08:39:37+08:60",
+    "2026-11-11T08:39:37+08:00:60",
+    "2026-11-11T08:39:37",
+    "0000-01-01T00:00:00Z",
+    " 2026-11-11T08:39:37Z"
+  ],
+  "conservativeClock": "Date.now is a millisecond lower bound. A fractional deadline later inside that millisecond is unverified; no early claim. A native read_at, if present, also bounds evidence as-of proof.",
+  "futureRecord": "Parsing preserves consistent native recorded as-of grades. Current claims and visible grade are separately gated; no persisted-grade mutation.",
+  "memoryProjectionNotPersistedNativeProducer": true,
+  "SQL": false,
+  "API": false,
+  "services": false,
+  "browser": false,
+  "v4NativeExecuteCoherenceRepair": "Synthetic precise controls now copy case window_spec and execution anchor from the same source-extracted Window, matching native execute. Original two independent rows unchanged. Original v3b fixture preserved immutably.",
+  "v5OnlyTwoMixedOffsetCurrentAuthorityExpectationsCorrected": "Absolute UTC and source-supported same-timezone wall maturity disagree. ISO does not identify the native timezone object/fold. Preserve these exact saved as-of native inputs, but current effect/causal expectations now withhold authority. Only these2 cases/4 expected leaves changed; original V4 artifact remains immutable."
+}

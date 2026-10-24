@@ -24,10 +24,14 @@ const nullableRecommendation = (value: unknown) => value === null || recommendat
 // in the legacy UI status unions or deriving an eligibility decision.
 export function hasNetworkListingsRenderShape(value: unknown): boolean {
   if (!readObject(value)) return false;
-  return rows(value.heatZones, (zone) => text(zone.label) && number(zone.rank)
-      && Array.isArray(zone.centroid) && zone.centroid.length === 2 && zone.centroid.every(number)
-      && number(zone.demandGap) && number(zone.competitionIndex)
-      && text(zone.cannibalizationRisk)
+  const availability = value.heatZoneAvailability;
+  if (availability !== undefined && availability !== null && (!readObject(availability)
+    || !oneOf(availability.state, ["available", "unavailable"])
+    || !optionalText(availability.message))) return false;
+  return rows(value.heatZones, (zone) => text(zone.label) && nullableNumber(zone.rank)
+      && (zone.centroid === null || Array.isArray(zone.centroid) && zone.centroid.length === 2 && zone.centroid.every(number))
+      && nullableNumber(zone.demandGap) && nullableNumber(zone.competitionIndex)
+      && (zone.cannibalizationRisk === null || oneOf(zone.cannibalizationRisk, ["low", "medium", "high", "critical"]))
       && text(zone.rentBand) && optionalNumber(zone.confidence)
       && strings(zone.reasons) && strings(zone.risks) && text(zone.nextStep))
     && rows(value.listingSources, (source) => text(source.name)
@@ -177,10 +181,7 @@ export function hasScoreExecutionReceipt(value: unknown): value is import("./net
 
 
 /** Current sealed/server-owned session readback; persona storage is not this authority. */
-export function hasCanonicalScoreSession(value: unknown): value is { subject: string; expiresAt: number } {
-  return readObject(value) && readId(value.subject) && typeof value.expiresAt === "number"
-    && Number.isSafeInteger(value.expiresAt) && value.expiresAt > Math.floor(Date.now() / 1000);
-}
+export { hasCanonicalScoreSession } from "../operatorSessionValidation";
 
 export function hasScoreExecutionCommandReceipt(value: unknown): value is import("./networkScoringTypes").ScoreExecutionCommandReceipt {
   return readObject(value) && oneOf(value.operation, ["create", "retry"])

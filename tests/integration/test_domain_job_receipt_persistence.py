@@ -15,13 +15,16 @@ from apps.api.app.routes.priceops import create_priceops_router
 from apps.api.app.routes.sitescore import create_sitescore_router
 from apps.api.oday_api.main import create_app
 from modules.forecastops import default_forecast_alert_policy
+from modules.intervention.application.workflow import InterventionWorkflow
 from shared.api.idempotency import IdempotencyConflictError
+from shared.domain.models import AddressLocation, Brand, Store, Tenant
 from shared.governance import InMemoryDecisionPolicyRepository
 from shared.infrastructure.persistence.command_receipts import (
     TenantScopedCommandReceiptStore,
 )
 from shared.infrastructure.persistence.factory import _durable_bundle
 from shared.jobs.queue import InMemoryJobQueue, JobRequest
+from shared.observability import CORRELATION_ID_HEADER, CorrelationContext
 from tests.integration._authz import (
     ADLIFT_HEADERS,
     AVM_HEADERS,
@@ -539,8 +542,55 @@ def test_adlift_receipt_and_idempotency_survive_app_restart_by_tenant(
         reopened.engine.close()
 
 
-def test_production_routes_reject_in_memory_job_receipts() -> None:
+@pytest.fixture
+def intervention_scope_bundle(tmp_path):
+    """Native SQLite scope prerequisites; command receipts remain in memory."""
+    bundle = _durable_bundle(tmp_path / "intervention-receipt-scope.sqlite3")
+    try:
+        brand_id = "receipt-scope-brand"
+        address_id = "receipt-scope-address"
+        bundle.tenant_repository.save_tenant(
+            Tenant(tenant_id=TENANT_A, tenant_name="Explicit synthetic receipt tenant")
+        )
+        bundle.brand_repository.save_brand(
+            Brand(
+                brand_id=brand_id,
+                tenant_id=TENANT_A,
+                brand_code="synthetic-receipt-scope",
+                brand_name="Explicit synthetic receipt brand",
+            )
+        )
+        # Store.address_id has a native FK; unknown geocoding stays unmeasured.
+        bundle.address_location_repository.save_address(
+            AddressLocation(
+                address_id=address_id,
+                tenant_id=TENANT_A,
+                raw_address="Explicit synthetic receipt fixture address",
+            )
+        )
+        bundle.store_repository.save_store(
+            Store(
+                store_id="store-a",
+                tenant_id=TENANT_A,
+                brand_id=brand_id,
+                address_id=address_id,
+                store_name="Explicit synthetic receipt fixture store",
+                is_current=True,
+            )
+        )
+        yield bundle
+    finally:
+        bundle.engine.close()
+
+
+def test_production_routes_reject_in_memory_job_receipts(intervention_scope_bundle) -> None:
     app = FastAPI()
+
+    @app.middleware("http")
+    async def attach_correlation_id(request, call_next):
+        context = CorrelationContext.from_header(request.headers.get(CORRELATION_ID_HEADER))
+        request.state.correlation_id = context.correlation_id
+        return await call_next(request)
     app.include_router(
         create_forecastops_router(
             job_queue=InMemoryJobQueue(),
@@ -577,6 +627,12 @@ def test_production_routes_reject_in_memory_job_receipts() -> None:
     )
     app.include_router(
         create_interventions_router(
+            workflow=InterventionWorkflow(
+                repository=intervention_scope_bundle.intervention_repository,
+                audit_log=intervention_scope_bundle.audit_log,
+            ),
+            store_repository=intervention_scope_bundle.store_repository,
+            brand_repository=intervention_scope_bundle.brand_repository,
             job_queue=InMemoryJobQueue(),
             require_durable_commands=True,
         )
@@ -663,3 +719,20 @@ def test_production_routes_reject_in_memory_job_receipts() -> None:
     )
     assert intervention.status_code == 503
     assert intervention.json()["detail"]["code"] == "DURABLE_COMMAND_STORE_REQUIRED"
+
+    # The canonical store was authorized and audited before the memory guard.
+    # Audit-delivery jobs, when enabled, are distinct from domain receipts.
+    events = intervention_scope_bundle.audit_log.list_events(
+        correlation_id=f"corr-{TENANT_A}-intervention-memory"
+    )
+    assert [event.resource for event in events] == ["intervention", "intervention/store-a"]
+    assert all(event.outcome == "allow" for event in events)
+    assert events[1].metadata["reason"] == "canonical intervention store scope accepted"
+    assert events[1].metadata["tenant_id"] == TENANT_A
+    assert all(event.actor == INTERVENTION_HEADERS["x-subject-id"] for event in events)
+    assert intervention_scope_bundle.intervention_repository.list_all() == []
+    command_receipts = intervention_scope_bundle.engine.query_one(
+        "SELECT COUNT(*) AS count FROM durable_jobs WHERE job_type = ?",
+        ("interventions.command-receipt",),
+    )
+    assert command_receipts["count"] == 0

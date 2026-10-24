@@ -58,7 +58,10 @@ else:
     )
     from modules.priceops.domain.pricing import PlanAlreadyExistsError
     from modules.priceops.infrastructure import InMemoryPriceOpsRepository
-    from modules.priceops.infrastructure.oss_optimizer import PriceOpsProductionOptimizer
+    from modules.priceops.infrastructure.oss_optimizer import (
+        PriceOpsMissingSourceLineageError,
+        PriceOpsProductionOptimizer,
+    )
     from modules.priceops.workers.optimizer_worker import (
         PlanRequest,
         run_priceops_optimizer_batch,
@@ -66,6 +69,86 @@ else:
     from shared.governance.vocabularies import EvidenceLevel
 
     logger = logging.getLogger("oday-api.priceops")
+
+
+    def canonical_priceops_store(item: Any, expected_tenant: str | None, *,
+                                 store_repository: Any, brand_repository: Any,
+                                 production_required: bool = False,
+                                 read_cache: dict[tuple[str, str], Any] | None = None) -> Any:
+        if store_repository is None and brand_repository is None and not production_required:
+            return None
+        try:
+            def read_master(kind: str, key: str, load: Any) -> Any:
+                if read_cache is None:
+                    return load(key)
+                identity = (kind, key)
+                if identity not in read_cache:
+                    read_cache[identity] = load(key)
+                return read_cache[identity]
+
+            store = read_master("store", item.store_id, store_repository.get_store)
+            if store is None or not store.is_current or store.tenant_id != expected_tenant:
+                return None
+            brand = read_master("brand", store.brand_id, brand_repository.get_brand)
+            if brand is None or brand.tenant_id != expected_tenant:
+                return None
+            return store
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail={
+                "code": "PRICEOPS_STORE_BINDING_UNAVAILABLE",
+                "message": "Canonical pricing ownership is unavailable",
+            }) from exc
+
+
+    def priceops_items_in_scope(items: Any, principal: Any, expected_tenant: str | None, *,
+                                store_repository: Any = None, brand_repository: Any = None,
+                                production_required: bool = False,
+                                scope_module: str = "priceops",
+                                read_cache: dict[tuple[str, str], Any] | None = None) -> bool:
+        """Share object axes while retaining the caller's existing module guard.
+
+        Native routes use priceops. Operator projections use operator_console,
+        the module their existing read guard verifies; this is not another
+        business-role or native PriceOps operation grant.
+        """
+        from shared.auth import DataClassification
+
+        scope = principal.scope
+        if not (
+            scope.permits_module(scope_module)
+            and scope.permits_classification(DataClassification.CONFIDENTIAL)
+            and scope.permits_assigned_area(None)
+            and scope.permits_heat_zone(None)
+        ):
+            return False
+        for item in items:
+            store = canonical_priceops_store(item, expected_tenant, store_repository=store_repository,
+                                             brand_repository=brand_repository,
+                                             production_required=production_required, read_cache=read_cache)
+            canonical_required = store_repository is not None or brand_repository is not None or production_required
+            if canonical_required and (store is None or item.brand_id != store.brand_id):
+                return False
+            brand_id = store.brand_id if store is not None else item.brand_id
+            region_id = (store.region_code or None) if store is not None else None
+            if not (scope.permits_store(item.store_id)
+                    and scope.permits_brand(brand_id)
+                    and scope.permits_region(region_id)):
+                return False
+        return True
+
+
+    def priceops_plan_in_scope(plan: Any, principal: Any, *, store_repository: Any = None,
+                               brand_repository: Any = None, production_required: bool = False,
+                               require_tenant: bool = False, scope_module: str = "priceops",
+                                read_cache: dict[tuple[str, str], Any] | None = None) -> bool:
+        scope = principal.scope
+        if scope.tenant_id and plan.tenant_id != scope.tenant_id:
+            return False
+        if require_tenant and not scope.tenant_id:
+            return False
+        return priceops_items_in_scope(plan.items, principal, plan.tenant_id,
+                                       store_repository=store_repository, brand_repository=brand_repository,
+                                       production_required=production_required, scope_module=scope_module, read_cache=read_cache)
 
 
     class PriceOpsPlanItemPayload(BaseModel):
@@ -339,14 +422,12 @@ else:
                 if approval is not None:
                     require_independent_approval(*approval, request)
                 sink = getattr(active_audit_log, "_worm_sink", None)
-                delivery = DurableAuditDelivery(
-                    engine, tenant_id(request, require_scope=True), queue, sink,
-                ) if sink else None
+                delivery = DurableAuditDelivery(engine, tenant_id(request), queue, sink) if sink else None
                 context = active_audit_log.transactional_worm_sink(delivery) if delivery else nullcontext()
                 with context:
                     yield
 
-        def tenant_id(request: Request, fallback: str | None = None, *, require_scope: bool = False) -> str:
+        def tenant_id(request: Request, fallback: str | None = None) -> str:
             principal = getattr(request.state, "operator_principal", None)
             scope = getattr(principal, "scope", None)
             value = getattr(scope, "tenant_id", None)
@@ -360,7 +441,7 @@ else:
                         },
                     )
                 return str(value)
-            if require_scope or durable_commands_required or production_required:
+            if durable_commands_required or production_required:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail={
@@ -370,65 +451,20 @@ else:
                 )
             return "__local__"
 
-        def canonical_store(item: Any, expected_tenant: str | None, *,
-                            read_cache: dict[tuple[str, str], Any] | None = None) -> Any:
-            if store_repository is None and brand_repository is None and not production_required:
-                return None
-            try:
-                def read_master(kind: str, key: str, load: Any) -> Any:
-                    if read_cache is None:
-                        return load(key)
-                    identity = (kind, key)
-                    if identity not in read_cache:
-                        read_cache[identity] = load(key)
-                    return read_cache[identity]
+        def canonical_store(item: Any, expected_tenant: str | None, *, read_cache: dict[tuple[str, str], Any] | None = None) -> Any:
+            return canonical_priceops_store(item, expected_tenant, store_repository=store_repository,
+                                             brand_repository=brand_repository,
+                                             production_required=production_required, read_cache=read_cache)
 
-                store = read_master("store", item.store_id, store_repository.get_store)
-                if store is None or not store.is_current or store.tenant_id != expected_tenant:
-                    return None
-                brand = read_master("brand", store.brand_id, brand_repository.get_brand)
-                if brand is None or brand.tenant_id != expected_tenant:
-                    return None
-                return store
-            except Exception as exc:
-                raise HTTPException(status_code=503, detail={
-                    "code": "PRICEOPS_STORE_BINDING_UNAVAILABLE",
-                    "message": "Canonical pricing ownership is unavailable",
-                }) from exc
+        def items_in_scope(items: Any, principal: Any, expected_tenant: str | None, *, read_cache: dict[tuple[str, str], Any] | None = None) -> bool:
+            return priceops_items_in_scope(items, principal, expected_tenant,
+                                           store_repository=store_repository, brand_repository=brand_repository,
+                                           production_required=production_required, read_cache=read_cache)
 
-        def items_in_scope(items: Any, principal: Any, expected_tenant: str | None, *,
-                           read_cache: dict[tuple[str, str], Any] | None = None) -> bool:
-            scope = principal.scope
-            if not (
-                scope.permits_module("priceops")
-                and scope.permits_classification(DataClassification.CONFIDENTIAL)
-                and scope.permits_assigned_area(None)
-                and scope.permits_heat_zone(None)
-            ):
-                return False
-            for item in items:
-                store = canonical_store(item, expected_tenant, read_cache=read_cache)
-                canonical_required = store_repository is not None or brand_repository is not None or production_required
-                if canonical_required and (
-                    store is None or item.brand_id != store.brand_id
-                ):
-                    return False
-                brand_id = store.brand_id if store is not None else item.brand_id
-                region_id = (store.region_code or None) if store is not None else None
-                if not (scope.permits_store(item.store_id)
-                        and scope.permits_brand(brand_id)
-                        and scope.permits_region(region_id)):
-                    return False
-            return True
-
-        def plan_in_scope(plan: Any, principal: Any, *,
-                          read_cache: dict[tuple[str, str], Any] | None = None) -> bool:
-            scope = principal.scope
-            if scope.tenant_id and plan.tenant_id != scope.tenant_id:
-                return False
-            if (durable_commands_required or production_required) and not scope.tenant_id:
-                return False
-            return items_in_scope(plan.items, principal, plan.tenant_id, read_cache=read_cache)
+        def plan_in_scope(plan: Any, principal: Any, *, read_cache: dict[tuple[str, str], Any] | None = None) -> bool:
+            return priceops_plan_in_scope(plan, principal, store_repository=store_repository,
+                                          brand_repository=brand_repository, production_required=production_required,
+                                          require_tenant=durable_commands_required or production_required, read_cache=read_cache)
 
         def require_proposal_scope(body: PriceOpsPlanPayload, request: Request) -> None:
             principal = request.state.operator_principal
@@ -605,6 +641,8 @@ else:
                         production_optimizer=production_optimizer,
                         runtime_mode=runtime_mode,
                     )
+                except PriceOpsMissingSourceLineageError as exc:
+                    raise _missing_source_lineage_error() from exc
                 except PlanAlreadyExistsError as exc:
                     raise HTTPException(status_code=409, detail="batch plan id already exists or is repeated") from exc
                 audit_event = _record_audit(
@@ -673,8 +711,8 @@ else:
             `has_more`, so a caller that ignores the new fields and passes no
             query parameters sees what it saw before.
             """
-            # Reuse master rows only within this list request. Every plan still
-            # passes scope checks; commands retain uncached, locked rechecks.
+            # Master rows are reused only within this response; every plan
+            # retains scope checks and command boundaries remain uncached.
             read_cache: dict[tuple[str, str], Any] = {}
             rows = [
                 plan.to_dict() for plan in service.repository.list_plans()
@@ -1365,7 +1403,39 @@ else:
         if hasattr(body, "executor"):
             body.executor = principal.subject_id
 
+        def require_activation_flag() -> None:
+            # This key controls price go-live, not every EXECUTE permission.
+            # Read the same actual app owner as admin/API/queue composition.
+            from apps.api.oday_api.security.dependencies import require_feature_flag
+
+            if command_store is not None and command_store.is_durable:
+                from shared.infrastructure.persistence.feature_flags import (
+                    FeatureFlagStoreUnavailable,
+                    require_durable_flag_owner,
+                )
+
+                app = request.scope.get("app")
+                owner = getattr(getattr(app, "state", None), "feature_flag_registry", None)
+                try:
+                    queue = command_store.queue
+                    require_durable_flag_owner(owner, queue._engine, queue=queue)
+                except FeatureFlagStoreUnavailable as exc:
+                    raise HTTPException(status_code=503, detail="FEATURE_FLAG_STORE_UNAVAILABLE") from exc
+            require_feature_flag("high_risk.priceops.execute")(request)
+
+        activation = event_type == "priceops.activated.v1"
+        if activation and (command_store is None or not command_store.is_durable):
+            # Process-local receipt stores have no transaction rollback. Refuse
+            # before reserving any receipt; this is not a local-mode exemption.
+            require_activation_flag()
+
         def _execute() -> dict[str, Any]:
+            if activation:
+                # Durable command_store.run has already checked/replayed a
+                # committed key and revalidated locked tenant/object ownership.
+                # New refusal rolls back reservation before any domain/audit/job
+                # success. Replay remains a read of the prior committed result.
+                require_activation_flag()
             approving = (
                 event_type in {"priceops.approved.v1", "priceops.decision_written_back.v1"}
                 and normalize_approval_decision(getattr(body, "decision", "")) == "approved"
@@ -1400,6 +1470,8 @@ else:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                 ) from exc
+            except PriceOpsMissingSourceLineageError as exc:
+                raise _missing_source_lineage_error() from exc
             except RuntimeError as exc:
                 correlation_id = getattr(request.state, "correlation_id", None) or "unknown"
                 logger.exception(
@@ -1462,6 +1534,14 @@ else:
         except CommandReceiptPersistenceError as exc:
             raise _persistence_error(exc) from exc
         return apply_replay_marker(outcome.value, replayed=outcome.replayed)
+
+    def _missing_source_lineage_error() -> ApiError:
+        return ApiError(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "價格輸入來源尚未備妥，無法執行正式最佳化。",
+            code=ErrorCode.UNPROCESSABLE,
+            next_action="請先確認價格資料的可追溯來源已備妥，再重試最佳化。",
+        )
 
     _durable_store_required = durable_store_required
 

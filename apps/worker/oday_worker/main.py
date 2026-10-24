@@ -489,6 +489,19 @@ class ODayWorker:
         # Dispatch through the registry: no monolithic switch over job_type.
         # An unregistered job_type raises UnknownJobTypeError (a ValueError),
         # which the loop retries and finally dead-letters.
+        from shared.jobs.queue import check_job_feature_flag, resolve_job_feature_flag_key
+
+        flags = getattr(self.persistence, "feature_flag_registry", None)
+        engine = getattr(self.persistence, "engine", None)
+        queue = getattr(self.persistence, "job_queue", None)
+        if (resolve_job_feature_flag_key(job.job_type, job.payload) is not None
+                and (engine is not None or getattr(queue, "_engine", None) is not None)):
+            from shared.infrastructure.persistence.feature_flags import require_durable_flag_owner
+
+            # Revalidate exact composition after claim, before any handler.
+            # Owner/storage absence is not a permanently disabled policy.
+            require_durable_flag_owner(flags, engine, queue=queue)
+        check_job_feature_flag(job.job_type, job.payload, flags=flags)
         self.registry.handle(job, self.persistence)
 
     def loop(self, stop_event: Any = None) -> None:

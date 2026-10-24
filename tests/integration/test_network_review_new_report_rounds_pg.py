@@ -23,6 +23,7 @@ from shared.infrastructure.persistence.repositories import (
     DurableRealizedSiteStore,
 )
 from shared.workflow.sitescore import CandidateSiteRealizationHook, DecisionStatus
+from tests.integration._operation_flag_fixtures import SITE_GO_FLAG, enable_operation_flag
 from tests.integration.test_network_review_submission_sod import _submit
 from tests.integration.test_sitescore_native_human_scope import (
     CHECKER,
@@ -92,6 +93,8 @@ def _prepare_original(pg, monkeypatch, state):
 
 def _original_approval(pg, client, headers, state):
     _, bundle, harness, tenant, candidate, saved = pg
+    enable_operation_flag(bundle.feature_flag_registry, key=SITE_GO_FLAG, tenant_id=tenant,
+                          queue=bundle.job_queue, audit_log=bundle.audit_log)
     initial, _ = _open(client, headers, tenant, saved, key="original-submission")
     assert initial.status_code == 201, initial.text
     original_id = initial.json()["decision_id"]

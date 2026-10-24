@@ -18,7 +18,7 @@ import type {
   HeatZone as MapHeatZone,
   Listing as MapListing,
 } from "./mapTypes";
-import { projectRecordedHeatZone, type RecordedOperatorHeatZone } from "./heatZoneRecordedEvidence";
+import { projectRecordedHeatZone } from "./heatZoneRecordedEvidence";
 
 /** Fallback centroid (Taipei) for records whose heat zone cannot be resolved. */
 const FALLBACK_CENTROID: [number, number] = [121.48, 25.0];
@@ -51,9 +51,9 @@ function offsetFromZone(
 /** Derive an illustrative state only for an explicitly selected fixture. */
 export function deriveHeatZoneState(zone: OperatorHeatZone): MapHeatZone["state"] {
   if (zone.confidence === null || zone.confidence < 0.7) return "SUPPRESSED_LOW_CONFIDENCE";
-  if (zone.demandGap >= 0.75) return "STILL_EXPANDABLE";
-  if (zone.demandGap >= 0.5) return "UNDER_REALIZED";
-  if (zone.competitionIndex >= 0.7) return "SATURATED";
+  if ((zone.demandGap ?? 0) >= 0.75) return "STILL_EXPANDABLE";
+  if ((zone.demandGap ?? 0) >= 0.5) return "UNDER_REALIZED";
+  if ((zone.competitionIndex ?? 0) >= 0.7) return "SATURATED";
   return "PARTIALLY_ABSORBED";
 }
 
@@ -63,9 +63,8 @@ export function deriveHeatZoneState(zone: OperatorHeatZone): MapHeatZone["state"
  * synthesize illustrative metrics.
  */
 export function operatorHeatZoneToMapZone(zone: OperatorHeatZone, allowFixtureMetrics = false): MapHeatZone {
-  if (!allowFixtureMetrics) {
-    return (zone as Partial<RecordedOperatorHeatZone>).recordedMap ?? projectRecordedHeatZone({}, zone);
-  }
+  if (zone.recordedMap) return zone.recordedMap;
+  if (!allowFixtureMetrics) return projectRecordedHeatZone({}, zone);
   const indexedCell = isValidCell(zone.id);
   return {
     id: zone.id,
@@ -74,7 +73,7 @@ export function operatorHeatZoneToMapZone(zone: OperatorHeatZone, allowFixtureMe
     h3: indexedCell ? zone.id : `h3-${zone.id}`,
     centroid: zone.centroid,
     h3Resolution: indexedCell ? getResolution(zone.id) : 9,
-    score: Math.round(zone.demandGap * 100),
+    score: Math.round((zone.demandGap ?? 0) * 100),
     confidence: zone.confidence,
     state: deriveHeatZoneState(zone),
     rank: zone.rank,
@@ -89,12 +88,12 @@ export function operatorHeatZoneToMapZone(zone: OperatorHeatZone, allowFixtureMe
     lastScoredAt: "",
     sourceSnapshotIds: ["fixture-network-ops"],
     unmetDemandScore: zone.demandGap,
-    formatFitScore: 1 - zone.competitionIndex,
+    formatFitScore: 1 - (zone.competitionIndex ?? 0),
     cannibalizationRisk: zone.cannibalizationRisk === "low" ? 0.1 : zone.cannibalizationRisk === "medium" ? 0.35 : 0.65,
     rentFeasibility: 0.7,
     listingAvailability: 0.5,
     poiCount: 10,
-    competitorCount: Math.round(zone.competitionIndex * 10),
+    competitorCount: Math.round((zone.competitionIndex ?? 0) * 10),
     competitorCapacity: 20,
     medianListingRent: 0,
     existingStoreCount: 0,

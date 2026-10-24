@@ -82,3 +82,76 @@ def test_other_personas_do_not_inherit_operations_cards_or_example_numbers(role_
 
 def test_due_soon_does_not_invent_a_two_hour_or_utc_business_day_policy():
     assert _cards([_issue(slaDueAt="2026-10-12T11:00:00+00:00")])["即將逾期"]["value"] is None
+
+
+def _growth_cards(actions, approvals=()):
+    facts = None if actions is None else {"actions": actions, "approvals": list(approvals)}
+    return {row["label"]: row for row in build_today_metrics(
+        issues=[_issue()], approvals_count=99, now=NOW,
+        role_id="marketing-manager", growth_facts=facts,
+    )}
+
+
+def _action(identity, status="DRAFT", kind="offpeak", **changes):
+    return {"id": identity, "status": status, "kind": kind, **changes}
+
+
+def test_marketing_uses_actual_action_lifecycle_and_mature_review_not_other_shell_counts():
+    cards = _growth_cards([
+        _action("draft-offpeak"), _action("draft-winback", kind="winback"),
+        _action("draft-priceops", kind="priceops"),
+        _action("pending", status="PENDING_APPROVAL", approvalId="own-approval"),
+        _action("observing", status="OBSERVING", observation={"status": "OBSERVING"}),
+        _action("ready", status="OUTCOME_READY", observation={"status": "MATURE"}),
+        _action("closed", status="CLOSED", observation={"status": "MATURE"}),
+    ], [{"id": "own-approval", "ref": "pending", "status": "pending"}])
+    assert cards["促銷草稿"]["value"] == "3"
+    assert cards["待核准活動"]["value"] == "1"
+    assert cards["成效待判斷"]["value"] == "1"
+    # A draft kind is not a measured Forecast candidate or lapsed-member feed.
+    assert cards["離峰機會"]["value"] is None
+    assert cards["會員召回候選"]["value"] is None
+
+
+def test_marketing_missing_owner_is_distinct_from_successful_empty_read():
+    assert all(row["value"] is None for row in _growth_cards(None).values())
+    cards = _growth_cards([])
+    for label in ("促銷草稿", "待核准活動", "成效待判斷"):
+        assert cards[label]["value"] == "0" and cards[label]["availability"] == "available"
+    for label in ("離峰機會", "會員召回候選"):
+        assert cards[label]["value"] is None and cards[label]["availability"] == "unavailable"
+
+
+@pytest.mark.parametrize("damage", [
+    {"id": None}, {"status": "candidate"}, {"status": []}, {"kind": None}, {"kind": "unknown"},
+])
+def test_marketing_malformed_action_does_not_create_plausible_counts(damage):
+    cards = _growth_cards([_action("declared-unit", **damage)])
+    assert all(row["value"] is None for row in cards.values())
+
+
+def test_marketing_duplicate_action_identity_is_not_double_counted():
+    assert all(row["value"] is None for row in _growth_cards([_action("one"), _action("one")]).values())
+
+
+@pytest.mark.parametrize("approvals", [[], [{"id": "approval", "ref": "foreign", "status": "pending"}],
+    [{"id": "approval", "ref": "own", "status": "approved"}],
+    [{"id": "approval", "ref": "own", "status": "pending"}] * 2,
+    [{"id": "approval", "ref": "own", "status": "pending"},
+     {"id": "approval", "ref": "own", "status": "approved"}],
+    [{"id": "approval", "ref": "own", "status": "pending"},
+     {"id": "approval", "ref": "foreign", "status": "pending"}],
+    [{"id": "approval", "ref": "own", "status": "pending"},
+     {"id": "approval", "ref": "foreign", "status": "approved"}],
+])
+def test_marketing_pending_requires_the_actual_unique_pending_approval_parent(approvals):
+    cards = _growth_cards([_action("own", status="PENDING_APPROVAL", approvalId="approval")], approvals)
+    assert cards["待核准活動"]["value"] is None
+    assert cards["促銷草稿"]["value"] == "0"
+
+
+@pytest.mark.parametrize("observation", [None, {}, {"status": "UNAVAILABLE"}, {"status": "OBSERVING"}])
+def test_marketing_legacy_ready_without_mature_recorded_window_is_unknown(observation):
+    cards = _growth_cards([_action("legacy", status="OUTCOME_READY", observation=observation)])
+    assert cards["成效待判斷"]["value"] is None
+    assert cards["促銷草稿"]["value"] == "0"

@@ -293,6 +293,31 @@ catalog_additions:
     consumers: [operator_console_projection, audit_projection]
     retention_days: 30
 
+  - event_type: adlift.campaign_approved
+    event_version: 1
+    producer: adlift_native_budget_authority
+    transaction_owner: adlift.native_budget_authority
+    aggregate_type: adlift_campaign
+    partition_key: tenant_id:campaign_id
+    ordering_scope: one_campaign_budget
+    schema_ref: '#/payloads/AdLiftCampaignApprovedV1'
+    sensitive_fields: []
+    consumers:
+    - campaign_projection
+    retention_days: 30
+  - event_type: adlift.campaign_execution_requested
+    event_version: 1
+    producer: adlift_native_budget_authority
+    transaction_owner: adlift.native_budget_authority
+    aggregate_type: adlift_campaign
+    partition_key: tenant_id:campaign_id
+    ordering_scope: one_campaign_budget
+    schema_ref: '#/payloads/AdLiftCampaignExecutionRequestedV1'
+    sensitive_fields: []
+    consumers:
+    - marketing_platform_dispatcher
+    retention_days: 30
+
 payloads:
   MatchDecidedV2:
     type: object

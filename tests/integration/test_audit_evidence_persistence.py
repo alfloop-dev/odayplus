@@ -938,11 +938,13 @@ def test_api_persists_and_serves_retained_evidence(db_path) -> None:
         )
         assert payload["audit_chain"]["end"]
 
-        # Retrieve the persisted bundle through the read endpoint.
+        # Sensitive full JSON is not a bypass around the download authority
+        # gate. Verify durable content through its actual internal store owner.
         owner_headers = auth_headers(Role.AUDITOR, subject="auditor-a")
         fetched = client.get(f"/audit/evidence/exports/{export_id}", headers=owner_headers)
-        assert fetched.status_code == 200
-        fetched_payload = fetched.json()
+        assert fetched.status_code == 403
+        assert fetched.json()["detail"] == "SENSITIVE_EVIDENCE_DOWNLOAD_AUTHORITY_REQUIRED"
+        fetched_payload = bundle_persistence.evidence_store.get(export_id).to_dict()
         assert fetched_payload["bundle_checksum"] == payload["bundle_checksum"]
         assert fetched_payload["requested_by"] == "auditor-a"
         assert fetched_payload["retention_class"] == RETENTION_REGULATORY

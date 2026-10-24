@@ -1,3 +1,4 @@
+import { cellToBoundary } from "h3-js";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OdpApiClient } from "@oday-plus/openapi-client";
@@ -105,6 +106,12 @@ describe("recorded HeatZone map evidence", () => {
     expect(recordedLensPoints(map, "demand")).toBeNull();
   });
 
+  it("rejects a numeric score contradicting the native V3 abstention contract", async () => {
+    const zone = await load({ ...recorded, state: "ABSTAINED", score: 72, abstained: true });
+    expect(zone.recordedMap).toBeUndefined();
+    expect(operatorHeatZoneToMapZone(zone).score).toBeNull();
+  });
+
   it("keeps an unsupported producer state unknown", async () => {
     const map = operatorHeatZoneToMapZone(await load({ ...recorded, state: "unregistered-state" }));
     expect(map.state).toBe("UNKNOWN");
@@ -178,7 +185,7 @@ describe("recorded HeatZone map evidence", () => {
 
   it("requires explicit fixture mode for illustrative metric synthesis", () => {
     const map = operatorHeatZoneToMapZone(HEAT_ZONE_FIXTURES[0]!, true);
-    expect(map.score).toBe(Math.round(HEAT_ZONE_FIXTURES[0]!.demandGap * 100));
+    expect(map.score).toBe(Math.round(HEAT_ZONE_FIXTURES[0]!.demandGap! * 100));
     expect(map.modelVersion).toBe("network-ops-fixture");
   });
 
@@ -204,27 +211,30 @@ describe("recorded HeatZone map evidence", () => {
     expect(recordedMapFreshness([])).toMatchObject({ status: "UNKNOWN", modelVersion: "", sourceSnapshotId: "" });
   });
 
-  it("uses the actual H3 boundary and refuses invented live polygons", async () => {
-    const map = operatorHeatZoneToMapZone(await load());
+  it("uses the recorded H3 polygon and refuses invented live polygons", async () => {
+    const boundary = cellToBoundary(recorded.h3_index, true);
+    const map = operatorHeatZoneToMapZone(await load({ ...recorded,
+      geometry: { type: "Polygon", coordinates: [boundary] },
+    }));
     const feature = zoneToFeature(map);
     expect(feature?.geometry.coordinates[0]).toHaveLength(7);
     expect(feature?.geometry.coordinates[0]?.[0]).toEqual(feature?.geometry.coordinates[0]?.[6]);
-    const pointOnly = { ...map, h3: "not-a-cell" };
+    const pointOnly = { ...map, h3: "not-a-cell", geometry: undefined };
     expect(zoneToFeature(pointOnly)).toBeNull();
     expect(zoneToFeature(pointOnly, true)?.geometry.coordinates[0]).toHaveLength(5);
   });
 
-  it("passes recorded model/snapshot evidence and unknown freshness to the live map", async () => {
+  it.each([false, true])("passes recorded model/snapshot evidence without fixture recalculation (fixtures=%s)", async fixturesAllowed => {
     const zone = await load();
     const viewModel = buildNetworkFindAreasViewModel({ heatZones: [zone], candidates: [], listings: [], activeLens: "fit" });
     render(<FindAreasPanel
       activeRoleId="expansion-manager" canAddListing={false} candidates={[]}
-      effectiveLens="fit" fixturesAllowed={false} heatZones={[zone]} isSelectedTracked={false}
+      effectiveLens="fit" fixturesAllowed={fixturesAllowed} heatZones={[zone]} isSelectedTracked={false}
       listings={[]} selectedZone={viewModel.zones[0]!}
       viewModel={viewModel}
-      onAddListingFromUrl={() => {}} onChangeLens={() => {}} onScoreCandidate={() => {}}
-      onSelectZone={() => {}} onSourceListings={() => {}} onSubmitReview={() => {}}
-      onToggleTracked={() => {}} onViewCandidates={() => {}}
+      onAddListingFromUrl={() => {}} onChangeLens={() => {}}
+      onSelectZone={() => {}} onSourceListings={() => {}}
+      onToggleTracked={() => {}}
     />);
     expect(observed.map?.freshness).toMatchObject({
       status: "UNKNOWN", modelVersion: recorded.model_version,
@@ -246,9 +256,9 @@ describe("recorded HeatZone map evidence", () => {
       activeRoleId="expansion-manager" canAddListing={false} candidates={[]}
       effectiveLens="traffic" fixturesAllowed={false} heatZones={[zone]} isSelectedTracked={false}
       listings={[]} selectedZone={viewModel.zones[0]!} viewModel={viewModel}
-      onAddListingFromUrl={() => {}} onChangeLens={() => {}} onScoreCandidate={() => {}}
-      onSelectZone={() => {}} onSourceListings={() => {}} onSubmitReview={() => {}}
-      onToggleTracked={() => {}} onViewCandidates={() => {}}
+      onAddListingFromUrl={() => {}} onChangeLens={() => {}}
+      onSelectZone={() => {}} onSourceListings={() => {}}
+      onToggleTracked={() => {}}
     />);
     expect(observed.map?.lensScores[0]?.points).toBeNull();
     expect(screen.getByTestId("find-areas-zone-score").textContent).toBe("未評估");

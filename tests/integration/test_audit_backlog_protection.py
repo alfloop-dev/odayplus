@@ -31,6 +31,7 @@ def _prepare(bundle):
     store.refresh(source.TENANT)
     # Controlled workflow precondition, not a parser execution claim.
     store.intakes[iid]["state"] = "NEEDS_REVIEW"
+    store.intakes[iid]["version"] += 1
     store.flush()
     return iid
 
@@ -41,7 +42,7 @@ def _age(bundle, seconds, *, at=None):
     return at
 
 
-def _correct(bundle, iid, *, field="address_raw", key="synthetic-backlog-correct", version=1):
+def _correct(bundle, iid, *, field="address_raw", key="synthetic-backlog-correct", version=2):
     return source._client(bundle).post(
         f"/api/v1/intakes/{iid}/corrections",
         json={"field_path": field, "corrected_value": 12 if field == "floor" else "Synthetic verified address", "reason": "Synthetic documented review", "risk_acknowledged": True},
@@ -88,7 +89,7 @@ def test_stale_backlog_preserves_low_risk_correction_and_authorized_cached_recei
     assert replay.json() == identity.json()
     assert replay.headers["Idempotency-Replayed"] == "true"
     assert source._snapshot(bundle) == before
-    ordinary = _correct(bundle, iid, field="floor", key="synthetic-low-risk", version=2)
+    ordinary = _correct(bundle, iid, field="floor", key="synthetic-low-risk", version=3)
     assert ordinary.status_code == 201, ordinary.text
     assert source._submit(bundle, key="synthetic-low-risk-submit").status_code == 202
 

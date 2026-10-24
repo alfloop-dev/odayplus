@@ -28,10 +28,12 @@ HEADERS = {"x-subject-id": "durable-pricer", "x-roles": "pricing_manager", "x-te
 
 
 def http_context(engine, *, store_repository=None, brand_repository=None,
-                 require_durable_commands=True, worm_sink=None):
+                 require_durable_commands=True, worm_sink=None, feature_flag_registry=None):
     repository = DurablePriceOpsRepository(SqliteDocumentStore(engine))
     audit = DurableAuditLog(engine, worm_sink=worm_sink)
     app = FastAPI()
+    if feature_flag_registry is not None:
+        app.state.feature_flag_registry = feature_flag_registry
     install_error_handlers(app)
 
     @app.middleware("http")
@@ -42,7 +44,7 @@ def http_context(engine, *, store_repository=None, brand_repository=None,
     app.include_router(create_priceops_router(repository=repository, audit_log=audit,
                                              store_repository=store_repository,
                                              brand_repository=brand_repository,
-                                             job_queue=DurableJobQueue(engine),
+                                             job_queue=DurableJobQueue(engine, flags=feature_flag_registry),
                                              require_durable_commands=require_durable_commands, runtime_mode="poc"))
     return TestClient(app, headers=HEADERS), repository, audit
 

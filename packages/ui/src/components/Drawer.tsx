@@ -28,6 +28,8 @@ export function Drawer({
   className,
 }: DrawerProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
+  const behavior = useRef(onClose); behavior.current = onClose;
 
   useEffect(() => {
     if (!open) {
@@ -35,17 +37,33 @@ export function Drawer({
     }
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     closeRef.current?.focus();
+    const focusables = () => Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(
+      'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+    ) ?? []).filter((element) => {
+      if (element.matches(":disabled") || element.closest('[hidden], [inert], [aria-hidden="true"]') || element.getAttribute("type") === "hidden" || element.tabIndex < 0) return false;
+      for (let parent: HTMLElement | null = element; parent && parent !== dialogRef.current; parent = parent.parentElement) {
+        const style = window.getComputedStyle(parent);
+        if (style.display === "none" || style.visibility === "hidden") return false;
+      }
+      return true;
+    });
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        onClose();
+        event.preventDefault(); event.stopPropagation(); behavior.current();
+      } else if (event.key === "Tab") {
+        const items = focusables(); const first = items[0]; const last = items[items.length - 1];
+        if (!first || !last) { event.preventDefault(); dialogRef.current?.focus(); }
+        else if (!dialogRef.current?.contains(document.activeElement) || (event.shiftKey ? document.activeElement === first : document.activeElement === last)) {
+          event.preventDefault(); (event.shiftKey ? last : first).focus();
+        }
       }
     };
-    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("keydown", onKeyDown, true);
     return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      previouslyFocused?.focus();
+      document.removeEventListener("keydown", onKeyDown, true);
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
     };
-  }, [onClose, open]);
+  }, [open]);
 
   if (!open) {
     return null;
@@ -54,6 +72,8 @@ export function Drawer({
   return (
     <div className="odp-overlay" data-layer="drawer">
       <aside
+        ref={dialogRef}
+        tabIndex={-1}
         className={["odp-drawer", className].filter(Boolean).join(" ")}
         data-width={width}
         role="dialog"

@@ -87,6 +87,20 @@ def _clone(value: Any) -> Any:
     return deepcopy(value)
 
 
+def _growth_decision_provenance(item: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Read frozen owner references, without hydrating from current freshness."""
+    model = item.get("modelVersion")
+    model = model if isinstance(model, str) and model.strip() else None
+    ids = item.get("sourceSnapshotIds")
+    snapshot = (
+        ", ".join(ids)
+        if isinstance(ids, (list, tuple)) and ids
+        and all(isinstance(value, str) and value.strip() for value in ids)
+        else None
+    )
+    return model, snapshot
+
+
 class GovernanceExportUnavailable(RuntimeError):
     """Formal export has no admitted artifact/policy binding yet."""
 
@@ -256,7 +270,7 @@ class GovernanceService:
                     "requestor": item.get("requester", "Growth Manager"),
                     "submittedAt": item.get("createdAt", ""),
                     "status": "pending",
-                    "priority": "medium",
+                    "priority": {"高": "high", "中": "medium", "低": "low"}.get(str(item.get("risk", ""))),
                     "owner": item.get("approver", "行銷經理"),
                     "sla": item.get("due", ""),
                     "entityRef": item.get("ref", item["id"]),
@@ -275,9 +289,11 @@ class GovernanceService:
     def _growth_decisions(self) -> list[dict[str, Any]]:
         if self._growth is None:
             return []
-        freshness = self._growth.get_freshness()
         out: list[dict[str, Any]] = []
         for item in self._growth.list_decisions():
+            model, snapshot = _growth_decision_provenance(item)
+            actor = item.get("decidedBy")
+            approval_id = item.get("approvalId")
             verdict = str(item.get("verdict", ""))
             final = (
                 "Approved"
@@ -294,11 +310,11 @@ class GovernanceService:
                     "systemRecommendation": item.get("recommendation", "—"),
                     "finalDecision": final,
                     "reason": item.get("reason", ""),
-                    "actor": item.get("decidedBy", "行銷經理"),
+                    "actor": actor if isinstance(actor, str) and actor.strip() else None,
                     "decidedAt": item.get("occurredAt", ""),
-                    "model": freshness.get("modelVersion"),
-                    "datasetSnapshot": freshness.get("sourceSnapshotId"),
-                    "approvalId": item.get("ref", ""),
+                    "model": model,
+                    "datasetSnapshot": snapshot,
+                    "approvalId": approval_id if isinstance(approval_id, str) and approval_id.strip() else None,
                 }
             )
         return out
@@ -495,16 +511,33 @@ class GovernanceService:
         ]
         for plan in plans:
             plan_approvals = self._priceops_repository.list_approvals(plan.plan_id)
+            # Current-round state takes precedence over retained prior decisions,
+            # matching PriceOpsService.get_plan_comparison's approval projection.
+            plan_status = plan.status.value
+            if plan_status == "pending_approval":
+                approval_status = "pending"
+            elif plan_status in {"candidate", "simulated", "optimized"}:
+                approval_status = "not_submitted"
+            elif plan_approvals:
+                approval_status = plan_approvals[-1].decision
+            elif plan_status in {
+                "approved_for_pilot",
+                "active",
+                "observing",
+                "evaluated",
+                "continue",
+                "adjust",
+                "rollback",
+            }:
+                approval_status = "approved"
+            else:
+                approval_status = "not_submitted"
             approvals.append(
                 {
                     "id": plan.plan_id,
                     "module": "PriceOps",
                     "title": plan.plan_id,
-                    "status": (
-                        plan_approvals[-1].decision
-                        if plan_approvals
-                        else "pending"
-                    ),
+                    "status": approval_status,
                     "entityRef": plan.plan_id,
                     "submittedAt": plan.created_at.isoformat(),
                     "_canonical": True,
@@ -579,6 +612,7 @@ class GovernanceService:
         tenant_id: str | None = None,
         idempotency_key: str | None = None,
         correlation_id: str | None = None,
+        replay_only: bool = False,
     ) -> dict[str, Any]:
         """Approve / return / reject an approval, enforcing policy server-side.
 
@@ -627,12 +661,18 @@ class GovernanceService:
                     reason=trimmed_reason, actor_name=actor, role=role, tenant_id=tenant_id,
                     idempotency_key=idempotency_key, correlation_id=correlation_id or "")
             return cached
+        if replay_only:
+            # A scoped read admitted only a previously bound receipt. If it
+            # disappeared before this locked command reload, never create a
+            # fresh decision or audit from that historical exception.
+            raise GovernanceNotFound("bound decision replay unavailable")
 
+        growth_result: dict[str, Any] | None = None
         # Growth approvals are owned by GrowthService — delegate so the linked
         # Growth Action advances too.  Return maps to a Growth rejection (the
         # action returns to DRAFT for revision).
         if self._growth is not None and self._growth_owns(approval_id):
-            self._decide_growth(
+            growth_result = self._decide_growth(
                 approval_id=approval_id,
                 normalized=normalized,
                 reason=trimmed_reason,
@@ -663,11 +703,12 @@ class GovernanceService:
         log_approval = approval
         if growth_owned:
             raw = next(row for row in self._growth.list_approvals() if row["id"] == approval_id)
-            freshness = self._growth.get_freshness()
+            child_decision = (growth_result or {}).get("decision", {})
+            model, snapshot = _growth_decision_provenance(child_decision)
             log_approval = {**raw, "module": "Growth", "entityRef": raw["ref"],
                 "systemRecommendation": raw.get("risk", ""),
-                "modelVersion": freshness.get("modelVersion"),
-                "datasetSnapshot": freshness.get("featureSnapshotTime")}
+                "modelVersion": model,
+                "datasetSnapshot": snapshot}
         decision = self._append_decision(
             approval=log_approval,
             approval_id=approval_id,
@@ -701,6 +742,64 @@ class GovernanceService:
         self._save_command_receipt(replay_key, request_sha, result)
         return result
 
+    def has_visible_growth_decision_receipt(
+        self, *, approval_id: str, action: str, reason: str, role: str,
+        actor_name: str, tenant_id: str, idempotency_key: str | None,
+    ) -> bool:
+        """Pure read of an exact receipt after current parent scope filtering.
+
+        The HTTP route only calls this on its explicit read_service_resolver,
+        whose Growth actions/approvals/decisions were projected from the
+        principal's current canonical plan/store scope. A receipt alone never
+        makes an unscoped or absent action visible. No cache/audit is written.
+        """
+        if not self._require_canonical or self._growth is None or not idempotency_key or not idempotency_key.strip():
+            return False
+        approvals = [row for row in self._growth.list_approvals() if row.get("id") == approval_id]
+        if len(approvals) != 1:
+            return False
+        approval = approvals[0]
+        normalized = action.strip().lower()
+        if normalized not in DECISION_ACTIONS:
+            return False
+        expected_status = "approved" if normalized == "approve" else "rejected"
+        action_id = approval.get("ref")
+        if not isinstance(action_id, str) or not action_id:
+            return False
+        try:
+            parent = self._growth.get_action(action_id)
+        except GrowthNotFound:
+            return False
+        if parent.get("id") != action_id:
+            return False
+        children = [row for row in self._growth.list_decisions()
+                    if row.get("ref") == action_id and row.get("approvalId") == approval_id
+                    and row.get("decidedBy") == actor_name]
+        if len(children) != 1:
+            return False
+        _, _, cached = self._command_replay(
+            operation="decide", payload={"approvalId": approval_id, "entityRef": action_id,
+                "action": normalized, "reason": (reason or "").strip()},
+            actor=actor_name, role=role, tenant_id=tenant_id, idempotency_key=idempotency_key,
+        )
+        if cached is None or cached.get("approvalId") != approval_id or cached.get("action") != normalized:
+            return False
+        if approval.get("status") != expected_status or cached.get("status") != _APPROVAL_STATUS[normalized]:
+            return False
+        expected_verdicts = {"核准", "approved", "Approved"} if expected_status == "approved" else {"駁回", "rejected", "Rejected"}
+        verdict = children[0].get("verdict")
+        if not isinstance(verdict, str) or verdict not in expected_verdicts:
+            return False
+        decision = cached.get("decision")
+        if not isinstance(decision, dict) or decision.get("module") != "Growth" or decision.get("actor") != actor_name:
+            return False
+        if decision.get("approvalId") != approval_id or not isinstance(decision.get("item"), str):
+            return False
+        if decision["item"].partition(" ")[0] != action_id:
+            return False
+        owned = [row for row in self._state["decisions"] if row.get("id") == decision.get("id")]
+        return len(owned) == 1 and owned[0] == decision
+
     def _growth_owns(self, approval_id: str) -> bool:
         if self._growth is None:
             return False
@@ -717,12 +816,12 @@ class GovernanceService:
         tenant_id: str | None,
         idempotency_key: str | None,
         correlation_id: str,
-    ) -> None:
+    ) -> dict[str, Any]:
         # GrowthService only understands approved / rejected; treat "return" as
         # a rejection that sends the action back to DRAFT for revision.
         decision = "approved" if normalized == "approve" else "rejected"
         try:
-            self._growth.resolve_approval(
+            return self._growth.resolve_approval(
                 approval_id=approval_id,
                 decision=decision,
                 reason=reason,

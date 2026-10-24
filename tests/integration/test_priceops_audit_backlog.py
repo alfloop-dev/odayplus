@@ -32,13 +32,18 @@ TENANT = "tenant-a"
 def case(database, tmp_path):
     open_engine, _ = database
     engine = open_engine()
-    client, repository, audit = http_context(engine)
+    from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+    from shared.infrastructure.persistence.feature_flags import DurableFeatureFlagRegistry
+
+    flags = DurableFeatureFlagRegistry(SqliteDocumentStore(engine))
+    flags.initialize_defaults()  # This owned fixture starts disabled, never auto-enabled.
+    client, repository, audit = http_context(engine, feature_flag_registry=flags)
     sink = LocalAppendOnlyWormSink(tmp_path / "synthetic-backlog-worm")
     audit._worm_sink = sink
     scenario, _, _ = seed(client)
     assert client.post("/priceops/plans/durable-plan/submit", json={"reason": "independent review"}).status_code == 200
-    queue = DurableJobQueue(engine)
-    bundle = SimpleNamespace(engine=engine, job_queue=queue, audit_log=audit)
+    queue = DurableJobQueue(engine, flags=flags)
+    bundle = SimpleNamespace(engine=engine, job_queue=queue, audit_log=audit, feature_flag_registry=flags)
     registry = default_registry()
     worker = ODayWorker(persistence=bundle, audit_only=True, worker_id="synthetic-backlog-worker",
                        telemetry=Telemetry("oday-worker", metrics=registry))
@@ -48,7 +53,7 @@ def case(database, tmp_path):
         yield SimpleNamespace(engine=engine, client=client, repository=repository, audit=audit,
                               sink=sink, queue=queue, worker=worker, registry=registry,
                               delivery=delivery, checker=checker, scenario=scenario,
-                              open_engine=open_engine)
+                              open_engine=open_engine, flags=flags)
     finally:
         engine.close()
 
@@ -147,7 +152,19 @@ def test_low_risk_reads_simulation_and_rejection_remain_available(case):
     assert case.checker.inspect(TENANT).blocked
 
 
+def enable_synthetic_activation_owner(case):
+    # Explicit engineering setup for only these two legitimate go-live flows;
+    # not production/human approval, not a global fixture auto-enable.
+    for operation, actor in (("approve", "synthetic-flag-admin-a"),
+                             ("approve", "synthetic-flag-admin-b"),
+                             ("enable", "synthetic-flag-admin-a")):
+        case.flags.execute(operation, "high_risk.priceops.execute", actor=actor,
+                           correlation_id="synthetic-backlog-fixture-config", audit_log=case.audit,
+                           queue=case.queue)
+
+
 def test_rollback_remains_available_during_stale_backlog(case):
+    enable_synthetic_activation_owner(case)
     assert approval(case).status_code == 200
     activated = case.client.post("/priceops/plans/durable-plan/activate", json={"executor": "forged"})
     assert activated.status_code == 200, activated.text
@@ -159,6 +176,7 @@ def test_rollback_remains_available_during_stale_backlog(case):
 
 
 def test_authorized_committed_replay_survives_backpressure_and_changed_body_conflicts(case):
+    enable_synthetic_activation_owner(case)
     first = approval(case, key="committed-approval")
     assert first.status_code == 200, first.text
     age(case, 301)
@@ -218,90 +236,6 @@ def test_delivered_status_without_bound_external_receipt_is_not_a_healthy_zero(c
     case.delivery.store.put(COLLECTION, event.event_id, {**intent, "status": "delivered", "receipt": receipt})
     with pytest.raises(AuditBacklogUnavailable):
         case.checker.inspect(TENANT)
-
-
-@pytest.mark.parametrize("method", ["inspect", "all_tenants"])
-def test_settled_history_does_not_add_per_event_database_round_trips(case, monkeypatch, method):
-    from shared.audit.events import AuditEvent
-
-    drain(case)
-    observed_counts = []
-    original_query = case.engine.query
-    original_query_one = case.engine.query_one
-
-    for history in (8, 32):
-        for index in range(history):
-            with case.engine.transaction():
-                if getattr(case.engine, "dialect", "") != "postgresql":
-                    case.engine.execute("BEGIN IMMEDIATE")
-                with case.audit.transactional_worm_sink(case.delivery):
-                    event = case.audit.record(AuditEvent(
-                        event_type="synthetic.audit.scale", actor="synthetic-actor",
-                        action="synthetic-write", resource=f"synthetic-record-{history}-{index}",
-                        outcome="succeeded", correlation_id=f"synthetic-scale-{history}-{index}",
-                        metadata={"tenant_id": TENANT},
-                    ))
-            job = case.queue.get_by_idempotency_key("durable-audit:" + TENANT + ":" + event.event_id)
-            assert job is not None
-            case.delivery.deliver(job)
-
-        queries = []
-
-        def count_query(sql, params=(), _queries=queries):
-            _queries.append(sql)
-            return original_query(sql, params)
-
-        def count_query_one(sql, params=(), _queries=queries):
-            _queries.append(sql)
-            return original_query_one(sql, params)
-
-        with monkeypatch.context() as patch:
-            patch.setattr(case.engine, "query", count_query)
-            patch.setattr(case.engine, "query_one", count_query_one)
-            health = case.checker.inspect(TENANT) if method == "inspect" else case.checker.all_tenants()
-        assert health.pending == 0 and not health.blocked
-        observed_counts.append(len(queries))
-
-    assert observed_counts[1] <= observed_counts[0]
-    assert case.audit.verify_chain().ok
-
-
-def test_intent_document_key_must_match_the_committed_event(case):
-    intent, event, _ = first_delivery(case)
-    case.delivery.store.put(COLLECTION, "unrelated-document-key", intent)
-    case.engine.execute(
-        "DELETE FROM durable_documents WHERE collection = ? AND doc_id = ?",
-        (case.delivery.store._collection(COLLECTION), event.event_id),
-    )
-    with pytest.raises(AuditBacklogUnavailable):
-        case.checker.inspect(TENANT)
-
-
-def test_refresh_cannot_hide_facts_deleted_during_observation(case, monkeypatch):
-    _, event, job = first_delivery(case)
-    other = case.open_engine()
-    original_query = case.engine.query
-    removed = False
-
-    def remove_after_read(statement, params=()):
-        nonlocal removed
-        rows = original_query(statement, params)
-        if statement.startswith("SELECT * FROM durable_audit_events WHERE") and not removed:
-            removed = True
-            with other.transaction():
-                other.execute("DELETE FROM durable_jobs WHERE job_id = ?", (job.job_id,))
-                other.execute("DELETE FROM durable_documents WHERE collection = ? AND doc_id = ?",
-                              (case.delivery.store._collection(COLLECTION), event.event_id))
-                other.execute("DELETE FROM durable_audit_events WHERE event_id = ?", (event.event_id,))
-        return rows
-
-    monkeypatch.setattr(case.engine, "query", remove_after_read)
-    try:
-        with pytest.raises(AuditBacklogUnavailable):
-            case.checker.inspect(TENANT)
-        assert removed
-    finally:
-        other.close()
 
 
 def test_orphan_duplicate_jobs_and_wrong_tenant_partition_are_unavailable(case):
@@ -390,4 +324,90 @@ def test_arriving_committed_delivery_during_observation_is_counted_without_clock
         assert health.pending == 7 and not health.blocked
     finally:
         resume.set()
+        other.close()
+
+
+@pytest.mark.parametrize("method", ["inspect", "all_tenants"])
+def test_settled_history_does_not_add_per_event_database_round_trips(case, monkeypatch, method):
+    from shared.audit.events import AuditEvent
+
+    drain(case)
+    observed_counts = []
+    original_query = case.engine.query
+    original_query_one = case.engine.query_one
+
+    for history in (8, 32):
+        for index in range(history):
+            with case.engine.transaction():
+                if getattr(case.engine, "dialect", "") != "postgresql":
+                    case.engine.execute("BEGIN IMMEDIATE")
+                with case.audit.transactional_worm_sink(case.delivery):
+                    event = case.audit.record(AuditEvent(
+                        event_type="synthetic.audit.scale", actor="synthetic-actor",
+                        action="synthetic-write", resource=f"synthetic-record-{history}-{index}",
+                        outcome="succeeded", correlation_id=f"synthetic-scale-{history}-{index}",
+                        metadata={"tenant_id": TENANT},
+                    ))
+            job = case.queue.get_by_idempotency_key("durable-audit:" + TENANT + ":" + event.event_id)
+            assert job is not None
+            case.delivery.deliver(job)
+
+        queries = []
+
+        def count_query(sql, params=(), _queries=queries):
+            _queries.append(sql)
+            return original_query(sql, params)
+
+        def count_query_one(sql, params=(), _queries=queries):
+            _queries.append(sql)
+            return original_query_one(sql, params)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(case.engine, "query", count_query)
+            patch.setattr(case.engine, "query_one", count_query_one)
+            health = case.checker.inspect(TENANT) if method == "inspect" else case.checker.all_tenants()
+        assert health.pending == 0 and not health.blocked
+        observed_counts.append(len(queries))
+
+    assert observed_counts[1] <= observed_counts[0]
+    assert case.audit.verify_chain().ok
+
+
+
+def test_intent_document_key_must_match_the_committed_event(case):
+    intent, event, _ = first_delivery(case)
+    case.delivery.store.put(COLLECTION, "unrelated-document-key", intent)
+    case.engine.execute(
+        "DELETE FROM durable_documents WHERE collection = ? AND doc_id = ?",
+        (case.delivery.store._collection(COLLECTION), event.event_id),
+    )
+    with pytest.raises(AuditBacklogUnavailable):
+        case.checker.inspect(TENANT)
+
+
+
+def test_refresh_cannot_hide_facts_deleted_during_observation(case, monkeypatch):
+    _, event, job = first_delivery(case)
+    other = case.open_engine()
+    original_query = case.engine.query
+    removed = False
+
+    def remove_after_read(statement, params=()):
+        nonlocal removed
+        rows = original_query(statement, params)
+        if statement.startswith("SELECT * FROM durable_audit_events WHERE") and not removed:
+            removed = True
+            with other.transaction():
+                other.execute("DELETE FROM durable_jobs WHERE job_id = ?", (job.job_id,))
+                other.execute("DELETE FROM durable_documents WHERE collection = ? AND doc_id = ?",
+                              (case.delivery.store._collection(COLLECTION), event.event_id))
+                other.execute("DELETE FROM durable_audit_events WHERE event_id = ?", (event.event_id,))
+        return rows
+
+    monkeypatch.setattr(case.engine, "query", remove_after_read)
+    try:
+        with pytest.raises(AuditBacklogUnavailable):
+            case.checker.inspect(TENANT)
+        assert removed
+    finally:
         other.close()

@@ -4,7 +4,7 @@ import type { NetworkScoringSnapshot } from "./networkScoringTypes";
 
 /** Collection read, masked synchronously when its source/access/location changes. */
 export function useCandidateScoreJobs(snapshot: NetworkScoringSnapshot | null, headers: HeadersInit,
-  key: string, generation: number, refreshToken: unknown, onTerminal: () => Promise<void>) {
+  key: string, generation: number, refreshToken: unknown, onTerminal: () => Promise<void>, transport: typeof fetch = fetch) {
   const [value, setValue] = useState<{ input: typeof snapshot; key: string; read: CandidateScoreJobsRead } | null>(null);
   const refreshed = useRef(new Set<string>());
   useEffect(() => {
@@ -13,7 +13,7 @@ export function useCandidateScoreJobs(snapshot: NetworkScoringSnapshot | null, h
     let timer: ReturnType<typeof setTimeout> | undefined;
     let previousPending = new Set<string>();
     async function load() {
-      const result = await readCandidateScoreJobs(snapshot!, headers, controller.signal);
+      const result = await readCandidateScoreJobs(snapshot!, headers, controller.signal, transport);
       if (controller.signal.aborted) return;
       setValue({ input: snapshot, key, read: { snapshot: result, status: "ready", generation } });
       const terminal = result.jobs.filter((job) => job.jobId && !pendingScoreJob(job)
@@ -29,7 +29,7 @@ export function useCandidateScoreJobs(snapshot: NetworkScoringSnapshot | null, h
     }
     void load();
     return () => { controller.abort(); if (timer) clearTimeout(timer); };
-  }, [snapshot, headers, key, generation, refreshToken, onTerminal]);
+  }, [snapshot, headers, key, generation, refreshToken, onTerminal, transport]);
   return value?.input === snapshot && value.key === key && value.read.generation === generation
     ? value.read : { snapshot: null, status: "loading", generation } satisfies CandidateScoreJobsRead;
 }

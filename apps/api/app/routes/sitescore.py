@@ -523,6 +523,23 @@ else:
                 or getattr(current, "created_by_verified", False) and current.created_by == principal.subject_id
             ):
                 raise HTTPException(403, detail="proposer cannot approve own submission")
+            if action is DecisionAction.APPROVE:
+                from shared.infrastructure.persistence.feature_flags import (
+                    FeatureFlagOperationDisabled,
+                    FeatureFlagStoreUnavailable,
+                    require_operation_feature_flag,
+                )
+
+                owner = getattr(request.app.state, "feature_flag_registry", None)
+                engine = getattr(getattr(active_wf, "_store", None), "engine", None)
+                try:
+                    require_operation_feature_flag("high_risk.sitescore.approve",
+                        owner=owner, engine=engine, queue=job_queue,
+                        durable_required=production_runtime_required or canonical_report_reads)
+                except FeatureFlagOperationDisabled as exc:
+                    raise HTTPException(403, detail="FEATURE_FLAG_DISABLED") from exc
+                except FeatureFlagStoreUnavailable as exc:
+                    raise HTTPException(503, detail="FEATURE_FLAG_STORE_UNAVAILABLE") from exc
             try:
                 outcome = active_wf.decide(
                     decision_id,

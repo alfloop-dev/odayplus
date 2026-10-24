@@ -1,7 +1,39 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_INBOX_FILTERS, parseInboxUrlState, serializeInboxUrlState, toIntakeInboxQuery } from "../inboxUrlState";
+import { parseUrlState, serializeUrlState } from "../urlState";
 
 describe("shareable intake inbox navigation", () => {
+  it.each(["heatZoneId", "hz"])("retains explicit all areas through %s detail and return serializers", (key) => {
+    const original = new URLSearchParams(`ws=network&tab=radar&${key}=&extra=a&extra=b`);
+    const detail = serializeUrlState({ ...parseUrlState(original), selectedId: "IN-UNASSIGNED", dialog: "detail" }, original);
+    expect(toIntakeInboxQuery(parseInboxUrlState(detail), "HZ-01").selectedHeatZoneId).toBeUndefined();
+    const returned = serializeUrlState({ ...parseUrlState(detail), dialog: null }, detail);
+    expect(toIntakeInboxQuery(parseInboxUrlState(returned), "HZ-01").selectedHeatZoneId).toBeUndefined();
+    const canonical = serializeInboxUrlState(parseInboxUrlState(returned), returned);
+    expect(canonical.has("hz")).toBe(false);
+    expect(canonical.get("heatZoneId")).toBe("");
+    expect(canonical.getAll("extra")).toEqual(["a", "b"]);
+    expect(parseInboxUrlState(canonical).selectedIntakeId).toBe("IN-UNASSIGNED");
+    expect(toIntakeInboxQuery(parseInboxUrlState(canonical), "HZ-01").selectedHeatZoneId).toBeUndefined();
+  });
+
+  it("distinguishes inherited area from an explicit all-areas link across reloads", () => {
+    const inherited = parseInboxUrlState(new URLSearchParams("ws=network&extra=a&extra=b"));
+    expect(inherited.heatZoneId).toBeNull();
+    expect(toIntakeInboxQuery(inherited, "HZ-01").selectedHeatZoneId).toBe("HZ-01");
+    const allAreas = { ...inherited, heatZoneId: "" };
+    const saved = serializeInboxUrlState(allAreas, new URLSearchParams("ws=network&extra=a&extra=b&hz=HZ-01"));
+    expect(saved.has("heatZoneId")).toBe(true);
+    expect(saved.get("heatZoneId")).toBe("");
+    expect(saved.has("hz")).toBe(false);
+    expect(saved.getAll("extra")).toEqual(["a", "b"]);
+    const restored = parseInboxUrlState(saved);
+    expect(restored).toEqual(allAreas);
+    expect(toIntakeInboxQuery(restored, "HZ-01").selectedHeatZoneId).toBeUndefined();
+    expect(toIntakeInboxQuery(parseInboxUrlState(new URLSearchParams("hz=")), "HZ-01").selectedHeatZoneId).toBeUndefined();
+    expect(toIntakeInboxQuery(parseInboxUrlState(new URLSearchParams("heatZoneId=HZ-02")), "HZ-01").selectedHeatZoneId).toBe("HZ-02");
+  });
+
   it("restores every API filter, view, pagination and selection from a direct link", () => {
     const query = new URLSearchParams("search=台北&intakeMethod=ASSISTED_ENTRY&intakeStage=READY&matchOutcome=NEW&slaState=BREACHED&heatZoneId=HZ-TPE&savedView=ready&viewMode=map&page=3&pageSize=25&sortBy=sourceId&sortOrder=asc&selected=IN-123");
     expect(parseInboxUrlState(query)).toEqual({ ...DEFAULT_INBOX_FILTERS, search: "台北", intakeMethod: "ASSISTED_ENTRY", intakeStage: "READY", matchOutcome: "NEW", slaState: "BREACHED", heatZoneId: "HZ-TPE", savedView: "ready", viewMode: "map", page: 3, pageSize: 25, sortBy: "sourceId", sortOrder: "asc", selectedIntakeId: "IN-123" });

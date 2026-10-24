@@ -34,7 +34,7 @@ export function parseUrlState(
       stage: (params.get("stage") as any) || undefined,
       matchOutcome: (params.get("outcome") as any) || undefined,
       sourceId: params.get("source") || undefined,
-      heatZoneId: params.get("hz") || undefined,
+      heatZoneId: get("hz") ?? undefined,
     },
     sort: (params.get("sort") as any) || undefined,
     view: (params.get("view") as "list" | "map") || undefined,
@@ -79,7 +79,7 @@ export function serializeUrlState(
     if (state.filters.stage) params.set("stage", state.filters.stage);
     if (state.filters.matchOutcome) params.set("outcome", state.filters.matchOutcome);
     if (state.filters.sourceId) params.set("source", state.filters.sourceId);
-    if (state.filters.heatZoneId) params.set("hz", state.filters.heatZoneId);
+    if (state.filters.heatZoneId !== undefined) params.set("hz", state.filters.heatZoneId);
   }
   if (state.sort) params.set("sort", state.sort);
   if (state.view) params.set("view", state.view);

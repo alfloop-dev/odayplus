@@ -28,6 +28,27 @@ function strings(input: unknown): string[] {
   return Array.isArray(input) && input.every((item) => typeof item === "string" && item.trim()) ? [...input] : [];
 }
 
+function recordedPolygon(value: unknown): GeoJSON.Polygon | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const polygon = value as Record<string, unknown>;
+  if (polygon.type !== "Polygon" || !Array.isArray(polygon.coordinates) || polygon.coordinates.length === 0) return null;
+  const rings: number[][][] = [];
+  for (const ring of polygon.coordinates) {
+    if (!Array.isArray(ring) || ring.length < 4) return null;
+    const positions: number[][] = [];
+    for (const point of ring) {
+      if (!Array.isArray(point) || point.length !== 2
+        || typeof point[0] !== "number" || !Number.isFinite(point[0]) || Math.abs(point[0]) > 180
+        || typeof point[1] !== "number" || !Number.isFinite(point[1]) || Math.abs(point[1]) > 90) return null;
+      positions.push([point[0], point[1]]);
+    }
+    if (positions[0][0] !== positions[positions.length - 1][0]
+      || positions[0][1] !== positions[positions.length - 1][1]) return null;
+    rings.push(positions);
+  }
+  return { type: "Polygon", coordinates: rings };
+}
+
 /** Project the score producer's observations; absent values remain absent. */
 export function projectRecordedHeatZone(row: Record<string, unknown>, zone: OperatorHeatZone): HeatZone {
   const observedCell = "h3_index" in row ? row["h3_index"] : zone.id;
@@ -35,6 +56,7 @@ export function projectRecordedHeatZone(row: Record<string, unknown>, zone: Oper
   const state = row["state"];
   return {
     id: zone.id, district: zone.label, h3: indexed ? observedCell : `h3-${zone.id}`,
+    geometry: recordedPolygon(row["geometry"]),
     centroid: zone.centroid, h3Resolution: indexed ? getResolution(observedCell) : 9,
     score: measured(row["score"], 100),
     confidence: "confidence" in row ? measured(row["confidence"], 1) : zone.confidence,
@@ -96,6 +118,11 @@ export function recordedZoneDetailRows(zone: HeatZone) {
 
 /** A centroid locates a point; it does not supply an area's polygon. */
 export function zoneToFeature(zone: HeatZone, allowFixtureGeometry = false): HeatZoneFeature | null {
+  if (zone.geometry === null || zone.centroid === null) return null;
+  if (zone.geometry) {
+    const geometry = recordedPolygon(zone.geometry);
+    return geometry ? { type: "Feature", geometry, properties: zone } : null;
+  }
   if (isValidCell(zone.h3)) {
     try {
       const ring = cellToBoundary(zone.h3, true);

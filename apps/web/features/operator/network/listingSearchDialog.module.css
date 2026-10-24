@@ -1,0 +1,16 @@
+.dialog { overflow-wrap: anywhere; }
+.dialog button { max-width: 100%; }
+
+.fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+  border: 1px solid #dfe5f0;
+  border-radius: 10px;
+  padding: 16px;
+}
+.fields label { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.fields input { font: inherit; min-width: 0; border: 1px solid #c9d4e8; border-radius: 6px; padding: 8px; }
+.fields input[type="checkbox"] { align-self: flex-start; }
+@media (max-width: 600px) { .fields { grid-template-columns: minmax(0, 1fr); } }

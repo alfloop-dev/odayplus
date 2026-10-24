@@ -51,6 +51,7 @@ try:
         StringConstraints,
         WithJsonSchema,
         field_validator,
+        model_validator,
     )
 except ModuleNotFoundError:  # pragma: no cover - optional API dependency
     APIRouter = None  # type: ignore[assignment]
@@ -648,6 +649,21 @@ else:
         resource: Literal["intake"]
         shared_role: str | None = None
         visibility: SavedViewVisibility = SavedViewVisibility.PRIVATE
+
+        @model_validator(mode="after")
+        def valid_listing_criteria(self):
+            from modules.listing.application.saved_search import (
+                ListingCriteriaInvalid,
+                SavedListingCriteria,
+            )
+
+            try:
+                criteria = SavedListingCriteria.from_query(self.query)
+            except ListingCriteriaInvalid:
+                raise HTTPException(422, "LISTING_CRITERIA_INVALID") from None
+            if criteria is not None and (self.visibility != SavedViewVisibility.PRIVATE or self.shared_role is not None):
+                raise HTTPException(422, "LISTING_CRITERIA_PRIVATE_OWNER_REQUIRED")
+            return self
 
     class SavedView(SavedViewRequest):
         saved_view_id: UuidString
@@ -3506,7 +3522,24 @@ else:
             views = [
                 v for v in active.saved_views
                 if v.get("owner_subject_id") == actor_id and v.get("tenant_id") == tenant_id
+                and not v.get("deleted_at")
             ]
+            from modules.listing.application.saved_search import SavedListingCriteria
+            authorized_views = []
+            for view in views:
+                criteria = SavedListingCriteria.from_query(view.get("query"))
+                if criteria is not None:
+                    try:
+                        from modules.listing.application.saved_search_owner import (
+                            authorize_listing_search_query,
+                        )
+                        authorize_listing_search_query(principal, view["query"])
+                    except HTTPException as exc:
+                        if exc.status_code == 403:
+                            continue
+                        raise
+                authorized_views.append(view)
+            views = authorized_views
             return [SavedView(**v) for v in views]
 
         @router.post(
@@ -3546,6 +3579,16 @@ else:
                 raise HTTPException(403, "ROLE_DENIED")
 
             actor_id = principal.subject_id
+
+            from modules.listing.application.saved_search import SavedListingCriteria
+            if SavedListingCriteria.from_query(body.query) is not None:
+                from modules.listing.application.saved_search_owner import SavedListingSearchOwner
+                owner = SavedListingSearchOwner.from_runtime(request.app.state)
+                if owner.store is not active:
+                    raise HTTPException(503, "LISTING_SEARCH_NATIVE_OWNER_MISMATCH")
+                result = owner.command(principal, operation="create", payload={"name": body.name, "query": body.query},
+                    key=key, correlation_id=request.state.correlation_id)
+                return SavedView(**result["search"])
 
             def make() -> tuple[dict[str, Any], int]:
                 svid = str(uuid4())

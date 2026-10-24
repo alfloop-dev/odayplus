@@ -31,9 +31,9 @@ def inventory(monkeypatch, pages):
             raise page
         return io.BytesIO(json.dumps(page).encode())
 
-    monkeypatch.setattr("urllib.request.urlopen", open_page)
     monkeypatch.setattr("shared.infrastructure.object_store.client.monotonic", lambda: 0, raising=False)
     store = GcsObjectStore(timeout_seconds=2.5)
+    monkeypatch.setattr(store._opener, "open", open_page)
     monkeypatch.setattr(store, "_get_token", lambda: "synthetic-not-a-credential")
     return store, requests
 
@@ -112,7 +112,7 @@ def test_inventory_total_deadline_bounds_distinct_tokens_and_late_final_page(mon
             body["nextPageToken"] = "distinct-" + str(index)
         return io.BytesIO(json.dumps(body).encode())
 
-    monkeypatch.setattr("urllib.request.urlopen", open_page)
+    monkeypatch.setattr(store._opener, "open", open_page)
     with pytest.raises(OSError) as raised:
         store.list_objects(TENANT, BUCKET)
     assert isinstance(raised.value.__cause__, TimeoutError)

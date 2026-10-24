@@ -786,7 +786,26 @@ test("governance reviewer gets masked read-only intake while unrelated roles fai
   page,
 }) => {
   await openRadar(page, "expansion-manager", "qa-role-seed-manager");
-  const intakeId = await submitUrl(page, URLS.possible);
+  // The inherited area must be visible. Clearing it explicitly includes
+  // unassigned intakes, and that choice must survive detail and role reloads.
+  await expect(page.getByTestId("intake-filter-heat-zone")).toHaveValue("HZ-01");
+  const [allAreas] = await Promise.all([
+    page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname === "/api/v1/operator/network-listings/intake"
+        && response.request().method() === "GET" && !url.searchParams.has("selectedHeatZoneId");
+    }),
+    page.getByTestId("intake-filter-heat-zone").fill(""),
+  ]);
+  expect(allAreas.status()).toBe(200);
+  await expect.poll(() => new URL(page.url()).searchParams.get("heatZoneId")).toBe("");
+  const [created, intakeId] = await Promise.all([
+    page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/operator/network-listings/intake/submit"
+      && response.request().method() === "POST"),
+    submitUrl(page, URLS.possible),
+  ]);
+  expect(created.status()).toBe(200);
+  expect((await created.json()).heatZoneId).toBeNull();
   await page.getByTestId("intake-return-button").click();
   // Returning to the inbox rewrites the durable URL asynchronously; reloading
   // before it settles restores the full-page detail view without the tab bar.
@@ -851,9 +870,25 @@ test("governance reviewer gets masked read-only intake while unrelated roles fai
     const body = await bootstrap.json();
     expect(body.navigation.allowedWorkspaces).not.toContain("network");
     expect(body.navigation.allowedTabs.network).toEqual([]);
-    // Even ops-lead must not advertise an unreadable Network workspace.
-    // No disabled placeholder or clickable link to a predictable 403 remains.
-    await expect(page.getByRole("button", { name: /展店與店網/ })).toHaveCount(0);
-    await expect(page.getByTestId("intake-add-button")).toHaveCount(0);
+    // Package 10 keeps the workspace label locked when the role cannot read
+    // any tabs. Clicking it must not issue a protected Network request.
+    const locked = page.getByRole("button", { name: /展店與店網/ });
+    await expect(locked).toBeVisible();
+    await expect(locked).toHaveAttribute("aria-disabled", "true");
+    const protectedRequests: string[] = [];
+    const recordRequest = (request: import("@playwright/test").Request) => {
+      if (new URL(request.url()).pathname.includes("/api/v1/operator/network-")) protectedRequests.push(request.url());
+    };
+    page.on("request", recordRequest);
+    try {
+      // Intentionally try the locked control; normal Playwright clicks wait for aria-disabled to clear.
+      await locked.click({ force: true });
+      await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      await expect(page.getByTestId("network-tab-1")).toHaveCount(0);
+      await expect(page.getByTestId("intake-add-button")).toHaveCount(0);
+      expect(protectedRequests).toEqual([]);
+    } finally {
+      page.off("request", recordRequest);
+    }
   }
 });

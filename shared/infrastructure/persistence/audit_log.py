@@ -56,9 +56,8 @@ class DurableAuditLog:
     def record(self, event: AuditEvent) -> AuditEvent:
         with self._engine.transaction():
             if getattr(self._engine, "dialect", "") == "postgresql":
-                # Acquire the database-wide chain lock before the per-engine
-                # process lock. Waiting for another transaction while holding
-                # that process lock can prevent its receipt from committing.
+                # The outer engine root reserves its process lock first.
+                # The chain lock also serializes independent engine/process roots.
                 self._engine.query_one(
                     "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
                     ("durable-audit-chain",),
@@ -201,6 +200,40 @@ class DurableAuditLog:
                 "audit event integrity verification failed for correlation query"
             )
         return events
+
+    def list_resource_events(
+        self, *, tenant_id: str, resource: str, event_type: str,
+    ) -> list[AuditEvent]:
+        """Read exact tenant/object/type facts, never a CID-wide export feed."""
+        if any(not isinstance(value, str) or not value.strip()
+               for value in (tenant_id, resource, event_type)):
+            raise ValueError("Exact tenant, resource and event type are required")
+        tenant = ("metadata_json ->> 'tenant_id'" if getattr(self._engine, "dialect", "") == "postgresql"
+                  else "json_extract(metadata_json, '$.tenant_id')")
+        rows = self._engine.query(
+            "SELECT * FROM durable_audit_events WHERE " + tenant  # nosec B608
+            + " = ? AND resource = ? AND event_type = ? ORDER BY seq",
+            (tenant_id, resource, event_type),
+        )
+        events = [self._row_to_event(row) for row in rows]
+        if any(not verify_audit_event_integrity(event) for event in events):
+            raise AuditIntegrityError("audit event integrity verification failed for exact source query")
+        return events
+
+    def get_event(self, event_id: str, *, tenant_id: str) -> AuditEvent | None:
+        """Read one actual shared AuditEvent under its mandatory tenant."""
+        if any(not isinstance(value, str) or not value.strip() for value in (event_id, tenant_id)):
+            raise ValueError("Exact tenant and event identity are required")
+        tenant = ("metadata_json ->> 'tenant_id'" if getattr(self._engine, "dialect", "") == "postgresql"
+                  else "json_extract(metadata_json, '$.tenant_id')")
+        row = self._engine.query_one(
+            "SELECT * FROM durable_audit_events WHERE event_id = ? AND " + tenant + " = ?",  # nosec B608
+            (event_id, tenant_id),
+        )
+        event = self._row_to_event(row) if row is not None else None
+        if event is not None and not verify_audit_event_integrity(event):
+            raise AuditIntegrityError("audit event integrity verification failed for exact identity query")
+        return event
 
     def verify_chain(self) -> AuditChainVerification:
         return verify_audit_chain(self._read_events())

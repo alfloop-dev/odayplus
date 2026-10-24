@@ -2,20 +2,21 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OperatorRoleId } from "../../navigation";
-import { NetworkFindAreasWorkspace as Workspace } from "../../NetworkFindAreasWorkspace";
-import { NETWORK_TAB_IDS } from "../networkUrlState";
-
-// Explicit synthetic bootstrap tabs for these component controls. Backend
-// scope/role denials and read revalidation assertions remain authoritative.
-function NetworkFindAreasWorkspace(props: Parameters<typeof Workspace>[0]) {
-  return <Workspace allowedTabIds={NETWORK_TAB_IDS} {...props} />;
-}
+import { NetworkFindAreasWorkspace as GrantedReadNetworkWorkspace } from "../../NetworkFindAreasWorkspace";
 import { hasReviewSubmissionContext, reviewSubmissionReceiptMatches, reviewSubmissionReadbackMatches } from "../networkReviewSubmission";
 import { projectCandidateNativeWorkflow } from "../candidateNativeWorkflowProjection";
 import type { NetworkReviewsSnapshot } from "../networkReviewTypes";
 import type { NetworkScoringSnapshot } from "../networkScoringTypes";
 import type { ReviewSubmissionBody, ReviewSubmissionContext, ReviewSubmissionReceipt } from "../networkReviewSubmissionTypes";
 import samples from "./fixtures/canonicalReviewSubmission.json";
+
+// Explicit read-grant fixture: shell projects listing and SiteScore read families.
+// This is a renderer premise, not a real Principal/production permission grant.
+const NETWORK_READ_FIXTURE_TABS = ["areas", "radar", "candidates", "score", "compare", "review"] as const;
+function NetworkFindAreasWorkspace(props: import("../../NetworkFindAreasWorkspace").NetworkFindAreasWorkspaceProps) {
+  return <GrantedReadNetworkWorkspace allowedTabIds={NETWORK_READ_FIXTURE_TABS} {...props} />;
+}
+
 
 // Exact actual persisted backend producer output, SHAf4f801... . These are
 // native renderer/transport regressions, not signed API or browser acceptance.

@@ -13,6 +13,7 @@ from shared.audit.durable_delivery import DurableAuditDelivery
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.job_queue import DurableJobQueue
 from shared.infrastructure.persistence.operator_domains import DurableOperatorDomainStateRepository
+from tests.integration._operation_flag_fixtures import SITE_GO_FLAG, enable_operation_flag
 from tests.unit.test_network_canonical_review_projection import report
 from tests.unit.test_network_review_canonical_action_metadata import (
     TENANT,
@@ -40,7 +41,7 @@ def business_bytes(engine):
 
 @pytest.mark.parametrize("failure", ["save", "after_save"])
 def test_failure_after_real_canonical_sql_writes_rolls_back_every_durable_row(tmp_path, failure):
-    engine, scores, decisions, _, workflow, service = components(tmp_path / "atomic.sqlite")
+    engine, scores, decisions, _, workflow, service = components(tmp_path / "atomic.sqlite", go_enabled=True)
     install_real_related_producers(engine, decisions, workflow, service)
     frozen = scores.save_report(report())
     decision = workflow.open_decision(frozen, created_by="offline-author", tenant_id=TENANT)
@@ -180,6 +181,10 @@ def test_actual_operator_http_review_governance_and_candidate_sql_readback(tmp_p
     )
 
     harness = CanonicalHarness(tmp_path / "http.sqlite")
+    if action == "GO":
+        enable_operation_flag(harness.bundle.feature_flag_registry, key=SITE_GO_FLAG,
+                              tenant_id="tenant-a", queue=harness.bundle.job_queue,
+                              audit_log=harness.bundle.audit_log)
     candidate_id = _seed_candidate(harness, "tenant-a")
     frozen = harness.sitescore("tenant-a").save_report(replace(report(), candidate_site_id=candidate_id))
     decision = SiteScoreDecisionWorkflow(store=harness.decisions("tenant-a")).open_decision(frozen, created_by="offline-system")

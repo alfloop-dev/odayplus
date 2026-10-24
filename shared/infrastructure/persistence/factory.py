@@ -97,7 +97,23 @@ class PersistenceBundle:
     # share one registry repository when it is available.
     forecastops_policy_repository: Any = None
     current_model_admission: Any = None
+    feature_flag_registry: Any = None
+    adlift_campaign_repository: Any = None
+    survey_assignment_repository: Any = None
+    diagnostic_evidence_repository: Any = None
 
+
+    def diagnostic_evidence_reader(self) -> Any:
+        """Actual current-principal reader; memory has no formal diagnostic owner."""
+        from modules.forecastops.application.root_cause_evidence import (
+            ScopedDiagnosticEvidenceReader,
+        )
+
+        return ScopedDiagnosticEvidenceReader(
+            engine=self.engine, forecasts=self.forecastops_repository,
+            issues=self.store_ops_repository, stores=self.store_repository,
+            evidence=self.diagnostic_evidence_repository, audit=self.audit_log,
+        )
 
     @property
     def is_durable(self) -> bool:
@@ -118,104 +134,6 @@ class PersistenceBundle:
             admission = CurrentModelAdmissionPort(runtime=model_runtime,
                 registry_repository=self.learninghub_repository, engine=self.engine)
         return SiteScoreExecutionService(ScoreExecutionJobRepository(self, model_admission=admission))
-
-    def canonical_identity_graph(self, *, identity_service_boundary=None) -> Any:
-        """Use native canonical rows with the configured Intake audit policy."""
-        from modules.listing.application.identity_delivery import IdentityDeliveryAuthenticator
-        from shared.infrastructure.persistence.identity_graph_sql import (
-            CanonicalIdentityGraphRepository,
-        )
-
-        return CanonicalIdentityGraphRepository(
-            self.engine, self.job_queue,
-            getattr(self.assisted_intake_store, "_canonical_audit_sink", None),
-            delivery_authenticator=IdentityDeliveryAuthenticator(self.engine),
-            identity_service_boundary=identity_service_boundary,
-        )
-
-    def canonical_intakes(self) -> Any:
-        from shared.infrastructure.persistence.canonical_intakes_sql import (
-            CanonicalIntakeRepository,
-        )
-
-        return CanonicalIntakeRepository(self.canonical_identity_graph())
-
-    def canonical_intake_start(self) -> Any:
-        from modules.listing.application.native_intake_start import NativeIntakeStartOwner
-
-        return NativeIntakeStartOwner(self.canonical_identity_graph())
-
-    def canonical_intake_identity(self, *, identity_service_boundary=None) -> Any:
-        from modules.listing.application.native_intake_identity import NativeIntakeIdentityOwner
-
-        return NativeIntakeIdentityOwner(self.canonical_identity_graph(identity_service_boundary=identity_service_boundary))
-
-    def canonical_intake_source_policy(self) -> Any:
-        from modules.listing.application.native_intake_source_policy import (
-            NativeIntakeSourcePolicyOwner,
-        )
-
-        return NativeIntakeSourcePolicyOwner(self.canonical_identity_graph())
-
-    def canonical_intake_source_policy_recheck(self) -> Any:
-        from modules.listing.application.native_intake_source_policy_recheck import (
-            NativeIntakeSourcePolicyRecheckOwner,
-        )
-
-        return NativeIntakeSourcePolicyRecheckOwner(self.canonical_identity_graph())
-
-    def canonical_intake_retrieval(self) -> Any:
-        from modules.listing.application.native_intake_retrieval import NativeIntakeRetrievalOwner
-
-        return NativeIntakeRetrievalOwner(self.canonical_identity_graph())
-
-    def canonical_intake_assisted_entry(self, *, snapshot_transport_factory: Any = None) -> Any:
-        from modules.listing.application.native_intake_assisted_entry import (
-            NativeIntakeAssistedEntryOwner,
-        )
-
-        return NativeIntakeAssistedEntryOwner(self.canonical_identity_graph(), snapshot_transport_factory=snapshot_transport_factory)
-
-    def canonical_intake_parser(self, *, storage_factory: Any = None, parser_process_factory: Any = None) -> Any:
-        from modules.external_data.application.native_parser_artifacts import (
-            NativeParserArtifactRejected,
-            NativeParserArtifactUnavailable,
-        )
-        from modules.external_data.application.native_parser_deployments import (
-            NativeParserDeploymentConfigurationRejected,
-            native_parser_deployments,
-        )
-        from modules.listing.application.native_intake_parser import NativeIntakeParserOwner
-
-        registry, configuration_error, artifact_error = None, None, None
-        try:
-            registry = native_parser_deployments().build_registry()
-        except NativeParserDeploymentConfigurationRejected as error:
-            # Historical replay and owned negative settlement must remain
-            # available. Positive boundaries raise this distinct bounded code;
-            # invalid startup data is never silently treated as absence.
-            configuration_error = str(error)
-        except NativeParserArtifactRejected:
-            artifact_error = "REJECTED"
-        except NativeParserArtifactUnavailable:
-            artifact_error = "UNAVAILABLE"
-        return NativeIntakeParserOwner(self.canonical_identity_graph(), artifact_registry=registry,
-            deployment_configuration_error=configuration_error, artifact_startup_error=artifact_error,
-            storage_factory=storage_factory, parser_process_factory=parser_process_factory)
-
-    def canonical_match_cases(self) -> Any:
-        from shared.infrastructure.persistence.identity_cases_sql import (
-            CanonicalMatchCaseRepository,
-        )
-
-        return CanonicalMatchCaseRepository(self.canonical_identity_graph(), replay_store=self.assisted_intake_store)
-
-    def canonical_identity_decisions(self) -> Any:
-        from shared.infrastructure.persistence.identity_decisions_sql import (
-            CanonicalIdentityDecisionRepository,
-        )
-
-        return CanonicalIdentityDecisionRepository(self.canonical_identity_graph())
 
     def network_review_resolver(self, *, hooks: Any = ()) -> Any:
         """Native aliases share the Operator review domain's durable owner."""
@@ -252,10 +170,15 @@ class PersistenceBundle:
                 decision_workflow=SiteScoreDecisionWorkflow(store=decisions, audit_log=self.audit_log,
                     approval_store=DurableApprovalRepository(scoped), hooks=hooks),
                 candidate_workflow_service=candidate,
+                feature_flags=self.feature_flag_registry, job_queue=self.job_queue,
                 audit_delivery_factory=lambda tid: DurableAuditDelivery(self.engine, tid, self.job_queue, self.audit_log._worm_sink))
         return DurableTenantServiceResolver(DurableOperatorDomainStateRepository(store, "network-reviews"),
             factory=factory, exporter=lambda value: value.export_state(),
             mutating_methods={"submit_review", "submit_native_report", "decide_review", "decide_native_review"}, transactional_mutations=True)
+
+    def survey_assignment_repository_for_tenant(self, tenant_id: str) -> Any | None:
+        repository = self.survey_assignment_repository
+        return None if repository is None else repository.for_tenant(tenant_id)
 
     def listing_repository_for_tenant(self, tenant_id: str) -> Any | None:
         return self._scoped_repository("listing_repository", tenant_id)
@@ -310,6 +233,115 @@ class PersistenceBundle:
 
                 return type(repo)(TenantScopedDocumentStore(base_store, clean_tenant))
         return None
+
+
+    def canonical_identity_graph(self, *, identity_service_boundary=None) -> Any:
+        """Use native canonical rows with the configured Intake audit policy."""
+        from modules.listing.application.identity_delivery import IdentityDeliveryAuthenticator
+        from shared.infrastructure.persistence.identity_graph_sql import (
+            CanonicalIdentityGraphRepository,
+        )
+
+        return CanonicalIdentityGraphRepository(
+            self.engine, self.job_queue,
+            getattr(self.assisted_intake_store, "_canonical_audit_sink", None),
+            delivery_authenticator=IdentityDeliveryAuthenticator(self.engine),
+            identity_service_boundary=identity_service_boundary,
+        )
+
+
+    def canonical_intakes(self) -> Any:
+        from shared.infrastructure.persistence.canonical_intakes_sql import (
+            CanonicalIntakeRepository,
+        )
+
+        return CanonicalIntakeRepository(self.canonical_identity_graph())
+
+
+    def canonical_intake_start(self) -> Any:
+        from modules.listing.application.native_intake_start import NativeIntakeStartOwner
+
+        return NativeIntakeStartOwner(self.canonical_identity_graph())
+
+
+    def canonical_intake_identity(self, *, identity_service_boundary=None) -> Any:
+        from modules.listing.application.native_intake_identity import NativeIntakeIdentityOwner
+
+        return NativeIntakeIdentityOwner(self.canonical_identity_graph(identity_service_boundary=identity_service_boundary))
+
+
+    def canonical_intake_source_policy(self) -> Any:
+        from modules.listing.application.native_intake_source_policy import (
+            NativeIntakeSourcePolicyOwner,
+        )
+
+        return NativeIntakeSourcePolicyOwner(self.canonical_identity_graph())
+
+
+    def canonical_intake_source_policy_recheck(self) -> Any:
+        from modules.listing.application.native_intake_source_policy_recheck import (
+            NativeIntakeSourcePolicyRecheckOwner,
+        )
+
+        return NativeIntakeSourcePolicyRecheckOwner(self.canonical_identity_graph())
+
+
+    def canonical_intake_retrieval(self) -> Any:
+        from modules.listing.application.native_intake_retrieval import NativeIntakeRetrievalOwner
+
+        return NativeIntakeRetrievalOwner(self.canonical_identity_graph())
+
+
+    def canonical_intake_assisted_entry(self, *, snapshot_transport_factory: Any = None) -> Any:
+        from modules.listing.application.native_intake_assisted_entry import (
+            NativeIntakeAssistedEntryOwner,
+        )
+
+        return NativeIntakeAssistedEntryOwner(self.canonical_identity_graph(), snapshot_transport_factory=snapshot_transport_factory)
+
+
+    def canonical_intake_parser(self, *, storage_factory: Any = None, parser_process_factory: Any = None) -> Any:
+        from modules.external_data.application.native_parser_artifacts import (
+            NativeParserArtifactRejected,
+            NativeParserArtifactUnavailable,
+        )
+        from modules.external_data.application.native_parser_deployments import (
+            NativeParserDeploymentConfigurationRejected,
+            native_parser_deployments,
+        )
+        from modules.listing.application.native_intake_parser import NativeIntakeParserOwner
+
+        registry, configuration_error, artifact_error = None, None, None
+        try:
+            registry = native_parser_deployments().build_registry()
+        except NativeParserDeploymentConfigurationRejected as error:
+            # Historical replay and owned negative settlement must remain
+            # available. Positive boundaries raise this distinct bounded code;
+            # invalid startup data is never silently treated as absence.
+            configuration_error = str(error)
+        except NativeParserArtifactRejected:
+            artifact_error = "REJECTED"
+        except NativeParserArtifactUnavailable:
+            artifact_error = "UNAVAILABLE"
+        return NativeIntakeParserOwner(self.canonical_identity_graph(), artifact_registry=registry,
+            deployment_configuration_error=configuration_error, artifact_startup_error=artifact_error,
+            storage_factory=storage_factory, parser_process_factory=parser_process_factory)
+
+
+    def canonical_match_cases(self) -> Any:
+        from shared.infrastructure.persistence.identity_cases_sql import (
+            CanonicalMatchCaseRepository,
+        )
+
+        return CanonicalMatchCaseRepository(self.canonical_identity_graph(), replay_store=self.assisted_intake_store)
+
+
+    def canonical_identity_decisions(self) -> Any:
+        from shared.infrastructure.persistence.identity_decisions_sql import (
+            CanonicalIdentityDecisionRepository,
+        )
+
+        return CanonicalIdentityDecisionRepository(self.canonical_identity_graph())
 
 
 def _default_decision_policy_repository() -> InMemoryDecisionPolicyRepository:
@@ -404,12 +436,15 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
     )
     mem_corr_repo = InMemoryManualCorrectionRepository()
     mem_audit_log = InMemoryAuditLog(worm_sink=worm_sink)
+    from shared.auth.feature_flags import default_registry
+    memory_flags = default_registry()
 
     return PersistenceBundle(
         mode="memory",
         audit_log=mem_audit_log,
         evidence_store=InMemoryEvidenceBundleStore(worm_sink=worm_sink),
-        job_queue=InMemoryJobQueue(),
+        job_queue=InMemoryJobQueue(flags=memory_flags),
+        feature_flag_registry=memory_flags,
         avm_repository=InMemoryAVMRepository(),
         forecastops_repository=InMemoryForecastOpsRepository(),
         forecastops_policy_repository=_default_decision_policy_repository(),
@@ -452,7 +487,11 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
 def _durable_bundle(
     db_path: str | Path, *, worm_sink: AuditWormSink | None = None
 ) -> PersistenceBundle:
+    from modules.adlift.infrastructure.campaign_repository import DurableAdLiftCampaignRepository
     from modules.external_data.workers.scheduled_fetch import DurableExternalFetchStateStore
+    from modules.market_survey.infrastructure.assignment_repository import (
+        DurableSurveyAssignmentRepository,
+    )
     from modules.notifications import DurableNotificationRepository
     from modules.opsboard.application.store_ops import DurableStoreOpsRepository
     from modules.opsboard.audit.evidence_store import DurableEvidenceBundleStore
@@ -495,6 +534,12 @@ def _durable_bundle(
 
     engine = SqliteEngine(db_path)
     store = SqliteDocumentStore(engine)
+    from modules.forecastops.infrastructure.root_cause_repository import (
+        DurableDiagnosticEvidenceRepository,
+    )
+    from shared.infrastructure.persistence.feature_flags import DurableFeatureFlagRegistry
+    durable_flags = DurableFeatureFlagRegistry(store)
+    durable_flags.initialize_defaults()
     # The identity schema is PostgreSQL-only (migration 000011), so SQLite mode
     # carries in-memory doubles rather than None: the auth boundary always has
     # an identity store and a session verifier and never silently skips them.
@@ -522,9 +567,11 @@ def _durable_bundle(
         mode="durable",
         audit_log=durable_audit_log,
         evidence_store=DurableEvidenceBundleStore(engine, worm_sink=resolved_worm_sink),
-        job_queue=DurableJobQueue(engine),
+        job_queue=DurableJobQueue(engine, flags=durable_flags),
+        feature_flag_registry=durable_flags,
         avm_repository=DurableAVMRepository(store),
         forecastops_repository=DurableForecastOpsRepository(store),
+        diagnostic_evidence_repository=DurableDiagnosticEvidenceRepository(store),
         forecastops_policy_repository=_default_decision_policy_repository(),
         netplan_repository=DurableNetPlanRepository(store),
         learninghub_repository=DurableLearningHubRepository(store),
@@ -532,6 +579,8 @@ def _durable_bundle(
         priceops_repository=DurablePriceOpsRepository(store),
         sitescore_repository=DurableSiteScoreRepository(store),
         adlift_repository=DurableAdLiftRepository(store),
+        adlift_campaign_repository=DurableAdLiftCampaignRepository(store),
+        survey_assignment_repository=DurableSurveyAssignmentRepository(store),
         store_ops_repository=DurableStoreOpsRepository(store),
         intervention_repository=DurableInterventionRepository(store),
         intervention_label_registry=DurableLabelRegistry(store),
@@ -570,7 +619,11 @@ def _postgres_bundle(
     *,
     worm_sink: AuditWormSink | None = None,
 ) -> PersistenceBundle:
+    from modules.adlift.infrastructure.campaign_repository import DurableAdLiftCampaignRepository
     from modules.external_data.workers.scheduled_fetch import DurableExternalFetchStateStore
+    from modules.market_survey.infrastructure.assignment_repository import (
+        DurableSurveyAssignmentRepository,
+    )
     from modules.notifications import DurableNotificationRepository
     from modules.opsboard.application.store_ops import DurableStoreOpsRepository
     from modules.opsboard.audit.evidence_store import DurableEvidenceBundleStore
@@ -620,6 +673,9 @@ def _postgres_bundle(
 
     engine = PostgresEngine(database_url)
     store = PostgresDocumentStore(engine)
+    from modules.forecastops.infrastructure.root_cause_repository import (
+        DurableDiagnosticEvidenceRepository,
+    )
     try:
         validate_required_tables(engine)
         assisted_intake_store = DurableAssistedIntakeStore(store)
@@ -660,7 +716,10 @@ def _postgres_bundle(
     from shared.audit.canonical_postgresql import CanonicalPostgresAuditLog
 
     resolved_worm_sink = worm_sink or build_audit_worm_sink_from_env()
-    pg_job_queue = DurableJobQueue(engine, canonical_intake_score_schedule=True)
+    from shared.infrastructure.persistence.feature_flags import DurableFeatureFlagRegistry
+    pg_flags = DurableFeatureFlagRegistry(store)
+    pg_flags.initialize_defaults()
+    pg_job_queue = DurableJobQueue(engine, canonical_intake_score_schedule=True, flags=pg_flags)
     canonical_audit_writer = CanonicalPostgresAuditLog(engine)
 
     assisted_intake_store.configure_canonical_audit(CanonicalIntakeAuditSink(
@@ -681,8 +740,10 @@ def _postgres_bundle(
             worm_sink=resolved_worm_sink,
         ),
         job_queue=pg_job_queue,
+        feature_flag_registry=pg_flags,
         avm_repository=DurableAVMRepository(store),
         forecastops_repository=DurableForecastOpsRepository(store),
+        diagnostic_evidence_repository=DurableDiagnosticEvidenceRepository(store),
         forecastops_policy_repository=SqlDecisionPolicyRepository(engine),
         netplan_repository=DurableNetPlanRepository(store),
         learninghub_repository=DurableLearningHubRepository(store),
@@ -692,6 +753,8 @@ def _postgres_bundle(
         ),
         sitescore_repository=DurableSiteScoreRepository(store),
         adlift_repository=DurableAdLiftRepository(store),
+        adlift_campaign_repository=DurableAdLiftCampaignRepository(store),
+        survey_assignment_repository=DurableSurveyAssignmentRepository(store),
         store_ops_repository=DurableStoreOpsRepository(store),
         intervention_repository=DurableInterventionRepository(store),
         intervention_label_registry=DurableLabelRegistry(store),

@@ -6,8 +6,11 @@ import "@oday-plus/design-tokens/tokens.css";
 import "@oday-plus/ui/styles/shell.css";
 
 // Package 10 typography, self-hosted at build time (no runtime third-party
-// request). The fonts are exposed as CSS variables; product surfaces opt in.
+// request). Keep fallback families in the surface CSS instead of generating a
+// second font face backed only by a workstation-local Arial installation.
+// The fonts are exposed as CSS variables; product surfaces opt in.
 const notoSansTc = Noto_Sans_TC({
+  adjustFontFallback: false,
   display: "swap",
   preload: false,
   subsets: ["latin"],
@@ -15,6 +18,7 @@ const notoSansTc = Noto_Sans_TC({
 });
 
 const ibmPlexMono = IBM_Plex_Mono({
+  adjustFontFallback: false,
   display: "swap",
   preload: false,
   subsets: ["latin"],

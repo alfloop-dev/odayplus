@@ -8,6 +8,7 @@ import type { OperatorRoleId } from "../navigation";
 import type { OperatorLoadFailure } from "../operatorDataMode";
 import { OperatorDataUnavailableGate } from "../OperatorDataUnavailableGate";
 import styles from "../networkFindAreas.module.css";
+import type { IntakeHeatZoneOptions } from "./intake/AddListingFromUrlDialog";
 import { AssistedIntakeSection } from "./intake/AssistedIntakeSection";
 import { CanonicalIntakeCasePicker } from "./intake/CanonicalIntakeCasePicker";
 import type { CanonicalIntakeReadContext } from "./intake/canonicalIntakeReadClient";
@@ -61,6 +62,7 @@ export function ListingRadarPanel({
   onMerge,
   rows,
   selectedHeatZoneId,
+  heatZoneOptions,
   selectedZoneLabel,
   sources,
   writeContext,
@@ -90,6 +92,7 @@ export function ListingRadarPanel({
   onMerge?: (sourceListingId: string, targetListingId: string) => void;
   rows: ListingRadarRow[];
   selectedHeatZoneId?: string;
+  heatZoneOptions?: IntakeHeatZoneOptions;
   selectedZoneLabel?: string;
   sources: ListingSource[];
   writeContext?: ListingWriteContext;
@@ -160,6 +163,7 @@ export function ListingRadarPanel({
       <AssistedIntakeSection
         activeRoleId={activeRoleId}
         selectedHeatZoneId={selectedHeatZoneId}
+        heatZoneOptions={heatZoneOptions}
         targetListings={listings.map(toTargetListingData)}
       />
 

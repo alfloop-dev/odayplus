@@ -204,20 +204,23 @@ class PostgresEngine:
                 self._local.depth -= 1
             return
 
-        with self._pool.connection() as connection:
-            with connection.transaction() as root_transaction:
-                self._local.connection = connection
-                self._local.root_transaction = root_transaction
-                self._local.depth = 1
-                try:
-                    connection.execute(
-                        "SET LOCAL search_path TO odp_runtime, core, public"
-                    )
-                    yield self
-                finally:
-                    self._local.connection = None
-                    self._local.root_transaction = None
-                    self._local.depth = 0
+        # Keep process and database locks in the same order for the whole root,
+        # including commit/rollback, while retaining the actual root witness.
+        with self._lock._lock:
+            with self._pool.connection() as connection:
+                with connection.transaction() as root_transaction:
+                    self._local.connection = connection
+                    self._local.root_transaction = root_transaction
+                    self._local.depth = 1
+                    try:
+                        connection.execute(
+                            "SET LOCAL search_path TO odp_runtime, core, public"
+                        )
+                        yield self
+                    finally:
+                        self._local.connection = None
+                        self._local.root_transaction = None
+                        self._local.depth = 0
 
     def execute(
         self,

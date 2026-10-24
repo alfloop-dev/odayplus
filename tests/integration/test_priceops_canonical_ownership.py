@@ -227,3 +227,167 @@ def test_legacy_unknown_creator_is_not_inferred_or_approved_in_production(tmp_pa
         assert repo.get_plan("unbound-production-plan") is None
     finally:
         engine.close()
+
+
+@pytest.fixture
+def production_lineage_context(tmp_path):
+    """Real local durable owner/receipts; synthetic inputs, never production auth."""
+    from modules.priceops.infrastructure.oss_optimizer import PriceOpsProductionOptimizer
+    from shared.domain.models import AddressLocation, Tenant
+    from shared.infrastructure.persistence.audit_log import DurableAuditLog
+    from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+    from shared.infrastructure.persistence.engine import SqliteEngine
+    from shared.infrastructure.persistence.job_queue import DurableJobQueue
+    from shared.infrastructure.persistence.repositories import (
+        DurableAddressLocationRepository,
+        DurableBrandRepository,
+        DurablePriceOpsRepository,
+        DurableStoreRepository,
+        DurableTenantRepository,
+    )
+
+    engine = SqliteEngine(tmp_path / "synthetic-price-lineage.sqlite3")
+    DurableTenantRepository(engine).save_tenant(Tenant(tenant_id="tenant-a"))
+    brands = DurableBrandRepository(engine)
+    stores = DurableStoreRepository(engine)
+    brands.save_brand(Brand(brand_id="brand-a", tenant_id="tenant-a"))
+    DurableAddressLocationRepository(engine).save_address(
+        AddressLocation(address_id="address-a", tenant_id="tenant-a", raw_address="Synthetic address")
+    )
+    stores.save_store(Store(store_id="store-a", tenant_id="tenant-a", brand_id="brand-a", address_id="address-a"))
+    repository = DurablePriceOpsRepository(SqliteDocumentStore(engine))
+    audit = DurableAuditLog(engine)
+    optimizer = PriceOpsProductionOptimizer()
+    app = FastAPI()
+    install_error_handlers(app)
+
+    @app.middleware("http")
+    async def correlation(request, call_next):
+        request.state.correlation_id = "synthetic-lineage-http"
+        return await call_next(request)
+
+    app.include_router(create_priceops_router(
+        repository=repository, audit_log=audit, job_queue=DurableJobQueue(engine),
+        store_repository=stores, brand_repository=brands,
+        production_optimizer=optimizer, runtime_mode="production",
+    ))
+    client = TestClient(app, headers=CREATOR, raise_server_exceptions=False)
+    try:
+        yield client, repository, audit, optimizer
+    finally:
+        engine.close()
+
+
+def _lineage_proposal(snapshot_ids):
+    body = proposal("missing-lineage-plan")
+    if snapshot_ids is not None:
+        body["items"][0]["source_snapshot_ids"] = snapshot_ids
+    return body
+
+
+def _created_simulated_lineage_plan(client, body):
+    created = client.post("/priceops/plans", json=body, headers={"Idempotency-Key": "lineage-create"})
+    assert created.status_code == 201, created.text
+    simulated = client.post("/priceops/plans/missing-lineage-plan/simulate", json={"reason": "synthetic verification"},
+                            headers={"Idempotency-Key": "lineage-simulate"})
+    assert simulated.status_code == 200, simulated.text
+
+
+def _assert_source_not_ready(response):
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "unprocessable_entity"
+    assert "來源尚未備妥" in response.json()["error"]["message"]
+    assert "可追溯來源" in response.json()["error"]["next_action"]
+    assert response.json()["error"]["correlation_id"] == "synthetic-lineage-http"
+
+
+@pytest.mark.parametrize("snapshot_ids", [None, ["arbitrary-not-a-snapshot"]])
+def test_production_missing_lineage_returns_actionable_422_without_effects(production_lineage_context, snapshot_ids):
+    client, repository, audit, _optimizer = production_lineage_context
+    _created_simulated_lineage_plan(client, _lineage_proposal(snapshot_ids))
+    assert repository.get_plan("missing-lineage-plan").items[0].source_snapshot_ids == ()
+    for _attempt in range(2):
+        response = client.post("/priceops/plans/missing-lineage-plan/optimize",
+                               json={"reason": "synthetic verification"},
+                               headers={"Idempotency-Key": "lineage-optimize"})
+        _assert_source_not_ready(response)
+        assert repository.get_optimization("missing-lineage-plan") is None
+        assert repository.get_plan("missing-lineage-plan").status.value == "simulated"
+    assert not [event for event in audit.list_events() if event.event_type == "priceops.optimized.v1"]
+
+
+@pytest.mark.parametrize("snapshot_ids", [None, ["arbitrary-not-a-snapshot"]])
+def test_production_batch_missing_lineage_422_rolls_back_creation(production_lineage_context, snapshot_ids):
+    client, repository, audit, _optimizer = production_lineage_context
+    for _attempt in range(2):
+        response = client.post("/priceops/optimizer-jobs", json={"plans": [_lineage_proposal(snapshot_ids)]},
+                               headers={"Idempotency-Key": "lineage-batch"})
+        _assert_source_not_ready(response)
+        assert repository.get_plan("missing-lineage-plan") is None
+        assert repository.get_optimization("missing-lineage-plan") is None
+    assert not [event for event in audit.list_events() if event.event_type == "priceops.optimized.v1"]
+
+
+def test_missing_solver_dependency_remains_500(production_lineage_context, monkeypatch):
+    """Synthetic lineage only isolates error classification; it is not source proof."""
+    import builtins
+
+    client, repository, audit, _optimizer = production_lineage_context
+    _created_simulated_lineage_plan(client, _lineage_proposal(None))
+    plan = repository.get_plan("missing-lineage-plan")
+    repository.save_plan(replace(plan, items=tuple(replace(item, source_snapshot_ids=("synthetic-dependency-control",))
+                                                  for item in plan.items)))
+    original_import = builtins.__import__
+    calls = []
+
+    def missing_dependency(name, *args, **kwargs):
+        if name in {"cvxpy", "optuna"}:
+            calls.append(name)
+            raise ModuleNotFoundError("synthetic solver dependency unavailable")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", missing_dependency)
+    response = client.post("/priceops/plans/missing-lineage-plan/optimize", json={"reason": "synthetic verification"},
+                           headers={"Idempotency-Key": "missing-dependency"})
+    assert calls == ["cvxpy"]
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "internal_error"
+    assert "synthetic solver dependency" not in response.text
+    assert "來源尚未備妥" not in response.text
+    assert repository.get_optimization("missing-lineage-plan") is None
+    assert repository.get_plan("missing-lineage-plan").status.value == "simulated"
+    assert not [event for event in audit.list_events() if event.event_type == "priceops.optimized.v1"]
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_unrelated_production_execution_error_is_not_lineage_422(production_lineage_context, monkeypatch, batch):
+    from modules.priceops.infrastructure.oss_optimizer import PriceOpsProductionExecutionError
+
+    client, repository, audit, optimizer = production_lineage_context
+
+    def unavailable(_plan):
+        raise PriceOpsProductionExecutionError("synthetic unrelated production solver fault")
+
+    monkeypatch.setattr(optimizer, "optimize", unavailable)
+    if batch:
+        response = client.post("/priceops/optimizer-jobs", json={"plans": [_lineage_proposal(None)]},
+                               headers={"Idempotency-Key": "unrelated-batch"})
+        assert repository.get_plan("missing-lineage-plan") is None
+    else:
+        _created_simulated_lineage_plan(client, _lineage_proposal(None))
+        response = client.post("/priceops/plans/missing-lineage-plan/optimize", json={"reason": "synthetic verification"},
+                               headers={"Idempotency-Key": "unrelated-single"})
+        assert repository.get_plan("missing-lineage-plan").status.value == "simulated"
+    assert response.status_code == 500
+    assert "來源尚未備妥" not in response.text
+    assert repository.get_optimization("missing-lineage-plan") is None
+    assert not [event for event in audit.list_events() if event.event_type == "priceops.optimized.v1"]
+
+
+def test_poc_optimizer_without_snapshot_keeps_original_behavior(context):
+    client, repository, audit, _stores, _brands = context
+    _created_simulated_lineage_plan(client, _lineage_proposal(None))
+    response = client.post("/priceops/plans/missing-lineage-plan/optimize", json={"reason": "synthetic POC verification"})
+    assert response.status_code == 200, response.text
+    assert repository.get_optimization("missing-lineage-plan") is not None
+    assert repository.get_plan("missing-lineage-plan").status.value == "optimized"

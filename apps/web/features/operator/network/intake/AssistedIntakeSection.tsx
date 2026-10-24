@@ -18,6 +18,7 @@ import type {
 import type { OperatorRoleId } from "../../navigation";
 import { getOperatorRole } from "../../navigation";
 import styles from "./intake.module.css";
+import type { IntakeHeatZoneOptions } from "./AddListingFromUrlDialog";
 import { ListingInboxIntakeView } from "./ListingInboxIntakeView";
 import { IntakeDecisionDialog } from "./IntakeDecisionDialog";
 import { IntakeProcessingDetail } from "./IntakeProcessingDetail";
@@ -64,6 +65,7 @@ export function AssistedIntakeSection({
   initialDialog,
   initialSelectedId,
   selectedHeatZoneId,
+  heatZoneOptions,
   targetListings = [],
 }: {
   activeRoleId: OperatorRoleId;
@@ -71,6 +73,7 @@ export function AssistedIntakeSection({
   initialDialog?: IntakeUrlState["dialog"];
   initialSelectedId?: string;
   selectedHeatZoneId?: string;
+  heatZoneOptions?: IntakeHeatZoneOptions;
   targetListings?: TargetListingData[];
 }) {
   const router = useRouter();
@@ -133,7 +136,7 @@ export function AssistedIntakeSection({
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [loadError, setLoadError] = useState<IntakeApiError | null>(null);
   const [detailLoadState, setDetailLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
-  const [busy, setBusy] = useState(false);
+  const [otherCommandBusy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<IntakeApiError | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [assignmentReceipts, setAssignmentReceipts] = useState<Record<string, AssignmentReceipt>>({});
@@ -195,6 +198,30 @@ export function AssistedIntakeSection({
   );
   const activeClient = useRef(client);
   activeClient.current = client;
+  // Object identity is an intent epoch: A -> B -> A creates a fresh scope.
+  // A list omission or failed direct GET must not discard this exact draft.
+  const decisionScope = useMemo(() => ({
+    client, activeRoleId, activeSubjectId, selectedId, decisionKind, dialog,
+    idempotencyKey: null as string | null,
+  }), [client, activeRoleId, activeSubjectId, selectedId, decisionKind, dialog]);
+  const currentDecisionScope = useRef<typeof decisionScope | null>(decisionScope);
+  currentDecisionScope.current = decisionScope;
+  useEffect(() => {
+    currentDecisionScope.current = decisionScope;
+    return () => {
+      if (currentDecisionScope.current === decisionScope) currentDecisionScope.current = null;
+    };
+  }, [decisionScope]);
+  const [decisionDraft, setDecisionDraft] = useState<{
+    scope: typeof decisionScope; reason: string; riskAcknowledged: boolean;
+  } | null>(null);
+  const [pendingDecision, setPendingDecision] = useState<typeof decisionScope | null>(null);
+  const [decisionError, setDecisionError] = useState<{
+    scope: typeof decisionScope; error: IntakeApiError;
+  } | null>(null);
+  const busy = otherCommandBusy || pendingDecision === decisionScope;
+  const currentDecisionDraft = decisionDraft?.scope === decisionScope
+    ? decisionDraft : { reason: "", riskAcknowledged: false };
   const commandContext = JSON.stringify([selectedId, dialog, asgKind]);
   const activeCommandContext = useRef({ value: commandContext, generation: 0 });
   if (activeCommandContext.current.value !== commandContext) {
@@ -209,7 +236,6 @@ export function AssistedIntakeSection({
   const submitKeyRef = useRef<string | null>(null);
   const correctionKeyRef = useRef<string | null>(null);
   const assistedEntryKeyRef = useRef<string | null>(null);
-  const decisionKeyRef = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     // A role without listing:VIEW would get a guaranteed 403. That is a
@@ -280,7 +306,6 @@ export function AssistedIntakeSection({
   useEffect(() => {
     correctionKeyRef.current = null;
     assistedEntryKeyRef.current = null;
-    decisionKeyRef.current = null;
     setPromotionError(null);
     setPromotionReplayed(false);
     setActionError(null);
@@ -409,7 +434,6 @@ export function AssistedIntakeSection({
     submitKeyRef.current = null;
     correctionKeyRef.current = null;
     assistedEntryKeyRef.current = null;
-    decisionKeyRef.current = null;
   }
 
   function openDetail(intakeId: string) {
@@ -549,10 +573,12 @@ export function AssistedIntakeSection({
     riskAcknowledged: boolean;
   }) {
     if (!client || !selected || !decisionKind || busy) return;
-    setBusy(true);
-    setActionError(null);
-    if (!decisionKeyRef.current) {
-      decisionKeyRef.current = newIntakeActionIdempotencyKey(selected.id, `decide-${decisionKind}`);
+    const scope = decisionScope;
+    if (currentDecisionScope.current !== scope || client !== activeClient.current) return;
+    setPendingDecision(scope);
+    setDecisionError(null);
+    if (!scope.idempotencyKey) {
+      scope.idempotencyKey = newIntakeActionIdempotencyKey(selected.id, `decide-${decisionKind}`);
     }
     const result = await intakeApi.decide(
       client,
@@ -563,16 +589,19 @@ export function AssistedIntakeSection({
         riskSummary,
         riskAcknowledged,
       },
-      { idempotencyKey: decisionKeyRef.current },
+      { idempotencyKey: scope.idempotencyKey },
     );
-    setBusy(false);
+    // Abandoned principal/intent results cannot clear a newer dialog or draft.
+    if (currentDecisionScope.current !== scope || client !== activeClient.current) return;
+    setPendingDecision(null);
 
     if (!result.ok) {
       // Keep the dialog open and the reason typed — no optimistic close.
-      setActionError(result.error);
+      setDecisionError({ scope, error: result.error });
       return;
     }
-    decisionKeyRef.current = null;
+    scope.idempotencyKey = null;
+    setDecisionDraft(null);
     applyRecord(result.value);
     updateUrlState({ dialog: "detail", decisionKind: null });
     setToast(`決策已寫入 — ${result.value.stage} · 已記錄於 Audit Trail`);
@@ -955,6 +984,7 @@ export function AssistedIntakeSection({
         pageData={pageData}
         records={records}
         selectedHeatZoneId={inboxQuery.selectedHeatZoneId}
+        heatZoneOptions={heatZoneOptions}
       /> : null}
 
       {/*
@@ -1016,9 +1046,6 @@ export function AssistedIntakeSection({
           onAssistedEntrySave={handleAssistedEntry}
           onClose={closeDialog}
           onDecide={canDecide ? (kind) => {
-            decisionKeyRef.current = selected
-              ? newIntakeActionIdempotencyKey(selected.id, `decide-${kind}`)
-              : null;
             setActionError(null);
             updateUrlState({ dialog: "decide", decisionKind: kind });
           } : undefined}
@@ -1102,12 +1129,20 @@ export function AssistedIntakeSection({
       {dialog === "decide" && selected && decisionKind && canDecide ? (
         <IntakeDecisionDialog
           busy={busy}
-          error={actionError}
+          draft={currentDecisionDraft}
+          error={decisionError?.scope === decisionScope ? decisionError.error : null}
           kind={decisionKind}
+          onDraftChange={(draft) => {
+            if (currentDecisionScope.current === decisionScope && client === activeClient.current) {
+              setDecisionDraft({ scope: decisionScope, ...draft });
+            }
+          }}
           onClose={() => {
+            decisionScope.idempotencyKey = null;
+            setDecisionDraft(null);
+            setDecisionError(null);
             updateUrlState({ dialog: "detail", decisionKind: null });
             setActionError(null);
-            decisionKeyRef.current = null;
           }}
           onSubmit={handleDecide}
           record={selected}

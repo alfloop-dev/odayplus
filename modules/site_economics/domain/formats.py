@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
 from modules.site_economics.domain.models import (
+    CapitalAssetSpec,
     FinancingSpec,
     FitoutSpec,
     MachineClass,
@@ -166,6 +169,12 @@ PET_WASHER_10KG_V1 = MachineModelSpec(
     residual_value_ratio=0.10,
 )
 
+_KNOWN_MACHINE_MODELS = {model.model_id: model for model in (
+    WASHER_LARGE_20KG_V1, WASHER_MEDIUM_14KG_V1, WASHER_JUMBO_27KG_V1,
+    DRYER_STACK_15KG_V1, DRYER_LARGE_25KG_V1, COMBO_ALL_IN_ONE_12KG_V1,
+    VENDING_DETERGENT_SMART_V1, PET_WASHER_10KG_V1,
+)}
+
 
 @dataclass(frozen=True, slots=True)
 class TargetFormatSpec:
@@ -187,9 +196,43 @@ class TargetFormatSpec:
     residual_spec: ResidualValueSpec
     ramp_spec: RampCurveSpec
     seasonality_spec: SeasonalitySpec
+    capital_assets: tuple[CapitalAssetSpec, ...] = ()
+
+    def __post_init__(self) -> None:
+        if type(self.capital_assets) is not tuple or any(type(asset) is not CapitalAssetSpec for asset in self.capital_assets):
+            raise ValueError("CAPITAL_ASSET_INVALID: asset specifications must be an immutable tuple")
+        identities = [asset.asset_id for asset in self.capital_assets]
+        if any(identity in _KNOWN_MACHINE_MODELS
+               and _KNOWN_MACHINE_MODELS[identity].machine_class is not MachineClass.VENDING
+               for identity in identities):
+            raise ValueError("CAPITAL_ASSET_INVALID: known laundry models cannot be reclassified as ancillary assets")
+        if len(set(identities)) != len(identities) or set(identities).intersection(
+            item.machine_model.model_id for item in self.machine_mix.items
+        ):
+            raise ValueError("CAPITAL_ASSET_INVALID: capital asset identities must be unique and separate from productive machines")
+        if self.capital_assets:
+            try:
+                finite = all(math.isfinite(value) for value in (
+                    self.total_equipment_capex,
+                    sum(asset.total_residual_value for asset in self.capital_assets),
+                    sum(asset.total_monthly_operating_cost for asset in self.capital_assets),
+                ))
+            except OverflowError:
+                finite = False
+            if not finite:
+                raise ValueError("CAPITAL_ASSET_INVALID: aggregate asset costs must be finite")
+
+    @property
+    def total_equipment_capex(self) -> float:
+        return self.machine_mix.total_equipment_capex + sum(asset.total_capex for asset in self.capital_assets)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> TargetFormatSpec:
+        if isinstance(data.get("format_code"), str) and data["format_code"].upper() == "ODAY_G2":
+            _require_g2_numeric_payload(data)
+        assets = data.get("capital_assets", ())
+        if type(assets) not in (tuple, list):
+            raise ValueError("CAPITAL_ASSET_INVALID: capital_assets must be a collection of explicit asset specifications")
         return cls(
             format_code=str(data["format_code"]),
             format_name=str(data["format_name"]),
@@ -207,10 +250,11 @@ class TargetFormatSpec:
             residual_spec=ResidualValueSpec.from_dict(data["residual_spec"]),
             ramp_spec=RampCurveSpec.from_dict(data["ramp_spec"]),
             seasonality_spec=SeasonalitySpec.from_dict(data["seasonality_spec"]),
+            capital_assets=tuple(CapitalAssetSpec.from_dict(asset) for asset in assets),
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "format_code": self.format_code,
             "format_name": self.format_name,
             "format_version": self.format_version,
@@ -228,10 +272,120 @@ class TargetFormatSpec:
             "ramp_spec": self.ramp_spec.to_dict(),
             "seasonality_spec": self.seasonality_spec.to_dict(),
         }
+        # Preserve every retained no-asset snapshot and catalog serialization.
+        if self.capital_assets:
+            result["capital_assets"] = [asset.to_dict() for asset in self.capital_assets]
+        return result
+
+
+def _require_g2_numeric_payload(data: Mapping[str, Any]) -> None:
+    """Do not turn strings, bools or fractional counts into measured inputs.
+
+    This preserves numeric types before the legacy convenience constructors
+    cast them. Valid retained mixed-format snapshots remain deserializable;
+    their configuration is separately refused at the new-calculation boundary.
+    """
+    def number(value: Any) -> None:
+        try:
+            valid = type(value) in (int, float) and math.isfinite(value)
+        except OverflowError:
+            valid = False
+        if not valid:
+            raise ValueError("ODAY_G2_CONFIGURATION_REQUIRED: G2 parameters must be finite numeric measurements, not coercible declarations")
+
+    for key in ("target_area_ping_min", "target_area_ping_max", "recommended_area_ping"):
+        number(data[key])
+    mix = data["machine_mix"]
+    if "installation_and_delivery_fee" in mix:
+        number(mix["installation_and_delivery_fee"])
+    for item in mix["items"]:
+        if type(item["quantity"]) is not int:
+            raise ValueError("ODAY_G2_CONFIGURATION_REQUIRED: machine counts must be actual integers")
+        for key in ("custom_price_per_cycle", "custom_turns_per_day"):
+            if item.get(key) is not None:
+                number(item[key])
+        for key, value in item["machine_model"].items():
+            if key == "useful_life_months" and type(value) is not int:
+                raise ValueError("ODAY_G2_CONFIGURATION_REQUIRED: useful life must be an actual integer month count")
+            if key not in {"model_id", "machine_class", "model_name"}:
+                number(value)
+
+
+def require_oday_g2_configuration(spec: TargetFormatSpec) -> None:
+    """Validate the specified six-combo target without supplying observations.
+
+    The retained v1 catalog is a mixed-equipment historical snapshot, not the
+    G2 in specification sections 5.6.1 and 11.5.1. New G2 calculations need an
+    explicitly supplied, versioned configuration of three large and three
+    medium all-in-one machines. This structural check grants no financial or
+    production approval to the supplied prices, throughput or other assumptions.
+    """
+    if spec.format_code.upper() != "ODAY_G2":
+        return
+
+    def refuse() -> None:
+        raise ValueError("ODAY_G2_CONFIGURATION_REQUIRED: supply a versioned three-large/three-medium all-in-one configuration; retained mixed v1 is not the specified target")
+
+    def number(value: Any, *, positive: bool = False, maximum: float | None = None) -> None:
+        try:
+            valid = (type(value) in (int, float) and math.isfinite(value)
+                and (value > 0 if positive else value >= 0)
+                and (maximum is None or value <= maximum))
+        except OverflowError:
+            valid = False
+        if not valid:
+            refuse()
+
+    mix = spec.machine_mix
+    if type(mix) is not MachineMixSpec or type(mix.items) is not tuple or len(mix.items) != 2:
+        refuse()
+    for value in (spec.format_version, mix.spec_id, mix.version):
+        if type(value) is not str or not value or value != value.strip():
+            refuse()
+    if spec.format_version == "1.0.0" or (mix.spec_id, mix.version) == ("MIX-G2-STD-V1", "1.0.0"):
+        refuse()
+    number(mix.installation_and_delivery_fee)
+    number(spec.target_area_ping_min, positive=True)
+    number(spec.target_area_ping_max, positive=True)
+    number(spec.recommended_area_ping, positive=True)
+    if not spec.target_area_ping_min <= spec.recommended_area_ping <= spec.target_area_ping_max:
+        refuse()
+    identities, capacities = set(), set()
+    for item in mix.items:
+        if type(item) is not MachineMixItem or type(item.quantity) is not int or item.quantity != 3:
+            refuse()
+        model = item.machine_model
+        if type(model) is not MachineModelSpec or model.machine_class is not MachineClass.COMBO:
+            refuse()
+        if type(model.model_id) is not str or not model.model_id or model.model_id != model.model_id.strip():
+            refuse()
+        known = _KNOWN_MACHINE_MODELS.get(model.model_id)
+        if known is not None and model != known:
+            refuse()
+        identities.add(model.model_id)
+        number(model.capacity_kg, positive=True)
+        capacities.add(model.capacity_kg)
+        for value in (model.unit_capex, model.base_cycle_price, model.baseline_turns_per_day,
+                model.water_liters_per_cycle, model.electricity_kwh_per_cycle,
+                model.gas_kg_per_cycle, model.detergent_cost_per_cycle,
+                model.monthly_maintenance_per_unit):
+            number(value)
+        number(model.max_turns_per_day, positive=True)
+        if model.baseline_turns_per_day > model.max_turns_per_day:
+            refuse()
+        if type(model.useful_life_months) is not int or model.useful_life_months < 1:
+            refuse()
+        number(model.residual_value_ratio, maximum=1)
+        if item.custom_price_per_cycle is not None:
+            number(item.custom_price_per_cycle)
+        if item.custom_turns_per_day is not None:
+            number(item.custom_turns_per_day, maximum=model.max_turns_per_day)
+    if len(identities) != 2 or len(capacities) != 2:
+        refuse()
 
 
 def build_default_g2_standard_v1() -> TargetFormatSpec:
-    """Standard 25-ping ODay G2 laundromat format (v1.0.0)."""
+    """Retained mixed v1 snapshot; invalid for new specified G2 calculations."""
     machine_items = (
         MachineMixItem(machine_model=WASHER_LARGE_20KG_V1, quantity=3),
         MachineMixItem(machine_model=WASHER_MEDIUM_14KG_V1, quantity=2),
@@ -412,7 +566,11 @@ class TargetFormatRegistry:
 
     def register(self, format_spec: TargetFormatSpec) -> None:
         key = (format_spec.format_code.upper(), format_spec.format_version)
-        self._formats[key] = format_spec
+        if key in self._formats:
+            if self._formats[key] != format_spec:
+                raise ValueError("TARGET_FORMAT_IMMUTABLE_VERSION: register changed assumptions under a new version")
+            return
+        self._formats[key] = deepcopy(format_spec)
         # Track latest version registered
         self._latest[format_spec.format_code.upper()] = format_spec.format_version
 
@@ -425,10 +583,10 @@ class TargetFormatRegistry:
         key = (code_upper, version)
         if key not in self._formats:
             raise KeyError(f"Target format not found for code '{format_code}' version '{version}'")
-        return self._formats[key]
+        return deepcopy(self._formats[key])
 
     def list_formats(self) -> list[TargetFormatSpec]:
-        return list(self._formats.values())
+        return deepcopy(list(self._formats.values()))
 
     def list_codes(self) -> list[str]:
         return sorted(list(self._latest.keys()))

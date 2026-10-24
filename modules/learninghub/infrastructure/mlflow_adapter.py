@@ -437,11 +437,15 @@ class MlflowRegistryAdapter:
         model_name: str,
         alias: ModelAlias,
         authority: str,
+        expected_target_version: str | None,
     ) -> ModelVersion | None:
         """Service-internal primitive; callers must use governed reconciliation."""
 
         if authority == "remote":
             remote = self._get_remote_alias(model_name, alias)
+            actual_version = self._to_domain(remote).version if remote is not None else None
+            if actual_version != expected_target_version:
+                raise MlflowAliasSynchronizationError("ALIAS_REPAIR_TARGET_CHANGED")
             if remote is None:
                 self.repository.clear_alias(model_name, alias)
                 return None
@@ -459,6 +463,9 @@ class MlflowRegistryAdapter:
 
         if authority == "durable":
             durable = self.repository.get_alias(model_name, alias)
+            actual_version = durable.version if durable is not None else None
+            if actual_version != expected_target_version:
+                raise MlflowAliasSynchronizationError("ALIAS_REPAIR_TARGET_CHANGED")
             client = self._require_client()
             if durable is None:
                 if self._get_remote_alias(model_name, alias) is not None:

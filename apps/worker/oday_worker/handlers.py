@@ -913,8 +913,11 @@ def build_default_registry() -> JobRegistry:
     )
     from apps.worker.consumers.canonical_audit import handle_canonical_audit_delivery
     from apps.worker.consumers.durable_audit import handle_durable_audit_delivery
+    from apps.worker.consumers.listing_search import handle_listing_search_match
+    from apps.worker.consumers.retained_evidence import handle_retained_evidence_delivery
     from apps.worker.consumers.store_ops_audit import handle_store_ops_audit_delivery
     from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
+    from modules.netplan.workers.outcome_worker import handle_netplan_outcome_due
     from modules.opsboard.application.store_ops_audit_delivery import (
         JOB_TYPE as STORE_OPS_AUDIT_JOB_TYPE,
     )
@@ -925,9 +928,16 @@ def build_default_registry() -> JobRegistry:
     from modules.sitescore.application.score_delivery import SITESCORE_EXECUTION_JOB_TYPE
     from shared.audit.canonical_delivery import JOB_TYPE as CANONICAL_AUDIT_JOB_TYPE
     from shared.audit.durable_delivery import JOB_TYPE as DURABLE_AUDIT_JOB_TYPE
+    from shared.infrastructure.persistence.listing_search_delivery import (
+        JOB_TYPE as LISTING_SEARCH_JOB_TYPE,
+    )
+    from shared.infrastructure.persistence.netplan_outcomes import (
+        DUE_JOB_TYPE as NETPLAN_OUTCOME_DUE_JOB_TYPE,
+    )
 
     registry = JobRegistry()
     registry.register(FORECAST_JOB_TYPE, handle_forecast)
+    registry.register(LISTING_SEARCH_JOB_TYPE, handle_listing_search_match)
     registry.register(EXTERNAL_FETCH_JOB_TYPE, handle_external_fetch)
     registry.register(INTAKE_JOB_TYPE, handle_assisted_listing_intake)
     registry.register(INTAKE_SITESCORE_JOB_TYPE, handle_intake_score)
@@ -936,6 +946,7 @@ def build_default_registry() -> JobRegistry:
     registry.register(STORE_OPS_AUDIT_JOB_TYPE, handle_store_ops_audit_delivery)
     registry.register(CANONICAL_AUDIT_JOB_TYPE, handle_canonical_audit_delivery)
     registry.register(DURABLE_AUDIT_JOB_TYPE, handle_durable_audit_delivery)
+    registry.register("retained-evidence-delivery", handle_retained_evidence_delivery)
 
     registry.register(STORE_OPS_MATERIALIZE_JOB_TYPE, handle_store_ops_materialize)
     registry.register("identity-execution", handle_identity_execution)
@@ -946,6 +957,7 @@ def build_default_registry() -> JobRegistry:
     registry.register("native-intake-retrieval", handle_native_intake_retrieval)
     registry.register("native-intake-assisted-entry", handle_native_intake_assisted_entry)
     registry.register("native-intake-parser", handle_native_intake_parser)
+    registry.register(NETPLAN_OUTCOME_DUE_JOB_TYPE, handle_netplan_outcome_due)
     return registry
 
 

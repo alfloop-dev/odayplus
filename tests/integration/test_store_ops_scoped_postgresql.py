@@ -13,6 +13,7 @@ from modules.opsboard.application.operator_live_repository import OperatorLiveRe
 from modules.opsboard.application.store_ops import (
     DurableStoreOpsRepository,
     InMemoryStoreOpsRepository,
+    StoreOpsLiveDataUnavailable,
 )
 from modules.opsboard.application.store_ops_audit_delivery import COLLECTION
 from modules.opsboard.application.store_ops_scope import binding_hash
@@ -150,7 +151,6 @@ def case(intake_blank_db, monkeypatch, tmp_path):
             "db": intake_blank_db,
             "bundle": bundle,
             "repo": repo_a,
-            "scoped_documents": TenantScopedDocumentStore(documents, tenant_a),
             "foreign_repo": repo_b,
             "headers": headers,
             "tenant": tenant_a,
@@ -161,6 +161,7 @@ def case(intake_blank_db, monkeypatch, tmp_path):
             "hidden_issue": issue_hidden,
             "foreign_issue": issue_foreign,
             "global_state": global_state,
+            "legacy_documents": documents,
             "monkeypatch": monkeypatch,
         }
     finally:
@@ -175,6 +176,18 @@ def _transition(case, **body):
     )
 
 
+def test_public_unbound_factory_refuses_legacy_global_while_bound_owner_remains_valid(case):
+    documents = case["legacy_documents"]
+    before = documents.get("opsboard.store_ops.state", "default")
+    with pytest.raises(StoreOpsLiveDataUnavailable, match="authenticated tenant scope"):
+        case["bundle"].store_ops_repository.get_state()
+    with pytest.raises(StoreOpsLiveDataUnavailable, match="authenticated tenant scope"):
+        case["bundle"].store_ops_repository.save_state(before)
+    assert documents.get("opsboard.store_ops.state", "default") == before
+    assert case["repo"].tenant_id == case["tenant"]
+    assert case["repo"].get_state()["issues"][0]["id"] == case["issue"]
+
+
 def test_http_write_scoped_read_today_and_restart_share_the_committed_state(case):
     hidden_before = deepcopy(case["repo"].get_state()["issues"][1])
     response = _transition(case, actorName="forged actor", actorRoleId="auditPm")
@@ -185,7 +198,7 @@ def test_http_write_scoped_read_today_and_restart_share_the_committed_state(case
     assert body["auditEvent"]["actorName"] == case["subject"]
     assert body["auditEvent"]["actorRoleId"] == "opsLead"
     assert case["repo"].get_state()["issues"][1] == hidden_before
-    assert PostgresDocumentStore(case["bundle"].engine).get("opsboard.store_ops.state", "default") == case["global_state"]
+    assert case["legacy_documents"].get("opsboard.store_ops.state", "default") == case["global_state"]
     read = _client(case["bundle"]).get(f"{BASE}/issues/{case['issue']}", headers=case["headers"])
     assert read.json()["issue"]["severity"] == "critical"
     state = OperatorLiveRepository(case["bundle"]).load_state(
@@ -205,7 +218,7 @@ def test_http_write_scoped_read_today_and_restart_share_the_committed_state(case
     assert events[0].actor == case["subject"]
     assert events[0].metadata["actor_subject_id"] == case["subject"]
     assert body["auditDelivery"]["status"] == "delivered"
-    queued = case["scoped_documents"].get(COLLECTION, events[0].event_id)
+    queued = case["repo"]._store.get(COLLECTION, events[0].event_id)
     assert queued["status"] == "delivered"
     assert queued["receipt"]["object_uri"].startswith("file://")
     reopened = _bundle(case["db"], case["monkeypatch"])
@@ -215,43 +228,6 @@ def test_http_write_scoped_read_today_and_restart_share_the_committed_state(case
         assert after.json()["issue"]["status"] == "triaged"
     finally:
         reopened.engine.close()
-
-
-def test_materializer_interleave_refuses_stale_scoped_write_then_same_key_can_retry(case, monkeypatch):
-    from modules.opsboard.application.store_ops_scope import ScopedStoreOpsRepository
-    from shared.infrastructure.persistence.postgresql import PostgresEngine
-
-    engine = PostgresEngine(case["db"].url(), bootstrap=False, validate_schema=False)
-    other = DurableStoreOpsRepository(PostgresDocumentStore(engine)).for_tenant(case["tenant"])
-    original = ScopedStoreOpsRepository.save_state
-    interleaved = False
-
-    def competing_projection(repository, state):
-        nonlocal interleaved
-        if not interleaved:
-            interleaved = True
-            current, version = other.read_versioned_state()
-            next(row for row in current["stores"] if row["id"] == case["store"])["riskScore"] = 77
-            assert other.compare_and_save_state(current, expected_version=version)
-        return original(repository, state)
-
-    monkeypatch.setattr(ScopedStoreOpsRepository, "save_state", competing_projection)
-    try:
-        rejected = _transition(case)
-        assert rejected.status_code == 409, rejected.text
-        assert rejected.json()["detail"]["code"] == "STORE_OPS_CONCURRENT_WRITE"
-        current = other.get_state()
-        assert next(row for row in current["stores"] if row["id"] == case["store"])["riskScore"] == 77
-        assert next(row for row in current["issues"] if row["id"] == case["issue"])["status"] == "new"
-        assert current["auditEvents"] == []
-        retried = _transition(case)
-        assert retried.status_code == 200, retried.text
-        current = other.get_state()
-        assert next(row for row in current["stores"] if row["id"] == case["store"])["riskScore"] == 77
-        assert next(row for row in current["issues"] if row["id"] == case["issue"])["status"] == "triaged"
-        assert len(current["auditEvents"]) == 1
-    finally:
-        engine.close()
 
 
 def test_current_scope_denies_foreign_issue_and_preserves_all_business_state(case):
@@ -323,7 +299,7 @@ def test_receipt_failure_rolls_back_written_state_and_business_audit(case):
         if event.event_type == "operator.store_ops.issue_transition"
     ]
     assert events == []
-    assert case["scoped_documents"].list_all(COLLECTION) == []
+    assert case["repo"]._store.list_all(COLLECTION) == []
     assert case["bundle"].engine.query_one(
         "SELECT COUNT(*) AS count FROM durable_jobs WHERE job_type = ?",
         ("store-ops-audit-delivery",),
@@ -397,24 +373,24 @@ def test_clearance_change_cannot_replay_an_old_snapshot(case):
 
 
 def test_missing_tenant_materialization_is_not_seeded_from_global_or_fixture(case):
-    case["scoped_documents"].delete_collection("opsboard.store_ops.state")
+    case["repo"]._store.delete_collection("opsboard.store_ops.state")
     response = _client(case["bundle"]).get(f"{BASE}/summary", headers=case["headers"])
     assert response.status_code == 503
     assert (
         response.json()["detail"]["message"]
         == "Store Ops production state has not been materialized"
     )
-    assert case["scoped_documents"].get("opsboard.store_ops.state", "default") is None
-    assert PostgresDocumentStore(case["bundle"].engine).get("opsboard.store_ops.state", "default") == case["global_state"]
+    assert case["repo"]._store.get("opsboard.store_ops.state", "default") is None
+    assert case["legacy_documents"].get("opsboard.store_ops.state", "default") == case["global_state"]
 
 
 def test_materialized_tenant_fixture_is_rejected_before_any_mutation(case):
     fixture = InMemoryStoreOpsRepository().get_state()
-    case["scoped_documents"].put("opsboard.store_ops.state", "default", fixture)
+    case["repo"]._store.put("opsboard.store_ops.state", "default", fixture)
     response = _transition(case)
     assert response.status_code == 503
     assert "canonical fixture identifiers" in response.json()["detail"]["message"]
-    assert case["scoped_documents"].get("opsboard.store_ops.state", "default") == fixture
+    assert case["repo"]._store.get("opsboard.store_ops.state", "default") == fixture
 
 
 def test_concurrent_scoped_writes_preserve_both_stores_and_audit_ordinals(case):
@@ -484,7 +460,7 @@ def test_worker_recovers_pending_delivery_without_another_http_request(case):
     case["monkeypatch"].setattr(sink, "write_audit_event", real_write)
     worker = ODayWorker(persistence=case["bundle"], worker_id="synthetic-audit-worker")
     assert worker.run_once() is True
-    deliveries = case["scoped_documents"].list_all(COLLECTION)
+    deliveries = case["repo"]._store.list_all(COLLECTION)
     assert len(deliveries) == 1
     assert deliveries[0]["status"] == "delivered"
     job = case["bundle"].job_queue.get_by_idempotency_key(
@@ -508,7 +484,7 @@ def test_delivery_job_enqueue_failure_rolls_back_the_complete_business_transacti
     case["monkeypatch"].setattr(case["bundle"].job_queue, "enqueue", fail_enqueue)
     assert _transition(case).status_code == 503
     assert case["repo"].get_state() == original
-    assert case["scoped_documents"].list_all(COLLECTION) == []
+    assert case["repo"]._store.list_all(COLLECTION) == []
     assert not any(
         event.event_type == "operator.store_ops.issue_transition"
         for event in case["bundle"].audit_log.list_events(tenant_id=case["tenant"])
@@ -528,14 +504,14 @@ def test_worker_outage_retries_without_claiming_delivery_success(case):
 
     case["monkeypatch"].setattr(sink, "write_audit_event", fail_business_delivery)
     assert _transition(case).status_code == 200
-    delivery = case["scoped_documents"].list_all(COLLECTION)[0]
+    delivery = case["repo"]._store.list_all(COLLECTION)[0]
     key = "store-ops-audit:" + case["tenant"] + ":" + delivery["event"].event_id
     worker = ODayWorker(persistence=case["bundle"], worker_id="synthetic-retry-worker")
     assert worker.run_once() is True
     job = case["bundle"].job_queue.get_by_idempotency_key(key)
     assert job.status.value == "queued"
     assert job.attempts == 1
-    assert case["scoped_documents"].get(COLLECTION, delivery["event"].event_id)["status"] == "pending"
+    assert case["repo"]._store.get(COLLECTION, delivery["event"].event_id)["status"] == "pending"
     case["monkeypatch"].setattr(sink, "write_audit_event", real_write)
     assert worker.run_once() is True
     job = case["bundle"].job_queue.get_by_idempotency_key(key)
@@ -549,7 +525,7 @@ def test_worker_rejects_a_different_sink_without_an_external_write(case):
     from shared.jobs.queue import JobRecord, NonRetryableJobError
 
     assert _transition(case).status_code == 200
-    delivery = case["scoped_documents"].list_all(COLLECTION)[0]
+    delivery = case["repo"]._store.list_all(COLLECTION)[0]
     sink = case["bundle"].audit_log._worm_sink
 
     def forbidden_write(event):
@@ -604,7 +580,7 @@ def test_postgresql_worker_recovers_a_gcs_lost_response_after_connection_restart
         assert repo.get_state()["issues"][0]["status"] == "triaged"
         worker = ODayWorker(persistence=reopened, worker_id="synthetic-gcs-recovery-worker")
         assert worker.run_once() is True
-        delivery = TenantScopedDocumentStore(PostgresDocumentStore(reopened.engine), case["tenant"]).list_all(COLLECTION)[0]
+        delivery = repo._store.list_all(COLLECTION)[0]
         assert delivery["status"] == "delivered"
         assert delivery["receipt"]["object_uri"].startswith("gs://synthetic-bucket/scoped-audit/")
         job = reopened.job_queue.get_by_idempotency_key("store-ops-audit:" + case["tenant"] + ":" + delivery["event"].event_id)
@@ -626,7 +602,7 @@ def test_postgresql_gcs_recovery_failures_stay_pending_and_retry_safely(case, gc
     assert _transition(case).status_code == 200
     original_state = case["repo"].get_state()
     original_objects = deepcopy(gcs_worm_server.objects)
-    delivery = case["scoped_documents"].list_all(COLLECTION)[0]
+    delivery = case["repo"]._store.list_all(COLLECTION)[0]
     key = "store-ops-audit:" + case["tenant"] + ":" + delivery["event"].event_id
     if fault == "missing-authority":
         case["monkeypatch"].setattr(target, "_recovery_token", "")
@@ -637,7 +613,7 @@ def test_postgresql_gcs_recovery_failures_stay_pending_and_retry_safely(case, gc
     worker = ODayWorker(persistence=case["bundle"], worker_id="synthetic-gcs-denial-worker")
     assert worker.run_once() is True
     assert case["bundle"].job_queue.get_by_idempotency_key(key).status.value == "queued"
-    assert case["scoped_documents"].get(COLLECTION, delivery["event"].event_id)["status"] == "pending"
+    assert case["repo"]._store.get(COLLECTION, delivery["event"].event_id)["status"] == "pending"
     assert case["repo"].get_state() == original_state
     assert gcs_worm_server.objects == original_objects
     case["monkeypatch"].setattr(target, "_recovery_token", gcs_worm_server.recovery_token)
@@ -645,6 +621,43 @@ def test_postgresql_gcs_recovery_failures_stay_pending_and_retry_safely(case, gc
     gcs_worm_server.read_transform = None
     assert worker.run_once() is True
     assert case["bundle"].job_queue.get_by_idempotency_key(key).status.value == "succeeded"
-    assert case["scoped_documents"].get(COLLECTION, delivery["event"].event_id)["status"] == "delivered"
+    assert case["repo"]._store.get(COLLECTION, delivery["event"].event_id)["status"] == "delivered"
     assert case["repo"].get_state() == original_state
     assert gcs_worm_server.objects == original_objects
+
+
+def test_materializer_interleave_refuses_stale_scoped_write_then_same_key_can_retry(case, monkeypatch):
+    from modules.opsboard.application.store_ops_scope import ScopedStoreOpsRepository
+    from shared.infrastructure.persistence.postgresql import PostgresEngine
+
+    engine = PostgresEngine(case["db"].url(), bootstrap=False, validate_schema=False)
+    other = DurableStoreOpsRepository(PostgresDocumentStore(engine)).for_tenant(case["tenant"])
+    original = ScopedStoreOpsRepository.save_state
+    interleaved = False
+
+    def competing_projection(repository, state):
+        nonlocal interleaved
+        if not interleaved:
+            interleaved = True
+            current, version = other.read_versioned_state()
+            next(row for row in current["stores"] if row["id"] == case["store"])["riskScore"] = 77
+            assert other.compare_and_save_state(current, expected_version=version)
+        return original(repository, state)
+
+    monkeypatch.setattr(ScopedStoreOpsRepository, "save_state", competing_projection)
+    try:
+        rejected = _transition(case)
+        assert rejected.status_code == 409, rejected.text
+        assert rejected.json()["detail"]["code"] == "STORE_OPS_CONCURRENT_WRITE"
+        current = other.get_state()
+        assert next(row for row in current["stores"] if row["id"] == case["store"])["riskScore"] == 77
+        assert next(row for row in current["issues"] if row["id"] == case["issue"])["status"] == "new"
+        assert current["auditEvents"] == []
+        retried = _transition(case)
+        assert retried.status_code == 200, retried.text
+        current = other.get_state()
+        assert next(row for row in current["stores"] if row["id"] == case["store"])["riskScore"] == 77
+        assert next(row for row in current["issues"] if row["id"] == case["issue"])["status"] == "triaged"
+        assert len(current["auditEvents"]) == 1
+    finally:
+        engine.close()

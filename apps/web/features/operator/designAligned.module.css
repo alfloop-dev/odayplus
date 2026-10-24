@@ -642,16 +642,16 @@
 
 .storeGrid {
   display: grid;
-  grid-template-columns: 325px minmax(0, 1fr) 305px;
+  grid-template-columns: 326px minmax(0, 1fr) 306px;
   gap: 14px;
   align-items: start;
 }
 
 .storeQueue {
   position: sticky;
-  top: 62px;
+  top: calc(var(--operator-sticky-header-height, 53px) + 9px);
   display: flex;
-  max-height: calc(100vh - 80px);
+  max-height: calc(100vh - var(--operator-sticky-header-height, 53px) - 27px);
   flex-direction: column;
 }
 
@@ -1283,7 +1283,7 @@
   display: grid;
   gap: 14px;
   position: sticky;
-  top: 62px;
+  top: calc(var(--operator-sticky-header-height, 53px) + 9px);
 }
 
 .actionRail section {
@@ -1447,18 +1447,22 @@
     grid-row: 2;
   }
 
-  .storeGrid {
-    grid-template-columns: 310px minmax(0, 1fr);
-  }
-
-  .actionRail {
-    position: static;
-    grid-column: 1 / -1;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
+  /* Keep the Package 10 outer tracks at 1024; reflow the existing cards
+     inside the 324px detail column instead of dropping the action rail. */
   .storeStrip {
-    grid-template-columns: repeat(4, auto);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .issueHeroTopline,
+  .sectionTitle,
+  .evidenceDetail dl {
+    flex-wrap: wrap;
+  }
+
+  .evidenceDetail,
+  .metricChart {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .storeStrip > span:last-child {
@@ -1494,6 +1498,12 @@
 
   .storeGrid {
     grid-template-columns: 280px minmax(0, 1fr);
+  }
+
+  .actionRail {
+    position: static;
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .storeStrip {

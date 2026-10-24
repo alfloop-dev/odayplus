@@ -113,6 +113,21 @@ class TenantScopedDocumentStore:
     def get(self, collection: str, doc_id: str) -> Any | None:
         return self._store.get(self._collection(collection), doc_id)
 
+    def get_versioned(self, collection: str, doc_id: str) -> tuple[Any, int] | None:
+        return self._store.get_versioned(self._collection(collection), doc_id)
+
+    def compare_and_put(
+        self,
+        collection: str,
+        doc_id: str,
+        obj: Any,
+        *,
+        expected_version: int | None,
+    ) -> int | None:
+        return self._store.compare_and_put(
+            self._collection(collection), doc_id, obj, expected_version=expected_version
+        )
+
     def list_all(self, collection: str) -> list[Any]:
         return self._store.list_all(self._collection(collection))
 

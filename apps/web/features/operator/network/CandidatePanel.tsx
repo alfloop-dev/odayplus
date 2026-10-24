@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import styles from "../networkFindAreas.module.css";
 import type { ReviewSubmissionOffer } from "./networkReviewSubmissionTypes";
+import type { SurveyTarget } from "./surveyAssignmentClient";
 import type { CandidatePipelineRow } from "../networkFindAreasViewModel";
 import {
   candidateGateDisplayRows,
@@ -44,9 +45,11 @@ export function CandidatePanel({
   onViewReview,
   submissionOffers,
   onRequestSubmission,
+  onOpenSurvey,
 }: {
   submissionOffers?: Record<string, ReviewSubmissionOffer>;
   onRequestSubmission?: (offer: ReviewSubmissionOffer) => void;
+  onOpenSurvey?: (target: SurveyTarget) => void;
   nativeWorkflow?: CandidateNativeWorkflowReads;
   onViewReview?: (target: CandidateReviewReadTarget) => void;
   selectedCandidateId?: string | null;
@@ -267,7 +270,7 @@ export function CandidatePanel({
           <aside className={`${styles.listingDetailPanel} ${styles.candidateDetailPanel}`} aria-label="資料完整度 Gate detail">
             {selected ? (
               <GateDetail candidate={selected} nativeWorkflow={nativeWorkflow?.[selected.id]} canonical={nativeWorkflow !== undefined}
-                onViewReview={onViewReview} submissionOffer={submissionOffers?.[selected.id]} onRequestSubmission={onRequestSubmission} onScore={onScore} onToggleCompare={onToggleCompare} busy={busyCandidateId === selected.id} />
+                onOpenSurvey={onOpenSurvey} onViewReview={onViewReview} submissionOffer={submissionOffers?.[selected.id]} onRequestSubmission={onRequestSubmission} onScore={onScore} onToggleCompare={onToggleCompare} busy={busyCandidateId === selected.id} />
             ) : (
               <div className={styles.emptyState} data-testid="candidate-selection-unavailable">{missingSelection ?? "No candidate selected"}</div>
             )}
@@ -312,9 +315,11 @@ function GateDetail({
   onViewReview,
   submissionOffer,
   onRequestSubmission,
+  onOpenSurvey,
 }: {
   submissionOffer?: ReviewSubmissionOffer;
   onRequestSubmission?: (offer: ReviewSubmissionOffer) => void;
+  onOpenSurvey?: (target: SurveyTarget) => void;
   nativeWorkflow?: CandidateNativeWorkflowRead;
   canonical?: boolean;
   onViewReview?: (target: CandidateReviewReadTarget) => void;
@@ -421,7 +426,8 @@ function GateDetail({
           disabled={!onViewReview || busy} onClick={() => onViewReview?.(reviewTarget)} type="button">
           {reviewTarget.relation === "historical" ? "查看歷史審核" : "查看審核"}
         </button> : null}
-        <button disabled title="現勘指派服務未接通" type="button">指派現勘</button>
+        <button disabled={busy || !onOpenSurvey} title={onOpenSurvey ? "查看目前實體的已保存現勘任務並指派" : "現勘指派服務未接通"}
+          onClick={() => onOpenSurvey?.({ kind: "CANDIDATE_SITE", id: candidate.id })} type="button">指派現勘</button>
         <button disabled title="仲介聯絡服務未接通" type="button">聯絡仲介</button>
         <button disabled={busy || !onToggleCompare} onClick={() => onToggleCompare?.(candidate.id)} type="button">
           {candidate.inCompare ? "移出比較" : "加入比較"}
@@ -435,7 +441,6 @@ function GateDetail({
     </>
   );
 }
-
 
 function nativeStageLabel(read?: CandidateNativeWorkflowRead): string {
   const labels = { needdata: "缺資料／退回", ready: "資料齊備", scoring: "評分中", evaluated: "已保存報告", pendingreview: "審核中",

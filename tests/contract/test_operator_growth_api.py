@@ -37,6 +37,13 @@ WRITE_HEADERS = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _stable_growth_contract_clock(monkeypatch):
+    """Keep non-mutation snapshots stable while testing source-clock readback."""
+    monkeypatch.setattr("modules.opsboard.application.growth._now_iso",
+                        lambda: "2026-10-15T00:00:00+00:00")
+
+
 def _client() -> TestClient:
     """Fresh app (hence fresh GrowthService) per test for isolation."""
     return TestClient(create_app(external_provider_validation=lambda: None))
@@ -283,6 +290,12 @@ def test_submit_creates_govern_item_and_approval_advances_state() -> None:
     assert approval["status"] == "pending"
     assert submit.json()["status"] == "PENDING_APPROVAL"
 
+    assert approval["risk"] == "低"
+    governed = client.get("/api/v1/operator/governance/snapshot", headers=_headers())
+    assert governed.status_code == 200, governed.text
+    governed_approval = next(row for row in governed.json()["approvals"] if row["id"] == approval["id"])
+    assert governed_approval["priority"] == "low"
+
     # The Govern item is listed on the growth approvals surface.
     approvals = client.get(f"{BASE}/approvals", headers=WRITE_HEADERS).json()["items"]
     assert any(a["id"] == approval["id"] and a["module"] == "Growth" for a in approvals)
@@ -330,6 +343,22 @@ def test_rejected_approval_returns_action_to_draft() -> None:
     )
 
 
+def _transition_with_elapsed_fixture_window(client, action_id, target):
+    """Positive lifecycle fixture records execution in the past, never skips the gate."""
+    from datetime import datetime, timedelta
+    from unittest.mock import patch
+
+    from modules.opsboard.application.growth import _now_iso
+
+    if target == "OUTCOME_READY":
+        return client.post(f"{BASE}/actions/{action_id}/transition", json={"targetStatus": target},
+                           headers=_execution_headers())
+    executed = (datetime.fromisoformat(_now_iso()) - timedelta(days=15)).isoformat()
+    with patch("modules.opsboard.application.growth._now_iso", return_value=executed):
+        return client.post(f"{BASE}/actions/{action_id}/transition", json={"targetStatus": target},
+                           headers=_execution_headers())
+
+
 def test_full_lifecycle_pending_to_outcome_ready() -> None:
     client = _client()
     draft = _create_draft(client, kind="offpeak", store="Oday 三重店", window="平日 15:00-18:00")
@@ -343,11 +372,7 @@ def test_full_lifecycle_pending_to_outcome_ready() -> None:
     )
     # APPROVED -> SCHEDULED -> RUNNING -> OBSERVING -> OUTCOME_READY
     for target in ("SCHEDULED", "RUNNING", "OBSERVING", "OUTCOME_READY"):
-        resp = client.post(
-            f"{BASE}/actions/{draft['id']}/transition",
-            json={"targetStatus": target},
-            headers=_execution_headers(),
-        )
+        resp = _transition_with_elapsed_fixture_window(client, draft["id"], target)
         assert resp.status_code == 200, (target, resp.text)
         assert resp.json()["status"] == target
 
@@ -458,11 +483,7 @@ def _drive_to_outcome_ready(client: TestClient, action_id: str) -> None:
         headers=_headers(),
     )
     for target in ("SCHEDULED", "RUNNING", "OBSERVING", "OUTCOME_READY"):
-        client.post(
-            f"{BASE}/actions/{action_id}/transition",
-            json={"targetStatus": target},
-            headers=_execution_headers(),
-        )
+        _transition_with_elapsed_fixture_window(client, action_id, target)
 
 
 def test_outcome_rejects_evidence_that_names_no_rung() -> None:
@@ -827,3 +848,27 @@ def test_growth_generic_execution_cannot_bypass_a_mature_outcome_decision(target
     with pytest.raises(GrowthPolicyError, match="OUTCOME_WORKFLOW_REQUIRED"):
         service.transition_action(action_id="growth-7001", target_status=target)
     assert service.export_state() == before
+
+
+def test_recent_actual_execution_cannot_be_promoted_to_outcome_ready_over_http():
+    """Enum/body claims cannot replace an elapsed recorded execution window."""
+    client = _client()
+    draft = _create_draft(client, kind="offpeak", name="recent-window-negative")
+    approval = client.post(f"{BASE}/actions/{draft['id']}/submit", json={}, headers=_headers()).json()["approval"]
+    approved = client.post(f"{BASE}/approvals/{approval['id']}/decision",
+                           json={"decision": "approved"}, headers=_headers())
+    assert approved.status_code == 200, approved.text
+    for target in ("SCHEDULED", "RUNNING", "OBSERVING"):
+        response = client.post(f"{BASE}/actions/{draft['id']}/transition",
+                               json={"targetStatus": target}, headers=_execution_headers())
+        assert response.status_code == 200, response.text
+    read_headers = {**WRITE_HEADERS, "X-Correlation-Id": "growth-maturity-record-read-control"}
+    before = client.get(f"{BASE}/actions/{draft['id']}", headers=read_headers).json()
+    decisions = client.get(f"{BASE}/decisions", headers=read_headers).json()
+    response = client.post(f"{BASE}/actions/{draft['id']}/transition",
+                           json={"targetStatus": "OUTCOME_READY", "executedAt": "2000-01-01T00:00:00Z"},
+                           headers=_execution_headers())
+    assert response.status_code == 409, response.text
+    assert "OBSERVATION_WINDOW_NOT_MATURE" in response.text
+    assert client.get(f"{BASE}/actions/{draft['id']}", headers=read_headers).json() == before
+    assert client.get(f"{BASE}/decisions", headers=read_headers).json() == decisions

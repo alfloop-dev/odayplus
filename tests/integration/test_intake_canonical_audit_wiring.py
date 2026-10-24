@@ -264,6 +264,7 @@ def test_completion_rechecks_actual_canonical_record_instead_of_envelope_flags(c
     store.refresh(TENANT)
     # Controlled parser precondition only; no parser/UAT claim.
     store.intakes[iid]["state"] = "NEEDS_REVIEW"
+    store.intakes[iid]["version"] += 1
     store.flush()
     response = _client(bundle).post(
         f"/api/v1/intakes/{iid}/corrections",
@@ -276,7 +277,7 @@ def test_completion_rechecks_actual_canonical_record_instead_of_envelope_flags(c
         headers={
             **HEADERS,
             "Idempotency-Key": "synthetic-proof-correction-" + str(uuid4()),
-            "If-Match": 'W/"1"',
+            "If-Match": f'W/"{store.intakes[iid]["version"]}"',
         },
     )
     assert response.status_code == 201, response.text

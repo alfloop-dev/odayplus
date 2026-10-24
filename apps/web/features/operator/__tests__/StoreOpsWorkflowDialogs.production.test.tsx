@@ -1,6 +1,8 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { webcrypto } from "node:crypto";
+import { responseForRequest } from "./storeOpsPersistedReviews.fixtures";
 import { StoreOpsWorkflowDialogs } from "../StoreOpsWorkflowDialogs";
 import { STORE_OPS_WORKFLOW_DIALOG_TYPES, type StoreOpsWorkflowIssue } from "../storeOpsWorkflowTypes";
 
@@ -22,7 +24,7 @@ const liveIssue: StoreOpsWorkflowIssue = {
 };
 
 describe("StoreOpsWorkflowDialogs production guards", () => {
-  beforeEach(() => { vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ issue: liveIssue }) })); });
+  beforeEach(() => { vi.stubGlobal("crypto", webcrypto); vi.stubGlobal("fetch", vi.fn((url, init) => Promise.resolve(responseForRequest(liveIssue, url, init)))); });
   it("keeps escalation metadata and target enums behind the compact choice cards", async () => {
     const onEscalate = vi.fn();
     render(<StoreOpsWorkflowDialogs activeDialog="escalate" issue={liveIssue} callbacks={{ onEscalate }} onClose={vi.fn()} />);
@@ -43,6 +45,7 @@ describe("StoreOpsWorkflowDialogs production guards", () => {
     expect(onReplyReview).not.toHaveBeenCalled();
     expect(screen.getByRole("alert")).toHaveTextContent("退回或拒絕必須填寫審查備註");
     fireEvent.change(screen.getByLabelText(/審查備註/), { target: { value: "需核對現場證據" } });
+    fireEvent.change(screen.getByLabelText(/回覆內容/), { target: { value: "已核對的操作人員回覆" } });
     fireEvent.submit(screen.getByLabelText(/回覆內容/).closest("form")!);
     await waitFor(() => expect(onReplyReview).toHaveBeenCalledWith(expect.objectContaining({ decision: "reject", channel: "google", publishAfterApproval: false, reviewerNote: "需核對現場證據" })));
   });
@@ -77,6 +80,7 @@ describe("StoreOpsWorkflowDialogs production guards", () => {
     const onOutcome = vi.fn();
     render(<StoreOpsWorkflowDialogs activeDialog="outcome" issue={liveIssue} callbacks={{ onOutcome }} onClose={vi.fn()} />);
     expect(screen.queryByLabelText("後續工作台")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("判斷理由"), { target: { value: "現場複查尚未改善" } });
     const outcome = screen.getByRole("radio", { name: /^無效/ });
     fireEvent.click(outcome);
     expect(screen.queryByRole("checkbox", { name: /審查後結案/ })).not.toBeInTheDocument();
@@ -98,6 +102,8 @@ describe("StoreOpsWorkflowDialogs production guards", () => {
       fireEvent.change(screen.getByLabelText(/調閱目的/), { target: { value: "核對現場證據" } });
       fireEvent.click(screen.getByRole("checkbox", { name: /確認隱私/ }));
     }
+    if (type === "replyReview") fireEvent.change(screen.getByLabelText(/回覆內容/), { target: { value: "操作人員填寫的待審回覆" } });
+    if (type === "outcome") fireEvent.change(screen.getByLabelText("判斷理由"), { target: { value: "人工複查結果" } });
     if (type === "transfer") fireEvent.change(screen.getByLabelText("轉交理由"), { target: { value: "現場設備檢查" } });
     const panel = screen.getByRole("dialog");
     const form = panel.querySelector("form")!;
@@ -113,7 +119,7 @@ describe("StoreOpsWorkflowDialogs production guards", () => {
     expect(onClose).not.toHaveBeenCalled();
     expect(onSubmit).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    finish({ ok: true, status: 200, json: async () => ({ issue: liveIssue }) });
+    finish(responseForRequest(liveIssue, fetchMock.mock.calls[0][0], fetchMock.mock.calls[0][1]));
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
@@ -122,7 +128,7 @@ describe("StoreOpsWorkflowDialogs production guards", () => {
     const fetchMock = vi.fn()
       .mockRejectedValueOnce(new Error("connection lost"))
       .mockResolvedValueOnce({ ok: false, status: 503 })
-      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ issue: liveIssue }) });
+      .mockImplementationOnce((url, init) => Promise.resolve(responseForRequest(liveIssue, url, init)));
     vi.stubGlobal("fetch", fetchMock);
     const onClose = vi.fn();
     const onTriage = vi.fn();

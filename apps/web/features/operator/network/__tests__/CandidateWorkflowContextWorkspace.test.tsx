@@ -1,13 +1,12 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NetworkFindAreasWorkspace as Workspace } from "../../NetworkFindAreasWorkspace";
-import { NETWORK_TAB_IDS } from "../networkUrlState";
+import { NetworkFindAreasWorkspace as GrantedReadNetworkWorkspace } from "../../NetworkFindAreasWorkspace";
 
 // Explicit synthetic bootstrap tabs for these component controls. Backend
 // scope/role denials and read revalidation assertions remain authoritative.
-function NetworkFindAreasWorkspace(props: Parameters<typeof Workspace>[0]) {
-  return <Workspace allowedTabIds={NETWORK_TAB_IDS} {...props} />;
+function NetworkFindAreasWorkspace(props: Parameters<typeof GrantedReadNetworkWorkspace>[0]) {
+  return <GrantedReadNetworkWorkspace allowedTabIds={["areas", "radar", "candidates", "score", "compare", "review"]} {...props} />;
 }
 
 const nav = vi.hoisted(() => ({ pathname: "/operator", search: "ws=network&tab=candidates&candidate=second", push: vi.fn() }));
@@ -196,5 +195,21 @@ describe("exact report-aware workflow context", () => {
     await screen.findByTestId("candidate-detail-score-second");
     expect(screen.queryByTestId("candidate-zone-scope")).not.toBeInTheDocument();
     expect(screen.getByTestId("network-step-sitescore")).toHaveTextContent("second");
+  });
+});
+
+
+describe("Find Areas keeps candidate-only workflow notices in their action context", () => {
+  it("does not add a candidate-selection notice to Find Areas while keeping unknown step states", async () => {
+    nav.search = "ws=network&tab=areas";
+    const fetchMock = reads();
+    render(<NetworkFindAreasWorkspace activeRoleId="expansion-manager" />);
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("network-listings?"))).toBe(true));
+    expect(screen.getByTestId("network-tab-0")).toHaveAttribute("aria-current", "page");
+    expect(screen.queryByTestId("network-workflow-context-notice")).not.toBeInTheDocument();
+    expect(screen.getByTestId("network-step-sitescore")).not.toHaveAttribute("data-state", "completed");
+    expect(screen.getByTestId("network-step-candidate")).toHaveTextContent("未確認");
+    expect(screen.getByTestId("network-tab-1")).toBeEnabled();
+    expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
   });
 });

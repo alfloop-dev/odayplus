@@ -629,7 +629,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     expect(envelope.navigation.allowedWorkspaces).not.toContain("network");
     expect(envelope.navigation.allowedTabs.network).toEqual([]);
     await expect(page.getByTestId("operator-envelope-source")).toHaveText("operator-shell-api-envelope");
-    await expect(page.getByRole("navigation", { name: "Operator workspaces" }).getByRole("button", { name: /展店與店網/ })).toHaveCount(0);
+    await expect(page.getByRole("navigation", { name: "Operator workspaces" }).getByRole("button", { name: /展店與店網/ })).toHaveAttribute("aria-disabled", "true");
     const denied = await page.request.get("/api/v1/operator/network-listings/intake", { headers });
     expect(denied.status()).toBe(403);
     // It must not imply "no submissions exist", and must offer no write action.

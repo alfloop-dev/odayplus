@@ -10,7 +10,7 @@
  * but empty scoped snapshot is reported as empty, not as an error or fixtures.
  */
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OperatorConsole } from "../OperatorConsole";
 import { resolveNetworkCountState } from "../NetworkFindAreasWorkspace";
@@ -33,6 +33,14 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/operator",
   useRouter: () => router,
   useSearchParams: () => new URLSearchParams(nav.search),
+}));
+
+// This file verifies actual Console/session/scope reads, not the WebGL renderer.
+// Isolate only the heavy map leaf; the real workspace, panel, fetches, guards,
+// and all original business assertions remain active. Native map/browser
+// geometry is validated separately; this placeholder supplies no data or grants.
+vi.mock("../network/HeatZoneMap", () => ({
+  HeatZoneMap: () => <div data-testid="unit-WebGL-renderer-boundary" />,
 }));
 
 const role = {
@@ -207,7 +215,7 @@ function stubProductionFetch(snapshot: unknown, denyScoring = false, reviews?: u
     }
     return jsonResponse({ detail: "not routed" }, 503);
   });
-  stubAuthenticatedFetch( fetchMock);
+  stubAuthenticatedFetch(fetchMock);
   return { fetchMock, legacyDomainPaths, networkListingUrls };
 }
 
@@ -261,11 +269,15 @@ describe("Network Find Areas in the production Operator Console composition", ()
     expect(screen.getAllByRole("tab")).toHaveLength(6);
   });
 
-  it("hides a workspace with no readable tabs even when a stored deep link requests it", async () => {
+  it("locks a workspace with no readable tabs even when a stored deep link requests it", async () => {
     const { fetchMock } = stubProductionFetch(DENIED, true, undefined, []);
     render(<OperatorConsole searchParams={{ ws: "network" }} />);
     await waitFor(() => expect(screen.getByTestId("operator-console").querySelector('[data-data-status="ready"]')).not.toBeNull());
-    expect(within(screen.getByRole("navigation", { name: "Operator workspaces" })).queryByText("Network")).toBeNull();
+    // Package 10 retains the static navigation label in its locked state;
+    // neither the stored deep link nor clicking it grants a protected read.
+    const locked = within(screen.getByRole("navigation", { name: "Operator workspaces" })).getByRole("button", { name: /Network/ });
+    expect(locked).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(locked);
     expect(screen.queryByRole("tab", { name: /Rebalance/ })).toBeNull();
     expect(fetchMock.mock.calls.map(([url]) => String(url)).filter((url) => url.includes("/network-"))).toEqual([]);
   });
@@ -275,8 +287,6 @@ describe("Network Find Areas in the production Operator Console composition", ()
 
     render(<OperatorConsole searchParams={{ ws: "network" }} />);
 
-    // The authenticated shell loads Network lazily; its module may still be
-    // compiling while the parallel component suites initialise.
     expect(await screen.findByTestId("network-panel-find-areas", {}, { timeout: 5000 })).toBeInTheDocument();
     // Production no longer preloads RBAC-only domain bindings.
     expect(legacyDomainPaths).toEqual([]);

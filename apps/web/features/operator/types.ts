@@ -1,3 +1,7 @@
+import type { WorkflowRecord } from "./storeOpsWorkflowRecords";
+import type { OutcomeReviewRecord, ReplyReviewRecord } from "./storeOpsPersistedReviews";
+import type { NativeStoreSummary } from "./storeOpsNativeSummary";
+
 import type { NetworkListingReadResponse } from "@oday-plus/openapi-client";
 
 export const OPERATOR_ROLE_IDS = [
@@ -174,20 +178,44 @@ export type NavWorkspace = {
 };
 
 export type StoreLightStatus = "green" | "yellow" | "red";
+export type StoreHealthAvailabilityState = "available" | "degraded" | "unavailable";
+export type StoreHealthSlotAvailability = {
+  state: StoreHealthAvailabilityState;
+  source: string | null;
+  reasonCode?: string | null;
+  message?: string | null;
+  recordIds?: string[];
+};
+export type StoreHealthAvailability = {
+  state: StoreHealthAvailabilityState;
+  complete: boolean;
+  lights: Record<"demand" | "operations" | "staffing" | "margin", StoreHealthSlotAvailability>;
+  riskScore: StoreHealthSlotAvailability;
+};
+export type StoreOpsHealthAvailability = {
+  state: StoreHealthAvailabilityState;
+  complete: boolean;
+  totalCount: number;
+  coveredCount: number;
+  unavailableCount: number;
+  warningCount: number;
+};
 
 export type Store = {
+  nativeSummary?: NativeStoreSummary;
   id: string;
   name: string;
   district: string;
   city: string;
   manager: string;
   lights: {
-    demand: StoreLightStatus;
-    operations: StoreLightStatus;
-    staffing: StoreLightStatus;
-    margin: StoreLightStatus;
+    demand: StoreLightStatus | null;
+    operations: StoreLightStatus | null;
+    staffing: StoreLightStatus | null;
+    margin: StoreLightStatus | null;
   };
-  riskScore: number;
+  riskScore: number | null;
+  healthAvailability?: StoreHealthAvailability;
 };
 
 export type Issue = {
@@ -208,6 +236,10 @@ export type Issue = {
   relatedGrowthId?: string;
   /** Optional source-provided before/after comparison; absence is not success. */
   outcomeMetrics?: Array<{ label: string; before: string; after: string }>;
+  /** Native append-only saved manual reviews; not measured effect or delivery proof. */
+  workflowRecords?: WorkflowRecord[];
+  outcomeReviews?: OutcomeReviewRecord[];
+  replyReviews?: ReplyReviewRecord[];
   summary: string;
 };
 
@@ -219,9 +251,17 @@ export type EvidenceItem = {
   sourceLabel: string;
   summary: string;
   polarity: EvidencePolarity;
-  confidence: number;
+  confidence: number | null;
   occurredAt: string;
   lockedReason?: string;
+  /** Saved CameraPurpose fields; a missing lock reason is not an access receipt. */
+  purpose?: string;
+  cameraLocation?: string;
+  timeWindow?: string;
+  retentionHours?: number;
+  /** Historical purpose receipt time, not an access grant or expiry. */
+  purposeRecordedAt?: string;
+  unlockedAt?: string;
   /** Optional source-provided payment metric; never derived from confidence. */
   paymentTrend?: {
     failureRate: number;
@@ -270,17 +310,19 @@ export type HeatZoneLens = "demand" | "fit" | "competition" | "cannibalization" 
 export type OperatorHeatZone = {
   id: string;
   label: string;
-  rank: number;
-  centroid: [number, number];
-  demandGap: number;
-  competitionIndex: number;
-  cannibalizationRisk: RiskLevel;
+  rank: number | null;
+  centroid: [number, number] | null;
+  demandGap: number | null;
+  competitionIndex: number | null;
+  cannibalizationRisk: RiskLevel | null;
   rentBand: string;
   confidence: number | null;
   recommendedLens: HeatZoneLens;
   reasons: string[];
   risks: string[];
   nextStep: string;
+  /** One shared projection of the recorded native result. */
+  recordedMap?: import("./network/mapTypes").HeatZone;
 };
 
 export type ListingSource = {

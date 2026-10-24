@@ -15,11 +15,43 @@ for(const width of [1440,1024,390]){
     await page.goto(`/operator?ws=govern&tab=approvals&entity=${target}&evidence=ev-score&trace=local-governance-check`);
     const detail=page.getByRole("article",{name:"Approval detail"});
     await expect(detail.getByRole("heading",{name:"Approve SiteScore override"})).toBeVisible();
+    const headerGroupGeometry=await page.getByTestId("operator-topbar-inner").evaluate(element=>{
+      const brand=element.querySelector('[aria-label="Oday Plus Operator Console"]');
+      const workspaceNav=element.querySelector('nav[aria-label="Operator workspaces"]');
+      const approvalCount=element.querySelector('[data-testid="operator-approval-count"]');
+      const actions=Array.from(element.children).find(child=>approvalCount!==null && child.contains(approvalCount));
+      if(!brand || !workspaceNav || !actions) throw new Error("HEADER_GROUPS_NOT_FOUND");
+      const box=(node:Element)=>{const r=node.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};};
+      return {brand:box(brand),workspaceNav:box(workspaceNav),actions:box(actions)};
+    });
+    const {brand,workspaceNav,actions}=headerGroupGeometry;
+    for(const group of [brand,workspaceNav,actions]) {
+      expect(group.width).toBeGreaterThan(0);expect(group.height).toBeGreaterThan(0);
+      expect(group.x).toBeGreaterThanOrEqual(0);
+      expect(group.x+group.width).toBeLessThanOrEqual(width);
+    }
+    if(width>768) {
+      expect(Math.min(brand.y+brand.height,workspaceNav.y+workspaceNav.height)).toBeGreaterThan(Math.max(brand.y,workspaceNav.y));
+      expect(workspaceNav.x).toBeGreaterThanOrEqual(brand.x+brand.width);
+      if(width>1240) {
+        expect(Math.min(workspaceNav.y+workspaceNav.height,actions.y+actions.height)).toBeGreaterThan(Math.max(workspaceNav.y,actions.y));
+        expect(actions.x).toBeGreaterThanOrEqual(workspaceNav.x+workspaceNav.width);
+      } else expect(actions.y).toBeGreaterThanOrEqual(Math.max(brand.y+brand.height,workspaceNav.y+workspaceNav.height));
+    } else {
+      expect(workspaceNav.y).toBeGreaterThanOrEqual(brand.y+brand.height);
+      expect(actions.y).toBeGreaterThanOrEqual(workspaceNav.y+workspaceNav.height);
+    }
+    await expect(page.getByRole("navigation",{name:"Governance tabs"}).getByRole("button")).toHaveCount(3);
     await expect(page.getByTestId("governance-selected-evidence")).toContainText("ev-score");
     await page.reload();
     await expect(detail.getByRole("heading",{name:"Approve SiteScore override"})).toBeVisible();
     const states=[];
     for(const tab of tabs){
+      if(tab === "userManagement") {
+        // Enter the existing non-R7 extension via its established deep link;
+        // preserve every tab/URL/history assertion after that entry.
+        await page.goto(`/operator?ws=govern&tab=userManagement&entity=${target}&evidence=ev-score&trace=local-governance-check`);
+      }
       await page.getByTestId(`governance-tab-${tab}`).click();
       await expect(page.getByTestId(`governance-tab-${tab}`)).toHaveAttribute("aria-current","page");
       await expect(page).toHaveURL(new RegExp(`tab=${tab}(?:&|$)`));

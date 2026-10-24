@@ -42,5 +42,3 @@ BEGIN
   RETURN NEW;
 END;
 $$;
-
-

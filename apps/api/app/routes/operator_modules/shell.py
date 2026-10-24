@@ -26,7 +26,7 @@ resource with its own grants.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
@@ -36,6 +36,7 @@ from apps.api.oday_api.security.dependencies import (
     operator_permission_decision,
 )
 from modules.listing.application.intake_authorization import authorize_intake_action
+from modules.opsboard.application.operator_live_repository import OperatorLiveRepositoryError
 from modules.opsboard.application.operator_state import OperatorStateService
 from modules.opsboard.application.shell import (
     ShellConflict,
@@ -337,6 +338,8 @@ def create_shell_sub_router(
         assignee: str | None = Query(default=None),
         task_status: str | None = Query(default=None, alias="status"),
         task_id: str | None = Query(default=None, alias="taskId"),
+        request_key: str | None = Query(default=None, alias="requestKey"),
+        view: Literal["all", "assigned", "approvals", "initiated", "completed"] | None = Query(default=None),
         x_operator_role: str | None = Header(default=None, alias="X-Operator-Role"),
         x_subject_id: str | None = Header(default=None, alias="X-Subject-Id"),
         x_roles: str | None = Header(default=None, alias="X-Roles"),
@@ -344,10 +347,12 @@ def create_shell_sub_router(
     ) -> dict[str, Any]:
         """Return the Task Center list with SLA/assignee filters and deep links."""
         return shell_for(request).get_tasks(
+            view=view,
             sla=sla,
             assignee=assignee,
             status=task_status,
             task_id=task_id,
+            request_key=request_key,
             **_context_from_request(
                 request,
                 x_operator_role=x_operator_role,
@@ -405,7 +410,7 @@ def create_shell_sub_router(
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         """Return the durable notification inbox for the acting role."""
-        return shell_for(request).get_notifications(
+        result = shell_for(request).get_notifications(
             severity=severity,
             acknowledged=acknowledged,
             **_context_from_request(
@@ -416,6 +421,20 @@ def create_shell_sub_router(
                 x_correlation_id=x_correlation_id,
             ),
         )
+
+        # Advisory UI eligibility uses the exact existing principal resource gate.
+        # The POST dependency remains authoritative (including session/audit guards).
+        principal = request.state.operator_principal
+        allowed = operator_permission_decision(
+            principal,
+            ResourceDescriptor(
+                type="operator_console", tenant_id=principal.tenant_id,
+                module="operator_console", data_classification=DataClassification.CONFIDENTIAL,
+            ),
+            Action.UPDATE,
+        ).allowed
+        result["actions"] = {"acknowledge": {"allowed": allowed}}
+        return result
 
     @router.get(
         "/shell/notifications/preferences",
@@ -437,7 +456,19 @@ def create_shell_sub_router(
             x_correlation_id=x_correlation_id,
         )
         context.pop("correlation_id", None)
-        return shell_for(request).get_notification_preferences(**context)
+        result = shell_for(request).get_notification_preferences(**context)
+        # Advisory eligibility only: the existing PUT guard is authoritative.
+        principal = request.state.operator_principal
+        allowed = operator_permission_decision(
+            principal,
+            ResourceDescriptor(
+                type="operator_console", tenant_id=principal.tenant_id,
+                module="operator_console", data_classification=DataClassification.CONFIDENTIAL,
+            ),
+            Action.UPDATE,
+        ).allowed
+        result["actions"] = {"update": {"allowed": allowed}}
+        return result
 
     @router.put(
         "/shell/notifications/preferences",
@@ -685,6 +716,20 @@ def create_shell_sub_router(
                 idempotency_key=idempotency_key,
                 correlation_id=getattr(request.state, "correlation_id", None) or x_correlation_id,
             )
+        except _SHELL_ERRORS as exc:
+            raise _translate(exc) from exc
+
+    @router.get(
+        "/shell/franchisee/reports/{report_id}",
+        dependencies=[Depends(require_view_permission_fn)],
+    )
+    def shell_supervisor_franchisee_report(report_id: str, request: Request) -> dict[str, Any]:
+        # The live resolver captures the actual app-boundary principal; the
+        # application owner admits only current supervisor/canonical store scope.
+        try:
+            return shell_for(request).get_supervisor_report(report_id)
+        except OperatorLiveRepositoryError as exc:
+            raise HTTPException(status_code=503, detail={"code": "SUPERVISOR_REPORT_OWNER_UNAVAILABLE"}) from exc
         except _SHELL_ERRORS as exc:
             raise _translate(exc) from exc
 

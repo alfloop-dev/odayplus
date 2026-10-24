@@ -121,7 +121,8 @@ def test_signed_native_persisted_version_requires_actual_positive_integer(
     """
     database, bundle, harness, tenant, candidate, saved = native_scope_pg
     assert bundle.engine.dialect == "postgresql"
-    with _signed_client(native_scope_pg, monkeypatch) as (client, headers, _, _):
+    # Use the existing isolated operation premise through its real dual-approval HTTP helper.
+    with _signed_client(native_scope_pg, monkeypatch, go_enabled=True) as (client, headers, _, _):
         submitted, _ = _open(client, headers, tenant, saved, key="stored-version-" + label)
         assert submitted.status_code == 201, submitted.text
         decision_id = submitted.json()["decision_id"]

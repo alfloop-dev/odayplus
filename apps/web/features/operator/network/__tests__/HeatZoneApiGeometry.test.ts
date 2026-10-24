@@ -1,3 +1,4 @@
+import { zoneToFeature } from "../heatZoneRecordedEvidence";
 import { describe, expect, it } from "vitest";
 import { OdpApiClient } from "@oday-plus/openapi-client";
 import { loadNetworkFindAreasBindings } from "../networkFindAreasLoader";
@@ -31,15 +32,17 @@ describe("HeatZone batch API geometry", () => {
     expect(binding.state).toBe("ready");
     const zone = binding.items[0]!;
     expect(zone.id).toBe(recordedCell.heat_zone_id);
-    expect(zone.centroid[0]).toBeGreaterThan(-123);
-    expect(zone.centroid[0]).toBeLessThan(-122);
-    expect(zone.centroid[1]).toBeGreaterThan(37);
-    expect(zone.centroid[1]).toBeLessThan(38);
+    expect(zone.centroid).not.toBeNull();
+    expect(zone.centroid![0]).toBeGreaterThan(-123);
+    expect(zone.centroid![0]).toBeLessThan(-122);
+    expect(zone.centroid![1]).toBeGreaterThan(37);
+    expect(zone.centroid![1]).toBeLessThan(38);
     expect(zone.rank).toBe(2);
-    expect(zone.demandGap).toBe(0.73);
+    expect(zone.demandGap).toBeNull();
     const projected = operatorHeatZoneToMapZone(zone);
-    expect(projected.h3).toBe(recordedCell.h3_index);
-    expect(projected.h3Resolution).toBe(9);
+    expect(zone.recordedMap).toBeUndefined();
+    expect(projected.score).toBeNull();
+    expect(zoneToFeature(projected)).toBeNull();
     expect(projected.centroid).toEqual(zone.centroid);
   });
 
@@ -49,9 +52,15 @@ describe("HeatZone batch API geometry", () => {
     expect(binding.items[0]?.centroid).toEqual([0, 0]);
   });
 
+  it.each([{ h3_index: "not-a-cell" }, { id: "without-geometry" }])("retains an unlocated row without inventing map authority: %j", async (row) => {
+    const binding = (await loadNetworkFindAreasBindings(clientFor(row))).heatZones;
+    expect(binding.state).toBe("ready");
+    expect(binding.items[0]?.centroid).toBeNull();
+    expect(binding.items[0]?.recordedMap).toBeUndefined();
+    expect(zoneToFeature(operatorHeatZoneToMapZone(binding.items[0]!))).toBeNull();
+  });
+
   it.each([
-    { h3_index: "not-a-cell" },
-    { id: "without-geometry" },
     { ...recordedCell, centroid: [181, 25] },
     { ...recordedCell, centroid: [121, 91] },
     { ...recordedCell, centroid: ["121", 25] },

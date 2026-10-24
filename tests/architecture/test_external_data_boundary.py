@@ -476,6 +476,52 @@ def test_existing_snapshot_admission_reads_do_not_create_a_raw_store(policy, met
 
 
 @pytest.mark.parametrize("query", [
+    "SELECT to_regclass('intake.source_registry') AS policy, to_regclass('intake.source_snapshots') AS snapshot",
+    " select TO_REGCLASS('intake.source_registry') as policy,\n TO_REGCLASS('intake.source_snapshots') as snapshot; ",
+])
+def test_existing_snapshot_presence_probe_is_only_a_catalog_read(policy, query):
+    path = "modules/listing/application/admission_reader.py"
+    content = f'說明 = "既有資料查核"; present = engine.query_one({query!r})\n'
+    report = synthetic(policy, {path: content}, ("capabilities",))
+    assert "blocked_capability:new_raw_evidence_store" not in codes(report)
+
+
+@pytest.mark.parametrize("query", [
+    "SELECT persist_raw_payload('intake.source_registry') AS policy, to_regclass('intake.source_snapshots') AS snapshot",
+    "SELECT to_regclass('intake.source_registry') AS policy, persist_raw_payload('intake.source_snapshots') AS snapshot",
+    "SELECT to_regclass('intake.source_registry') AS policy, to_regclass('intake.source_snapshots') AS snapshot INTO raw_copy",
+    "SELECT to_regclass('intake.source_registry') AS policy, to_regclass('intake.source_snapshots') AS snapshot; DELETE FROM intake.source_snapshots",
+    "SELECT to_regclass('intake.source_registry') AS policy, to_regclass('intake.source_snapshots') AS snapshot /* extra SQL is unknown */",
+    "WITH written AS (DELETE FROM intake.source_snapshots RETURNING *) SELECT to_regclass('intake.source_registry') AS policy, to_regclass('intake.source_snapshots') AS snapshot",
+])
+def test_catalog_read_shape_does_not_hide_writes_or_other_functions(policy, query):
+    path = "modules/listing/application/admission_reader.py"
+    report = synthetic(policy, {path: f"present = engine.query_one({query!r})\n"}, ("capabilities",))
+    assert path in paths_for(report, "blocked_capability:new_raw_evidence_store")
+
+
+@pytest.mark.parametrize("method", ["query_all", "execute"])
+def test_catalog_presence_probe_is_not_an_arbitrary_method_exemption(policy, method):
+    path = "modules/listing/application/admission_reader.py"
+    query = "SELECT to_regclass('intake.source_registry') AS policy, to_regclass('intake.source_snapshots') AS snapshot"
+    report = synthetic(policy, {path: f"present = engine.{method}({query!r})\n"}, ("capabilities",))
+    assert path in paths_for(report, "blocked_capability:new_raw_evidence_store")
+
+
+@pytest.mark.parametrize("extra", [
+    'engine.execute("INSERT INTO intake.source_snapshots (id) VALUES (?)", (value,))',
+    'query = "intake.source_snapshots"',
+    """engine.query_one(f"SELECT to_regclass('intake.source_snapshots') WHERE id={value}")""",
+])
+def test_catalog_probe_does_not_exempt_other_references_in_the_file(policy, extra):
+    path = "modules/listing/application/admission_reader.py"
+    query = "SELECT to_regclass('intake.source_registry') AS policy, to_regclass('intake.source_snapshots') AS snapshot"
+    content = f"present = engine.query_one({query!r})\n" + extra + "\n"
+    report = synthetic(policy, {path: content}, ("capabilities",))
+    assert path in paths_for(report, "blocked_capability:new_raw_evidence_store")
+
+
+@pytest.mark.parametrize("query", [
     "CREATE TABLE intake.source_snapshots (id text)",
     "INSERT INTO intake.source_snapshots (id) VALUES (?)",
     "UPDATE intake.source_snapshots SET raw_object_uri=? WHERE tenant_id=?",

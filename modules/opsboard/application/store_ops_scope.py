@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 from hashlib import sha256
-from typing import Any
+from typing import Any, TypeVar
 
 from modules.opsboard.application.store_ops import (
     DurableStoreOpsRepository,
@@ -14,6 +14,9 @@ from modules.opsboard.application.store_ops import (
     StoreOpsConflict,
     StoreOpsLiveDataUnavailable,
 )
+from modules.opsboard.domain.store_ops_reviews import record_contract
+
+_T = TypeVar("_T")
 
 
 def binding_hash(value: Any) -> str:
@@ -48,16 +51,11 @@ class ScopedStoreOpsRepository:
         self._request_hash = request_hash
         self._operation = operation
         self._state: dict[str, Any] | None = None
-        self._version: int | None = None
         self.new_audits: list[dict[str, Any]] = []
 
     def _full_state(self) -> dict[str, Any]:
         if self._state is None:
-            state, version = self._repository.read_versioned_state()
-            state = self._repository._validated(state)
-            if state is None or type(version) is not int or version < 0:
-                raise StoreOpsLiveDataUnavailable("Store Ops scoped state has not been materialized")
-            self._state, self._version = state, version
+            self._state = self._repository.get_state()
         for key in ("stores", "issues", "evidence", "auditEvents"):
             rows = self._state.get(key)
             if not isinstance(rows, list) or not all(
@@ -105,7 +103,7 @@ class ScopedStoreOpsRepository:
         ]
         return state
 
-    def save_state(self, state: Mapping[str, Any]) -> None:
+    def _merge_state(self, state: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         full = deepcopy(self._full_state())
         before = self.get_state()
         original_issues = {row["id"]: row for row in before["issues"]}
@@ -126,6 +124,17 @@ class ScopedStoreOpsRepository:
             raise StoreOpsConflict(
                 "Store Ops evidence references cannot change through a transition"
             )
+        for key, row in incoming_issues.items():
+            for history_key in ("outcomeReviews", "replyReviews", "workflowRecords"):
+                previous = original_issues[key].get(history_key, [])
+                incoming = row.get(history_key, [])
+                if (
+                    not isinstance(previous, list)
+                    or not isinstance(incoming, list)
+                    or incoming[:len(previous)] != previous
+                    or len(incoming) < len(previous)
+                ):
+                    raise StoreOpsConflict("Store Ops review history cannot be rewritten")
         if state["stores"] != before["stores"]:
             raise StoreOpsConflict("Store Ops transitions cannot rewrite the store master")
         full["issues"] = [incoming_issues.get(row["id"], row) for row in full["issues"]]
@@ -167,6 +176,28 @@ class ScopedStoreOpsRepository:
             row["actorSubjectId"] = self._subject_id
             new_audits.append(row)
         full["auditEvents"].extend(new_audits)
+        new_audits_by_id = {row["id"]: row for row in new_audits}
+        for key, issue in incoming_issues.items():
+            original = original_issues[key]
+            for history_key in ("outcomeReviews", "replyReviews", "workflowRecords"):
+                for record in issue.get(history_key, [])[len(original.get(history_key, [])):]:
+                    try:
+                        record_type, action = record_contract(history_key, record)
+                        record_type.model_validate(record)
+                    except (ValueError, TypeError) as exc:
+                        raise StoreOpsConflict("Store Ops review record is invalid") from exc
+                    audit = new_audits_by_id.get(record["workflowAuditId"])
+                    if (
+                        record["id"] != record["workflowAuditId"]
+                        or record["issueId"] != key or record["storeId"] != original["storeId"]
+                        or record["actorSubjectId"] != self._subject_id
+                        or record["actorEvidence"] != "authenticated_principal"
+                        or record["sourceIssueUpdatedAt"] != original["updatedAt"]
+                        or record["evidenceIds"] != original.get("evidenceIds", [])
+                        or audit is None or audit["action"] != action or audit["targetId"] != key
+                        or audit["metadata"].get("reviewRecordHash") != binding_hash(record)
+                    ):
+                        raise StoreOpsConflict("Store Ops review does not match its authorized source and audit")
         expected_ordinal = int(full.get("nextAuditOrdinal") or 1) + len(new_audits)
         if int(state.get("nextAuditOrdinal") or 1) != expected_ordinal:
             raise StoreOpsConflict("Store Ops audit ordinal does not match the appended events")
@@ -185,13 +216,39 @@ class ScopedStoreOpsRepository:
         ):
             raise StoreOpsConflict("Attachment identifier collides with another issue")
         full["attachments"] = [*hidden, *deepcopy(incoming_attachments)]
-        if not self._repository.compare_and_save_state(full, expected_version=self._version):
-            raise StoreOpsConcurrentWriteConflict(
-                "Store Ops state changed during the scoped command; refresh and retry"
-            )
-        self._state = full
-        self._version += 1
-        self.new_audits.extend(deepcopy(new_audits))
+        return full, new_audits
+
+    def update_state(self, mutate: Callable[[dict[str, Any]], _T]) -> _T:
+        """Rebuild the scoped view on every full-document CAS attempt."""
+        def apply(full: dict[str, Any]) -> tuple[_T, list[dict[str, Any]]]:
+            self._state = deepcopy(full)
+            visible = self.get_state()
+            result = mutate(visible)
+            merged, audits = self._merge_state(visible)
+            full.clear()
+            full.update(merged)
+            return result, audits
+
+        try:
+            result, audits = self._repository.update_state(apply)
+        finally:
+            self._state = None
+        self.new_audits.extend(deepcopy(audits))
+        return result
+
+    def save_state(self, state: Mapping[str, Any]) -> None:
+        """A detached edit cannot replace a more recent aggregate."""
+        baseline = deepcopy(self._full_state())
+
+        def replace_visible(visible: dict[str, Any]) -> None:
+            if self._full_state() != baseline:
+                raise StoreOpsConcurrentWriteConflict(
+                    "Store Ops state changed after the scoped read; retry the command"
+                )
+            visible.clear()
+            visible.update(deepcopy(dict(state)))
+
+        self.update_state(replace_visible)
 
     def _receipt_key(self, key: str) -> str:
         return binding_hash([self._subject_id, self._operation, key])

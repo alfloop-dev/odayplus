@@ -352,7 +352,7 @@
 
 .rail {
   position: sticky;
-  top: 62px;
+  top: calc(var(--operator-sticky-header-height, 53px) + 9px);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -675,7 +675,7 @@
 
 .detailPanel {
   position: sticky;
-  top: 62px;
+  top: calc(var(--operator-sticky-header-height, 53px) + 9px);
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -1263,7 +1263,8 @@
 .builderModal .builderSummary dt,
 .builderModal .actionNote { color: #536079; }
 
-@media (max-width: 1280px) {
+/* Full Package 10 composition starts at breakpoint.lg (1024px). */
+@media (max-width: 1023px) {
   .campaign {
     grid-template-columns: 220px minmax(0, 1fr);
   }

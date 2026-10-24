@@ -16,6 +16,7 @@ from shared.infrastructure.persistence.operator_network_listings import (
 )
 from shared.infrastructure.persistence.repositories import DurableApprovalRepository
 from shared.workflow.sitescore import SiteScoreDecisionWorkflow
+from tests.integration._operation_flag_fixtures import SITE_GO_FLAG, enable_operation_flag
 from tests.integration.test_network_review_submission_sod import (
     CHECKER,
     ORIGINAL,
@@ -193,6 +194,9 @@ def _pending(pg, client, headers):
 
 
 def test_native_only_signed_sql_initial_submit_read_selfdeny_checker_and_replay(native_scope_pg, monkeypatch):
+    enable_operation_flag(native_scope_pg[1].feature_flag_registry, key=SITE_GO_FLAG,
+                          tenant_id=native_scope_pg[3], queue=native_scope_pg[1].job_queue,
+                          audit_log=native_scope_pg[1].audit_log)
     _, bundle, harness, tenant, candidate, saved = native_scope_pg
     with _signed_client(native_scope_pg, monkeypatch) as (client, headers, _, _):
         opened, body = _open(client, headers, tenant, saved)
@@ -235,6 +239,9 @@ def test_native_only_pending_decision_read_uses_same_actual_scope(native_scope_p
 
 
 def test_native_only_pending_independent_checker_approve(native_scope_pg, monkeypatch):
+    enable_operation_flag(native_scope_pg[1].feature_flag_registry, key=SITE_GO_FLAG,
+                          tenant_id=native_scope_pg[3], queue=native_scope_pg[1].job_queue,
+                          audit_log=native_scope_pg[1].audit_log)
     _, _, harness, tenant, _, saved = native_scope_pg
     with _signed_client(native_scope_pg, monkeypatch) as (client, headers, _, _):
         decision_id = _pending(native_scope_pg, client, headers)
@@ -247,6 +254,9 @@ def test_native_only_pending_independent_checker_approve(native_scope_pg, monkey
 
 
 def test_native_only_return_resubmit_preserves_both_verified_sod_and_frozen_report(native_scope_pg, monkeypatch):
+    enable_operation_flag(native_scope_pg[1].feature_flag_registry, key=SITE_GO_FLAG,
+                          tenant_id=native_scope_pg[3], queue=native_scope_pg[1].job_queue,
+                          audit_log=native_scope_pg[1].audit_log)
     _, bundle, harness, tenant, candidate, saved = native_scope_pg
     with _signed_client(native_scope_pg, monkeypatch) as (client, headers, _, _):
         decision_id = _pending(native_scope_pg, client, headers)
@@ -283,6 +293,9 @@ def test_native_only_return_resubmit_preserves_both_verified_sod_and_frozen_repo
 
 
 def test_native_only_unverified_legacy_creator_is_not_authority(native_scope_pg, monkeypatch):
+    enable_operation_flag(native_scope_pg[1].feature_flag_registry, key=SITE_GO_FLAG,
+                          tenant_id=native_scope_pg[3], queue=native_scope_pg[1].job_queue,
+                          audit_log=native_scope_pg[1].audit_log)
     _, bundle, harness, tenant, _, saved = native_scope_pg
     workflow = SiteScoreDecisionWorkflow(store=harness.decisions(tenant), audit_log=bundle.audit_log,
         approval_store=DurableApprovalRepository(harness.scoped(tenant)))

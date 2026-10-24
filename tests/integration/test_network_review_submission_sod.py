@@ -26,6 +26,11 @@ from shared.infrastructure.persistence.operator_network_listings import (
 )
 from shared.infrastructure.persistence.repositories import DurableApprovalRepository
 from shared.workflow.sitescore import DecisionAction, SiteScoreDecisionWorkflow
+from tests.integration._operation_flag_fixtures import (
+    SITE_GO_FLAG,
+    enable_operation_flag,
+    new_operation_flags,
+)
 from tests.integration.test_network_review_canonical_atomicity import durable_bytes
 from tests.unit.test_network_canonical_review_projection import report
 
@@ -121,8 +126,11 @@ def submit_sod_pg(monkeypatch):
 
 
 @contextmanager
-def _signed_client(pg, monkeypatch, *, memory=False):
+def _signed_client(pg, monkeypatch, *, memory=False, go_enabled=False):
     _, bundle, harness, tenant, _, saved = pg
+    if go_enabled and not memory:
+        enable_operation_flag(bundle.feature_flag_registry, key=SITE_GO_FLAG, tenant_id=tenant,
+                              queue=bundle.job_queue, audit_log=bundle.audit_log)
     signing_key = SigningKey(kid="synthetic-sod-local", algorithm="HS256",
                              secret=b"isolated-local-sod-regression-key")
     config = AuthBoundaryConfig(local_issuer="urn:odp:identity:local",
@@ -140,22 +148,54 @@ def _signed_client(pg, monkeypatch, *, memory=False):
         return {"Authorization": "Bearer " + token, "If-Actor-Match": actor,
                 "Idempotency-Key": key, "X-Correlation-Id": "sod-" + key}
 
-    app = harness.app()
-    workflow = None
-    if memory:
-        repository = InMemorySiteScoreRepository()
-        stored = repository.save_report(saved)
-        workflow = SiteScoreDecisionWorkflow()
-        router = create_sitescore_router(repository=repository, workflow=workflow,
-            runtime_mode="local", require_production_model=False, require_durable_jobs=False)
-    else:
-        router = create_sitescore_router(repository=harness.sitescore(tenant), audit_log=bundle.audit_log,
-            sitescore_decision_repository_for_tenant=harness.decisions,
-            review_service_resolver=bundle.network_review_resolver(), runtime_mode="production",
-            require_production_model=True)
-    app.include_router(router, prefix="/api/v1")
-    with TestClient(app) as client:
-        yield client, headers, workflow, stored if memory else saved
+    # Runtime admission is captured when the router is constructed. Keep
+    # this one explicit memory compatibility owner local through construction
+    # and HTTP; the context restores all surrounding genuine PG test settings.
+    with monkeypatch.context() as memory_mode:
+        if memory:
+            for name, value in {"ODP_REQUIRE_LIVE_DATA": "false", "ODP_DEPLOY_ENV": "development",
+                                "ODP_PRODUCT_MODE": "poc", "NODE_ENV": "test"}.items():
+                memory_mode.setenv(name, value)
+        app = harness.app()
+        workflow = None
+        if memory:
+            from shared.jobs.queue import InMemoryJobQueue
+
+            owner, _ = new_operation_flags()
+            queue = InMemoryJobQueue(flags=owner)
+            app.state.feature_flag_registry = owner
+            app.state.job_queue = queue
+            if go_enabled:
+                from apps.api.oday_api.runtime_mode import live_data_required
+
+                # The explicit local memory owner uses matching POC mode for
+                # setup, router construction and HTTP. Signed SQL identity remains
+                # genuine; other cases retain production flag admission.
+                local_mode = {"ODP_REQUIRE_LIVE_DATA": "false", "ODP_DEPLOY_ENV": "development",
+                              "ODP_PRODUCT_MODE": "poc", "NODE_ENV": "test"}
+                original_mode = {name: os.environ.get(name) for name in local_mode}
+                original_live = live_data_required()
+                with monkeypatch.context() as local:
+                    for name, value in local_mode.items():
+                        local.setenv(name, value)
+                    assert live_data_required() is False
+                    enable_operation_flag(owner, key=SITE_GO_FLAG, tenant_id=tenant)
+                    assert live_data_required() is False
+                assert {name: os.environ.get(name) for name in local_mode} == original_mode
+                assert live_data_required() is original_live
+            repository = InMemorySiteScoreRepository()
+            stored = repository.save_report(saved)
+            workflow = SiteScoreDecisionWorkflow()
+            router = create_sitescore_router(repository=repository, workflow=workflow, job_queue=queue,
+                runtime_mode="local", require_production_model=False, require_durable_jobs=False)
+        else:
+            router = create_sitescore_router(repository=harness.sitescore(tenant), audit_log=bundle.audit_log,
+                sitescore_decision_repository_for_tenant=harness.decisions,
+                review_service_resolver=bundle.network_review_resolver(), runtime_mode="production",
+                require_production_model=True)
+        app.include_router(router, prefix="/api/v1")
+        with TestClient(app) as client:
+            yield client, headers, workflow, stored if memory else saved
 
 
 def _business(bundle):
@@ -198,7 +238,7 @@ def test_signed_original_creator_and_current_resubmitter_denied_independent_chec
     """Actual JWT+SQL A→C RETURN→B resubmit→A/B deny→C accepted, frozen V1/latest V2."""
     _, bundle, harness, tenant, candidate, saved = submit_sod_pg
     case = "signed-" + surface + "-" + action
-    with _signed_client(submit_sod_pg, monkeypatch) as (client, headers, _, _):
+    with _signed_client(submit_sod_pg, monkeypatch, go_enabled=action == "GO") as (client, headers, _, _):
         _, _, initial = _submit(client, headers, tenant, candidate, ORIGINAL, "initial")
         decision_id = initial["records"]["decisionId"]
         returned = client.post(f"{BASE}/{decision_id}/decide", headers=headers(CHECKER, "return"),
@@ -279,7 +319,7 @@ def test_signed_unverified_legacy_body_creator_is_not_authority_current_sender_s
     workflow = SiteScoreDecisionWorkflow(store=harness.decisions(tenant), audit_log=bundle.audit_log,
                                         approval_store=DurableApprovalRepository(harness.scoped(tenant)))
     legacy = workflow.open_decision(saved, created_by=ORIGINAL, tenant_id=tenant, verified_creator=False)
-    with _signed_client(submit_sod_pg, monkeypatch) as (client, headers, _, _):
+    with _signed_client(submit_sod_pg, monkeypatch, go_enabled=True) as (client, headers, _, _):
         _, _, receipt = _submit(client, headers, tenant, candidate, RESUBMITTER, "legacy-submit", decision_id=legacy.decision_id)
         current = harness.decisions(tenant).get_decision(legacy.decision_id)
         assert current.created_by == ORIGINAL and current.created_by_verified is False
@@ -304,7 +344,7 @@ def test_signed_native_memory_fallback_uses_genuine_principal_and_verified_creat
 ):
     """Memory compatibility owner only; identity/session/JWT still actual owned SQL."""
     _, _, _, tenant, _, _ = submit_sod_pg
-    with _signed_client(submit_sod_pg, monkeypatch, memory=True) as (client, headers, workflow, saved):
+    with _signed_client(submit_sod_pg, monkeypatch, memory=True, go_enabled=True) as (client, headers, workflow, saved):
         posted = client.post("/api/v1/sitescore/decisions", headers=headers(ORIGINAL, "memory-open"),
                              json={"report_id": saved.report_id, "created_by": CHECKER})
         assert posted.status_code == 201, posted.text

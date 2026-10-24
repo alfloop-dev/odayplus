@@ -44,6 +44,9 @@ import {
   type ListingApiError,
 } from "./network/listingsClient";
 import { canMergeListing } from "./network/listingPermissions";
+import { boundReviewDecisionBody, hasReviewDecisionContext, reviewDecisionContextMatches, reviewDecisionReceiptMatches, reviewDecisionReadbackMatches, type BoundReviewDecisionBody, type ReviewDecisionContext } from "./network/networkReviewDecision";
+import { reviewDecisionFreshGraphMatches } from "./network/networkReviewDecisionRefresh";
+import { readReviewDecisionIdentity } from "./network/reviewDecisionAuthContext";
 import { ReviewSubmissionDialog } from "./network/ReviewSubmissionDialog";
 import { canOfferReviewSubmission, hasReviewSubmissionContext, reviewSubmissionTargetsMatch, reviewSubmissionReceiptMatches, reviewSubmissionReadbackMatches, reviewSubmissionOffers } from "./network/networkReviewSubmission";
 import type { ReviewSubmissionContext, ReviewSubmissionBody, ReviewSubmissionForm, ReviewSubmissionOffer, ReviewSubmissionReceipt } from "./network/networkReviewSubmissionTypes";
@@ -59,8 +62,22 @@ import { CandidateWorkflowFacts } from "./network/CandidateWorkflowFacts";
 import { projectCandidateNativeWorkflow, resolveCandidateReviewTarget } from "./network/candidateNativeWorkflowProjection";
 import { hasNetworkListingsRenderShape, hasNetworkScoringRenderShape, hasCanonicalScoreSession, hasScoreExecutionContext, hasScoreExecutionReceipt, scoreExecutionCommandReceiptMatches, hasVerifiedCurrentScoreAdmission, readId, readObject } from "./network/networkReadValidation";
 import { FindAreasPanel } from "./network/FindAreasPanel";
+import type { ListingSearchDialogProps } from "./network/ListingSearchDialog";
+import type { AreaPlanningDraftDialogProps } from "./network/AreaPlanningDraftDialog";
 import { canPerform as canPerformIntake } from "./network/intake/intakePermissions";
 import type { RebalancePanelProps } from "./network/RebalancePanel";
+import { createNetPlanBuilderApi } from "./network/netplanBuilderClient";
+import { createSurveyAssignmentApi, type SurveyTarget } from "./network/surveyAssignmentClient";
+import { createSurveyEvidenceApi } from "./network/surveyEvidenceClient";
+import { SurveyAssignmentDialog } from "./network/SurveyAssignmentDialog";
+import { parseHeatZoneSelection } from "./network/heatZoneNavigation";
+import {
+  heatZoneRequestArgument,
+  heatZoneSelectionParams,
+  heatZoneSnapshotReceipt,
+  heatZoneTargetGate,
+  resolveHeatZoneRequestedTarget,
+} from "./network/heatZoneRequestedSnapshot";
 import type {
   HeatZoneMergeSplitPanelProps,
   HeatZoneProposal,
@@ -68,13 +85,13 @@ import type {
 } from "./network/HeatZoneMergeSplitPanel";
 import {
   buildNetworkTabHref,
+  NETWORK_TAB_IDS,
   candidateWorkflowNavigationParams,
   isCandidateWorkflowTab,
   CANDIDATE_SELECTION_PARAM,
   parseCandidateSelection,
   parseReviewSelection,
   REVIEW_SELECTION_PARAM,
-  NETWORK_TAB_IDS,
   parseNetworkTabIndex,
 } from "./network/networkUrlState";
 import type { ExpansionStep } from "./network/ExpansionStepper";
@@ -96,6 +113,12 @@ import {
 // merge/split panel below is, so /operator and /intake do not pay for it on
 // first load. `ssr: false` matches the other deferred panels -- the panel is
 // driven entirely by client state and callbacks from this workspace.
+const ListingSearchDialog = dynamic<ListingSearchDialogProps>(
+  () => import("./network/ListingSearchDialog").then(mod => mod.ListingSearchDialog), { ssr: false },
+);
+const AreaPlanningDraftDialog = dynamic<AreaPlanningDraftDialogProps>(
+  () => import("./network/AreaPlanningDraftDialog").then(mod => mod.AreaPlanningDraftDialog), { ssr: false },
+);
 const RebalancePanel = dynamic<RebalancePanelProps>(
   () => import("./network/RebalancePanel").then((mod) => mod.RebalancePanel),
   {
@@ -146,8 +169,10 @@ export type NetworkFindAreasWorkspaceCallbacks = {
   onSubmitReview?: (heatZone: OperatorHeatZone) => void;
 };
 
+type NetworkReadSessionGuard = () => Promise<boolean>;
+
 export type NetworkFindAreasWorkspaceProps = {
-  /** Console supplies the current account/persona transport; standalone controls may inject their fixture transport. */
+  /** Existing injectable transport; Console account authority comes from its shared guard. */
   fetchImpl?: typeof fetch;
   heatZones?: OperatorHeatZone[];
   listings?: Listing[];
@@ -160,6 +185,10 @@ export type NetworkFindAreasWorkspaceProps = {
   initialTabId?: string;
   /** Verified bootstrap projection; absent metadata fails closed outside fixtures. */
   allowedTabIds?: readonly string[];
+  /** Console-owned session lease for every canonical read. The sole production
+   * mount always supplies it. Optional only for standalone renderer/unit and
+   * explicit POC callers; it never grants tabs, roles, or API permissions. */
+  createAuthenticatedReadGuard?: (current: () => boolean) => NetworkReadSessionGuard;
   trackedHeatZoneIds?: string[];
   /**
    * Active operator console role. Binds the Network Review read/decide security
@@ -168,6 +197,7 @@ export type NetworkFindAreasWorkspaceProps = {
    */
   activeRoleId?: OperatorRoleId;
   callbacks?: NetworkFindAreasWorkspaceCallbacks;
+  onReviewDecisionConfirmed?: () => Promise<void> | void;
   /**
    * Live API binding for heatzone scores. When `source === "api"` the
    * workspace renders live items; local/POC may otherwise use bundled
@@ -219,6 +249,7 @@ type NetworkListingDetail = Listing & {
 type NetworkListingsSnapshot = {
   source?: "api" | "fixture";
   heatZones?: OperatorHeatZone[];
+  heatZoneAvailability?: { state: "available" | "unavailable"; message?: string };
   listingSources?: ListingSource[];
   listings?: NetworkListingDetail[];
   candidates?: Candidate[];
@@ -326,7 +357,9 @@ export function inspectNetworkListingsSnapshot(
 export function resolveNetworkFindAreasLoadState(
   networkLoadState: OperatorDataAvailability,
   heatZoneCount: number,
+  nativeZoneState?: string,
 ): OperatorDataAvailability {
+  if (nativeZoneState === "unavailable") return "error";
   return networkLoadState === "ready" && heatZoneCount === 0 ? "empty" : networkLoadState;
 }
 
@@ -441,27 +474,36 @@ function resolveNetworkReviewIdentity(roleId: OperatorRoleId): NetworkReviewIden
  * collapsed into "no snapshot", which used to surface a received 403 as a
  * transport failure and its collection as an authoritative zero.
  */
-type NetworkRead<T> = { ok: true; snapshot: T } | { ok: false; failure: OperatorLoadFailure };
+type NetworkRead<T> = { ok: true; snapshot: T } | { ok: false; failure: OperatorLoadFailure }
+  | { ok: false; superseded: true };
 
 async function readNetworkSnapshot<T>(
   label: string,
   path: string,
   headers: Record<string, string>,
   correlationId: string,
-  fetchImpl: typeof fetch = fetch,
+  sessionGuard?: NetworkReadSessionGuard, transport: typeof fetch = fetch,
 ): Promise<NetworkRead<T>> {
+  // A superseded lease is not a current owner's HTTP failure. Consumers
+  // discard it before touching any snapshot, error, or loading state.
+  const unowned = (): NetworkRead<T> => ({ ok: false, superseded: true });
   try {
-    const response = await fetchImpl(path, {
+    if (sessionGuard && !await sessionGuard()) return unowned();
+    const response = await transport(path, {
       cache: "no-store",
       headers: {
         ...headers,
         "X-Correlation-Id": correlationId,
       },
     });
+    if (sessionGuard && !await sessionGuard()) return unowned();
     if (!response.ok) {
-      return { ok: false, failure: await operatorLoadFailureFromResponse(response, label, correlationId) };
+      const failure = await operatorLoadFailureFromResponse(response, label, correlationId);
+      if (sessionGuard && !await sessionGuard()) return unowned();
+      return { ok: false, failure };
     }
     const body: unknown = await response.json();
+    if (sessionGuard && !await sessionGuard()) return unowned();
     if (!readObject(body)) {
       return {
         ok: false,
@@ -476,20 +518,20 @@ async function readNetworkSnapshot<T>(
     }
     return { ok: true, snapshot: body as T };
   } catch (error) {
+    if (sessionGuard && !await sessionGuard()) return unowned();
     return { ok: false, failure: operatorLoadFailureFromError(error, label, correlationId) };
   }
 }
 
 function fetchNetworkReviewsSnapshot(
   readHeaders: Record<string, string>,
-  fetchImpl: typeof fetch = fetch,
+  sessionGuard?: NetworkReadSessionGuard, transport: typeof fetch = fetch,
 ): Promise<NetworkRead<NetworkReviewsSnapshot>> {
   return readNetworkSnapshot(
     "network-reviews",
     "/api/v1/operator/network-reviews",
     readHeaders,
-    "corr-r4-007-reviews-read",
-    fetchImpl,
+    "corr-r4-007-reviews-read", sessionGuard, transport
   );
 }
 
@@ -501,7 +543,7 @@ function fetchNetworkSnapshot(
   selectedHeatZoneId: string | null,
   lens: NetworkFindAreasLens,
   roleId: OperatorRoleId,
-  fetchImpl: typeof fetch = fetch,
+  sessionGuard?: NetworkReadSessionGuard, transport: typeof fetch = fetch,
 ): Promise<NetworkRead<NetworkListingsSnapshot>> {
   const params = new URLSearchParams({ lens });
   if (selectedHeatZoneId) params.set("selectedHeatZoneId", selectedHeatZoneId);
@@ -509,28 +551,25 @@ function fetchNetworkSnapshot(
     "network-listings",
     `/api/v1/operator/network-listings?${params.toString()}`,
     operatorSecurityHeaders(roleId),
-    `corr-r4-005-read-${selectedHeatZoneId ?? "initial"}-${lens}`,
-    fetchImpl,
+    `corr-r4-005-read-${selectedHeatZoneId ?? "initial"}-${lens}`, sessionGuard, transport
   );
 }
 
-function fetchNetworkScoringSnapshot(roleId: OperatorRoleId, fetchImpl: typeof fetch = fetch): Promise<NetworkRead<NetworkScoringSnapshot>> {
+function fetchNetworkScoringSnapshot(roleId: OperatorRoleId, sessionGuard?: NetworkReadSessionGuard, transport: typeof fetch = fetch): Promise<NetworkRead<NetworkScoringSnapshot>> {
   return readNetworkSnapshot(
     "network-scoring",
     "/api/v1/operator/network-scoring",
     operatorSecurityHeaders(roleId),
-    "corr-r4-006-scoring-read",
-    fetchImpl,
+    "corr-r4-006-scoring-read", sessionGuard, transport
   );
 }
 
-function fetchNetworkRebalanceSnapshot(roleId: OperatorRoleId, fetchImpl: typeof fetch = fetch): Promise<NetworkRead<NetworkRebalanceSnapshot>> {
+function fetchNetworkRebalanceSnapshot(roleId: OperatorRoleId, sessionGuard?: NetworkReadSessionGuard, transport: typeof fetch = fetch): Promise<NetworkRead<NetworkRebalanceSnapshot>> {
   return readNetworkSnapshot(
     "network-rebalance",
     "/api/v1/operator/network-rebalance",
     operatorSecurityHeaders(roleId),
-    "corr-r4-008-rebalance-read",
-    fetchImpl,
+    "corr-r4-008-rebalance-read", sessionGuard, transport
   );
 }
 
@@ -617,14 +656,16 @@ export function isNetworkIntakeDetailRoute(
 }
 
 export function NetworkFindAreasWorkspace({
+  fetchImpl = fetch,
   activeLens,
   activeRoleId = DEFAULT_OPERATOR_ROLE_ID,
   allowedTabIds,
+  createAuthenticatedReadGuard,
   callbacks,
-  fetchImpl = fetch,
   candidates: candidatesInput,
   heatZones: heatZonesInput,
   initialTabId,
+  onReviewDecisionConfirmed,
   listings: listingsInput,
   listingSources: listingSourcesInput,
   rebalanceStores: rebalanceStoresInput,
@@ -638,10 +679,16 @@ export function NetworkFindAreasWorkspace({
   const router = useRouter();
   const searchParams = useSearchParams();
   const fixturesAllowed = operatorFixturesAllowed();
+  const allowedTabIndices = useMemo(() => NETWORK_TAB_IDS.flatMap((tab, index) =>
+    (allowedTabIds?.includes(tab) ?? fixturesAllowed) ? [index] : []), [allowedTabIds, fixturesAllowed]);
+  const canReadListings = allowedTabIndices.includes(0) || allowedTabIndices.includes(1);
+  const canReadScoring = allowedTabIndices.some((index) => index >= 2 && index <= 4);
+  const canReadReviews = allowedTabIndices.includes(5);
+  const canReadRebalance = allowedTabIndices.includes(6);
   // This observed browser context invalidates cached links. Clicks also re-read
   // the guarded endpoints because the API exposes no client scope/session epoch.
   const navigationContextKey = JSON.stringify([
-    activeRoleId, operatorSubjectId(activeRoleId),
+    activeRoleId, operatorSubjectId(activeRoleId), allowedTabIndices,
     typeof window === "undefined" ? "" : window.sessionStorage.getItem("oday.operator.tenant"),
   ]);
   const navigationContext = useRef({ key: navigationContextKey, generation: 0 });
@@ -664,17 +711,47 @@ export function NetworkFindAreasWorkspace({
       navigationIntent.current += 1;
     };
   }, []);
+  const readGuardFactory = useRef(createAuthenticatedReadGuard);
+  readGuardFactory.current = createAuthenticatedReadGuard;
+  const snapshotReadGuard = useCallback((bindLocation = true): NetworkReadSessionGuard => {
+    const context = navigationContext.current;
+    const locationVersion = navigationLocation.current.version;
+    const current = () => navigationLocation.current.mounted
+      && context === navigationContext.current
+      && (!bindLocation || locationVersion === navigationLocation.current.version);
+    const authenticated = readGuardFactory.current?.(current);
+    return async () => current() && (!authenticated || await authenticated()) && current();
+  }, []);
+
+  // The existing native command packet belongs to the account/context, not
+  // an inbox query. Job polls retain their own location key and cancellation.
+  const nativeReadFetch = useMemo<typeof fetch>(() => {
+    const current = snapshotReadGuard(false);
+    const requireCurrent = async () => {
+      if (!await current()) throw new Error("Network read account or persona changed");
+    };
+    const guardBody = (response: Response): Response => {
+      const json = response.json.bind(response);
+      const text = response.text.bind(response);
+      const clone = response.clone.bind(response);
+      response.json = async () => { await requireCurrent(); const body: unknown = await json(); await requireCurrent(); return body; };
+      response.text = async () => { await requireCurrent(); const body = await text(); await requireCurrent(); return body; };
+      response.clone = () => guardBody(clone());
+      return response;
+    };
+    return async (input, init) => {
+      await requireCurrent();
+      const response = await fetchImpl(input, init);
+      await requireCurrent();
+      return guardBody(response);
+    };
+  }, [snapshotReadGuard, fetchImpl, navigationContextKey, createAuthenticatedReadGuard]);
   const [networkNavigationGeneration, setNetworkNavigationGeneration] = useState<number | null>(null);
   const [scoringNavigationGeneration, setScoringNavigationGeneration] = useState<number | null>(null);
+  const [rebalanceNavigationGeneration, setRebalanceNavigationGeneration] = useState<number | null>(null);
   const [reviewsNavigationGeneration, setReviewsNavigationGeneration] = useState<number | null>(null);
   const [navigationError, setNavigationError] = useState<string | null>(null);
   const NETWORK_OPERATOR_HEADERS = useMemo(() => operatorSecurityHeaders(activeRoleId), [activeRoleId, navigationContextKey]);
-  const allowedTabIndices = useMemo(() => NETWORK_TAB_IDS.flatMap((tab, index) =>
-    (allowedTabIds?.includes(tab) ?? fixturesAllowed) ? [index] : []), [allowedTabIds, fixturesAllowed]);
-  const canReadListings = allowedTabIndices.includes(0) || allowedTabIndices.includes(1);
-  const canReadScoring = allowedTabIndices.some((index) => index >= 2 && index <= 4);
-  const canReadReviews = allowedTabIndices.includes(5);
-  const canReadRebalance = allowedTabIndices.includes(6);
   const candidatesProp = candidatesInput ?? (fixturesAllowed ? CANDIDATE_FIXTURES : EMPTY_CANDIDATES);
   const heatZonesProp = heatZonesInput ?? (fixturesAllowed ? HEAT_ZONE_FIXTURES : EMPTY_HEAT_ZONES);
   const listings = listingsInput ?? (fixturesAllowed ? LISTING_FIXTURES : EMPTY_LISTINGS);
@@ -741,6 +818,11 @@ export function NetworkFindAreasWorkspace({
   const workflowSelectionError = isCandidateWorkflowTab(activeTab) && !overrideApplies && urlCandidateSelection.invalid
     ? "候選點連結包含不一致或空白的選取值。" : null;
   const candidateSelectionError = activeTab === 2 ? workflowSelectionError : null;
+  // Exact Task Center HeatZone identity (frozen Root parser). Only Find Areas
+  // consumes it; the intake detail route and every other tab keep their own
+  // owners. It names a target only — the guarded read below decides access.
+  const heatZoneSelection = parseHeatZoneSelection(searchParams, intakeDetailOpen ? -1 : activeTab);
+  const heatZoneRequestId = heatZoneRequestArgument(heatZoneSelection, selectedHeatZoneId);
 
   useEffect(() => {
     setTabOverride((current) => (current !== null
@@ -750,6 +832,8 @@ export function NetworkFindAreasWorkspace({
   }, [urlTab, urlCandidateZoneId, searchParams]);
   const [networkSnapshotValue, setNetworkSnapshot] = useState<NetworkListingsSnapshot | null>(null);
   const networkSnapshot = networkNavigationGeneration === navigationContext.current.generation ? networkSnapshotValue : null;
+  // Generation+URL+location-epoch receipt of the last admitted scoped read (answer or refusal).
+  const [networkSnapshotReceipt, setNetworkSnapshotReceipt] = useState<string | null>(null);
   const [networkApiError, setNetworkApiError] = useState<string | null>(null);
   const [networkLoadFailureValue, setNetworkLoadFailure] = useState<OperatorLoadFailure | null>(null);
   const networkLoadFailure = networkNavigationGeneration === navigationContext.current.generation ? networkLoadFailureValue : null;
@@ -805,12 +889,17 @@ export function NetworkFindAreasWorkspace({
     executionKey.current = null;
     executionSubjectIntent.current = null;
   }, [navigationContextKey, navigationLocationKey]);
-  const [rebalanceSnapshot, setRebalanceSnapshot] = useState<NetworkRebalanceSnapshot | null>(null);
-  const [rebalanceApiError, setRebalanceApiError] = useState<string | null>(null);
-  const [rebalanceLoadState, setRebalanceLoadState] = useState<OperatorDataAvailability>(
+  const [rebalanceSnapshotValue, setRebalanceSnapshot] = useState<NetworkRebalanceSnapshot | null>(null);
+  const rebalanceSnapshot = rebalanceNavigationGeneration === navigationContext.current.generation ? rebalanceSnapshotValue : null;
+  const [rebalanceApiErrorValue, setRebalanceApiError] = useState<string | null>(null);
+  const rebalanceApiError = rebalanceNavigationGeneration === navigationContext.current.generation ? rebalanceApiErrorValue : null;
+  const [rebalanceLoadStateValue, setRebalanceLoadState] = useState<OperatorDataAvailability>(
     fixturesAllowed ? "fixture" : "loading",
   );
-  const [rebalanceLoadFailure, setRebalanceLoadFailure] = useState<OperatorLoadFailure | null>(null);
+  const rebalanceLoadState: OperatorDataAvailability = rebalanceNavigationGeneration === navigationContext.current.generation || fixturesAllowed
+    ? rebalanceLoadStateValue : "loading";
+  const [rebalanceLoadFailureValue, setRebalanceLoadFailure] = useState<OperatorLoadFailure | null>(null);
+  const rebalanceLoadFailure = rebalanceNavigationGeneration === navigationContext.current.generation ? rebalanceLoadFailureValue : null;
   const [busyRebalanceAction, setBusyRebalanceAction] = useState<string | null>(null);
   const [reviewsSnapshotValue, setReviewsSnapshot] = useState<NetworkReviewsSnapshot | null>(null);
   const reviewsSnapshot = reviewsNavigationGeneration === navigationContext.current.generation ? reviewsSnapshotValue : null;
@@ -823,6 +912,58 @@ export function NetworkFindAreasWorkspace({
   const reviewsLoadFailure = reviewsNavigationGeneration === navigationContext.current.generation ? reviewsLoadFailureValue : null;
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  const [reviewIntentEpoch, setReviewIntentEpoch] = useState(0);
+  const reviewDecisionInFlight = useRef<symbol | null>(null);
+  const reviewDecisionAttempt = useRef<{ reviewId: string; generation: number; contextKey: string; locationVersion: number;
+    observedTenant: string | null; actor: string | null; tenant: string | null; context: ReviewDecisionContext | null;
+    frames: { network: number; scoring: number; reviews: number }; requestToken: symbol | null;
+    body: BoundReviewDecisionBody | null; payload: string | null; key: string; correlation: string; unknownOutcome: boolean } | null>(null);
+  useEffect(() => {
+    reviewDecisionAttempt.current = null; reviewDecisionInFlight.current = null;
+    setReviewSubmitting(false); setReviewError(null);
+    setReviewIntentEpoch((epoch) => epoch + 1);
+  },
+    [navigationContextKey, navigationLocationKey]);
+
+  const invalidateReviewScope = useCallback((session: NonNullable<typeof reviewDecisionAttempt.current>) => {
+    if (reviewDecisionAttempt.current !== session || !navigationLocation.current.mounted) return;
+    // A request owns each frame separately. Newer authenticated reads retain
+    // their exact bytes even if an old request discovers a changed cookie.
+    if (networkReadSequence.current === session.frames.network) {
+      ++networkReadSequence.current; setNetworkSnapshot(null); setNetworkLoadState("error");
+    }
+    if (scoringReadSequence.current === session.frames.scoring) {
+      ++scoringReadSequence.current; setScoringSnapshot(null); setScoringLoadState("error");
+    }
+    if (reviewsReadSequence.current === session.frames.reviews) {
+      ++reviewsReadSequence.current; setReviewsSnapshot(null);
+      setReviewsNavigationGeneration(session.generation); setReviewsLoadState("error");
+    }
+    reviewDecisionAttempt.current = null;
+    if (reviewDecisionInFlight.current === session.requestToken) {
+      reviewDecisionInFlight.current = null; setReviewSubmitting(false);
+    }
+    setReviewError(null); setReviewIntentEpoch((epoch) => epoch + 1);
+  }, []);
+
+  useEffect(() => {
+    const session = reviewDecisionAttempt.current;
+    if (!session || session.actor === null || session.tenant === null
+      || networkReadSequence.current === session.frames.network
+        && scoringReadSequence.current === session.frames.scoring && reviewsReadSequence.current === session.frames.reviews) return;
+    let cancelled = false;
+    const sequences = [networkReadSequence.current, scoringReadSequence.current, reviewsReadSequence.current];
+    const isCurrent = () => !cancelled && navigationLocation.current.mounted && reviewDecisionAttempt.current === session
+      && sequences[0] === networkReadSequence.current && sequences[1] === scoringReadSequence.current
+      && sequences[2] === reviewsReadSequence.current;
+    void readReviewDecisionIdentity(isCurrent).then((identity) => {
+      if (isCurrent() && (!identity || identity.actorSubjectId !== session.actor || identity.tenantId !== session.tenant)) {
+        invalidateReviewScope(session);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [networkSnapshotValue, scoringSnapshotValue, reviewsSnapshotValue, invalidateReviewScope]);
+
 
   const [submissionOffer, setSubmissionOffer] = useState<ReviewSubmissionOffer | null>(null);
   const [submissionContext, setSubmissionContext] = useState<ReviewSubmissionContext | null>(null);
@@ -1013,20 +1154,27 @@ export function NetworkFindAreasWorkspace({
   const localCandidates = candidates;
 
   const effectiveLens = activeLens ?? localLens;
-  const effectiveSelectedId = selectedHeatZoneId ?? localSelectedId;
+  // An explicit valid request is the original selectedHeatZoneId argument; a
+  // refused one reads unfiltered without choosing any zone for it.
+  const effectiveSelectedId = heatZoneRequestId === undefined
+    ? selectedHeatZoneId ?? localSelectedId
+    : heatZoneRequestId ?? "";
   const effectiveTrackedIds = trackedHeatZoneIds ?? Array.from(localTrackedIds);
   const trackedSet = useMemo(() => new Set(effectiveTrackedIds), [effectiveTrackedIds]);
 
   useEffect(() => {
     if (
+      heatZoneRequestId === undefined &&
       selectedHeatZoneId === undefined &&
       !localSelectedId &&
       heatZones.length > 0
     ) {
       setLocalSelectedId(heatZones[0].id);
     }
-  }, [heatZones, localSelectedId, selectedHeatZoneId]);
+  }, [heatZoneRequestId, heatZones, localSelectedId, selectedHeatZoneId]);
 
+  // Read leases include the observed URL and scope. When either changes,
+  // replace the invalidated read; a late response alone cannot restart it.
   useEffect(() => {
     if (!canReadListings) {
       setNetworkSnapshot(null);
@@ -1038,16 +1186,28 @@ export function NetworkFindAreasWorkspace({
     let cancelled = false;
     const generation = navigationContext.current.generation;
     const sequence = ++networkReadSequence.current;
+    // Explicit intent never adopts the server's default first zone, and the
+    // receipt lets Find Areas confirm a target only from this exact read.
+    const explicitHeatZoneRequest = heatZoneRequestId !== undefined;
+    // The location epoch is captured once, when this read starts. A late answer
+    // keeps the epoch it was issued under, so returning to a byte-identical URL
+    // (a newer epoch) never re-matches an earlier snapshot.
+    const locationEpoch = navigationLocation.current.version;
+    const receipt = heatZoneSnapshotReceipt(generation, navigationLocationKey, locationEpoch);
     async function load() {
-      const read = await fetchNetworkSnapshot(effectiveSelectedId || null, effectiveLens, activeRoleId, fetchImpl);
+      const read = await fetchNetworkSnapshot(effectiveSelectedId || null, effectiveLens, activeRoleId, snapshotReadGuard(), fetchImpl);
+      if ("superseded" in read) return;
       if (sequence !== networkReadSequence.current) return;
       const snapshot = read.ok ? read.snapshot : null;
       if (!cancelled && generation === navigationContext.current.generation && snapshot) {
         setNetworkNavigationGeneration(generation);
+        setNetworkSnapshotReceipt(receipt);
         const inspection = inspectNetworkListingsSnapshot(snapshot);
+        const authorizedEmpty = inspection === "empty" && snapshot.source === "api" && hasNetworkListingsRenderShape(snapshot);
         const serverSelectedId = snapshot.selectedHeatZoneId;
         if (
           inspection === "ready" &&
+          !explicitHeatZoneRequest &&
           !effectiveSelectedId &&
           serverSelectedId &&
           snapshot.heatZones?.some((zone) => zone.id === serverSelectedId)
@@ -1055,7 +1215,9 @@ export function NetworkFindAreasWorkspace({
           setLocalSelectedId(serverSelectedId);
         }
         setNetworkSnapshot(
-          inspection === "ready" || fixturesAllowed && hasNetworkListingsRenderShape(snapshot)
+          inspection === "ready"
+            || authorizedEmpty
+            || fixturesAllowed && hasNetworkListingsRenderShape(snapshot)
             ? snapshot
             : null,
         );
@@ -1064,12 +1226,15 @@ export function NetworkFindAreasWorkspace({
         setNetworkLoadState(
           inspection === "ready"
             ? "ready"
-            : fixturesAllowed
-              ? "fixture"
-              : inspection,
+            : authorizedEmpty
+              ? "empty"
+              : fixturesAllowed
+                ? "fixture"
+                : inspection,
         );
       } else if (!cancelled && generation === navigationContext.current.generation && !read.ok) {
         setNetworkNavigationGeneration(generation);
+        setNetworkSnapshotReceipt(receipt);
         // A refused read leaves no snapshot behind: its collections were not
         // read, so nothing below may present them as an authorized result.
         setNetworkSnapshot(null);
@@ -1086,7 +1251,7 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [activeRoleId, canReadListings, effectiveLens, effectiveSelectedId, fixturesAllowed, navigationContextKey, fetchImpl]);
+  }, [activeRoleId, canReadListings, effectiveLens, effectiveSelectedId, fixturesAllowed, heatZoneRequestId, navigationContextKey, navigationLocationKey, fetchImpl]);
 
   useEffect(() => {
     if (!canReadScoring) {
@@ -1099,7 +1264,8 @@ export function NetworkFindAreasWorkspace({
     const generation = navigationContext.current.generation;
     const sequence = ++scoringReadSequence.current;
     async function loadScoring() {
-      const read = await fetchNetworkScoringSnapshot(activeRoleId, fetchImpl);
+      const read = await fetchNetworkScoringSnapshot(activeRoleId, snapshotReadGuard(), fetchImpl);
+      if ("superseded" in read) return;
       if (sequence !== scoringReadSequence.current) return;
       const snapshot = read.ok ? read.snapshot : null;
       if (!cancelled && generation === navigationContext.current.generation && snapshot) {
@@ -1130,7 +1296,7 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [activeRoleId, canReadScoring, fixturesAllowed, navigationContextKey, fetchImpl]);
+  }, [activeRoleId, canReadScoring, fixturesAllowed, navigationContextKey, navigationLocationKey, fetchImpl]);
 
   useEffect(() => {
     if (!canReadRebalance) {
@@ -1141,10 +1307,13 @@ export function NetworkFindAreasWorkspace({
       return;
     }
     let cancelled = false;
+    const generation = navigationContext.current.generation;
     async function loadRebalance() {
-      const read = await fetchNetworkRebalanceSnapshot(activeRoleId, fetchImpl);
+      const read = await fetchNetworkRebalanceSnapshot(activeRoleId, snapshotReadGuard(), fetchImpl);
+      if ("superseded" in read) return;
       const snapshot = read.ok ? read.snapshot : null;
-      if (!cancelled && snapshot) {
+      if (!cancelled && generation === navigationContext.current.generation && snapshot) {
+        setRebalanceNavigationGeneration(generation);
         const inspection = inspectNetworkRebalanceSnapshot(snapshot);
         setRebalanceSnapshot(
           inspection === "ready" || fixturesAllowed
@@ -1160,7 +1329,9 @@ export function NetworkFindAreasWorkspace({
               ? "fixture"
               : inspection,
         );
-      } else if (!cancelled && !read.ok) {
+      } else if (!cancelled && generation === navigationContext.current.generation && !read.ok) {
+        setRebalanceSnapshot(null);
+        setRebalanceNavigationGeneration(generation);
         setRebalanceLoadFailure(read.failure);
         setRebalanceApiError(
           fixturesAllowed
@@ -1174,7 +1345,7 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [activeRoleId, canReadRebalance, fixturesAllowed, fetchImpl]);
+  }, [activeRoleId, canReadRebalance, fixturesAllowed, navigationContextKey, navigationLocationKey, fetchImpl]);
 
   const applyReviewsSnapshot = useCallback((snapshot: NetworkReviewsSnapshot, generation: number, sequence: number) => {
     if (!navigationLocation.current.mounted || generation !== navigationContext.current.generation
@@ -1213,7 +1384,8 @@ export function NetworkFindAreasWorkspace({
     setReviewSubmitting(false);
     setReviewsLoadState(fixturesAllowed ? "fixture" : "loading");
     async function loadReviews() {
-      const read = await fetchNetworkReviewsSnapshot(reviewIdentity.readHeaders, fetchImpl);
+      const read = await fetchNetworkReviewsSnapshot(reviewIdentity.readHeaders, snapshotReadGuard(), fetchImpl);
+      if ("superseded" in read) return;
       const snapshot = read.ok ? read.snapshot : null;
       if (!cancelled && snapshot) {
         applyReviewsSnapshot(snapshot, generation, sequence);
@@ -1229,7 +1401,7 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [applyReviewsSnapshot, canReadReviews, fixturesAllowed, reviewIdentity, fetchImpl]);
+  }, [applyReviewsSnapshot, canReadReviews, fixturesAllowed, reviewIdentity, navigationLocationKey, fetchImpl]);
 
   // Decide using the current review identity and reload the authoritative queue.
   // Returns false so the dialog
@@ -1241,6 +1413,8 @@ export function NetworkFindAreasWorkspace({
     action: ReviewDecisionAction,
     form: ReviewDecisionForm,
   ): Promise<boolean> {
+    if (reviewsSnapshot?.source === "canonical") return submitBoundReviewDecision(reviewId, action, form);
+    if (!fixturesAllowed) return false; // Production never enters the fixture decision transport.
     const generation = navigationContext.current.generation;
     if (!navigationLocation.current.mounted || reviewIdentity.observedContextKey !== navigationContext.current.key) return false;
     if (!reviewIdentity.canDecide) return false;
@@ -1277,7 +1451,8 @@ export function NetworkFindAreasWorkspace({
         setReviewError(`review decision failed (${response.status})`);
         return false;
       }
-      const read = await fetchNetworkReviewsSnapshot(reviewIdentity.readHeaders, fetchImpl);
+      const read = await fetchNetworkReviewsSnapshot(reviewIdentity.readHeaders, snapshotReadGuard(), fetchImpl);
+      if ("superseded" in read) return false;
       if (!isCurrent()) return false;
       if (read.ok) {
         return applyReviewsSnapshot(read.snapshot, generation, sequence);
@@ -1296,10 +1471,144 @@ export function NetworkFindAreasWorkspace({
     }
   }
 
+  async function submitBoundReviewDecision(reviewId: string, action: ReviewDecisionAction, form: ReviewDecisionForm | null): Promise<boolean> {
+    if (reviewDecisionInFlight.current || !navigationLocation.current.mounted || !reviewIdentity.canDecide) return false;
+    const capturedScoringSequence = scoringReadSequence.current;
+    const snapshot = reviewsSnapshot;
+    const rows = snapshot?.reviews.filter((row) => row.id === reviewId) ?? [];
+    const row = rows[0];
+    if (!snapshot || rows.length !== 1 || !row || !isReviewPending(row) || !hasRecordedReviewReport(row)) return false;
+    let attempt = reviewDecisionAttempt.current;
+    if (attempt?.body && attempt.reviewId === reviewId && attempt.unknownOutcome && form !== null
+      && JSON.stringify(boundReviewDecisionBody(attempt.context!, action, form)) !== attempt.payload) {
+      setReviewError(`原核決結果尚未確認；請保留原原因、動作與風險確認，以同一請求核對。${attempt.correlation}`);
+      return false;
+    }
+    const sameForm = attempt?.context && attempt.reviewId === reviewId && (!attempt.body || form === null || form !== null
+      && JSON.stringify(boundReviewDecisionBody(attempt.context, action, form)) === attempt.payload);
+    if (!sameForm) {
+      attempt = { reviewId, generation: navigationContext.current.generation, contextKey: navigationContext.current.key,
+        locationVersion: navigationLocation.current.version, observedTenant: window.sessionStorage.getItem("oday.operator.tenant"),
+        actor: attempt?.reviewId === reviewId ? attempt.actor : null,
+        tenant: attempt?.reviewId === reviewId ? attempt.tenant : null, context: null, body: null, payload: null,
+        frames: { network: networkReadSequence.current, scoring: capturedScoringSequence, reviews: reviewsReadSequence.current }, requestToken: null,
+        key: crypto.randomUUID(), correlation: crypto.randomUUID(), unknownOutcome: false };
+      reviewDecisionAttempt.current = attempt;
+    }
+    const session = attempt!;
+    const requestToken = Symbol("native-review-request");
+    session.frames = { network: networkReadSequence.current, scoring: capturedScoringSequence, reviews: reviewsReadSequence.current };
+    session.requestToken = requestToken;
+    const ownsAttempt = () => reviewDecisionAttempt.current === session && navigationLocation.current.mounted;
+    const scopeError = "登入身分或審核範圍已變更；未確認核決結果，請重新讀取。";
+    const invalidateOwnedScope = () => {
+      invalidateReviewScope(session);
+    };
+    const current = () => reviewDecisionAttempt.current === session && navigationLocation.current.mounted
+      && session.generation === navigationContext.current.generation && session.contextKey === navigationContext.current.key
+      && session.locationVersion === navigationLocation.current.version
+      && session.observedTenant === window.sessionStorage.getItem("oday.operator.tenant");
+    const subject = async () => {
+      const identity = await readReviewDecisionIdentity(current);
+      if (!identity || !current() || session.actor !== null && session.actor !== identity.actorSubjectId
+        || session.tenant !== null && session.tenant !== identity.tenantId
+        || session.context && (session.context.actorSubjectId !== identity.actorSubjectId || session.context.tenantId !== identity.tenantId)
+        || session.body && (session.body.expectedActorSubjectId !== identity.actorSubjectId || session.body.expectedTenantId !== identity.tenantId)) {
+        invalidateOwnedScope();
+        throw new Error(scopeError);
+      }
+      session.actor = identity.actorSubjectId; session.tenant = identity.tenantId; return identity.actorSubjectId;
+    };
+    const read = async (path: string, init?: RequestInit, ownsRead: () => boolean = current): Promise<unknown> => {
+      await subject();
+      if (!ownsRead()) throw new Error(`正式資料讀取已被新的讀取取代；${session.correlation}`);
+      const response = await fetchImpl(path, { cache: "no-store", signal: AbortSignal.timeout(20_000), ...init });
+      await subject();
+      if (!ownsRead()) throw new Error(`正式資料讀取已被新的讀取取代；${session.correlation}`);
+      const value: unknown = await response.json();
+      await subject();
+      if (!ownsRead()) throw new Error(`正式資料讀取已被新的讀取取代；${session.correlation}`);
+      if (init?.method === "POST" && response.status >= 400 && response.status < 500) session.unknownOutcome = false;
+      if (!response.ok) throw new Error(`審核服務拒絕或未完成讀取（HTTP ${response.status}）；${session.correlation}`);
+      return value;
+    };
+    reviewDecisionInFlight.current = requestToken; setReviewSubmitting(true); setReviewError(null);
+    try {
+      await subject();
+      if (!session.body) {
+        const context = await read(`/api/v1/operator/network-reviews/${encodeURIComponent(reviewId)}/decision-context?${new URLSearchParams({ candidateId: row.candidateId })}`);
+        if (hasReviewDecisionContext(context) && (context.actorSubjectId !== session.actor
+          || context.tenantId !== session.tenant || session.observedTenant && context.tenantId !== session.observedTenant)) {
+          invalidateOwnedScope();
+          throw new Error(scopeError);
+        }
+        if (!hasReviewDecisionContext(context) || !reviewDecisionContextMatches(context, snapshot, row)) {
+          throw new Error("目前登入者、候選點、凍結報告或審核版本尚未唯一核對；未送出決策。");
+        }
+        if (session.context && JSON.stringify(session.context.target) !== JSON.stringify(context.target)) {
+          throw new Error("審核內容已變更；保留表單，請重新讀取並確認原核決結果。");
+        }
+        session.context = context;
+        if (form === null) return true;
+        session.body = boundReviewDecisionBody(context, action, form); session.payload = JSON.stringify(session.body);
+      }
+      if (form === null) return session.context !== null;
+      const body = session.body;
+      // Unknown outcomes retain the original request/version/key for an authorized replay.
+      session.unknownOutcome = true;
+      const receipt = await read(`/api/v1/operator/network-reviews/${encodeURIComponent(reviewId)}/decision`, {
+        method: "POST", headers: { ...reviewIdentity.decideHeaders, "Content-Type": "application/json",
+          "If-Match": `W/"${body.expectedDecisionVersion}"`, "If-Actor-Match": body.expectedActorSubjectId,
+          "Idempotency-Key": session.key, "X-Correlation-Id": session.correlation }, body: session.payload!,
+      });
+      if (!reviewDecisionReceiptMatches(receipt, reviewId, body, session.key, session.correlation)) {
+        throw new Error(`核決回覆未核對同一份 Decision、Approval 與處理人員；${session.correlation}`);
+      }
+      const networkSequence = ++networkReadSequence.current;
+      const reviewsSequence = ++reviewsReadSequence.current;
+      session.frames.network = networkSequence; session.frames.reviews = reviewsSequence;
+      const scoringSequence = capturedScoringSequence;
+      const freshCurrent = () => current() && networkSequence === networkReadSequence.current
+        && reviewsSequence === reviewsReadSequence.current && scoringSequence === scoringReadSequence.current;
+      const params = new URLSearchParams({ lens: effectiveLens });
+      if (effectiveSelectedId) params.set("selectedHeatZoneId", effectiveSelectedId);
+      const network = await read(`/api/v1/operator/network-listings?${params}`, { headers: NETWORK_OPERATOR_HEADERS }, freshCurrent);
+      if (!freshCurrent()) throw new Error(`候選點讀取已被新的範圍或資料讀取取代；${session.correlation}`);
+      const confirmed = await read("/api/v1/operator/network-reviews", { headers: reviewIdentity.readHeaders }, freshCurrent);
+      if (!freshCurrent() || scoringNavigationGeneration !== session.generation || scoringLoadState !== "ready"
+        || !reviewDecisionFreshGraphMatches(network, scoringSnapshot, confirmed, reviewId, body, session.generation)
+        || inspectNetworkListingsSnapshot(network as NetworkListingsSnapshot) !== "ready") {
+        throw new Error(`正式 Decision、Approval、凍結報告與決策內容尚未吻合；${session.correlation}`);
+      }
+      await subject();
+      if (!freshCurrent()) return false;
+      // Publish the two coherent, authorized reads in one synchronous batch.
+      setNetworkSnapshot(network as NetworkListingsSnapshot); setNetworkNavigationGeneration(session.generation);
+      setNetworkLoadState("ready"); setNetworkLoadFailure(null); setNetworkApiError(null);
+      if (!applyReviewsSnapshot(confirmed as NetworkReviewsSnapshot, session.generation, reviewsSequence)) return false;
+      session.unknownOutcome = false;
+      await onReviewDecisionConfirmed?.();
+      await subject();
+      if (!current()) return false;
+      reviewDecisionAttempt.current = null;
+      return true;
+    } catch (error) {
+      if (current()) setReviewError(error instanceof Error ? error.message : `核決結果尚未確認；${session.correlation}`);
+      else invalidateOwnedScope();
+      return false;
+    } finally {
+      if (reviewDecisionInFlight.current === requestToken) {
+        reviewDecisionInFlight.current = null;
+        if (ownsAttempt() || reviewDecisionAttempt.current === null) setReviewSubmitting(false);
+      }
+    }
+  }
+
   const reloadScoringSnapshot = useCallback(async () => {
     const generation = navigationContext.current.generation;
     const sequence = ++scoringReadSequence.current;
-    const read = await fetchNetworkScoringSnapshot(activeRoleId, fetchImpl);
+    const read = await fetchNetworkScoringSnapshot(activeRoleId, snapshotReadGuard(), fetchImpl);
+    if ("superseded" in read) return;
     if (!navigationLocation.current.mounted || sequence !== scoringReadSequence.current
       || navigationContextKey !== navigationContext.current.key || generation !== navigationContext.current.generation) return;
     setScoringNavigationGeneration(generation);
@@ -1350,7 +1659,7 @@ export function NetworkFindAreasWorkspace({
 
   async function readCanonicalScoreSubject(isCurrent: () => boolean): Promise<string | null> {
     try {
-      const response = await fetch("/auth/session", { cache: "no-store", headers: { accept: "application/json" } });
+      const response = await fetchImpl("/auth/session", { cache: "no-store", headers: { accept: "application/json" } });
       if (!isCurrent()) return null;
       const session: unknown = await response.json();
       if (!isCurrent()) return null;
@@ -1541,12 +1850,45 @@ export function NetworkFindAreasWorkspace({
   }
 
   async function reloadRebalanceSnapshot() {
-    const read = await fetchNetworkRebalanceSnapshot(activeRoleId, fetchImpl);
+    const generation = navigationContext.current.generation;
+    const read = await fetchNetworkRebalanceSnapshot(activeRoleId, snapshotReadGuard(), fetchImpl);
+    if ("superseded" in read || generation !== navigationContext.current.generation) return;
     if (read.ok) {
       setRebalanceSnapshot(read.snapshot);
+      setRebalanceNavigationGeneration(generation);
       setRebalanceApiError(null);
     }
   }
+
+  const [surveyRequest, setSurveyRequest] = useState<{ target: SurveyTarget; api: ReturnType<typeof createSurveyAssignmentApi>; tab: number } | null>(null);
+  const [listingSearchRequest, setListingSearchRequest] = useState<{
+    zoneId: string; zoneLabel: string; guard: NetworkReadSessionGuard; contextKey: string; locationVersion: number;
+  } | null>(null);
+  const [areaPlanningRequest, setAreaPlanningRequest] = useState<{
+    zoneId: string; zoneLabel: string; guard: NetworkReadSessionGuard; contextKey: string; locationVersion: number;
+  } | null>(null);
+  const surveyBinding = useMemo(() => {
+    const context = navigationContext.current;
+    const locationVersion = navigationLocation.current.version;
+    const current = () => context === navigationContext.current
+      && locationVersion === navigationLocation.current.version && navigationLocation.current.mounted;
+    const capture = () => current() ? snapshotReadGuard() : async () => false;
+    const api = createSurveyAssignmentApi(NETWORK_OPERATOR_HEADERS, capture);
+    api.work = createSurveyEvidenceApi(NETWORK_OPERATOR_HEADERS, capture);
+    return { api, open(target: SurveyTarget, tab: number) {
+      if (current() && !fixturesAllowed) setSurveyRequest({ target, api, tab });
+    } };
+  }, [NETWORK_OPERATOR_HEADERS, navigationContextKey, navigationLocationKey, fixturesAllowed]);
+
+  const netPlanBuilderApi = useMemo(() => {
+    const context = navigationContext.current;
+    const locationVersion = navigationLocation.current.version;
+    const current = () => context === navigationContext.current
+      && locationVersion === navigationLocation.current.version && navigationLocation.current.mounted;
+    return createNetPlanBuilderApi(NETWORK_OPERATOR_HEADERS,
+      () => current() ? snapshotReadGuard() : async () => false,
+      async () => { if (current()) await reloadRebalanceSnapshot(); });
+  }, [NETWORK_OPERATOR_HEADERS, navigationContextKey, navigationLocationKey]);
 
   async function postRebalanceAction(
     storeId: string,
@@ -1667,6 +2009,7 @@ export function NetworkFindAreasWorkspace({
     () =>
       buildNetworkFindAreasViewModel({
         activeLens: effectiveLens,
+        fixturesAllowed,
         candidates: localCandidates,
         heatZones,
         listings: listingsEffective,
@@ -1675,10 +2018,37 @@ export function NetworkFindAreasWorkspace({
         selectedHeatZoneId: effectiveSelectedId,
         siteReviews: localSiteReviews,
       }),
-    [localCandidates, effectiveLens, effectiveSelectedId, heatZones, listingsEffective, listingSourcesEffective, rebalanceStoresEffective, localSiteReviews],
+    [fixturesAllowed, localCandidates, effectiveLens, effectiveSelectedId, heatZones, listingsEffective, listingSourcesEffective, rebalanceStoresEffective, localSiteReviews],
   );
 
-  const selectedZone = viewModel.selectedZone;
+  const heatZoneTarget = resolveHeatZoneRequestedTarget({
+    selection: heatZoneSelection,
+    controlledSelectedId: selectedHeatZoneId,
+    snapshot: networkSnapshot,
+    loadState: networkLoadState,
+    snapshotReceipt: networkSnapshotReceipt,
+    currentReceipt: heatZoneSnapshotReceipt(navigationContext.current.generation, navigationLocationKey, navigationLocation.current.version),
+  });
+  const confirmedHeatZoneId = heatZoneTarget.state === "confirmed" ? heatZoneTarget.id : null;
+  // The view model falls back to HZ-01 or the first row. Under explicit intent
+  // only the exactly confirmed zone may be presented or acted on.
+  const selectedZone = heatZoneTarget.state === "none"
+    || confirmedHeatZoneId !== null && viewModel.selectedZone?.id === confirmedHeatZoneId
+    ? viewModel.selectedZone : null;
+  useEffect(() => {
+    // A confirmed target becomes the ordinary local selection, matching a
+    // user's own click, so leaving Find Areas keeps the same verified zone.
+    if (confirmedHeatZoneId !== null) setLocalSelectedId(confirmedHeatZoneId);
+  }, [confirmedHeatZoneId]);
+  // Carry an area only when the intake options and the visible selection are
+  // verified by the same current read. An earlier native map binding can have
+  // different IDs while the scoped aggregate is still arriving.
+  const canAddListingFromSelectedZone = Boolean(
+    canPerformIntake("submit", activeRoleId) && selectedZone
+    && networkLoadState === "ready" && networkSnapshot?.source === "api"
+    && networkSnapshot.heatZoneAvailability?.state !== "unavailable"
+    && networkSnapshot.heatZones?.some(zone => zone.id === selectedZone.id),
+  );
   const isSelectedTracked = selectedZone ? trackedSet.has(selectedZone.id) : false;
   // One effective review source feeds the header chip, the tab badge and the
   // Review panel. Fallback rows exist only in fixture mode, where the panel
@@ -1712,6 +2082,12 @@ export function NetworkFindAreasWorkspace({
   function selectHeatZone(zone: NetworkFindAreasZoneViewModel) {
     setLocalSelectedId(zone.id);
     callbacks?.onSelectHeatZone?.(zone.zone);
+    // With an explicit URL identity, the selected row must match reload and
+    // Back/Forward: both identities move together through the existing tab
+    // navigation helper. Ordinary visits keep their original local selection.
+    if (heatZoneSelection.requested && activeTab === 0 && zone.id !== confirmedHeatZoneId) {
+      changeActiveTab(0, heatZoneSelectionParams(zone.id));
+    }
   }
 
   function changeLens(lens: NetworkFindAreasLens) {
@@ -1741,43 +2117,33 @@ export function NetworkFindAreasWorkspace({
   function sourceListings() {
     if (selectedZone) {
       callbacks?.onSourceListings?.(selectedZone.zone);
-      changeActiveTab(1);
+      changeActiveTab(1, { heatZoneId: selectedZone.id, page: "1" });
     }
   }
 
   /**
    * Opens the canonical add-from-URL dialog on Listing Radar (dialog=add), so
    * the intake keeps its single dialog and permission checks. The radar is
-   * already scoped to the selected HeatZone, which the dialog pre-fills.
+   * explicitly scoped to this HeatZone even after the inbox was set to all areas.
    */
   function addListingFromUrl() {
-    if (selectedZone) {
-      changeActiveTab(1, { dialog: "add" });
-    }
-  }
-
-  function scoreCandidate() {
-    if (selectedZone?.bestCandidate) {
-      callbacks?.onScoreCandidate?.(selectedZone.bestCandidate, selectedZone.zone);
-    }
-  }
-
-  function submitReview() {
-    if (selectedZone) {
-      callbacks?.onSubmitReview?.(selectedZone.zone);
+    if (canAddListingFromSelectedZone && selectedZone) {
+      changeActiveTab(1, { dialog: "add", heatZoneId: selectedZone.id, page: "1" });
     }
   }
 
   async function reloadNetworkSnapshot() {
     const generation = navigationContext.current.generation;
     const sequence = ++networkReadSequence.current;
-    const read = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens, activeRoleId, fetchImpl);
+    const read = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens, activeRoleId, snapshotReadGuard(), fetchImpl);
+    if ("superseded" in read) return;
     if (!navigationLocation.current.mounted || sequence !== networkReadSequence.current
       || navigationContextKey !== navigationContext.current.key || generation !== navigationContext.current.generation) return;
     setNetworkNavigationGeneration(generation);
     if (read.ok) {
       const inspection = inspectNetworkListingsSnapshot(read.snapshot);
-      setNetworkSnapshot(inspection === "ready" || fixturesAllowed && hasNetworkListingsRenderShape(read.snapshot) ? read.snapshot : null);
+      const authorizedEmpty = inspection === "empty" && read.snapshot.source === "api" && hasNetworkListingsRenderShape(read.snapshot);
+      setNetworkSnapshot(inspection === "ready" || authorizedEmpty || fixturesAllowed && hasNetworkListingsRenderShape(read.snapshot) ? read.snapshot : null);
       setNetworkLoadState(inspection);
       setNetworkApiError(null);
       setNetworkLoadFailure(null);
@@ -1810,9 +2176,10 @@ export function NetworkFindAreasWorkspace({
       // These are reads under the current authenticated principal. Cached
       // relations are previews, not permission to bypass destination reads.
       const [read, scoringRead] = await Promise.all([
-        fetchNetworkSnapshot(effectiveSelectedId || null, effectiveLens, activeRoleId, fetchImpl),
-        target.kind === "candidate" ? fetchNetworkScoringSnapshot(activeRoleId, fetchImpl) : Promise.resolve(null),
+        fetchNetworkSnapshot(effectiveSelectedId || null, effectiveLens, activeRoleId, snapshotReadGuard(), fetchImpl),
+        target.kind === "candidate" ? fetchNetworkScoringSnapshot(activeRoleId, snapshotReadGuard(), fetchImpl) : Promise.resolve(null),
       ]);
+      if ("superseded" in read || scoringRead && "superseded" in scoringRead) return;
       if (!isCurrentIntent() || networkSequence !== networkReadSequence.current
         || scoringSequence !== null && scoringSequence !== scoringReadSequence.current) return;
       if (!read.ok) {
@@ -1909,7 +2276,7 @@ export function NetworkFindAreasWorkspace({
   async function readListingWriteSubject(): Promise<string | null> {
     if (fixturesAllowed) return operatorSubjectId(activeRoleId) || null;
     try {
-      const response = await fetch("/auth/session", { cache: "no-store", headers: { accept: "application/json" } });
+      const response = await fetchImpl("/auth/session", { cache: "no-store", headers: { accept: "application/json" } });
       if (!response.ok) return null;
       const session: unknown = await response.json();
       return readObject(session) && typeof session.subject === "string" && session.subject.trim() ? session.subject : null;
@@ -1923,7 +2290,7 @@ export function NetworkFindAreasWorkspace({
     const current = () => listingWriteSession.current === session && navigationLocation.current.mounted
       && session.contextKey === navigationContext.current.key && session.generation === navigationContext.current.generation
       && session.locationVersion === navigationLocation.current.version
-      && session.contextKey === JSON.stringify([activeRoleId, operatorSubjectId(activeRoleId),
+      && session.contextKey === JSON.stringify([activeRoleId, operatorSubjectId(activeRoleId), allowedTabIndices,
         typeof window === "undefined" ? "" : window.sessionStorage.getItem("oday.operator.tenant")]);
     if (!current()) return;
     const setError = kind === "merge" ? setMergeError : setArchiveError;
@@ -1950,7 +2317,8 @@ export function NetworkFindAreasWorkspace({
         return;
       }
       if (actorSubjectId) session.verifiedActorSubjectId = actorSubjectId;
-      const fresh = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens, activeRoleId, fetchImpl);
+      const fresh = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens, activeRoleId, snapshotReadGuard(), fetchImpl);
+      if ("superseded" in fresh) return;
       if (!current()) return;
       const admitted = fresh.ok && (inspectNetworkListingsSnapshot(fresh.snapshot) === "ready"
         || fixturesAllowed && hasNetworkListingsRenderShape(fresh.snapshot));
@@ -2147,7 +2515,7 @@ export function NetworkFindAreasWorkspace({
   const scoreJobRead = useCandidateScoreJobs(isCandidateWorkflowTab(activeTab)
     && scoringWorkflowProvenance === "canonical" && scoringLoadState === "ready" ? scoringSnapshot : null,
     NETWORK_OPERATOR_HEADERS, JSON.stringify([navigationContextKey, navigationLocationKey]),
-    navigationContext.current.generation, `${scoreExecution?.executionRequestId}:${scoreExecution?.actualVersion}`, reloadScoringSnapshot);
+    navigationContext.current.generation, `${scoreExecution?.executionRequestId}:${scoreExecution?.actualVersion}`, reloadScoringSnapshot, nativeReadFetch);
 
   // Both snapshots are masked to the current access generation above. A prior
   // fixture read cannot survive a role/tenant change or a failed current read.
@@ -2192,7 +2560,11 @@ export function NetworkFindAreasWorkspace({
     : null;
   const selectedZoneLabel = selectedZone?.label ?? heatZones.find((zone) => zone.id === effectiveSelectedId)?.label;
 
-  const findAreasLoadState = resolveNetworkFindAreasLoadState(networkLoadState, heatZones.length);
+  const findAreasLoadState = resolveNetworkFindAreasLoadState(networkLoadState, heatZones.length,
+    networkSnapshot?.heatZoneAvailability?.state);
+  // Explicit Task Center target that is not exactly confirmed by the fresh
+  // read: existing unavailable styling, no unrelated zone detail or actions.
+  const findAreasTargetGate = activeTab === 0 ? heatZoneTargetGate(heatZoneTarget) : null;
   const activeTabGateState = resolveNetworkTabGateState({
     activeTab,
     findAreasLoadState,
@@ -2204,7 +2576,7 @@ export function NetworkFindAreasWorkspace({
   });
   const activeTabGateDetail =
     activeTab === 0
-      ? networkApiError ??
+      ? networkApiError ?? networkSnapshot?.heatZoneAvailability?.message ??
         (findAreasLoadState !== networkLoadState
           ? "HeatZone aggregates are not authorized for this read scope; scoped listings remain in Listing Radar."
           : null)
@@ -2248,7 +2620,7 @@ export function NetworkFindAreasWorkspace({
       activeRoleId={activeRoleId}
       busyListingId={busyListingId}
       canonicalIntakeReadContext={!fixturesAllowed && canReadListings ? {
-        fetchImpl, contextKey: navigationContextKey, headers: NETWORK_OPERATOR_HEADERS,
+        fetchImpl: nativeReadFetch, contextKey: navigationContextKey, headers: NETWORK_OPERATOR_HEADERS,
       } : undefined}
       intakeDetailOpen={intakeDetailOpen}
       listings={listingsEffective}
@@ -2260,6 +2632,12 @@ export function NetworkFindAreasWorkspace({
       onMerge={mergeListing}
       rows={viewModel.listingRadar}
       selectedHeatZoneId={effectiveSelectedId}
+      heatZoneOptions={{
+        state: (networkLoadState === "ready" || networkLoadState === "empty") && networkSnapshot?.source === "api" ? "ready"
+          : networkLoadState === "loading" ? "loading" : "error",
+        options: (networkLoadState === "ready" || networkLoadState === "empty") && networkSnapshot?.source === "api"
+          ? (networkSnapshot.heatZones ?? []).map(({ id, label }) => ({ id, label })) : [],
+      }}
       selectedZoneLabel={selectedZoneLabel}
       sources={listingSourcesEffective}
       writeContext={listingWriteContext}
@@ -2345,7 +2723,7 @@ export function NetworkFindAreasWorkspace({
         allowedTabIndices={allowedTabIndices}
         onTabChange={changeActiveTab}
         steps={expansionSteps}
-        workflowNotice={useFixtureWorkflow ? undefined : workflowProjection.notice}
+        workflowNotice={useFixtureWorkflow || activeTab === 0 ? undefined : workflowProjection.notice}
         workflowNextAction={useFixtureWorkflow ? undefined : workflowProjection.nextAction}
         tabCounts={tabCounts}
         tabs={networkTabs}
@@ -2364,6 +2742,7 @@ export function NetworkFindAreasWorkspace({
           <CandidatePanel
             busyCandidateId={submissionBusy ? submissionOffer?.candidateId : busyCandidateId}
             submissionOffers={submissionCandidates}
+            onOpenSurvey={fixturesAllowed ? undefined : (target) => surveyBinding.open(target, activeTab)}
             onRequestSubmission={(offer) => { void requestReviewSubmission(offer); }}
             candidates={scoringNavigationGeneration === navigationContext.current.generation ? scoringSnapshot?.candidates ?? [] : []}
             fallbackRows={fixturesAllowed && !selectedCandidateId ? viewModel.candidatePipeline : []}
@@ -2406,15 +2785,29 @@ export function NetworkFindAreasWorkspace({
           />
         ) : activeTab === 5 ? (
           <ReviewPanel
+            key={reviewIntentEpoch}
             reviews={dedicatedReviews}
             fallbackRows={reviewFallbackRows}
-            canDecide={reviewIdentity.canDecide}
+            // Role eligibility and admission to the native transport are
+            // separate. Production legacy reads remain readable without
+            // presenting controls that their preflight would refuse.
+            canDecide={reviewIdentity.canDecide && (reviewsSnapshot?.source === "canonical" || fixturesAllowed)}
+            decisionUnavailableReason={reviewIdentity.canDecide && !fixturesAllowed && reviewsSnapshot?.source !== "canonical"
+              ? "這筆審核資料尚未與正式審核流程核對，目前僅供查閱。請從 Today 開啟對應的候選點審核。"
+              : undefined}
             submitting={reviewSubmitting}
             decideError={reviewError}
             onDecide={submitReviewDecision}
+            onRequestDecision={(id, action) => reviewsSnapshot?.source === "canonical"
+              ? submitBoundReviewDecision(id, action, null) : fixturesAllowed}
             workflowCandidateId={workflowCandidateId}
             expectedReport={workflowProjection.report}
             explicitReadTarget={explicitReview.target}
+            canonicalCurrentReviewTarget={workflowCandidateId
+              && nativeWorkflow?.[workflowCandidateId]?.availability === "recorded"
+              && nativeWorkflow[workflowCandidateId].stage === "pendingreview"
+              && nativeWorkflow[workflowCandidateId].review?.generation === navigationContext.current.generation
+              ? nativeWorkflow[workflowCandidateId].review : null}
             explicitSelectionError={explicitReview.error}
             fixtureCandidateContext={fixturesAllowed}
             onSelectCandidate={(id) => changeActiveTab(5, { [CANDIDATE_SELECTION_PARAM]: id })}
@@ -2422,6 +2815,7 @@ export function NetworkFindAreasWorkspace({
           />
         ) : activeTab === 6 ? (
           <RebalancePanel
+            builderApi={netPlanBuilderApi}
             apiError={rebalanceApiError}
             busyAction={busyRebalanceAction}
             onCompleteAvm={(storeId) => postRebalanceAction(storeId, "complete-avm")}
@@ -2440,10 +2834,17 @@ export function NetworkFindAreasWorkspace({
             onRejectProposal={handleRejectProposal}
             proposals={proposals}
           />
+        ) : findAreasTargetGate ? (
+          <OperatorDataUnavailableGate
+            failure={findAreasTargetGate.failure}
+            loadingDetail={findAreasTargetGate.loadingDetail}
+            onRetry={findAreasTargetGate.retry ? () => window.location.reload() : undefined}
+            status={findAreasTargetGate.status}
+          />
         ) : (
           <FindAreasPanel
             activeRoleId={activeRoleId}
-            canAddListing={canPerformIntake("submit", activeRoleId)}
+            canAddListing={canAddListingFromSelectedZone}
             fixturesAllowed={fixturesAllowed}
             viewModel={viewModel}
             selectedZone={selectedZone}
@@ -2453,15 +2854,29 @@ export function NetworkFindAreasWorkspace({
             listings={listingsEffective}
             candidates={localCandidates}
             onSelectZone={selectHeatZone}
+            onOpenSurvey={fixturesAllowed ? undefined : (id) => surveyBinding.open({ kind: "HEAT_ZONE", id }, activeTab)}
+            onOpenListingSearch={networkLoadState !== "ready" || networkSnapshot?.source !== "api"
+              || networkSnapshot.heatZoneAvailability?.state === "unavailable"
+              || !selectedZone || !networkSnapshot.heatZones?.some(zone => zone.id === selectedZone.id)
+              || !canPerformIntake("submit", activeRoleId) ? undefined : () => {
+              const guard = snapshotReadGuard();
+              if (!guard || !selectedZone) return;
+              setListingSearchRequest({ zoneId: selectedZone.id, zoneLabel: selectedZone.label, guard,
+                contextKey: navigationContext.current.key, locationVersion: navigationLocation.current.version });
+            }}
             onChangeLens={changeLens}
+            onOpenAreaPlanning={networkLoadState !== "ready" || networkSnapshot?.source !== "api"
+              || networkSnapshot.heatZoneAvailability?.state === "unavailable"
+              || !selectedZone || !networkSnapshot.heatZones?.some(zone => zone.id === selectedZone.id)
+              || !["expansion-manager", "expansion-staff"].includes(activeRoleId) ? undefined : () => {
+              const guard = snapshotReadGuard();
+              if (!guard || !selectedZone) return;
+              setAreaPlanningRequest({ zoneId: selectedZone.id, zoneLabel: selectedZone.label, guard,
+                contextKey: navigationContext.current.key, locationVersion: navigationLocation.current.version });
+            }}
             onToggleTracked={toggleTracked}
             onSourceListings={sourceListings}
             onAddListingFromUrl={addListingFromUrl}
-            onViewCandidates={() =>
-              selectedZone && changeActiveTab(2, { [CANDIDATE_ZONE_PARAM]: selectedZone.id })
-            }
-            onScoreCandidate={scoreCandidate}
-            onSubmitReview={submitReview}
           />
         )}
       </NetworkShell>
@@ -2476,7 +2891,28 @@ export function NetworkFindAreasWorkspace({
       {submissionOffer ? <ReviewSubmissionDialog candidateId={submissionOffer.candidateId} context={submissionContext} busy={submissionBusy}
         error={submissionError} correlationId={submissionCorrelation} onSubmit={(form) => { void submitCanonicalReview(form); }}
         onClose={() => { if (!submissionInFlight.current) { submissionSession.current = null; setSubmissionOffer(null); setSubmissionContext(null); setSubmissionError(null); } }} /> : null}
+      {surveyRequest?.api === surveyBinding.api && surveyRequest.tab === activeTab && (activeTab === 0 || activeTab === 2)
+        && allowedTabIndices.includes(activeTab) ? <SurveyAssignmentDialog api={surveyRequest.api} target={surveyRequest.target}
+          onClose={() => setSurveyRequest(null)} /> : null}
+      {listingSearchRequest && activeTab === 0 && allowedTabIndices.includes(0)
+        && listingSearchRequest.contextKey === navigationContext.current.key
+        && listingSearchRequest.locationVersion === navigationLocation.current.version ?
+        <ListingSearchDialog zoneId={listingSearchRequest.zoneId} zoneLabel={listingSearchRequest.zoneLabel}
+          headers={NETWORK_OPERATOR_HEADERS} guard={listingSearchRequest.guard}
+          onClose={() => setListingSearchRequest(null)} onOpenIntake={(id) => {
+            const params = new URLSearchParams(searchParams.toString());
+            params.set("heatZoneId", listingSearchRequest.zoneId); params.set("hz", listingSearchRequest.zoneId);
+            router.push(buildDurableDetailHref(id, parseUrlState(params), params), { scroll: false });
+          }} /> : null}
       {listingMergeDialog}
+      {areaPlanningRequest && activeTab === 0 && allowedTabIndices.includes(0)
+        && areaPlanningRequest.contextKey === navigationContext.current.key
+        && areaPlanningRequest.locationVersion === navigationLocation.current.version ?
+        <AreaPlanningDraftDialog zoneId={areaPlanningRequest.zoneId} zoneLabel={areaPlanningRequest.zoneLabel}
+          candidates={localCandidates.filter(candidate => candidate.heatZoneId === areaPlanningRequest.zoneId)
+            .map(candidate => ({ id: candidate.id, title: candidate.title }))}
+          headers={NETWORK_OPERATOR_HEADERS} guard={areaPlanningRequest.guard}
+          onClose={() => setAreaPlanningRequest(null)} /> : null}
         {listingArchiveDialog}
     </section>
   );

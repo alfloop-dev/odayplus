@@ -222,8 +222,6 @@ jobs:
     needs: change-scope
     if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
-    # Allow the full live SQL selection and fixture cleanup to finish.
-    # Individual native commands retain their original root and IO deadlines.
     timeout-minutes: 60
     services:
       postgres:
@@ -232,130 +230,135 @@ jobs:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: oday_product_test
         ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+        - 5432:5432
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
     env:
       INTAKE_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/oday_product_test
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        enable-cache: true
+    - name: Set up Python
+      run: uv python install 3.12
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    - name: Install product E2E dependencies
+      run: make product-e2e-bootstrap
+    - name: Bind native review tests to the owned PostgreSQL service
+      run: |
+        uv run python - <<'PY'
+        import os
+        import shutil
+        import tempfile
+        from pathlib import Path
+        from urllib.parse import urlsplit
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
+        runner = Path(os.environ["RUNNER_TEMP"]).resolve()
+        assert "\n" not in str(runner) and "\r" not in str(runner)
+        dsn = os.environ["INTAKE_TEST_DATABASE_URL"]
+        parsed = urlsplit(dsn)
+        assert parsed.scheme == "postgresql"
+        assert parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+        assert parsed.username == "postgres" and parsed.path == "/oday_product_test"
+        assert parsed.port is not None and not parsed.query and not parsed.fragment
+        descriptor, target = tempfile.mkstemp(prefix="oday-ci-owned-postgres-admin-", suffix=".dsn", dir=runner)
+        evidence = None
+        try:
+            with os.fdopen(descriptor, "w") as stream:
+                stream.write(dsn + "\n")
+            evidence = Path(tempfile.mkdtemp(prefix="oday-ci-native-review-evidence-", dir=runner))
+            exported = {name: target for name in (
+                "ODP_SUBMIT_AUTHOR_ADMIN_DSN_FILE", "ODP_NATIVE_SCOPE_ADMIN_DSN_FILE")}
+            exported["ODP_CI_NATIVE_REVIEW_EVIDENCE_DIR"] = str(evidence)
+            for name in ("ODP_SUBMIT_SOD_EVIDENCE_DIR", "ODP_NATIVE_SCOPE_EVIDENCE_DIR",
+                         "ODP_NATIVE_VERSION_EVIDENCE_DIR", "ODP_NEW_REPORT_ROUNDS_EVIDENCE_DIR"):
+                directory = evidence / name.lower()
+                directory.mkdir(mode=0o700)
+                exported[name] = str(directory)
+            with Path(os.environ["GITHUB_ENV"]).open("a") as export:
+                export.write("".join(name + "=" + value + "\n" for name, value in exported.items()))
+        except BaseException:
+            Path(target).unlink(missing_ok=True)
+            if evidence is not None:
+                shutil.rmtree(evidence)
+            raise
+        PY
+    - name: Test official real-estate outcomes on PostgreSQL 16
+      run: uv run pytest tests/integration/test_official_real_estate_postgresql.py
+    - name: Test database contracts, migrations and schema gates
+      env:
+        PYTEST_ADDOPTS: --junitxml=.odp_data/ci/database-contracts.xml
+      run: |
+        # Qualify the original product path; SQL profiling remains opt-in.
+        # Preserve the first failure and JUnit report before the job deadline.
+        # A successful invocation still executes the complete original selection.
+        # Scratch databases isolate file groups. Keep each file on one worker
+        # so its stateful fixtures and browser composition stay serialized.
+        # Overlap real lease waits without shortening root or IO budgets.
+        uv run pytest -m "requires_live_env" \
+          tests/contract tests/ops tests/integration -x --tb=short -vv \
+          -n2 --dist=loadfile --max-worker-restart=0
+    - name: Test model admission and delete propagation against PostgreSQL
+      run: |
+        uv run pytest -m "requires_live_env and not requires_postgis" \
+          tests/unit/test_current_model_admission.py \
+          --junitxml=.odp_data/ci/current-model-admission.xml
+        uv run pytest -m "requires_live_env and not requires_postgis" \
+          apps/data_platform/tests/test_delete_propagation.py \
+          --junitxml=.odp_data/ci/delete-propagation.xml
+        uv run python - <<'PY'
+        import xml.etree.ElementTree as ET
 
-      - name: Set up Python
-        run: uv python install 3.12
+        for path in (
+            ".odp_data/ci/database-contracts.xml",
+            ".odp_data/ci/current-model-admission.xml",
+            ".odp_data/ci/delete-propagation.xml",
+        ):
+            root = ET.parse(path).getroot()
+            cases = list(root.iter("testcase"))
+            if not cases:
+                raise SystemExit(f"Required native SQL controls did not execute: {path}")
+            for outcome in ("skipped", "failure", "error"):
+                if next(root.iter(outcome), None) is not None:
+                    raise SystemExit(f"Required native SQL controls contain {outcome}: {path}")
+            print(f"Verified {len(cases)} native SQL controls; zero skips: {path}")
+        PY
+    - name: Retain database, model and deletion PostgreSQL evidence
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: required-native-sql-${{ github.run_id }}-${{ github.run_attempt }}
+        path: |
+          .odp_data/ci/database-contracts.xml
+          .odp_data/ci/native-intake-command-profile.jsonl
+          .odp_data/ci/current-model-admission.xml
+          .odp_data/ci/delete-propagation.xml
+          .odp_data/ci/odp-new-report-rounds/
+          .odp_data/ci/odp-native-version/
+          ${{ env.ODP_CI_NATIVE_REVIEW_EVIDENCE_DIR }}
+        if-no-files-found: error
+    - name: Remove owned native review connection file
+      if: ${{ always() }}
+      run: |
+        uv run python - <<'PY'
+        import os
+        import re
+        from pathlib import Path
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      # The database selection also owns the native browser-to-SQL cases.
-      # Reuse the shared Python/Node/Chromium bootstrap for those cases.
-      - name: Install product E2E dependencies
-        run: make product-e2e-bootstrap
-
-      - name: Provide owned PostgreSQL authority and evidence directories to existing SQL fixtures
-        run: |
-          uv run python - <<'PYTHON'
-          import os
-          from pathlib import Path
-
-          temporary = Path(os.environ["RUNNER_TEMP"])
-          authority = temporary / "odp-product-postgresql-admin-dsn"
-          with os.fdopen(os.open(authority, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as stream:
-              stream.write(os.environ["INTAKE_TEST_DATABASE_URL"] + "\n")
-          with open(os.environ["GITHUB_ENV"], "a") as stream:
-              for name in ("ODP_SUBMIT_AUTHOR_ADMIN_DSN_FILE", "ODP_NATIVE_SCOPE_ADMIN_DSN_FILE"):
-                  stream.write(f"{name}={authority}\n")
-              for name, folder in (
-                  ("ODP_NEW_REPORT_ROUNDS_EVIDENCE_DIR", "odp-new-report-rounds"),
-                  ("ODP_NATIVE_VERSION_EVIDENCE_DIR", "odp-native-version"),
-              ):
-                  evidence = Path(".odp_data/ci") / folder
-                  evidence.mkdir(mode=0o700, parents=True)
-                  stream.write(f"{name}={evidence.resolve()}\n")
-          PYTHON
-
-      - name: Test official real-estate outcomes on PostgreSQL 16
-        run: uv run pytest tests/integration/test_official_real_estate_postgresql.py
-
-      # `requires_live_env` was doing two jobs at once. Some of the tests behind
-      # it genuinely need a live multi-repo checkout (.orchestrator's sidecar
-      # coordination tests); the rest only need a PostgreSQL, which `pgserver`
-      # already provides as a project dependency with no root and no service
-      # container -- `make security` has been running database tests that way
-      # all along. Conflating the two meant ~79 database tests never ran
-      # anywhere, and that is how the assisted-listing schema validator sat
-      # broken from commit 549ce261 onwards: the test that would have reported
-      # it was excluded by the same marker expression.
-      #
-      # This step runs the database side. The live-environment tests stay out
-      # by path, and the one PostGIS-dependent test stays out by its own marker
-      # so the residual exclusion is one named test rather than a silent bulk.
-      - name: Test database contracts, migrations and schema gates
-        env:
-          PYTEST_ADDOPTS: --junitxml=.odp_data/ci/database-contracts.xml
-        run: |
-          # Qualify the original product path; SQL profiling remains opt-in.
-          # Preserve the first failure and JUnit report before the job deadline.
-          # A successful invocation still executes the complete original selection.
-          # Scratch databases isolate file groups. Keep each file on one worker
-          # so its stateful fixtures and browser composition stay serialized.
-          # Overlap real lease waits without shortening root or IO budgets.
-          uv run pytest -m "requires_live_env and not requires_postgis" \
-            tests/contract tests/ops tests/integration -x --tb=short -vv \
-            -n2 --dist=loadfile --max-worker-restart=0
-
-      # These offline PostgreSQL controls live under unit/ and apps/, so
-      # both the non-live selection and the database paths above omit them.
-      - name: Test model admission and delete propagation against PostgreSQL
-        run: |
-          uv run pytest -m "requires_live_env and not requires_postgis" \
-            tests/unit/test_current_model_admission.py \
-            --junitxml=.odp_data/ci/current-model-admission.xml
-          uv run pytest -m "requires_live_env and not requires_postgis" \
-            apps/data_platform/tests/test_delete_propagation.py \
-            --junitxml=.odp_data/ci/delete-propagation.xml
-          uv run python - <<'PY'
-          import xml.etree.ElementTree as ET
-
-          for path in (
-              ".odp_data/ci/database-contracts.xml",
-              ".odp_data/ci/current-model-admission.xml",
-              ".odp_data/ci/delete-propagation.xml",
-          ):
-              root = ET.parse(path).getroot()
-              cases = list(root.iter("testcase"))
-              if not cases:
-                  raise SystemExit(f"Required native SQL controls did not execute: {path}")
-              for outcome in ("skipped", "failure", "error"):
-                  if next(root.iter(outcome), None) is not None:
-                      raise SystemExit(f"Required native SQL controls contain {outcome}: {path}")
-              print(f"Verified {len(cases)} native SQL controls; zero skips: {path}")
-          PY
-
-      - name: Retain database, model and deletion PostgreSQL evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: required-native-sql-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            .odp_data/ci/database-contracts.xml
-            .odp_data/ci/native-intake-command-profile.jsonl
-            .odp_data/ci/current-model-admission.xml
-            .odp_data/ci/delete-propagation.xml
-            .odp_data/ci/odp-new-report-rounds/
-            .odp_data/ci/odp-native-version/
-          if-no-files-found: error
+        names = {os.environ[key] for key in ("ODP_SUBMIT_AUTHOR_ADMIN_DSN_FILE", "ODP_NATIVE_SCOPE_ADMIN_DSN_FILE")
+                 if os.environ.get(key)}
+        for name in names:
+            target = Path(name)
+            assert target.parent.resolve() == Path(os.environ["RUNNER_TEMP"]).resolve()
+            assert re.fullmatch(r"oday-ci-owned-postgres-admin-[a-z0-9_]+\.dsn", target.name)
+            target.unlink(missing_ok=True)
+        PY
 
   product-api-contract:
     needs: change-scope
@@ -568,79 +571,160 @@ jobs:
     if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # Receipt validation proves the complete evidence-only ancestry from
-          # the tested source commit, which is unavailable in a depth-1 clone.
-          fetch-depth: 0
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - name: Set up Python
-        run: uv python install 3.12
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install product E2E dependencies
-        run: make product-e2e-bootstrap
-
-      # Fixture UI geometry/axe checks are supplemental, not part of the exact
-      # 18-spec/130-test deterministic product receipt inventory. Fail this required
-      # lane on visual regressions without changing release authority or counts.
-      - name: Verify Store Ops Package 10 geometry and accessibility
-        run: npx playwright test --config tests/visual/operator-store-ops-parity.config.ts
-
-      # A reviewed task PR must prove its current source through the complete
-      # deterministic E2E runner. It must not manufacture production release
-      # authority: a well-formed NO-GO Gate 0-6 registry is valid here, while
-      # dev -> main promotion separately requires an authentic GO decision.
-      - name: Run product E2E dev merge gate
-        id: product_e2e
-        run: make product-e2e-gate
-
-      - name: Collect current-source product E2E evidence
-        if: always()
+    services:
+      listing-search-postgres:
+        image: postgis/postgis:16-3.5
         env:
-          E2E_RUNNER_OUTCOME: ${{ steps.product_e2e.outcome }}
-        run: |
-          args=()
-          if [[ "$E2E_RUNNER_OUTCOME" == "success" ]]; then
-            args+=(--expect-complete)
-          fi
-          python3 delivery_toolchain/e2e/collect_ci_product_e2e_evidence.py \
-            --output "$RUNNER_TEMP/product-e2e-evidence" "${args[@]}"
-
-      - name: Preserve product E2E execution evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          # The collector includes only traces/screenshots/context explicitly
-          # referenced by the validated current-source Playwright artifact.
-          name: product-e2e-evidence-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/product-e2e-evidence/
-          if-no-files-found: error
-          retention-days: 90
-
-      # Startup can fail before Playwright produces a source-bound receipt.
-      # Keep its explicit diagnostics separately; they grant no acceptance.
-      - name: Preserve product E2E startup diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: product-e2e-startup-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            .odp_data/e2e-diagnostics/source-identity.json
-            .odp_data/e2e-diagnostics/compose-ps.txt
-            .odp_data/e2e-diagnostics/compose-tail.log
-          if-no-files-found: warn
-          retention-days: 90
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: odp_score_browser_ci
+        ports:
+        - 5438:5432
+        options: --health-cmd "pg_isready -U postgres -d odp_score_browser_ci" --health-interval 10s --health-timeout 5s --health-retries
+          5
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        enable-cache: true
+    - name: Set up Python
+      run: uv python install 3.12
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    - name: Install product E2E dependencies
+      run: make product-e2e-bootstrap
+    - name: Verify Store Ops Package 10 geometry and accessibility
+      env:
+        PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ runner.temp }}/product-e2e-supplemental/geometry45/report.json
+        PLAYWRIGHT_HTML_OUTPUT_DIR: ${{ runner.temp }}/product-e2e-supplemental/geometry45/html-report
+        PLAYWRIGHT_HTML_OPEN: never
+      run: npx playwright test --config tests/visual/operator-store-ops-parity.config.ts --output "$RUNNER_TEMP/product-e2e-supplemental/geometry45/test-results"
+        --reporter=list,json,html
+    - name: Preserve supplemental geometry45 Playwright diagnostics
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: product-e2e-supplemental-geometry45-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/product-e2e-supplemental/geometry45/
+        if-no-files-found: warn
+        retention-days: 90
+    - name: Verify Governance long-record geometry at 390 and 1024
+      env:
+        PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ runner.temp }}/product-e2e-supplemental/governance-visual2/report.json
+        PLAYWRIGHT_HTML_OUTPUT_DIR: ${{ runner.temp }}/product-e2e-supplemental/governance-visual2/html-report
+        PLAYWRIGHT_HTML_OPEN: never
+      run: npx playwright test --config tests/visual/operator-governance-long-records.config.ts --output "$RUNNER_TEMP/product-e2e-supplemental/governance-visual2/test-results"
+        --reporter=list,json,html
+    - name: Preserve supplemental Governance visual2 Playwright diagnostics
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: product-e2e-supplemental-governance-visual2-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/product-e2e-supplemental/governance-visual2/
+        if-no-files-found: warn
+        retention-days: 90
+    - name: Build personal listing search supplemental fixture
+      timeout-minutes: 15
+      env:
+        ODP_API_BASE_URL: http://127.0.0.1:8116
+        NEXT_PUBLIC_API_URL: http://127.0.0.1:8116
+        ODP_DATA_BINDING_MODE: fixture
+        NEXT_PUBLIC_ODP_DATA_BINDING_MODE: fixture
+        ODP_PRODUCT_MODE: poc
+        NEXT_PUBLIC_ODP_PRODUCT_MODE: poc
+        ODP_DEPLOY_ENV: e2e
+        NEXT_PUBLIC_ODP_DEPLOY_ENV: e2e
+        ODP_E2E_MODE: 'true'
+        NEXT_PUBLIC_ODP_E2E_MODE: 'true'
+        ODAY_ENV: test
+      run: npm run build --workspace=@oday-plus/web
+    - name: Verify personal listing search with canonical API and PostgreSQL
+      timeout-minutes: 10
+      env:
+        ODP_SCORE_BROWSER_MODE: isolated-synthetic
+        ODP_SCORE_BROWSER_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5438/odp_score_browser_ci
+        ODP_SCORE_BROWSER_CONTROL_KEY: synthetic-browser-control-20261013-local-only
+        PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ runner.temp }}/product-e2e-supplemental/personal-search3/report.json
+        PLAYWRIGHT_HTML_OUTPUT_DIR: ${{ runner.temp }}/product-e2e-supplemental/personal-search3/html-report
+        PLAYWRIGHT_HTML_OPEN: never
+      run: npx playwright test --config tests/visual/operator-personal-listing-search.config.ts --output "$RUNNER_TEMP/product-e2e-supplemental/personal-search3/test-results"
+        --reporter=list,json,html
+    - name: Preserve supplemental personal listing search3 diagnostics
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: product-e2e-supplemental-personal-search3-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/product-e2e-supplemental/personal-search3/
+        if-no-files-found: warn
+        retention-days: 90
+    - name: Verify area planning drafts with password session and PostgreSQL
+      timeout-minutes: 10
+      env:
+        ODP_SCORE_BROWSER_MODE: isolated-synthetic
+        ODP_SCORE_BROWSER_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5438/odp_score_browser_quarterly_ci
+        ODP_SCORE_BROWSER_CONTROL_KEY: synthetic-quarterly-browser-control-20261016-local-only
+        PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ runner.temp }}/product-e2e-supplemental/area-planning3/report.json
+        PLAYWRIGHT_HTML_OUTPUT_DIR: ${{ runner.temp }}/product-e2e-supplemental/area-planning3/html-report
+        PLAYWRIGHT_HTML_OPEN: never
+      run: |
+        .venv/bin/python - <<'PY'
+        import os
+        import psycopg
+        from psycopg.conninfo import conninfo_to_dict
+        options = conninfo_to_dict(os.environ["ODP_SCORE_BROWSER_DATABASE_URL"])
+        assert options["host"] == "127.0.0.1" and options["dbname"] == "odp_score_browser_quarterly_ci"
+        options["dbname"] = "postgres"
+        with psycopg.connect(**options, autocommit=True) as connection:
+            connection.execute("CREATE DATABASE odp_score_browser_quarterly_ci")
+        PY
+        npx playwright test --config tests/visual/operator-area-planning-draft.config.ts \
+          --output "$RUNNER_TEMP/product-e2e-supplemental/area-planning3/test-results" \
+          --reporter=list,json,html
+    - name: Preserve supplemental area planning3 diagnostics
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: product-e2e-supplemental-area-planning3-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/product-e2e-supplemental/area-planning3/
+        if-no-files-found: warn
+        retention-days: 90
+    - name: Run product E2E dev merge gate
+      id: product_e2e
+      run: make product-e2e-gate
+    - name: Collect current-source product E2E evidence
+      if: always()
+      env:
+        E2E_RUNNER_OUTCOME: ${{ steps.product_e2e.outcome }}
+      run: |
+        args=()
+        if [[ "$E2E_RUNNER_OUTCOME" == "success" ]]; then
+          args+=(--expect-complete)
+        fi
+        python3 delivery_toolchain/e2e/collect_ci_product_e2e_evidence.py \
+          --output "$RUNNER_TEMP/product-e2e-evidence" "${args[@]}"
+    - name: Preserve product E2E execution evidence
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: product-e2e-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/product-e2e-evidence/
+        if-no-files-found: error
+        retention-days: 90
+    - name: Preserve product E2E startup diagnostics
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: product-e2e-startup-${{ github.run_id }}-${{ github.run_attempt }}
+        path: |
+          .odp_data/e2e-diagnostics/source-identity.json
+          .odp_data/e2e-diagnostics/compose-ps.txt
+          .odp_data/e2e-diagnostics/compose-tail.log
+        if-no-files-found: warn
+        retention-days: 90
 
   automatic-dev-release:
     name: Request automatic dev release after checks

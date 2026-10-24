@@ -42,6 +42,7 @@ from tests.integration.test_operator_intake_workflow_postgresql import (
 from tests.integration.test_operator_intake_workflow_postgresql import (
     bridge_database as bridge_database,
 )
+from tests.support.listing_search_integration import execute_claimed_listing_search
 
 pytestmark = pytest.mark.requires_live_env
 
@@ -75,6 +76,8 @@ def _claim_all_other_jobs(bundle, score_job_id):
         if job is None:
             return claimed
         assert job.job_id != score_job_id, "A future retry must never consume a delivery claim"
+        if execute_claimed_listing_search(bundle, job):
+            continue
         assert job.job_type in {"canonical-audit-delivery", "synthetic-other-ready"}
         claimed.append(job)
     raise AssertionError("Synthetic fixture unexpectedly produced unbounded other jobs")

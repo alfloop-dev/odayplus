@@ -42,19 +42,28 @@ const expectedCards: Record<string, string[]> = {
 
 test.describe.configure({ mode: "serial" });
 
-test("expansion contributor keeps the server persona and principal-derived navigation", async ({ page }) => {
+test("expansion contributor keeps the server persona, principal-derived navigation and decision denial", async ({ page }) => {
   await page.setExtraHTTPHeaders(roleHeaders("expansion-staff"));
   await page.addInitScript(() => sessionStorage.setItem("oday.operator.role", "expansion-staff"));
   await page.goto("/operator");
   await expect(page.getByTestId("operator-envelope-source")).toHaveText("operator-shell-api-envelope");
   await expect(page.getByTitle("展店專員", { exact: true })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Operator workspaces" }).getByRole("button", { name: /門市營運/ })).toBeEnabled();
+  // Expansion has operator_console VIEW, which protects these non-Network
+  // reads. The persona label cannot remove its actual API grants.
+  await expect(page.getByRole("navigation", { name: "Operator workspaces" }).getByRole("button", { name: /門市營運/ })).toHaveAttribute("aria-disabled", "false");
   const api = await playwrightRequest.newContext();
   const response = await api.get(`${API_BASE_URL}/api/v1/operator/bootstrap`, { headers: roleHeaders("expansion-staff") });
   expect(response.status()).toBe(200);
   const body = await response.json();
   expect(body.meta.role.id).toBe("expansion-staff");
   expect(body.navigation.allowedWorkspaces).toEqual(allWorkspaces);
+  expect(body.meta.role.allowedWorkspaces).toEqual(allWorkspaces);
+  // Console read access does not grant SiteScore decision authority.
+  const decision = await api.post(`${API_BASE_URL}/api/v1/operator/network-reviews/RV-701/decide`, {
+    headers: roleHeaders("expansion-staff"),
+    data: { decision: "GO", reason: "Verify contributor decision denial without mutation." },
+  });
+  expect(decision.status()).toBe(403);
   await api.dispose();
 });
 
@@ -166,7 +175,40 @@ test("approval writes refresh header counts from the API envelope without sessio
   const before = Number(await count.textContent());
   expect(before).toBeGreaterThan(0);
 
-  await page.getByTestId("operator-decision-rail").getByRole("button", { name: "核准" }).first().click();
+  const card = page.getByTestId("operator-decision-rail").locator("article").first();
+  const approvalId = await card.getAttribute("data-target-entity");
+  expect(approvalId).toBeTruthy();
+  await expect(card).toHaveAttribute("data-target-workspace", "govern");
+  await expect(card).toHaveAttribute("data-target-tab", "approvals");
+  const ownerRead = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/operator/governance/snapshot" && response.request().method() === "GET");
+  await card.getByRole("button", { name: "核准", exact: true }).click();
+  const ownerResponse = await ownerRead;
+  expect(ownerResponse.status()).toBe(200);
+  const owner = await ownerResponse.json();
+  expect(owner.actionAuthority).toMatchObject({ verified: true, decide: true });
+  const exactRows = owner.approvals.filter((row: { id: string; status: string }) => row.id === approvalId && row.status === "pending");
+  expect(exactRows).toHaveLength(1);
+  const detail = page.getByRole("article", { name: "Approval detail" });
+  await expect(detail).toContainText(approvalId!);
+  await expect(detail.getByRole("heading", { name: exactRows[0].title, exact: true })).toBeVisible();
+  // Opening an owner is read-only. Only its successful decision may change a count.
+  await expect(count).toHaveText(String(before));
+  await detail.getByLabel(/決策理由/).fill("Local E2E review of this recorded approval and its evidence.");
+  const command = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/operator/governance/decisions" && response.request().method() === "POST");
+  const refreshed = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/operator/bootstrap" && response.request().method() === "GET");
+  await detail.getByRole("button", { name: "核准", exact: true }).click();
+  const confirmed = await command;
+  expect(confirmed.status()).toBe(200);
+  const receipt = await confirmed.json();
+  expect(receipt).toMatchObject({ approvalId, action: "approve", status: "approved", finalDecision: "Approved" });
+  expect(receipt.decision.approvalId).toBe(approvalId);
+  expect(receipt.correlation_id).toBe(confirmed.headers()["x-correlation-id"]);
+  expect(confirmed.request().headers()["idempotency-key"]).toBeTruthy();
+  const freshResponse = await refreshed;
+  expect(freshResponse.status()).toBe(200);
+  const fresh = await freshResponse.json();
+  expect(fresh.header.counts.approvals).toBe(before - 1);
+  expect(fresh.today.decisions.some((row: { id: string }) => row.id === approvalId)).toBe(false);
 
   await expect(count).toHaveText(String(before - 1));
   await expect(page.getByTestId("operator-task-center-count").locator("strong")).not.toHaveText("0");

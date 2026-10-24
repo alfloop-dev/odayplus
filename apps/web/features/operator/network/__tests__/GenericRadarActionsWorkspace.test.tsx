@@ -1,18 +1,19 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NetworkFindAreasWorkspace as Workspace } from "../../NetworkFindAreasWorkspace";
-import { NETWORK_TAB_IDS } from "../networkUrlState";
-
-// Explicit synthetic bootstrap tabs for these component controls. Backend
-// scope/role denials and read revalidation assertions remain authoritative.
-function NetworkFindAreasWorkspace(props: Parameters<typeof Workspace>[0]) {
-  return <Workspace allowedTabIds={NETWORK_TAB_IDS} {...props} />;
-}
+import { NetworkFindAreasWorkspace as GrantedReadNetworkWorkspace } from "../../NetworkFindAreasWorkspace";
 import { buildNetworkFindAreasViewModel } from "../../networkFindAreasViewModel";
 import type { Listing } from "../../types";
 import { ListingRadarPanel } from "../ListingRadarPanel";
 import { buildMergeRiskSummary } from "../ListingMergeDialog";
+
+// Explicit read-grant fixture: shell projects listing and SiteScore read families.
+// This is a renderer premise, not a real Principal/production permission grant.
+const NETWORK_READ_FIXTURE_TABS = ["areas", "radar", "candidates", "score", "compare", "review"] as const;
+function NetworkFindAreasWorkspace(props: import("../../NetworkFindAreasWorkspace").NetworkFindAreasWorkspaceProps) {
+  return <GrantedReadNetworkWorkspace allowedTabIds={NETWORK_READ_FIXTURE_TABS} {...props} />;
+}
+
 
 vi.mock("../intake/AssistedIntakeSection", () => ({ AssistedIntakeSection: () => <div /> }));
 const nav = vi.hoisted(() => ({ pathname: "/operator", search: "ws=network&tab=listings", push: vi.fn() }));

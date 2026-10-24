@@ -180,6 +180,19 @@ class OperatorLiveRepository:
             "completeness": "request-scoped",
         }
 
+    def load_heat_zones(self, *, tenant_id: str) -> dict[str, Any]:
+        """Read one native tenant source without loading unrelated workspaces."""
+        scope = self._require_scope(tenant_id=tenant_id, brand_ids=(), region_ids=(), store_ids=())
+        repository, _error = self._tenant_scoped_repository("heatzone_store", scope)
+        if repository is None:
+            rows, available = [], False
+        else:
+            rows, section = self._read_list("heat_zones", repository, "list_scores")
+            available = section.complete
+        return {"tenantId": scope.tenant_id, "persistenceMode": self._mode,
+                "source": "heatzone_store.list_scores", "state": "available" if available else "unavailable",
+                "rows": [_record_dict(row) for row in rows] if available else []}
+
     @staticmethod
     def _require_scope(
         *,
@@ -564,6 +577,21 @@ class OperatorLiveRepository:
             else:
                 sections["storeOpsIssues"] = self._available(issue_source, store_ops_issues)
 
+        survey_repository, survey_error = self._tenant_scoped_repository(
+            "survey_assignment_repository", scope
+        )
+        if survey_repository is None:
+            survey_assignments = []
+            survey_section = self._unavailable(
+                "survey_assignment_repository.list_assignments",
+                reason_code="OPERATOR_SURVEY_ASSIGNMENTS_UNAVAILABLE",
+                message=survey_error or "tenant-scoped Survey assignment owner is unavailable",
+            )
+        else:
+            survey_assignments, survey_section = self._read_list(
+                "survey_assignments", survey_repository, "list_assignments"
+            )
+
         audit_events, sections["auditEvents"] = self._read_list(
             "audit_events",
             self._persistence.audit_log,
@@ -601,6 +629,8 @@ class OperatorLiveRepository:
             "sitescore_decisions": decisions,
             "ingestion_runs": ingestion_runs,
             "heatzones": heatzones,
+            "survey_assignments": survey_assignments,
+            "survey_section": survey_section,
             "audit_events": audit_events,
             "active_jobs": active_jobs,
             "store_ops_issues": store_ops_issues,
@@ -677,7 +707,7 @@ class OperatorLiveRepository:
             *self._intervention_approvals(interventions),
         ]
         notifications = [
-            *self._alert_notifications(alerts),
+            *self._alert_notifications(alerts, sources["store_ops_issues"]),
             *self._ingestion_notifications(ingestion_runs),
         ]
         audit_feed = self._audit_feed(audit_events)
@@ -811,7 +841,12 @@ class OperatorLiveRepository:
                 "notifications": len(notifications),
             }
         )
+        # Separate retained Task Center facts from the intentionally active-only
+        # work queue. Admission to the new view is request-local at the API.
+        from modules.opsboard.application.operator_tasks import build_task_center_records
+
         return {
+            "taskCenterRecords": build_task_center_records(sources),
             "_meta": {
                 "source": "operator-live-repository",
                 "generatedAt": datetime.now(UTC).isoformat(),
@@ -982,13 +1017,7 @@ class OperatorLiveRepository:
             intervention_id = str(_value(intervention, "intervention_id"))
             kind = _status(_value(intervention, "kind"))
             store_id = str(_value(intervention, "store_id"))
-            workspace = "growth" if kind in {
-                "PRICE_CHANGE",
-                "AD_CAMPAIGN",
-                "PROMOTION",
-                "CRM_RECALL",
-                "OPENING_CAMPAIGN",
-            } else "store"
+            workspace = "today"
             rows.append(
                 {
                     "id": intervention_id,
@@ -1003,17 +1032,12 @@ class OperatorLiveRepository:
                     "time": _iso(_value(intervention, "created_at")),
                     "tone": "warning" if status == "PENDING_APPROVAL" else "info",
                     "workspace": workspace,
-                    "roles": _roles(
-                        "ops-lead",
-                        "marketing-manager",
-                        "field-lead",
-                        "pm-audit",
-                    ),
+                    "roles": _roles("ops-lead"),
                     "tags": ["Intervention", kind],
                     "target": {
                         "workspace": workspace,
                         "entityId": intervention_id,
-                        "tab": "overview",
+                        "tab": "interventions",
                     },
                 }
             )
@@ -1132,7 +1156,7 @@ class OperatorLiveRepository:
                     "title": "SiteScore decision",
                     "meta": candidate_id,
                     "status": status,
-                    "cta": "Open Govern",
+                    "cta": "進行審核",
                     "tone": "warning",
                     "roles": _roles(
                         "ops-lead",
@@ -1140,9 +1164,11 @@ class OperatorLiveRepository:
                         "pm-audit",
                     ),
                     "target": {
-                        "workspace": "govern",
-                        "entityId": decision_id,
-                        "tab": "approvals",
+                        "workspace": "network",
+                        "entityId": candidate_id,
+                        "tab": "review",
+                        "candidateId": candidate_id,
+                        "reviewId": decision_id,
                     },
                 }
             )
@@ -1161,23 +1187,21 @@ class OperatorLiveRepository:
                     "title": "Intervention approval",
                     "meta": _status(_value(intervention, "kind")),
                     "status": status,
-                    "cta": "Open Govern",
+                    "cta": "開啟完整干預審查",
                     "tone": "warning",
-                    "roles": _roles(
-                        "ops-lead",
-                        "marketing-manager",
-                        "pm-audit",
-                    ),
+                    "roles": _roles("ops-lead"),
                     "target": {
-                        "workspace": "govern",
+                        "workspace": "today",
                         "entityId": intervention_id,
-                        "tab": "approvals",
+                        "tab": "interventions",
                     },
                 }
             )
         return rows
 
-    def _alert_notifications(self, alerts: list[Any]) -> list[dict[str, Any]]:
+    def _alert_notifications(
+        self, alerts: list[Any], store_ops_issues: list[dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for alert in alerts:
             status = _status(_value(alert, "status")).lower()
@@ -1185,17 +1209,38 @@ class OperatorLiveRepository:
                 continue
             level = _status(_value(alert, "alert_level")).lower()
             alert_id = str(_value(alert, "alert_id"))
+            # Use only issues already read through the same request's tenant/store
+            # projection. The sourceRef join is the materializer's real identity
+            # relation, never a guessed string prefix or the first visible issue.
+            matches = [
+                issue for issue in (store_ops_issues or [])
+                if isinstance(issue, dict)
+                and isinstance(issue.get("id"), str) and issue["id"].strip()
+                and issue.get("storeId") == str(_value(alert, "store_id"))
+                and isinstance(issue.get("sourceRef"), dict)
+                and issue["sourceRef"].get("kind") == "forecastops.alert"
+                and issue["sourceRef"].get("id") == alert_id
+            ]
+            issue_id = matches[0]["id"] if len(matches) == 1 else None
             rows.append(
                 {
                     "id": f"notification-{alert_id}",
+                    "category": "alert",
+                    "occurredAt": _iso(_value(alert, "opened_at")) or None,
                     "title": str(_value(alert, "alert_reason_code")),
                     "detail": f"Store {_value(alert, 'store_id')}",
                     "tone": "danger" if level in {"critical", "red"} else "warning",
                     "roles": _roles("ops-lead", "field-lead", "pm-audit"),
+                    "sourceEntity": {"kind": "forecastops.alert", "id": alert_id},
+                    "sourceDetail": {
+                        "state": "available" if issue_id else "unavailable",
+                        "reasonCode": None if issue_id else "STORE_OPS_SOURCE_ISSUE_UNRESOLVED",
+                    },
+                    # Keep declared workspace scope for franchisee filtering even
+                    # when no authorized issue detail can be resolved.
                     "target": {
                         "workspace": "store",
-                        "entityId": alert_id,
-                        "tab": "triage",
+                        **({"entityId": issue_id, "tab": "forecastOps"} if issue_id else {}),
                     },
                 }
             )
@@ -1212,15 +1257,20 @@ class OperatorLiveRepository:
             rows.append(
                 {
                     "id": f"notification-{run_id}",
+                    "category": "job",
+                    "occurredAt": _iso(_value(run, "completed_at")) or None,
                     "title": "External data ingestion",
                     "detail": str(_value(run, "message", status)),
                     "tone": "danger" if status == "failed" else "warning",
                     "roles": _roles("ops-lead", "pm-audit"),
-                    "target": {
-                        "workspace": "govern",
-                        "entityId": run_id,
-                        "tab": "data-quality",
+                    "sourceEntity": {"kind": "external_data.ingestion_run", "id": run_id},
+                    "sourceDetail": {
+                        "state": "unavailable",
+                        "reasonCode": "INGESTION_RUN_DETAIL_NOT_IMPLEMENTED",
                     },
+                    # No ingestion-run detail consumer exists in the current
+                    # Governance tabs. Never route a run id into approvals.
+                    "target": {"workspace": "govern"},
                 }
             )
         return rows

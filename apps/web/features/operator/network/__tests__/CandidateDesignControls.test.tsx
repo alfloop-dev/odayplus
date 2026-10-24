@@ -213,3 +213,16 @@ describe("R7 Candidate original design controls with actual read evidence", () =
     },
   );
 });
+
+
+it("uses only the selected canonical candidate ID for the original assignment action without making visits or photos score gates", () => {
+  const open = vi.fn(), score = vi.fn();
+  render(<CandidatePanel candidates={[candidate()]} fallbackRows={[]} onOpenSurvey={open} onScore={score} />);
+  fireEvent.click(screen.getByRole("button", { name: "指派現勘" }));
+  expect(open).toHaveBeenCalledOnce();
+  expect(open).toHaveBeenCalledWith({ kind: "CANDIDATE_SITE", id: "selected-second" });
+  expect(screen.getByTestId("candidate-evidence-visit")).toHaveAttribute("data-state", "unknown");
+  expect(screen.getByTestId("candidate-evidence-photos")).toHaveAttribute("data-state", "unknown");
+  fireEvent.click(screen.getByTestId("candidate-detail-score-selected-second"));
+  expect(score).toHaveBeenCalledWith("selected-second");
+});

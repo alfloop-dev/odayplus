@@ -4,9 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { GeoJsonLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
 import DeckGL from "@deck.gl/react";
+import { zoneToFeature } from "./heatZoneRecordedEvidence.ts";
 import * as maplibregl from "maplibre-gl";
 import type { CandidateSite, HeatZone, Listing } from "./mapTypes.ts";
-import { zoneToFeature } from "./heatZoneRecordedEvidence.ts";
 import { isOperatorProductionMode } from "../operatorDataMode.ts";
 import { SCHEMATIC_BASEMAP } from "./schematicBasemap.ts";
 import styles from "./heatZoneMap.module.css";
@@ -116,6 +116,7 @@ export function HeatZoneMap({
     productionModeProp === true || isOperatorProductionMode();
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const fittedGeometry = useRef("");
   const deckRenderVersionRef = useRef(0);
   const [viewState, setViewState] = useState({
     longitude: 121.48,
@@ -147,16 +148,27 @@ export function HeatZoneMap({
   const zoneFeatures = useMemo(
     () =>
       zones.flatMap((zone) => {
-        const feature = zoneToFeature(zone, dataSource === "fixture" && !productionMode);
-        if (!feature) return [];
+        const feature = zoneToFeature(zone, !productionMode && dataSource === "fixture");
+        if (feature === null) return [];
         const lens = lensScoreById?.get(zone.id);
         return [lens ? { ...feature, properties: { ...feature.properties, lensTint: lensTierHex(lens.points) } } : feature];
       }),
-    [lensScoreById, zones, dataSource, productionMode],
+    [dataSource, lensScoreById, productionMode, zones],
   );
+  const geometryZones = useMemo(() => {
+    const ids = new Set(zoneFeatures.map((feature) => feature.properties.id));
+    return zones.filter((zone) => ids.has(zone.id) && zone.centroid !== null);
+  }, [zoneFeatures, zones]);
+  const missingGeometryCount = zones.length - geometryZones.length;
   const geometryHidden = boundaryConfig.stateFixture === "empty" || boundaryConfig.stateFixture === "no-geometry";
-  const visibleZones = useMemo(() => geometryHidden ? [] : zones, [geometryHidden, zones]);
+  const visibleZones = useMemo(() => geometryHidden ? [] : geometryZones, [geometryHidden, geometryZones]);
   const visibleZoneFeatures = useMemo(() => geometryHidden ? [] : zoneFeatures, [geometryHidden, zoneFeatures]);
+  // A source refresh can replace a distant provisional zone set after the
+  // map has loaded. Only a geometry change should move the viewport; lens
+  // changes and selecting a different zone keep the operator's current view.
+  const geometryKey = useMemo(() => JSON.stringify(visibleZones
+    .map((zone) => [zone.id, zone.h3, zone.centroid] as const)
+    .sort((a, b) => a[0].localeCompare(b[0]))), [visibleZones]);
   const visibleListings = useMemo(
     () => boundaryConfig.stateFixture === "partial" ? [] : listings,
     [boundaryConfig.stateFixture, listings],
@@ -166,6 +178,7 @@ export function HeatZoneMap({
     visibleZoneFeatures,
     visibleZones,
     zones,
+    geometryKey,
   });
   const evidenceZone = useMemo(
     () => zones.find((zone) => zone.id === evidenceZoneId) ?? zones.find((zone) => zone.id === selectedZoneId) ?? zones[0],
@@ -188,6 +201,7 @@ export function HeatZoneMap({
     visibleZoneFeatures,
     visibleZones,
     zones,
+    geometryKey,
   };
 
   useEffect(() => {
@@ -258,10 +272,6 @@ export function HeatZoneMap({
               "#2f855a",
               "SUPPRESSED_LOW_CONFIDENCE",
               "#c05621",
-              "ABSTAINED",
-              "#718096",
-              "UNKNOWN",
-              "#718096",
               "#3182ce",
             ],
           ],
@@ -288,6 +298,7 @@ export function HeatZoneMap({
         },
       });
       fitToZones(map, mapData.visibleZones.length ? mapData.visibleZones : mapData.zones);
+      fittedGeometry.current = mapData.geometryKey;
       map.resize();
     });
 
@@ -316,6 +327,7 @@ export function HeatZoneMap({
       }
       map.remove();
       mapRef.current = null;
+      fittedGeometry.current = "";
     };
   }, [
     boundaryConfig,
@@ -325,28 +337,52 @@ export function HeatZoneMap({
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map?.isStyleLoaded()) return;
+    if (!map) return;
+    let applied = false;
+    const synchronize = () => {
+      // Source/style loading may overlap an API snapshot or lens change. Keep
+      // this render pending until the actual map can consume it; every newer
+      // render removes these listeners before installing its own current data.
+      if (applied || mapRef.current !== map || !map.isStyleLoaded()) return;
 
-    const source = map.getSource("odp-local-heatzones") as maplibregl.GeoJSONSource | undefined;
-    source?.setData({
-      type: "FeatureCollection",
-      features: visibleZoneFeatures,
-    });
-    if (map.getLayer("odp-local-heatzone-line")) {
-      map.setPaintProperty("odp-local-heatzone-line", "line-color", [
-        "case",
-        ["==", ["get", "id"], selectedZoneId],
-        "#172554",
-        "#ffffff",
-      ]);
-      map.setPaintProperty("odp-local-heatzone-line", "line-width", [
-        "case",
-        ["==", ["get", "id"], selectedZoneId],
-        4,
-        1.5,
-      ]);
-    }
-  }, [selectedZoneId, visibleZoneFeatures]);
+      const source = map.getSource("odp-local-heatzones") as maplibregl.GeoJSONSource | undefined;
+      if (!source) return;
+      // setData/paint can synchronously emit style events. Apply this render
+      // once so a later idle does not start another data-loading cycle.
+      applied = true;
+      source.setData({
+        type: "FeatureCollection",
+        features: visibleZoneFeatures,
+      });
+      if (source && fittedGeometry.current !== geometryKey) {
+        fitToZones(map, visibleZones);
+        fittedGeometry.current = geometryKey;
+      }
+      if (map.getLayer("odp-local-heatzone-line")) {
+        map.setPaintProperty("odp-local-heatzone-line", "line-color", [
+          "case",
+          ["==", ["get", "id"], selectedZoneId],
+          "#172554",
+          "#ffffff",
+        ]);
+        map.setPaintProperty("odp-local-heatzone-line", "line-width", [
+          "case",
+          ["==", ["get", "id"], selectedZoneId],
+          4,
+          1.5,
+        ]);
+      }
+    };
+    map.on("load", synchronize);
+    map.on("styledata", synchronize);
+    map.on("idle", synchronize);
+    synchronize();
+    return () => {
+      map.off("load", synchronize);
+      map.off("styledata", synchronize);
+      map.off("idle", synchronize);
+    };
+  }, [boundaryConfig, productionMapReady, productionMode, geometryKey, selectedZoneId, visibleZoneFeatures, visibleZones]);
 
   useEffect(() => {
     setLayers(layerQuery ? parseLayerState(layerQuery) : readLayerStateFromUrl());
@@ -371,7 +407,7 @@ export function HeatZoneMap({
     if (!map) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
-    const href = nearestPickHref(point, { zones, listings, candidates, layers, map });
+    const href = nearestPickHref(point, { zones: visibleZones, listings, candidates, layers, map });
     if (href) {
       event.stopPropagation();
       window.location.assign(href);
@@ -406,6 +442,11 @@ export function HeatZoneMap({
           {runtimeError || ""}
         </span>
         <span>Production 不會渲染 local map、mock layer 或 fixture 點位。</span>
+        {missingGeometryCount > 0 ? (
+          <span data-testid="map-geometry-unavailable">
+            地圖 geometry 尚未可用；列表仍可用於審查。
+          </span>
+        ) : null}
       </section>
     );
   }
@@ -432,6 +473,11 @@ export function HeatZoneMap({
         <span>Attribution: {boundaryConfig.attribution}</span>
         {boundaryConfig.termsUrl ? <a href={boundaryConfig.termsUrl}>Terms</a> : <span>Terms: local fixture</span>}
       </div>
+      {missingGeometryCount > 0 ? (
+        <div className={styles.boundaryAlert} data-testid="map-geometry-unavailable" role="status">
+          地圖 geometry 尚未可用；列表仍可用於審查。
+        </div>
+      ) : null}
       {boundaryConfig.tileFault || boundaryConfig.geocoderFault || runtimeError ? (
         <div className={styles.boundaryAlert} data-testid="map-boundary-alert" role="status">
           {boundaryConfig.tileFault ? <span>Tile outage · correlation_id {boundaryConfig.correlationId}</span> : null}
@@ -803,17 +849,17 @@ function buildDeckLayers({
           characterSet: "auto",
           fontFamily: "\"Noto Sans TC\", \"PingFang TC\", \"Microsoft JhengHei\", sans-serif",
           fontWeight: 700,
-          getPosition: (zone) => zone.centroid,
+          getPosition: (zone) => zone.centroid!,
           getText: (zone) => {
             const lens = lensScoreById.get(zone.id);
-            return lens ? `${lens.label} ${lens.points ?? "未評估"}` : zone.id;
+            return lens ? `${lens.label} ${lens.points}` : zone.id;
           },
           getColor: [255, 255, 255, 255],
           getSize: 12,
           getTextAnchor: "middle",
           getAlignmentBaseline: "center",
           background: true,
-          getBackgroundColor: (zone) => lensTierSolid(lensScoreById.get(zone.id)?.points ?? null),
+          getBackgroundColor: (zone) => lensTierSolid(lensScoreById.get(zone.id)?.points ?? 0),
           backgroundPadding: [8, 4],
           pickable: false,
           updateTriggers: { getText: [lensScoreById], getBackgroundColor: [lensScoreById] },
@@ -822,8 +868,8 @@ function buildDeckLayers({
           id: "odp-heatzone-labels",
           data: zones,
           visible: visible.freshness,
-          getPosition: (zone) => zone.centroid,
-          getText: (zone) => `${zone.id}\n${zone.score ?? "未評估"} / ${zone.confidence != null ? zone.confidence.toFixed(2) : "N/A"}`,
+          getPosition: (zone) => zone.centroid!,
+          getText: (zone) => `${zone.id}\n${zone.score} / ${zone.confidence != null ? zone.confidence.toFixed(2) : "N/A"}`,
           getColor: [23, 37, 84, 255],
           getSize: 13,
           getTextAnchor: "middle",
@@ -929,7 +975,7 @@ function nearestPickHref(
   if (listing) return pickHref("odp-listing-points", listing, layers);
 
   const zone = layers.h3
-    ? nearestProjected(zones, point, map, (item) => item.centroid, directPickRadius.zone)
+    ? nearestProjected(zones, point, map, (item) => item.centroid!, directPickRadius.zone)
     : undefined;
   if (zone) {
     return pickHref(
@@ -968,6 +1014,8 @@ declare global {
   }
 }
 
+
+
 function confidenceBand(confidence: number | null): "high" | "medium" | "low" {
   if (confidence === null) return "low";
   if (confidence >= 0.8) return "high";
@@ -977,7 +1025,7 @@ function confidenceBand(confidence: number | null): "high" | "medium" | "low" {
 
 function fitToZones(map: maplibregl.Map, zones: HeatZone[]) {
   const bounds = new maplibregl.LngLatBounds();
-  zones.forEach((zone) => bounds.extend(zone.centroid));
+  zones.forEach((zone) => { if (zone.centroid !== null) bounds.extend(zone.centroid); });
   if (!bounds.isEmpty()) {
     map.fitBounds(bounds, { padding: 80, maxZoom: 11, duration: 0 });
   }

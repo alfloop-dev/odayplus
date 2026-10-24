@@ -11,11 +11,30 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
+import math
 import threading
 from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from datetime import UTC, datetime
 from typing import Any, NoReturn, Protocol, TypeVar
 
+from pydantic import ValidationError
+
+from modules.opsboard.domain.store_ops_reviews import (
+    WORKFLOW_RECORD_TYPES,
+    ActionSubmission,
+    AssignSubmission,
+    CameraPurposeSubmission,
+    EscalationSubmission,
+    FieldReportSubmission,
+    OutcomeReviewRecord,
+    OutcomeSubmission,
+    ReplyReviewRecord,
+    ReplyReviewSubmission,
+    TransferSubmission,
+    TriageSubmission,
+    record_contract,
+)
 from shared.audit.events import AuditEvent, InMemoryAuditLog
 
 IssueStatus = str
@@ -25,9 +44,7 @@ LightStatus = str
 _STORE_OPS_STATE_DOC_ID = "default"
 _STORE_OPS_STATE_COLLECTION = "opsboard.store_ops.state"
 _STORE_OPS_IDEMPOTENCY_COLLECTION = "opsboard.store_ops.idempotency"
-#: Optimistic-write attempts before a contended Store Ops write gives up.
 _STORE_OPS_WRITE_ATTEMPTS = 8
-
 _T = TypeVar("_T")
 _STORE_OPS_FIXTURE_IDS = frozenset(
     {
@@ -112,6 +129,132 @@ class StoreOpsLiveDataUnavailable(StoreOpsError):
     """The production Store Ops repository cannot provide canonical data."""
 
 
+def _validate_live_store_ops_state(state: Mapping[str, Any]) -> None:
+    """Reject malformed workflow data, independently of optional health facts."""
+    if not isinstance(state, Mapping):
+        raise StoreOpsLiveDataUnavailable("Store Ops workflow aggregate is invalid")
+    for key in ("stores", "issues", "evidence", "auditEvents"):
+        rows = state.get(key)
+        if not isinstance(rows, list) or not all(
+            isinstance(row, Mapping) and isinstance(row.get("id"), str) and row["id"].strip()
+            for row in rows
+        ):
+            raise StoreOpsLiveDataUnavailable(f"Store Ops {key} projection is invalid")
+        if len({row["id"] for row in rows}) != len(rows):
+            raise StoreOpsLiveDataUnavailable(f"Store Ops {key} has duplicate identifiers")
+    for issue in state["issues"]:
+        if (
+            not isinstance(issue.get("storeId"), str) or not issue["storeId"].strip()
+            or not isinstance(issue.get("evidenceIds", []), list)
+            or not all(isinstance(key, str) for key in issue.get("evidenceIds", []))
+        ):
+            raise StoreOpsLiveDataUnavailable("Store Ops issue scope or evidence is invalid")
+    for store in state["stores"]:
+        lights = store.get("lights", {})
+        if not isinstance(lights, Mapping) or any(
+            value is not None and (not isinstance(value, str) or value not in _LIGHT_STATUSES)
+            for value in lights.values()
+        ):
+            raise StoreOpsLiveDataUnavailable("Store Ops light values are invalid")
+        risk = store.get("riskScore")
+        if risk is not None:
+            try:
+                finite = not isinstance(risk, bool) and isinstance(risk, (int, float)) and math.isfinite(risk)
+            except OverflowError:
+                finite = False
+            if not finite:
+                raise StoreOpsLiveDataUnavailable("Store Ops risk score is invalid")
+
+
+def _unavailable_health_slot() -> dict[str, Any]:
+    return {
+        "state": "unavailable", "source": None,
+        "reasonCode": "CANONICAL_KPI_SOURCE_UNAVAILABLE", "message": "指標資料未取得",
+    }
+
+
+def _alert_fact(alert: Any, key: str) -> Any:
+    value = alert.get(key) if isinstance(alert, Mapping) else getattr(alert, key, None)
+    return getattr(value, "value", value)
+
+
+def project_store_ops_health(
+    state: Mapping[str, Any],
+    *,
+    alerts_by_store: Mapping[str, Iterable[Any] | None] | None = None,
+    tenant_id: str | None = None,
+) -> dict[str, Any]:
+    """Copy workflow data; only this read's canonical alerts can supply health.
+
+    Stored colors, source names, flags and retained issue/evidence references
+    cannot establish a current observation. No current owner read means null
+    health, while the original issues and their complete histories stay usable.
+    An issue queue is not an equipment, staffing, margin or risk measurement.
+    """
+    _validate_live_store_ops_state(state)
+    result = _clone(state)
+    for store in result["stores"]:
+        slots = {dimension: _unavailable_health_slot() for dimension in _LIGHT_DIMENSIONS}
+        lights: dict[str, str | None] = {dimension: None for dimension in _LIGHT_DIMENSIONS}
+        observations: list[tuple[str, str]] = []
+        if alerts_by_store is not None and tenant_id:
+            current = alerts_by_store.get(str(store["id"]))
+            invalid = current is None or not isinstance(current, (list, tuple))
+            for alert in current if not invalid else ():
+                if (
+                    _alert_fact(alert, "tenant_id") != tenant_id
+                    or _alert_fact(alert, "store_id") != store["id"]
+                ):
+                    invalid = True
+                    break
+                alert_id = _alert_fact(alert, "alert_id")
+                level = _alert_fact(alert, "alert_level")
+                if not isinstance(alert_id, str) or not alert_id.strip() or not isinstance(level, str):
+                    invalid = True
+                    break
+                level = level.lower()
+                if level not in {"red", "orange", "yellow", "green"}:
+                    invalid = True
+                    break
+                status = _alert_fact(alert, "status")
+                if not isinstance(status, str):
+                    invalid = True
+                    break
+                if status not in {"open", "acknowledged", "in_progress"}:
+                    continue
+                observations.append((alert_id, "red" if level == "red" else "green" if level == "green" else "yellow"))
+            if invalid:
+                observations = []
+                slots["demand"]["reasonCode"] = "FORECASTOPS_OBSERVATION_UNAVAILABLE"
+        if observations:
+            levels = {level for _, level in observations}
+            lights["demand"] = "red" if "red" in levels else "yellow" if "yellow" in levels else "green"
+            slots["demand"] = {
+                "state": "available", "source": "forecastops.alerts",
+                "recordIds": sorted({key for key, _ in observations}),
+                "message": "本次 ForecastOps 政策觀測；其他指標資料未取得",
+            }
+        store["lights"] = lights
+        store["riskScore"] = None
+        store["healthAvailability"] = {
+            "state": "degraded" if observations else "unavailable", "complete": False,
+            "lights": slots, "riskScore": _unavailable_health_slot(),
+        }
+    return result
+
+
+def _health_availability(stores: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    rows = list(stores)
+    covered = sum(row.get("healthAvailability", {}).get("complete") is True for row in rows)
+    warnings = sum(any(value in {"red", "yellow"} for value in row["lights"].values()) for row in rows)
+    observed = any(row.get("healthAvailability", {}).get("state") == "degraded" for row in rows)
+    return {
+        "state": "available" if covered == len(rows) else "degraded" if observed else "unavailable",
+        "complete": covered == len(rows), "totalCount": len(rows), "coveredCount": covered,
+        "unavailableCount": len(rows) - covered, "warningCount": warnings,
+    }
+
+
 class StoreOpsRepository(Protocol):
     @property
     def is_live(self) -> bool: ...
@@ -134,8 +277,15 @@ def _clone(value: Any) -> Any:
 
 
 def _contains_fixture_signature(state: Mapping[str, Any]) -> bool:
+    if not isinstance(state, Mapping):
+        raise StoreOpsLiveDataUnavailable("Store Ops workflow aggregate is invalid")
     for collection in ("stores", "issues", "auditEvents"):
-        for item in state.get(collection, ()):
+        rows = state.get(collection, ())
+        if not isinstance(rows, (list, tuple)):
+            # Shape validation owns unavailable aggregates; signature probing
+            # must not turn malformed metadata into an unrelated TypeError.
+            continue
+        for item in rows:
             if isinstance(item, Mapping) and str(item.get("id")) in _STORE_OPS_FIXTURE_IDS:
                 return True
     return False
@@ -560,7 +710,13 @@ class DurableStoreOpsRepository:
         tenant = None if tenant_id is None else str(tenant_id).strip()
         if tenant_id is not None and not tenant:
             raise StoreOpsLiveDataUnavailable("Store Ops tenant scope must not be blank")
-        self._tenant_id = tenant
+        bound_tenant = getattr(store, "tenant_id", None)
+        self._store_tenant_id = None if bound_tenant is None else str(bound_tenant).strip()
+        if bound_tenant is not None and not self._store_tenant_id:
+            raise StoreOpsLiveDataUnavailable("Store Ops document-store tenant scope must not be blank")
+        if self._store_tenant_id is not None and tenant not in (None, self._store_tenant_id):
+            raise StoreOpsLiveDataUnavailable("Store Ops repository and document-store tenant scopes differ")
+        self._tenant_id = self._store_tenant_id if self._store_tenant_id is not None else tenant
 
     @property
     def is_live(self) -> bool:
@@ -572,10 +728,12 @@ class DurableStoreOpsRepository:
         return self._tenant_id
 
     def for_tenant(self, tenant_id: str) -> DurableStoreOpsRepository:
+        if self._tenant_id is not None and str(tenant_id).strip() != self._tenant_id:
+            raise StoreOpsLiveDataUnavailable("Store Ops repository belongs to another tenant")
         return DurableStoreOpsRepository(self._store, tenant_id=tenant_id)
 
     def _collection(self, collection: str) -> str:
-        if self._tenant_id is None:
+        if self._tenant_id is None or self._store_tenant_id is not None:
             return collection
         return f"{collection}.tenant.{_tenant_partition(self._tenant_id)}"
 
@@ -626,6 +784,8 @@ class DurableStoreOpsRepository:
             raise StoreOpsLiveDataUnavailable(
                 "Store Ops production writes cannot persist canonical fixture data"
             )
+        if self.is_live:
+            _validate_live_store_ops_state(state)
         collection = self._collection(_STORE_OPS_STATE_COLLECTION)
         compare_and_put = getattr(self._store, "compare_and_put", None)
         if compare_and_put is None:
@@ -657,6 +817,8 @@ class DurableStoreOpsRepository:
             raise StoreOpsLiveDataUnavailable(
                 "Store Ops production state contains canonical fixture identifiers"
             )
+        if state is not None and self.is_live:
+            _validate_live_store_ops_state(state)
         return state
 
     def get_state(self) -> dict[str, Any]:
@@ -733,6 +895,44 @@ class DurableStoreOpsRepository:
             ) from exc
 
 
+_CAMERA_TEXT_METADATA = (
+    "id", "issueId", "kind", "title", "sourceLabel", "summary", "polarity", "occurredAt",
+    "purpose", "cameraLocation", "timeWindow", "purposeRecordedAt", "unlockedAt",
+)
+
+
+def _camera_metadata_only(item: Mapping[str, Any]) -> dict[str, Any]:
+    """Read existing metadata; no current media-content authority is bound here."""
+    result = {key: value for key in _CAMERA_TEXT_METADATA
+              if isinstance((value := item.get(key)), str)}
+    confidence = item.get("confidence")
+    if confidence is None or type(confidence) in (int, float) and math.isfinite(confidence):
+        result["confidence"] = confidence
+    retention = item.get("retentionHours")
+    if type(retention) is int and 1 <= retention <= 72:
+        result["retentionHours"] = retention
+    reason = item.get("lockedReason")
+    result["lockedReason"] = reason if isinstance(reason, str) and reason.strip() else (
+        "Camera content authorization is unavailable; a recorded purpose is not an access grant."
+    )
+    return result
+
+
+def _camera_response_metadata(result: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep a legacy receipt readable without reusing its media-access claims."""
+    response = _clone(result)
+    if isinstance(response.get("evidence"), list):
+        response["evidence"] = [
+            _camera_metadata_only(item)
+            if isinstance(item, Mapping) and item.get("kind") == "camera" else item
+            for item in response["evidence"]
+        ]
+    item = response.get("evidenceItem")
+    if isinstance(item, Mapping) and item.get("kind") == "camera":
+        response["evidenceItem"] = _camera_metadata_only(item)
+    return response
+
+
 class StoreOpsService:
     def __init__(
         self,
@@ -740,6 +940,9 @@ class StoreOpsService:
         *,
         audit_log: InMemoryAuditLog | None = None,
         require_live_data: bool = False,
+        actor_subject_id: str | None = None,
+        forecastops_repository: Any = None,
+        tenant_id: str | None = None,
     ) -> None:
         if require_live_data and (
             repository is None or not bool(getattr(repository, "is_live", False))
@@ -748,6 +951,10 @@ class StoreOpsService:
         else:
             self._repository = repository or InMemoryStoreOpsRepository()
         self._audit_log = audit_log or InMemoryAuditLog()
+        self._actor_subject_id = actor_subject_id
+        self._require_live_data = require_live_data
+        self._forecastops_repository = forecastops_repository
+        self._tenant_id = tenant_id
 
     def _update_state(self, mutate: Callable[[dict[str, Any]], _T]) -> _T:
         """Read-modify-write the state through the repository's atomic update."""
@@ -772,6 +979,24 @@ class StoreOpsService:
         light_status: str | None = None,
     ) -> dict[str, Any]:
         state = self._repository.get_state()
+        if self._require_live_data:
+            alerts_by_store = None
+            if self._forecastops_repository is not None and self._tenant_id:
+                _validate_live_store_ops_state(state)
+                alerts_by_store = {}
+                for store in state["stores"]:
+                    store_id = str(store["id"])
+                    try:
+                        alerts_by_store[store_id] = self._forecastops_repository.list_alerts_by_store(
+                            self._tenant_id, store_id,
+                        )
+                    except Exception:
+                        # Optional health is isolated from the native issue
+                        # workflow. Do not expose exception/connection details.
+                        alerts_by_store[store_id] = None
+            state = project_store_ops_health(
+                state, alerts_by_store=alerts_by_store, tenant_id=self._tenant_id,
+            )
         stores = state["stores"]
         issues = self._filter_issues(
             state,
@@ -784,10 +1009,13 @@ class StoreOpsService:
             light=light,
             light_status=light_status,
         )
-        return {
+        result = {
             "stores": stores,
             "issues": issues,
-            "evidence": state["evidence"],
+            "evidence": [
+                _camera_metadata_only(item) if item.get("kind") == "camera" else _clone(item)
+                for item in state["evidence"]
+            ] if self._require_live_data or self._repository.is_live else state["evidence"],
             "auditEvents": _sorted_audit_events(state),
             "fourLightSummary": _four_light_summary(stores=stores, issues=state["issues"]),
             "count": len(issues),
@@ -802,6 +1030,9 @@ class StoreOpsService:
                 "lightStatus": light_status,
             },
         }
+        if self._require_live_data:
+            result["healthAvailability"] = _health_availability(stores)
+        return result
 
     def get_issue(self, issue_id: str) -> dict[str, Any]:
         state = self._repository.get_state()
@@ -811,7 +1042,10 @@ class StoreOpsService:
         state = self._repository.get_state()
         issue = _find_issue(state, issue_id)
         evidence = [item for item in state["evidence"] if item["id"] in issue["evidenceIds"]]
-        return {"issue": _clone(issue), "evidence": _clone(evidence)}
+        return {"issue": _clone(issue), "evidence": [
+            _camera_metadata_only(item) if item.get("kind") == "camera" else _clone(item)
+            for item in evidence
+        ] if self._require_live_data or self._repository.is_live else _clone(evidence)}
 
     def list_attachments(
         self,
@@ -858,78 +1092,56 @@ class StoreOpsService:
         tenant_id: str = "tenant-a",
         correlation_id: str = "",
     ) -> dict[str, Any]:
-        filename = str(payload.get("filename", "")).strip()
-        if not filename:
-            raise StoreOpsPolicyError("attachment filename is required")
-        return mask_attachment(
-            self._update_state(
-                lambda state: self._add_attachment(
-                    state,
-                    issue_id=issue_id,
-                    filename=filename,
-                    payload=payload,
-                    actor_role_id=actor_role_id,
-                    actor_name=actor_name,
-                    tenant_id=tenant_id,
-                )
-            ),
-            masking_profile="masked",
-        )
+        def mutate(state: dict[str, Any]) -> dict[str, Any]:
+            _find_issue(state, issue_id)
+            filename = str(payload.get("filename", "")).strip()
+            if not filename:
+                raise StoreOpsPolicyError("attachment filename is required")
 
-    @staticmethod
-    def _add_attachment(
-        state: dict[str, Any],
-        *,
-        issue_id: str,
-        filename: str,
-        payload: Mapping[str, Any],
-        actor_role_id: str,
-        actor_name: str | None,
-        tenant_id: str,
-    ) -> dict[str, Any]:
-        _find_issue(state, issue_id)
-        existing = [a for a in state.get("attachments", []) if a.get("issueId") == issue_id]
-        att_id = f"ATT-{issue_id.split('-')[-1]}-{len(existing) + 1:02d}"
-        file_type = str(payload.get("fileType", "application/octet-stream"))
-        classification = str(payload.get("classification", "site_photo"))
-        sensitivity = str(payload.get("sensitivityLevel", "controlled"))
-        content_b64 = payload.get("contentBase64") or None
-        size_bytes = len(content_b64) if content_b64 else int(payload.get("sizeBytes", 1024))
+            existing = [a for a in state.get("attachments", []) if a.get("issueId") == issue_id]
+            att_id = f"ATT-{issue_id.split('-')[-1]}-{len(existing) + 1:02d}"
+            file_type = str(payload.get("fileType", "application/octet-stream"))
+            classification = str(payload.get("classification", "site_photo"))
+            sensitivity = str(payload.get("sensitivityLevel", "controlled"))
+            content_b64 = payload.get("contentBase64") or None
+            size_bytes = len(content_b64) if content_b64 else int(payload.get("sizeBytes", 1024))
 
-        attachment_record = {
-            "id": att_id,
-            "issueId": issue_id,
-            "tenantId": tenant_id,
-            "filename": filename,
-            "fileType": file_type,
-            "sizeBytes": size_bytes,
-            "classification": classification,
-            "sensitivityLevel": sensitivity,
-            "uploadedBy": actor_name or actor_role_id,
-            "uploadedAt": _now_iso(),
-            "storageUri": f"store-ops/attachments/{issue_id}/{att_id}-{filename}",
-            "contentBase64": content_b64,
-        }
-        if "attachments" not in state:
-            state["attachments"] = []
-        state["attachments"].append(attachment_record)
-
-        _append_audit_event(
-            state,
-            actor_role_id=actor_role_id,
-            actor_name=actor_name or actor_role_id,
-            action="attachment.uploaded",
-            category="attachment",
-            message=f"Attachment {att_id} ({filename}) uploaded to issue {issue_id}.",
-            metadata={
+            attachment_record = {
+                "id": att_id,
                 "issueId": issue_id,
-                "attachmentId": att_id,
+                "tenantId": tenant_id,
+                "filename": filename,
+                "fileType": file_type,
+                "sizeBytes": size_bytes,
                 "classification": classification,
                 "sensitivityLevel": sensitivity,
-                "filename": filename,
-            },
-        )
-        return attachment_record
+                "uploadedBy": actor_name or actor_role_id,
+                "uploadedAt": _now_iso(),
+                "storageUri": f"store-ops/attachments/{issue_id}/{att_id}-{filename}",
+                "contentBase64": content_b64,
+            }
+            if "attachments" not in state:
+                state["attachments"] = []
+            state["attachments"].append(attachment_record)
+
+            _append_audit_event(
+                state,
+                actor_role_id=actor_role_id,
+                actor_name=actor_name or actor_role_id,
+                action="attachment.uploaded",
+                category="attachment",
+                message=f"Attachment {att_id} ({filename}) uploaded to issue {issue_id}.",
+                metadata={
+                    "issueId": issue_id,
+                    "attachmentId": att_id,
+                    "classification": classification,
+                    "sensitivityLevel": sensitivity,
+                    "filename": filename,
+                },
+            )
+            return attachment_record
+
+        return mask_attachment(self._update_state(mutate), masking_profile="masked")
 
     def download_attachment(
         self,
@@ -948,25 +1160,24 @@ class StoreOpsService:
             user_roles=user_roles,
             tenant_id=tenant_id,
         )
-        roles_list = list(user_roles or ["opsLead"])
-        self._update_state(
-            lambda state: _append_audit_event(
+
+        def mutate(state: dict[str, Any]) -> None:
+            roles_list = list(user_roles or ["opsLead"])
+            _append_audit_event(
                 state,
                 actor_role_id=actor_role_id or (roles_list[0] if roles_list else "opsLead"),
                 actor_name=actor_name or (roles_list[0] if roles_list else "Operator"),
                 action="attachment.downloaded",
                 category="attachment",
-                message=(
-                    f"Attachment {attachment_id} downloaded for issue {issue_id} "
-                    f"(masked={att.get('masked')})."
-                ),
+                message=f"Attachment {attachment_id} downloaded for issue {issue_id} (masked={att.get('masked')}).",
                 metadata={
                     "issueId": issue_id,
                     "attachmentId": attachment_id,
                     "masked": att.get("masked"),
                 },
             )
-        )
+
+        self._update_state(mutate)
         return att
 
     def delete_attachment(
@@ -980,53 +1191,34 @@ class StoreOpsService:
         correlation_id: str = "",
     ) -> dict[str, Any]:
         def mutate(state: dict[str, Any]) -> None:
-            self._delete_attachment(
+            _find_issue(state, issue_id)
+            attachments = state.get("attachments", [])
+            found_idx = -1
+            for idx, att in enumerate(attachments):
+                if att.get("issueId") == issue_id and att.get("id") == attachment_id:
+                    if tenant_id and att.get("tenantId") and att.get("tenantId") != tenant_id:
+                        raise StoreOpsNotFound(f"attachment not found for tenant: {attachment_id}")
+                    found_idx = idx
+                    break
+            if found_idx == -1:
+                raise StoreOpsNotFound(f"attachment not found: {attachment_id}")
+
+            attachments.pop(found_idx)
+            _append_audit_event(
                 state,
-                issue_id=issue_id,
-                attachment_id=attachment_id,
                 actor_role_id=actor_role_id,
-                actor_name=actor_name,
-                tenant_id=tenant_id,
+                actor_name=actor_name or actor_role_id,
+                action="attachment.deleted",
+                category="attachment",
+                message=f"Attachment {attachment_id} deleted from issue {issue_id}.",
+                metadata={
+                    "issueId": issue_id,
+                    "attachmentId": attachment_id,
+                },
             )
 
         self._update_state(mutate)
         return {"success": True, "deletedAttachmentId": attachment_id}
-
-    @staticmethod
-    def _delete_attachment(
-        state: dict[str, Any],
-        *,
-        issue_id: str,
-        attachment_id: str,
-        actor_role_id: str,
-        actor_name: str | None,
-        tenant_id: str,
-    ) -> None:
-        _find_issue(state, issue_id)
-        attachments = state.get("attachments", [])
-        found_idx = -1
-        for idx, att in enumerate(attachments):
-            if att.get("issueId") == issue_id and att.get("id") == attachment_id:
-                if tenant_id and att.get("tenantId") and att.get("tenantId") != tenant_id:
-                    raise StoreOpsNotFound(f"attachment not found for tenant: {attachment_id}")
-                found_idx = idx
-                break
-        if found_idx == -1:
-            raise StoreOpsNotFound(f"attachment not found: {attachment_id}")
-
-        attachments.pop(found_idx)
-        _append_audit_event(
-            state,
-            actor_role_id=actor_role_id,
-            actor_name=actor_name or actor_role_id,
-            action="attachment.deleted",
-            category="attachment",
-            message=f"Attachment {attachment_id} deleted from issue {issue_id}.",
-            metadata={
-                "issueId": issue_id,
-                "attachmentId": attachment_id,
-            },
-        )
 
     def transition_issue(
         self,
@@ -1045,36 +1237,83 @@ class StoreOpsService:
                 replay["idempotentReplay"] = True
                 return replay
 
-        normalized_action = _normalize_action(action_type)
+        def mutate(state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], AuditEvent]:
+            issue = _find_issue(state, issue_id)
+            previous_status = issue["status"]
+            normalized_action = _normalize_action(action_type)
+            source_updated_at = issue["updatedAt"]
+            review_submission = None
+            workflow_submission = None
 
-        def mutate(state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-            return self._transition(
+            if normalized_action == "triage":
+                workflow_submission = self._apply_triage(issue, payload)
+            elif normalized_action == "assign":
+                workflow_submission = self._apply_assign(issue, payload)
+            elif normalized_action == "actions":
+                workflow_submission = self._apply_action(issue, payload)
+            elif normalized_action == "field-report":
+                workflow_submission = self._apply_field_report(issue, payload)
+            elif normalized_action == "outcome":
+                review_submission = self._apply_outcome(issue, payload)
+            elif normalized_action == "escalate":
+                workflow_submission = self._apply_escalation(issue, payload)
+            elif normalized_action == "reply-review":
+                review_submission = self._apply_reply_review(issue, payload)
+            elif normalized_action == "transfer":
+                workflow_submission = self._apply_transfer(issue, payload)
+            else:
+                raise StoreOpsNotFound(f"unknown Store Ops action: {action_type}")
+
+            issue["updatedAt"] = _now_iso()
+            audit = _append_audit_event(
                 state,
-                issue_id=issue_id,
-                action_type=action_type,
-                normalized_action=normalized_action,
-                payload=payload,
-                idempotency_key=idempotency_key,
+                action=f"issue.{normalized_action}",
                 actor_role_id=actor_role_id,
                 actor_name=actor_name,
+                category="workflow",
+                message=f"{issue_id} {normalized_action} moved {previous_status} -> {issue['status']}.",
+                metadata={
+                    "issueId": issue_id,
+                    "previousStatus": previous_status,
+                    "status": issue["status"],
+                    "actionType": normalized_action,
+                    "idempotencyKey": idempotency_key,
+                },
             )
+            shared_audit = AuditEvent(
+                event_type="operator.store_ops.issue_transition",
+                actor=self._actor_subject_id or actor_name,
+                action=normalized_action,
+                resource=f"operator/store-ops/issues/{issue_id}",
+                outcome="accepted",
+                correlation_id=correlation_id,
+                metadata=audit["metadata"],
+            )
+            if review_submission is not None:
+                self._append_submission_record(
+                    state, issue, audit, shared_audit,
+                    record_type=OutcomeReviewRecord if normalized_action == "outcome" else ReplyReviewRecord,
+                    history_key="outcomeReviews" if normalized_action == "outcome" else "replyReviews",
+                    submission=review_submission, source_updated_at=source_updated_at,
+                    actor_name=actor_name, actor_role_id=actor_role_id, correlation_id=correlation_id,
+                )
+            elif workflow_submission is not None:
+                self._append_submission_record(
+                    state, issue, audit, shared_audit,
+                    record_type=WORKFLOW_RECORD_TYPES[normalized_action], history_key="workflowRecords",
+                    submission=workflow_submission, source_updated_at=source_updated_at,
+                    actor_name=actor_name, actor_role_id=actor_role_id, correlation_id=correlation_id,
+                )
+            return _clone(issue), _clone(audit), shared_audit
 
-        issue, audit = self._update_state(mutate)
-        self._record_shared_audit(
-            event_type="operator.store_ops.issue_transition",
-            actor=actor_name,
-            action=normalized_action,
-            resource=f"operator/store-ops/issues/{issue_id}",
-            outcome="accepted",
-            correlation_id=correlation_id,
-            metadata=audit["metadata"],
-        )
+        issue, audit, shared_audit = self._update_state(mutate)
+        self._audit_log.record(shared_audit)
 
         result = self.snapshot()
         result.update(
             {
-                "issue": issue,
-                "auditEvent": audit,
+                "issue": _clone(issue),
+                "auditEvent": _clone(audit),
                 "idempotentReplay": False,
             }
         )
@@ -1082,57 +1321,43 @@ class StoreOpsService:
             self._repository.save_idempotency_result(idempotency_key, result)
         return result
 
-    def _transition(
-        self,
-        state: dict[str, Any],
-        *,
-        issue_id: str,
-        action_type: str,
-        normalized_action: str,
-        payload: Mapping[str, Any],
-        idempotency_key: str | None,
-        actor_role_id: str,
-        actor_name: str,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        issue = _find_issue(state, issue_id)
-        previous_status = issue["status"]
-
-        if normalized_action == "triage":
-            self._apply_triage(issue, payload)
-        elif normalized_action == "assign":
-            self._apply_assign(issue, payload)
-        elif normalized_action == "actions":
-            self._apply_action(issue, payload)
-        elif normalized_action == "field-report":
-            self._apply_field_report(issue, payload)
-        elif normalized_action == "outcome":
-            self._apply_outcome(issue, payload)
-        elif normalized_action == "escalate":
-            self._apply_escalation(issue, payload)
-        elif normalized_action == "reply-review":
-            self._apply_reply_review(issue, payload)
-        elif normalized_action == "transfer":
-            self._apply_transfer(issue, payload)
-        else:
-            raise StoreOpsNotFound(f"unknown Store Ops action: {action_type}")
-
-        issue["updatedAt"] = _now_iso()
-        audit = _append_audit_event(
-            state,
-            action=f"issue.{normalized_action}",
-            actor_role_id=actor_role_id,
-            actor_name=actor_name,
-            category="workflow",
-            message=f"{issue_id} {normalized_action} moved {previous_status} -> {issue['status']}.",
-            metadata={
-                "issueId": issue_id,
-                "previousStatus": previous_status,
-                "status": issue["status"],
-                "actionType": normalized_action,
-                "idempotencyKey": idempotency_key,
-            },
-        )
-        return _clone(issue), _clone(audit)
+    def _append_submission_record(
+        self, state: Mapping[str, Any], issue: MutableMapping[str, Any],
+        audit: dict[str, Any], shared_audit: AuditEvent, *, record_type: Any,
+        history_key: str, submission: Any, source_updated_at: str,
+        actor_name: str, actor_role_id: str, correlation_id: str,
+    ) -> None:
+        history = issue.get(history_key, [])
+        if not isinstance(history, list):
+            raise StoreOpsLiveDataUnavailable("Store Ops review history is invalid")
+        evidence_ids = issue.get("evidenceIds")
+        if (
+            not isinstance(evidence_ids, list)
+            or not all(isinstance(key, str) for key in evidence_ids)
+            or not set(evidence_ids).issubset({row["id"] for row in state["evidence"]})
+            or not isinstance(source_updated_at, str)
+        ):
+            raise StoreOpsLiveDataUnavailable("Store Ops review source is unavailable")
+        try:
+            record = record_type(
+                id=audit["id"], issueId=issue["id"], storeId=issue["storeId"],
+                actorSubjectId=self._actor_subject_id, actorName=actor_name,
+                actorRoleId=actor_role_id,
+                actorEvidence="authenticated_principal" if self._actor_subject_id else "caller_supplied",
+                recordedAt=issue["updatedAt"], correlationId=correlation_id,
+                workflowAuditId=audit["id"], auditEventId=shared_audit.event_id,
+                sourceIssueUpdatedAt=source_updated_at, evidenceIds=evidence_ids,
+                submission=submission,
+            ).model_dump(mode="json")
+        except ValidationError as exc:
+            raise StoreOpsLiveDataUnavailable("Store Ops review source is invalid") from exc
+        issue[history_key] = [*history, record]
+        audit["metadata"].update({
+            "workflowAuditId": audit["id"],
+            "reviewRecordHash": hashlib.sha256(
+                json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+            ).hexdigest(),
+        })
 
     def record_camera_purpose(
         self,
@@ -1148,34 +1373,82 @@ class StoreOpsService:
             replay = self._repository.get_idempotency_result(idempotency_key)
             if replay is not None:
                 replay["idempotentReplay"] = True
-                return replay
+                return (
+                    _camera_response_metadata(replay)
+                    if self._require_live_data or self._repository.is_live else replay
+                )
 
-        issue, camera_evidence, audit = self._update_state(
-            lambda state: self._record_camera_purpose(
+        def mutate(state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], AuditEvent]:
+            issue = _find_issue(state, issue_id)
+            camera_evidence = _find_camera_evidence(state, issue)
+            source_updated_at = issue["updatedAt"]
+            submission = _review_submission(CameraPurposeSubmission, issue, payload)
+            validated_payload = submission.model_dump(exclude_none=True)
+            _validate_camera_purpose(validated_payload)
+
+            camera_evidence["purpose"] = str(validated_payload.get("purpose", "")).strip()
+            camera_evidence["cameraLocation"] = str(validated_payload.get("cameraLocation", "")).strip()
+            camera_evidence["timeWindow"] = str(validated_payload.get("timeWindow", "")).strip()
+            camera_evidence["retentionHours"] = int(validated_payload.get("retentionHours") or 24)
+            if self._require_live_data or self._repository.is_live:
+                camera_evidence["purposeRecordedAt"] = _now_iso()
+                camera_evidence["lockedReason"] = camera_evidence.get("lockedReason") or (
+                    "Camera content authorization is unavailable; a recorded purpose is not an access grant."
+                )
+                camera_evidence["summary"] = "Camera evidence purpose recorded; media content is not authorized."
+            else:
+                # Preserve the original explicit local/POC illustration.
+                camera_evidence.pop("lockedReason", None)
+                camera_evidence["unlockedAt"] = _now_iso()
+                camera_evidence["summary"] = (
+                    "Camera evidence unlocked for a recorded, audit-scoped purpose."
+                )
+            issue["updatedAt"] = _now_iso()
+
+            audit = _append_audit_event(
                 state,
-                issue_id=issue_id,
-                payload=payload,
-                idempotency_key=idempotency_key,
+                action="evidence.camera_purpose.recorded",
                 actor_role_id=actor_role_id,
                 actor_name=actor_name,
+                category="evidence",
+                message=f"{issue_id} camera evidence purpose recorded before access.",
+                metadata={
+                    "issueId": issue_id,
+                    "evidenceId": camera_evidence["id"],
+                    "purpose": camera_evidence["purpose"],
+                    "cameraLocation": camera_evidence["cameraLocation"],
+                    "timeWindow": camera_evidence["timeWindow"],
+                    "retentionHours": camera_evidence["retentionHours"],
+                    "idempotencyKey": idempotency_key,
+                },
             )
-        )
-        self._record_shared_audit(
-            event_type="operator.store_ops.camera_purpose",
-            actor=actor_name,
-            action="record_camera_purpose",
-            resource=f"operator/store-ops/issues/{issue_id}/evidence/{camera_evidence['id']}",
-            outcome="accepted",
-            correlation_id=correlation_id,
-            metadata=audit["metadata"],
-        )
+            shared_audit = AuditEvent(
+                event_type="operator.store_ops.camera_purpose",
+                actor=self._actor_subject_id or actor_name,
+                action="record_camera_purpose",
+                resource=f"operator/store-ops/issues/{issue_id}/evidence/{camera_evidence['id']}",
+                outcome="accepted",
+                correlation_id=correlation_id,
+                metadata=audit["metadata"],
+            )
+            self._append_submission_record(
+                state, issue, audit, shared_audit,
+                record_type=WORKFLOW_RECORD_TYPES["camera-purpose"], history_key="workflowRecords",
+                submission=submission, source_updated_at=source_updated_at,
+                actor_name=actor_name, actor_role_id=actor_role_id, correlation_id=correlation_id,
+            )
+            return _clone(issue), _clone(camera_evidence), _clone(audit), shared_audit
+
+        issue, camera_evidence, audit, shared_audit = self._update_state(mutate)
+        self._audit_log.record(shared_audit)
 
         result = self.snapshot()
         result.update(
             {
-                "issue": issue,
-                "evidenceItem": camera_evidence,
-                "auditEvent": audit,
+                "issue": _clone(issue),
+                "evidenceItem": _camera_metadata_only(camera_evidence)
+                    if self._require_live_data or self._repository.is_live else _clone(camera_evidence),
+                "auditEvent": _clone(audit),
                 "idempotentReplay": False,
             }
         )
@@ -1183,60 +1456,22 @@ class StoreOpsService:
             self._repository.save_idempotency_result(idempotency_key, result)
         return result
 
-    @staticmethod
-    def _record_camera_purpose(
-        state: dict[str, Any],
-        *,
-        issue_id: str,
-        payload: Mapping[str, Any],
-        idempotency_key: str | None,
-        actor_role_id: str,
-        actor_name: str,
-    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-        issue = _find_issue(state, issue_id)
-        camera_evidence = _find_camera_evidence(state, issue)
-        _validate_camera_purpose(payload)
-
-        camera_evidence.pop("lockedReason", None)
-        camera_evidence["purpose"] = str(payload.get("purpose", "")).strip()
-        camera_evidence["cameraLocation"] = str(payload.get("cameraLocation", "")).strip()
-        camera_evidence["timeWindow"] = str(payload.get("timeWindow", "")).strip()
-        camera_evidence["retentionHours"] = int(payload.get("retentionHours") or 24)
-        camera_evidence["unlockedAt"] = _now_iso()
-        camera_evidence["summary"] = (
-            "Camera evidence unlocked for a recorded, audit-scoped purpose."
-        )
-
-        audit = _append_audit_event(
-            state,
-            action="evidence.camera_purpose.recorded",
-            actor_role_id=actor_role_id,
-            actor_name=actor_name,
-            category="evidence",
-            message=f"{issue_id} camera evidence purpose recorded before access.",
-            metadata={
-                "issueId": issue_id,
-                "evidenceId": camera_evidence["id"],
-                "purpose": camera_evidence["purpose"],
-                "cameraLocation": camera_evidence["cameraLocation"],
-                "timeWindow": camera_evidence["timeWindow"],
-                "retentionHours": camera_evidence["retentionHours"],
-                "idempotencyKey": idempotency_key,
-            },
-        )
-        return _clone(issue), _clone(camera_evidence), _clone(audit)
-
-    def _apply_triage(self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]) -> None:
+    def _apply_triage(self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]) -> TriageSubmission:
         _require_status(issue, {"new", "waitingevidence"}, "triage")
+        submission = _review_submission(TriageSubmission, issue, payload)
+        payload = submission.model_dump(exclude_none=True)
         severity = payload.get("severity")
         if isinstance(severity, str) and severity in _ISSUE_SEVERITIES:
             issue["severity"] = severity
         decision = payload.get("decision")
         need_evidence = bool(payload.get("needEvidence")) or decision == "needEvidence"
         issue["status"] = "waitingevidence" if need_evidence else "triaged"
+        return submission
 
-    def _apply_assign(self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]) -> None:
+    def _apply_assign(self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]) -> AssignSubmission:
         _require_status(issue, {"triaged"}, "assign")
+        submission = _review_submission(AssignSubmission, issue, payload)
+        payload = submission.model_dump(exclude_none=True)
         owner_role_id = str(payload.get("ownerRoleId") or issue["ownerRoleId"])
         owner_name = str(payload.get("ownerName") or issue["ownerName"]).strip()
         sla_due_at = str(payload.get("slaDueAt") or issue["slaDueAt"]).strip()
@@ -1244,58 +1479,73 @@ class StoreOpsService:
         issue["ownerName"] = owner_name or issue["ownerName"]
         issue["slaDueAt"] = sla_due_at or issue["slaDueAt"]
         issue["status"] = "assigned"
+        return submission
 
-    def _apply_action(self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]) -> None:
+    def _apply_action(self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]) -> ActionSubmission:
         _require_status(issue, {"assigned"}, "actions")
+        submission = _review_submission(ActionSubmission, issue, payload)
+        payload = submission.model_dump(exclude_none=True)
         issue["status"] = (
             "waitingapproval" if bool(payload.get("requiresApproval")) else "inprogress"
         )
+        return submission
 
     def _apply_field_report(
         self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]
-    ) -> None:
+    ) -> FieldReportSubmission:
         _require_status(issue, {"inprogress", "executed"}, "field-report")
+        submission = _review_submission(FieldReportSubmission, issue, payload)
+        payload = submission.model_dump(exclude_none=True)
         checklist_status = payload.get("checklistStatus")
         issue["status"] = "waitingevidence" if checklist_status == "blocked" else "observing"
+        return submission
 
-    def _apply_outcome(self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]) -> None:
+    def _apply_outcome(
+        self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]
+    ) -> OutcomeSubmission:
         _require_status(issue, {"observing", "outcomeready"}, "outcome")
-        outcome = payload.get("outcome")
-        close_issue = bool(payload.get("closeIssue"))
+        submission = _review_submission(OutcomeSubmission, issue, payload)
+        outcome = submission.outcome
+        close_issue = submission.closeIssue
         if outcome == "effective" and close_issue:
             issue["status"] = "closed"
         elif outcome in {"ineffective", "inconclusive"}:
             issue["status"] = "escalated"
         else:
             issue["status"] = "outcomeready"
+        return submission
 
     def _apply_escalation(
         self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]
-    ) -> None:
+    ) -> EscalationSubmission:
         if issue["status"] == "closed":
             raise StoreOpsConflict("closed issues cannot be escalated")
+        submission = _review_submission(EscalationSubmission, issue, payload)
         issue["status"] = "escalated"
-        issue["relatedGrowthId"] = (
-            payload.get("target")
-            if payload.get("target") == "growth"
-            else issue.get("relatedGrowthId")
-        )
+        # A routing intent is not an actual Growth entity identifier. Preserve
+        # any previously recorded relationship until a real producer changes it.
+        if issue.get("relatedGrowthId") == "growth":
+            issue.pop("relatedGrowthId")  # Remove the old handler's known fabricated sentinel.
+        return submission
 
     def _apply_reply_review(
         self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]
-    ) -> None:
+    ) -> ReplyReviewSubmission:
         if issue["status"] == "closed":
             raise StoreOpsConflict("closed issues cannot accept reply review")
-        issue["updatedAt"] = _now_iso()
+        return _review_submission(ReplyReviewSubmission, issue, payload)
 
-    def _apply_transfer(self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]) -> None:
+    def _apply_transfer(self, issue: MutableMapping[str, Any], payload: Mapping[str, Any]) -> TransferSubmission:
         if issue["status"] == "closed":
             raise StoreOpsConflict("closed issues cannot be transferred")
+        submission = _review_submission(TransferSubmission, issue, payload)
+        payload = submission.model_dump(exclude_none=True)
         target_role = str(payload.get("targetRoleId") or issue["ownerRoleId"])
         target_owner = str(payload.get("targetOwnerName") or "").strip()
         issue["ownerRoleId"] = target_role
         if target_owner:
             issue["ownerName"] = target_owner
+        return submission
 
     def _filter_issues(
         self,
@@ -1320,6 +1570,7 @@ class StoreOpsService:
 
         filtered: list[dict[str, Any]] = []
         for issue in state["issues"]:
+            _validate_review_history(state, issue)
             store = stores_by_id.get(issue["storeId"], {})
             if mine_only and issue["ownerRoleId"] != role_id:
                 continue
@@ -1377,6 +1628,22 @@ class StoreOpsService:
                 metadata=dict(metadata),
             )
         )
+
+
+def _review_submission(model: Any, issue: Mapping[str, Any], payload: Mapping[str, Any]) -> Any:
+    for key in ("issueId", "storeId"):
+        expected = issue["id"] if key == "issueId" else issue["storeId"]
+        if key in payload and payload[key] != expected:
+            raise StoreOpsConflict("Store Ops review does not match its issue and store")
+    if payload.get("payload") not in (None, {}):
+        raise StoreOpsPolicyError("Store Ops review fields must be submitted at the top level")
+    envelope = {"issueId", "issueTitle", "storeId", "storeName", "actorRoleId", "actorName", "payload"}
+    try:
+        return model.model_validate({key: value for key, value in payload.items() if key not in envelope})
+    except ValidationError as exc:
+        # Error responses identify fields without echoing customer text or draft contents.
+        fields = sorted({".".join(map(str, error["loc"])) or "submission" for error in exc.errors()})
+        raise StoreOpsPolicyError("Invalid Store Ops review fields: " + ", ".join(fields)) from exc
 
 
 def _normalize_action(action_type: str) -> str:
@@ -1446,8 +1713,36 @@ def mask_attachment(
 def _find_issue(state: Mapping[str, Any], issue_id: str) -> MutableMapping[str, Any]:
     for issue in state["issues"]:
         if issue["id"] == issue_id:
+            _validate_review_history(state, issue)
             return issue
     raise StoreOpsNotFound(f"issue not found: {issue_id}")
+
+
+def _validate_review_history(state: Mapping[str, Any], issue: Mapping[str, Any]) -> None:
+    audits = {row["id"]: row for row in state["auditEvents"]}
+    for key in ("outcomeReviews", "replyReviews", "workflowRecords"):
+        history = issue.get(key, [])
+        if not isinstance(history, list):
+            raise StoreOpsLiveDataUnavailable("Store Ops review history is invalid")
+        seen = set()
+        for record in history:
+            try:
+                record_type, action = record_contract(key, record)
+                record_type.model_validate(record)
+            except (ValueError, TypeError) as exc:
+                raise StoreOpsLiveDataUnavailable("Store Ops review record is invalid") from exc
+            audit = audits.get(record["workflowAuditId"])
+            digest = hashlib.sha256(
+                json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+            ).hexdigest()
+            if (
+                record["id"] in seen or record["id"] != record["workflowAuditId"]
+                or record["issueId"] != issue["id"] or record["storeId"] != issue["storeId"]
+                or audit is None or audit["targetId"] != issue["id"] or audit["action"] != action
+                or audit["metadata"].get("reviewRecordHash") != digest
+            ):
+                raise StoreOpsLiveDataUnavailable("Store Ops review source or audit binding is invalid")
+            seen.add(record["id"])
 
 
 def _find_camera_evidence(
@@ -1524,9 +1819,11 @@ def _four_light_summary(
     for dimension in _LIGHT_DIMENSIONS:
         counts = {status: 0 for status in _LIGHT_STATUSES}
         issue_counts = {status: 0 for status in _LIGHT_STATUSES}
+        unavailable_count = 0
         for store in store_list:
-            light_status = str(store.get("lights", {}).get(dimension, "green"))
+            light_status = store.get("lights", {}).get(dimension)
             if light_status not in counts:
+                unavailable_count += 1
                 continue
             counts[light_status] += 1
             issue_counts[light_status] += len(issues_by_store.get(str(store.get("id")), []))
@@ -1541,6 +1838,7 @@ def _four_light_summary(
                 }[dimension],
                 "counts": counts,
                 "issueCounts": issue_counts,
+                "unavailableCount": unavailable_count,
             }
         )
     return summary

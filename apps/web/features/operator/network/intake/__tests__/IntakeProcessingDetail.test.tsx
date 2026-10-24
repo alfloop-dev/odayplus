@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssistedIntake, IntakeInboxPage } from "@oday-plus/openapi-client";
 import { OperatorConsole, isIntakeDetailOpen } from "../../../OperatorConsole";
+import "../../../NetworkFindAreasWorkspace";
 import {
   AssistedIntakeSection,
   authoritativeAssignmentVersion,
@@ -597,9 +598,9 @@ describe("AssistedIntakeSection production container", () => {
       if (path === `/api/v1/intakes/${record.id}/promotion-decision`) return json({ code: "NOT_FOUND" }, 404);
       return json({ code: "NOT_FOUND" }, 404);
     }));
-    // Exercise the real panel's routing and authoritative intake binding.
-    // Fresh-browser cold module loading is verified separately.
-    await import("../../../NetworkFindAreasWorkspace");
+    // The test module imports the real panel before the timed interaction.
+    // Exercise routing and authoritative intake binding; fresh-browser cold
+    // module loading is verified separately.
     render(<OperatorConsole searchParams={{ ws: "network", tab: "radar", selected: record.id, dialog: "detail", stage: "NEEDS_REVIEW" }} />);
     expect(await screen.findByTestId("intake-detail-dialog")).toBeInTheDocument();
     expect(screen.queryByTestId("operator-data-unavailable")).toBeNull();
@@ -1199,5 +1200,117 @@ describe("partial recorded match facts do not establish decision authority", () 
   });
   it.each([0, 0.7, 1])("retains recorded confidence boundary %s", (value) => {
     expect(matchConfidence(value)).toBe(value);
+  });
+});
+
+
+describe("decision drafts belong to one client, principal, record and decision intent", () => {
+  it("survives list omission, delayed failing direct GET and 503, then retries the same command key", async () => {
+    const record = intake();
+    let listed = true;
+    let finishGet!: (response: Response) => void;
+    const writes: Array<{ key: string | null; reason: string }> = [];
+    nav.reset(`selected=${record.id}&dialog=decide&decision=create`);
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), "http://localhost").pathname;
+      if (path === "/api/v1/operator/network-listings/intake") return json({
+        items: listed ? [record] : [], total: listed ? 1 : 0, page: 1, pageSize: 10,
+        counts: {}, evidenceState: "complete",
+      });
+      if (path === `/api/v1/operator/network-listings/intake/${record.id}`) {
+        return new Promise<Response>((resolve) => { finishGet = resolve; });
+      }
+      if (path.endsWith(`/${record.id}/decide`)) {
+        writes.push({ key: new Headers(init?.headers).get("idempotency-key"),
+          reason: JSON.parse(String(init?.body)).reason });
+        return writes.length === 1 ? json({ detail: "Decision temporarily unavailable" }, 503)
+          : json({ ...record, stage: "READY" });
+      }
+      return json({ code: "NOT_FOUND" }, 404);
+    }));
+    render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="draft-owner" />);
+    fireEvent.change(await screen.findByTestId("intake-decide-reason"), { target: { value: "Recorded same-scope decision reason" } });
+    fireEvent.click(screen.getByTestId("intake-decide-risk-ack"));
+    fireEvent.click(screen.getByTestId("intake-decide-submit"));
+    await screen.findByTestId("intake-decide-error");
+    expect(screen.getByTestId("intake-decide-reason")).toHaveValue("Recorded same-scope decision reason");
+    listed = false;
+    await act(async () => nav.replace(`/operator?selected=${record.id}&dialog=decide&decision=create&refresh=omitted`));
+    await screen.findByTestId("intake-direct-detail-loading");
+    expect(screen.queryByTestId("intake-decide-dialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(finishGet).toBeDefined());
+    await act(async () => finishGet(json({ detail: "Direct read temporarily unavailable" }, 503)));
+    await screen.findByTestId("intake-direct-detail-error");
+    expect(writes).toHaveLength(1);
+    listed = true;
+    await act(async () => nav.replace(`/operator?selected=${record.id}&dialog=decide&decision=create&refresh=restored`));
+    expect(await screen.findByTestId("intake-decide-reason")).toHaveValue("Recorded same-scope decision reason");
+    expect(screen.getByTestId("intake-decide-risk-ack")).toBeChecked();
+    expect(screen.getByTestId("intake-decide-error")).toHaveTextContent("Decision temporarily unavailable");
+    fireEvent.click(screen.getByTestId("intake-decide-submit"));
+    await waitFor(() => expect(screen.queryByTestId("intake-decide-dialog")).not.toBeInTheDocument());
+    expect(writes).toHaveLength(2);
+    expect(writes[0].key).toBeTruthy();
+    expect(writes[1]).toEqual(writes[0]);
+  });
+
+  it.each(["principal", "role", "record", "kind", "cancel"])("does not carry a draft across a %s change or A-B-A navigation", async (change) => {
+    const record = intake();
+    const second = intake({ id: "IN-SECOND-DECISION" });
+    nav.reset(`selected=${record.id}&dialog=decide&decision=create`);
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(String(input), "http://localhost").pathname;
+      if (path === "/api/v1/operator/network-listings/intake") return json({ items: [record, second], total: 2,
+        page: 1, pageSize: 10, counts: {}, evidenceState: "complete" });
+      return json({ code: "NOT_FOUND" }, 404);
+    }));
+    const view = render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="draft-owner" />);
+    fireEvent.change(await screen.findByTestId("intake-decide-reason"), { target: { value: "Must stay with the original intent" } });
+    fireEvent.click(screen.getByTestId("intake-decide-risk-ack"));
+    if (change === "principal") {
+      view.rerender(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="other-owner" />);
+    } else if (change === "role") {
+      view.rerender(<AssistedIntakeSection activeRoleId="expansion-staff" activeSubjectId="draft-owner" />);
+    } else {
+      const next = change === "record" ? `selected=${second.id}&dialog=decide&decision=create`
+        : change === "kind" ? `selected=${record.id}&dialog=decide&decision=dup`
+          : `selected=${record.id}&dialog=detail`;
+      await act(async () => nav.replace(`/operator?${next}`));
+    }
+    if (change !== "role" && change !== "cancel") {
+      await waitFor(() => expect(screen.getByTestId("intake-decide-reason")).toHaveValue(""));
+      expect(screen.getByTestId("intake-decide-risk-ack")).not.toBeChecked();
+    }
+    view.rerender(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="draft-owner" />);
+    await act(async () => nav.replace(`/operator?selected=${record.id}&dialog=decide&decision=create`));
+    expect(await screen.findByTestId("intake-decide-reason")).toHaveValue("");
+    expect(screen.getByTestId("intake-decide-risk-ack")).not.toBeChecked();
+  });
+
+  it.each([200, 503])("ignores an abandoned decision's late %s result after a new principal is ready", async (status) => {
+    const record = intake();
+    let finishWrite!: (response: Response) => void;
+    nav.reset(`selected=${record.id}&dialog=decide&decision=create`);
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(String(input), "http://localhost").pathname;
+      if (path === "/api/v1/operator/network-listings/intake") return json({ items: [record], total: 1,
+        page: 1, pageSize: 10, counts: {}, evidenceState: "complete" });
+      if (path.endsWith(`/${record.id}/decide`)) return new Promise<Response>((resolve) => { finishWrite = resolve; });
+      return json({ code: "NOT_FOUND" }, 404);
+    }));
+    const view = render(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="draft-owner" />);
+    fireEvent.change(await screen.findByTestId("intake-decide-reason"), { target: { value: "Old principal reason" } });
+    fireEvent.click(screen.getByTestId("intake-decide-risk-ack"));
+    fireEvent.click(screen.getByTestId("intake-decide-submit"));
+    await waitFor(() => expect(finishWrite).toBeDefined());
+    view.rerender(<AssistedIntakeSection activeRoleId="expansion-manager" activeSubjectId="new-owner" />);
+    await waitFor(() => expect(screen.getByTestId("intake-decide-reason")).toBeEnabled());
+    fireEvent.change(screen.getByTestId("intake-decide-reason"), { target: { value: "New principal reason" } });
+    await act(async () => finishWrite(status === 200 ? json({ ...record, stage: "READY" })
+      : json({ detail: "Old principal refusal" }, 503)));
+    expect(screen.getByTestId("intake-decide-reason")).toHaveValue("New principal reason");
+    expect(screen.getByTestId("intake-decide-risk-ack")).not.toBeChecked();
+    expect(screen.queryByTestId("intake-decide-error")).not.toBeInTheDocument();
+    expect(new URLSearchParams(nav.state.search).get("dialog")).toBe("decide");
   });
 });

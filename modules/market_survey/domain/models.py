@@ -68,6 +68,7 @@ class TargetEntityKind(StrEnum):
     """Category of entity targeted by the field survey."""
 
     CANDIDATE_SITE = "CANDIDATE_SITE"
+    HEAT_ZONE = "HEAT_ZONE"
     STORE = "STORE"
     POI = "POI"
     PROPERTY = "PROPERTY"

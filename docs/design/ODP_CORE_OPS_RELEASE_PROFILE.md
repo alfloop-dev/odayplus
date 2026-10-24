@@ -245,7 +245,7 @@ Task: ODP-CORE-OPS-STAGING-LIVE-GATE-001 · Owner: Claude2 · Reviewer: Codex2
   - `ODP_AUTH_SERVICE_JWKS_URI=https://www.googleapis.com/oauth2/v3/certs`
   - `ODP_AUTH_SERVICE_AUDIENCES=urn:odp:staging-smoke:<release_label>`
   - `ODP_AUTH_PRINCIPAL_MAP`：只有一筆，key 是 `google_service_account.staging_runtime.unique_id`（ID token 的數字 `sub`），值是 `roles=["operations_manager","model_owner","data_owner"]` 與 `tenant_id=<release tenant>`。
-  
+
   issuer/JWKS 與 root stack 的 `service_auth_*` 預設值相同。
 - **Token**：gate stage 執行時，以 `gcloud auth print-identity-token --impersonate-service-account=<runtime SA> --include-email` 現場簽發三個短效 ID token：
   - smoke bearer（audience 是上面的 urn）

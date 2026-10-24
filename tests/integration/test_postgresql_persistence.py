@@ -214,6 +214,7 @@ def test_postgresql_claim_is_atomic_across_worker_processes(intake_blank_db: Any
         for index, ready_event in enumerate(ready_events)
     ]
     try:
+        assert engine.query("SELECT job_id FROM durable_jobs") == [{"job_id": job.job_id}]
         # Spawn imports the persistence/ML stack. Bound startup separately,
         # then retain the original 20-second limit for the actual claim race.
         for process, ready_event in zip(processes, ready_events, strict=True):

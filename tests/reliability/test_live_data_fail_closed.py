@@ -361,6 +361,7 @@ def test_all_production_mode_aliases_block_product_routes_without_live_stack(
 
     assert app.state.require_live_data is True
     assert client.get("/healthz").status_code == 200
+    assert client.get("/liveness").status_code == 200
     response = client.get(
         "/api/v1/operator/bootstrap",
         headers={

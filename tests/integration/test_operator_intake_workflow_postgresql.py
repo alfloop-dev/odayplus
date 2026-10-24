@@ -30,6 +30,7 @@ from tests.integration.test_intake_registry_calendar_postgresql import (
     _seed_identities,
     _upgrade,
 )
+from tests.support.listing_search_integration import execute_claimed_listing_search
 
 pytestmark = pytest.mark.requires_live_env
 BASE = "/api/v1/operator/network-listings"
@@ -121,6 +122,8 @@ def _claim_intake_job(bundle, job_id):
         assert job is not None
         if job.job_id == job_id:
             return job
+        if execute_claimed_listing_search(bundle, job):
+            continue
         assert job.job_type == "canonical-audit-delivery"
     raise AssertionError("Intake job was not claimable")
 

@@ -95,7 +95,7 @@ describe("OperatorConsole session wiring", () => {
 
     render(<OperatorConsole searchParams={{ ws: "today" }} />);
     fireEvent.click(screen.getByRole("button", { name: /營運主管/, expanded: false }));
-    fireEvent.click(screen.getByRole("button", { name: "登出" }));
+    fireEvent.click(await screen.findByRole("button", { name: "登出" }));
 
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/login"));
     expect(fetchMock.mock.calls.some(([input]) => urlOf(input) === "/auth/logout")).toBe(true);
@@ -114,7 +114,7 @@ describe("OperatorConsole session wiring", () => {
 
     render(<OperatorConsole searchParams={{ ws: "today" }} />);
     fireEvent.click(screen.getByRole("button", { name: /營運主管/, expanded: false }));
-    fireEvent.click(screen.getByRole("button", { name: "登出" }));
+    fireEvent.click(await screen.findByRole("button", { name: "登出" }));
 
     expect(await screen.findByText(/登出失敗/)).toBeInTheDocument();
     expect(assign).not.toHaveBeenCalled();
@@ -214,7 +214,7 @@ describe("OperatorAdminConsole", () => {
   });
 
   it.each(["full", "dev-admin", "core-ops"] as const)("keeps truthful model-ready messaging for %s", profile => {
-    stubAuthenticatedFetch(vi.fn().mockResolvedValue(json(401, {})));
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(json(401, {})));
     render(<OperatorAdminConsole releaseStatus={{ profile, models: "ready", unavailableServices: ["AVM"] }} />);
     const notice = screen.getByTestId("operator-release-notice");
     expect(notice).toHaveTextContent("正式模型綁定已就緒");

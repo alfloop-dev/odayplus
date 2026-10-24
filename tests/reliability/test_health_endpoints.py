@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
@@ -61,9 +62,10 @@ def _connectivity_result(
     }
 
 
-def test_healthz_liveness() -> None:
+@pytest.mark.parametrize("path", ["/liveness", "/healthz"])
+def test_healthz_liveness(path: str) -> None:
     client = TestClient(create_app())
-    response = client.get("/healthz")
+    response = client.get(path)
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "service": "oday-api"}
 

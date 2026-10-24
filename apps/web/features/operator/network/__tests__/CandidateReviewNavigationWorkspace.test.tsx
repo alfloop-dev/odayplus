@@ -3,15 +3,16 @@ import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NetworkFindAreasWorkspace as Workspace } from "../../NetworkFindAreasWorkspace";
-import { NETWORK_TAB_IDS } from "../networkUrlState";
-
-// Explicit synthetic bootstrap tabs for these component controls. Backend
-// scope/role denials and read revalidation assertions remain authoritative.
-function NetworkFindAreasWorkspace(props: Parameters<typeof Workspace>[0]) {
-  return <Workspace allowedTabIds={NETWORK_TAB_IDS} {...props} />;
-}
+import { NetworkFindAreasWorkspace as GrantedReadNetworkWorkspace } from "../../NetworkFindAreasWorkspace";
 import { candidateWorkflowNavigationParams, parseReviewSelection } from "../networkUrlState";
+
+// Explicit read-grant fixture: shell projects listing and SiteScore read families.
+// This is a renderer premise, not a real Principal/production permission grant.
+const NETWORK_READ_FIXTURE_TABS = ["areas", "radar", "candidates", "score", "compare", "review"] as const;
+function NetworkFindAreasWorkspace(props: import("../../NetworkFindAreasWorkspace").NetworkFindAreasWorkspaceProps) {
+  return <GrantedReadNetworkWorkspace allowedTabIds={NETWORK_READ_FIXTURE_TABS} {...props} />;
+}
+
 
 const nav = vi.hoisted(() => ({ search: "", push: vi.fn() }));
 vi.mock("next/navigation", () => ({ usePathname: () => "/operator", useSearchParams: () => new URLSearchParams(nav.search), useRouter: () => ({ push: nav.push }) }));
@@ -84,14 +85,68 @@ describe("exact existing review read navigation", () => {
     const { value, fetch } = prepare("GO_V2", "review", facts.GO_V2.reviewId);
     const view = render(<NetworkFindAreasWorkspace activeRoleId="expansion-manager" />);
     await waitFor(() => expect(screen.getByTestId(`review-card-${value.reviewId}`)).toHaveAttribute("data-active", "true"));
+    const reviewReads = () => fetch.mock.calls.filter(([input]) => String(input).includes("network-reviews")).length;
+    const initialReads = reviewReads();
     nav.search = `ws=network&tab=review&candidate=${value.candidateId}&review=foreign`;
     window.history.replaceState(null, "", `/operator?${nav.search}`); view.rerender(<NetworkFindAreasWorkspace activeRoleId="expansion-manager" />);
-    expect(screen.getByTestId(`review-card-${value.reviewId}`)).toHaveAttribute("data-active", "false");
+    expect(document.querySelectorAll('[data-testid^="review-card-"][data-active="true"]')).toHaveLength(0);
+    expect(screen.queryByTestId("review-historical-target-context")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "GO 核准" })).not.toBeInTheDocument();
+    await waitFor(() => expect(reviewReads()).toBe(initialReads + 1));
+    expect(await screen.findByTestId(`review-card-${value.reviewId}`)).toHaveAttribute("data-active", "false");
     expect(screen.getByTestId("review-explicit-target-unavailable")).toBeVisible();
     nav.search = `ws=network&tab=review&candidate=${value.candidateId}&review=${value.reviewId}`;
     window.history.replaceState(null, "", `/operator?${nav.search}`); view.rerender(<NetworkFindAreasWorkspace activeRoleId="expansion-manager" />);
-    expect(screen.getByTestId(`review-card-${value.reviewId}`)).toHaveAttribute("data-active", "true");
+    expect(document.querySelectorAll('[data-testid^="review-card-"][data-active="true"]')).toHaveLength(0);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "GO 核准" })).not.toBeInTheDocument();
+    await waitFor(() => expect(reviewReads()).toBe(initialReads + 2));
+    await waitFor(() => expect(screen.getByTestId(`review-card-${value.reviewId}`)).toHaveAttribute("data-active", "true"));
     expect(fetch.mock.calls.every(([, init]) => !init || init.method !== "POST")).toBe(true);
+  });
+  it("a late previous URL's successful body cannot replace the current URL's denied review read", async () => {
+    const { value } = prepare("GO_V2", "review", facts.GO_V2.reviewId);
+    let reviewReads = 0, finishPrevious!: (value: unknown) => void;
+    const delayed = { ok: true, json: () => new Promise<unknown>((resolve) => { finishPrevious = resolve; }) } as Response;
+    const fetch = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      if (String(input).includes("network-listings")) return json(value.network);
+      if (String(input).includes("network-scoring")) return json(value.scoring);
+      if (!String(input).includes("network-reviews")) return json({}, 403);
+      reviewReads += 1;
+      if (reviewReads === 1) return json(value.reviews);
+      if (reviewReads === 2) return delayed;
+      return new Response(JSON.stringify({ detail: "current history URL denied" }), {
+        status: 403, headers: { "Content-Type": "application/json", "X-Correlation-Id": "corr-current-history-denied" },
+      });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const view = render(<NetworkFindAreasWorkspace activeRoleId="expansion-manager" />);
+    await waitFor(() => expect(screen.getByTestId(`review-card-${value.reviewId}`)).toHaveAttribute("data-active", "true"));
+    nav.search = `ws=network&tab=review&candidate=${value.candidateId}&review=foreign`;
+    window.history.replaceState(null, "", `/operator?${nav.search}`); view.rerender(<NetworkFindAreasWorkspace activeRoleId="expansion-manager" />);
+    expect(document.querySelectorAll('[data-testid^="review-card-"][data-active="true"]')).toHaveLength(0);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(finishPrevious).toBeTypeOf("function"));
+    nav.search = `ws=network&tab=review&candidate=${value.candidateId}&review=${value.reviewId}`;
+    window.history.replaceState(null, "", `/operator?${nav.search}`); view.rerender(<NetworkFindAreasWorkspace activeRoleId="expansion-manager" />);
+    expect(document.querySelectorAll('[data-testid^="review-card-"][data-active="true"]')).toHaveLength(0);
+    await waitFor(() => expect(reviewReads).toBe(3));
+    await waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-failure-kind", "forbidden"));
+    expect(screen.getByTestId("operator-data-unavailable-correlation")).toHaveTextContent("corr-current-history-denied");
+    expect(screen.getByTestId("operator-data-unavailable-technical")).toHaveTextContent("current history URL denied");
+    expect(screen.queryByTestId(`review-card-${value.reviewId}`)).not.toBeInTheDocument();
+    await act(async () => finishPrevious(value.reviews));
+    expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-failure-kind", "forbidden");
+    expect(screen.getByTestId("operator-data-unavailable-correlation")).toHaveTextContent("corr-current-history-denied");
+    expect(screen.getByTestId("operator-data-unavailable-technical")).toHaveTextContent("current history URL denied");
+    expect(screen.queryByTestId(`review-card-${value.reviewId}`)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("review-historical-target-context")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "GO 核准" })).not.toBeInTheDocument();
+    expect(reviewReads).toBe(3);
+    expect(fetch.mock.calls.every(([, init]) => !init || init.method !== "POST")).toBe(true);
+    expect(nav.push).not.toHaveBeenCalled();
   });
   it("a new role's denied review read removes the old stage and navigation immediately", async () => {
     const value = facts.GO_V2; prepare("GO_V2"); let calls = 0;

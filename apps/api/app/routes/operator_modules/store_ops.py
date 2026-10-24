@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
@@ -8,16 +9,17 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from apps.api.oday_api.runtime_mode import live_data_required
 from modules.opsboard.application.store_ops import (
-    InMemoryStoreOpsRepository,
+    DurableStoreOpsRepository,
     StoreOpsConcurrentWriteConflict,
     StoreOpsConflict,
     StoreOpsLiveDataUnavailable,
     StoreOpsNotFound,
     StoreOpsPolicyError,
     StoreOpsService,
-    UnavailableStoreOpsRepository,
 )
 from modules.opsboard.application.store_ops_audit_delivery import StoreOpsAuditDelivery
+from modules.opsboard.application.store_ops_forecast import current_issue_forecast
+from modules.opsboard.application.store_ops_native_summary import native_store_summary
 from modules.opsboard.application.store_ops_scope import ScopedStoreOpsRepository, binding_hash
 from modules.opsboard.domain.r4_dtos import AttachmentUploadRequest
 from shared.audit import AuditEvent, InMemoryAuditLog
@@ -37,7 +39,7 @@ class StoreOpsTransitionPayload(BaseModel):
 
 
 class StoreOpsCameraPurposePayload(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="allow", strict=True)
 
     issueId: str | None = None
     issueTitle: str | None = None
@@ -63,6 +65,8 @@ def create_operator_store_ops_router(
     *,
     repository: Any = None,
     store_repository: Any = None,
+    machine_repository: Any = None,
+    forecastops_repository: Any = None,
     delivery_job_queue: Any = None,
     audit_log: InMemoryAuditLog | None = None,
     require_live_data: bool | None = None,
@@ -91,40 +95,12 @@ def create_operator_store_ops_router(
         tenant_id=guard_tenant_id,
         engine=authz_engine,
     )
-    if repository is None and not live_required:
-        # One demo repository for the router's lifetime, as before scoping.
-        repository = InMemoryStoreOpsRepository()
+    service = StoreOpsService(
+        repository=repository,
+        audit_log=active_audit_log,
+        require_live_data=live_required,
+    )
     router = APIRouter(prefix="/operator/store-ops", tags=["operator-store-ops"])
-
-    def tenant_of(request: Request) -> str:
-        return str(getattr(request.state, "operator_tenant_id", "") or "").strip()
-
-    def service_for(request: Request) -> StoreOpsService:
-        """A service bound to the authenticated tenant's own Store Ops partition.
-
-        The guard has already resolved the tenant; in production a repository
-        that cannot partition by tenant is refused rather than shared.
-        """
-        tenant_id = tenant_of(request)
-        scoped: Any = repository
-        for_tenant = getattr(repository, "for_tenant", None)
-        if for_tenant is not None and tenant_id:
-            scoped = for_tenant(tenant_id)
-        elif live_required:
-            scoped = UnavailableStoreOpsRepository(
-                "Store Ops production routes require a tenant-partitioned repository"
-            )
-        return StoreOpsService(
-            repository=scoped,
-            audit_log=active_audit_log,
-            require_live_data=live_required,
-        )
-
-    def attachment_tenant(request: Request, header_tenant_id: str | None) -> str:
-        # Production records the authenticated tenant, never a request header.
-        if live_required:
-            return tenant_of(request)
-        return header_tenant_id or "tenant-a"
 
     def call_service(
         request: Request, operation: str, method: Any, *args: Any, **kwargs: Any
@@ -151,13 +127,13 @@ def create_operator_store_ops_router(
                 raise StoreOpsLiveDataUnavailable(
                     "Store Ops scoped PostgreSQL repositories are not configured"
                 )
-            bound_tenant = getattr(repository, "tenant_id", None)
-            document_tenant = getattr(document_store, "tenant_id", None)
-            if any(value is not None and value != tenant_id for value in (bound_tenant, document_tenant)):
+            bound_tenant = getattr(document_store, "tenant_id", None)
+            repository_tenant = getattr(repository, "tenant_id", None)
+            if any(value is not None and value != tenant_id for value in (bound_tenant, repository_tenant)):
                 raise StoreOpsLiveDataUnavailable("Store Ops repository belongs to another tenant")
             scoped_store = (
                 document_store
-                if document_tenant
+                if bound_tenant
                 else TenantScopedDocumentStore(document_store, tenant_id)
             )
             binding = {
@@ -214,7 +190,7 @@ def create_operator_store_ops_router(
                     store_ids=tuple(scope.store_ids),
                 )
                 scoped_repository = ScopedStoreOpsRepository(
-                    repository.for_tenant(tenant_id),
+                    DurableStoreOpsRepository(scoped_store),
                     store_ids=frozenset(str(store.store_id) for store in stores),
                     subject_id=subject_id,
                     scope_hash=binding_hash(binding),
@@ -222,7 +198,9 @@ def create_operator_store_ops_router(
                     operation=operation,
                 )
                 scoped_service = StoreOpsService(
-                    repository=scoped_repository, audit_log=audit, require_live_data=True
+                    repository=scoped_repository, audit_log=audit, require_live_data=True,
+                    actor_subject_id=subject_id,
+                    forecastops_repository=forecastops_repository, tenant_id=tenant_id,
                 )
                 issue_id = kwargs.get("issue_id") or (args[0] if args else None)
                 if issue_id is not None:
@@ -230,10 +208,32 @@ def create_operator_store_ops_router(
                     # receipt; scope reduction cannot reveal an old response.
                     scoped_service.get_issue(str(issue_id))
                 result = getattr(scoped_service, method.__name__)(*args, **kwargs)
+                if operation == "store_ops.issue_evidence" and isinstance(result, dict):
+                    # Read the exact saved forecast only after current issue/store
+                    # authorization. This never changes the workflow aggregate.
+                    result["forecast"] = current_issue_forecast(
+                        issue=result["issue"], tenant_id=tenant_id,
+                        repository=forecastops_repository, engine=engine,
+                    )
                 if isinstance(result, dict) and result.get("idempotentReplay") is True:
                     result.update(scoped_service.snapshot())
                     if issue_id is not None:
                         result["issue"] = scoped_service.get_issue(str(issue_id))
+                if operation in {"store_ops.issues", "store_ops.summary"} and isinstance(result, dict):
+                    # Enrich this authorized read only. Never persist native facts
+                    # into the workflow aggregate or trust its copied store metadata.
+                    native_stores = {store.store_id: store for store in stores}
+                    observed_at = datetime.now(UTC)
+                    for card in result.get("stores", []):
+                        card["nativeSummary"] = native_store_summary(
+                            native_stores.get(card["id"]),
+                            store_id=card["id"], tenant_id=tenant_id,
+                            brand_ids=tuple(scope.brand_ids),
+                            region_codes=tuple(scope.region_ids),
+                            store_ids=tuple(scope.store_ids),
+                            engine=engine, store_repository=store_repository,
+                            machine_repository=machine_repository, as_of=observed_at,
+                        )
                 if not audit.recorded:
                     for event in scoped_repository.new_audits:
                         audit.record(
@@ -248,20 +248,30 @@ def create_operator_store_ops_router(
                             )
                         )
             if delivery is not None:
+                # Delivery metadata belongs to response envelopes, not raw
+                # issue or attachment dictionaries returned by the service.
+                attach_delivery_status = operation in {
+                    "store_ops.summary", "store_ops.issues", "store_ops.issue_evidence",
+                    "store_ops.delete_attachment", "store_ops.transition", "store_ops.camera_purpose",
+                }
                 try:
                     delivery_status = delivery.deliver_pending()
-                    if isinstance(result, dict):
+                    if attach_delivery_status and isinstance(result, dict):
                         result["auditDelivery"] = delivery_status
                 except Exception:
                     # The business transaction has committed. Delivery status
                     # loss cannot turn it into a fictitious write rejection.
-                    if isinstance(result, dict):
+                    if attach_delivery_status and isinstance(result, dict):
                         result["auditDelivery"] = {"status": "pending", "pending": None, "retryable": True}
             return result
         except StoreOpsConcurrentWriteConflict as exc:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail={"code": "STORE_OPS_CONCURRENT_WRITE", "operation": operation, "message": str(exc)},
+                detail={
+                    "code": "STORE_OPS_CONCURRENT_WRITE",
+                    "operation": operation,
+                    "message": str(exc),
+                },
             ) from exc
         except StoreOpsLiveDataUnavailable as exc:
             raise HTTPException(
@@ -279,10 +289,12 @@ def create_operator_store_ops_router(
 
     @router.get("/summary", dependencies=[Depends(read_guard)])
     def get_summary(request: Request) -> dict[str, Any]:
-        snapshot = call_service(request, "store_ops.summary", service_for(request).snapshot)
+        snapshot = call_service(request, "store_ops.summary", service.snapshot)
         return {
             "fourLightSummary": snapshot["fourLightSummary"],
             "stores": snapshot["stores"],
+            **({"healthAvailability": snapshot["healthAvailability"]}
+               if "healthAvailability" in snapshot else {}),
             "correlation_id": request.state.correlation_id,
         }
 
@@ -301,7 +313,7 @@ def create_operator_store_ops_router(
         snapshot = call_service(
             request,
             "store_ops.issues",
-            service_for(request).snapshot,
+            service.snapshot,
             query=query,
             statuses=statuses or (),
             sources=sources or (),
@@ -321,7 +333,7 @@ def create_operator_store_ops_router(
                 "issue": call_service(
                     request,
                     "store_ops.issue",
-                    service_for(request).get_issue,
+                    service.get_issue,
                     issue_id,
                 ),
                 "correlation_id": request.state.correlation_id,
@@ -335,7 +347,7 @@ def create_operator_store_ops_router(
             result = call_service(
                 request,
                 "store_ops.issue_evidence",
-                service_for(request).issue_evidence,
+                service.issue_evidence,
                 issue_id,
             )
         except StoreOpsNotFound as exc:
@@ -356,11 +368,11 @@ def create_operator_store_ops_router(
             attachments = call_service(
                 request,
                 "store_ops.list_attachments",
-                service_for(request).list_attachments,
+                service.list_attachments,
                 issue_id=issue_id,
                 masking_profile=masking_profile,
                 user_roles=user_roles,
-                tenant_id=attachment_tenant(request, x_tenant_id),
+                tenant_id=x_tenant_id,
             )
         except StoreOpsNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -385,12 +397,12 @@ def create_operator_store_ops_router(
             attachment = call_service(
                 request,
                 "store_ops.add_attachment",
-                service_for(request).add_attachment,
+                service.add_attachment,
                 issue_id=issue_id,
                 payload=body.model_dump(exclude_none=True),
                 actor_role_id=body.actorRoleId or "opsLead",
                 actor_name=body.actorName or _actor_name_from_role(body.actorRoleId),
-                tenant_id=attachment_tenant(request, x_tenant_id),
+                tenant_id=x_tenant_id or "tenant-a",
                 correlation_id=request.state.correlation_id,
             )
         except StoreOpsNotFound as exc:
@@ -416,12 +428,12 @@ def create_operator_store_ops_router(
             attachment = call_service(
                 request,
                 "store_ops.get_attachment",
-                service_for(request).get_attachment,
+                service.get_attachment,
                 issue_id=issue_id,
                 attachment_id=attachment_id,
                 masking_profile=masking_profile,
                 user_roles=user_roles,
-                tenant_id=attachment_tenant(request, x_tenant_id),
+                tenant_id=x_tenant_id,
             )
         except StoreOpsNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -445,12 +457,12 @@ def create_operator_store_ops_router(
             attachment = call_service(
                 request,
                 "store_ops.download_attachment",
-                service_for(request).download_attachment,
+                service.download_attachment,
                 issue_id=issue_id,
                 attachment_id=attachment_id,
                 masking_profile=masking_profile,
                 user_roles=user_roles,
-                tenant_id=attachment_tenant(request, x_tenant_id),
+                tenant_id=x_tenant_id,
                 actor_role_id=None,
                 actor_name=None,
             )
@@ -474,12 +486,12 @@ def create_operator_store_ops_router(
             result = call_service(
                 request,
                 "store_ops.delete_attachment",
-                service_for(request).delete_attachment,
+                service.delete_attachment,
                 issue_id=issue_id,
                 attachment_id=attachment_id,
                 actor_role_id=actor_role_id,
                 actor_name=_actor_name_from_role(actor_role_id),
-                tenant_id=attachment_tenant(request, x_tenant_id),
+                tenant_id=x_tenant_id or "tenant-a",
                 correlation_id=request.state.correlation_id,
             )
         except StoreOpsNotFound as exc:
@@ -503,7 +515,7 @@ def create_operator_store_ops_router(
                 return call_service(
                     request,
                     "store_ops.camera_purpose",
-                    service_for(request).record_camera_purpose,
+                    service.record_camera_purpose,
                     issue_id=issue_id,
                     payload=body.model_dump(exclude_none=True),
                     idempotency_key=idempotency_key,
@@ -514,7 +526,7 @@ def create_operator_store_ops_router(
             return call_service(
                 request,
                 "store_ops.transition",
-                service_for(request).transition_issue,
+                service.transition_issue,
                 issue_id=issue_id,
                 action_type=action_type,
                 payload=body.model_dump(exclude_none=True),
@@ -544,7 +556,7 @@ def create_operator_store_ops_router(
             return call_service(
                 request,
                 "store_ops.camera_purpose",
-                service_for(request).record_camera_purpose,
+                service.record_camera_purpose,
                 issue_id=issue_id,
                 payload=body.model_dump(exclude_none=True),
                 idempotency_key=idempotency_key,

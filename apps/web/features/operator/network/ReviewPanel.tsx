@@ -29,9 +29,11 @@ export function ReviewPanel({
   reviews,
   fallbackRows,
   canDecide = true,
+  decisionUnavailableReason,
   submitting,
   decideError,
   onDecide,
+  onRequestDecision,
   workflowCandidateId,
   expectedReport,
   onSelectCandidate,
@@ -39,14 +41,20 @@ export function ReviewPanel({
   fixtureCandidateContext = false,
   explicitReadTarget,
   explicitSelectionError,
+  canonicalCurrentReviewTarget,
 }: {
   explicitReadTarget?: CandidateReviewReadTarget | null;
+  /** Verified native current pending pointer; report age alone never grants authority. */
+  canonicalCurrentReviewTarget?: CandidateReviewReadTarget | null;
   explicitSelectionError?: string | null;
   reviews: ReviewItem[];
   fallbackRows: ReviewQueueRow[];
   canDecide?: boolean;
+  /** Read-only explanation supplied separately from the role eligibility. */
+  decisionUnavailableReason?: string;
   submitting?: boolean;
   decideError?: string | null;
+  onRequestDecision?: (reviewId: string, action: ReviewDecisionAction) => Promise<boolean> | boolean;
   onDecide?: (reviewId: string, action: ReviewDecisionAction, form: ReviewDecisionForm) => Promise<boolean> | boolean | void;
   workflowCandidateId?: string | null;
   expectedReport?: { reportId: string; reportVersion: number } | null;
@@ -67,10 +75,14 @@ export function ReviewPanel({
   useEffect(() => {
     setItems(seeded);
   }, [seeded]);
+  const decisionReportTarget = canonicalCurrentReviewTarget && canonicalCurrentReviewTarget.candidateId === workflowCandidateId
+    ? canonicalCurrentReviewTarget : expectedReport;
   useEffect(() => {
     setHistorySelection(null);
     setDialogAction(null);
-  }, [workflowCandidateId, expectedReport?.reportId, expectedReport?.reportVersion, fixtureCandidateContext, explicitReadTarget?.reviewId, explicitSelectionError]);
+  }, [workflowCandidateId, decisionReportTarget?.reportId, decisionReportTarget?.reportVersion,
+    canonicalCurrentReviewTarget?.reviewId, canonicalCurrentReviewTarget?.generation,
+    fixtureCandidateContext, explicitReadTarget?.reviewId, explicitSelectionError]);
 
   const exactReviews = items.filter((item) => {
     const identity = item as ReviewItem & { reportId?: string; reportVersion?: number };
@@ -94,16 +106,32 @@ export function ReviewPanel({
     ? items.filter((item) => item.id === explicitReadTarget.reviewId && item.candidateId === explicitReadTarget.candidateId
       && item.reportId === explicitReadTarget.reportId && item.reportVersion === explicitReadTarget.reportVersion)
     : [];
+  const boundTarget = canonicalCurrentReviewTarget;
+  const boundPendingRows = onRequestDecision && boundTarget && boundTarget.candidateId === workflowCandidateId
+    ? items.filter((item) => item.id === boundTarget.reviewId
+      && item.candidateId === boundTarget.candidateId
+      && item.reportId === boundTarget.reportId && item.reportVersion === boundTarget.reportVersion
+      && item.canonicalDecisionStatus === "PENDING_REVIEW" && isReviewPending(item) && hasRecordedReviewReport(item)) : [];
   const selected = selectionError || explicitSelectionError ? undefined : explicitReadTarget
     ? explicitRows.length === 1 ? explicitRows[0] : undefined
-    : workflowCandidateId ? historical ?? (currentReviews.length === 1 ? currentReviews[0] : undefined)
+    : workflowCandidateId ? historical ?? (boundPendingRows.length === 1 ? boundPendingRows[0]
+      : currentReviews.length === 1 ? currentReviews[0] : undefined)
     : items.find((item) => item.id === selectedId) ?? items[0];
   const selectedIsCurrentReport = explicitReadTarget?.relation !== "historical"
     && (!workflowCandidateId || currentReviews.length === 1 && selected?.id === currentReviews[0].id);
+  const selectedIsBoundPending = boundPendingRows.length === 1 && selected?.id === boundPendingRows[0].id;
+  const selectedIsDecisionTarget = selectedIsCurrentReport || selectedIsBoundPending;
   const pendingCount = items.filter(isReviewPending).length;
 
+  async function requestDecision(action: ReviewDecisionAction) {
+    if (!selected || submitting || !selectedIsDecisionTarget || !canDecide || !isReviewPending(selected) || !hasRecordedReviewReport(selected)) return;
+    const requested = onRequestDecision?.(selected.id, action);
+    if (typeof requested === "boolean" ? !requested : requested && !await requested) return;
+    setDialogAction(action);
+  }
+
   async function submitDecision(form: ReviewDecisionForm) {
-    if (!selected || !dialogAction || !selectedIsCurrentReport || !canDecide || !isReviewPending(selected) || !hasRecordedReviewReport(selected)) return;
+    if (!selected || !dialogAction || !selectedIsDecisionTarget || !canDecide || !isReviewPending(selected) || !hasRecordedReviewReport(selected)) return;
     const result = await onDecide?.(selected.id, dialogAction, form);
     if (result === false) return; // keep the dialog open; server rejected
     // Canonical state, actors and audit come from the authoritative readback.
@@ -191,19 +219,25 @@ export function ReviewPanel({
           </div>
 
           <div className={styles.reviewDetail}>
+            {decideError && !dialogAction ? <p role="alert" data-testid="review-action-error">{decideError}</p> : null}
             {selectionError ? <p role="status">{selectionError}</p> : null}
             {explicitSelectionError ? <p role="status" data-testid="review-explicit-target-unavailable">{explicitSelectionError}</p> : null}
             {explicitReadTarget && selected ? <p role="status" data-testid="review-historical-target-context">
               指定審核 {explicitReadTarget.reviewId} · 凍結報告 {explicitReadTarget.reportId} v{explicitReadTarget.reportVersion}。
               {expectedReport ? ` 最新報告 ${expectedReport.reportId} v${expectedReport.reportVersion}。` : " 最新報告尚未核驗。"}
-              {explicitReadTarget.relation === "historical" ? "歷史紀錄僅供查閱，未套用為最新版報告的決策。" : "此審核只對應上述報告版本。"}
+              {explicitReadTarget.relation === "historical"
+                ? selectedIsBoundPending ? "目前待審核對此凍結報告核決；最新版報告另列，不取代本輪報告。"
+                  : "歷史紀錄僅供查閱，未套用為最新版報告的決策。"
+                : "此審核只對應上述報告版本。"}
             </p> : null}
-            {workflowCandidateId && !selectedIsCurrentReport ? <p role="status">目前報告的人審關聯尚未唯一核對；可查閱歷史項目，未套用為目前報告的決策。</p> : null}
+            {workflowCandidateId && !selectedIsDecisionTarget ? <p role="status">目前報告的人審關聯尚未唯一核對；可查閱歷史項目，未套用為目前報告的決策。</p> : null}
             {selected ? (
               <ReviewDetail
-                canDecide={canDecide && selectedIsCurrentReport}
+                canDecide={canDecide && selectedIsDecisionTarget}
+                decisionUnavailableReason={decisionUnavailableReason}
+                busy={submitting}
                 review={selected}
-                onOpenDecision={(action) => setDialogAction(action)}
+                onOpenDecision={(action) => { void requestDecision(action); }}
               />
             ) : (
               <div className={styles.emptyState}>選擇左側審核項目</div>
@@ -231,10 +265,14 @@ export function ReviewPanel({
 function ReviewDetail({
   review,
   canDecide,
+  decisionUnavailableReason,
+  busy,
   onOpenDecision,
 }: {
   review: ReviewItem;
   canDecide: boolean;
+  decisionUnavailableReason?: string;
+  busy?: boolean;
   onOpenDecision: (action: ReviewDecisionAction) => void;
 }) {
   const isPending = isReviewPending(review);
@@ -333,6 +371,7 @@ function ReviewDetail({
               <button
                 className={styles.btnGo}
                 data-testid={`review-btn-go-${review.id}`}
+                disabled={busy}
                 onClick={() => onOpenDecision("GO")}
                 type="button"
               >
@@ -341,6 +380,7 @@ function ReviewDetail({
               <button
                 className={styles.btnWait}
                 data-testid={`review-btn-wait-${review.id}`}
+                disabled={busy}
                 onClick={() => onOpenDecision("WAIT")}
                 type="button"
               >
@@ -349,6 +389,7 @@ function ReviewDetail({
               <button
                 className={styles.btnReturn}
                 data-testid={`review-btn-return-${review.id}`}
+                disabled={busy}
                 onClick={() => onOpenDecision("RETURN")}
                 type="button"
               >
@@ -357,6 +398,7 @@ function ReviewDetail({
               <button
                 className={styles.btnReject}
                 data-testid={`review-btn-reject-${review.id}`}
+                disabled={busy}
                 onClick={() => onOpenDecision("REJECT")}
                 type="button"
               >
@@ -365,7 +407,7 @@ function ReviewDetail({
             </div>
           ) : (
             <div className={styles.reviewRoleNote} data-testid={`review-role-note-${review.id}`}>
-              目前角色可準備／送審，但不能決策。請切換至授權審核角色（Site Reviewer）後再進行核決。
+              {decisionUnavailableReason ?? "目前角色可準備／送審，但不能決策。請切換至授權審核角色（Site Reviewer）後再進行核決。"}
             </div>
           )}
         </div>

@@ -2,7 +2,15 @@ import "@testing-library/jest-dom/vitest";
 import { createElement } from "react";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { NetworkFindAreasWorkspace, inspectNetworkListingsSnapshot, inspectNetworkScoringSnapshot } from "../../NetworkFindAreasWorkspace";
+import { NetworkFindAreasWorkspace as GrantedReadNetworkWorkspace, inspectNetworkListingsSnapshot, inspectNetworkScoringSnapshot } from "../../NetworkFindAreasWorkspace";
+
+// Explicit read-grant fixture: shell projects listing and SiteScore read families.
+// This is a renderer premise, not a real Principal/production permission grant.
+const NETWORK_READ_FIXTURE_TABS = ["areas", "radar", "candidates", "score", "compare", "review"] as const;
+function NetworkFindAreasWorkspace(props: import("../../NetworkFindAreasWorkspace").NetworkFindAreasWorkspaceProps) {
+  return createElement(GrantedReadNetworkWorkspace, { allowedTabIds: NETWORK_READ_FIXTURE_TABS, ...props });
+}
+
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/operator", useSearchParams: () => new URLSearchParams("ws=network&tab=sitescore"),
@@ -1254,8 +1262,7 @@ describe("successful HTTP response body shape", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(body), {
       status: 200, headers: { "Content-Type": "application/json", "X-Correlation-Id": "corr-malformed-body" },
     })));
-    // Explicit synthetic bootstrap tab grant; payload validation remains strict.
-    render(createElement(NetworkFindAreasWorkspace, { activeRoleId: "expansion-manager", allowedTabIds: ["score"] }));
+    render(createElement(NetworkFindAreasWorkspace, { activeRoleId: "expansion-manager" }));
     const gate = await screen.findByTestId("operator-data-unavailable");
     await vi.waitFor(() => expect(gate).toHaveAttribute("data-status", "error"));
     expect(gate).not.toHaveAttribute("data-status", "empty");

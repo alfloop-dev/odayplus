@@ -19,12 +19,12 @@
  */
 
 import type { OdpApiClient } from "@oday-plus/openapi-client";
-import { cellToLatLng, isValidCell } from "h3-js";
+import { cellToLatLng, getResolution, isValidCell } from "h3-js";
+import { projectRecordedHeatZone } from "./heatZoneRecordedEvidence.ts";
 import type { ApiBinding } from "../../../src/lib/api/binding.ts";
 import { loadApiBinding } from "../../../src/lib/api/binding.ts";
 import type { Candidate, Listing, OperatorHeatZone } from "../types.ts";
 import { payloadContainsSeedData } from "../operatorDataMode.ts";
-import { projectRecordedHeatZone, type RecordedOperatorHeatZone } from "./heatZoneRecordedEvidence.ts";
 
 // ---------------------------------------------------------------------------
 // Re-exported binding types used by NetworkFindAreasWorkspace
@@ -40,41 +40,76 @@ export type CandidateBinding = ApiBinding<Candidate>;
 // missing optional fields get safe defaults.
 // ---------------------------------------------------------------------------
 
-function adaptHeatZone(raw: Record<string, unknown>): RecordedOperatorHeatZone {
-  // Candidate relationships use the heat-zone entity ID. The H3 cell is a
-  // separate geometry identity and may be shared by baseline and V3 results.
-  const observedId = "heat_zone_id" in raw ? raw["heat_zone_id"] : raw["id"] ?? raw["h3_index"];
-  if ("heat_zone_id" in raw && (typeof observedId !== "string" || !observedId.trim())) {
+
+
+function recordedHeatZoneEvidence(raw: Record<string, unknown>): boolean {
+  const h3 = raw.h3_index;
+  const number = (key: string, max = 1) => {
+    const value = raw[key];
+    return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max;
+  };
+  const text = (key: string) => {
+    const value = raw[key];
+    return typeof value === "string" && value.trim().length > 0;
+  };
+  const time = (key: string) => text(key) && Number.isFinite(Date.parse(raw[key] as string));
+  const states = ["ABSTAINED", "UNTOUCHED", "PARTIALLY_ABSORBED", "SATURATED", "UNDER_REALIZED", "STILL_EXPANDABLE", "SUPPRESSED_LOW_CONFIDENCE"] as const;
+  const state = states.find((value) => value === raw.state);
+  if (!text("heat_zone_id") || typeof h3 !== "string" || !isValidCell(h3)
+    || raw.h3_resolution !== getResolution(h3) || !(raw.state === "ABSTAINED" ? raw.score === null : number("score", 100))
+    || typeof raw.priority_rank !== "number" || !Number.isInteger(raw.priority_rank) || raw.priority_rank < 1
+    || !state || !number("confidence")
+    || !["unmet_demand_score", "format_fit_score", "cannibalization_risk_score", "rent_feasibility_score", "listing_availability_score"].every((key) => number(key))
+    || !text("model_version") || !text("feature_version")
+    || !["feature_snapshot_time", "prediction_origin_time", "last_scored_at"].every(time)
+    || !["reasons", "warnings"].every((key) => Array.isArray(raw[key])
+      && (raw[key] as unknown[]).every((value) => typeof value === "string"))
+    || !Array.isArray(raw.source_snapshot_ids) || raw.source_snapshot_ids.length === 0
+    || !raw.source_snapshot_ids.every((id) => typeof id === "string" && id.trim().length > 0)) return false;
+  return true;
+}
+
+function adaptHeatZone(raw: Record<string, unknown>): OperatorHeatZone {
+  // The backend scores use h3_index as the stable zone id; we propagate it
+  // directly so the frontend lens map can show real IDs.
+  const evidenceAvailable = recordedHeatZoneEvidence(raw);
+  if ("heat_zone_id" in raw && (typeof raw.heat_zone_id !== "string" || !raw.heat_zone_id.trim())) {
     throw new Error("HEATZONE_ID_UNAVAILABLE");
   }
-  const id = typeof observedId === "string" && observedId.trim() ? observedId : "HZ-UNKNOWN";
-  const unmetDemand = Number(raw["unmet_demand_score"] ?? raw["unmet_demand"] ?? raw["unmetDemand"] ?? 0);
-  const confidence = raw["confidence"] != null ? Number(raw["confidence"]) : null;
-  const observedCentroid = raw["centroid"];
-  let centroid: [number, number];
-  if (Array.isArray(observedCentroid) && observedCentroid.length === 2
-    && observedCentroid.every((value) => typeof value === "number" && Number.isFinite(value))
-    && Math.abs(observedCentroid[0]) <= 180 && Math.abs(observedCentroid[1]) <= 90) {
-    centroid = observedCentroid as [number, number];
-  } else if (observedCentroid == null && typeof raw["h3_index"] === "string" && isValidCell(raw["h3_index"])) {
-    // The cell center is derived geometry, not a fabricated address geocode.
-    const [lat, lng] = cellToLatLng(raw["h3_index"]);
-    centroid = [lng, lat];
-  } else {
-    throw new Error("HEATZONE_GEOMETRY_UNAVAILABLE");
+  const id = (typeof raw.heat_zone_id === "string" && raw.heat_zone_id.trim() ? raw.heat_zone_id : undefined)
+    ?? (raw["h3_index"] as string | undefined) ?? String(raw["id"] ?? "HZ-UNKNOWN");
+  const unitMetric = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1 ? value : null;
+  const demandGap = unitMetric(raw.demand_gap ?? raw.demandGap);
+  const rank = raw.rank;
+  const risk = raw.cannibalization_risk ?? raw.cannibalizationRisk;
+  const recordedRisk = typeof risk === "string" && ["low", "medium", "high", "critical"].includes(risk)
+    ? risk as OperatorHeatZone["cannibalizationRisk"] : null;
+  const confidence = unitMetric(raw.confidence);
+  let centroid: OperatorHeatZone["centroid"] = null;
+  if ("centroid" in raw) {
+    if (raw.centroid !== null) {
+      if (!Array.isArray(raw.centroid) || raw.centroid.length !== 2
+        || !raw.centroid.every((value) => typeof value === "number" && Number.isFinite(value))
+        || Math.abs(raw.centroid[0]) > 180 || Math.abs(raw.centroid[1]) > 90) {
+        throw new Error("HEATZONE_GEOMETRY_UNAVAILABLE");
+      }
+      centroid = [raw.centroid[0], raw.centroid[1]];
+    }
+  } else if (typeof raw.h3_index === "string" && isValidCell(raw.h3_index)) {
+    const [latitude, longitude] = cellToLatLng(raw.h3_index);
+    centroid = [longitude, latitude];
   }
 
   const zone: OperatorHeatZone = {
     id,
     label: (raw["label"] as string | undefined) ?? id,
-    rank: Number(raw["priority_rank"] ?? raw["rank"] ?? 999),
+    rank: typeof raw.priority_rank === "number" && Number.isInteger(raw.priority_rank) && raw.priority_rank >= 1
+      ? raw.priority_rank : typeof rank === "number" && Number.isInteger(rank) && rank >= 1 ? rank : null,
+    // A missing coordinate is unavailable, never a recorded [0,0].
     centroid,
-    demandGap: unmetDemand,
-    competitionIndex: Number(raw["competition_index"] ?? raw["competitionIndex"] ?? 0),
-    cannibalizationRisk:
-      (raw["cannibalization_risk"] as OperatorHeatZone["cannibalizationRisk"]) ??
-      (raw["cannibalizationRisk"] as OperatorHeatZone["cannibalizationRisk"]) ??
-      "low",
+    demandGap,
+    competitionIndex: unitMetric(raw.competition_index ?? raw.competitionIndex),
+    cannibalizationRisk: recordedRisk,
     rentBand: (raw["rent_band"] as string | undefined) ?? (raw["rentBand"] as string | undefined) ?? "N/A",
     confidence,
     recommendedLens:
@@ -82,10 +117,11 @@ function adaptHeatZone(raw: Record<string, unknown>): RecordedOperatorHeatZone {
       (raw["recommendedLens"] as OperatorHeatZone["recommendedLens"]) ??
       "demand",
     reasons: Array.isArray(raw["reasons"]) ? (raw["reasons"] as string[]) : [],
-    risks: Array.isArray(raw["risks"]) ? (raw["risks"] as string[]) : [],
+    risks: evidenceAvailable ? [...raw.warnings as string[]]
+      : Array.isArray(raw["risks"]) ? (raw["risks"] as string[]) : [],
     nextStep: (raw["next_step"] as string | undefined) ?? (raw["nextStep"] as string | undefined) ?? "",
   };
-  return { ...zone, recordedMap: projectRecordedHeatZone(raw, zone) };
+  return evidenceAvailable ? { ...zone, recordedMap: projectRecordedHeatZone(raw, zone) } : zone;
 }
 
 function measuredScore(value: unknown): number | null {

@@ -37,6 +37,8 @@ if str(ROOT) not in sys.path:
 # The auth-mode decision is shared with the running API boundary rather than
 # re-derived here; see shared/auth/mode.py for why the two must not drift
 # (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
+from shared.audit.gcs_identity import validate_audit_service_accounts
+from shared.audit.worm import is_gcs_worm_sink_uri
 from shared.auth.mode import (
     # Re-exported: tests/ops/test_conditional_oidc_deployment.py reads
     # PLACEHOLDER_VALUES off this module to pin the shell resolver's token list
@@ -1406,6 +1408,29 @@ def preflight_checks(
     root: Path = ROOT,
 ) -> list[CheckResult]:
     checks: list[CheckResult] = []
+
+    if expected_environment.strip().lower() in {"prod", "production"}:
+        configured_gcs = is_gcs_worm_sink_uri(env.get("ODP_AUDIT_WORM_SINK_URI", "").strip())
+        checks.append(CheckResult(
+            ok=configured_gcs,
+            name="config:ODP_AUDIT_WORM_SINK_URI",
+            detail=("configured GCS sink address; bucket/IAM/retention still require live verification"
+                    if configured_gcs else "production audit WORM requires a configured GCS sink URI"),
+        ))
+        try:
+            validate_audit_service_accounts(
+                env.get("ODP_AUDIT_WORM_WRITER_SERVICE_ACCOUNT", "").strip(),
+                env.get("ODP_AUDIT_WORM_RECOVERY_SERVICE_ACCOUNT", "").strip(),
+            )
+            configured_identities = True
+        except ValueError:
+            configured_identities = False
+        checks.append(CheckResult(
+            ok=configured_identities,
+            name="config:ODP_AUDIT_WORM_SERVICE_ACCOUNTS",
+            detail=("separate workload identity references; live IAM still requires verification"
+                    if configured_identities else "production audit WORM requires separate explicit writer and recovery service accounts"),
+        ))
 
     for name in REQUIRED_PUBLIC_CONFIG:
         checks.append(

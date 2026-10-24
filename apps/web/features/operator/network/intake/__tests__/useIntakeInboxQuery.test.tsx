@@ -5,6 +5,32 @@ import { useIntakeInboxQuery } from "../useIntakeInboxQuery";
 
 afterEach(cleanup);
 describe("intake URL navigation ownership", () => {
+  it("keeps cleared and reset area filters explicit across history restoration", () => {
+    window.history.replaceState(null, "", "/operator?ws=network&page=3&selected=IN-1&extra=a&extra=b");
+    const { result } = renderHook(() => useIntakeInboxQuery());
+    expect(result.current.filters.heatZoneId).toBeNull();
+    act(() => result.current.updateFilters({ heatZoneId: "" }));
+    const cleared = window.location.pathname + window.location.search;
+    expect(new URLSearchParams(window.location.search).get("heatZoneId")).toBe("");
+    expect(result.current.filters.page).toBe(1);
+    act(() => {
+      window.history.replaceState(null, "", "/operator?heatZoneId=HZ-02&page=4");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    expect(result.current.filters.heatZoneId).toBe("HZ-02");
+    act(() => {
+      window.history.replaceState(null, "", cleared);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    expect(result.current.filters.heatZoneId).toBe("");
+    act(() => result.current.updateFilters({ search: "台北", heatZoneId: "HZ-03", viewMode: "map" }));
+    act(() => result.current.resetFilters());
+    expect(result.current.filters).toMatchObject({ search: "", heatZoneId: "", viewMode: "map", selectedIntakeId: "IN-1" });
+    const params = new URLSearchParams(window.location.search);
+    expect(params.get("heatZoneId")).toBe("");
+    expect(params.getAll("extra")).toEqual(["a", "b"]);
+  });
+
   it("does not rewrite a direct link on mount and retains framework history state on updates", () => {
     window.history.replaceState({ __NA: true, tree: "framework-owned" }, "", "/operator?ws=network&extra=a&extra=b&page=3#other");
     const push = vi.spyOn(window.history, "pushState");

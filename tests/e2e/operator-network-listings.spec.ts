@@ -572,6 +572,7 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
       .toMatchObject({
         isStyleLoaded: true,
         sourceLoaded: true,
+        sourceFeatureIds: expect.arrayContaining(["HZ-01"]),
       });
 
     const finalMapState = await page.evaluate(() => {

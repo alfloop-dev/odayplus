@@ -224,7 +224,7 @@ function ScoreReport({
     >
       <header className={styles.scoreCardHead}>
         <div className={styles.scoreIdentity}>
-          <span className={styles.scoreNumber}>{card.score === null ? "已評分" : <>{card.score}<small>/ 100</small></>}</span>
+          <span className={card.score === null ? styles.scoreLabel : styles.scoreNumber}>{card.score === null ? "已評分" : <>{card.score}<small>/ 100</small></>}</span>
           <ToneBadge tone={tone}>{card.recommendation}</ToneBadge>
           {card.confidence !== null && card.confidence !== "" ? <span className={styles.confidenceBadge}>信心 {card.confidence}</span> : null}
         </div>
@@ -285,7 +285,12 @@ function ScoreReport({
         </div>
       ) : null}
 
-      {requireRescoreReason ? <label>重新評分原因<input aria-label={`重新評分原因 ${card.id}`} value={reason} onChange={(event) => setReason(event.target.value)} disabled={busy} /></label> : null}
+      {requireRescoreReason ? (
+        <div className={styles.reasonInputGroup}>
+          <label htmlFor={`sitescore-rescore-reason-${card.id}`}>重新評分原因</label>
+          <input id={`sitescore-rescore-reason-${card.id}`} className={styles.inputField} aria-label={`重新評分原因 ${card.id}`} value={reason} onChange={(event) => setReason(event.target.value)} disabled={busy} />
+        </div>
+      ) : null}
       <button
         className={styles.detailPrimaryButton}
         data-testid={`sitescore-rescore-${card.id}`}

@@ -475,3 +475,79 @@ describe("actual actor caller constraint forwarding", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 });
+
+
+describe("retained AVM integrity through the actual production response proxy", () => {
+  it("forwards exact export identity and digest with original download metadata while denying secret response headers", async () => {
+    vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
+    const cookie = await productionSessionCookie();
+    const exportId = "avm-export-11111111-1111-4111-8111-111111111111";
+    const bytes = new TextEncoder().encode(JSON.stringify({ exportId, sourceDocumentBytesIncluded: false }));
+    const { createHash } = await import("node:crypto");
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    const disposition = `attachment; filename="${exportId}.json"`;
+    const fetchMock = vi.fn(async (_url: URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("if-actor-match")).toBe("user-123");
+      expect(headers.get("authorization")).toBe("Bearer real-access-token");
+      expect(headers.get("x-serverless-authorization")).toBe("Bearer trusted-service-token");
+      return new Response(bytes, { status: 200, headers: {
+        "content-type": "application/json", "content-disposition": disposition,
+        etag: `"${digest}"`, "x-avm-export-id": exportId, "x-content-sha256": digest,
+        "cache-control": "public, max-age=3600", authorization: "Bearer upstream-secret",
+        "x-serverless-authorization": "Bearer upstream-service-secret", "set-cookie": "upstream-private-cookie=secret",
+        "x-internal-debug": "private-provider-detail",
+      } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const path = `/api/v1/operator/avm/cases/actual-case/dataroom/exports/${exportId}`;
+    const request = new NextRequest(`https://web.example${path}`, { headers: { "If-Actor-Match": "user-123" } });
+    request.cookies.set(webSessionCookieName, cookie);
+    const response = await proxyApiRequest(request, path, {
+      NODE_ENV: "production", ODP_API_BASE_URL: "https://api.internal.example", ODP_API_SERVICE_AUDIENCE: "https://api.internal.example",
+    }, { resolveServiceIdentityToken: async () => "trusted-service-token" });
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(response.headers.get("x-avm-export-id")).toBe(exportId);
+    expect(response.headers.get("x-content-sha256")).toBe(digest);
+    expect(response.headers.get("content-disposition")).toBe(disposition);
+    expect(response.headers.get("content-type")).toBe("application/json");
+    expect(response.headers.get("etag")).toBe(`"${digest}"`);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    for (const name of ["authorization", "x-serverless-authorization", "set-cookie", "x-internal-debug"]) {
+      expect(response.headers.get(name)).toBeNull();
+    }
+    const actualBytes = new Uint8Array(await response.arrayBuffer());
+    expect(actualBytes).toEqual(bytes);
+    expect(createHash("sha256").update(actualBytes).digest("hex")).toBe(response.headers.get("x-content-sha256"));
+  });
+});
+
+
+it("preserves actual Survey attachment no-sniff and bytes through the authenticated production BFF without forwarding private upstream headers", async () => {
+  vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
+  const cookie = await productionSessionCookie();
+  const bytes = new Uint8Array([255, 216, 255, 0, 1, 2, 255, 217]);
+  const { createHash } = await import("node:crypto");
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  vi.stubGlobal("fetch", vi.fn(async (_url: URL, init?: RequestInit) => {
+    expect(new Headers(init?.headers).get("authorization")).toBe("Bearer real-access-token");
+    return new Response(bytes, { status: 200, headers: { "content-type": "application/octet-stream",
+      "content-disposition": 'attachment; filename="survey-media-owned.bin"', "x-content-type-options": "nosniff",
+      "x-content-sha256": digest, "cache-control": "public, max-age=3600", "set-cookie": "private=upstream",
+      authorization: "Bearer private-upstream-token", "x-internal-debug": "private-detail" } });
+  }));
+  const path = "/api/v1/market-survey/assignments/asgn-owned/attachments/media-owned/content";
+  const request = new NextRequest(`https://web.example${path}`); request.cookies.set(webSessionCookieName, cookie);
+  const result = await proxyApiRequest(request, path, { NODE_ENV: "production", ODP_API_BASE_URL: "https://api.internal.example",
+    ODP_API_SERVICE_AUDIENCE: "https://api.internal.example" }, { resolveServiceIdentityToken: async () => "trusted-service-token" });
+  expect(result.status).toBe(200);
+  expect(result.headers.get("x-content-type-options")).toBe("nosniff");
+  expect(result.headers.get("content-type")).toBe("application/octet-stream");
+  expect(result.headers.get("content-disposition")).toBe('attachment; filename="survey-media-owned.bin"');
+  expect(result.headers.get("cache-control")).toBe("no-store");
+  expect(result.headers.get("x-content-sha256")).toBe(digest);
+  for (const name of ["set-cookie", "authorization", "x-internal-debug"]) expect(result.headers.get(name)).toBeNull();
+  const actual = new Uint8Array(await result.arrayBuffer());
+  expect(actual).toEqual(bytes); expect(createHash("sha256").update(actual).digest("hex")).toBe(digest);
+});

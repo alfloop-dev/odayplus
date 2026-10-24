@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -193,12 +193,21 @@ class NetworkListingReadResponse(BaseModel):
     )
 
 
+class HeatZoneAvailabilityReadResponse(BaseModel):
+    state: Literal["available", "unavailable"]
+    source: Literal["canonical-heatzone"]
+    count: int | None = Field(default=None, ge=0)
+    code: str | None = None
+    message: str | None = None
+
+
 class NetworkListingRadarReadResponse(BaseModel):
     """Narrow read contract preserving the existing authorized snapshot fields."""
 
     model_config = ConfigDict(extra="allow")
 
     listings: list[NetworkListingReadResponse]
+    heatZoneAvailability: HeatZoneAvailabilityReadResponse | None = None
 
 
 def create_network_listings_sub_router(
@@ -208,9 +217,14 @@ def create_network_listings_sub_router(
     require_write_permission_fn: Callable[..., Any],
     audit_log: InMemoryAuditLog | None = None,
     service_resolver: Callable[[Request], Any] | None = None,
+    heat_zone_reader: Callable[[Request], dict[str, Any]] | None = None,
     allow_reset: bool = True,
 ) -> APIRouter:
     router = APIRouter(prefix="/network-listings")
+    from apps.api.app.routes.operator_modules.listing_searches import (
+        create_listing_search_sub_router,
+    )
+    router.include_router(create_listing_search_sub_router(require_view_permission_fn))
 
     def reject_sensitive_submission_material(body: IntakeSubmitPayload) -> None:
         payload = body.model_dump()
@@ -274,6 +288,11 @@ def create_network_listings_sub_router(
             correlation_id=x_correlation_id,
             tenant_id=principal.tenant_id,
         )
+        if heat_zone_reader is not None:
+            from modules.opsboard.application.network_heat_zones import project_canonical_heat_zones
+
+            snap = project_canonical_heat_zones(snap, heat_zone_reader(request),
+                                               principal=principal, selected_id=selected_heat_zone_id)
 
         is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
             "expansion-manager",
@@ -314,6 +333,8 @@ def create_network_listings_sub_router(
             snap["assistedIntakes"] = [
                 mask_intake(principal, intake) for intake in snap["assistedIntakes"]
             ]
+        if (snap.get("heatZoneAvailability") or {}).get("state") == "unavailable":
+            snap["counts"] = {**snap.get("counts", {}), "heatZones": None}
         return snap
 
     @router.post(
@@ -471,6 +492,8 @@ def create_network_listings_sub_router(
                 raise NetworkListingConflict("ACTOR_CONTEXT_CONFLICT")
 
             def authorize_current(resource: dict[str, Any]) -> None:
+                # Archive has retention semantics distinct from intake cancel.
+                # Its hold/terminal guards run in the listing write owner.
                 authorize_intake_action(
                     principal, "archive", resource=resource,
                     has_legal_hold=has_recorded_legal_hold(resource),

@@ -21,6 +21,10 @@ from tests.integration.test_operator_intake_workflow_postgresql import (
 from tests.integration.test_operator_intake_workflow_postgresql import (
     bridge_database as bridge_database,
 )
+from tests.support.listing_search_integration import (
+    assert_receipt_revision_intent,
+    listing_search_events,
+)
 
 pytestmark = pytest.mark.requires_live_env
 
@@ -142,6 +146,7 @@ def _snapshot(bundle):
         "events": bundle.outbox_repository.get_unpublished_events(),
         "audit_rows": bundle.engine.query("SELECT audit_event_id,event_sha256,result FROM audit.audit_events ORDER BY audit_event_id"),
         "delivery_jobs": bundle.engine.query("SELECT job_id,status,version FROM durable_jobs ORDER BY job_id"),
+        "matching_events": listing_search_events(bundle, TENANT),
         "score_jobs": bundle.engine.query("SELECT job_id,status,version,payload FROM workflow.jobs WHERE job_type='intake-sitescore' ORDER BY job_id")})
 
 
@@ -405,6 +410,7 @@ def test_fresh_parent_scope_is_checked_after_route_read(bridge_database, monkeyp
         before = _snapshot(bundle)
         original_lock = bundle.assisted_intake_store._read_locked
         revoked = False
+        revocation_intent = {}
 
         def revoke_before_lock(collection, key):
             nonlocal revoked
@@ -413,7 +419,10 @@ def test_fresh_parent_scope_is_checked_after_route_read(bridge_database, monkeyp
                 other = second.assisted_intake_store
                 other.refresh(TENANT)
                 other.intakes[record["id"]]["scope"]["heat_zone_id"] = "synthetic-revoked-zone"
+                other.intakes[record["id"]]["version"] += 1
                 other.flush()
+                event, job = assert_receipt_revision_intent(second, other.intakes[record["id"]])
+                revocation_intent.update(event=event, job=job)
             return original_lock(collection, key)
 
         with monkeypatch.context() as patch:
@@ -423,6 +432,16 @@ def test_fresh_parent_scope_is_checked_after_route_read(bridge_database, monkeyp
                         else _review(client, decision, extra_headers=scoped))
         assert revoked and response.status_code == 403, response.text
         before["canonical"]["intakes"][record["id"]]["scope"]["heat_zone_id"] = "synthetic-revoked-zone"
+        before["canonical"]["intakes"][record["id"]]["version"] += 1
+        # Only the explicitly verified external revocation revision/event/job
+        # may differ. Every denied promotion, score, audit, outbox and replay
+        # row still has to match the complete pre-request snapshot.
+        before["matching_events"] = sorted(
+            [*before["matching_events"], revocation_intent["event"]], key=lambda row: row["id"],
+        )
+        before["delivery_jobs"] = sorted(
+            [*before["delivery_jobs"], revocation_intent["job"]], key=lambda row: row["job_id"],
+        )
         assert _snapshot(bundle) == before
     finally:
         bundle.engine.close()

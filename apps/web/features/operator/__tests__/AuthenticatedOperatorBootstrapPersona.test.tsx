@@ -2,6 +2,24 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OperatorConsole, operatorBootstrapRetryPolicy } from "../OperatorConsole";
+import type { NetworkFindAreasWorkspaceProps } from "../NetworkFindAreasWorkspace";
+import "../NetworkFindAreasWorkspace";
+
+const confirmedRefreshControl = vi.hoisted(() => ({ enabled: false, invoked: 0 }));
+let canonicalHistoryBefore: { url: string; state: unknown } | null = null;
+vi.mock("../NetworkFindAreasWorkspace", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../NetworkFindAreasWorkspace")>();
+  return { ...actual, NetworkFindAreasWorkspace: (props: NetworkFindAreasWorkspaceProps) => {
+    if (!confirmedRefreshControl.enabled) return <actual.NetworkFindAreasWorkspace {...props} />;
+    // Only the nine declared shell refresh controls use this leaf adapter.
+    // Real Today navigates to the permitted Network owner; its actual console
+    // callback is invoked as a unit premise, without a native approval claim.
+    return <button type="button" data-testid="unit-confirmed-network-refresh" onClick={() => {
+      confirmedRefreshControl.invoked += 1;
+      void props.onReviewDecisionConfirmed?.();
+    }}>Invoke declared Network confirmation callback</button>;
+  } };
+});
 
 // Fully mounted lazy Network reads need the same Next navigation premise as
 // existing workspace renderer tests. This supplies routing, never authority.
@@ -30,17 +48,45 @@ function envelope(role: "expansion-manager" | "ops-lead", name: string, decision
   return { meta: { source: "operator-shell-production", dataMode: "live", role: { id: role, label, subtitle: "Unit transport", allowedWorkspaces: workspaces, heroName: name }, counts: { approvals: 0, critical: 0, notifications: 0, search: 0, taskCenter: 1 } },
     navigation: { roles: [{ id: "ops-lead", label: "營運主管", subtitle: "Catalog, not a grant", allowedWorkspaces: ["today", "store"] },
       { id: "expansion-manager", label: "展店經理", subtitle: "Catalog, not a grant", allowedWorkspaces: ["today", "network"] }],
-      workspaces: [{ id: "today", label: "Today", shortLabel: "Today", description: "Current scope", allowed: true }], allowedWorkspaces: workspaces, allowedTabs: { network: [] as string[] } },
+      workspaces: [{ id: "today", label: "Today", shortLabel: "Today", description: "Current scope", allowed: true }], allowedWorkspaces: workspaces, allowedTabs: { network: role === "expansion-manager" ? ["areas", "radar", "candidates", "score", "compare", "review"] : [] } },
     header: { counts: { approvals: 0, critical: 0, notifications: 0, search: 0, taskCenter: 1 } },
-    today: { hero: { name, roleLabel: label, scope: "Unit current account", dateLabel: "2026-10-13" }, kpis: [{ label: `${name} current row`, value: "1" }], queue: [], decisions: decision ? [{ id: "SYNTHETIC-APR", title: "Unit refresh trigger", meta: "Synthetic UI transport premise, not approval authority", status: "pending", cta: "Unit refresh", tone: "info", target: { workspace: "govern", entityId: "SYNTHETIC-APR", tab: "approvals" } }] : [], riskRows: [], auditFeed: [] },
+    today: { hero: { name, roleLabel: label, scope: "Unit current account", dateLabel: "2026-10-13" }, kpis: [{ label: `${name} current row`, value: "1" }], queue: [], decisions: decision ? [{ id: "SYNTHETIC-APR", title: "Unit refresh callback navigation", meta: "Declared UI callback premise, not approval authority", status: "pending", cta: "Unit refresh", tone: "info", target: { workspace: "network", entityId: "SYNTHETIC-APR", tab: "review" } }] : [], riskRows: [], auditFeed: [] },
     notifications: [], search: { count: 0, items: [] } };
 }
+// Synthetic but complete scoped snapshots. These controls exercise the real
+// Console-owned canonical read lease, not a legacy preload or a fake grant.
+function canonicalNetworkSnapshot(label: string) {
+  const id = `HZ-${label.replace(/[^a-z0-9]+/gi, "-")}`;
+  return { source: "api", selectedHeatZoneId: id, selectedLens: "demand",
+    heatZones: [{ id, label, rank: 1, centroid: [121.5, 25], demandGap: 0.4,
+      competitionIndex: 0.3, cannibalizationRisk: "low", rentBand: "unit", confidence: 0.7,
+      recommendedLens: "demand", reasons: [], risks: [], nextStep: "" }],
+    listingSources: [], listings: [], candidates: [], siteReviews: [], expansionSteps: [], assistedIntakes: [] };
+}
+function failingRead<T>() {
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<T>((_resolve, fail) => { reject = fail; });
+  return { promise, reject };
+}
 const delays = [...operatorBootstrapRetryPolicy.delaysMs];
-beforeEach(() => { window.sessionStorage.clear(); operatorBootstrapRetryPolicy.delaysMs = delays.map(() => 0); vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true"); });
-afterEach(() => { cleanup(); operatorBootstrapRetryPolicy.delaysMs = [...delays]; vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+// Resolve the real module during fixture collection, as other routing controls do.
+// Read/assertion deadlines remain unchanged; fresh-browser startup is a separate gate.
+beforeEach(() => { window.sessionStorage.clear(); confirmedRefreshControl.enabled = false; confirmedRefreshControl.invoked = 0; operatorBootstrapRetryPolicy.delaysMs = delays.map(() => 0); vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true"); });
+afterEach(() => {
+  if (confirmedRefreshControl.enabled) {
+    expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+  }
+  cleanup(); operatorBootstrapRetryPolicy.delaysMs = [...delays]; vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks();
+  if (canonicalHistoryBefore !== null) {
+    window.history.replaceState(canonicalHistoryBefore.state, "", canonicalHistoryBefore.url);
+    canonicalHistoryBefore = null;
+  }
+});
 type Config = { actor?: string; role?: "expansion-manager" | "ops-lead"; storedRole?: string; session?: unknown;
-  firstBootstrap?: Response | Promise<Response>; refresh?: Response | Promise<Response>; decision?: boolean; tasks?: (actor: string) => Response | Promise<Response>; legacy?: (path: string, actor: string) => Response | Promise<Response>; network?: (path: string, actor: string) => Response | Promise<Response>; workspace?: string; tab?: string; issues?: boolean; sessionStatus?: number; invalidRole?: string; denied?: number };
+  canonicalNetwork?: (actor: string) => Response | Promise<Response>;
+  firstBootstrap?: Response | Promise<Response>; refresh?: Response | Promise<Response>; decision?: boolean; tasks?: (actor: string) => Response | Promise<Response>; legacy?: (path: string, actor: string) => Response | Promise<Response>; workspace?: string; issues?: boolean; sessionStatus?: number; invalidRole?: string; denied?: number };
 function mount(config: Config = {}) {
+  confirmedRefreshControl.enabled = config.decision === true;
   let actor = config.actor ?? A;
   let role = config.role ?? "expansion-manager";
   let boots = 0;
@@ -59,26 +105,42 @@ function mount(config: Config = {}) {
       const hint = new Headers(init?.headers).get("X-Operator-Role");
       if (config.denied || hint && hint !== role) return json({ detail: "requested Operator Console role is outside principal roles" }, config.denied ?? 403);
       const body = envelope(role, actor === A ? "Account A" : actor === B ? "Account B" : actor === "unit-operations-account" ? "Operations account" : actor, config.decision && actor === A);
-      body.navigation.allowedTabs.network = config.network ? ["radar"] : [];
+      if (config.canonicalNetwork) {
+        // The fixture grants only the read under test; no unrelated domain
+        // request or hidden static persona is needed to start its HTTP/JSON.
+        body.navigation.allowedTabs.network = ["areas"];
+        body.navigation.workspaces.push({ id: "network", label: "Network", shortLabel: "Network", description: "Current scope", allowed: true });
+      }
       if (config.invalidRole) body.meta.role.id = config.invalidRole as typeof role;
       if (config.issues) Object.assign(body, { issues: [{ id: "UNIT-ISSUE", title: "Prior API issue marker", storeName: "Unit store", summary: "Prior API record", severity: "high" }] });
       return json(body);
     }
-    if (url === "/api/v1/operator/approvals/SYNTHETIC-APR/decision" && config.decision) return json({ protocolPremiseOnly: true });
+    if (new URL(url, window.location.origin).pathname === "/api/v1/operator/network-listings" && config.canonicalNetwork) return config.canonicalNetwork(actor);
     if (url === "/api/v1/operator/shell/tasks" && config.tasks) return config.tasks(actor);
-    if (config.network && new URL(url, window.location.origin).pathname === "/api/v1/operator/network-listings") return config.network(new URL(url, window.location.origin).pathname, actor);
     if (config.legacy && ["/api/v1/heatzones", "/api/v1/listings/candidates", "/api/v1/sitescore/reports"].includes(new URL(url, window.location.origin).pathname)) return config.legacy(new URL(url, window.location.origin).pathname, actor);
     return json({ detail: "unrelated read unavailable" }, 403);
   });
   vi.stubGlobal("fetch", fetch);
-  const view = render(<OperatorConsole searchParams={{ ws: config.workspace ?? "today", ...(config.tab ? { tab: config.tab } : {}) }} />);
+  if (config.canonicalNetwork) {
+    canonicalHistoryBefore ??= { url: window.location.href, state: window.history.state };
+    window.history.replaceState(null, "", "/operator?ws=network&tab=areas");
+  }
+  const view = render(<OperatorConsole searchParams={{ ws: config.workspace ?? "today" }} />);
   return { fetch, view, bootstrapObservations, setAccount: (next: string, nextRole = role) => { actor = next; role = nextRole; }, setSession: (value: unknown, status = 200) => { sessionOverride = value; sessionStatus = status; }, boots: () => boots };
 }
-function networkSnapshot(address?: string) {
-  return { source: "api", selectedHeatZoneId: null, heatZones: [], listingSources: [{ id: "synthetic-source", name: "Synthetic source", status: "connected" }], candidates: [], siteReviews: [],
-    listings: address ? [{ id: "OLD-A", sourceId: "synthetic-source", address, status: "new" }] : [], rebalanceStores: [], assistedIntakes: [], expansionSteps: [] };
-}
 function bootstrapCalls(fetch: ReturnType<typeof vi.fn>) { return fetch.mock.calls.filter(([url]) => String(url) === "/api/v1/operator/bootstrap"); }
+
+async function invokeConfirmedNetworkRefreshControl() {
+  const invoked = confirmedRefreshControl.invoked;
+  fireEvent.click(screen.getByRole("button", { name: "核准" }));
+  const callback = await screen.findByTestId("unit-confirmed-network-refresh");
+  expect(window.location.search).toContain("ws=network");
+  fireEvent.click(callback);
+  expect(confirmedRefreshControl.invoked).toBe(invoked + 1);
+  // Keep the real Today rows visible while the original deferred read runs.
+  fireEvent.click(screen.getByRole("button", { name: /^Today/ }));
+  expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+}
 
 describe("authenticated bootstrap persona ownership", () => {
   it.each([undefined, "ops-lead", "pm-audit"])("cold open ignores unverified %s preference and adopts actual server persona", async (storedRole) => {
@@ -103,7 +165,7 @@ describe("authenticated bootstrap persona ownership", () => {
   it("an explicitly selected unsupported role remains a 403 and clears old account rows", async () => {
     const { fetch } = mount(); await screen.findByText("Account A current row");
     fireEvent.click(screen.getByRole("button", { name: /展店經理/ }));
-    fireEvent.click(screen.getByRole("button", { name: /^營運主管/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^營運主管/ }));
     await waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-failure-kind", "forbidden"));
     expect(bootstrapCalls(fetch).some(([, init]) => new Headers(init?.headers).get("X-Operator-Role") === "ops-lead")).toBe(true);
     expect(screen.queryByText("Account A current row")).not.toBeInTheDocument();
@@ -182,27 +244,23 @@ describe("authenticated bootstrap persona ownership", () => {
     expect(screen.queryByText("Account A current row")).not.toBeInTheDocument();
     expect(new Headers(bootstrapCalls(fetch).at(-1)?.[1]?.headers).has("X-Operator-Role")).toBe(false);
   });
-  it.each(["HTTP", "JSON", "ERROR_JSON"])("cookie-only rotation rejects late A Network snapshot %s without any UI reload", async (boundary) => {
-    window.history.replaceState(null, "", "/operator?ws=network&tab=radar");
+  it.each(["HTTP", "JSON", "ERROR_JSON"])("cookie-only rotation rejects late A Network binding %s without any UI reload", async (boundary) => {
     const pending = deferred<Response>(); const body = deferred<unknown>(); const reading = deferred<boolean>();
     const late = json({}, boundary === "ERROR_JSON" ? 403 : 200);
     const deferredBody = () => { reading.resolve(true); return body.promise; };
     late.json = deferredBody;
     if (boundary === "ERROR_JSON") { const clone = json({}, 403); clone.json = deferredBody; late.clone = () => clone; }
-    const { setAccount, fetch } = mount({ workspace: "network", tab: "radar", network: (_path, actor) => {
-      if (actor === A) return boundary === "HTTP" ? pending.promise : late;
-      return json(networkSnapshot());
-    } });
+    const { setAccount, fetch } = mount({ workspace: "network", canonicalNetwork: (actor) =>
+      actor === A ? boundary === "HTTP" ? pending.promise : late : json(canonicalNetworkSnapshot("Current B binding")) });
     await screen.findByRole("button", { name: /展店經理/ });
     if (boundary !== "HTTP") await reading.promise;
-    else await waitFor(() => expect(fetch.mock.calls.some(([url]) => new URL(String(url), window.location.origin).pathname === "/api/v1/operator/network-listings")).toBe(true), { timeout: 5000 });
+    else await waitFor(() => expect(fetch.mock.calls.some(([url]) => new URL(String(url), window.location.origin).pathname === "/api/v1/operator/network-listings")).toBe(true));
     setAccount(B);
-    await act(async () => { if (boundary === "HTTP") pending.resolve(json(networkSnapshot("Old A binding")));
-      else body.resolve(boundary === "ERROR_JSON" ? { error: { code: "forbidden", message: "Old A binding", correlation_id: "unit-old-A" } } : networkSnapshot("Old A binding")); });
-    expect(screen.queryAllByText(/Old A binding/)).toHaveLength(0);
+    await act(async () => { if (boundary === "HTTP") pending.resolve(json(canonicalNetworkSnapshot("Old A binding")));
+      else body.resolve(boundary === "ERROR_JSON" ? { error: { code: "forbidden", message: "Old A binding", correlation_id: "unit-old-A" } } : canonicalNetworkSnapshot("Old A binding")); });
     await waitFor(() => expect(bootstrapCalls(fetch).length).toBeGreaterThan(1));
     expect(new Headers(bootstrapCalls(fetch).at(-1)?.[1]?.headers).has("X-Operator-Role")).toBe(false);
-    expect(screen.queryAllByText(/Old A binding/)).toHaveLength(0);
+    expect(screen.queryByText("Old A binding")).not.toBeInTheDocument();
     // Today is an authorized read of the new account; no reload/role event caused the recovery.
     fireEvent.click(screen.getByRole("button", { name: /^Today/ }));
     await screen.findByText("Account B current row");
@@ -214,12 +272,12 @@ describe("authenticated bootstrap persona ownership", () => {
     const body = deferred<unknown>(); const reading = deferred<boolean>();
     const late = json({}); late.json = () => { reading.resolve(true); return body.promise; };
     const { setSession } = mount({ workspace: surface === "Network" ? "network" : "today", tasks: () => late,
-      legacy: (path) => path === "/api/v1/heatzones" ? late : json({ candidates: [] }) });
+      canonicalNetwork: surface === "Network" ? () => late : undefined });
     if (surface === "Task") { await screen.findByText("Account A current row"); fireEvent.click(screen.getByTestId("operator-task-center-button")); }
     await reading.promise;
     setSession({ detail: "session expired" }, 401);
     await act(async () => { body.resolve(surface === "Task" ? { items: [{ id: "OLD", title: "Old expired task", status: "todo" }] }
-      : { items: [{ h3_index: "OLD", label: "Old expired binding" }] }); });
+      : canonicalNetworkSnapshot("Old expired binding")); });
     await waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error"));
     expect(screen.queryByText("Account A current row")).not.toBeInTheDocument();
     expect(screen.queryByText("Old expired task")).not.toBeInTheDocument();
@@ -227,29 +285,27 @@ describe("authenticated bootstrap persona ownership", () => {
     expect(screen.queryByText("開發／驗收 API 資料")).not.toBeInTheDocument();
   });
   it.each(["Task", "Network"])("invalid session200 during %s JSON fails closed and clears old rows", async (surface) => {
-    if (surface === "Network") window.history.replaceState(null, "", "/operator?ws=network&tab=radar");
     const body = deferred<unknown>(); const reading = deferred<boolean>();
     const late = json({}); late.json = () => { reading.resolve(true); return body.promise; };
-    const { setSession } = mount({ workspace: surface === "Network" ? "network" : "today", tab: surface === "Network" ? "radar" : undefined, tasks: () => late,
-      network: surface === "Network" ? () => late : undefined,
-      legacy: (path) => path === "/api/v1/heatzones" ? late : json({ candidates: [] }) });
+    const { setSession } = mount({ workspace: surface === "Network" ? "network" : "today", tasks: () => late,
+      canonicalNetwork: surface === "Network" ? () => late : undefined });
     if (surface === "Task") { await screen.findByText("Account A current row"); fireEvent.click(screen.getByTestId("operator-task-center-button")); }
     await reading.promise; setSession({ subject: A, expiresAt: 1 });
     await act(async () => { body.resolve(surface === "Task" ? { items: [{ id: "OLD", title: "Old invalid task", status: "todo" }] }
-      : networkSnapshot("Old invalid binding")); });
+      : canonicalNetworkSnapshot("Old invalid binding")); });
     await waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error"));
     expect(screen.queryByText("Account A current row")).not.toBeInTheDocument();
     expect(screen.queryByText("Old invalid task")).not.toBeInTheDocument();
     expect(screen.queryByText("Old invalid binding")).not.toBeInTheDocument();
   });
 
-  // A synthetic successful POST is only the premise that invokes the existing
-  // refresh callback. These controls do not establish business approval/auth.
+  // Explicit Network callback controls preserve shell read ownership checks.
+  // They issue no business POST and do not establish native approval/auth.
   it.each(["HTTP", "JSON"])("cookie-only rotation rejects late A post-decision refresh %s without UI reload", async (boundary) => {
     const pending = deferred<Response>(); const body = deferred<unknown>(); const reading = deferred<boolean>();
     const late = json({}); late.json = () => { reading.resolve(true); return body.promise; };
     const { setAccount, fetch, bootstrapObservations } = mount({ decision: true, refresh: boundary === "HTTP" ? pending.promise : late });
-    await screen.findByText("Account A current row"); fireEvent.click(screen.getByRole("button", { name: "核准" }));
+    await screen.findByText("Account A current row"); await invokeConfirmedNetworkRefreshControl();
     if (boundary === "JSON") await reading.promise;
     else await waitFor(() => expect(bootstrapCalls(fetch)).toHaveLength(2));
     setAccount(B);
@@ -258,8 +314,6 @@ describe("authenticated bootstrap persona ownership", () => {
     await screen.findByText("Account B current row");
     expect(screen.queryByText("Late refreshed A current row")).not.toBeInTheDocument();
     expect(screen.queryByText("Account A current row")).not.toBeInTheDocument();
-    // Bind the cold request assertion to B's first request. A later reload
-    // may legitimately use B's server-resolved persona after B is admitted.
     const recoveryRequest = bootstrapObservations.find((request) => request.subject === B);
     expect(recoveryRequest).toBeDefined();
     expect(recoveryRequest?.roleHint).toBeNull();
@@ -270,7 +324,7 @@ describe("authenticated bootstrap persona ownership", () => {
 
   it("a current same-account post-decision refresh still applies validated API data", async () => {
     mount({ decision: true, refresh: json(envelope("expansion-manager", "Refreshed current A")) });
-    await screen.findByText("Account A current row"); fireEvent.click(screen.getByRole("button", { name: "核准" }));
+    await screen.findByText("Account A current row"); await invokeConfirmedNetworkRefreshControl();
     await screen.findByText("Refreshed current A current row");
     expect(screen.queryByText("Account A current row")).not.toBeInTheDocument();
     expect(screen.queryByTestId("operator-data-unavailable")).not.toBeInTheDocument();
@@ -280,7 +334,7 @@ describe("authenticated bootstrap persona ownership", () => {
     if (kind === "unknown") response.meta.role.id = "unknown-profile" as typeof response.meta.role.id;
     if (kind === "fixture source") response.meta.source = "fixture";
     mount({ decision: true, refresh: json(response) });
-    await screen.findByText("Account A current row"); fireEvent.click(screen.getByRole("button", { name: "核准" }));
+    await screen.findByText("Account A current row"); await invokeConfirmedNetworkRefreshControl();
     await screen.findByTestId("operator-data-unavailable");
     expect(screen.queryByText("Invalid refreshed A current row")).not.toBeInTheDocument();
     expect(screen.queryByText("Account A current row")).not.toBeInTheDocument();
@@ -290,6 +344,7 @@ describe("authenticated bootstrap persona ownership", () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false"); vi.stubEnv("NEXT_PUBLIC_ODP_PRODUCT_MODE", "poc");
     mount(); await screen.findByText("Account A current row");
     fireEvent.click(screen.getByTestId("operator-notification-button"));
+    await waitFor(() => expect(document.querySelector('[data-screen-label="Notifications"]')).not.toBeNull());
     const panel = document.querySelector('[data-screen-label="Notifications"]');
     expect(panel).not.toBeNull(); expect(panel?.querySelectorAll("article")).toHaveLength(0);
     expect(screen.getByTestId("operator-notification-button")).toHaveTextContent("通知0");
@@ -300,14 +355,14 @@ describe("authenticated bootstrap persona ownership", () => {
     mount({ decision: true, issues: true, refresh: json(envelope("expansion-manager", "Refreshed empty A")) });
     await screen.findByText("Account A current row");
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
-    fireEvent.change(screen.getByLabelText("Command palette search Global search"), { target: { value: "UNIT-ISSUE" } });
+    fireEvent.change(await screen.findByLabelText("Command palette search Global search"), { target: { value: "UNIT-ISSUE" } });
     expect(await screen.findByText("Prior API issue marker")).toBeVisible();
     fireEvent.keyDown(window, { key: "Escape" });
-    fireEvent.click(screen.getByRole("button", { name: "核准" }));
+    await invokeConfirmedNetworkRefreshControl();
     await screen.findByText("Refreshed empty A current row");
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
-    expect(screen.getByTestId("operator-command-palette")).toBeVisible();
-    fireEvent.change(screen.getByLabelText("Command palette search Global search"), { target: { value: "UNIT-ISSUE" } });
+    expect(await screen.findByTestId("operator-command-palette")).toBeVisible();
+    fireEvent.change(await screen.findByLabelText("Command palette search Global search"), { target: { value: "UNIT-ISSUE" } });
     expect(screen.queryByText("Prior API issue marker")).not.toBeInTheDocument();
   });
   it("explicit no-auth POC still retains visibly labelled fixture compatibility", async () => {
@@ -318,10 +373,11 @@ describe("authenticated bootstrap persona ownership", () => {
     expect(document.querySelector('[data-data-status="fixture"]')).toBeVisible();
     expect(document.querySelector('[data-data-status="ready"]')).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("operator-notification-button"));
+    await waitFor(() => expect(document.querySelector('[data-screen-label="Notifications"]')).not.toBeNull());
     expect(document.querySelector('[data-screen-label="Notifications"]')?.querySelectorAll("article").length).toBeGreaterThan(0);
     expect(screen.queryByText("Production API 資料")).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("operator-task-center-button"));
-    expect(await within(screen.getByTestId("operator-task-center")).findByText("FIXTURE", { exact: true })).toBeVisible();
+    expect(await within(await screen.findByTestId("operator-task-center")).findByText("FIXTURE", { exact: true })).toBeVisible();
     expect(screen.getByLabelText("Task center summary")).not.toHaveTextContent(/0\s*Visible/);
   });
 
@@ -331,7 +387,7 @@ describe("authenticated bootstrap persona ownership", () => {
     await screen.findByText("Account A current row"); fireEvent.click(screen.getByTestId("operator-task-center-button"));
     await screen.findByTestId("operator-task-center-unavailable");
     expect(screen.getByLabelText("Task center summary")).toHaveTextContent(/0\s*Visible/);
-    expect(within(screen.getByTestId("operator-task-center")).queryByText("FIXTURE", { exact: true })).not.toBeInTheDocument();
+    expect(within(await screen.findByTestId("operator-task-center")).queryByText("FIXTURE", { exact: true })).not.toBeInTheDocument();
   });
 
   it("authenticated POC Task API 403 with valid session never uses fixture task rows", async () => {
@@ -340,7 +396,7 @@ describe("authenticated bootstrap persona ownership", () => {
     await screen.findByText("Account A current row"); fireEvent.click(screen.getByTestId("operator-task-center-button"));
     await screen.findByTestId("operator-task-center-unavailable");
     expect(screen.getByLabelText("Task center summary")).toHaveTextContent(/0\s*Visible/);
-    expect(within(screen.getByTestId("operator-task-center")).queryByText("FIXTURE", { exact: true })).not.toBeInTheDocument();
+    expect(within(await screen.findByTestId("operator-task-center")).queryByText("FIXTURE", { exact: true })).not.toBeInTheDocument();
   });
   it("authenticated POC seed Task payload cannot be normalized into API tasks", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false"); vi.stubEnv("NEXT_PUBLIC_ODP_PRODUCT_MODE", "poc");
@@ -369,7 +425,7 @@ describe("independent null-to-real session controls", () => {
   state.setAccount(B, "expansion-manager"); state.setSession({ subject: B, expiresAt: Math.floor(Date.now()/1000)+3600 });
   fireEvent.click(screen.getByTestId("operator-task-center-button"));
   await waitFor(() => expect(state.fetch.mock.calls.filter(([url]) => String(url) === "/auth/session").length).toBeGreaterThan(before));
-  expect(within(screen.getByTestId("operator-task-center")).queryByText("FIXTURE", { exact: true })).not.toBeInTheDocument();
+  expect(within(await screen.findByTestId("operator-task-center")).queryByText("FIXTURE", { exact: true })).not.toBeInTheDocument();
  });
 });
 
@@ -397,7 +453,7 @@ describe("owned reads from explicit no-session POC", () => {
     mount({ role: "ops-lead", sessionStatus: 404, session: { detail: "Legacy isolated endpoint absent" }, firstBootstrap: json(fixture), tasks: () => json({ items: [] }) });
     await screen.findByText("Legacy missing session endpoint current row");
     fireEvent.click(screen.getByTestId("operator-task-center-button"));
-    expect(await within(screen.getByTestId("operator-task-center")).findByText("FIXTURE", { exact: true })).toBeVisible();
+    expect(await within(await screen.findByTestId("operator-task-center")).findByText("FIXTURE", { exact: true })).toBeVisible();
     expect(document.querySelector('[data-data-status="fixture"]')).toBeVisible();
     expect(document.querySelector('[data-data-status="ready"]')).not.toBeInTheDocument();
   });
@@ -421,7 +477,9 @@ describe("owned reads from explicit no-session POC", () => {
       vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false"); vi.stubEnv("NEXT_PUBLIC_ODP_PRODUCT_MODE", "poc");
       const pending = deferred<Response>(); const body = deferred<unknown>(); const reading = deferred<boolean>();
       const late = json({}); late.json = () => { reading.resolve(true); return body.promise; };
-      const initialRole = surface === "Network" ? "expansion-manager" : "ops-lead";
+      // The two null refresh callback controls need the existing permitted
+      // Network persona; operations has no Network grant. Task is unchanged.
+      const initialRole = surface === "Task" ? "ops-lead" : "expansion-manager";
       const fixture = envelope(initialRole, "Explicit fixture", surface === "refresh"); fixture.meta.source = "fixture";
       const state = mount({ role: initialRole, storedRole: initialRole, sessionStatus: 401, session: { detail: "No session" }, firstBootstrap: json(fixture),
         workspace: surface === "Network" ? "network" : "today", decision: surface === "refresh",
@@ -429,7 +487,7 @@ describe("owned reads from explicit no-session POC", () => {
         tasks: (actor) => actor === B ? json({ items: [] }) : boundary === "HTTP" ? pending.promise : late,
         legacy: (path, actor) => path === "/api/v1/heatzones" && actor !== B ? boundary === "HTTP" ? pending.promise : late : json(path === "/api/v1/listings/candidates" ? { candidates: [] } : { items: [] }) });
       if (surface === "Task") { await screen.findByText("Explicit fixture current row"); fireEvent.click(screen.getByTestId("operator-task-center-button")); }
-      if (surface === "refresh") { await screen.findByText("Explicit fixture current row"); fireEvent.click(screen.getByRole("button", { name: "核准" })); }
+      if (surface === "refresh") { await screen.findByText("Explicit fixture current row"); await invokeConfirmedNetworkRefreshControl(); }
       if (boundary === "JSON") await reading.promise;
       else await waitFor(() => expect(state.fetch.mock.calls.some(([url]) => surface === "Task" ? String(url) === "/api/v1/operator/shell/tasks"
         : surface === "Network" ? new URL(String(url), window.location.origin).pathname === "/api/v1/heatzones" : bootstrapCalls(state.fetch).length === 2)).toBe(true));
@@ -445,5 +503,49 @@ describe("owned reads from explicit no-session POC", () => {
       expect(screen.queryByText("Old no-session binding")).not.toBeInTheDocument();
       expect(screen.queryByText("Old no-session refresh current row")).not.toBeInTheDocument();
       state.view.unmount();
+  });
+});
+
+
+describe("canonical Network read owner epochs", () => {
+  it.each(["HTTP403", "JSON rejection"])("a late old A %s cannot clear current B Network rows", async (boundary) => {
+    const pending = deferred<Response>(); const failedBody = failingRead<unknown>(); const reading = deferred<boolean>();
+    const late = json({}); late.json = () => { reading.resolve(true); return failedBody.promise; };
+    let oldStarted = false;
+    const state = mount({ workspace: "network", canonicalNetwork: (actor) => {
+      if (actor === A && !oldStarted) { oldStarted = true; return boundary === "HTTP403" ? pending.promise : late; }
+      return json(canonicalNetworkSnapshot(actor === B ? "Current B binding" : "Current A binding"));
+    } });
+    if (boundary === "JSON rejection") await reading.promise;
+    else await waitFor(() => expect(state.fetch.mock.calls.some(([url]) => String(url).includes("/operator/network-listings"))).toBe(true));
+    state.setAccount(B); fireEvent.click(screen.getByRole("button", { name: "重設視角" }));
+    await screen.findByText("Account B current row");
+    fireEvent.click(screen.getByRole("button", { name: /^Network/ }));
+    await waitFor(() => expect(screen.getByTestId("find-areas-zone-detail")).toHaveTextContent("Current B binding"));
+    await act(async () => { if (boundary === "HTTP403") pending.resolve(json({ detail: "Old A refused" }, 403));
+      else failedBody.reject(new Error("Old A JSON failed")); });
+    expect(screen.getByTestId("find-areas-zone-detail")).toHaveTextContent("Current B binding");
+    expect(screen.queryByTestId("operator-data-unavailable")).not.toBeInTheDocument();
+    expect(screen.queryByText("Old A refused")).not.toBeInTheDocument();
+    expect(new Headers(bootstrapCalls(state.fetch).at(-1)?.[1]?.headers).has("X-Operator-Role")).toBe(false);
+  });
+
+  it("a completed A→B→A bootstrap epoch cannot adopt an earlier A HTTP response", async () => {
+    const old = deferred<Response>(); let firstA = true;
+    const state = mount({ workspace: "network", canonicalNetwork: (actor) => {
+      if (actor === A && firstA) { firstA = false; return old.promise; }
+      return json(canonicalNetworkSnapshot(actor === A ? "Current A binding" : "Current B binding"));
+    } });
+    await waitFor(() => expect(state.fetch.mock.calls.some(([url]) => String(url).includes("/operator/network-listings"))).toBe(true));
+    state.setAccount(B); fireEvent.click(screen.getByRole("button", { name: "重設視角" }));
+    await screen.findByText("Account B current row");
+    state.setAccount(A); fireEvent.click(screen.getByRole("button", { name: "重設視角" }));
+    await screen.findByText("Account A current row");
+    fireEvent.click(screen.getByRole("button", { name: /^Network/ }));
+    await waitFor(() => expect(screen.getByTestId("find-areas-zone-detail")).toHaveTextContent("Current A binding"));
+    await act(async () => { old.resolve(json(canonicalNetworkSnapshot("Old A binding"))); });
+    expect(screen.getByTestId("find-areas-zone-detail")).toHaveTextContent("Current A binding");
+    expect(screen.queryByText("Old A binding")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("operator-data-unavailable")).not.toBeInTheDocument();
   });
 });

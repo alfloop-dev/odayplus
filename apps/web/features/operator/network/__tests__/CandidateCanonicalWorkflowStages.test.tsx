@@ -3,13 +3,12 @@ import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NetworkFindAreasWorkspace as Workspace } from "../../NetworkFindAreasWorkspace";
-import { NETWORK_TAB_IDS } from "../networkUrlState";
+import { NetworkFindAreasWorkspace as GrantedReadNetworkWorkspace } from "../../NetworkFindAreasWorkspace";
 
 // Explicit synthetic bootstrap tabs for these component controls. Backend
 // scope/role denials and read revalidation assertions remain authoritative.
-function NetworkFindAreasWorkspace(props: Parameters<typeof Workspace>[0]) {
-  return <Workspace allowedTabIds={NETWORK_TAB_IDS} {...props} />;
+function NetworkFindAreasWorkspace(props: Parameters<typeof GrantedReadNetworkWorkspace>[0]) {
+  return <GrantedReadNetworkWorkspace allowedTabIds={["areas", "radar", "candidates", "score", "compare", "review"]} {...props} />;
 }
 import { projectCandidateNativeWorkflow, resolveCandidateReviewTarget } from "../candidateNativeWorkflowProjection";
 import { CandidatePanel } from "../CandidatePanel";

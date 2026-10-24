@@ -134,7 +134,12 @@ class DurableAuditBacklog:
             if now is not None and now.tzinfo is None:
                 raise ValueError("Audit backlog clock requires a timezone")
             with self.engine.transaction():
-                return self._inspect(tenant_id, now)
+                audit = self._inspect(tenant_id, now)
+                from shared.audit.retained_backlog import RetainedEvidenceBacklog
+
+                retained = RetainedEvidenceBacklog(self.engine, self.sink_id).inspect(tenant_id, now=now)
+                return AuditBacklog(audit.pending + retained.pending,
+                                    max(audit.oldest_seconds, retained.oldest_seconds))
         except Exception as exc:
             raise AuditBacklogUnavailable("Durable audit backlog cannot be verified") from exc
 
@@ -249,9 +254,18 @@ class DurableAuditBacklog:
                 (DURABLE_JOB_TYPE,),
             )
             jobs = self.engine.query("SELECT payload_json FROM durable_jobs WHERE job_type = ?", (DURABLE_JOB_TYPE,))
+            from shared.audit.platform_flag_delivery import SCOPE, inspect_platform_flag_backlog
+
+            platform = inspect_platform_flag_backlog(self.engine, self.sink_id, now=now)
             tenants = set()
             for row in marked + jobs:
-                payload = json.loads(row["metadata_json"] if "metadata_json" in row.keys() else row["payload_json"])
+                metadata = "metadata_json" in row.keys()
+                payload = json.loads(row["metadata_json"] if metadata else row["payload_json"])
+                if payload.get("scope") == SCOPE:
+                    digests = platform.metadata_digests if metadata else platform.payload_digests
+                    if sha256_hex(payload) not in digests:
+                        raise ValueError("Global audit row was not verified by its platform owner")
+                    continue
                 tenant_id = payload.get("tenant_id")
                 if not isinstance(tenant_id, str) or not tenant_id.strip():
                     raise ValueError("Audit delivery lacks its tenant")
@@ -272,7 +286,11 @@ class DurableAuditBacklog:
                     tenants.add(tenant_id)
             if now is not None and now.tzinfo is None:
                 raise ValueError("Audit backlog clock requires a timezone")
+            from shared.audit.retained_backlog import RetainedEvidenceBacklog
+
+            tenants.update(RetainedEvidenceBacklog(self.engine, self.sink_id).tenants())
             health = [self.inspect(tenant_id, now=now) for tenant_id in sorted(tenants)]
-            return AuditBacklog(sum(item.pending for item in health), max((item.oldest_seconds for item in health), default=0.0))
+            return AuditBacklog(platform.pending + sum(item.pending for item in health),
+                                max(platform.oldest_seconds, max((item.oldest_seconds for item in health), default=0.0)))
         except Exception as exc:
             raise AuditBacklogUnavailable("Durable audit backlog tenants cannot be verified") from exc

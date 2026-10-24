@@ -16,7 +16,7 @@ from tests.unit.test_network_canonical_review_projection import report
 results={}
 with tempfile.TemporaryDirectory() as directory:
  for action in ('GO','WAIT','RETURN','REJECT'):
-  engine,scores,decisions,audit,workflow,service=components(Path(directory)/(action+'.sqlite'))
+  engine,scores,decisions,audit,workflow,service=components(Path(directory)/(action+'.sqlite'),go_enabled=action=='GO')
   install_real_related_producers(engine,decisions,workflow,service)
   frozen=scores.save_report(report())
   decision=workflow.open_decision(frozen,created_by='offline-author',tenant_id=TENANT)

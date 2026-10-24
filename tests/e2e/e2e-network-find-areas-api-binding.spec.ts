@@ -21,28 +21,33 @@ import { primeOperatorPersona } from "./_operatorPersona";
 test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
   test.describe.configure({ timeout: 60_000 });
 
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page }, testInfo) => {
     await primeOperatorPersona(page, "expansion-manager");
+    const unavailableCase = testInfo.title === "Network workspace shows fixture data indicator when API is unavailable";
+    const unavailableRead = unavailableCase ? page.waitForEvent("requestfailed", {
+      predicate: (request) => new URL(request.url()).pathname === "/api/v1/operator/network-listings",
+    }) : null;
+    if (unavailableCase) {
+      // Exercise an actual transport failure in this explicit local fixture
+      // lane. No successful business response or production fallback is forged.
+      await page.route((url) => url.pathname === "/api/v1/operator/network-listings"
+        || url.pathname.startsWith("/api/v1/heatzones/")
+        || url.pathname.startsWith("/api/v1/listings/candidates"),
+      (route) => route.abort("failed"));
+    }
     // Navigate to the operator console and activate the Network workspace.
     await page.goto("/operator");
-    // The stored persona is applied during client hydration. Start this
-    // workspace binding check after that setup has taken effect.
-    await expect(
-      page.getByRole("button", { name: "展店經理", exact: true }),
-    ).toBeVisible();
-    // The persona preference can render before the fixture API envelope.
-    // Bind this API suite to the applied envelope before navigating once.
-    await expect(page.getByTestId("operator-envelope-source")).toHaveText(
-      "operator-shell-api-envelope", { timeout: 15_000 },
-    );
+    await expect(page.getByTestId("operator-envelope-source")).toHaveText("operator-shell-api-envelope", { timeout: 15_000 });
     // Click the Network tab in the workspace navigation.
-    const networkTab = page.getByRole("button", { name: /network/i }).first();
+    const networkTab = page.getByRole("navigation", { name: "Operator workspaces" })
+      .getByRole("button", { name: /network/i });
+    await expect(networkTab).toHaveAttribute("aria-disabled", "false");
     await networkTab.click();
-    // The Network workspace is lazy-loaded; allow its cold dev-server chunk
-    // to finish within the same bounded budget as the other Radar reads.
+    // Wait for the Network Find Areas workspace to mount.
     await expect(
       page.getByTestId("network-find-areas-workspace"),
     ).toBeVisible({ timeout: 15_000 });
+    if (unavailableRead) await unavailableRead;
   });
 
   test("Network Find Areas workspace renders with HeatZone summary stats", async ({
@@ -65,15 +70,9 @@ test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
     const workspace = page.getByTestId("network-find-areas-workspace");
     // When backend is unconfigured, the workspace renders fixture data and
     // shows a fixture-mode chip in the header.
-    const fixtureChip = workspace.getByText(/fixture data/i);
-    // Fixture indicator may or may not show depending on env — but the
-    // workspace must still render without crashing.
+    const fixtureChip = workspace.getByText("示範資料", { exact: true });
     await expect(workspace).toBeVisible();
-    // The fixture chip only appears when liveHeatZones/liveCandidates props
-    // are bound but fall back; in static env it may be absent.
-    const isFixture = await fixtureChip.isVisible().catch(() => false);
-    // Either fixture mode is shown or the workspace rendered live data — both valid.
-    expect(isFixture || true).toBe(true);
+    await expect(fixtureChip).toBeVisible();
   });
 
   test("Listing Radar tab renders the listing table", async ({ page }) => {
@@ -81,15 +80,11 @@ test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
     // Click the Listing Radar tab (index 1).
     const listingTab = page.getByTestId("network-tab-1");
     await listingTab.click();
-    await expect(page.getByTestId("network-panel-listings")).toBeVisible({
-      timeout: 15_000,
-    });
+    await expect(page.getByTestId("network-panel-listings")).toBeVisible();
     // Either listings table or empty state.
     const table = page.getByTestId("network-listing-table");
     const empty = page.getByText(/No listings sourced yet/i);
-    const hasTable = await table.isVisible().catch(() => false);
-    const hasEmpty = await empty.isVisible().catch(() => false);
-    expect(hasTable || hasEmpty).toBe(true);
+    await expect(table.or(empty)).toBeVisible();
   });
 
   test("Candidate Pipeline tab renders without crash", async ({ page }) => {
@@ -98,7 +93,6 @@ test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
     await expect(page.getByTestId("network-panel-candidates")).toBeVisible();
     const table = page.getByTestId("network-candidate-table");
     const empty = page.getByText(/No candidates yet/i);
-    // The panel can appear before its contents finish the route transition.
     await expect(table.or(empty)).toBeVisible();
   });
 

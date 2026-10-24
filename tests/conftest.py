@@ -350,3 +350,53 @@ def patch_synthetic_dns(request, monkeypatch):
         return original_resolve(host)
 
     monkeypatch.setattr(assisted_listing_retrieval, "_resolve_host", mock_resolve)
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--emgi-proposed-bundle",
+        default=None,
+        help="Explicit EMGI bundle root containing foundation/ and product/schemas.json.",
+    )
+
+
+@pytest.fixture(scope="module")
+def consumer_roundtrip_release(request, release):
+    """Use proposed schemas only for existing consumer-model compatibility samples.
+
+    The module's original release fixture still verifies vendored artifact hashes.
+    This test-only view is not a new pin: catalog, identity, checksums and runtime
+    stay untouched. Do not run exact-pin verify_release on the mixed view.
+    """
+    proposed = request.config.getoption("--emgi-proposed-bundle")
+    if proposed is None:
+        return release
+
+    from collections.abc import Mapping
+    from dataclasses import replace
+    from pathlib import Path
+
+    component = release.pin.release.type
+    if component == "foundation":
+        from packages.oday_data_contracts_client.release import FoundationRelease
+
+        expected_class = FoundationRelease
+    elif component == "product":
+        from packages.oday_data_product_contracts_client.release import ProductRelease
+
+        expected_class = ProductRelease
+    else:
+        pytest.fail(f"Unknown consumer release type: {component!r}")
+    if not isinstance(release, expected_class):
+        pytest.fail(f"{component}: expected {expected_class.__name__}")
+
+    if not proposed or not Path(proposed).is_dir():
+        pytest.fail(f"Proposed EMGI bundle root is not a directory: {proposed!r}")
+    schema_path = Path(proposed) / component / "schemas.json"
+    bundle = json.loads(schema_path.read_text(encoding="utf-8"))
+    schemas = bundle.get("schemas") if isinstance(bundle, Mapping) else None
+    if not isinstance(schemas, Mapping):
+        pytest.fail(f"{schema_path}: bundle has no 'schemas' mapping")
+
+    # Replace, never merge: schema_for must reject missing pinned schema paths.
+    return replace(release, schemas=schemas)

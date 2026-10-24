@@ -3,6 +3,10 @@
 import { CSSProperties, useState, useMemo, useEffect } from "react";
 import { ISSUE_FIXTURES, EVIDENCE_FIXTURES, AUDIT_EVENT_FIXTURES, STORE_FIXTURES } from "./fixtures";
 import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
+import type { OperatorRoleId as NavigationOperatorRoleId } from "./navigation";
+import { nativeStoreLabels } from "./storeOpsNativeSummary";
+import { StoreOpsForecastQuality, StoreOpsForecastView, useStoreOpsForecastRead } from "./StoreOpsForecastSection";
+import { recordedAlertAtRun, recordedRecommendationAtAlert, savedForecastActionLabel, type ForecastReadGuardFactory } from "./storeOpsForecastClient";
 import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
 import {
   isSeedDataSource,
@@ -13,7 +17,7 @@ import {
 } from "./operatorDataMode";
 import styles from "./designAligned.module.css";
 import { ISSUE_STATUSES } from "./types";
-import type { AuditEvent, EvidenceItem, Issue, Severity, Store, StoreLightStatus, OperatorRoleId } from "./types";
+import type { AuditEvent, EvidenceItem, Issue, Severity, Store, StoreLightStatus, OperatorRoleId, StoreHealthAvailability, StoreHealthSlotAvailability, StoreOpsHealthAvailability } from "./types";
 import { STORE_OPS_REFRESH_EVENT, type StoreOpsWorkflowDialogType } from "./storeOpsWorkflowTypes";
 import {
   filterStoreOpsIssues,
@@ -42,6 +46,9 @@ type DesignTodayWorkspaceProps = {
 };
 
 type DesignStoreOpsWorkspaceProps = {
+  activeRoleId?: NavigationOperatorRoleId;
+  forecastScopeKey?: string;
+  createAuthenticatedReadGuard?: ForecastReadGuardFactory;
   initialIssueId?: string;
   initialTabId?: string;
   onOpenWorkflow: (dialog: StoreOpsWorkflowDialogType, issue: Issue) => void;
@@ -60,6 +67,7 @@ type StoreOpsLightSummary = {
   label: string;
   counts: Record<StoreLightStatus, number>;
   issueCounts: Record<StoreLightStatus, number>;
+  unavailableCount?: number;
 };
 
 type StoreOpsFullLightStatus = "red" | "orange" | "yellow" | "green";
@@ -72,9 +80,75 @@ type StoreOpsApiState = {
   evidence: EvidenceItem[];
   auditEvents: AuditEvent[];
   fourLightSummary: StoreOpsLightSummary[];
+  healthAvailability?: StoreOpsHealthAvailability;
   count: number;
   source?: string;
 };
+
+function cameraPurposeTimestamp(value: unknown): { milliseconds: number; fraction: string } | null {
+  if (typeof value !== "string") return null;
+  const parts = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(?:Z|[+-]\d{2}:\d{2})$/.exec(value);
+  if (!parts) return null;
+  const [, year, month, day, hour, minute, second] = parts.map(Number);
+  if (year < 1 || month < 1 || month > 12 || day < 1
+    || day > new Date(Date.UTC(year, month, 0)).getUTCDate()
+    || hour > 23 || minute > 59 || second > 59) return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? { milliseconds: timestamp, fraction: parts[7] ?? "" } : null;
+}
+
+export function hasRecordedCameraPurpose(
+  evidence: EvidenceItem | undefined,
+  issue: Issue,
+  auditEvents: AuditEvent[],
+): boolean {
+  const nonempty = (value: unknown): value is string =>
+    typeof value === "string" && value.trim().length > 0;
+  if (!evidence || !issue || evidence.kind !== "camera" || evidence.lockedReason
+    || !nonempty(issue.id) || !nonempty(evidence.id) || !nonempty(evidence.issueId)
+    || evidence.issueId !== issue.id || !Array.isArray(issue.evidenceIds)
+    || !issue.evidenceIds.includes(evidence.id)) return false;
+  if (!nonempty(evidence.purpose) || !nonempty(evidence.cameraLocation)
+    || !nonempty(evidence.timeWindow) || !Number.isInteger(evidence.retentionHours)
+    || evidence.retentionHours! < 1 || evidence.retentionHours! > 72) return false;
+  const unlockedAt = cameraPurposeTimestamp(evidence.unlockedAt);
+  if (unlockedAt === null) return false;
+
+  return auditEvents.some((event) => {
+    const metadata = event.metadata;
+    const occurredAt = cameraPurposeTimestamp(event.occurredAt);
+    const precision = Math.max(occurredAt?.fraction.length ?? 0, unlockedAt.fraction.length);
+    const recordedAfterUnlock = occurredAt !== null
+      && (occurredAt.milliseconds > unlockedAt.milliseconds
+        || occurredAt.milliseconds === unlockedAt.milliseconds
+          && occurredAt.fraction.padEnd(precision, "0") >= unlockedAt.fraction.padEnd(precision, "0"));
+    return nonempty(event.id) && event.category === "evidence"
+      && event.action === "evidence.camera_purpose.recorded"
+      && event.targetType === "issue" && event.targetId === issue.id
+      && recordedAfterUnlock
+      && metadata !== null && typeof metadata === "object" && !Array.isArray(metadata)
+      && metadata.issueId === issue.id && metadata.evidenceId === evidence.id
+      && metadata.purpose === evidence.purpose
+      && metadata.cameraLocation === evidence.cameraLocation
+      && metadata.timeWindow === evidence.timeWindow
+      && metadata.retentionHours === evidence.retentionHours;
+  });
+}
+
+// This proves only a saved purpose record. A current media-content owner is
+// not connected here; neither this record nor retentionHours grants access.
+function hasCameraPurposeRecord(
+  evidence: EvidenceItem | undefined,
+  issue: Issue,
+  auditEvents: AuditEvent[],
+): boolean {
+  if (!evidence) return false;
+  return hasRecordedCameraPurpose({
+    ...evidence,
+    lockedReason: undefined,
+    unlockedAt: evidence.purposeRecordedAt ?? evidence.unlockedAt,
+  }, issue, auditEvents);
+}
 
 const EMPTY_STORE_OPS_ISSUE: Issue = {
   id: "",
@@ -110,7 +184,6 @@ export function inspectStoreOpsApiPayload(
     !stores ||
     !evidence ||
     !auditEvents ||
-    issues.length === 0 ||
     stores.length === 0
   ) {
     return "empty";
@@ -141,9 +214,10 @@ function hasStoreOpsRenderData(payload: unknown): payload is StoreOpsApiState {
       && row.outcomeMetrics.every((metric) => object(metric) && strings(metric, ["label", "before", "after"]))))
     && stores.every((row) => object(row)
       && strings(row, ["id", "name", "district", "city", "manager"])
-      && finite(row.riskScore) && object(row.lights)
+      && (row.riskScore === null || finite(row.riskScore)) && object(row.lights)
       && ["demand", "operations", "staffing", "margin"].every((dimension) =>
-        typeof (row.lights as Record<string, unknown>)[dimension] === "string"
+        (row.lights as Record<string, unknown>)[dimension] === null
+        || typeof (row.lights as Record<string, unknown>)[dimension] === "string"
         && ["green", "yellow", "red"].includes((row.lights as Record<string, string>)[dimension])))
     && evidence.every((row) => object(row)
       && strings(row, ["id", "issueId", "kind", "sourceLabel", "occurredAt", "polarity"])
@@ -159,6 +233,94 @@ function hasStoreOpsRenderData(payload: unknown): payload is StoreOpsApiState {
     && auditEvents.every((row) => object(row)
       && strings(row, ["id", "occurredAt", "actorRoleId", "actorName", "category", "action",
         "targetType", "targetId", "message"]));
+}
+
+const storeHealthDimensions = ["demand", "operations", "staffing", "margin"] as const;
+const storeHealthDimensionLabels = { demand: "需求", operations: "設備", staffing: "清潔", margin: "利潤" };
+
+function hasAvailableHealthSlot(value: unknown): value is StoreHealthSlotAvailability {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const slot = value as Record<string, unknown>;
+  return slot.state === "available" && typeof slot.source === "string" && !!slot.source.trim()
+    && (slot.reasonCode == null || typeof slot.reasonCode === "string")
+    && (slot.message == null || typeof slot.message === "string")
+    && (slot.recordIds === undefined || Array.isArray(slot.recordIds)
+      && slot.recordIds.every((id) => typeof id === "string" && !!id.trim()));
+}
+
+function completeStoreHealth(store: Store): boolean {
+  return storeHealthDimensions.every((dimension) => store.lights[dimension] !== null)
+    && typeof store.riskScore === "number" && Number.isFinite(store.riskScore)
+    && (!store.healthAvailability || store.healthAvailability.complete);
+}
+
+function storeHealthCoverage(stores: Store[]): StoreOpsHealthAvailability {
+  const coveredCount = stores.filter(completeStoreHealth).length;
+  const warningCount = stores.filter((store) => {
+    const status = classifyStoreLight(store);
+    return status !== null && status !== "green";
+  }).length;
+  const anyKnown = stores.some((store) => storeHealthDimensions.some((dimension) => store.lights[dimension] !== null)
+    || store.riskScore !== null);
+  return {
+    state: coveredCount === stores.length ? "available" : anyKnown ? "degraded" : "unavailable",
+    complete: coveredCount === stores.length,
+    totalCount: stores.length, coveredCount,
+    unavailableCount: stores.length - coveredCount, warningCount,
+  };
+}
+
+/** API compatibility masks unsupported health only, after validating supplied shapes.
+ * The canonical server verifies observations; this does not create source authority.
+ */
+export function normalizeStoreOpsApiHealth(payload: unknown): unknown {
+  // A malformed colour, number, issue or collection is still failed data; do
+  // not turn it into null merely because legacy provenance is absent.
+  if (!hasStoreOpsRenderData(payload) || payloadContainsSeedData(payload)
+    || isSeedDataSource(payload.source)) return payload;
+  const unavailable: StoreHealthSlotAvailability = {
+    state: "unavailable", source: null,
+    reasonCode: "CANONICAL_KPI_SOURCE_UNAVAILABLE", message: "指標資料未取得",
+  };
+  const stores = payload.stores.map((store): Store => {
+    const health: unknown = store.healthAvailability;
+    const row = health && typeof health === "object" && !Array.isArray(health)
+      ? health as Record<string, unknown> : null;
+    const validRow = row && ["available", "degraded", "unavailable"].includes(String(row.state))
+      && typeof row.complete === "boolean";
+    const slots = validRow && row?.lights && typeof row.lights === "object" && !Array.isArray(row.lights)
+      ? row.lights as Record<string, unknown> : null;
+    const lights = { ...store.lights };
+    const lightAvailability: StoreHealthAvailability["lights"] = {
+      demand: { ...unavailable }, operations: { ...unavailable },
+      staffing: { ...unavailable }, margin: { ...unavailable },
+    };
+    for (const dimension of storeHealthDimensions) {
+      const slot = slots?.[dimension];
+      if (lights[dimension] !== null && hasAvailableHealthSlot(slot)) {
+        lightAvailability[dimension] = { ...slot, ...(slot.recordIds ? { recordIds: [...slot.recordIds] } : {}) };
+      } else {
+        lights[dimension] = null;
+        lightAvailability[dimension] = { ...unavailable };
+      }
+    }
+    const riskSlot = row?.riskScore;
+    const riskKnown = !!validRow && typeof store.riskScore === "number"
+      && Number.isFinite(store.riskScore) && hasAvailableHealthSlot(riskSlot);
+    const riskScore = riskKnown ? store.riskScore : null;
+    const complete = !!validRow && row?.complete === true && row?.state === "available"
+      && storeHealthDimensions.every((dimension) => lights[dimension] !== null) && riskKnown;
+    const anyKnown = storeHealthDimensions.some((dimension) => lights[dimension] !== null) || riskKnown;
+    return {
+      ...store, lights, riskScore,
+      healthAvailability: {
+        state: complete ? "available" : anyKnown ? "degraded" : "unavailable", complete,
+        lights: lightAvailability,
+        riskScore: riskKnown && hasAvailableHealthSlot(riskSlot) ? { ...riskSlot } : { ...unavailable },
+      },
+    };
+  });
+  return { ...payload, stores, healthAvailability: storeHealthCoverage(stores) };
 }
 
 function sourceEvidenceText(item: EvidenceItem, field: "title" | "summary"): string {
@@ -222,13 +384,13 @@ const evidenceTabLabels: Partial<Record<EvidenceItem["kind"], string>> = {
   cleaning: "清潔",
 };
 
-function classifyStoreLight(store: Store): StoreOpsFullLightStatus {
+function classifyStoreLight(store: Store): StoreOpsFullLightStatus | null {
   const statuses = Object.values(store.lights);
   const yellowCount = statuses.filter((status) => status === "yellow").length;
   if (statuses.includes("red")) return "red";
-  if (yellowCount >= 2 || store.riskScore >= 70) return "orange";
+  if (yellowCount >= 2 || typeof store.riskScore === "number" && Number.isFinite(store.riskScore) && store.riskScore >= 70) return "orange";
   if (yellowCount > 0) return "yellow";
-  return "green";
+  return completeStoreHealth(store) ? "green" : null;
 }
 
 const kpis = [
@@ -525,6 +687,9 @@ export function DesignTodayWorkspace({
 }
 
 export function DesignStoreOpsWorkspace({
+  activeRoleId,
+  forecastScopeKey,
+  createAuthenticatedReadGuard,
   initialIssueId,
   initialTabId,
   onOpenWorkflow,
@@ -563,12 +728,10 @@ export function DesignStoreOpsWorkspace({
     (initialTabId as EvidenceItem["kind"]) || "googleReview",
   );
   const [mineOnly, setMineOnly] = useState(false);
-  const [selectedIssueId, setSelectedIssueId] = useState<string>(initialIssueId || "ISS-1024");
+  const [selectedIssueId, setSelectedIssueId] = useState<string>(initialIssueId || "");
 
   useEffect(() => {
-    if (initialIssueId) {
-      setSelectedIssueId(initialIssueId);
-    }
+    setSelectedIssueId(initialIssueId || "");
   }, [initialIssueId]);
 
   useEffect(() => {
@@ -621,7 +784,7 @@ export function DesignStoreOpsWorkspace({
           setApiState(null);
           setStoreOpsLoadState("loading");
         }
-        const data: unknown = await response.json();
+        const data: unknown = normalizeStoreOpsApiHealth(await response.json());
         if (!cancelled) {
           const inspection = inspectStoreOpsApiPayload(data);
           const usable = hasStoreOpsRenderData(data);
@@ -732,10 +895,25 @@ export function DesignStoreOpsWorkspace({
 
   // 4. Resolve selected issue
   const issue = useMemo(() => {
-    return filteredIssues.find((i) => i.id === selectedIssueId) ??
-      filteredIssues[0] ??
+    if (selectedIssueId) {
+      return filteredIssues.find((candidate) => candidate.id === selectedIssueId) ?? EMPTY_STORE_OPS_ISSUE;
+    }
+    return filteredIssues[0] ??
       (fixturePresentation ? ISSUE_FIXTURES[0] : EMPTY_STORE_OPS_ISSUE);
   }, [filteredIssues, fixturePresentation, selectedIssueId]);
+
+  const hasActualIssue = filteredIssues.some((candidate) => candidate.id === issue.id);
+  const unresolvedRequestedIssue = Boolean(selectedIssueId) && !hasActualIssue;
+  // One captured current owner feeds both the top warning and Forecast tab.
+  const forecastRead = useStoreOpsForecastRead({
+    scopeKey: forecastScopeKey ? JSON.stringify([forecastScopeKey, storeOpsRefreshToken]) : "",
+    issueId: issue.id, storeId: issue.storeId, roleId: activeRoleId ?? roleId,
+    createAuthenticatedReadGuard,
+  }, !fixturePresentation && storeOpsLoadState === "ready" && hasActualIssue
+    && (issue.source === "forecastOps" || activeEvidenceTab === "forecastOps"));
+  const savedForecast = forecastRead.result?.state === "ready" ? forecastRead.result.forecast : null;
+  const savedForecastAlert = savedForecast ? recordedAlertAtRun(savedForecast) : null;
+  const savedForecastRecommendation = savedForecast ? recordedRecommendationAtAlert(savedForecast) : null;
 
   // 5. Generate 28-day revenue forecast band data based on selected store
   const forecastData = useMemo(() => {
@@ -807,6 +985,8 @@ export function DesignStoreOpsWorkspace({
   const evGoogleReview = issueEvidence.find((e) => e.kind === "googleReview");
   const evCsCase = issueEvidence.find((e) => e.kind === "csCase");
   const evCamera = issueEvidence.find((e) => e.kind === "camera");
+  const cameraPurposeRecorded = hasRecordedCameraPurpose(evCamera, issue, activeAuditEvents);
+  const cameraPurposeRecordPresent = hasCameraPurposeRecord(evCamera, issue, activeAuditEvents);
   const evPayment = issueEvidence.find((e) => e.kind === "payment");
   const evIot = issueEvidence.find((e) => e.kind === "iot");
   const evForecastOps = issueEvidence.find((e) => e.kind === "forecastOps");
@@ -835,6 +1015,7 @@ export function DesignStoreOpsWorkspace({
   const storeObj = useMemo(() => {
     return activeStores.find((s) => s.id === issue.storeId);
   }, [activeStores, issue.storeId]);
+  const nativeLabels = nativeStoreLabels(storeObj?.nativeSummary, issue.storeId);
 
   const storesByFullLight = useMemo(() => {
     const grouped: Record<StoreOpsFullLightStatus, Store[]> = {
@@ -843,9 +1024,18 @@ export function DesignStoreOpsWorkspace({
       yellow: [],
       green: [],
     };
-    activeStores.forEach((store) => grouped[classifyStoreLight(store)].push(store));
+    activeStores.forEach((store) => {
+      const status = classifyStoreLight(store);
+      if (status !== null) grouped[status].push(store);
+    });
     return grouped;
   }, [activeStores]);
+
+  const healthCoverage = useMemo(() => storeHealthCoverage(activeStores), [activeStores]);
+  const readOnlyStores = activeStores.filter((store) =>
+    (!hasActualIssue || !issueSource.some((candidate) => candidate.storeId === store.id))
+    && (!selectedStoreLightStatus || classifyStoreLight(store) === selectedStoreLightStatus)
+    && (!selectedLightFilter || store.lights[selectedLightFilter.dimension] === selectedLightFilter.status));
 
   const sourceDistribution = useMemo(() => {
     const counts = {
@@ -898,12 +1088,14 @@ export function DesignStoreOpsWorkspace({
       "",
     );
     return [
-      `紅燈門市 ${storesByFullLight.red.length} 間`,
+      healthCoverage.unavailableCount > 0
+        ? `已觀測紅燈門市 ${storesByFullLight.red.length} 間 · PARTIAL，${healthCoverage.unavailableCount} 家資料不完整（已完整判定 ${healthCoverage.coveredCount}/${healthCoverage.totalCount}）`
+        : `紅燈門市 ${storesByFullLight.red.length} 間`,
       `高風險 Issue ${issueSource.filter((candidate) => ["critical", "high"].includes(candidate.severity)).length} 件`,
       `Outcome Ready ${issueSource.filter((candidate) => candidate.status === "outcomeready").length} 件`,
       latestUpdatedAt ? `更新 ${formatCompactDateTime(latestUpdatedAt)}` : "尚無更新時間",
     ];
-  }, [issueSource, storesByFullLight.red.length]);
+  }, [issueSource, storesByFullLight.red.length, healthCoverage]);
 
   // Interactive callbacks
   const toggleSource = (source: string) => {
@@ -971,11 +1163,13 @@ export function DesignStoreOpsWorkspace({
     return "triage";
   };
 
+  const openIssueWorkflow = (dialogType: StoreOpsWorkflowDialogType) => {
+    if (hasActualIssue) onOpenWorkflow(dialogType, issue);
+  };
+
   const handleActionClick = (label: string) => {
     const dialogType = getDialogTypeFromLabel(label);
-    if (issue) {
-      onOpenWorkflow(dialogType, issue);
-    }
+    openIssueWorkflow(dialogType);
   };
 
   const primaryActionLabel = getPrimaryActionLabel(issue);
@@ -1019,7 +1213,7 @@ export function DesignStoreOpsWorkspace({
     <div
       className={styles.storeWorkspace}
       data-screen-label="Store Ops 門市營運"
-      data-selected-issue-id={selectedIssueId}
+      data-selected-issue-id={hasActualIssue ? issue.id : selectedIssueId || undefined}
       data-selected-tab-id={initialTabId}
     >
       <header className={styles.storeHeader}>
@@ -1031,6 +1225,7 @@ export function DesignStoreOpsWorkspace({
         aria-label="全店四燈摘要"
         className={styles.storeOverview}
         data-screen-label="Store Ops 全店四燈摘要"
+        data-health-state={healthCoverage.state}
       >
         <div className={styles.fullLightGrid}>
           {fullStoreLightOrder.map((status) => {
@@ -1051,7 +1246,9 @@ export function DesignStoreOpsWorkspace({
                   {meta.label}
                 </span>
                 <strong>{storesByFullLight[status].length}</strong>
-                <small>{meta.note}</small>
+                <small>{status === "green" && healthCoverage.unavailableCount > 0
+                  ? `另有 ${healthCoverage.unavailableCount} 家指標資料未取得`
+                  : meta.note}</small>
               </button>
             );
           })}
@@ -1200,12 +1397,14 @@ export function DesignStoreOpsWorkspace({
               );
             })}
             {filteredIssues.length === 0 && (
-              <div className={styles.queueEmpty}>沒有符合條件的項目，請調整篩選。</div>
+              <div className={styles.queueEmpty}>{issueSource.length === 0 ? "目前沒有門市事件。" : "沒有符合條件的項目，請調整篩選。"}</div>
             )}
           </div>
         </aside>
 
-        <section className={styles.storeDetail} aria-label={`${issue.id} detail`}>
+        <section className={styles.storeDetail} aria-label={hasActualIssue ? `${issue.id} detail` : "門市唯讀資訊"}>
+          {unresolvedRequestedIssue ? <p role="status">指定事件不存在、無權限或不在目前篩選範圍；未開啟其他事件。</p> : null}
+          {hasActualIssue ? (<>
           <section className={styles.issueHero}>
             <div className={styles.issueHeroTopline}>
               <span>
@@ -1236,7 +1435,11 @@ export function DesignStoreOpsWorkspace({
                 );
               })}
             </ol>
-            <div className={styles.nextStep}>下一步：{getAiRecommendation(issue)}</div>
+            <div className={styles.nextStep}>下一步：{!fixturePresentation && issue.source === "forecastOps"
+              ? savedForecastRecommendation?.state === "recorded"
+                ? "查看下方保存政策建議，確認後再依既有流程建立處置。"
+                : "此告警尚無可核對的保存建議。"
+              : getAiRecommendation(issue)}</div>
           </section>
 
           <section className={styles.storeStrip}>
@@ -1246,11 +1449,13 @@ export function DesignStoreOpsWorkspace({
             </span>
             <span>
               <small>型態</small>
-              <strong>{fixturePresentation ? "自助洗衣" : "不可用"}</strong>
+              <strong>{fixturePresentation ? "自助洗衣" : nativeLabels.format}</strong>
             </span>
             <span>
               <small>機台</small>
-              <strong>{fixturePresentation ? "14 台" : "不可用"}</strong>
+              <strong title={fixturePresentation ? undefined : nativeLabels.machineDescription}>
+                {fixturePresentation ? "14 台" : nativeLabels.machines}
+              </strong>
             </span>
             <span>
               <small>今日營收</small>
@@ -1270,9 +1475,9 @@ export function DesignStoreOpsWorkspace({
                       ["清潔", storeObj.lights.staffing],
                       ["利潤", storeObj.lights.margin],
                     ] as const).map(([label, status]) => (
-                      <span data-status={status} key={label}>
-                        <i aria-hidden="true">{status === "green" ? "✓" : status === "red" ? "!" : "•"}</i>
-                        {label} {lightStatusLabels[status]}
+                      <span data-status={status ?? undefined} key={label}>
+                        {status !== null ? <i aria-hidden="true">{status === "green" ? "✓" : status === "red" ? "!" : "•"}</i> : null}
+                        {label} {status === null ? "資料不可用" : lightStatusLabels[status]}
                       </span>
                     ))
                   : "API 未提供門市四燈"}
@@ -1286,12 +1491,15 @@ export function DesignStoreOpsWorkspace({
               <span>EVIDENCE FUSION</span>
               <strong>證據強度 {fixturePresentation ? supportingEvidence.length >= 3 ? "強" : "中" : "不可用"}</strong>
             </div>
+            {!fixturePresentation && issue.source === "forecastOps" ? <StoreOpsForecastQuality read={forecastRead} /> : null}
             <div className={styles.evidenceCards}>
               <article>
                 <small>Google 評價</small>
                 {evGoogleReview ? (
                   <>
-                    <strong>{fixturePresentation ? `★ ${(evGoogleReview.confidence * 5).toFixed(1)} 未回覆` : sourceEvidenceText(evGoogleReview, "title")}</strong>
+                    <strong>{fixturePresentation && typeof evGoogleReview.confidence === "number"
+                      && Number.isFinite(evGoogleReview.confidence) && evGoogleReview.confidence >= 0 && evGoogleReview.confidence <= 1
+                      ? `★ ${(evGoogleReview.confidence * 5).toFixed(1)} 未回覆` : sourceEvidenceText(evGoogleReview, "title")}</strong>
                     <p>{sourceEvidenceText(evGoogleReview, "summary")}</p>
                   </>
                 ) : (
@@ -1320,14 +1528,22 @@ export function DesignStoreOpsWorkspace({
               >
                 <small>Camera 影像</small>
                 {evCamera ? (
-                  evCamera.lockedReason ? (
+                  !fixturePresentation ? (
+                    <>
+                      <strong>{cameraPurposeRecordPresent ? "調閱目的已記錄" : "影像內容不可用"}</strong>
+                      <p>影像內容不可用；調閱目的紀錄不代表存取授權。</p>
+                      <button className={styles.cameraTrigger} onClick={() => openIssueWorkflow("cameraPurpose")} type="button">
+                        {cameraPurposeRecordPresent ? "更新調閱目的" : "填寫調閱目的"}
+                      </button>
+                    </>
+                  ) : evCamera.lockedReason ? (
                     <>
                       <strong style={{ color: "#d18700" }}>影像鎖定 • 需授權</strong>
-                      <button className={styles.cameraTrigger} onClick={() => onOpenWorkflow("cameraPurpose", issue)} type="button">點擊填寫調閱目的</button>
+                      <button className={styles.cameraTrigger} onClick={() => openIssueWorkflow("cameraPurpose")} type="button">點擊填寫調閱目的</button>
                     </>
                   ) : (
                     <>
-                      <strong style={fixturePresentation ? { color: "#087a47" } : undefined}>{fixturePresentation ? "影像已解鎖" : sourceEvidenceText(evCamera, "title")}</strong>
+                      <strong style={cameraPurposeRecorded ? { color: "#087a47" } : undefined}>{cameraPurposeRecorded ? "影像已解鎖" : sourceEvidenceText(evCamera, "title")}</strong>
                       <p>{sourceEvidenceText(evCamera, "summary")}</p>
                     </>
                   )
@@ -1401,18 +1617,33 @@ export function DesignStoreOpsWorkspace({
             <div className={styles.evidenceLists}>
               <section>
                 <h4>支持證據 {supportingEvidence.length}</h4>
-                {supportingEvidence.map((e) => <p key={e.id}>{e.title}：{e.summary}</p>)}
+                {supportingEvidence.map((e) => <p key={e.id}>{e.title}：{e.kind === "camera" && !fixturePresentation
+                  ? "影像內容不可用；調閱目的紀錄不代表存取授權。" : e.summary}</p>)}
               </section>
               <section>
                 <h4>反向證據 {contraryEvidence.length}</h4>
-                {contraryEvidence.map((e) => <p key={e.id}>{e.title}：{e.summary}</p>)}
+                {contraryEvidence.map((e) => <p key={e.id}>{e.title}：{e.kind === "camera" && !fixturePresentation
+                  ? "影像內容不可用；調閱目的紀錄不代表存取授權。" : e.summary}</p>)}
                 {contraryEvidence.length === 0 && <p>{fixturePresentation ? "目前無反向反駁證據" : "來源未提供反向證據"}</p>}
               </section>
             </div>
             <div className={styles.aiBox}>
-              <b>AI 建議</b><small>由證據融合產生 · 僅供參考</small>
-              <p>{getAiRecommendation(issue)}</p>
-              <button onClick={() => onOpenWorkflow("action", issue)} type="button">採用建議並建立處置</button>
+              <b>AI 建議</b><small>{!fixturePresentation && issue.source === "forecastOps"
+                ? "原 ForecastOps 保存政策建議 · 僅供參考" : "由證據融合產生 · 僅供參考"}</small>
+              {!fixturePresentation && issue.source === "forecastOps" ? <div data-testid="forecast-saved-recommendation">
+                {savedForecastAlert?.state === "recorded" ? <p>
+                  保存告警：{savedForecastAlert.data.level}／{savedForecastAlert.data.reasonCode}；{savedForecastAlert.data.openedAt}
+                </p> : <p>保存告警證據未提供。</p>}
+                {savedForecastRecommendation?.state === "recorded" ? <>
+                  {savedForecastRecommendation.data.actionIds.map(action => <p key={action}>
+                    {savedForecastActionLabel(action)}（{action}）
+                  </p>)}
+                  <p>建議來源：{savedForecastRecommendation.data.handoffId}；{savedForecastRecommendation.data.createdAt}；
+                    保存轉交狀態：{savedForecastRecommendation.data.handoffStatus}</p>
+                </> : <p role="status">此告警尚無可核對的保存建議。</p>}
+                <p>自動根因候選、證據強度與資料信心尚未提供。保存建議不代表因果判定、核准或已執行處置。</p>
+              </div> : <p>{getAiRecommendation(issue)}</p>}
+              <button onClick={() => openIssueWorkflow("action")} type="button">採用建議並建立處置</button>
             </div>
           </section>
 
@@ -1465,7 +1696,8 @@ export function DesignStoreOpsWorkspace({
                   <small>{evidenceTabLabels[activeEvidenceItem.kind]}</small>
                   <strong>{activeEvidenceItem.title}</strong>
                 </span>
-                <p>{activeEvidenceItem.summary}</p>
+                <p>{activeEvidenceItem.kind === "camera" && !fixturePresentation
+                  ? "影像內容不可用；調閱目的紀錄不代表存取授權。" : activeEvidenceItem.summary}</p>
                 <dl>
                   <div>
                     <dt>來源</dt>
@@ -1480,9 +1712,10 @@ export function DesignStoreOpsWorkspace({
                     <dd>{formatCompactDateTime(activeEvidenceItem.occurredAt)}</dd>
                   </div>
                 </dl>
-                {activeEvidenceItem.kind === "camera" && activeEvidenceItem.lockedReason ? (
-                  <button onClick={() => onOpenWorkflow("cameraPurpose", issue)} type="button">
-                    輸入調閱目的以檢視
+                {activeEvidenceItem.kind === "camera" && (activeEvidenceItem.lockedReason || !fixturePresentation) ? (
+                  <button onClick={() => openIssueWorkflow("cameraPurpose")} type="button">
+                    {fixturePresentation ? "輸入調閱目的以檢視" : hasCameraPurposeRecord(activeEvidenceItem, issue, activeAuditEvents)
+                      ? "更新調閱目的" : "填寫調閱目的"}
                   </button>
                 ) : null}
               </div>
@@ -1551,16 +1784,29 @@ export function DesignStoreOpsWorkspace({
               </div>
               </div>
             ) : (
-              <div className={styles.forecastChartSection} data-testid="store-forecast-unavailable" role="tabpanel" id="store-evidence-panel" aria-labelledby="store-evidence-tab-forecastOps" tabIndex={0}>
-                <h4>28 天門市營運營收預測與異常帶</h4>
-                <p>FORECAST_DATA_UNAVAILABLE · Store Ops API 未提供正式 ForecastOps 序列。</p>
-              </div>
+              <StoreOpsForecastView read={forecastRead} storeId={issue.storeId} showQuality={false} />
             )) : null}
 
           </section>
+          </>) : null}
+          {readOnlyStores.map((store) => {
+            const labels = nativeStoreLabels(store.nativeSummary, store.id);
+            return <section className={styles.storeStrip} key={store.id} aria-label={`${store.id} 門市唯讀資訊`}>
+              <span><small>門市（唯讀）</small><strong>{store.id} · {store.name}</strong></span>
+              <span><small>型態</small><strong>{labels.format}</strong></span>
+              <span><small>機台</small><strong title={labels.machineDescription}>{labels.machines}</strong></span>
+              <span><small>今日營收</small><strong>不可用</strong></span>
+              <span><small>FORECASTOPS 四燈</small><strong className={styles.storeLightRow}>
+                {storeHealthDimensions.map((dimension) => {
+                  const status = store.lights[dimension];
+                  return <span key={dimension}>{storeHealthDimensionLabels[dimension]} {status === null ? "資料不可用" : lightStatusLabels[status]}</span>;
+                })}
+              </strong></span>
+            </section>;
+          })}
         </section>
 
-        <aside className={styles.actionRail} aria-label="Action rail">
+        {hasActualIssue ? <aside className={styles.actionRail} aria-label="Action rail">
           <section>
             <h2>ACTION RAIL <span>下一步</span></h2>
             <dl>
@@ -1623,7 +1869,7 @@ export function DesignStoreOpsWorkspace({
               )}
             </div>
           </section>
-        </aside>
+        </aside> : null}
       </div>
     </div>
   );

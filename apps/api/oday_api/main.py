@@ -13,6 +13,7 @@ import threading
 import time
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from apps.api.oday_api.routes.heatzone import HeatZoneResultStore, create_heatzone_router
@@ -160,7 +161,11 @@ else:
         # Defaults come from the persistence factory, including the production
         # PostgreSQL runtime. Explicit arguments still win so tests can inject
         # hand-built doubles. See ODP-PV-009.
-        from apps.api.oday_api.security.dependencies import bind_audit_log, bind_persistence
+        from apps.api.oday_api.security.dependencies import (
+            bind_audit_log,
+            bind_persistence,
+            default_boundary,
+        )
         from shared.infrastructure.persistence import build_persistence
         from shared.observability import (
             RouteTemplateResolver,
@@ -185,6 +190,14 @@ else:
         active_release_manifest_digest = os.environ.get("ODP_RELEASE_MANIFEST_DIGEST", "")
         require_live_data = live_data_required()
         domain_runtime_mode = "production" if require_live_data else "local"
+        feature_flags = getattr(bundle, "feature_flag_registry", None)
+        from shared.infrastructure.persistence.feature_flags import (
+            DurableFeatureFlagRegistry,
+            UnavailableFeatureFlagRegistry,
+        )
+        if (require_live_data and not isinstance(feature_flags, DurableFeatureFlagRegistry)
+                or feature_flags is None and getattr(bundle, "engine", None) is not None):
+            feature_flags = UnavailableFeatureFlagRegistry()
         persistence_mode = str(getattr(bundle, "mode", "unknown")).strip().lower()
         configured_persistence_mode = (
             os.environ.get("ODP_PERSISTENCE", persistence_mode).strip().lower()
@@ -316,6 +329,7 @@ else:
             audit_log=audit_log,
         )
         api = FastAPI(title="ODay Plus API", version=API_VERSION)
+        api.state.feature_flag_registry = feature_flags
         provider_probe_lock = threading.Lock()
         provider_probe_cache: tuple[float, Any] | None = None
 
@@ -670,6 +684,7 @@ else:
                 if require_live_data and request.url.path not in {
                     "/health",
                     "/healthz",
+                    "/liveness",
                     "/openapi.json",
                     "/platform/health",
                     "/platform/version",
@@ -755,9 +770,11 @@ else:
                 response.headers[CORRELATION_ID_HEADER] = context.correlation_id
                 return response
 
+        @api.get("/liveness", tags=["system"])
         @api.get("/healthz", tags=["system"])
         def healthz() -> dict[str, str]:
-            # Liveness: simply check that process is running
+            # Cloud Run reserves some paths ending in z. Use /liveness for
+            # deployed probes while retaining /healthz for existing callers.
             return {"status": "ok", "service": "oday-api"}
 
         @api.get("/readiness", tags=["system"])
@@ -1142,8 +1159,26 @@ else:
             from apps.api.oday_api.security.dependencies import principal_from_headers
             from modules.listing.application.intake_authorization import authorize_intake_action
             from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
+            from modules.listing.application.saved_search import LISTING_SEARCH_RECEIPT_SERVICE
+            from modules.opsboard.application.area_planning_draft_owner import (
+                AREA_PLANNING_DRAFT_RECEIPT_SERVICE,
+            )
             from modules.sitescore.application.score_delivery import SITESCORE_EXECUTION_JOB_TYPE
-
+            from shared.infrastructure.persistence.listing_search_delivery import (
+                JOB_TYPE as LISTING_SEARCH_JOB_TYPE,
+            )
+            if body.job_type == AREA_PLANNING_DRAFT_RECEIPT_SERVICE + ".command-receipt":
+                raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                    {"code": "JOB_TYPE_NOT_SUPPORTED", "message": "Area planning commands require their authorized owner"})
+            if body.job_type in {LISTING_SEARCH_JOB_TYPE, LISTING_SEARCH_RECEIPT_SERVICE + ".command-receipt"}:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                    {"code": "JOB_TYPE_NOT_SUPPORTED", "message": "Listing search jobs require committed receipt/search events"})
+            if (body.idempotency_key or idempotency_key or "").startswith((
+                "listing-search-internal:", "command:v1:" + LISTING_SEARCH_RECEIPT_SERVICE + ":",
+                "command:v1:" + AREA_PLANNING_DRAFT_RECEIPT_SERVICE + ":",
+            )):
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    {"code": "RESERVED_IDEMPOTENCY_NAMESPACE"})
             if body.job_type in {INTAKE_SITESCORE_JOB_TYPE, SITESCORE_EXECUTION_JOB_TYPE}:
                 raise HTTPException(
                     status.HTTP_400_BAD_REQUEST,
@@ -1327,7 +1362,22 @@ else:
         ) -> dict[str, Any] | None:
             from apps.api.oday_api.security.dependencies import principal_from_headers
             from modules.listing.application.intake_score_delivery import INTAKE_SITESCORE_JOB_TYPE
+            from modules.listing.application.saved_search import LISTING_SEARCH_RECEIPT_SERVICE
+            from modules.opsboard.application.area_planning_draft_owner import (
+                AREA_PLANNING_DRAFT_RECEIPT_SERVICE,
+            )
             from modules.sitescore.application.score_delivery import SITESCORE_EXECUTION_JOB_TYPE
+            from shared.infrastructure.persistence.listing_search_delivery import (
+                JOB_TYPE as LISTING_SEARCH_JOB_TYPE,
+            )
+
+            # These private delivery records have no public job read surface.
+            # Their saved-search owner rechecks the current subject and scope.
+            if job.job_type in {LISTING_SEARCH_JOB_TYPE, LISTING_SEARCH_RECEIPT_SERVICE + ".command-receipt",
+                                AREA_PLANNING_DRAFT_RECEIPT_SERVICE + ".command-receipt"}:
+                if not principal_from_headers(request.headers).authenticated:
+                    raise HTTPException(status.HTTP_401_UNAUTHORIZED, "AUTHENTICATION_REQUIRED")
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
 
             job_tenant = str(job.payload.get("tenant_id") or "").strip()
             if job.job_type == "forecast":
@@ -1575,6 +1625,16 @@ else:
             job = job_queue.get(job_id)
             if job is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
+            from modules.listing.application.saved_search import LISTING_SEARCH_RECEIPT_SERVICE
+            from modules.opsboard.application.area_planning_draft_owner import (
+                AREA_PLANNING_DRAFT_RECEIPT_SERVICE,
+            )
+            from shared.infrastructure.persistence.listing_search_delivery import (
+                JOB_TYPE as LISTING_SEARCH_JOB_TYPE,
+            )
+            if job.job_type in {LISTING_SEARCH_JOB_TYPE, LISTING_SEARCH_RECEIPT_SERVICE + ".command-receipt",
+                                AREA_PLANNING_DRAFT_RECEIPT_SERVICE + ".command-receipt"}:
+                _authorize_job_access(job, request)
             if job.job_type in {INTAKE_SITESCORE_JOB_TYPE, SITESCORE_EXECUTION_JOB_TYPE}:
                 _authorize_job_access(job, request)
                 raise HTTPException(
@@ -1907,7 +1967,6 @@ else:
             DurableAVMRepository,
             DurableListingRepository,
             DurableNetPlanRepository,
-            DurablePriceOpsRepository,
             DurableSiteScoreRepository,
             PostgresDocumentStore,
             SqliteDocumentStore,
@@ -1970,14 +2029,66 @@ else:
             operator_document_store = SqliteDocumentStore(bundle.engine)
         else:
             operator_document_store = None
+        # The original native routes and Operator consumers share these exact
+        # tenant partitions. Never substitute the bundle's global repository.
+        if operator_document_store is not None:
+            def tenant_document_store(tenant_id: str) -> TenantScopedDocumentStore:
+                return TenantScopedDocumentStore(operator_document_store, tenant_id)
+
+
+            def avm_repository_for_tenant(
+                tenant_id: str,
+            ) -> DurableAVMRepository:
+                return DurableAVMRepository(tenant_document_store(tenant_id))
+
+
+            def netplan_repository_for_tenant(
+                tenant_id: str,
+            ) -> DurableNetPlanRepository:
+                return DurableNetPlanRepository(tenant_document_store(tenant_id))
+
+
+            from shared.infrastructure.persistence.operator_domains import (
+                DurableOperatorDomainStateRepository,
+            )
+            native_listing_state = DurableOperatorDomainStateRepository(operator_document_store, "network-listings")
+
+            def native_netplan_outcome_registry_for_tenant(*, repository, principal, authorize, correlation_id):
+                from shared.infrastructure.persistence.netplan_outcomes import (
+                    DurableNetPlanOutcomeRegistry,
+                )
+                # The request owner supplies its exact admitted tenant repo;
+                # no global/default partition or replacement principal exists.
+                return DurableNetPlanOutcomeRegistry(repository=repository, principal=principal,
+                    authorize=authorize, audit_log=audit_log, queue=job_queue, correlation_id=correlation_id)
+
+            def native_candidate_snapshot_for_tenant(tenant_id: str):
+                return native_listing_state.load(tenant_id) or {}
+        else:
+            avm_repository_for_tenant = None
+            netplan_repository_for_tenant = None
+            native_candidate_snapshot_for_tenant = None
+            native_netplan_outcome_registry_for_tenant = None
+
+        from modules.adlift.application.campaign import AdLiftCampaignService
+        from modules.adlift.application.campaign_authority import AdLiftCampaignBudgetAuthority
+        campaign_budget_authority = AdLiftCampaignBudgetAuthority(
+            campaigns=AdLiftCampaignService(repository=bundle.adlift_campaign_repository,
+                audit_log=audit_log, job_queue=job_queue,
+                store_repository=bundle.store_repository, brand_repository=bundle.brand_repository,
+                intervention_repository=intervention_repo),
+            interventions=intervention_repo, reports=adlift_repo,
+            flags=bundle.feature_flag_registry, boundary=default_boundary()) if bundle.is_durable else None
         interventions_workflow = intervention_workflow or InterventionWorkflow(
             repository=intervention_repo,
             audit_log=audit_log,
             label_hooks=[label_registry],
+            campaign_budget_authority=campaign_budget_authority,
         )
 
         from models.shared_ml import (
             MlflowProductionModelRuntime,
+            ProductionModelRegistryError,
             ProductionModelRuntimeError,
             seed_scoring_models,
         )
@@ -1986,6 +2097,10 @@ else:
             AVMProductionExecutor,
         )
         from modules.learninghub.infrastructure import MlflowRegistryAdapter
+        from modules.learninghub.infrastructure.mlflow_cloud_run_auth import (
+            configure_cloud_run_mlflow_auth,
+        )
+        from modules.learninghub.runtime import LearningHubRuntimeConfigurationError
         from modules.netplan.application import NetPlanProductionExecutor
         from modules.priceops.infrastructure.oss_optimizer import (
             PriceOpsProductionOptimizer,
@@ -2005,6 +2120,16 @@ else:
                 from modules.heatzone.domain import HEATZONE_FEATURE_VERSION
                 from modules.sitescore.domain import SITESCORE_FEATURE_VERSION
 
+                # Model aliases are read before the Learning Hub adapter exists.
+                # Configure the SDK's identity provider before that first read.
+                tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "")
+                try:
+                    if (urlparse(tracking_uri).hostname or "").endswith(".run.app"):
+                        configure_cloud_run_mlflow_auth(tracking_uri=tracking_uri)
+                except (LearningHubRuntimeConfigurationError, ValueError) as exc:
+                    raise ProductionModelRegistryError(
+                        "MLflow registry identity configuration is invalid"
+                    ) from exc
                 model_runtime = MlflowProductionModelRuntime.from_environment(
                     model_names=production_model_names()
                 )
@@ -2130,8 +2255,25 @@ else:
                 require_production_model=require_live_data,
             ),
         )
+        from apps.api.app.routes.market_survey_assignments import (
+            create_canonical_survey_assignment_router,
+        )
+        from modules.market_survey.infrastructure.assignment_factory import CanonicalSurveyFactory
+
+        mount_versioned(api, create_canonical_survey_assignment_router(
+            factory=CanonicalSurveyFactory(bundle, audit_log=audit_log, queue=job_queue),
+            audit_log=audit_log, boundary=default_boundary(),
+        ))
+        from modules.opsboard.audit.application.evidence_general_factory import (
+            GeneralSiteScoreExportFactory,
+        )
         mount_versioned(
-            api, create_audit_router(audit_log=audit_log, evidence_store=evidence_store)
+            api, create_audit_router(
+                audit_log=audit_log, evidence_store=evidence_store,
+                boundary=default_boundary(),
+                canonical_service_for_tenant=(GeneralSiteScoreExportFactory(bundle, audit_log=audit_log,
+                    evidence_store=evidence_store, queue=job_queue) if require_live_data else None),
+            )
         )
         mount_versioned(
             api,
@@ -2230,9 +2372,34 @@ else:
                     depreciation_version_pin=avm_dep_pin,
                 )
 
+        from apps.api.app.routes._native_request_owner import NativeRequestOwnerFactory
+        from apps.api.oday_api.security.dependencies import build_engine
+        native_boundary = default_boundary()
+        # Header-only native embedders remain the existing non-live engineering
+        # contract. Any live deployment or configured authentication boundary
+        # uses request-bound tenant owners for both old URL aliases.
+        bind_native_request_owner = require_live_data or native_boundary is not None
+        native_authz = build_engine(audit_log=audit_log)
+        native_avm_owner = NativeRequestOwnerFactory(
+            resource="avm", repository_for_tenant=avm_repository_for_tenant,
+            stores=bundle.store_repository, brands=bundle.brand_repository,
+            audit_log=audit_log, queue=job_queue, boundary=native_boundary, engine=native_authz,
+            formal=require_live_data, production_executor=avm_production_executor,
+            depreciation_version_pin=avm_dep_pin, rollback_receipt=avm_rollback_receipt,
+        ) if bind_native_request_owner else None
+        native_netplan_owner = NativeRequestOwnerFactory(
+            resource="netplan", repository_for_tenant=netplan_repository_for_tenant,
+            stores=bundle.store_repository, brands=bundle.brand_repository,
+            audit_log=audit_log, queue=job_queue, boundary=native_boundary, engine=native_authz,
+            candidate_snapshot_for_tenant=native_candidate_snapshot_for_tenant,
+            outcome_registry_for_tenant=native_netplan_outcome_registry_for_tenant,
+            formal=require_live_data,
+        ) if bind_native_request_owner else None
+
         mount_versioned(
             api,
             create_avm_router(
+                request_owner=native_avm_owner,
                 repository=avm_repo,
                 audit_log=audit_log,
                 job_queue=job_queue,
@@ -2260,7 +2427,9 @@ else:
         mount_versioned(
             api,
             create_netplan_router(
+                request_owner=native_netplan_owner,
                 repository=netplan_repo,
+                feature_flags=feature_flags, job_queue=job_queue,
                 audit_log=audit_log,
                 production_executor=netplan_production_executor,
                 approval_verifier=netplan_approval_verifier,
@@ -2271,7 +2440,12 @@ else:
         mount_versioned(
             api,
             create_learninghub_router(
+                canonical_forecast_repository=forecast_repository,
+                canonical_store_repository=bundle.store_repository,
+                canonical_policy_repository=forecast_policy_repository,
+                canonical_monitoring_boundary=native_boundary,
                 repository=learning_repo,
+                feature_flags=feature_flags, job_queue=job_queue,
                 artifact_store=model_artifacts,
                 audit_log=audit_log,
                 registry=learninghub_registry,
@@ -2327,6 +2501,11 @@ else:
                 job_queue=job_queue,
                 require_durable_jobs=require_live_data,
                 runtime_mode=domain_runtime_mode,
+                campaign_budget_authority=campaign_budget_authority,
+                campaign_repository=getattr(bundle, "adlift_campaign_repository", None),
+                store_repository=bundle.store_repository,
+                brand_repository=bundle.brand_repository,
+                boundary=None if campaign_budget_authority is None else campaign_budget_authority.boundary,
             ),
         )
         mount_versioned(
@@ -2334,6 +2513,8 @@ else:
             create_operator_store_ops_router(
                 repository=store_ops_repo,
                 store_repository=bundle.store_repository,
+                machine_repository=bundle.machine_repository,
+                forecastops_repository=forecast_repository,
                 delivery_job_queue=bundle.job_queue,
                 audit_log=audit_log,
                 require_live_data=require_live_data,
@@ -2343,6 +2524,9 @@ else:
             api,
             create_interventions_router(
                 workflow=interventions_workflow,
+                store_repository=bundle.store_repository,
+                brand_repository=bundle.brand_repository,
+                require_object_scope=require_live_data,
                 label_registry=label_registry,
                 job_queue=job_queue,
                 require_durable_commands=require_live_data,
@@ -2360,8 +2544,6 @@ else:
         )
         if operator_document_store is not None:
 
-            def tenant_document_store(tenant_id: str) -> TenantScopedDocumentStore:
-                return TenantScopedDocumentStore(operator_document_store, tenant_id)
 
             def listing_repository_for_tenant(
                 tenant_id: str,
@@ -2378,26 +2560,24 @@ else:
             ) -> DurableDecisionStore:
                 return DurableDecisionStore(tenant_document_store(tenant_id))
 
-            def avm_repository_for_tenant(
-                tenant_id: str,
-            ) -> DurableAVMRepository:
-                return DurableAVMRepository(tenant_document_store(tenant_id))
 
-            def netplan_repository_for_tenant(
-                tenant_id: str,
-            ) -> DurableNetPlanRepository:
-                return DurableNetPlanRepository(tenant_document_store(tenant_id))
 
             def priceops_repository_for_tenant(
                 tenant_id: str,
-            ) -> DurablePriceOpsRepository:
-                return DurablePriceOpsRepository(tenant_document_store(tenant_id))
+            ) -> Any | None:
+                if not tenant_id or not tenant_id.strip():
+                    return None
+                # Native PriceOps writes the already-selected repository's base
+                # collections. Growth and Governance filter those plans by
+                # verified tenant; another document partition would hide native
+                # plans and discard canonical_exploration on PostgreSQL.
+                # Previously written tenant partitions require an explicit,
+                # conflict-checked copy before deployment; never move them on GET.
+                return price_repo
         else:
             listing_repository_for_tenant = None
             sitescore_repository_for_tenant = None
             sitescore_decision_repository_for_tenant = None
-            avm_repository_for_tenant = None
-            netplan_repository_for_tenant = None
             priceops_repository_for_tenant = None
 
         identity_user_role_service: Any | None = None
@@ -2432,6 +2612,7 @@ else:
                 audit_log=audit_log,
                 identity_user_role_service=identity_user_role_service,
                 document_store=operator_document_store,
+                feature_flags=feature_flags,
                 job_queue=job_queue,
                 listing_repository=listing_repository,
                 listing_repository_for_tenant=listing_repository_for_tenant,
@@ -2439,7 +2620,12 @@ else:
                 sitescore_decision_repository_for_tenant=(sitescore_decision_repository_for_tenant),
                 avm_repository_for_tenant=avm_repository_for_tenant,
                 netplan_repository_for_tenant=netplan_repository_for_tenant,
+                # Exact same candidate parent reader as the original native
+                # NetPlan owner; proposal permissions confer no native grant.
+                netplan_candidate_snapshot_for_tenant=native_candidate_snapshot_for_tenant,
                 priceops_repository_for_tenant=priceops_repository_for_tenant,
+                priceops_store_repository=bundle.store_repository if require_live_data else None,
+                priceops_brand_repository=bundle.brand_repository if require_live_data else None,
                 model_runtime=model_runtime,
                 # Composition probes may expose production flags without the
                 # factory's canonical SQL authority. Keep their reads available;
@@ -2473,10 +2659,16 @@ else:
         )
 
         from apps.api.oday_api.routes.feature_flags import create_feature_flags_router
+        from apps.api.oday_api.security.dependencies import build_engine, default_boundary
 
         mount_versioned(
             api,
-            create_feature_flags_router(audit_log=audit_log),
+            create_feature_flags_router(
+                audit_log=audit_log,
+                engine=build_engine(audit_log=audit_log, flags=feature_flags),
+                boundary=default_boundary(),
+                registry=feature_flags, queue=job_queue,
+            ),
         )
 
         api.state.audit_log = audit_log

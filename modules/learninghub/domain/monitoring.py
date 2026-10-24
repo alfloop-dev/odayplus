@@ -63,6 +63,9 @@ class MonitoringEvaluation:
     drift_engine: str | None = None
     alert_id: str | None = None
     audit_event_id: str | None = None
+    # Optional for legacy evaluations. New canonical Forecast evaluations store
+    # the actual selected-record manifests, release/window and policy bindings.
+    source_provenance: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.signal_type != MonitoringSignalType.PREDICTION_DRIFT:
@@ -127,6 +130,8 @@ class MonitoringEvaluation:
             data["alert_id"] = self.alert_id
         if self.audit_event_id is not None:
             data["audit_event_id"] = self.audit_event_id
+        if self.source_provenance is not None:
+            data["source_provenance"] = dict(self.source_provenance)
         return data
 
 

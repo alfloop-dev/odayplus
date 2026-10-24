@@ -23,6 +23,9 @@ from shared.jobs.queue import (
     JobRecord,
     JobRequest,
     JobStatus,
+    NonRetryableJobError,
+    check_job_feature_flag,
+    resolve_job_feature_flag_key,
 )
 
 _LEGACY_RETRYING_STATUS_VALUES = (JobDeliveryState.RETRYING.value, "RETRYING")
@@ -37,13 +40,20 @@ _CANONICAL_INTAKE_SCORE_ELIGIBILITY = (
 )
 
 
+# The four bound audit-type parameters below mirror the shared closed runtime
+# vocabulary. Keep literal SQL arity aligned when a reviewed type is added;
+# job-type values remain parameters rather than query text.
+
+
 class DurableJobQueue:
     """``enqueue`` / ``get`` over the ``durable_jobs`` table."""
 
     def __init__(
         self, engine: SqliteEngine, *, canonical_intake_score_schedule: bool = False,
+        flags: Any = None,
     ) -> None:
         self._engine = engine
+        self._flags = flags
         if canonical_intake_score_schedule and str(getattr(engine, "dialect", "")).lower() != "postgresql":
             raise ValueError("Canonical intake score scheduling requires PostgreSQL")
         self._claim_eligibility = (
@@ -75,6 +85,7 @@ class DurableJobQueue:
             return row["count"] if row else 0
 
     def enqueue(self, request: JobRequest, *, correlation_id: str) -> tuple[JobRecord, bool]:
+        self._check_feature_flag(request.job_type, request.payload)
         record = JobRecord(
             job_type=request.job_type,
             payload=request.payload,
@@ -155,7 +166,7 @@ class DurableJobQueue:
                     "AND job_type NOT LIKE ? AND job_type NOT LIKE ? "
                     + available
                     + self._claim_eligibility
-                    + "ORDER BY CASE WHEN job_type IN (?, ?, ?) THEN 0 ELSE 1 END, created_at, job_id LIMIT 1"
+                    + "ORDER BY CASE WHEN job_type IN (?, ?, ?, ?) THEN 0 ELSE 1 END, created_at, job_id LIMIT 1"
                     + row_lock,
                     (
                         JobStatus.QUEUED.value,
@@ -171,6 +182,9 @@ class DurableJobQueue:
                     return None
 
                 job_id = row["job_id"]
+                record = self._row_to_record(row)
+                if not self._flag_admitted(record):
+                    continue
                 current_attempts = row["attempts"]
                 max_retries = row["max_retries"]
 
@@ -265,7 +279,9 @@ class DurableJobQueue:
             return True
 
     def claim_next(self, worker_id: str = "worker-1", *, audit_only: bool = False) -> JobRecord | None:
-        with self._engine.lock:
+        # A temporary owner/read failure must undo the claim's attempts/fence
+        # update, not consume work as if the flag were permanently disabled.
+        with self._engine.transaction():
             now = datetime.now(UTC)
             now_str = now.isoformat()
             heartbeat = now_str
@@ -283,10 +299,10 @@ class DurableJobQueue:
                     "  WHERE (status IN (?, ?, ?) OR (status = ? AND lease_expires_at IS NOT NULL "
                     "    AND lease_expires_at < statement_timestamp())) "
                     "  AND job_type NOT LIKE ? AND job_type NOT LIKE ? "
-                    "  AND (? = FALSE OR job_type IN (?, ?, ?)) "
+                    "  AND (? = FALSE OR job_type IN (?, ?, ?, ?)) "
                     "  AND (available_at IS NULL OR available_at <= statement_timestamp()) "
                     + self._claim_eligibility
-                    + "  ORDER BY CASE WHEN job_type IN (?, ?, ?) THEN 0 ELSE 1 END, created_at, job_id "  # nosec B608
+                    + "  ORDER BY CASE WHEN job_type IN (?, ?, ?, ?) THEN 0 ELSE 1 END, created_at, job_id "  # nosec B608
                     "  FOR UPDATE SKIP LOCKED "
                     "  LIMIT 1"
                     ") "
@@ -313,7 +329,8 @@ class DurableJobQueue:
                         worker_id,
                     ),
                 )
-                return None if updated is None else self._row_to_record(updated)
+                record = None if updated is None else self._row_to_record(updated)
+                return record if record is None or self._flag_admitted(record) else None
 
             while True:
                 row = self._engine.query_one(
@@ -321,9 +338,9 @@ class DurableJobQueue:
                     "WHERE (status IN (?, ?, ?) OR (status = ? AND lease_expires_at IS NOT NULL "
                     "AND lease_expires_at < ?)) "
                     "AND job_type NOT LIKE ? AND job_type NOT LIKE ? "
-                    "AND (? = FALSE OR job_type IN (?, ?, ?)) "
+                    "AND (? = FALSE OR job_type IN (?, ?, ?, ?)) "
                     "AND (available_at IS NULL OR julianday(available_at) <= julianday(?)) "
-                    "ORDER BY CASE WHEN job_type IN (?, ?, ?) THEN 0 ELSE 1 END, created_at, job_id LIMIT 1",
+                    "ORDER BY CASE WHEN job_type IN (?, ?, ?, ?) THEN 0 ELSE 1 END, created_at, job_id LIMIT 1",
                     (
                         JobStatus.QUEUED.value,
                         *_LEGACY_RETRYING_STATUS_VALUES,
@@ -371,7 +388,32 @@ class DurableJobQueue:
                 )
                 if updated is None:
                     raise RuntimeError("claimed durable job disappeared")
-                return self._row_to_record(updated)
+                record = self._row_to_record(updated)
+                if self._flag_admitted(record):
+                    return record
+
+    def _check_feature_flag(self, job_type: str, payload: dict[str, Any]) -> None:
+        if resolve_job_feature_flag_key(job_type, payload) is None:
+            return
+        from shared.infrastructure.persistence.feature_flags import require_durable_flag_owner
+
+        require_durable_flag_owner(self._flags, self._engine, queue=self)
+        check_job_feature_flag(job_type, payload, flags=self._flags)
+
+    def _flag_admitted(self, record: JobRecord) -> bool:
+        try:
+            self._check_feature_flag(record.job_type, record.payload)
+        except NonRetryableJobError as exc:
+            self._engine.execute(
+                "UPDATE durable_jobs SET status = ?, delivery_state = ?, "
+                "version = version + 1, locked_by = NULL, heartbeat_at = NULL, "
+                "lease_expires_at = NULL, leased_until = NULL, error_message = ? "
+                "WHERE job_id = ? AND version = ? AND fence_token = ? AND status = ?",
+                (JobStatus.FAILED.value, JobDeliveryState.DEAD_LETTER.value, str(exc),
+                 record.job_id, record.version, record.fence_token, record.status.value),
+            )
+            return False
+        return True
 
     def get_by_idempotency_key(self, idempotency_key: str) -> JobRecord | None:
         row = self._engine.query_one(

@@ -5,7 +5,7 @@ export type ViewMode = "list" | "map";
 export type BooleanFilter = "" | "true" | "false";
 export type IntakeInboxFilterState = {
   search: string; intakeMethod: string; intakeStage: string; matchOutcome: string;
-  slaState: string; heatZoneId: string; savedView: SavedViewType; viewMode: ViewMode;
+  slaState: string; heatZoneId: string | null; savedView: SavedViewType; viewMode: ViewMode;
   sourceId: string; submittedBy: string; ownerId: string; assignmentStatus: AssignmentState | ""; assignedAreaId: string;
   observedFrom: string; observedTo: string; updatedFrom: string; updatedTo: string;
   masked: BooleanFilter; restricted: BooleanFilter; retryable: BooleanFilter;
@@ -14,7 +14,7 @@ export type IntakeInboxFilterState = {
 };
 
 export const DEFAULT_INBOX_FILTERS: IntakeInboxFilterState = {
-  search: "", intakeMethod: "", intakeStage: "", matchOutcome: "", slaState: "", heatZoneId: "",
+  search: "", intakeMethod: "", intakeStage: "", matchOutcome: "", slaState: "", heatZoneId: null,
   sourceId: "", submittedBy: "", ownerId: "", assignmentStatus: "", assignedAreaId: "",
   observedFrom: "", observedTo: "", updatedFrom: "", updatedTo: "", masked: "", restricted: "", retryable: "",
   savedView: "all", viewMode: "list", page: 1, pageSize: 10, sortBy: "updatedAt", sortOrder: "desc",
@@ -54,7 +54,8 @@ export function parseInboxUrlState(params: Params, hash = ""): IntakeInboxFilter
   }
   state.intakeStage = one(params, "intakeStage") ?? one(params, "stage") ?? "";
   state.matchOutcome = one(params, "matchOutcome") ?? one(params, "outcome") ?? "";
-  state.heatZoneId = one(params, "heatZoneId") ?? one(params, "hz") ?? "";
+  // Missing means inherit the selected area; an explicit empty value means all areas.
+  state.heatZoneId = one(params, "heatZoneId") ?? one(params, "hz");
   const saved = one(params, "savedView");
   if (["all", "needsReview", "awaitingEntry", "blocked", "processing", "ready"].includes(saved ?? "")) state.savedView = saved as SavedViewType;
   const view = one(params, "viewMode") ?? one(params, "view");
@@ -78,7 +79,8 @@ export function serializeInboxUrlState(state: IntakeInboxFilterState, existing: 
   for (const key of OWNED) {
     params.delete(key);
     const value = state[key];
-    if (value !== "" && value !== DEFAULT_INBOX_FILTERS[key]) params.set(key, String(value));
+    if (key === "heatZoneId" && value === "") params.set(key, "");
+    else if (value !== null && value !== "" && value !== DEFAULT_INBOX_FILTERS[key]) params.set(key, String(value));
   }
   for (const alias of ["stage", "outcome", "hz", "sort", "view"]) params.delete(alias);
   // Dialog, section, selection, workspace and unrelated repeated parameters
@@ -98,6 +100,6 @@ export function toIntakeInboxQuery(state: IntakeInboxFilterState, selectedHeatZo
     observedFrom: state.observedFrom, observedTo: state.observedTo,
     updatedFrom: state.updatedFrom, updatedTo: state.updatedTo,
     masked: booleanValue(state.masked), restricted: booleanValue(state.restricted), retryable: booleanValue(state.retryable),
-    selectedHeatZoneId: state.heatZoneId || selectedHeatZoneId || undefined,
+    selectedHeatZoneId: (state.heatZoneId ?? selectedHeatZoneId) || undefined,
   };
 }

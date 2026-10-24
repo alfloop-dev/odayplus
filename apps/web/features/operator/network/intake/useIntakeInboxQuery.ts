@@ -45,7 +45,7 @@ export function useIntakeInboxQuery(controlled?: ControlledQuery) {
     if (INBOX_FILTER_KEYS.some((key) => key in updates) && !("page" in updates)) next.page = 1;
     commit(next);
   }, [commit]);
-  const resetFilters = useCallback(() => commit({ ...DEFAULT_INBOX_FILTERS,
+  const resetFilters = useCallback(() => commit({ ...DEFAULT_INBOX_FILTERS, heatZoneId: "",
     viewMode: current.current.viewMode, selectedIntakeId: current.current.selectedIntakeId }), [commit]);
   const toggleSort = useCallback((column: string) => commit({ ...current.current, page: 1, sortBy: column,
     sortOrder: current.current.sortBy === column && current.current.sortOrder === "asc" ? "desc" : "asc" }), [commit]);

@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import { enableSyntheticSiteReviewFlag } from "./_syntheticSiteReviewFlag";
 import {
   acquireOperatorBackendLock,
   releaseOperatorBackendLock,
@@ -160,8 +161,9 @@ test("ODP-FIN-FE-003 command palette and task center are API-bound", async ({
   ).toBeVisible();
   await page.keyboard.press("Enter");
 
-  await expect(page).toHaveURL(/ws=govern/);
-  await expect(page).toHaveURL(/entity=API-902/);
+  // API tasks use the canonical task detail. A workspace hint in a task row
+  // must not turn into a fixture-only Operator entity or an authority grant.
+  await expect(page).toHaveURL(/\/tasks\/API-902(?:[?#]|$)/);
 });
 
 test("ODP-OC-FE-05 Governance Workspace details and evidence package export", async ({
@@ -235,6 +237,7 @@ test("ODP-OC-FE-05 Governance Workspace details and evidence package export", as
 
   // Test 1: Evidence Package produces mock file entry + audit event
   // Go to Evidence Package 匯出 tab
+  await page.goto("/operator?ws=govern&tab=evidencePackage");
   await page.getByTestId("governance-tab-evidencePackage").click();
   await expect(
     page.getByRole("button", { name: "產生 Evidence Package", exact: true }),
@@ -269,6 +272,7 @@ test("ODP-OC-FE-05 Governance Workspace details and evidence package export", as
 
   // Test 2: Status board renders DQ/Model/Connector/Runbook from fixtures
   // Go to 系統狀態盤 tab
+  await page.goto("/operator?ws=govern&tab=statusBoard");
   await page.getByTestId("governance-tab-statusBoard").click();
   await expect(
     page.locator('[aria-label="System status board"]'),
@@ -334,24 +338,21 @@ test("ODP-OC-FE-04 Network tabs preserve fixture Candidate navigation and review
   // the golden GO review (RV-702) is pending and decidable in this smoke.
   const resetReviews = await request.post(`${API_BASE_URL}/api/v1/operator/network-reviews/reset`);
   expect(resetReviews.status()).toBe(200);
+  await enableSyntheticSiteReviewFlag(request, API_BASE_URL);
 
   // Use the canonical reviewer persona for this approving flow. Ops-lead
   // must not be silently promoted to a reviewer by the Network workspace.
   await page.addInitScript(() => {
     window.sessionStorage.setItem("oday.operator.role", "expansion-manager");
   });
-  await page.goto("/operator");
-  // This fixture API journey starts after its shell envelope is applied.
-  await expect(page.getByTestId("operator-envelope-source")).toHaveText(
-    "operator-shell-api-envelope", { timeout: 15_000 },
-  );
-  // Arm the response observer immediately before the single Network click.
   const listingSnapshotResponse = page.waitForResponse(
     (response) => response.url().includes("/api/v1/operator/network-listings?") &&
       response.request().method() === "GET" &&
       response.request().headers()["x-operator-role"] === "expansion-manager",
     { timeout: 15_000 },
   );
+  await page.goto("/operator");
+
   // Enter the Network (展店與店網) workspace.
   await page.getByRole("button", { name: /展店與店網/ }).click();
   const workspace = page.getByTestId("network-find-areas-workspace");
@@ -366,17 +367,14 @@ test("ODP-OC-FE-04 Network tabs preserve fixture Candidate navigation and review
 
   // 物件雷達 / Listing Radar
   await page.getByTestId("network-tab-1").click();
+  await expect(page).toHaveURL((url) => url.searchParams.get("ws") === "network"
+    && url.searchParams.get("tab") === "radar");
   await expect(page.getByTestId("network-panel-listings")).toBeVisible();
   await expect(page.getByTestId("network-listing-table")).toContainText(
     "L-2024",
   );
   await expect(page.getByTestId("network-listing-table")).toContainText(
     "L-2030",
-  );
-  // A reload must follow the committed tab URL, not its optimistic panel.
-  await expect(page).toHaveURL(
-    (url) => url.searchParams.get("ws") === "network" && url.searchParams.get("tab") === "radar",
-    { timeout: 15_000 },
   );
   // Explicit fixture-only setup retains the legacy API compatibility check.
   // The following Radar click must only navigate to this existing candidate.
@@ -418,7 +416,8 @@ test("ODP-OC-FE-04 Network tabs preserve fixture Candidate navigation and review
     }
   });
   await page.getByTestId("listing-navigate-L-2024").click();
-  await expect(page).toHaveURL((url) => url.searchParams.get("candidate") === "CS-1001");
+  await expect(page).toHaveURL((url) => url.searchParams.get("tab") === "candidates"
+    && url.searchParams.get("candidate") === "CS-1001");
 
   // 候選點 / Candidates
   await expect(page.getByTestId("network-panel-candidates")).toBeVisible();
@@ -449,6 +448,8 @@ test("ODP-OC-FE-04 Network tabs preserve fixture Candidate navigation and review
   // 選址審核 / Review — ODP-OC-R4-007 productized the review to the API-backed
   // decision dialog (Candidate/Review/Approval/Decision/Audit atomic sync).
   await page.getByTestId("network-tab-5").click();
+  await expect(page).toHaveURL((url) => url.searchParams.get("tab") === "review"
+    && url.searchParams.get("candidate") === "CS-1001");
   await expect(page.getByTestId("network-panel-review")).toBeVisible();
   await expect(page.getByTestId("review-card-RV-702")).toBeVisible({
     timeout: 15_000,
@@ -456,6 +457,8 @@ test("ODP-OC-FE-04 Network tabs preserve fixture Candidate navigation and review
 
   // Reason gate: submitting without a substantive reason is blocked.
   await page.getByTestId("review-card-RV-702").click();
+  await expect(page).toHaveURL((url) => url.searchParams.get("tab") === "review"
+    && url.searchParams.get("candidate") === "CS-1001");
   await page.getByTestId("review-btn-go-RV-702").click();
   await expect(page.getByTestId("review-decision-dialog")).toBeVisible();
   await page.getByTestId("review-decision-reason").fill("Short");
@@ -468,14 +471,10 @@ test("ODP-OC-FE-04 Network tabs preserve fixture Candidate navigation and review
   await page
     .getByTestId("review-decision-reason")
     .fill("Review approved based on excellent SiteScore and fit metrics.");
-  const decisionResponse = page.waitForResponse(
-    (response) => response.request().method() === "POST" &&
-      new URL(response.url()).pathname.endsWith("/operator/network-reviews/RV-702/decide"),
-    { timeout: 15_000 },
-  );
+  const decisionResponse = page.waitForResponse((response) => response.request().method() === "POST"
+    && new URL(response.url()).pathname.endsWith("/operator/network-reviews/RV-702/decide"), { timeout: 15_000 });
   await page.getByTestId("review-decision-submit").click();
-  const decision = await decisionResponse;
-  expect(decision.status()).toBe(200);
+  expect((await decisionResponse).status()).toBe(200);
   await expect(page.getByTestId("review-decision-dialog")).toHaveCount(0);
   await expect(page.getByTestId("review-decided-RV-702")).toContainText(
     "Approved",

@@ -1,4 +1,5 @@
 import { expect, request as playwrightRequest, test } from "@playwright/test";
+import { enableSyntheticSiteReviewFlag } from "./_syntheticSiteReviewFlag";
 
 // ODP-OC-R4-007 — Network Review decision + atomic governance sync.
 // Current UI target: R7 / Package 10; data-screen-label values
@@ -33,9 +34,18 @@ test.describe("ODP-OC-R4-007 Network Review decision", () => {
       window.sessionStorage.setItem("oday.operator.role", "expansion-manager");
     });
     const api = await reviewerContext();
+    await enableSyntheticSiteReviewFlag(api, API_BASE_URL);
     const reset = await api.post("/api/v1/operator/network-reviews/reset");
     expect(reset.status()).toBe(200);
     await api.dispose();
+    // This file exercises the disposable header-trust POC review API. Prove
+    // there is no authenticated account before selecting its legacy UI path.
+    const session = await page.context().request.get("/auth/session");
+    expect(session.status()).toBe(401);
+    await page.route("**/auth/session", (route) => route.fulfill({
+      status: 404, contentType: "application/json",
+      body: JSON.stringify({ detail: "Anonymous local POC review fixture; no authenticated session" }),
+    }));
   });
 
   test("Review panel opens the decision dialog and approves the golden GO flow", async ({ page }) => {
@@ -54,6 +64,8 @@ test.describe("ODP-OC-R4-007 Network Review decision", () => {
 
     // Open the GO decision dialog and confirm — reason is written to the log.
     await page.getByTestId("review-card-RV-702").click();
+    await expect(page).toHaveURL((url) => url.searchParams.get("tab") === "review"
+      && url.searchParams.get("candidate") === "CS-1001");
     await page.getByTestId("review-btn-go-RV-702").click();
     const dialog = page.getByTestId("review-decision-dialog");
     await expect(dialog).toBeVisible();
@@ -92,6 +104,8 @@ test.describe("ODP-OC-R4-007 Network Review decision", () => {
     await expect(page.getByTestId("network-panel-review")).toBeVisible();
 
     await page.getByTestId("review-card-RV-701").click({ timeout: 15_000 });
+    await expect(page).toHaveURL((url) => url.searchParams.get("tab") === "review"
+      && url.searchParams.get("candidate") === "CS-1002");
     await page.getByTestId("review-btn-wait-RV-701").click();
     await page.getByTestId("review-decision-reason").fill("人流佳惟站前施工需以條件管理。");
     await page.getByTestId("review-decision-submit").click();
@@ -193,6 +207,8 @@ test.describe("ODP-OC-R4-007 Network Review decision", () => {
     // The fixture queue is visible; decision controls remain read-only.
     await expect(page.getByTestId("review-card-RV-702")).toBeVisible({ timeout: 15_000 });
     await page.getByTestId("review-card-RV-702").click();
+    await expect(page).toHaveURL((url) => url.searchParams.get("tab") === "review"
+      && url.searchParams.get("candidate") === "CS-1001");
 
     // Read-only note is shown; the GO / WAIT / 退回 / 駁回 bar is NOT rendered.
     await expect(page.getByTestId("review-role-note-RV-702")).toBeVisible();

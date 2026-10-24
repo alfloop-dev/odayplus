@@ -1,15 +1,16 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NetworkFindAreasWorkspace as Workspace } from "../NetworkFindAreasWorkspace";
-import { NETWORK_TAB_IDS } from "../network/networkUrlState";
-
-// Explicit synthetic bootstrap tabs for these component controls. Backend
-// scope/role denials and read revalidation assertions remain authoritative.
-function NetworkFindAreasWorkspace(props: Parameters<typeof Workspace>[0]) {
-  return <Workspace allowedTabIds={NETWORK_TAB_IDS} {...props} />;
-}
+import { NetworkFindAreasWorkspace as GrantedReadNetworkWorkspace } from "../NetworkFindAreasWorkspace";
 import type { ReviewItem } from "../network/networkReviewTypes";
+
+// Explicit read-grant fixture: shell projects listing and SiteScore read families.
+// This is a renderer premise, not a real Principal/production permission grant.
+const NETWORK_READ_FIXTURE_TABS = ["areas", "radar", "candidates", "score", "compare", "review"] as const;
+function NetworkFindAreasWorkspace(props: import("../NetworkFindAreasWorkspace").NetworkFindAreasWorkspaceProps) {
+  return <GrantedReadNetworkWorkspace allowedTabIds={NETWORK_READ_FIXTURE_TABS} {...props} />;
+}
+
 
 const nav = vi.hoisted(() => ({ search: "ws=network&tab=review", push: vi.fn() }));
 vi.mock("next/navigation", () => ({
@@ -93,4 +94,16 @@ describe("review reads follow the observed current principal generation", () => 
     expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error");
     expect(screen.queryByTestId("review-card-synthetic-lifetime-decision")).not.toBeInTheDocument();
   });
+  it.each([
+    { label: "missing", tabs: undefined },
+    { label: "empty", tabs: [] },
+    { label: "unrecognized", tabs: ["not-a-network-tab"] },
+  ])("does not read Network domains for a $label server tab grant", async ({ tabs }) => {
+    const fetchMock = reads(() => json(snapshot()));
+    render(<NetworkFindAreasWorkspace activeRoleId="expansion-manager" allowedTabIds={tabs} />);
+    expect(await screen.findByText("目前身分沒有可讀取的 Network 分頁。")).toBeVisible();
+    expect(fetchMock.mock.calls.filter(([url]) => /\/network-(?:listings|scoring|reviews|rebalance)(?:\?|$)/.test(String(url)))).toHaveLength(0);
+    expect(screen.queryByTestId("review-card-synthetic-lifetime-decision")).not.toBeInTheDocument();
+  });
+
 });

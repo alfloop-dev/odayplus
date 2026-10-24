@@ -2,7 +2,9 @@ export type HeatZone = {
   id: string;
   district: string;
   h3: string;
-  centroid: [number, number];
+  /** Missing recorded geometry/coordinates remain unavailable. */
+  geometry?: GeoJSON.Polygon | null;
+  centroid: [number, number] | null;
   h3Resolution: number;
   score: number | null;
   confidence: number | null;
@@ -15,7 +17,7 @@ export type HeatZone = {
     | "SUPPRESSED_LOW_CONFIDENCE"
     | "ABSTAINED"
     | "UNKNOWN";
-  rank: number;
+  rank: number | null;
   listings: number | null;
   warnings: string[];
   reasons: string[];

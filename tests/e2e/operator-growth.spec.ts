@@ -115,17 +115,37 @@ test("Three create-entry cards are present and open the five-step builder", asyn
 test("Five-step builder navigates all steps and emits a create audit on submit", async ({
   page,
 }) => {
-  await page.goto("/operator?ws=growth&builder=winback");
+  // Use the API's current segment and existing winback scope, not UI demo defaults.
+  const [segmentsResponse, actionsResponse] = await Promise.all([
+    page.request.get("/api/v1/operator/growth/segments"),
+    page.request.get("/api/v1/operator/growth/actions"),
+  ]);
+  expect(segmentsResponse.ok()).toBe(true);
+  expect(actionsResponse.ok()).toBe(true);
+  const segments: { id: string; name: string; storeId?: string }[] = (await segmentsResponse.json()).items;
+  const actions: { kind: string; segmentId: string; store: string }[] = (await actionsResponse.json()).items;
+  const scope = actions.find(action => action.kind === "winback"
+    && typeof action.store === "string" && action.store.trim().length > 0
+    && segments.some(segment => segment.id === action.segmentId));
+  expect(scope).toBeDefined();
+  const segment = segments.find(segment => segment.id === scope!.segmentId)!;
+  // POC multi-store segments have no storeId; retain the API's explicit scope label.
+  const store = segment.storeId || scope!.store;
+  await page.goto(`/operator?ws=growth&builder=winback&segment=${encodeURIComponent(segment.id)}`);
+  // API arrival changes the builder context; wait for its actual remount before editing.
+  await expect(page.getByTestId("growth-workspace")).toHaveAttribute("data-source", "api");
 
   const modal = page.getByTestId("growth-draft-modal");
   await expect(modal).toBeVisible();
   await expect(page.getByTestId("growth-builder-step-1")).toBeVisible();
 
   await modal.locator('input[name="name"]').fill("宵夜外送會員召回改進版");
+  await modal.locator('input[name="store"]').fill(store);
 
   // step 1 -> 2 -> 3
   await modal.getByTestId("growth-builder-next").click();
   await expect(page.getByTestId("growth-builder-step-2")).toBeVisible();
+  await modal.locator('input[name="segmentId"]').fill(segment.id);
   await modal.getByTestId("growth-builder-next").click();
   await expect(page.getByTestId("growth-builder-step-3")).toBeVisible();
 
@@ -153,6 +173,8 @@ test("Five-step builder navigates all steps and emits a create audit on submit",
   const persisted = await stored.json();
   expect(persisted.id).toBe(created.id);
   expect(persisted.name).toBe(created.name);
+  expect(persisted.segmentId).toBe(segment.id);
+  expect(persisted.store).toBe(store);
   expect(persisted.status).toBe("DRAFT");
   expect(persisted.audit).toEqual(created.audit);
 

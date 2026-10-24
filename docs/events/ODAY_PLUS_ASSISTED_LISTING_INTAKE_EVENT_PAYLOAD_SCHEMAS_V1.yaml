@@ -200,6 +200,30 @@ payloads:
       worm_object_uri: {type: [string, 'null']}
       occurred_at: {type: string, format: date-time}
 
+  AdLiftCampaignApprovedV1:
+    type: object
+    additionalProperties: false
+    required: [campaign_id, configuration_revision, binding_sha256, authorization, external_execution_acknowledged]
+    properties:
+      campaign_id: {type: string}
+      configuration_revision: {type: integer, minimum: 1}
+      binding_sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+      authorization: {type: object}
+      external_execution_acknowledged: {type: boolean, enum: [false]}
+
+  AdLiftCampaignExecutionRequestedV1:
+    type: object
+    additionalProperties: false
+    required: [campaign_id, configuration_revision, binding_sha256, native_intervention_id, native_execution_id, external_execution_acknowledged]
+    properties:
+      campaign_id: {type: string}
+      configuration_revision: {type: integer, minimum: 1}
+      binding_sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+      native_intervention_id: {type: string}
+      native_execution_id: {type: string}
+      external_execution_acknowledged: {type: boolean, enum: [false]}
+
+
 definitions:
   ScopeContext:
     type: object

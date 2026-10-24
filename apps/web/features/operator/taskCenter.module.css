@@ -1,0 +1,10 @@
+.root { min-width: 0; width: 100%; padding: var(--odp-space-4); }
+.root dd, .root td, .root h2, .root p { overflow-wrap: anywhere; }
+.root dl { display: grid; gap: var(--odp-space-2); }
+.root dd { margin: 0; }
+.cards { display: none; }
+@media (max-width: 767px) {
+  .table { display: none; }
+  .cards { display: grid; gap: var(--odp-space-3); }
+  .cards article { padding: var(--odp-space-3); border: 1px solid var(--odp-color-border-default); background: var(--odp-color-bg-surface); }
+}

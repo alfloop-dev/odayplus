@@ -138,6 +138,52 @@ class DurableEvidenceBundleStore:
             self._insert(stamped)
             return stamped
 
+    def save_pending_delivery(self, record: RetainedEvidence, delivery: Any) -> RetainedEvidence:
+        """Append and reserve delivery only inside the caller's business SQL tx.
+
+        Unlike save(), this path never invokes an external sink. The record,
+        delivery intent and queued job roll back together with their caller.
+        """
+        from shared.audit.retained_delivery import RetainedEvidenceDelivery
+
+        if not isinstance(delivery, RetainedEvidenceDelivery):
+            raise RuntimeError("Typed retained delivery owner required")
+        active = (
+            getattr(getattr(self._engine, "_local", None), "connection", None) is not None
+            or (getattr(self._engine, "_tx_depth", 0) > 0
+                and getattr(getattr(self._engine, "_conn", None), "in_transaction", False))
+        )
+        if (not active or getattr(delivery, "engine", None) is not self._engine
+                or getattr(delivery, "evidence_store", None) is not self
+                or getattr(delivery, "sink", None) is not self._worm_sink
+                or self._worm_sink is None):
+            raise RuntimeError("Retained delivery requires its exact active SQL/store/sink owners")
+        with self._engine.lock:
+            if getattr(self._engine, "dialect", "") == "postgresql":
+                self._engine.query_one(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+                    ("durable-evidence-chain",),
+                )
+            elif not self._engine._conn.in_transaction:
+                self._engine.execute("BEGIN IMMEDIATE")
+            if self._engine.query_one(
+                "SELECT export_id FROM durable_evidence_bundles WHERE export_id = ?",
+                (record.export_id,),
+            ) is not None:
+                raise EvidenceImmutabilityError("Retained evidence is append-only")
+            last = self._engine.query_one(
+                "SELECT sequence, record_hash FROM durable_evidence_bundles "
+                "WHERE sequence IS NOT NULL ORDER BY sequence DESC LIMIT 1"
+            )
+            stamped = attach_retained_evidence_integrity(
+                _record_for_sink(record, self._worm_sink),
+                sequence=int(last["sequence"]) + 1 if last is not None else 1,
+                previous_hash=str(last["record_hash"]) if last is not None else CHAIN_GENESIS_HASH,
+            )
+            self._insert(stamped)
+            delivery.stage(stamped)
+            return stamped
+
     def get(self, export_id: str) -> RetainedEvidence | None:
         row = self._engine.query_one(
             "SELECT * FROM durable_evidence_bundles WHERE export_id = ?",
