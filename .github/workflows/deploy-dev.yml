@@ -510,16 +510,7 @@ jobs:
           REPO_PATH="${REGISTRY_HOST}/${GCP_PROJECT}/${GCP_AR_REPO}"
           gcloud auth configure-docker "${REGISTRY_HOST}" --quiet
 
-          resolve_image_digest() {
-            local image="$1"
-            local digest
-            digest="$(gcloud artifacts docker images describe "${image}" \
-              --format='value(image_summary.digest)' 2>/dev/null | tr -d '\r\n')" || return 1
-            if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-              return 1
-            fi
-            printf '%s@%s' "${image%:*}" "${digest}"
-          }
+          source product_ops/deployment/cloud_run_release_traffic.sh
 
           # Cosign publishes the signature and the CycloneDX SBOM attestation as
           # OCI artifacts tagged off the image digest. Resolving those tags back
@@ -581,11 +572,11 @@ jobs:
                 -f "${dockerfile}" \
                 .
               docker push "${tagged}"
-              # Only pre-publication transient ambient OIDC failures are retried.
-              CI=true ./delivery_toolchain/security/sign_images.sh sign "${tagged}"
-              CI=true ./delivery_toolchain/security/sign_images.sh verify "${tagged}"
               local digest_ref
               digest_ref="$(resolve_image_digest "${tagged}")"
+              # Sign and verify the same immutable reference used at runtime.
+              CI=true ./delivery_toolchain/security/sign_images.sh sign "${digest_ref}"
+              CI=true ./delivery_toolchain/security/sign_images.sh verify "${digest_ref}"
               CI=true ./delivery_toolchain/security/sign_images.sh attest "${digest_ref}" "${SBOM_PATH}"
               resolved["${name}"]="${digest_ref}"
             }
@@ -1331,6 +1322,7 @@ jobs:
       WEB_IMAGE: ${{ needs.build.outputs.web_image || inputs.web_image }}
       WORKER_IMAGE: ${{ needs.build.outputs.worker_image || inputs.worker_image }}
       SCHEDULER_IMAGE: ${{ needs.build.outputs.scheduler_image || inputs.scheduler_image }}
+      ODP_NEW_SCHEDULER_STATE: ${{ vars.ODP_NEW_SCHEDULER_STATE || 'PAUSED' }}
       ODP_DEPLOY_BY_DIGEST: "true"
     steps:
       - uses: actions/checkout@v4
@@ -1481,8 +1473,10 @@ jobs:
             --region "${GCP_REGION}" \
             capture-state \
             --release-id "odp-${ODAY_RELEASE_SHA:0:12}" \
+            --release-sha "${ODAY_RELEASE_SHA}" \
             --api-service "${API_SERVICE}" \
             --web-service "${WEB_SERVICE}" \
+            --scheduler-jobs "${SCHEDULER_SCHEDULE_NAME}" "${WORKER_SCHEDULE_NAME}" \
             --output-dir "${state_dir}"
           test -s "${state_dir}/api-traffic.json"
           test -s "${state_dir}/web-traffic.json"

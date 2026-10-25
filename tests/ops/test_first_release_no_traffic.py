@@ -122,6 +122,11 @@ if args[:3] == ["run", "services", "add-iam-policy-binding"]:
     raise SystemExit(0)
 
 if args[:3] == ["run", "services", "update-traffic"]:
+    service = args[3]
+    revision, percent = flag("--to-revisions").split("=")
+    if os.environ.get("FAKE_TRAFFIC_DRIFT") != "1":
+        state[service]["status"]["traffic"] = [{"revisionName": revision, "percent": int(percent)}]
+    state_path.write_text(json.dumps(state), encoding="utf-8")
     raise SystemExit(0)
 
 if args[:2] == ["auth", "print-identity-token"]:
@@ -236,7 +241,8 @@ target = "smoke" if any("smoke" in arg for arg in sys.argv[1:]) else "live_e2e"
 with open(os.environ["FAKE_LOG"], "a") as handle:
     handle.write(json.dumps([target, sys.argv[1:], web.get("iam", []),
         os.environ.get("ODP_WEB_CANDIDATE_INVOKER_TOKEN", ""),
-        os.environ.get("ODP_API_INVOKER_TOKEN", "")]) + "\n")
+        os.environ.get("ODP_API_INVOKER_TOKEN", ""),
+        {name: value.get("status", {}).get("traffic", []) for name, value in state.items()}]) + "\n")
 ' "$@"
   if [[ "$*" == *"smoke"* ]]; then
     return "${FAKE_SMOKE_EXIT:-0}"
@@ -316,6 +322,8 @@ def _run(
             "WEB_SERVICE": WEB_SERVICE,
             "API_IMAGE": "registry/api@sha256:" + "a" * 64,
             "WEB_IMAGE": "registry/web@sha256:" + "b" * 64,
+            "WORKER_IMAGE": "registry/worker@sha256:" + "c" * 64,
+            "SCHEDULER_IMAGE": "registry/scheduler@sha256:" + "d" * 64,
             "ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT": RUNTIME_SA,
             "GCP_CLOUD_SQL_INSTANCE": "odayplus-dev:asia-east1:oday",
             "API_ENV_FILE": "/dev/null",
@@ -337,6 +345,10 @@ def _run(
             "WORKER_SCHEDULE_NAME": "oday-worker",
             "WORKER_CANDIDATE_JOB": "oday-worker-candidate",
             "ODP_WORKER_CRON": "* * * * *",
+            "ODP_SCHEDULER_TIME_ZONE": "Asia/Taipei",
+            "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT": "scheduler@example.test",
+            "SCHEDULER_TRIGGER_SNAPSHOT": "/dev/null",
+            "WORKER_TRIGGER_SNAPSHOT": "/dev/null",
             "ODP_CANDIDATE_INVOKER_WAIT_SECONDS": "0",
             "ODP_PUBLIC_INVOKER_WAIT_SECONDS": "0",
             "ODP_API_INVOKER_WAIT_SECONDS": "0",
@@ -608,9 +620,13 @@ def test_existing_services_keep_the_exact_no_traffic_blue_green_argv(tmp_path: P
     deploys = _deploys(calls)
     assert deploys[API_SERVICE] == _expected_deploy(API_SERVICE, existing=True)
     assert deploys[WEB_SERVICE] == _expected_deploy(WEB_SERVICE, existing=True)
+    smoke = next(call for call in calls if call[0] == "smoke")
     for service in (API_SERVICE, WEB_SERVICE):
-        serving = [item for item in after[service]["status"]["traffic"] if item.get("percent")]
+        serving = [item for item in smoke[5][service] if item.get("percent")]
         assert serving == [{"percent": 100, "revisionName": f"{service}-release-previous00"}]
+        assert after[service]["status"]["traffic"] == [
+            {"revisionName": f"{service}-{SUFFIX}", "percent": 100}
+        ]
     outputs = _outputs(result.stdout)
     assert outputs["API_REVISION"] == f"{API_SERVICE}-{SUFFIX}"
     assert outputs["WEB_URL"] == f"https://{TAG}---{WEB_SERVICE}-abc.a.run.app"
@@ -637,6 +653,17 @@ def test_existing_services_keep_the_exact_no_traffic_blue_green_argv(tmp_path: P
 
 def _is_api_grant(call: list[object]) -> bool:
     return call[:4] == ["run", "services", "add-iam-policy-binding", API_SERVICE]
+
+
+def test_traffic_readback_drift_blocks_the_live_gate(tmp_path: Path) -> None:
+    result, calls, state = _run(
+        tmp_path, {API_SERVICE: _existing_service(API_SERVICE), WEB_SERVICE: _existing_service(WEB_SERVICE)},
+        FAKE_TRAFFIC_DRIFT="1",
+    )
+    assert result.returncode != 0
+    assert "traffic readback drift" in result.stderr
+    assert not any(call[0] == "live_e2e" for call in calls)
+    assert state[API_SERVICE]["status"]["traffic"][0]["revisionName"].endswith("previous00")
 
 
 @pytest.mark.parametrize("existing", [False, True])

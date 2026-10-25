@@ -2356,6 +2356,7 @@ def test_foreground_rollout_real_socket_shell_boundary_and_remote_lifecycle(
         ForegroundDevSmokeRollout,
         ProvisioningRefused,
     )
+    from tests.ops.test_bluegreen_release import offline_scheduler_resume_context
     s, web, journal, binding, github, _, plan, args = remote_binding
     config = _foreground_gate_template(binding, args)
     root = Path(__file__).resolve().parents[2]
@@ -2363,6 +2364,11 @@ def test_foreground_rollout_real_socket_shell_boundary_and_remote_lifecycle(
     hook = source[source.rindex('if [ -n "${ODP_DEV_SMOKE_FOREGROUND_FD:-}" ]; then'):]
     calls = tmp_path / "shell-calls"
     report = tmp_path / "gate.json"
+    release_tools = offline_scheduler_resume_context(
+        tmp_path / "release-tools", project="offline-project", region="asia-east1", release_sha=config.expected_sha,
+        worker_job="offline-worker", scheduler_job="offline-scheduler",
+        worker_trigger="offline-worker-schedule", scheduler_trigger="offline-schedule",
+    )
     env = {
         "PATH": os.environ["PATH"], "ODAY_RELEASE_SHA": config.expected_sha,
         "MANIFEST_DIGEST": config.expected_manifest_digest, "ODP_DEPLOY_ENV": "dev",
@@ -2378,8 +2384,20 @@ def test_foreground_rollout_real_socket_shell_boundary_and_remote_lifecycle(
     if fault == "context":
         env["LIVE_E2E_API_URL"] = "https://foreign.example.invalid"
     harness = '''set -euo pipefail
+source "$OFFLINE_RELEASE_OWNER"
 DEPLOYMENT_COMMITTED=false
-trap 'status=$?; if [ "$status" -ne 0 ] && [ "$DEPLOYMENT_COMMITTED" != true ]; then printf "restore-api-web-schedulers\\n" >> "$SHELL_CALLS"; fi; exit "$status"' EXIT
+restore_previous_release() {
+  local status=$?
+  trap - EXIT
+  if [ "$status" -ne 0 ] && [ "$DEPLOYMENT_COMMITTED" != true ]; then
+    printf "restore-api-web-schedulers\\n" >> "$SHELL_CALLS"
+    rollback_release_traffic "$API_SERVICE" "$API_TRAFFIC_SNAPSHOT" "$WEB_SERVICE" "$WEB_TRAFFIC_SNAPSHOT" || status=1
+    restore_scheduler_trigger "$WORKER_SCHEDULE_NAME" "$WORKER_TRIGGER_SNAPSHOT" || status=1
+    restore_scheduler_trigger "$SCHEDULER_SCHEDULE_NAME" "$SCHEDULER_TRIGGER_SNAPSHOT" || status=1
+  fi
+  exit "$status"
+}
+trap restore_previous_release EXIT
 printf 'promote-api\\npromote-web\\n' >> "$SHELL_CALLS"
 ''' + hook
     if fault == "shell-exit":
@@ -2400,6 +2418,10 @@ printf 'promote-api\\npromote-web\\n' >> "$SHELL_CALLS"
         assert all(secret not in json.dumps(child_env) + json.dumps(command)
                    for secret in (args["admin_password"], args["new_password"]))
         assert "GH_TOKEN" not in child_env and "GITHUB_TOKEN" not in child_env
+        # Keep the product's credential filtering intact. Only the spawned
+        # offline tool boundary receives the same shared readback fixture.
+        child_env.update(release_tools)
+        assert all(secret not in json.dumps(child_env) for secret in (args["admin_password"], args["new_password"]))
         child = original_popen(["/bin/bash", "-c", harness], **kwargs,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         children.append(child)
@@ -2441,6 +2463,17 @@ printf 'promote-api\\npromote-web\\n' >> "$SHELL_CALLS"
     assert len(github.uploads) == int(fault != "context")
     assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1 if fault == "context" else 2,)]
     assert s.audit.verify_chain().ok
+    cloud = json.loads(Path(release_tools["RELEASE_CLOUD_STATE"]).read_text())
+    for kind, trigger in (("worker", "offline-worker-schedule"), ("scheduler", "offline-schedule")):
+        target = cloud["triggers"][trigger]
+        assert target["state"] == ("ENABLED" if kind == "worker" else "PAUSED")
+        job = f"offline-{kind}" if fault == "none" else f"{kind}-old"
+        assert target["httpTarget"]["uri"].endswith(f"/jobs/{job}:run")
+    for kind in ("api", "web"):
+        service = "offline-" + kind
+        assert cloud["services"][service]["status"]["traffic"] == [
+            {"revisionName": service + ("-new" if fault == "none" else "-old"), "percent": 100}
+        ]
 
 
 @pytest.mark.parametrize("fault", ["environment", "password-env", "token-env", "bash-env", "dirty", "head"])

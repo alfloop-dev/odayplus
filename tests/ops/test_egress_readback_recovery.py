@@ -146,7 +146,8 @@ import os
 import sys
 from pathlib import Path
 
-present = set(filter(None, os.environ.get("FAKE_PRESENT", "").split(",")))
+present_path = Path(os.environ["FAKE_PRESENT_FILE"])
+present = set(filter(None, present_path.read_text().split(",")))
 failing = set(filter(None, os.environ.get("FAKE_DELETE_FAILURE", "").split(",")))
 args = sys.argv[1:]
 
@@ -164,6 +165,8 @@ if args[:2] == ["run", "services"] or args[:2] == ["run", "jobs"]:
         if args[3] in failing:
             print("DELETE_FAILED", file=sys.stderr)
             raise SystemExit(1)
+        present.discard(args[3])
+        present_path.write_text(",".join(sorted(present)))
         raise SystemExit(0)
 
 print("unexpected gcloud command", args, file=sys.stderr)
@@ -203,6 +206,8 @@ def run_trap_recovery(tmp_path: Path, **state: str) -> subprocess.CompletedProce
     fake = tmp_path / "gcloud"
     fake.write_text(FAKE_GCLOUD, encoding="utf-8")
     fake.chmod(0o755)
+    present_path = tmp_path / "present-resources"
+    present_path.write_text(state.get("FAKE_PRESENT", ""))
     traffic_helper = ROOT / "product_ops/deployment/cloud_run_traffic.py"
     snapshots = {}
     for service in ("api", "web"):
@@ -225,6 +230,7 @@ def run_trap_recovery(tmp_path: Path, **state: str) -> subprocess.CompletedProce
             "GCP_PROJECT": "odayplus",
             "GCP_REGION": "asia-east1",
             "FAKE_LOG": str(tmp_path / "gcloud.log"),
+            "FAKE_PRESENT_FILE": str(present_path),
             "API_SNAPSHOT": str(snapshots["api"]),
             "WEB_SNAPSHOT": str(snapshots["web"]),
             **state,

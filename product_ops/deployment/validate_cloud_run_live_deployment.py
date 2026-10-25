@@ -37,6 +37,7 @@ if str(ROOT) not in sys.path:
 # The auth-mode decision is shared with the running API boundary rather than
 # re-derived here; see shared/auth/mode.py for why the two must not drift
 # (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
+from product_ops.deployment.cloud_scheduler_trigger import validate_trigger_state
 from shared.audit.gcs_identity import validate_audit_service_accounts
 from shared.audit.worm import is_gcs_worm_sink_uri
 from shared.auth.mode import (
@@ -1404,6 +1405,14 @@ def preflight_checks(
     root: Path = ROOT,
 ) -> list[CheckResult]:
     checks: list[CheckResult] = []
+
+    try:
+        validate_trigger_state(env.get("ODP_NEW_SCHEDULER_STATE") or "PAUSED")
+        first_create_ok = True
+    except ValueError:
+        first_create_ok = False
+    checks.append(CheckResult(first_create_ok, "config:ODP_NEW_SCHEDULER_STATE",
+                              "explicit ENABLED or PAUSED" if first_create_ok else "expected ENABLED or PAUSED"))
 
     if expected_environment.strip().lower() in {"prod", "production"}:
         configured_gcs = is_gcs_worm_sink_uri(env.get("ODP_AUDIT_WORM_SINK_URI", "").strip())
@@ -3538,6 +3547,8 @@ def _iter_containers_key_paths(payload: Any, prefix: tuple[Any, ...] = ()) -> It
 
 def _authoritative_job_containers(
     job_description: Mapping[str, Any],
+    *,
+    execution: bool = False,
 ) -> tuple[_JobApiSchema, list[Mapping[str, Any]]]:
     """Return the dialect and task containers of a Job description, or fail closed.
 
@@ -3553,9 +3564,15 @@ def _authoritative_job_containers(
     the proof will accept.
     """
 
+    schemas = _JOB_API_SCHEMAS
+    if execution:
+        schemas = (
+            replace(schemas[0], container_path=("spec", "template", "spec", "containers")),
+            replace(schemas[1], container_path=("template", "containers")),
+        )
     present = [
         (schema, _resolve_path(job_description, schema.container_path))
-        for schema in _JOB_API_SCHEMAS
+        for schema in schemas
         if _resolve_path(job_description, schema.container_path) is not None
     ]
     if not present:
@@ -4354,6 +4371,8 @@ def cloud_run_job_checks(
     job_description: Mapping[str, Any],
     execution: Mapping[str, Any],
     expected_sha: str,
+    expected_image: str | None = None,
+    expected_job: str | None = None,
     release_provider_ids: str | None = None,
     root: Path = ROOT,
 ) -> tuple[list[CheckResult], dict[str, Any]]:
@@ -4407,7 +4426,62 @@ def cloud_run_job_checks(
         ),
     }
     report.update(secret_report)
+    if expected_image is not None:
+        try:
+            binding = cloud_run_job_binding(
+                job_description, expected_job=expected_job or str(report["job_name"]),
+                expected_sha=expected_sha, expected_image=expected_image,
+                execution=execution,
+            )
+            report.update(binding)
+            checks.append(CheckResult(True, f"jobs-smoke:{kind}:immutable_binding", "job and completed execution bind the exact immutable image and release"))
+        except ValueError as exc:
+            checks.append(CheckResult(False, f"jobs-smoke:{kind}:immutable_binding", str(exc)))
     return checks, report
+
+
+def cloud_run_job_binding(
+    description: Mapping[str, Any], *, expected_job: str, expected_sha: str,
+    expected_image: str, execution: Mapping[str, Any] | None = None, record: bool = False,
+    expected_execution: str | None = None,
+) -> dict[str, str]:
+    """Bind fresh Job readback and, for jobs-smoke, its completed execution."""
+    metadata = description.get("metadata", {})
+    name = metadata.get("name") if isinstance(metadata, Mapping) else None
+    name = name or description.get("name")
+    allowed_names = {expected_job, expected_job.rsplit("/", 1)[-1]}
+    if name not in allowed_names:
+        raise ValueError("Cloud Run Job name does not match the intended job")
+    _, container = _authoritative_task_container(description)
+    labels = metadata.get("labels", {}) if isinstance(metadata, Mapping) else {}
+    labels = labels or description.get("labels", {})
+    if record:
+        expected_image = str(container.get("image", ""))
+        expected_sha = str(labels.get("oday-release-sha", "")) if isinstance(labels, Mapping) else ""
+    if not SHA_PATTERN.fullmatch(expected_sha) or not re.fullmatch(r"[^@\s]+@sha256:[0-9a-f]{64}", expected_image):
+        raise ValueError("release SHA and exact immutable image are required")
+    if not isinstance(labels, Mapping) or labels.get("oday-release-sha") != expected_sha:
+        raise ValueError("Cloud Run Job release label does not match")
+    if container.get("image") != expected_image:
+        raise ValueError("Cloud Run Job immutable image does not match")
+    binding = {"job_name": str(name), "job_image": expected_image, "release_sha": expected_sha}
+    if execution is not None:
+        _, containers = _authoritative_job_containers(execution, execution=True)
+        if len(containers) != 1 or containers[0].get("image") != expected_image:
+            raise ValueError("Cloud Run execution immutable image does not match")
+        meta = execution.get("metadata", {})
+        execution_name = meta.get("name") if isinstance(meta, Mapping) else None
+        execution_name = execution_name or execution.get("name")
+        if not execution_name or (expected_execution is not None and execution_name not in
+                                  (expected_execution, expected_execution.rsplit("/", 1)[-1])):
+            raise ValueError("Cloud Run execution name does not match the verification receipt")
+        execution_job = meta.get("labels", {}).get("run.googleapis.com/job") if isinstance(meta, Mapping) else None
+        execution_job = execution_job or execution.get("job")
+        if execution_job not in allowed_names or not _execution_completed(execution):
+            raise ValueError("completed execution does not belong to the intended job")
+        binding["execution_job_name"] = str(execution_job)
+        binding["execution_image"] = expected_image
+    return binding
 
 
 def _finalize(
@@ -4512,7 +4586,17 @@ def main() -> int:
     jobs_smoke.add_argument("--job-description", required=True, type=Path)
     jobs_smoke.add_argument("--execution", required=True, type=Path)
     jobs_smoke.add_argument("--expected-sha", required=True)
+    jobs_smoke.add_argument("--expected-image")
+    jobs_smoke.add_argument("--expected-job")
     jobs_smoke.add_argument("--output", type=Path)
+    job_binding = subparsers.add_parser("job-binding")
+    job_binding.add_argument("--job-description", required=True, type=Path)
+    job_binding.add_argument("--expected-sha", default="")
+    job_binding.add_argument("--expected-image", default="")
+    job_binding.add_argument("--expected-job", required=True)
+    job_binding.add_argument("--record", action="store_true")
+    job_binding.add_argument("--execution", type=Path)
+    job_binding.add_argument("--expected-execution")
 
     resolve_execution = subparsers.add_parser("resolve-latest-execution")
     resolve_execution.add_argument("--executions", required=True, type=Path)
@@ -4577,6 +4661,19 @@ def main() -> int:
             label="Cloud Run bootstrap compatibility",
         )
 
+    if args.command == "job-binding":
+        try:
+            binding = cloud_run_job_binding(_read_json_object(args.job_description), expected_job=args.expected_job,
+                                           expected_sha=args.expected_sha, expected_image=args.expected_image, record=args.record,
+                                           execution=_read_json_object(args.execution) if args.execution else None,
+                                           expected_execution=args.expected_execution)
+        except (OSError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        if args.record:
+            print(json.dumps(binding))
+        return 0
+
     if args.command == "jobs-smoke":
         try:
             job_description = _read_json_object(args.job_description)
@@ -4586,6 +4683,8 @@ def main() -> int:
                 job_description=job_description,
                 execution=execution,
                 expected_sha=args.expected_sha,
+                expected_image=args.expected_image,
+                expected_job=args.expected_job,
                 release_provider_ids=os.environ.get(PRODUCTION_PROVIDER_IDS_ENV),
             )
         except (OSError, ValueError, json.JSONDecodeError) as exc:
