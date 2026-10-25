@@ -4164,6 +4164,7 @@ class AssignOptionalPinCorrectionTests(unittest.TestCase):
         from contextlib import ExitStack
         from datetime import datetime
 
+        import dispatch_engine
         import supervisor
 
         config = ai_status.status_runtime_config()
@@ -4178,11 +4179,15 @@ class AssignOptionalPinCorrectionTests(unittest.TestCase):
             for name in (
                 "repair_open_task_metadata", "repair_unsubmitted_review_tasks",
                 "reassign_tasks_after_review_churn", "normalize_task_assignment_integrity",
-                "normalize_mainline_task_assignment", "reassign_unavailable_reviewers",
-                "reconcile_task_reality", "advance_approved_prs_to_merge",
-                "recover_conflicted_review_prs", "recover_failed_ci_review_prs",
+                "normalize_mainline_task_assignment",
             ):
                 stack.enter_context(mock.patch.object(supervisor, name, return_value=False))
+            for name in (
+                "reassign_unavailable_reviewers", "reconcile_task_reality",
+                "advance_approved_prs_to_merge", "recover_conflicted_review_prs",
+                "recover_failed_ci_review_prs",
+            ):
+                stack.enter_context(mock.patch.object(dispatch_engine, name, return_value=False))
             stack.enter_context(mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None))
             stack.enter_context(mock.patch.object(supervisor, "agent_can_take_task", return_value=True))
             stack.enter_context(mock.patch.object(supervisor, "resolve_task_progress_head", return_value=None))
