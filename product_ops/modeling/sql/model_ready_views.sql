@@ -36,8 +36,12 @@ WITH authoritative_order_partitions AS (
     -- order-run predicate of candidate_site_view/heatzone_training_view and the
     -- UTC dates its window reads ('YYYY-MM-DD' daily or 'start__end' backfill).
     -- A resumed chunk that stopped at its record bound is legitimate once a
-    -- later run of the same partition reaches EOF, but no chunk of that
-    -- partition may have quarantined, dropped or failed to reconcile a record.
+    -- later run of the same partition reaches EOF, but every chunk of that
+    -- partition up to the proof must itself have succeeded, reconciled and
+    -- loaded every record it processed. A FAILED or abandoned RUNNING chunk
+    -- keeps its schema-default zero counters while its checkpoint may already
+    -- have advanced past a quarantined record, so it can never prove that the
+    -- resumed partition dropped nothing.
     SELECT
         completion.finished_at,
         scope.partition_start,
@@ -75,17 +79,16 @@ WITH authoritative_order_partitions AS (
           FROM data_plane.ingestion_runs AS chunk
           WHERE chunk.source_kind = completion.source_kind
             AND chunk.partition_key = completion.partition_key
-            AND chunk.finished_at <= completion.finished_at
             AND (
-                chunk.quarantined_count > 0
-                OR chunk.status = 'RECONCILIATION_FAILED'
-                OR (
-                    chunk.status = 'SUCCEEDED'
-                    AND (
-                        NOT chunk.reconciled
-                        OR chunk.processed_count <> chunk.valid_loaded
-                    )
-                )
+                chunk.finished_at IS NULL
+                OR chunk.finished_at <= completion.finished_at
+            )
+            AND NOT (
+                chunk.status = 'SUCCEEDED'
+                AND chunk.reconciled
+                AND chunk.quarantined_count = 0
+                AND chunk.processed_count = chunk.valid_loaded
+                AND chunk.finished_at IS NOT NULL
             )
       )
 ),

@@ -32,6 +32,10 @@ def test_forecast_sql_requires_eof_proven_partitions_for_target_and_prior_days()
     assert "completion.quarantined_count = 0" in body
     assert "completion.processed_count = completion.valid_loaded" in body
     assert "chunk.partition_key = completion.partition_key" in body
+    # FAILED/abandoned chunks keep default zero counters, so only a fully
+    # succeeded chunk may precede the proof.
+    assert "chunk.finished_at IS NULL" in body
+    assert "chunk.status = 'SUCCEEDED'\n                AND chunk.reconciled" in body
     assert "proof.partition_start <= transaction_daily.date" in body
     assert "proof.partition_end > transaction_daily.date" in body
     assert "proof.finished_at >= transaction_daily.source_run_finished_at" in body

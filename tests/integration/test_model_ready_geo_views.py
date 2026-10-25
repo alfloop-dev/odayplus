@@ -1085,6 +1085,77 @@ def test_postgresql_forecast_view_admits_only_eof_proven_target_and_prior_partit
             )
             assert_target_refused("SOURCE_RUN_NOT_COMPLETE")
 
+        # fail_run only sets status/error/finished_at, so a resumed chunk that
+        # quarantined a record, advanced the checkpoint and then raised keeps
+        # schema-default zero counters. Neither that FAILED chunk nor an
+        # abandoned RUNNING one may be skipped by a later zero-row EOF proof,
+        # for the target day or for any of its 28 prior feature days.
+        uncounted_chunks = (
+            ("failed", "FAILED", _at(FORECAST_TARGET_DAY + timedelta(days=1), 6)),
+            ("abandoned", "RUNNING", None),
+        )
+        for day, run, reason in (
+            (FORECAST_TARGET_DAY, target_run, "SOURCE_RUN_NOT_COMPLETE"),
+            (FORECAST_PRIOR_DAY, prior_run, "PRIOR_SOURCE_NOT_COMPLETE"),
+        ):
+            for label, status, finished_at in uncounted_chunks:
+                with connection.transaction(force_rollback=True):
+                    _set_run(connection, run, "partition_complete = FALSE")
+                    _insert_run(
+                        connection,
+                        name=f"forecast-uncounted-chunk:{day.isoformat()}:{label}",
+                        source_kind="orders",
+                        partition_key=day.isoformat(),
+                        finished_at=finished_at,
+                        status=status,
+                        reconciled=False,
+                        partition_complete=False,
+                    )
+                    _insert_run(
+                        connection,
+                        name=f"forecast-uncounted-chunk-eof:{day.isoformat()}:{label}",
+                        source_kind="orders",
+                        partition_key=day.isoformat(),
+                        finished_at=target_eof_at,
+                    )
+                    assert_target_refused(reason)
+
+        # The poisoned daily chain stays refused; a covering re-read partition
+        # that itself reached EOF cleanly is the lawful recovery, available
+        # only from its own finish.
+        recovery_key = (
+            f"{FORECAST_TARGET_DAY.isoformat()}__"
+            f"{(FORECAST_TARGET_DAY + timedelta(days=1)).isoformat()}"
+        )
+        recovery_eof_at = _at(FORECAST_TARGET_DAY + timedelta(days=4), 6)
+        with connection.transaction(force_rollback=True):
+            _set_run(connection, target_run, "partition_complete = FALSE")
+            for name, status, finished_at in (
+                ("forecast-recovery-failed-chunk", "FAILED", _at(FORECAST_TARGET_DAY + timedelta(days=1), 6)),
+                ("forecast-recovery-daily-eof", "SUCCEEDED", target_eof_at),
+            ):
+                _insert_run(
+                    connection,
+                    name=name,
+                    source_kind="orders",
+                    partition_key=FORECAST_TARGET_DAY.isoformat(),
+                    finished_at=finished_at,
+                    status=status,
+                    reconciled=status == "SUCCEEDED",
+                    partition_complete=status == "SUCCEEDED",
+                )
+            assert_target_refused("SOURCE_RUN_NOT_COMPLETE")
+            _insert_run(
+                connection,
+                name="forecast-recovery-reread-eof",
+                source_kind="orders",
+                partition_key=recovery_key,
+                finished_at=recovery_eof_at,
+            )
+            (recovered_row,) = source.load(spec, bounds).rows
+            assert recovered_row["date"] == FORECAST_TARGET_DAY
+            assert recovered_row["label_maturity_time"] == recovery_eof_at
+
         # A multi-day backfill partition whose window covers the date is the
         # same original partition authority as a daily one.
         backfill_key = (
