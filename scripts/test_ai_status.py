@@ -3847,15 +3847,16 @@ class AssignOptionalPinCorrectionTests(unittest.TestCase):
             "verification": list(self.VERIFICATION_DECLARATIONS),
             "no_live_operations": True,
         }
-        self._run_assign(
-            actor="Codex",
-            task_id=self.TASK_ID,
-            owner="Pi",
-            reviewer="Codex2",
-            title="G2標準配置接回既有SiteScore API與唯讀假設區",
-            summary_zh="沿原 SiteScore GET 與原假設區讀回已確認 G2 標準配置；保留財務未知與所有權限／動作邊界",
-            metadata=self.initial_metadata,
-        )
+        with mock.patch.object(ai_status, "iso_now", return_value="2026-10-25T18:42:41Z"):
+            self._run_assign(
+                actor="Codex",
+                task_id=self.TASK_ID,
+                owner="Pi",
+                reviewer="Codex2",
+                title="G2標準配置接回既有SiteScore API與唯讀假設區",
+                summary_zh="沿原 SiteScore GET 與原假設區讀回已確認 G2 標準配置；保留財務未知與所有權限／動作邊界",
+                metadata=self.initial_metadata,
+            )
         for idx in range(2):
             self._append_raw_log(
                 {
@@ -4200,6 +4201,33 @@ class AssignOptionalPinCorrectionTests(unittest.TestCase):
         finally:
             self._git(self.status_root, "update-ref", "-d", remote_ref)
 
+        config_original = self.config_file.read_text(encoding="utf-8")
+        lane_branch_ref = f"refs/heads/lane/{self.TASK_ID}"
+        lane_remote_ref = f"refs/remotes/origin/lane/{self.TASK_ID}"
+        try:
+            cfg_with_lane = json.loads(config_original)
+            cfg_with_lane["branch_workflow"] = {"task_branch_prefix": "lane/"}
+            self.config_file.write_text(
+                json.dumps(cfg_with_lane, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            ai_status._MERGED_CONFIG_CACHE.clear()
+
+            self._git(self.status_root, "update-ref", lane_branch_ref, self.base_sha)
+            try:
+                self._assert_clear_refused("task branch ref already exists in git (refs/heads/lane/")
+            finally:
+                self._git(self.status_root, "update-ref", "-d", lane_branch_ref)
+
+            self._git(self.status_root, "update-ref", lane_remote_ref, self.base_sha)
+            try:
+                self._assert_clear_refused("task remote-tracking branch ref already exists in git (refs/remotes/origin/lane/")
+            finally:
+                self._git(self.status_root, "update-ref", "-d", lane_remote_ref)
+        finally:
+            self.config_file.write_text(config_original, encoding="utf-8")
+            ai_status._MERGED_CONFIG_CACHE.clear()
+
         managed_wt_dir = self.worktree_root / "pantheon" / self.TASK_ID.lower()
         managed_wt_dir.mkdir(parents=True)
         try:
@@ -4230,6 +4258,18 @@ class AssignOptionalPinCorrectionTests(unittest.TestCase):
                 json.dumps(orch_with_worker, ensure_ascii=False), encoding="utf-8"
             )
             self._assert_clear_refused("orchestrator worker record exists")
+
+            orch_with_native_queue = json.loads(orch_original)
+            orch_with_native_queue["queue"]["events"]["evt-preflight-2"] = {
+                "attempt_count": 0,
+                "status": "queued",
+            }
+            ai_status.ORCHESTRATOR_STATE_FILE.write_text(
+                json.dumps(orch_with_native_queue, ensure_ascii=False), encoding="utf-8"
+            )
+            self._assert_clear_refused(
+                "pending or active queue event 'evt-preflight-2' exists in orchestrator state"
+            )
         finally:
             ai_status.ORCHESTRATOR_STATE_FILE.write_text(orch_original, encoding="utf-8")
 
@@ -4263,6 +4303,68 @@ class AssignOptionalPinCorrectionTests(unittest.TestCase):
             self._assert_clear_refused("helper_execution_lease")
         finally:
             ai_status.STATUS_FILE.write_text(state_original, encoding="utf-8")
+
+    def test_refuses_original_writer_rotation_and_later_different_actor_reassign(self) -> None:
+        state_original = ai_status.STATUS_FILE.read_text(encoding="utf-8")
+        log_original = ai_status.LOG_FILE.read_text(encoding="utf-8")
+        try:
+            rotate_cfg = ai_status.status_runtime_config()
+            rotate_cfg.setdefault("paths", {})["activity_log_rotate_bytes"] = 1
+            with mock.patch.object(ai_status.orchestrator_common, "ROOT", self.status_root):
+                ai_status.orchestrator_common.write_activity_log(
+                    rotate_cfg,
+                    {
+                        "type": "wake_queued",
+                        "task_id": self.TASK_ID,
+                        "target_agent": "Pi",
+                        "provider": "pi",
+                        "queue_event_id": "evt-preflight-rotate",
+                        "message": "Wake-up queued for supervisor: owned_ready_dispatch",
+                    },
+                )
+            archive_dir = self.status_root / ".orchestrator" / "logs" / "activity-log-archive"
+            self.assertTrue(list(archive_dir.glob("ai-activity-log-*.jsonl.gz")))
+
+            self._assert_clear_refused(
+                "no original assign audit entry found in canonical activity log",
+                actor="Codex",
+            )
+            self._assert_clear_refused(
+                "no original assign audit entry found in canonical activity log",
+                actor="Claude",
+            )
+
+            rc = self._run_assign(
+                actor="Claude",
+                task_id=self.TASK_ID,
+                owner="Pi",
+                reviewer="Codex2",
+            )
+            self.assertEqual(rc, 0)
+            reassigned_task = ai_status.get_task(ai_status.load_state(), self.TASK_ID)
+            self.assertEqual(reassigned_task.get("next"), "Ownership updated")
+            self.assertEqual(reassigned_task.get("frozen_evidence_base_sha"), self.base_sha)
+
+            self._assert_clear_refused(
+                "only a pristine initial assignment ('Assignment created') can be corrected",
+                actor="Claude",
+            )
+            self._assert_clear_refused(
+                "only a pristine initial assignment ('Assignment created') can be corrected",
+                actor="Codex",
+            )
+
+            state = ai_status.load_state()
+            task = ai_status.get_task(state, self.TASK_ID)
+            task["next"] = "Assignment created"
+            ai_status.save_state(state)
+            self._assert_clear_refused(
+                "initial creation assign audit entry is missing or rotated",
+                actor="Claude",
+            )
+        finally:
+            ai_status.STATUS_FILE.write_text(state_original, encoding="utf-8")
+            ai_status.LOG_FILE.write_text(log_original, encoding="utf-8")
 
     def test_refuses_prior_execution_or_verification_evidence_or_receipts(self) -> None:
         state_original = ai_status.STATUS_FILE.read_text(encoding="utf-8")
@@ -4375,9 +4477,13 @@ class AssignOptionalPinCorrectionTests(unittest.TestCase):
             ai_status.STATUS_FILE.write_text(state_original, encoding="utf-8")
 
     def test_refuses_when_evidence_proof_is_missing_or_corrupted(self) -> None:
+        self.assertFalse(hasattr(ai_status, "_load_strict_activity_logs_for_pin_removal"))
         log_original = ai_status.LOG_FILE.read_text(encoding="utf-8")
         try:
             ai_status.LOG_FILE.unlink()
+            self.assertEqual(ai_status.load_logs(), [])
+            with self.assertRaisesRegex(ValueError, "canonical activity log is missing"):
+                ai_status.load_logs(strict=True)
             self._assert_clear_refused("canonical activity log is missing")
         finally:
             ai_status.LOG_FILE.write_text(log_original, encoding="utf-8")
@@ -4390,9 +4496,80 @@ class AssignOptionalPinCorrectionTests(unittest.TestCase):
 
         try:
             ai_status.LOG_FILE.write_text(log_original + "{malformed-json\n", encoding="utf-8")
+            with mock.patch("sys.stderr", new_callable=io.StringIO):
+                tolerant_entries = ai_status.load_logs()
+            self.assertGreaterEqual(len(tolerant_entries), 1)
+            with self.assertRaisesRegex(ValueError, "malformed JSON in canonical activity log"):
+                ai_status.load_logs(strict=True)
             self._assert_clear_refused("malformed JSON in canonical activity log")
         finally:
             ai_status.LOG_FILE.write_text(log_original, encoding="utf-8")
+
+        try:
+            ai_status.LOG_FILE.write_text(log_original + "[]\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "non-object entry in canonical activity log"):
+                ai_status.load_logs(strict=True)
+            self._assert_clear_refused("non-object entry in canonical activity log")
+        finally:
+            ai_status.LOG_FILE.write_text(log_original, encoding="utf-8")
+
+        orch_original = ai_status.ORCHESTRATOR_STATE_FILE.read_text(encoding="utf-8")
+        try:
+            ai_status.ORCHESTRATOR_STATE_FILE.unlink()
+            self._assert_clear_refused("orchestrator runtime state is missing")
+        finally:
+            ai_status.ORCHESTRATOR_STATE_FILE.write_text(orch_original, encoding="utf-8")
+
+        try:
+            ai_status.ORCHESTRATOR_STATE_FILE.write_text("", encoding="utf-8")
+            self._assert_clear_refused("orchestrator runtime state is empty or truncated")
+
+            ai_status.ORCHESTRATOR_STATE_FILE.write_text("{}\n", encoding="utf-8")
+            self._assert_clear_refused("orchestrator runtime state must be a non-empty JSON object")
+
+            for missing_key, expected_err in (
+                ("workers", "orchestrator workers table is missing or malformed"),
+                ("worker_worktrees", "orchestrator worker_worktrees state is missing or malformed"),
+                ("worker_worktree_lease_blocks", "orchestrator worker_worktree_lease_blocks table is missing or malformed"),
+                ("queue", "orchestrator queue state is missing or malformed"),
+            ):
+                truncated_state = json.loads(orch_original)
+                truncated_state.pop(missing_key, None)
+                ai_status.ORCHESTRATOR_STATE_FILE.write_text(
+                    json.dumps(truncated_state, ensure_ascii=False), encoding="utf-8"
+                )
+                self._assert_clear_refused(expected_err)
+
+            no_leases_state = json.loads(orch_original)
+            no_leases_state["worker_worktrees"].pop("leases", None)
+            ai_status.ORCHESTRATOR_STATE_FILE.write_text(
+                json.dumps(no_leases_state, ensure_ascii=False), encoding="utf-8"
+            )
+            self._assert_clear_refused("orchestrator worktree leases table is missing or malformed")
+
+            no_hb_state = json.loads(orch_original)
+            no_hb_state["worker_worktrees"].pop("handoff_blocks", None)
+            ai_status.ORCHESTRATOR_STATE_FILE.write_text(
+                json.dumps(no_hb_state, ensure_ascii=False), encoding="utf-8"
+            )
+            self._assert_clear_refused("orchestrator worktree handoff_blocks table is missing or malformed")
+
+            no_events_state = json.loads(orch_original)
+            no_events_state["queue"].pop("events", None)
+            ai_status.ORCHESTRATOR_STATE_FILE.write_text(
+                json.dumps(no_events_state, ensure_ascii=False), encoding="utf-8"
+            )
+            self._assert_clear_refused("orchestrator queue events table is missing or malformed")
+        finally:
+            ai_status.ORCHESTRATOR_STATE_FILE.write_text(orch_original, encoding="utf-8")
+
+        eq_path = self.status_root / ".orchestrator" / "event-queue.jsonl"
+        eq_original = eq_path.read_text(encoding="utf-8")
+        try:
+            eq_path.unlink()
+            self._assert_clear_refused("event queue file is missing")
+        finally:
+            eq_path.write_text(eq_original, encoding="utf-8")
 
         with mock.patch.object(
             ai_status,
