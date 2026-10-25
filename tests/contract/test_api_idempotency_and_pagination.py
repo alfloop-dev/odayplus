@@ -550,6 +550,13 @@ def test_list_plans_filters_by_tenant() -> None:
     assert page["total"] == 1
     assert {row["tenant_id"] for row in page["items"]} == {"tenant-b"}
 
+    other = client.get(
+        "/api/v1/priceops/plans", params={"tenant_id": "tenant-a"},
+        headers={**WRITE_HEADERS, "x-tenant-id": "tenant-b"},
+    ).json()
+    assert other["total"] == 0
+    assert other["items"] == []
+
 
 def test_list_plans_default_response_stays_backward_compatible() -> None:
     """No query parameters must return what callers saw before this task."""
