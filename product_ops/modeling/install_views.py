@@ -55,6 +55,8 @@ REQUIRED_PREREQUISITE_COLUMNS: Mapping[str, tuple[str, ...]] = {
     ),
     "data_plane.canonical_lineage": (
         "source_snapshot_id",
+        "source_kind",
+        "source_id",
         "run_id",
         "tenant_id",
         "canonical_table",
@@ -72,6 +74,12 @@ REQUIRED_PREREQUISITE_COLUMNS: Mapping[str, tuple[str, ...]] = {
         "reconciled",
         "partition_complete",
         "finished_at",
+    ),
+    "data_plane.quarantined_records": (
+        "source_kind",
+        "source_id",
+        "quarantined_at",
+        "resolved_at",
     ),
 }
 

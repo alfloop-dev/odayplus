@@ -149,12 +149,24 @@ def _install_minimal_authoritative_schema(connection) -> None:
 
         CREATE TABLE data_plane.canonical_lineage (
             source_snapshot_id UUID NOT NULL,
+            source_kind TEXT NOT NULL,
+            source_id TEXT NOT NULL,
             run_id UUID NOT NULL,
             tenant_id UUID NOT NULL,
             canonical_table TEXT NOT NULL,
             canonical_id UUID NOT NULL,
             projected_at TIMESTAMPTZ NOT NULL,
             PRIMARY KEY (source_snapshot_id, canonical_table, canonical_id)
+        );
+
+        CREATE TABLE data_plane.quarantined_records (
+            source_snapshot_id UUID PRIMARY KEY,
+            source_kind TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            run_id UUID NOT NULL,
+            partition_key TEXT NOT NULL,
+            quarantined_at TIMESTAMPTZ NOT NULL,
+            resolved_at TIMESTAMPTZ
         );
 
         CREATE TABLE data_plane.transaction_authority (
@@ -231,14 +243,29 @@ def _insert_lineage(
     entity_id: UUID,
     projected_at: datetime,
 ) -> None:
+    # Lineage carries the source identity of the run that projected it; the
+    # snapshot name doubles as the source record id.
     connection.execute(
         """
         INSERT INTO data_plane.canonical_lineage (
-            source_snapshot_id, run_id, tenant_id, canonical_table,
-            canonical_id, projected_at
-        ) VALUES (%s, %s, %s, %s, %s, %s)
+            source_snapshot_id, source_kind, source_id, run_id, tenant_id,
+            canonical_table, canonical_id, projected_at
+        ) VALUES (
+            %s,
+            (SELECT source_kind FROM data_plane.ingestion_runs WHERE run_id = %s),
+            %s, %s, %s, %s, %s, %s
+        )
         """,
-        (_id(f"snapshot:{name}"), run_id, tenant_id, table, entity_id, projected_at),
+        (
+            _id(f"snapshot:{name}"),
+            run_id,
+            name,
+            run_id,
+            tenant_id,
+            table,
+            entity_id,
+            projected_at,
+        ),
     )
 
 
@@ -1750,6 +1777,215 @@ def test_postgresql_forecast_view_admits_only_eof_proven_target_and_prior_partit
                     assert row["feature_snapshot_time"] == prior_eof_at
             (late_row,) = source.load(spec, bounds).rows
             assert late_row["feature_snapshot_time"] == prior_eof_at
+
+        assert _forecast_rows(connection, tenant_id, store_id) == baseline
+
+
+def _insert_quarantine(
+    connection,
+    *,
+    name: str,
+    source_id: str,
+    run_id: UUID,
+    partition_key: str,
+    quarantined_at: datetime,
+    source_kind: str = "orders",
+    resolved_at: datetime | None = None,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO data_plane.quarantined_records (
+            source_snapshot_id, source_kind, source_id, run_id,
+            partition_key, quarantined_at, resolved_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            _id(f"quarantine-snapshot:{name}"),
+            source_kind,
+            source_id,
+            run_id,
+            partition_key,
+            quarantined_at,
+            resolved_at,
+        ),
+    )
+
+
+def test_postgresql_forecast_view_refuses_unresolved_later_update_quarantine(
+    intake_blank_db,
+) -> None:
+    """The orders source also windows on updatedAt, so a later update of an
+    already projected order is read -- and may be quarantined -- by another
+    day's partition. That partition's FAILED chunk keeps its schema-default zero
+    counters and adds no lineage, so neither the order day's EOF proof nor the
+    lineage run predicate sees the dropped update; the retained quarantine
+    evidence must keep the stale day out of the target and its 28 prior days."""
+    spec = MODEL_SPECS["forecastops"]
+    bounds = DataBounds(
+        _at(FORECAST_FIRST_DAY, 0),
+        _at(FORECAST_TARGET_DAY + timedelta(days=1), 0),
+        10,
+    )
+    expected_query_sha256 = hashlib.sha256(
+        (
+            f"{spec.relation}|{','.join(spec.required_columns)}|"
+            f"{bounds.start.isoformat()}|{bounds.end.isoformat()}|{bounds.max_rows}"
+        ).encode()
+    ).hexdigest()
+    update_day = FORECAST_TARGET_DAY + timedelta(days=3)
+
+    with intake_blank_db.connect() as connection:
+        _install_minimal_authoritative_schema(connection)
+        tenant_id, store_id, daily_runs = _seed_forecast_history(connection)
+        client = _PsycopgInstallationClient(connection)
+        installed = ModelReadyViewInstaller(client).install()
+        digest = hashlib.sha256(MODEL_READY_SQL_PATH.read_bytes()).hexdigest()
+        assert installed["forecast"]["view_version"] == spec.expected_view_version
+        assert installed["forecast"]["installer_sha256"] == digest
+        source = PostgresModelReadySource(client)
+        baseline = _forecast_rows(connection, tenant_id, store_id)
+        (baseline_row,) = source.load(spec, bounds).rows
+
+        def assert_target_refused(reason: str) -> None:
+            assert _forecast_target(connection, tenant_id, store_id) == (False, reason)
+            with pytest.raises(ModelReadyDataError, match="not trainable"):
+                source.load(spec, bounds)
+
+        def assert_target_admitted() -> None:
+            assert _forecast_target(connection, tenant_id, store_id) == (True, None)
+            loaded = source.load(spec, bounds)
+            assert loaded.query_sha256 == expected_query_sha256
+            assert loaded.bounds == bounds
+            (row,) = loaded.rows
+            assert row["view_version"] == spec.expected_view_version
+            assert row["tenant_id"] == tenant_id
+            assert row["store_id"] == store_id
+            assert row["date"] == FORECAST_TARGET_DAY
+            assert row["label_maturity_time"] == baseline_row["label_maturity_time"]
+            assert row["feature_snapshot_time"] == baseline_row["feature_snapshot_time"]
+
+        for day, reason in (
+            (FORECAST_TARGET_DAY, "SOURCE_RUN_NOT_COMPLETE"),
+            (FORECAST_PRIOR_DAY, "PRIOR_SOURCE_NOT_COMPLETE"),
+        ):
+            order_id = f"forecast:{day.isoformat()}"
+            projected_at = _at(day, 13)
+
+            # The updatedAt-day partition failed on the order's later update
+            # after quarantining it; its counters keep their zero defaults.
+            # Even a zero-row EOF of that partition does not clear the stale
+            # row, nor does the order day's own EOF proof.
+            with connection.transaction(force_rollback=True):
+                failed_update_run = _insert_run(
+                    connection,
+                    name=f"forecast-later-update-failed:{day.isoformat()}",
+                    source_kind="orders",
+                    partition_key=update_day.isoformat(),
+                    finished_at=None,
+                    status="FAILED",
+                )
+                _insert_quarantine(
+                    connection,
+                    name=f"later-update:{day.isoformat()}",
+                    source_id=order_id,
+                    run_id=failed_update_run,
+                    partition_key=update_day.isoformat(),
+                    quarantined_at=_at(update_day, 4),
+                )
+                _insert_run(
+                    connection,
+                    name=f"forecast-later-update-eof:{day.isoformat()}",
+                    source_kind="orders",
+                    partition_key=update_day.isoformat(),
+                    finished_at=_at(update_day, 6),
+                )
+                assert_target_refused(reason)
+
+                # Resolving that quarantine restores the admitted row with
+                # its original clocks; nothing is backdated or invented.
+                connection.execute(
+                    """
+                    UPDATE data_plane.quarantined_records
+                    SET resolved_at = %s
+                    WHERE source_snapshot_id = %s
+                    """,
+                    (
+                        _at(update_day, 8),
+                        _id(f"quarantine-snapshot:later-update:{day.isoformat()}"),
+                    ),
+                )
+                assert_target_admitted()
+
+            # The same failed chunk inside the order day's own partition, after
+            # a later zero-row EOF of that partition, is refused as well.
+            with connection.transaction(force_rollback=True):
+                failed_same_day_run = _insert_run(
+                    connection,
+                    name=f"forecast-same-day-failed:{day.isoformat()}",
+                    source_kind="orders",
+                    partition_key=day.isoformat(),
+                    finished_at=None,
+                    status="FAILED",
+                )
+                _insert_quarantine(
+                    connection,
+                    name=f"same-day:{day.isoformat()}",
+                    source_id=order_id,
+                    run_id=failed_same_day_run,
+                    partition_key=day.isoformat(),
+                    quarantined_at=_at(day + timedelta(days=1), 2),
+                )
+                _insert_run(
+                    connection,
+                    name=f"forecast-same-day-eof:{day.isoformat()}",
+                    source_kind="orders",
+                    partition_key=day.isoformat(),
+                    finished_at=_at(day + timedelta(days=1), 4),
+                )
+                assert_target_refused(reason)
+
+            # An unresolved quarantine of an earlier, superseded version of the
+            # order, or of an unrelated order or source, is not stale evidence
+            # about the projected row and does not refuse the day.
+            unrelated_partition = (FORECAST_FIRST_DAY - timedelta(days=10)).isoformat()
+            with connection.transaction(force_rollback=True):
+                earlier_run = _insert_run(
+                    connection,
+                    name=f"forecast-earlier-version:{day.isoformat()}",
+                    source_kind="orders",
+                    partition_key=unrelated_partition,
+                    finished_at=_at(day, 2),
+                    processed_count=1,
+                    quarantined_count=1,
+                    reconciled=False,
+                    status="RECONCILIATION_FAILED",
+                )
+                _insert_quarantine(
+                    connection,
+                    name=f"earlier-version:{day.isoformat()}",
+                    source_id=order_id,
+                    run_id=earlier_run,
+                    partition_key=unrelated_partition,
+                    quarantined_at=projected_at - timedelta(hours=11),
+                )
+                _insert_quarantine(
+                    connection,
+                    name=f"unrelated-order:{day.isoformat()}",
+                    source_id=f"forecast-unrelated:{day.isoformat()}",
+                    run_id=earlier_run,
+                    partition_key=update_day.isoformat(),
+                    quarantined_at=_at(update_day, 4),
+                )
+                _insert_quarantine(
+                    connection,
+                    name=f"other-source:{day.isoformat()}",
+                    source_id=order_id,
+                    source_kind="trade",
+                    run_id=earlier_run,
+                    partition_key=update_day.isoformat(),
+                    quarantined_at=_at(update_day, 4),
+                )
+                assert_target_admitted()
 
         assert _forecast_rows(connection, tenant_id, store_id) == baseline
 

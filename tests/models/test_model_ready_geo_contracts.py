@@ -61,6 +61,14 @@ def test_forecast_sql_requires_eof_proven_partitions_for_target_and_prior_days()
     assert "lineage.source_snapshot_id = authority.source_snapshot_id" in body
     assert "AND ingestion.source_kind = 'orders'" in body
     assert "bool_and(\n                ingestion.source_kind = 'orders'" not in body
+    # A later update of the order read by another day's updatedAt partition and
+    # quarantined there (even by a FAILED chunk with default zero counters)
+    # keeps the retained row incomplete until that quarantine is resolved.
+    assert "FROM data_plane.quarantined_records AS quarantine" in body
+    assert "quarantine.source_id = ANY(source.order_source_ids)" in body
+    assert "AND quarantine.resolved_at IS NULL" in body
+    assert "AND quarantine.quarantined_at >= source.source_projected_at" in body
+    assert "FILTER (WHERE lineage.source_kind = 'orders') AS order_source_ids" in body
     assert "proof.partition_date = transaction_daily.date" in body
     assert "proof.finished_at >= transaction_daily.source_run_finished_at" in body
     assert "partition_proof.finished_at,\n" in body

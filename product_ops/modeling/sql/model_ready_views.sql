@@ -106,7 +106,24 @@ transaction_source AS (
         txn.ingested_at,
         txn.net_amount,
         source.source_snapshot_ids,
-        source.source_run_complete,
+        (
+            source.source_run_complete
+            -- The orders source windows on updatedAt as well as createdAt, so
+            -- a later update of an already projected order is read by another
+            -- day's partition. When that update is quarantined -- including by
+            -- a FAILED chunk whose counters keep their schema-default zero --
+            -- the retained canonical row is stale and this day's EOF proof
+            -- cannot see it; an unresolved quarantine of the same order that
+            -- is no older than its newest projection keeps it incomplete.
+            AND NOT EXISTS (
+                SELECT 1
+                FROM data_plane.quarantined_records AS quarantine
+                WHERE quarantine.source_kind = 'orders'
+                  AND quarantine.source_id = ANY(source.order_source_ids)
+                  AND quarantine.resolved_at IS NULL
+                  AND quarantine.quarantined_at >= source.source_projected_at
+            )
+        ) AS source_run_complete,
         source.source_run_finished_at
     FROM core.transactions AS txn
     INNER JOIN core.stores AS store
@@ -136,7 +153,10 @@ transaction_source AS (
                     AND ingestion.finished_at IS NOT NULL
                 )
             ) AS source_run_complete,
-            max(ingestion.finished_at) AS source_run_finished_at
+            max(ingestion.finished_at) AS source_run_finished_at,
+            array_agg(DISTINCT lineage.source_id)
+                FILTER (WHERE lineage.source_kind = 'orders') AS order_source_ids,
+            max(lineage.projected_at) AS source_projected_at
         FROM data_plane.canonical_lineage AS lineage
         INNER JOIN data_plane.ingestion_runs AS ingestion
             ON ingestion.run_id = lineage.run_id
@@ -1439,7 +1459,8 @@ INSERT INTO model_ready.view_contracts (
             'core.stores',
             'data_plane.canonical_lineage',
             'data_plane.ingestion_runs',
-            'data_plane.transaction_authority'
+            'data_plane.transaction_authority',
+            'data_plane.quarantined_records'
         ],
         'ACTIVE',
         TRUE,
