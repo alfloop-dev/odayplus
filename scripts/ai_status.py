@@ -6332,6 +6332,797 @@ def normalize_handoffs(state: dict[str, Any]) -> None:
             )
 
 
+_ALLOWED_OPTIONAL_PIN_CORRECTION_LOG_TYPES = frozenset(
+    {
+        "assign",
+        "wake_queued",
+        "dispatch_blocked_worktree_base",
+        "dispatch_blocked_worktree_lease",
+        "dispatch_preflight_blocked",
+    }
+)
+
+_FORBIDDEN_OPTIONAL_PIN_CORRECTION_TASK_KEYS = (
+    "branch",
+    "head",
+    "head_sha",
+    "commit",
+    "commits",
+    "verified_head",
+    "workspace_path",
+    "worktree_path",
+    "helper_execution_lease",
+    "execution_evidence",
+    "verification_evidence",
+    "verification_runs",
+    "verification_results",
+    "verification_receipts",
+    "verification_receipt",
+    "verification_status",
+    "verification_passed",
+    "last_verification",
+    "test_results",
+    "evidence",
+    "pr_number",
+    "pr_url",
+    "pull_request",
+    "review_submission",
+    "approved_head",
+    "last_approved_head",
+    "review_gate_sha",
+    "review_gate_target",
+    "review_gate_revocations",
+    "status_check_outbox",
+    "status_check_delivery_history",
+    "review_notes_zh",
+    "review_file",
+    "merge_route",
+    "delivery",
+    "delivery_blockers",
+    "handoff_seal",
+    "human_continuation_approval",
+    "human_continuation_approval_history",
+    "blocker_provenance",
+    "blocker_provenance_history",
+    "review_reopen_history",
+    "last_reopened_at",
+    "last_reopened_by",
+    "last_reopened_reason",
+    "last_reopen_category",
+    "last_review_reopen_at",
+    "review_churn_escalated_at",
+    "waiting_for",
+    "blocker",
+    "failure_reason",
+    "superseded_by",
+    "terminal_outcome",
+    "history_recovery",
+    "completed_at",
+    "archived_at",
+)
+
+
+def _is_preflight_blocked_queue_record(record: Any) -> bool:
+    if not isinstance(record, dict):
+        return False
+    if record.get("run_id") or record.get("lease_owner"):
+        return False
+    status = str(record.get("status") or "").strip().lower()
+    error = str(record.get("error") or "").strip()
+    return status == "failed" and error.startswith("Worker workspace preflight blocked:")
+
+
+def _load_strict_activity_logs_for_pin_removal(task_id: str) -> list[dict[str, Any]]:
+    if not LOG_FILE.exists():
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "canonical activity log is missing; original assigning actor cannot be proven."
+        )
+    entries: list[dict[str, Any]] = []
+    archive_dir = LOG_FILE.parent / "archive" / "logs"
+    if archive_dir.exists():
+        try:
+            archive_paths = sorted(archive_dir.glob(f"{LOG_FILE.name}-*.gz"))
+        except OSError as exc:
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"unable to inspect archived activity logs: {exc}"
+            ) from exc
+        for archive_path in archive_paths:
+            try:
+                with gzip.open(archive_path, "rt", encoding="utf-8") as handle:
+                    lines = handle.read().splitlines()
+            except (OSError, EOFError, UnicodeDecodeError) as exc:
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    f"archived activity log {archive_path.name} is unreadable: {exc}"
+                ) from exc
+            for line_no, raw_line in enumerate(lines, start=1):
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    parsed = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise SystemExit(
+                        f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                        f"malformed JSON in archived activity log {archive_path.name}:{line_no}: {exc}"
+                    ) from exc
+                if not isinstance(parsed, dict):
+                    raise SystemExit(
+                        f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                        f"non-object entry in archived activity log {archive_path.name}:{line_no}."
+                    )
+                entries.append(parsed)
+    try:
+        active_lines = LOG_FILE.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"canonical activity log is unreadable: {exc}"
+        ) from exc
+    for line_no, raw_line in enumerate(active_lines, start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"malformed JSON in canonical activity log line {line_no}: {exc}"
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"non-object entry in canonical activity log line {line_no}."
+            )
+        entries.append(parsed)
+    return entries
+
+
+def _validate_assign_optional_pin_removal(
+    state: dict[str, Any],
+    *,
+    task_id: str,
+    task: dict[str, Any] | None,
+    actor: str,
+    owner: str,
+    reviewer: str,
+    title: str | None,
+    summary_zh: str | None,
+    metadata: dict[str, Any],
+) -> str:
+    if task is None:
+        if archived_task_snapshot(task_id):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: task is archived."
+            )
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "task does not exist on the active board (new-task clear attempts are forbidden)."
+        )
+    if archived_task_snapshot(task_id):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: task is archived."
+        )
+
+    prior_pin = task.get("frozen_evidence_base_sha")
+    if (
+        "frozen_evidence_base_sha" not in task
+        or not isinstance(prior_pin, str)
+        or not prior_pin.strip()
+    ):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "task has no prior frozen_evidence_base_sha pin to clear."
+        )
+    prior_pin = prior_pin.strip()
+
+    if task.get("status") != "todo":
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"task status must be 'todo' (found {task.get('status')!r})."
+        )
+    task_class = str(task.get("task_class") or "product").strip().lower()
+    if task_class != "product":
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"only 'product' tasks are eligible (found {task.get('task_class')!r})."
+        )
+    for marker in (
+        "non_dispatchable",
+        "requires_human_approval",
+        "human_required_roles",
+        "helper_parent",
+        "helper_kind",
+        "auto_generated",
+        "auto_created_by",
+        "gate_status",
+    ):
+        if task.get(marker):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"task carries non-standard or human-gate marker {marker!r}."
+            )
+    if str(task.get("next") or "").strip() not in {"Assignment created", "Ownership updated"}:
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"task next state ({task.get('next')!r}) indicates post-assignment activity."
+        )
+    for candidate in state.get("tasks", []) or []:
+        if (
+            isinstance(candidate, dict)
+            and str(candidate.get("helper_parent") or "").strip() == task_id
+        ):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"child helper/sidecar task {candidate.get('id')!r} already exists."
+            )
+
+    recorded_owner = canonical_agent_name(task.get("owner"))
+    recorded_reviewer = canonical_agent_name(task.get("reviewer"))
+    if (
+        not recorded_owner
+        or not recorded_reviewer
+        or canonical_agent_name(owner) != recorded_owner
+        or canonical_agent_name(reviewer) != recorded_reviewer
+    ):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"owner ({owner}) and reviewer ({reviewer}) must remain unchanged "
+            f"({recorded_owner} / {recorded_reviewer})."
+        )
+
+    for key, value in metadata.items():
+        if key == "frozen_evidence_base_sha":
+            continue
+        if value is None:
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"null metadata value for {key!r} is forbidden (no other null metadata changes allowed)."
+            )
+        if key == "priority":
+            if str(value).strip().upper() != str(task.get("priority") or "").strip().upper():
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    "cannot mutate priority during optional-pin correction."
+                )
+        elif key not in task or task.get(key) != value:
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"cannot mutate metadata field {key!r} during optional-pin correction."
+            )
+    if title is not None and title != task.get("title"):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "cannot mutate title during optional-pin correction."
+        )
+    if summary_zh is not None and summary_zh != task.get("summary_zh"):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "cannot mutate summary_zh during optional-pin correction."
+        )
+    if "TASK_PHASE" in os.environ and os.environ["TASK_PHASE"] != task.get("phase"):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "cannot mutate phase during optional-pin correction."
+        )
+    if "TASK_ARTIFACTS" in os.environ and parse_csv_env("TASK_ARTIFACTS") != (task.get("artifacts") or []):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "cannot mutate artifacts during optional-pin correction."
+        )
+    if "TASK_ACCEPTANCE" in os.environ and parse_csv_env("TASK_ACCEPTANCE") != (task.get("acceptance") or []):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "cannot mutate acceptance during optional-pin correction."
+        )
+    if os.environ.get("TASK_BRANCH", "").strip():
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "cannot set TASK_BRANCH during optional-pin correction."
+        )
+
+    if "verification" in task and task["verification"] is not None:
+        verifications = task["verification"]
+        if not isinstance(verifications, list) or any(
+            not isinstance(cmd, str) or not cmd.strip() for cmd in verifications
+        ):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                "verification field must contain only declared command strings, not execution results or receipts."
+            )
+    for counter_key in (
+        "review_reopen_count",
+        "review_churn_escalated_at_count",
+        "review_churn_reassigned_at_count",
+    ):
+        if counter_key in task:
+            raw_count = task.get(counter_key)
+            if isinstance(raw_count, bool) or raw_count not in (None, 0):
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    f"task has reopen/churn counter {counter_key}={raw_count!r}."
+                )
+    for forbidden_key in _FORBIDDEN_OPTIONAL_PIN_CORRECTION_TASK_KEYS:
+        if forbidden_key in task and (
+            task[forbidden_key] is not None
+            or forbidden_key
+            in {
+                "branch",
+                "helper_execution_lease",
+                "pr_number",
+                "pr_url",
+                "review_submission",
+                "approved_head",
+                "last_approved_head",
+                "delivery",
+                "handoff_seal",
+                "human_continuation_approval",
+                "human_continuation_approval_history",
+                "blocker_provenance",
+                "blocker_provenance_history",
+                "review_reopen_history",
+                "verification_runs",
+                "verification_results",
+                "verification_receipts",
+                "verification_receipt",
+                "verification_evidence",
+                "execution_evidence",
+            }
+        ):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"task carries prior execution, review, reopen, or approval state ({forbidden_key})."
+            )
+    for handoff in state.get("handoffs", []) or []:
+        if isinstance(handoff, dict) and str(handoff.get("task_id") or "").strip() == task_id:
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                "task has handoff history."
+            )
+    for blocker in state.get("blockers", []) or []:
+        if isinstance(blocker, dict) and str(blocker.get("task_id") or "").strip() == task_id:
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                "task has blocker history."
+            )
+    nonce_registry = state.get("human_continuation_approval_nonce_registry")
+    if isinstance(nonce_registry, dict):
+        for nonce_entry in nonce_registry.values():
+            if isinstance(nonce_entry, dict) and str(nonce_entry.get("task_id") or "").strip() == task_id:
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    "task has continuation approval nonce history."
+                )
+
+    log_entries = _load_strict_activity_logs_for_pin_removal(task_id)
+    task_log_entries = [
+        entry
+        for entry in log_entries
+        if str(entry.get("task_id") or "").strip() == task_id
+        or str(entry.get("workspace_task_id") or "").strip() == task_id
+        or str(entry.get("task_scope") or "").strip() == task_id
+        or (
+            isinstance(entry.get("task_ids"), list)
+            and task_id in {str(item).strip() for item in entry["task_ids"]}
+        )
+    ]
+    assign_entries = [
+        entry for entry in task_log_entries if str(entry.get("type") or "").strip() == "assign"
+    ]
+    if not assign_entries:
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "no original assign audit entry found in canonical activity log."
+        )
+    canonical_actor = canonical_agent_name(actor)
+    assign_pattern = re.compile(rf"^Assigned {re.escape(task_id)} to (\S+) with reviewer (\S+)$")
+    for entry in assign_entries:
+        entry_actor = canonical_agent_name(entry.get("agent"))
+        if not entry_actor or entry_actor != canonical_actor:
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"actor {actor} is not the proven original assigning actor ({entry_actor or 'unknown'})."
+            )
+        if entry.get("cleared_optional_pin") or "previous_frozen_evidence_base_sha" in entry:
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                "task already has an optional-pin correction in audit history."
+            )
+        match = assign_pattern.fullmatch(str(entry.get("message") or "").strip())
+        if not match:
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"assign audit entry message ({entry.get('message')!r}) is not an original creation assignment."
+            )
+        logged_owner, logged_reviewer = match.group(1), match.group(2)
+        if (
+            canonical_agent_name(logged_owner) != recorded_owner
+            or canonical_agent_name(logged_reviewer) != recorded_reviewer
+        ):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"historical assign audit ({logged_owner} / {logged_reviewer}) does not match "
+                f"current owner/reviewer ({recorded_owner} / {recorded_reviewer})."
+            )
+    for entry in task_log_entries:
+        entry_type = str(entry.get("type") or "").strip()
+        if entry_type == "assign":
+            continue
+        if (
+            entry_type == "dependency_update"
+            and entry.get("old_dependencies") == []
+            and str(entry.get("message") or "").strip()
+            == "Initial dependency declaration during canonical task assignment."
+            and canonical_agent_name(entry.get("agent")) == canonical_actor
+        ):
+            continue
+        if entry_type not in _ALLOWED_OPTIONAL_PIN_CORRECTION_LOG_TYPES:
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"canonical activity log records post-assignment activity ({entry_type!r})."
+            )
+        if entry.get("refresh_status"):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"preflight log records pre-existing worktree/branch refresh ({entry.get('refresh_status')!r})."
+            )
+
+    config = status_runtime_config()
+    if orchestrator_common.load_verification_receipts(config, task_id=task_id):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "recorded verification receipts exist for task."
+        )
+    ev_dir = orchestrator_common.evidence_dir(config)
+    if ev_dir.is_dir():
+        receipt_slug = orchestrator_common.verification_evidence.receipt_slug(task_id)
+        if list(ev_dir.glob(f"verification-receipt-{receipt_slug}-*.json")):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                "verification receipt file exists in evidence directory."
+            )
+
+    queue_events: dict[str, Any] = {}
+    if ORCHESTRATOR_STATE_FILE.exists():
+        try:
+            orch_text = ORCHESTRATOR_STATE_FILE.read_text(encoding="utf-8").strip()
+            orchestrator_state = json.loads(orch_text) if orch_text else {}
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"orchestrator runtime state is unreadable or malformed: {exc}"
+            ) from exc
+        if not isinstance(orchestrator_state, dict):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                "orchestrator runtime state must be a JSON object."
+            )
+        workers = orchestrator_state.get("workers")
+        if workers is not None:
+            if not isinstance(workers, dict):
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    "orchestrator workers table is malformed."
+                )
+            for run_id, worker in workers.items():
+                if not isinstance(worker, dict):
+                    raise SystemExit(
+                        f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                        f"orchestrator worker entry {run_id!r} is malformed."
+                    )
+                worker_task_id = str(
+                    worker.get("task_id")
+                    or ((worker.get("request_snapshot") or {}).get("task_id"))
+                    or ""
+                ).strip()
+                if worker_task_id.casefold() == task_id.casefold():
+                    raise SystemExit(
+                        f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                        f"orchestrator worker record exists ({run_id})."
+                    )
+        worker_worktrees = orchestrator_state.get("worker_worktrees")
+        if worker_worktrees is not None:
+            if not isinstance(worker_worktrees, dict):
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    "orchestrator worker_worktrees state is malformed."
+                )
+            leases = worker_worktrees.get("leases") or {}
+            if not isinstance(leases, dict):
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    "orchestrator worktree leases table is malformed."
+                )
+            for lease_key, lease in leases.items():
+                if str(lease_key).strip().casefold() == task_id.casefold() or (
+                    isinstance(lease, dict)
+                    and (
+                        str(lease.get("task_id") or "").strip().casefold() == task_id.casefold()
+                        or str(lease.get("workspace_task_id") or "").strip().casefold() == task_id.casefold()
+                    )
+                ):
+                    raise SystemExit(
+                        f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                        f"worker worktree lease exists ({lease_key})."
+                    )
+            handoff_blocks = worker_worktrees.get("handoff_blocks") or {}
+            if not isinstance(handoff_blocks, dict):
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    "orchestrator worktree handoff_blocks table is malformed."
+                )
+            for hb_key, hb in handoff_blocks.items():
+                if str(hb_key).strip().casefold() == task_id.casefold() or (
+                    isinstance(hb, dict)
+                    and str(hb.get("task_id") or "").strip().casefold() == task_id.casefold()
+                ):
+                    raise SystemExit(
+                        f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                        f"worktree handoff block exists ({hb_key})."
+                    )
+        lease_blocks = orchestrator_state.get("worker_worktree_lease_blocks")
+        if lease_blocks is not None:
+            if not isinstance(lease_blocks, dict):
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    "orchestrator worker_worktree_lease_blocks table is malformed."
+                )
+            for lb_key, lb in lease_blocks.items():
+                if str(lb_key).strip().casefold() == task_id.casefold() or (
+                    isinstance(lb, dict)
+                    and str(lb.get("task_id") or "").strip().casefold() == task_id.casefold()
+                ):
+                    raise SystemExit(
+                        f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                        f"worktree lease block exists ({lb_key})."
+                    )
+        queue = orchestrator_state.get("queue")
+        if queue is not None:
+            if not isinstance(queue, dict):
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    "orchestrator queue state is malformed."
+                )
+            raw_events = queue.get("events")
+            if raw_events is not None:
+                if isinstance(raw_events, dict):
+                    queue_events = raw_events
+                    for event_id, record in raw_events.items():
+                        if not isinstance(record, dict):
+                            raise SystemExit(
+                                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                                f"orchestrator queue event {event_id!r} is malformed."
+                            )
+                        rec_task_id = str(record.get("task_id") or "").strip()
+                        if rec_task_id.casefold() == task_id.casefold() and not _is_preflight_blocked_queue_record(record):
+                            raise SystemExit(
+                                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                                f"pending or active queue event {event_id!r} exists in orchestrator state."
+                            )
+                elif isinstance(raw_events, list):
+                    for record in raw_events:
+                        if not isinstance(record, dict):
+                            raise SystemExit(
+                                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                                "orchestrator queue event entry is malformed."
+                            )
+                        rec_task_id = str(record.get("task_id") or "").strip()
+                        if rec_task_id.casefold() == task_id.casefold() and not _is_preflight_blocked_queue_record(record):
+                            raise SystemExit(
+                                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                                "pending or active queue event exists in orchestrator state."
+                            )
+                else:
+                    raise SystemExit(
+                        f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                        "orchestrator queue events table is malformed."
+                    )
+        orch_approvals = orchestrator_state.get("approvals")
+        if isinstance(orch_approvals, dict):
+            for bucket in ("pending", "history"):
+                items = orch_approvals.get(bucket) or []
+                if isinstance(items, list):
+                    for item in items:
+                        if isinstance(item, dict) and str(item.get("task_id") or "").strip().casefold() == task_id.casefold():
+                            raise SystemExit(
+                                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                                "orchestrator approval record exists for task."
+                            )
+
+    event_queue_path = Path(
+        str((config.get("paths") or {}).get("event_queue") or (STATUS_ROOT / ".orchestrator" / "event-queue.jsonl"))
+    )
+    if event_queue_path.exists():
+        try:
+            eq_lines = event_queue_path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError) as exc:
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"event queue is unreadable: {exc}"
+            ) from exc
+        for line_no, raw_line in enumerate(eq_lines, start=1):
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    f"malformed JSON in event-queue.jsonl line {line_no}: {exc}"
+                ) from exc
+            if not isinstance(event, dict):
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    f"non-object event in event-queue.jsonl line {line_no}."
+                )
+            ev_task_id = str(
+                event.get("task_id")
+                or (((event.get("metadata") or {}).get("task") or {}).get("id"))
+                or ""
+            ).strip()
+            if ev_task_id.casefold() == task_id.casefold():
+                event_id = str(event.get("event_id") or "").strip()
+                record = queue_events.get(event_id) if event_id and isinstance(queue_events, dict) else None
+                if not _is_preflight_blocked_queue_record(record):
+                    raise SystemExit(
+                        f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                        f"pending or active dispatch event ({event_id or 'queued'}) exists in event queue."
+                    )
+
+    if APPROVAL_QUEUE_FILE.exists():
+        try:
+            ap_text = APPROVAL_QUEUE_FILE.read_text(encoding="utf-8").strip()
+            approval_state = json.loads(ap_text) if ap_text else {}
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"approval queue is unreadable or malformed: {exc}"
+            ) from exc
+        if not isinstance(approval_state, dict):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                "approval queue must be a JSON object."
+            )
+        for bucket in ("pending", "history"):
+            items = approval_state.get(bucket) or []
+            if not isinstance(items, list):
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    f"approval queue {bucket} is malformed."
+                )
+            for item in items:
+                if isinstance(item, dict) and str(item.get("task_id") or "").strip().casefold() == task_id.casefold():
+                    raise SystemExit(
+                        f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                        "approval queue record exists for task."
+                    )
+
+    binding = resolve_task_repository(config, task)
+    if not binding.resolved or binding.root is None:
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"task repository checkout is unavailable ({binding.error or 'unresolved'})."
+        )
+    repo_root = binding.root.resolve(strict=False)
+    if not repo_root.exists() or not git_command_succeeds(["rev-parse", "--git-dir"], cwd=repo_root):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"repository root {repo_root} is not a valid git checkout."
+        )
+    branch_names = [f"task/{task_id}", f"task-{task_id}"]
+    branch_names_lower = {name.casefold() for name in branch_names}
+    current_branch = run_git_command(
+        ["rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=repo_root,
+        required=True,
+        failure_message=(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"unable to inspect HEAD in {repo_root}."
+        ),
+    )
+    if current_branch.casefold() in branch_names_lower:
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"task branch {current_branch} is checked out in {repo_root}."
+        )
+    refs_output = run_git_command(
+        ["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"],
+        cwd=repo_root,
+        required=True,
+        failure_message=(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"unable to inspect git refs in {repo_root}."
+        ),
+    )
+    for raw_ref in refs_output.splitlines():
+        ref = raw_ref.strip()
+        if not ref:
+            continue
+        if ref.startswith("refs/heads/"):
+            branch_ref = ref[len("refs/heads/") :].casefold()
+            if branch_ref in branch_names_lower:
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    f"task branch ref already exists in git ({ref})."
+                )
+        elif ref.startswith("refs/remotes/"):
+            remote_branch = ref[len("refs/remotes/") :].partition("/")[2].casefold()
+            if remote_branch in branch_names_lower:
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    f"task remote-tracking branch ref already exists in git ({ref})."
+                )
+    worktree_payload = run_git_command(
+        ["worktree", "list", "--porcelain"],
+        cwd=repo_root,
+        required=True,
+        failure_message=(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"git worktree inventory is unavailable in {repo_root}."
+        ),
+    )
+    for entry in parse_git_worktree_porcelain(worktree_payload):
+        wt_branch = str(entry.get("branch") or "").strip().removeprefix("refs/heads/")
+        wt_path_str = str(entry.get("worktree") or "").strip()
+        if wt_branch.casefold() in branch_names_lower:
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"git worktree exists for branch {wt_branch} ({wt_path_str})."
+            )
+        if wt_path_str:
+            wt_path = Path(wt_path_str).resolve(strict=False)
+            if wt_path != repo_root:
+                wt_base_name = wt_path.name.split(".lease_", 1)[0].strip()
+                if wt_base_name.casefold() in {task_id.casefold(), f"task-{task_id}".casefold()}:
+                    raise SystemExit(
+                        f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                        f"git worktree exists for task ({wt_path})."
+                    )
+    wt_settings = config.get("worker_worktrees") if isinstance(config.get("worker_worktrees"), dict) else {}
+    raw_wt_root = str(wt_settings.get("root") or "").strip()
+    if raw_wt_root:
+        wt_root = Path(os.path.expanduser(raw_wt_root))
+        if not wt_root.is_absolute():
+            wt_root = (STATUS_ROOT / wt_root).resolve(strict=False)
+        if wt_root.is_dir():
+            for repo_dir in wt_root.iterdir():
+                if not repo_dir.is_dir():
+                    continue
+                for candidate in repo_dir.iterdir():
+                    base_name = candidate.name.split(".lease_", 1)[0].strip()
+                    if base_name.casefold() == task_id.casefold():
+                        raise SystemExit(
+                            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                            f"managed worktree directory exists on disk ({candidate})."
+                        )
+    slug = orchestrator_common.verification_evidence.receipt_slug(task_id)
+    for ev_dir in {
+        (STATUS_ROOT / ".orchestrator" / "evidence").resolve(strict=False),
+        (repo_root / ".orchestrator" / "evidence").resolve(strict=False),
+    }:
+        if not ev_dir.is_dir():
+            continue
+        if orchestrator_common.verification_evidence.load_receipts(ev_dir, task_id=task_id):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"verification receipt exists in {ev_dir}."
+            )
+        for ev_file in sorted(ev_dir.iterdir()):
+            if not ev_file.is_file():
+                continue
+            name_lower = ev_file.name.casefold()
+            if slug.casefold() in name_lower or task_id.casefold() in name_lower:
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    f"verification receipt or evidence file exists ({ev_file})."
+                )
+    return prior_pin
+
+
 def command_assign(state: dict[str, Any], args: list[str]) -> None:
     from wave_guards import WaveGuardError, check_wave_assign
 
@@ -6355,20 +7146,42 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
             "既有 task 的 depends_on 不可由 assign 靜默修改；請使用 "
             "set_dependencies <task-id> <dep1,dep2|-> <message>，以留下 dependency audit event。"
         )
+    clearing_optional_pin = (
+        "frozen_evidence_base_sha" in metadata
+        and metadata["frozen_evidence_base_sha"] is None
+    )
+    previous_optional_pin: str | None = None
+    if clearing_optional_pin:
+        previous_optional_pin = _validate_assign_optional_pin_removal(
+            state,
+            task_id=task_id,
+            task=task,
+            actor=actor,
+            owner=owner,
+            reviewer=reviewer,
+            title=title,
+            summary_zh=summary_zh,
+            metadata=metadata,
+        )
+    effective_metadata = (
+        {k: v for k, v in metadata.items() if k != "frozen_evidence_base_sha"}
+        if clearing_optional_pin
+        else metadata
+    )
     # Do this before priority checks, timestamping, or any task/agent mutation.
     # An invalid source document must fail at assignment time rather than leave
     # a board record that the dispatcher can only reject repeatedly later.
-    validate_assignment_source_docs(task_id, task, metadata)
+    validate_assignment_source_docs(task_id, task, effective_metadata)
     if task is None:
-        priority = str(metadata.get("priority") or "P2").strip().upper()
+        priority = str(effective_metadata.get("priority") or "P2").strip().upper()
         if priority not in {"P0", "P1", "P2", "P3"}:
             raise SystemExit("TASK_PRIORITY must be one of P0, P1, P2, or P3")
-        metadata["priority"] = priority
-    elif "priority" in metadata:
-        priority = str(metadata.get("priority") or "").strip().upper()
+        effective_metadata["priority"] = priority
+    elif "priority" in effective_metadata:
+        priority = str(effective_metadata.get("priority") or "").strip().upper()
         if priority not in {"P0", "P1", "P2", "P3"}:
             raise SystemExit("TASK_PRIORITY must be one of P0, P1, P2, or P3")
-        metadata["priority"] = priority
+        effective_metadata["priority"] = priority
     if owner == reviewer:
         raise SystemExit("Reviewer cannot equal owner")
     independence_reason = review_independence_block_reason(owner, reviewer)
@@ -6383,8 +7196,8 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
     # old task alone would measure the assignment against a class and a shape it
     # will not have once written.
     effective_task_class = str(
-        metadata.get("task_class")
-        if "task_class" in metadata
+        effective_metadata.get("task_class")
+        if "task_class" in effective_metadata
         else ((task or {}).get("task_class") or "")
     ).strip()
     # `metadata` is folded in because it is where this invocation declares the
@@ -6392,7 +7205,9 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
     # `non_dispatchable`, `human_required_roles`. Creating a human gate would
     # otherwise be judged against a task that does not exist yet, and re-classing
     # an existing one against the class it is being moved off.
-    effective_task = {**(task or {}), **metadata, "owner": owner, "reviewer": reviewer}
+    effective_task = {**(task or {}), **effective_metadata, "owner": owner, "reviewer": reviewer}
+    if clearing_optional_pin:
+        effective_task.pop("frozen_evidence_base_sha", None)
     if effective_task_class:
         effective_task["task_class"] = effective_task_class
     for actor_name, actor_role, field in (
@@ -6439,7 +7254,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
             "next": "Assignment created",
             "last_update": timestamp,
         }
-        task.update(metadata)
+        task.update(effective_metadata)
         state["tasks"].append(task)
     else:
         task["owner"] = owner
@@ -6448,24 +7263,42 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
             task["title"] = title
         if summary_zh:
             task["summary_zh"] = summary_zh
-        if metadata:
-            task.update(metadata)
-        task["last_update"] = timestamp
-        task["next"] = "Ownership updated"
+        if clearing_optional_pin:
+            task.pop("frozen_evidence_base_sha", None)
+            if effective_metadata:
+                task.update(effective_metadata)
+            task["last_update"] = timestamp
+            task["next"] = task.get("next") or "Assignment created"
+        else:
+            if effective_metadata:
+                task.update(effective_metadata)
+            task["last_update"] = timestamp
+            task["next"] = "Ownership updated"
 
     agent = get_agent(state, owner)
     if os.environ.get("TASK_BRANCH"):
         agent["branch"] = os.environ["TASK_BRANCH"]
 
-    append_log(
-        {
-            "ts": timestamp,
-            "agent": actor,
-            "type": "assign",
-            "task_id": task_id,
-            "message": f"Assigned {task_id} to {owner} with reviewer {reviewer}",
-        }
-    )
+    log_entry: dict[str, Any] = {
+        "ts": timestamp,
+        "agent": actor,
+        "type": "assign",
+        "task_id": task_id,
+        "message": f"Assigned {task_id} to {owner} with reviewer {reviewer}",
+    }
+    if clearing_optional_pin and previous_optional_pin is not None:
+        log_entry.update(
+            {
+                "previous_frozen_evidence_base_sha": previous_optional_pin,
+                "frozen_evidence_base_sha": None,
+                "cleared_optional_pin": "frozen_evidence_base_sha",
+                "message": (
+                    f"Assigned {task_id} to {owner} with reviewer {reviewer} "
+                    f"(cleared erroneous optional pin frozen_evidence_base_sha={previous_optional_pin})"
+                ),
+            }
+        )
+    append_log(log_entry)
     if requested_dependencies:
         append_log(
             {
