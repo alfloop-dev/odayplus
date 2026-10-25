@@ -6820,7 +6820,11 @@ def _validate_assign_optional_pin_removal(
                     valid_routing
                     and reserved_entry is not None
                     and expires_at is not None
-                    and routing_ts >= expires_at
+                    # Native cleanup checks the full expiry before writing
+                    # audit ts via common.utc_now(), which truncates micros.
+                    # Retained lease/release order supplies the same-second
+                    # ordering; never round the stored claim itself.
+                    and routing_ts >= expires_at.replace(microsecond=0)
                     and entry.get("message")
                     == "Helper execution lease released because its launched run is no longer live."
                 )
@@ -6855,7 +6859,10 @@ def _validate_assign_optional_pin_removal(
             or canonical_agent_name(reserved_entry.get("claimed_by")) != claimant
             or reserved_entry.get("lease_expires_at") != claim["lease_expires_at"]
             or reserved_at is None
-            or claimed_at > reserved_at
+            # The grant is committed before its second-precision audit.
+            # Compare at that writer's precision, retaining full claim data
+            # and the ordered release/lease pairing above as proof.
+            or claimed_at.replace(microsecond=0) > reserved_at
             or claimed_at < last_release_ts
         ):
             raise SystemExit(

@@ -4195,7 +4195,10 @@ class AssignOptionalPinCorrectionTests(unittest.TestCase):
             stack.enter_context(mock.patch.object(supervisor, "sync_status_pipeline", return_value=True))
             clock = stack.enter_context(mock.patch.object(supervisor, "datetime", wraps=datetime))
             clock.now.return_value = fixed_now
-            stack.enter_context(mock.patch.object(ai_status.orchestrator_common, "utc_now", return_value=claimed_at))
+            # Keep the real audit writer's second precision, independent of
+            # the dispatcher's full-precision claim timestamps.
+            audit_clock = stack.enter_context(mock.patch.object(ai_status.orchestrator_common, "datetime", wraps=datetime))
+            audit_clock.now.return_value = fixed_now
             queue = stack.enter_context(mock.patch.object(supervisor, "queue_dispatch_event_safely", return_value=True))
             supervisor.dispatch_ready_tasks(config, orch_state, provider_report={}, agent_ids_override=["claude"])
             queue.assert_called_once()
@@ -4207,7 +4210,7 @@ class AssignOptionalPinCorrectionTests(unittest.TestCase):
         self.assertNotIn("run_id", task["helper_execution_lease"])
         return event
 
-    def _release_unused_helper(self) -> None:
+    def _release_unused_helper(self, *, released_at: str = "2026-10-25T21:11:00Z") -> None:
         from datetime import datetime
 
         import capacity_controller
@@ -4220,9 +4223,10 @@ class AssignOptionalPinCorrectionTests(unittest.TestCase):
         with (
             mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
             mock.patch.object(capacity_controller, "datetime", wraps=datetime) as clock,
-            mock.patch.object(ai_status.orchestrator_common, "utc_now", return_value="2026-10-25T21:11:00Z"),
+            mock.patch.object(ai_status.orchestrator_common, "datetime", wraps=datetime) as audit_clock,
         ):
-            clock.now.return_value = datetime.fromisoformat("2026-10-25T21:11:00+00:00")
+            clock.now.return_value = datetime.fromisoformat(released_at.replace("Z", "+00:00"))
+            audit_clock.now.return_value = clock.now.return_value
             self.assertEqual(supervisor.release_dead_helper_claims(config, orch_state), (True, True))
         task = ai_status.get_task(ai_status.load_state(), self.TASK_ID)
         self.assertNotIn("helper_execution_lease", task)
@@ -4237,9 +4241,15 @@ class AssignOptionalPinCorrectionTests(unittest.TestCase):
 
         # The actual caller's earlier reservation was normally released; its
         # complete audit stays in place when the next reservation is made.
-        self._reserve_unused_helper()
-        self._release_unused_helper()
-        event = self._reserve_unused_helper(claimed_at="2026-10-25T21:11:01Z")
+        self._reserve_unused_helper(claimed_at="2026-10-25T20:39:00.123456Z")
+        self._release_unused_helper(released_at="2026-10-25T21:09:00.654321Z")
+        event = self._reserve_unused_helper(claimed_at="2026-10-25T21:11:01.123456Z")
+        routing = [e for e in ai_status.load_logs(strict=True) if e["type"].startswith("helper_claim_")]
+        self.assertEqual([e["ts"] for e in routing], [
+            "2026-10-25T20:39:00Z", "2026-10-25T21:09:00Z", "2026-10-25T21:11:01Z",
+        ])
+        self.assertEqual(routing[0]["lease_expires_at"], "2026-10-25T21:09:00.123456Z")
+        self.assertEqual(event["task"]["helper_execution_lease"]["claimed_at"], "2026-10-25T21:11:01.123456Z")
         config = ai_status.status_runtime_config()
         orch_state = json.loads(ai_status.ORCHESTRATOR_STATE_FILE.read_text(encoding="utf-8"))
         before_state = ai_status.load_state()
@@ -4334,8 +4344,11 @@ class AssignOptionalPinCorrectionTests(unittest.TestCase):
         self.assertEqual(ai_status.get_task(ai_status.load_state(), self.TASK_ID), task_after)
 
     def test_native_released_unused_routing_history_remains_correctable(self) -> None:
-        self._reserve_unused_helper()
-        self._release_unused_helper()
+        self._reserve_unused_helper(claimed_at="2026-10-25T20:39:00.123456Z")
+        self._release_unused_helper(released_at="2026-10-25T21:09:00.654321Z")
+        routing = [e for e in ai_status.load_logs(strict=True) if e["type"].startswith("helper_claim_")]
+        self.assertEqual(routing[-1]["ts"], "2026-10-25T21:09:00Z")
+        self.assertEqual(routing[0]["lease_expires_at"], "2026-10-25T21:09:00.123456Z")
         before = ai_status.get_task(ai_status.load_state(), self.TASK_ID).copy()
         logs = ai_status.load_logs(strict=True)
         self.assertEqual(self._run_assign(
@@ -4359,6 +4372,7 @@ class AssignOptionalPinCorrectionTests(unittest.TestCase):
             {"claimed_by": "UnregisteredWorker"}, {"claimed_by": "Human/Ops"},
             {"generation": True}, {"generation": "1"}, {"generation": 2},
             {"claimed_at": "bad"}, {"claimed_at": "2026-10-25T18:00:00Z"},
+            {"claimed_at": "2026-10-25T20:39:01.123456Z"},
             {"lease_expires_at": "bad"}, {"reason": "manual-bypass"},
         ]
         for mutation in mutations:
@@ -4403,6 +4417,15 @@ class AssignOptionalPinCorrectionTests(unittest.TestCase):
         ai_status.get_task(state, self.TASK_ID).pop("helper_execution_lease")
         ai_status.save_state(state)
         self._assert_clear_refused("does not match complete canonical reservation audit")
+
+    def test_fractional_expiry_does_not_allow_release_in_preceding_second(self) -> None:
+        self._reserve_unused_helper(claimed_at="2026-10-25T20:39:00.123456Z")
+        self._release_unused_helper(released_at="2026-10-25T21:09:00.654321Z")
+        logs = ai_status.load_logs(strict=True)
+        self.assertEqual(logs[-1]["type"], "helper_claim_released")
+        logs[-1]["ts"] = "2026-10-25T21:08:59Z"
+        ai_status.LOG_FILE.write_text("".join(json.dumps(e) + "\n" for e in logs), encoding="utf-8")
+        self._assert_clear_refused("incomplete or non-native helper reservation audit")
 
     def test_unused_reservation_does_not_bypass_runtime_queue_worker_or_worktree_proof(self) -> None:
         self._reserve_unused_helper()
