@@ -419,7 +419,7 @@ Task: ODP-PROD-IMAGE-PROMOTION-001 · Owner: Claude · Reviewer: Human/Ops
 | 不移動既有 tag | production 已有 `release-<sha>` tag 但指向別的 digest 時拒絕，不複製。指向同一 digest（重跑）時 cosign 略過相同內容，照常讀回與驗簽 |
 | deploy 只拿 promoted reference | deploy step 的 `API_IMAGE` 等改為 `steps.promote-images.outputs.* \|\| needs.build.outputs.* \|\| inputs.*`；promotion 只在成功時寫 output，dev 的值與 job 層 env 完全相同 |
 | deploy 腳本的最後一道 | `deploy_cloud_run_waji.sh` 在 deploy-by-digest 時，若 `ODP_DEPLOY_ENV` 是 `prod`／`production`，每個 image 都必須以 `${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT}/${GCP_AR_REPO}/` 開頭，否則在任何 `gcloud`／`docker` 呼叫前拒絕。這與 `checks.tf` 的 production 規則一致。dev 不受影響 |
-| 證據 | promotion receipt（`production-image-promotion.json`，kind `release-image-promotion`）記錄每個 component 的來源、promoted reference、digest、簽章與 attestation reference，失敗時記錄原因；以 artifact `production-image-promotion-<sha>-<attempt>` 上傳 |
+| 證據 | promotion receipt（`production-image-promotion.json`，kind `release-image-promotion`）記錄每個 component 的來源、promoted reference、digest、簽章與 attestation reference，失敗時記錄原因；以 artifact `production-image-promotion-receipt-<sha>-<attempt>` 上傳 |
 
 ### 13.3 Fail closed
 

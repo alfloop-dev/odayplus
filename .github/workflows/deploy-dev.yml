@@ -1515,7 +1515,7 @@ jobs:
         if: ${{ always() && inputs.environment == 'production' }}
         uses: actions/upload-artifact@v4
         with:
-          name: production-image-promotion-${{ inputs.release_sha }}-${{ github.run_attempt }}
+          name: production-image-promotion-receipt-${{ inputs.release_sha }}-${{ github.run_attempt }}
           path: .odp_data/release/production-image-promotion.json
           if-no-files-found: ignore
           retention-days: 90
