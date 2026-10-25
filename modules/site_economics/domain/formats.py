@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Any
 
 from modules.site_economics.domain.models import (
@@ -255,7 +255,9 @@ class TargetFormatSpec:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> TargetFormatSpec:
-        if isinstance(data.get("format_code"), str) and data["format_code"].upper() == "ODAY_G2":
+        if ((isinstance(data.get("format_code"), str) and data["format_code"].upper() == "ODAY_G2")
+            or data.get("package_total_untaxed") is not None
+            or data.get("unallocated_package_cost") is not None):
             _require_g2_numeric_payload(data)
         assets = data.get("capital_assets", ())
         if type(assets) not in (tuple, list):
@@ -309,9 +311,13 @@ def _require_g2_numeric_payload(data: Mapping[str, Any]) -> None:
     """Do not turn strings, bools or fractional counts into measured inputs.
 
     This preserves numeric types before the legacy convenience constructors
-    cast them. Valid retained mixed-format snapshots remain deserializable;
-    their configuration is separately refused at the new-calculation boundary.
+    cast them. Declared packages must supply every non-None subspec field,
+    rather than inherit legacy financial assumptions. Valid retained snapshots
+    without package semantics retain their convenience defaults.
     """
+    package_declared = (data.get("package_total_untaxed") is not None
+                        or data.get("unallocated_package_cost") is not None)
+
     def number(value: Any) -> None:
         try:
             valid = type(value) in (int, float) and math.isfinite(value)
@@ -331,6 +337,8 @@ def _require_g2_numeric_payload(data: Mapping[str, Any]) -> None:
         if data.get(key) is not None:
             number(data[key])
     mix = data["machine_mix"]
+    if package_declared and not {field.name for field in fields(MachineMixSpec)} <= mix.keys():
+        raise ValueError("ODAY_G2_CONFIGURATION_REQUIRED: declared package machine mix must be explicit and complete")
     for key in ("spec_id", "version"):
         identity(mix[key])
     if "installation_and_delivery_fee" in mix:
@@ -344,7 +352,11 @@ def _require_g2_numeric_payload(data: Mapping[str, Any]) -> None:
         for key in ("custom_price_per_cycle", "custom_turns_per_day"):
             if item.get(key) is not None:
                 number(item[key])
-        for key, value in item["machine_model"].items():
+        model = item["machine_model"]
+        if package_declared and not {field.name for field in fields(MachineModelSpec)
+                                     if field.name != "cycle_minutes"} <= model.keys():
+            raise ValueError("ODAY_G2_CONFIGURATION_REQUIRED: declared package machine inputs must be explicit, including unknowns")
+        for key, value in model.items():
             if key in {"model_id", "machine_class", "model_name"}:
                 identity(value)
             elif key == "useful_life_months":
@@ -352,13 +364,17 @@ def _require_g2_numeric_payload(data: Mapping[str, Any]) -> None:
                     raise ValueError("ODAY_G2_CONFIGURATION_REQUIRED: useful life must be an actual positive integer month count")
             elif value is not None or key not in nullable_machine_fields:
                 number(value)
-    for key in ("fitout_spec", "utilities_spec", "maintenance_spec", "financing_spec",
-                "tax_spec", "residual_spec", "ramp_spec", "seasonality_spec"):
+    for key, kind in (("fitout_spec", FitoutSpec), ("utilities_spec", UtilitiesCostSpec),
+                      ("maintenance_spec", MaintenanceSpec), ("financing_spec", FinancingSpec),
+                      ("tax_spec", TaxSpec), ("residual_spec", ResidualValueSpec),
+                      ("ramp_spec", RampCurveSpec), ("seasonality_spec", SeasonalitySpec)):
         subspec = data[key]
         if subspec is None and key != "fitout_spec":
             continue
         if not isinstance(subspec, Mapping):
             raise ValueError("ODAY_G2_CONFIGURATION_REQUIRED: financial specifications must be objects or explicit unknowns")
+        if package_declared and not {field.name for field in fields(kind)} <= subspec.keys():
+            raise ValueError("ODAY_G2_CONFIGURATION_REQUIRED: declared package financial specifications must be complete or explicit unknowns")
         for field, value in subspec.items():
             if field in {"spec_id", "version", "depreciation_method"}:
                 identity(value)
@@ -375,17 +391,16 @@ def _require_g2_numeric_payload(data: Mapping[str, Any]) -> None:
 
 
 def require_oday_g2_configuration(spec: TargetFormatSpec) -> None:
-    """Validate the specified six-combo target without supplying observations.
+    """Refuse unresolved calculation inputs, then validate G2-only structure.
 
+    Completeness and declared package allocation apply to every format using
+    these nullable types. G2 machine counts and area guidance do not.
     The retained v1 catalog is a mixed-equipment historical snapshot, not the
     G2 in specification sections 5.6.1 and 11.5.1. New G2 calculations need an
     explicitly supplied, versioned configuration of three large and three
     medium all-in-one machines. This structural check grants no financial or
     production approval to the supplied prices, throughput or other assumptions.
     """
-    if spec.format_code.upper() != "ODAY_G2":
-        return
-
     def refuse() -> None:
         raise ValueError("ODAY_G2_CONFIGURATION_REQUIRED: supply a complete versioned three-large/three-medium all-in-one configuration with allocated package costs and known financial inputs; retained mixed v1 is not the specified target")
 
@@ -406,6 +421,17 @@ def require_oday_g2_configuration(spec: TargetFormatSpec) -> None:
         spec.residual_spec, spec.ramp_spec, spec.seasonality_spec,
     )) or any(asset.monthly_fixed_operating_cost is None for asset in spec.capital_assets):
         refuse()
+    for item in spec.machine_mix.items:
+        model = item.machine_model
+        if any(value is None for value in (
+            item.effective_turns_per_day, model.water_liters_per_cycle,
+            model.electricity_kwh_per_cycle, model.gas_kg_per_cycle,
+            model.detergent_cost_per_cycle, model.monthly_maintenance_per_unit,
+        )):
+            refuse()
+    if spec.format_code.upper() != "ODAY_G2":
+        return
+
     if spec.daily_operating_hours is not None:
         number(spec.daily_operating_hours, positive=True, maximum=24)
 

@@ -298,7 +298,7 @@ def test_each_required_unknown_independently_refuses_a_complete_engineering_g2(f
 
 
 @pytest.mark.parametrize("generic", [False, True])
-def test_package_semantics_are_optional_but_conserved_and_unallocated_cost_blocks_g2(generic):
+def test_package_semantics_are_optional_but_conserved_and_unallocated_cost_blocks_calculation(generic):
     spec = _capital_asset_format()
     spec = replace(spec, fitout_spec=replace(spec.fitout_spec, cost_per_ping=0))
     if generic:
@@ -317,10 +317,9 @@ def test_package_semantics_are_optional_but_conserved_and_unallocated_cost_block
                     {"package_total_untaxed": None}, {"unallocated_package_cost": -1}):
         with pytest.raises(ValueError, match="declared package must conserve"):
             replace(declared, **changes)
-    if not generic:
-        unresolved = replace(declared, package_total_untaxed=total + 200000, unallocated_package_cost=200000)
-        with pytest.raises(ValueError, match="ODAY_G2_CONFIGURATION_REQUIRED"):
-            run(unresolved)
+    unresolved = replace(declared, package_total_untaxed=total + 200000, unallocated_package_cost=200000)
+    with pytest.raises(ValueError, match="ODAY_G2_CONFIGURATION_REQUIRED"):
+        run(unresolved)
 
 
 @pytest.mark.parametrize("field,value", [("package_total_untaxed", "5546000"),
@@ -337,6 +336,143 @@ def test_partial_g2_unknown_support_never_coerces_malformed_known_values(field, 
         raw["machine_mix"]["items"][0][field] = value
     else:
         raw["machine_mix"]["items"][0]["machine_model"][field] = value
+    with pytest.raises(ValueError, match="ODAY_G2_CONFIGURATION_REQUIRED"):
+        TargetFormatSpec.from_dict(raw)
+
+
+@pytest.mark.parametrize("entry", ["direct", "market_context", "simulator"])
+@pytest.mark.parametrize("format_code", ["ODAY_G3_COMPACT", "ENGINEERING_MIXED"])
+@pytest.mark.parametrize("missing", ["unallocated_package_cost", "monthly_fixed_operating_cost",
+    "utilities_spec", "maintenance_spec", "financing_spec", "tax_spec", "residual_spec",
+    "ramp_spec", "seasonality_spec", "baseline_turns_per_day", "water_liters_per_cycle",
+    "electricity_kwh_per_cycle", "gas_kg_per_cycle", "detergent_cost_per_cycle",
+    "monthly_maintenance_per_unit"])
+def test_non_g2_unresolved_inputs_refuse_at_all_original_entries(entry, format_code, missing):
+    from unittest.mock import Mock
+
+    registry = synthetic_g2_registry()
+    spec = registry.get(format_code)
+    spec = replace(spec, format_version="2.0.0-engineering-incomplete")
+    if missing == "unallocated_package_cost":
+        spec = replace(spec, fitout_spec=replace(spec.fitout_spec, cost_per_ping=0))
+        classified = spec.total_equipment_capex + spec.fitout_spec.compute_total_fitout(0)
+        spec = replace(spec, package_total_untaxed=classified + 200000, unallocated_package_cost=200000)
+        if format_code == "ODAY_G3_COMPACT":
+            assert classified == 2705000 and spec.package_total_untaxed == 2905000
+    elif missing == "monthly_fixed_operating_cost":
+        from modules.site_economics import CapitalAssetSpec
+
+        spec = replace(spec, capital_assets=(CapitalAssetSpec.from_dict(dict(
+            _synthetic_capital_asset_payload(), monthly_fixed_operating_cost=None)),))
+    elif missing in spec.machine_mix.items[0].machine_model.to_dict():
+        first, *rest = spec.machine_mix.items
+        first = replace(first, machine_model=replace(first.machine_model, **{missing: None}))
+        spec = replace(spec, machine_mix=replace(spec.machine_mix, items=(first, *rest)))
+    else:
+        spec = replace(spec, **{missing: None})
+    spec = TargetFormatSpec.from_dict(spec.to_dict())
+    registry.register(spec)
+    assert registry.get(format_code) == spec
+    simulator = Mock(spec=SiteEconomicsSimulator)
+    service = SiteEconomicsService(registry=registry, simulator=simulator)
+    overrides = SimulationOverrides(format_code=format_code, insurance_annual_cost=0,
+        custom_equipment_capex=9999999, custom_fitout_capex=0, debt_ratio=0, annual_interest_rate=0)
+    with pytest.raises(ValueError, match="ODAY_G2_CONFIGURATION_REQUIRED"):
+        if entry == "direct":
+            service.evaluate_site("non-g2-incomplete", 25, 0, overrides=overrides)
+        elif entry == "market_context":
+            service.evaluate_site_market_context({"context_id": "non-g2-context",
+                "identity": {"site_id": "non-g2-incomplete"},
+                "listing": {"average_area_ping": 25, "median_asking_rent_per_ping": 0},
+                "demand": {"total_population": 15000, "density_per_sq_km": 8000},
+                "competitor": {"active_competitors": 0, "competitor_density_per_sq_km": 0}},
+                overrides=overrides)
+        else:
+            SiteEconomicsSimulator().simulate(SimulationInput(format_spec=spec,
+                operating_params=SiteOperatingParameters(monthly_base_rent=0, area_ping=25,
+                    insurance_annual_cost=0), custom_equipment_capex=9999999,
+                custom_fitout_capex=0, custom_debt_ratio=0, custom_interest_rate=0))
+    simulator.simulate.assert_not_called()
+
+
+@pytest.mark.parametrize("format_code", ["ODAY_G2", "ODAY_G3_COMPACT", "ENGINEERING_MIXED"])
+def test_complete_declared_packages_preserve_all_original_entry_calculations(format_code):
+    registry = synthetic_g2_registry()
+    original = registry.get(format_code)
+    original = replace(original, fitout_spec=replace(original.fitout_spec, cost_per_ping=0))
+    if format_code != "ODAY_G2":
+        # Area/cycle guidance is not an arithmetic input for generic formats.
+        original = replace(original, target_area_ping_min=None, target_area_ping_max=None,
+            recommended_area_ping=None)
+    total = original.total_equipment_capex + original.fitout_spec.compute_total_fitout(0)
+    declared = replace(original, format_version="3.0.0-engineering-package",
+        package_total_untaxed=total, unallocated_package_cost=0)
+    declared = TargetFormatSpec.from_dict(declared.to_dict())
+    registry.register(declared)
+    service = SiteEconomicsService(registry=registry)
+    direct = service.evaluate_site("complete-package", 25, 0, format_code=format_code)
+    context = service.evaluate_site_market_context({"context_id": "complete-package-context",
+        "identity": {"site_id": "complete-package"},
+        "listing": {"average_area_ping": 25, "median_asking_rent_per_ping": 0},
+        "demand": {"total_population": 15000, "density_per_sq_km": 8000},
+        "competitor": {"active_competitors": 0, "competitor_density_per_sq_km": 0}},
+        overrides=SimulationOverrides(format_code=format_code))
+    params = SiteOperatingParameters(monthly_base_rent=0, area_ping=25)
+    ordinary = SiteEconomicsSimulator().simulate(SimulationInput(format_spec=original, operating_params=params))
+    packaged = SiteEconomicsSimulator().simulate(SimulationInput(format_spec=declared, operating_params=params))
+    assert ordinary.metrics == packaged.metrics == direct.metrics == context.metrics
+    assert ordinary.monthly_schedule == packaged.monthly_schedule == direct.monthly_schedule == context.monthly_schedule
+    assert packaged.metrics.total_initial_cash_outlay == total + params.lease_deposit_amount + params.pre_opening_working_capital
+    for doc in (direct, context):
+        validate_site_economics_document(doc)
+        assert doc.metadata["target_format_snapshot"] == declared.to_dict()
+        assert set(doc.scenarios) == {"base", "optimistic", "pessimistic", "stress_test"}
+
+
+@pytest.mark.parametrize("policy", ["utilities_spec", "maintenance_spec", "financing_spec",
+    "tax_spec", "residual_spec", "ramp_spec", "seasonality_spec"])
+def test_partial_package_unknown_policy_cannot_inherit_legacy_defaults(policy):
+    raw = TargetFormatRegistry().get("ODAY_G2").to_dict()
+    assert raw[policy] is None
+    assert TargetFormatSpec.from_dict(raw).to_dict()[policy] is None
+    raw[policy] = {"spec_id": "INCOMPLETE-POLICY", "version": "1.0.0"}
+    with pytest.raises(ValueError, match="ODAY_G2_CONFIGURATION_REQUIRED"):
+        TargetFormatSpec.from_dict(raw)
+
+
+@pytest.mark.parametrize("format_code", ["ODAY_G2", "ODAY_G3_COMPACT", "ENGINEERING_MIXED"])
+@pytest.mark.parametrize("section", ["machine_mix", "machine_model", "fitout_spec", "utilities_spec",
+    "maintenance_spec", "financing_spec", "tax_spec", "residual_spec", "ramp_spec", "seasonality_spec"])
+def test_declared_package_requires_each_supplied_subspec_field(format_code, section):
+    from copy import deepcopy
+
+    spec = synthetic_g2_registry().get(format_code)
+    spec = replace(spec, fitout_spec=replace(spec.fitout_spec, cost_per_ping=0))
+    total = spec.total_equipment_capex + spec.fitout_spec.compute_total_fitout(0)
+    raw = replace(spec, package_total_untaxed=total, unallocated_package_cost=0).to_dict()
+    assert TargetFormatSpec.from_dict(raw).to_dict() == raw
+    original = raw[section] if section != "machine_model" else raw["machine_mix"]["items"][0]["machine_model"]
+    for field in original:
+        if field.startswith("total_"):
+            continue  # Serialized derived totals are not source inputs.
+        incomplete = deepcopy(raw)
+        target = incomplete[section] if section != "machine_model" else incomplete["machine_mix"]["items"][0]["machine_model"]
+        del target[field]
+        with pytest.raises(ValueError, match="ODAY_G2_CONFIGURATION_REQUIRED"):
+            TargetFormatSpec.from_dict(incomplete)
+
+
+@pytest.mark.parametrize("format_code", ["ODAY_G2", "ODAY_G3_COMPACT"])
+@pytest.mark.parametrize("section,field,value", [("residual_spec", "recover_lease_deposit", "false"),
+    ("utilities_spec", "water_rate_per_liter", "0.016"), ("financing_spec", "debt_ratio", True),
+    ("financing_spec", "loan_term_months", 60.5), ("maintenance_spec", "per_machine_monthly_fee", float("nan")),
+    ("ramp_spec", "monthly_multipliers", [float("inf")]), ("tax_spec", "corporate_tax_rate", None)])
+def test_declared_package_policies_keep_raw_types_strict(format_code, section, field, value):
+    spec = synthetic_g2_registry().get(format_code)
+    spec = replace(spec, fitout_spec=replace(spec.fitout_spec, cost_per_ping=0))
+    raw = replace(spec, package_total_untaxed=spec.total_equipment_capex + spec.fitout_spec.compute_total_fitout(0),
+        unallocated_package_cost=0).to_dict()
+    raw[section][field] = value
     with pytest.raises(ValueError, match="ODAY_G2_CONFIGURATION_REQUIRED"):
         TargetFormatSpec.from_dict(raw)
 
