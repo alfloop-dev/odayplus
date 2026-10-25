@@ -4384,6 +4384,36 @@ class AssignOptionalPinCorrectionTests(unittest.TestCase):
                 self._assert_clear_refused("helper_execution_lease")
         ai_status.STATUS_FILE.write_text(original, encoding="utf-8")
 
+        canonical_claim = json.loads(original)["tasks"][0]["helper_execution_lease"]
+        incoming_metadata_cases: list[tuple[str, dict[str, Any]]] = [
+            (
+                "cannot mutate metadata field 'helper_execution_lease'",
+                {"frozen_evidence_base_sha": None, "helper_execution_lease": {**canonical_claim, "generation": True}},
+            ),
+            (
+                "cannot mutate metadata field 'helper_execution_lease'",
+                {"frozen_evidence_base_sha": None, "helper_execution_lease": {**canonical_claim, "generation": 1.0}},
+            ),
+            (
+                "cannot mutate metadata field 'helper_execution_lease'",
+                {"frozen_evidence_base_sha": None, "helper_execution_lease": dict(canonical_claim)},
+            ),
+            (
+                "cannot mutate priority during optional-pin correction",
+                {"frozen_evidence_base_sha": None, "priority": "P1"},
+            ),
+            (
+                "cannot mutate metadata field 'owned_paths'",
+                {"frozen_evidence_base_sha": None, "owned_paths": list(self.initial_metadata["owned_paths"])},
+            ),
+        ]
+        for expected_err, incoming_meta in incoming_metadata_cases:
+            with self.subTest(incoming_meta=incoming_meta):
+                self._assert_clear_refused(expected_err, metadata=incoming_meta)
+                persisted_task = ai_status.get_task(ai_status.load_state(), self.TASK_ID)
+                self.assertEqual(persisted_task["helper_execution_lease"], canonical_claim)
+                self.assertIs(type(persisted_task["helper_execution_lease"]["generation"]), int)
+
     def test_refuses_partial_forged_or_run_marked_routing_audit_atomically(self) -> None:
         self._reserve_unused_helper()
         original_logs = ai_status.load_logs(strict=True)
@@ -4485,8 +4515,16 @@ class AssignOptionalPinCorrectionTests(unittest.TestCase):
             metadata={"frozen_evidence_base_sha": None, "priority": "P2"},
         )
         self._assert_clear_refused(
+            "cannot mutate priority during optional-pin correction",
+            metadata={"frozen_evidence_base_sha": None, "priority": "P1"},
+        )
+        self._assert_clear_refused(
             "cannot mutate metadata field 'owned_paths'",
             metadata={"frozen_evidence_base_sha": None, "owned_paths": ["other/path.py"]},
+        )
+        self._assert_clear_refused(
+            "cannot mutate metadata field 'owned_paths'",
+            metadata={"frozen_evidence_base_sha": None, "owned_paths": list(self.initial_metadata["owned_paths"])},
         )
 
         rc = self._run_assign(

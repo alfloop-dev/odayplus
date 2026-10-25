@@ -6535,16 +6535,14 @@ def _validate_assign_optional_pin_removal(
                 f"null metadata value for {key!r} is forbidden (no other null metadata changes allowed)."
             )
         if key == "priority":
-            if str(value).strip().upper() != str(task.get("priority") or "").strip().upper():
-                raise SystemExit(
-                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
-                    "cannot mutate priority during optional-pin correction."
-                )
-        elif key not in task or task.get(key) != value:
             raise SystemExit(
                 f"Cannot clear frozen_evidence_base_sha on {task_id}: "
-                f"cannot mutate metadata field {key!r} during optional-pin correction."
+                "cannot mutate priority during optional-pin correction."
             )
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"cannot mutate metadata field {key!r} during optional-pin correction."
+        )
     if title is not None and title != task.get("title"):
         raise SystemExit(
             f"Cannot clear frozen_evidence_base_sha on {task_id}: "
@@ -7317,11 +7315,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
             summary_zh=summary_zh,
             metadata=metadata,
         )
-    effective_metadata = (
-        {k: v for k, v in metadata.items() if k != "frozen_evidence_base_sha"}
-        if clearing_optional_pin
-        else metadata
-    )
+    effective_metadata = {} if clearing_optional_pin else metadata
     # Do this before priority checks, timestamping, or any task/agent mutation.
     # An invalid source document must fail at assignment time rather than leave
     # a board record that the dispatcher can only reject repeatedly later.
@@ -7411,19 +7405,17 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
         task.update(effective_metadata)
         state["tasks"].append(task)
     else:
-        task["owner"] = owner
-        task["reviewer"] = reviewer
-        if title:
-            task["title"] = title
-        if summary_zh:
-            task["summary_zh"] = summary_zh
         if clearing_optional_pin:
             task.pop("frozen_evidence_base_sha", None)
-            if effective_metadata:
-                task.update(effective_metadata)
             task["last_update"] = timestamp
             task["next"] = task.get("next") or "Assignment created"
         else:
+            task["owner"] = owner
+            task["reviewer"] = reviewer
+            if title:
+                task["title"] = title
+            if summary_zh:
+                task["summary_zh"] = summary_zh
             if effective_metadata:
                 task.update(effective_metadata)
             task["last_update"] = timestamp
