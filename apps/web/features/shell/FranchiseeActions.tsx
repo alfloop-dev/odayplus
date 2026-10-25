@@ -9,7 +9,7 @@
  * would ignore it), so it is deliberately omitted.
  */
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@oday-plus/ui";
 import { newShellIdempotencyKey, shellWrite } from "./shellClient.ts";
 import type { ShellWriteResult } from "./shellClient.ts";
@@ -27,9 +27,12 @@ type Props = {
 
 export function FranchiseeActions(props: Props) {
   return props.mode === "acknowledge" ? (
-    <AcknowledgeAction {...props} />
+    <AcknowledgeAction
+      key={`${props.storeId}:${props.notificationId ?? ""}`}
+      {...props}
+    />
   ) : (
-    <ReportAction {...props} />
+    <ReportAction key={props.storeId} {...props} />
   );
 }
 
@@ -37,9 +40,17 @@ function AcknowledgeAction({ notificationId, acknowledged, storeId }: Props) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ShellWriteResult<ShellWriteResponse> | null>(null);
+  const mountedRef = useRef(true);
   const [idempotencyKey] = useState(() =>
     newShellIdempotencyKey("fr-ack", notificationId ?? "unknown"),
   );
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   if (acknowledged) {
     return (
@@ -50,14 +61,21 @@ function AcknowledgeAction({ notificationId, acknowledged, storeId }: Props) {
   }
 
   async function acknowledge() {
-    if (!notificationId) return;
+    if (!notificationId || busy) return;
+    const submittedStoreId = storeId;
+    const submittedNotificationId = notificationId;
+    const submittedKey = idempotencyKey;
     setBusy(true);
     const outcome = await shellWrite<ShellWriteResponse>(
       null,
       (client, options) =>
-        client.acknowledgeShellFranchiseeNotification({ notificationId, storeId }, options),
-      idempotencyKey,
+        client.acknowledgeShellFranchiseeNotification(
+          { notificationId: submittedNotificationId, storeId: submittedStoreId },
+          options,
+        ),
+      submittedKey,
     );
+    if (!mountedRef.current) return;
     setResult(outcome);
     setBusy(false);
     if (outcome.ok) router.refresh();
@@ -87,26 +105,81 @@ function ReportAction({ storeId, categories }: Props) {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ShellWriteResult<ShellWriteResponse> | null>(null);
-  const [idempotencyKey, setIdempotencyKey] = useState(() =>
-    newShellIdempotencyKey("fr-report", storeId),
-  );
+  const mountedRef = useRef(true);
+  const draftRevisionRef = useRef(0);
+  const submittedRevisionRef = useRef<number | null>(null);
+  const idempotencyKeyRef = useRef<string | null>(null);
+  if (idempotencyKeyRef.current === null) {
+    idempotencyKeyRef.current = newShellIdempotencyKey("fr-report", storeId);
+  }
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  function handleCategoryChange(nextCategory: string) {
+    draftRevisionRef.current += 1;
+    if (submittedRevisionRef.current !== null) {
+      idempotencyKeyRef.current = newShellIdempotencyKey("fr-report", storeId);
+      submittedRevisionRef.current = null;
+    }
+    setCategory(nextCategory);
+  }
+
+  function handleMessageChange(nextMessage: string) {
+    draftRevisionRef.current += 1;
+    if (submittedRevisionRef.current !== null) {
+      idempotencyKeyRef.current = newShellIdempotencyKey("fr-report", storeId);
+      submittedRevisionRef.current = null;
+    }
+    setMessage(nextMessage);
+  }
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    if (busy || message.trim().length === 0) return;
+    const submittedStoreId = storeId;
+    const submittedCategory = category;
+    const submittedMessage = message;
+    const submittedRevision = draftRevisionRef.current;
+    if (
+      idempotencyKeyRef.current === null ||
+      (submittedRevisionRef.current !== null &&
+        submittedRevisionRef.current !== submittedRevision)
+    ) {
+      idempotencyKeyRef.current = newShellIdempotencyKey("fr-report", submittedStoreId);
+    }
+    const submittedKey = idempotencyKeyRef.current;
+    submittedRevisionRef.current = submittedRevision;
+
     setBusy(true);
     const outcome = await shellWrite<ShellWriteResponse>(
       null,
       (client, options) =>
-        client.submitShellFranchiseeReport({ category, message, storeId }, options),
-      idempotencyKey,
+        client.submitShellFranchiseeReport(
+          {
+            category: submittedCategory,
+            message: submittedMessage,
+            storeId: submittedStoreId,
+          },
+          options,
+        ),
+      submittedKey,
     );
+    if (!mountedRef.current) return;
     setResult(outcome);
     setBusy(false);
     if (outcome.ok) {
-      setMessage("");
-      // Each report is a distinct submission — a fresh key, or the second
-      // report of the day would replay the first.
-      setIdempotencyKey(newShellIdempotencyKey("fr-report", storeId));
+      if (draftRevisionRef.current === submittedRevision) {
+        setMessage("");
+        // Each report is a distinct submission — a fresh key, or the second
+        // report of the day would replay the first.
+        idempotencyKeyRef.current = newShellIdempotencyKey("fr-report", submittedStoreId);
+        submittedRevisionRef.current = null;
+      }
       router.refresh();
     }
   }
@@ -118,7 +191,7 @@ function ReportAction({ storeId, categories }: Props) {
         <select
           id="report-category"
           value={category}
-          onChange={(event) => setCategory(event.target.value)}
+          onChange={(event) => handleCategoryChange(event.target.value)}
           data-testid="franchisee-report-category"
         >
           {categories.map((value) => (
@@ -133,7 +206,7 @@ function ReportAction({ storeId, categories }: Props) {
         <textarea
           id="report-message"
           value={message}
-          onChange={(event) => setMessage(event.target.value)}
+          onChange={(event) => handleMessageChange(event.target.value)}
           required
           data-testid="franchisee-report-message"
           placeholder="請簡述現場狀況"
