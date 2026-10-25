@@ -1177,7 +1177,13 @@ def test_build_once_job_exists_and_precedes_deploy() -> None:
         f"inputs.{name} == ''" in build_if
         for name in ("api_image", "web_image", "worker_image", "scheduler_image")
     )
-    assert "gcloud artifacts docker images describe" in "\n".join(build_runs)
+    build_text = "\n".join(build_runs)
+    assert "source product_ops/deployment/cloud_run_release_traffic.sh" in build_text
+    assert "resolve_image_digest()" not in build_text
+    assert "resolve_image_digest" in build_text
+    assert "gcloud artifacts docker images describe" in (
+        ROOT / "product_ops/deployment/cloud_run_release_traffic.sh"
+    ).read_text(encoding="utf-8")
     assert "GITHUB_OUTPUT" in "\n".join(build_runs)
     assert set(jobs["build"]["outputs"]) == {
         "api_image",

@@ -574,6 +574,9 @@ elif args[:3] == ["run", "services", "delete"]:
     data["services"].pop(args[3], None)
     save()
 elif args[:3] == ["run", "services", "update-traffic"]:
+    if args[3] == os.environ.get("OFFLINE_ROLLBACK_SERVICE"):
+        with Path(os.environ["OFFLINE_ROLLBACK_EVENTS"]).open("a") as stream:
+            stream.write("rollback\n")
     service = data["services"][args[3]]
     service["status"]["traffic"] = [
         {"revisionName": revision, "percent": int(percent)}
@@ -583,8 +586,11 @@ elif args[:3] == ["run", "services", "update-traffic"]:
 elif args[:3] == ["scheduler", "jobs", "list"]:
     name = flag("filter").split("/jobs/", 1)[1]
     if name in data["triggers"]:
-        print("projects/p/locations/r/jobs/" + name)
+        print("projects/" + os.environ["GCP_PROJECT"] + "/locations/" + os.environ["GCP_REGION"] + "/jobs/" + name)
 elif args[:3] == ["scheduler", "jobs", "describe"]:
+    if control.get("fail_describe_purpose") in os.environ.get("ODP_TEST_GCLOUD_PURPOSE", "").split():
+        print("gcloud describe error", file=sys.stderr)
+        sys.exit(19)
     print(json.dumps(data["triggers"][args[3]]))
 elif args[:3] == ["scheduler", "jobs", "delete"]:
     data["triggers"].pop(args[3], None)
@@ -601,7 +607,7 @@ elif args[:3] in (["scheduler", "jobs", "create"], ["scheduler", "jobs", "update
     name = args[4]
     if args[2] == "create":
         data["triggers"][name] = {
-            "name": "projects/p/locations/r/jobs/" + name,
+            "name": "projects/" + os.environ["GCP_PROJECT"] + "/locations/" + os.environ["GCP_REGION"] + "/jobs/" + name,
             "state": "ENABLED", "httpTarget": {},
             "retryConfig": {"minBackoffDuration": "5s", "maxBackoffDuration": "3600s", "maxDoublings": 5},
             "attemptDeadline": "180s",
@@ -679,6 +685,98 @@ def _trigger(kind: str, state: str) -> dict:
                            "scope": "https://www.googleapis.com/auth/cloud-platform"},
         },
     }
+
+
+def offline_scheduler_resume_context(
+    directory: Path, *, project: str, region: str, release_sha: str,
+    worker_job: str, scheduler_job: str, worker_trigger: str, scheduler_trigger: str,
+) -> dict[str, str]:
+    """OFFLINE external tools for callers that execute the real resume owner.
+
+    Both one-shot reports come from the existing production jobs-smoke
+    producer. The shared gcloud double keeps Job/execution/trigger state;
+    this setup does not claim cloud or business acceptance evidence.
+    """
+    from product_ops.deployment import validate_cloud_run_live_deployment as validator
+    from product_ops.deployment.cloud_scheduler_trigger import candidate_snapshot
+
+    directory.mkdir(parents=True, exist_ok=True)
+    tools = directory / "bin"
+    tools.mkdir()
+    gcloud = tools / "gcloud"
+    gcloud.write_text(f"#!{sys.executable}\n" + FAKE_RELEASE_GCLOUD.split("\n", 1)[1])
+    gcloud.chmod(0o755)
+    root = Path(__file__).resolve().parents[2]
+    state = {"jobs": {}, "executions": {}, "triggers": {}, "services": {}, "control": {}}
+    env = {
+        "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}", "GCP_PROJECT": project, "GCP_REGION": region,
+        "RELEASE_CLOUD_STATE": str(directory / "cloud.json"), "RELEASE_CLOUD_LOG": str(directory / "gcloud.jsonl"),
+        "JOB_REPORT_DIR": str(directory), "ODP_SCHEDULER_TIME_ZONE": "Asia/Taipei",
+        "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT": "scheduler@example.test",
+        "ODP_JOB_VALIDATOR": str(root / "product_ops/deployment/validate_cloud_run_live_deployment.py"),
+        "ODP_SCHEDULER_HELPER": str(root / "product_ops/deployment/cloud_scheduler_trigger.py"),
+        "ODP_TRAFFIC_HELPER": str(root / "product_ops/deployment/cloud_run_traffic.py"),
+        "OFFLINE_RELEASE_OWNER": str(root / "product_ops/deployment/cloud_run_release_traffic.sh"),
+    }
+    from product_ops.deployment.cloud_run_traffic import restore_traffic_argument
+    for kind in ("api", "web"):
+        service = "offline-" + kind
+        snapshot = {
+            "schema_version": 1, "kind": "cloud-run-service-traffic-snapshot", "exists": True,
+            "service": service, "status": {"url": f"https://{service}.example",
+                "traffic": [{"revisionName": service + "-old", "percent": 100}]},
+        }
+        assert restore_traffic_argument(snapshot) == service + "-old=100"
+        path = directory / f"{kind}-traffic-before.json"
+        path.write_text(json.dumps(snapshot))
+        current = copy.deepcopy(snapshot)
+        current["status"]["traffic"] = [{"revisionName": service + "-new", "percent": 100}]
+        state["services"][service] = current
+        env.update({kind.upper() + "_SERVICE": service, kind.upper() + "_TRAFFIC_SNAPSHOT": str(path)})
+    for kind, job_name, trigger_name, prior_state in (
+        ("worker", worker_job, worker_trigger, "ENABLED"),
+        ("scheduler", scheduler_job, scheduler_trigger, "PAUSED"),
+    ):
+        before = _trigger(kind, prior_state)
+        before["name"] = f"projects/{project}/locations/{region}/jobs/{trigger_name}"
+        before["httpTarget"]["uri"] = f"https://run.googleapis.com/v2/projects/{project}/locations/{region}/jobs/{kind}-old:run"
+        previous_job = _job(kind, kind + "-old", old=True)
+        before["jobBinding"] = validator.cloud_run_job_binding(
+            previous_job, expected_job=f"projects/{project}/locations/{region}/jobs/{kind}-old",
+            expected_sha="", expected_image="", record=True,
+        )
+        state["jobs"][kind + "-old"] = previous_job
+        snapshot = directory / f"{kind}-before.json"
+        snapshot.write_text(json.dumps(before))
+        state["triggers"][trigger_name] = candidate_snapshot(
+            before, trigger=trigger_name, project=project, location=region, job=job_name,
+            cron=before["schedule"], time_zone=before["timeZone"], service_account="scheduler@example.test",
+        )
+        job = _job(kind, job_name)
+        job["metadata"]["labels"]["oday-release-sha"] = release_sha
+        execution_name = job_name + "-proof"
+        execution = {
+            "metadata": {"name": execution_name, "labels": {"run.googleapis.com/job": job_name}},
+            "spec": {"template": {"spec": {"containers": [{"image": IMAGES[kind]}]}}},
+            "status": {"succeededCount": 1, "failedCount": 0,
+                       "conditions": [{"type": "Completed", "status": "True"}]},
+        }
+        checks, report = validator.cloud_run_job_checks(
+            kind=kind, job_description=job, execution=execution, expected_sha=release_sha,
+            expected_image=IMAGES[kind], expected_job=f"projects/{project}/locations/{region}/jobs/{job_name}",
+            release_provider_ids="admin_boundary.official_dataset",
+        )
+        assert all(check.ok for check in checks), [check for check in checks if not check.ok]
+        report.update(schema_version=1, ok=True, checks=[asdict(check) for check in checks],
+                      generated_at=datetime.now(UTC).isoformat())
+        (directory / f"{kind}-validation.json").write_text(json.dumps(report))
+        state["jobs"][job_name] = job
+        state["executions"][execution_name] = execution
+        env.update({kind.upper() + "_IMAGE": IMAGES[kind], kind.upper() + "_CANDIDATE_JOB": job_name,
+                    kind.upper() + "_SCHEDULE_NAME": trigger_name, "ODP_" + kind.upper() + "_CRON": before["schedule"],
+                    kind.upper() + "_TRIGGER_SNAPSHOT": str(snapshot)})
+    (directory / "cloud.json").write_text(json.dumps(state))
+    return env
 
 
 @pytest.fixture

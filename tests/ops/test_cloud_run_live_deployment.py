@@ -2564,6 +2564,37 @@ fi
     assert all("update-traffic" not in call for call in calls)
 
 
+def _scheduler_restore_spy(
+    tmp_path: Path, snapshot: Path, *, fail_readback: bool = False,
+) -> tuple[dict[str, str], Path, Path]:
+    from tests.ops.test_bluegreen_release import FAKE_RELEASE_GCLOUD
+    payload = json.loads(snapshot.read_text())
+    trigger = payload["name"].rsplit("/", 1)[-1]
+    state_path = tmp_path / "scheduler-state.json"
+    state_path.write_text(json.dumps({
+        "triggers": {trigger: payload}, "jobs": {}, "executions": {},
+        "control": {"fail_describe_purpose": "verify_scheduler_snapshot"} if fail_readback else {},
+    }))
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gcloud = fake_bin / "gcloud"
+    fake_gcloud.write_text(f"#!{sys.executable}\n" + FAKE_RELEASE_GCLOUD.split("\n", 1)[1])
+    fake_gcloud.chmod(0o755)
+    log = tmp_path / "gcloud.log"
+    return {
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "RELEASE_CLOUD_STATE": str(state_path), "RELEASE_CLOUD_LOG": str(log),
+        "ODP_TEST_GCLOUD_BIN": str(fake_gcloud),
+    }, state_path, log
+
+
+_SCHEDULER_RESTORE_SPY = r'''
+gcloud() {
+  ODP_TEST_GCLOUD_PURPOSE="${FUNCNAME[*]}" "$ODP_TEST_GCLOUD_BIN" "$@"
+}
+'''
+
+
 def test_scheduler_trigger_restore_uses_recorded_target_and_schedule(
     tmp_path: Path,
 ) -> None:
@@ -2586,29 +2617,18 @@ def test_scheduler_trigger_restore_uses_recorded_target_and_schedule(
         ),
         encoding="utf-8",
     )
-    gcloud_log = tmp_path / "gcloud.log"
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    fake_gcloud = fake_bin / "gcloud"
-    fake_gcloud.write_text(
-        '#!/usr/bin/env bash\n'
-        'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n'
-        'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
-        f'  cat "{snapshot}"\n'
-        'fi\n',
-        encoding="utf-8",
-    )
-    fake_gcloud.chmod(0o755)
+    cloud_env, state_path, gcloud_log = _scheduler_restore_spy(tmp_path, snapshot)
     command = (
         f'source "{TRAFFIC_SHELL_HELPER}"\n'
-        f'restore_scheduler_trigger "worker-trigger" "{snapshot}"\n'
+        + _SCHEDULER_RESTORE_SPY
+        + f'restore_scheduler_trigger "worker-trigger" "{snapshot}"\n'
     )
     result = subprocess.run(
         ["bash", "-c", command],
         cwd=ROOT,
         env={
             **os.environ,
-            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            **cloud_env,
             "GCLOUD_LOG": str(gcloud_log),
             "GCP_PROJECT": "test-project",
             "GCP_REGION": "test-region",
@@ -2620,10 +2640,13 @@ def test_scheduler_trigger_restore_uses_recorded_target_and_schedule(
     )
 
     assert result.returncode == 0, result.stderr
-    call = gcloud_log.read_text(encoding="utf-8")
+    call = "\n".join(" ".join(json.loads(line)) for line in gcloud_log.read_text(encoding="utf-8").splitlines())
     assert "scheduler jobs update http worker-trigger" in call
     assert "--schedule=17 * * * *" in call
     assert "/jobs/old-job:run" in call
+    actual = json.loads(state_path.read_text())["triggers"]["worker-trigger"]
+    assert actual["schedule"] == "17 * * * *" and actual["timeZone"] == "Asia/Taipei"
+    assert actual["httpTarget"]["uri"].endswith("/jobs/old-job:run")
 
 
 def test_scheduler_trigger_restore_supports_oidc_token(tmp_path: Path) -> None:
@@ -2739,29 +2762,18 @@ def test_scheduler_trigger_restore_handles_paused_state(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    gcloud_log = tmp_path / "gcloud.log"
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    fake_gcloud = fake_bin / "gcloud"
-    fake_gcloud.write_text(
-        '#!/usr/bin/env bash\n'
-        'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n'
-        'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
-        f'  cat "{snapshot}"\n'
-        'fi\n',
-        encoding="utf-8",
-    )
-    fake_gcloud.chmod(0o755)
+    cloud_env, state_path, gcloud_log = _scheduler_restore_spy(tmp_path, snapshot)
     command = (
         f'source "{TRAFFIC_SHELL_HELPER}"\n'
-        f'restore_scheduler_trigger "paused-trigger" "{snapshot}"\n'
+        + _SCHEDULER_RESTORE_SPY
+        + f'restore_scheduler_trigger "paused-trigger" "{snapshot}"\n'
     )
     result = subprocess.run(
         ["bash", "-c", command],
         cwd=ROOT,
         env={
             **os.environ,
-            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            **cloud_env,
             "GCLOUD_LOG": str(gcloud_log),
             "GCP_PROJECT": "test-project",
             "GCP_REGION": "test-region",
@@ -2773,8 +2785,9 @@ def test_scheduler_trigger_restore_handles_paused_state(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    call = gcloud_log.read_text(encoding="utf-8")
-    assert "scheduler jobs pause paused-trigger" in call
+    call = "\n".join(" ".join(json.loads(line)) for line in gcloud_log.read_text(encoding="utf-8").splitlines())
+    assert "scheduler jobs resume paused-trigger" not in call
+    assert json.loads(state_path.read_text())["triggers"]["paused-trigger"]["state"] == "PAUSED"
 
 
 def test_scheduler_trigger_restore_deletes_absent_pre_deploy_trigger(tmp_path: Path) -> None:
@@ -2920,30 +2933,18 @@ def test_scheduler_trigger_restore_fails_closed_when_readback_describe_fails(
         ),
         encoding="utf-8",
     )
-    gcloud_log = tmp_path / "gcloud.log"
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    fake_gcloud = fake_bin / "gcloud"
-    fake_gcloud.write_text(
-        '#!/usr/bin/env bash\n'
-        'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
-        '  echo "gcloud describe error" >&2\n'
-        '  exit 1\n'
-        'fi\n'
-        'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n',
-        encoding="utf-8",
-    )
-    fake_gcloud.chmod(0o755)
+    cloud_env, state_path, gcloud_log = _scheduler_restore_spy(tmp_path, snapshot, fail_readback=True)
     command = (
         f'source "{TRAFFIC_SHELL_HELPER}"\n'
-        f'restore_scheduler_trigger "worker-trigger" "{snapshot}"\n'
+        + _SCHEDULER_RESTORE_SPY
+        + f'restore_scheduler_trigger "worker-trigger" "{snapshot}"\n'
     )
     result = subprocess.run(
         ["bash", "-c", command],
         cwd=ROOT,
         env={
             **os.environ,
-            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            **cloud_env,
             "GCLOUD_LOG": str(gcloud_log),
             "GCP_PROJECT": "test-project",
             "GCP_REGION": "test-region",
@@ -2956,6 +2957,7 @@ def test_scheduler_trigger_restore_fails_closed_when_readback_describe_fails(
 
     assert result.returncode != 0
     assert "Error: failed to capture or validate readback snapshot for Cloud Scheduler trigger 'worker-trigger'." in result.stderr
+    assert json.loads(state_path.read_text())["triggers"]["worker-trigger"]["state"] == "PAUSED"
 
 
 def test_scheduler_trigger_restore_fails_closed_when_readback_drift_detected(

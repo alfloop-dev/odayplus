@@ -462,7 +462,9 @@ capture_scheduler_trigger() {
       python3 "${ODP_SCHEDULER_HELPER}" recovery --description="${output}" \
         || { rm -f "${output}"; return 1; }
     fi
-    return
+    # This capture also runs during rollback in a failed deployment's EXIT
+    # trap. A bare return there inherits the failed step's status.
+    return 0
   fi
   python3 "${ODP_SCHEDULER_HELPER}" write-absent --description="${output}" --trigger="${trigger}" \
     --project="${GCP_PROJECT}" --location="${GCP_REGION}"

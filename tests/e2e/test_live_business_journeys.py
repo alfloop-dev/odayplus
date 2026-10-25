@@ -2985,6 +2985,8 @@ def _run_original_final_deploy_gate(
     import os
     import subprocess
 
+    from tests.ops.test_bluegreen_release import offline_scheduler_resume_context
+
     source = (ROOT / "product_ops/deployment/deploy_cloud_run_waji.sh").read_text()
     caller = source.index("run_locked_python delivery_toolchain/e2e/check_live_e2e_gate.py")
     branch = source.rindex('if [ -n "${ODP_DEV_SMOKE_FOREGROUND_FD:-}" ]; then', 0, caller)
@@ -3085,11 +3087,11 @@ raise SystemExit(code)
     # committed-state condition are the exact original shipped Bash function.
     harness = r'''
 set -euo pipefail
+source "$OFFLINE_RELEASE_OWNER"
 DEPLOYMENT_COMMITTED=false
 ROLLBACK_ARMED=true
-SCHEDULER_ROLLBACK_ARMED=false
+SCHEDULER_ROLLBACK_ARMED=true
 release_recovery_mode() { printf 'rollback'; }
-rollback_release_traffic() { printf 'rollback\n' >> "$TEST_EVENTS"; }
 cleanup() { printf 'cleanup committed=%s\n' "$DEPLOYMENT_COMMITTED" >> "$TEST_EVENTS"; }
 run_locked_python() { "$TEST_PYTHON" -B "$TEST_GATE_DRIVER" "$@"; }
 '''
@@ -3123,6 +3125,15 @@ run_locked_python() { "$TEST_PYTHON" -B "$TEST_GATE_DRIVER" "$@"; }
         "API_TRAFFIC_SNAPSHOT": "offline-api-before.json",
         "WEB_TRAFFIC_SNAPSHOT": "offline-web-before.json",
     }
+    # Only the external cloud tools are doubled. Resume and rollback execute
+    # the shipped owner against real jobs-smoke reports and stateful readbacks.
+    environment.update(offline_scheduler_resume_context(
+        tmp_path / "release-tools", project="offline-project", region="offline-region", release_sha=SHA,
+        worker_job="offline-worker", scheduler_job="offline-scheduler",
+        worker_trigger="offline-worker-schedule", scheduler_trigger="offline-scheduler-schedule",
+    ))
+    environment["OFFLINE_ROLLBACK_SERVICE"] = environment["API_SERVICE"]
+    environment["OFFLINE_ROLLBACK_EVENTS"] = str(events)
     if profile is not None:
         environment["ODP_RELEASE_PROFILE"] = profile
     if receipt_case != "missing-env":
@@ -3131,8 +3142,17 @@ run_locked_python() { "$TEST_PYTHON" -B "$TEST_GATE_DRIVER" "$@"; }
         ["bash", "-c", harness], cwd=ROOT, env=environment,
         capture_output=True, text=True, check=False, timeout=60,
     )
+    cloud = json.loads(Path(environment["RELEASE_CLOUD_STATE"]).read_text())
+    observations = json.loads(observed.read_text())
+    observations["offline_scheduler_targets"] = {
+        name: {"state": value["state"], "uri": value["httpTarget"]["uri"]}
+        for name, value in cloud["triggers"].items()
+    }
+    observations["offline_service_traffic"] = {
+        name: value["status"]["traffic"] for name, value in cloud["services"].items()
+    }
     return (
-        result, json.loads(output.read_text()), json.loads(observed.read_text()),
+        result, json.loads(output.read_text()), observations,
         events.read_text().splitlines(),
     )
 
@@ -3184,6 +3204,17 @@ def test_original_deploy_caller_requires_full_verdict_before_commit(
         ["commit reached", "cleanup committed=true"] if passes
         else ["rollback", "cleanup committed=false"]
     )
+    targets = observed["offline_scheduler_targets"]
+    assert targets["offline-worker-schedule"]["state"] == "ENABLED"
+    assert targets["offline-scheduler-schedule"]["state"] == "PAUSED"
+    for kind in ("worker", "scheduler"):
+        job = f"offline-{kind}" if passes else f"{kind}-old"
+        assert targets[f"offline-{kind}-schedule"]["uri"].endswith(f"/jobs/{job}:run")
+    for kind in ("api", "web"):
+        service = f"offline-{kind}"
+        assert observed["offline_service_traffic"][service] == [
+            {"revisionName": service + ("-new" if passes else "-old"), "percent": 100}
+        ]
     record_property("original_deploy_full_acceptance_caller", json.dumps({
         **observed, "receipt_case": receipt_case, "offline_regression_only": True,
         "runtime_ok": report["ok"], "full_status": full_status, "events": events,
