@@ -34,15 +34,21 @@ CREATE OR REPLACE VIEW model_ready.forecast_training_view AS
 WITH authoritative_order_partitions AS (
     -- EOF proof for one full UTC-day order partition ('YYYY-MM-DD'), using the
     -- authoritative order-run predicate of candidate_site_view and
-    -- heatzone_training_view. Backfill 'start__end' keys are excluded because
-    -- backfill windows accept arbitrary sub-day timestamps while ingestion_runs
-    -- persists no window bounds. A resumed chunk that stopped at its record
-    -- bound is legitimate once a later run of the same daily partition reaches
-    -- EOF, but every chunk of that partition up to the proof must itself have
-    -- succeeded, reconciled and loaded every record it processed. A FAILED or
-    -- abandoned RUNNING chunk keeps its schema-default zero counters while its
-    -- checkpoint may already have advanced past a quarantined record, so it can
-    -- never prove that the resumed partition dropped nothing.
+    -- heatzone_training_view. Backfill 'start__end' keys never prove a day
+    -- because backfill windows accept arbitrary sub-day timestamps while
+    -- ingestion_runs persists no window bounds. A resumed chunk that stopped at
+    -- its record bound is legitimate once a later run of the same daily
+    -- partition reaches EOF, but every orders run that read this UTC day must
+    -- itself have succeeded, reconciled and loaded every record it processed.
+    -- A FAILED or abandoned RUNNING chunk keeps its schema-default zero
+    -- counters while its checkpoint may already have advanced past a
+    -- quarantined record, so it can never prove that nothing was dropped.
+    -- This holds for runs finishing after the proof as well: a later
+    -- rematerialization or a backfill window reaching the day that quarantined
+    -- or failed on an order adds no canonical lineage and leaves the earlier
+    -- EOF untouched, so it must revoke that proof rather than be ignored.
+    -- Backfill keys are compared as ISO date text (no cast) over the inclusive
+    -- start/end dates that _windows derives from the window bounds.
     SELECT
         completion.partition_key::date AS partition_date,
         completion.finished_at
@@ -59,10 +65,15 @@ WITH authoritative_order_partitions AS (
           SELECT 1
           FROM data_plane.ingestion_runs AS chunk
           WHERE chunk.source_kind = completion.source_kind
-            AND chunk.partition_key = completion.partition_key
             AND (
-                chunk.finished_at IS NULL
-                OR chunk.finished_at <= completion.finished_at
+                chunk.partition_key = completion.partition_key
+                OR (
+                    chunk.partition_key
+                        ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}__[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+                    AND completion.partition_key
+                        BETWEEN split_part(chunk.partition_key, '__', 1)
+                            AND split_part(chunk.partition_key, '__', 2)
+                )
             )
             AND NOT (
                 chunk.status = 'SUCCEEDED'

@@ -34,10 +34,19 @@ def test_forecast_sql_requires_eof_proven_partitions_for_target_and_prior_days()
     assert "completion.quarantined_count = 0" in body
     assert "completion.processed_count = completion.valid_loaded" in body
     assert "chunk.partition_key = completion.partition_key" in body
-    # FAILED/abandoned chunks keep default zero counters, so only a fully
-    # succeeded chunk may precede the proof.
-    assert "chunk.finished_at IS NULL" in body
+    # FAILED/abandoned chunks keep default zero counters, so only fully
+    # succeeded chunks may read the day -- including chunks finishing after the
+    # proof, which must revoke a retained earlier EOF rather than be ignored.
     assert "chunk.status = 'SUCCEEDED'\n                AND chunk.reconciled" in body
+    assert "AND chunk.finished_at IS NOT NULL" in body
+    assert "chunk.finished_at <= completion.finished_at" not in body
+    # Backfill windows reaching the day revoke its proof, compared as ISO date
+    # text over the window's inclusive start/end dates.
+    assert (
+        "AND completion.partition_key\n"
+        "                        BETWEEN split_part(chunk.partition_key, '__', 1)\n"
+        "                            AND split_part(chunk.partition_key, '__', 2)"
+    ) in body
     assert "LEFT JOIN data_plane.transaction_authority AS authority" in body
     assert "authority.source_kind = 'orders'" in body
     assert "lineage.source_snapshot_id = authority.source_snapshot_id" in body
@@ -49,8 +58,8 @@ def test_forecast_sql_requires_eof_proven_partitions_for_target_and_prior_days()
     assert "AND prior_complete_day_count_28 = 28" in body
     assert "'PRIOR_SOURCE_NOT_COMPLETE'" in body
     # Backfill 'start__end' keys accept sub-day timestamps and must not prove
-    # full-day UTC coverage.
-    assert "__[0-9]{4}-[0-9]{2}-[0-9]{2}" not in body
+    # full-day UTC coverage: the only completion key pattern is a single day.
+    assert body.count("completion.partition_key ~ ") == 1
     assert "split_part(completion.partition_key, '__'" not in body
     # A per-chunk completion flag would reject legitimately resumed partitions.
     assert "bool_and(ingestion.partition_complete" not in body

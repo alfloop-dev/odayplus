@@ -510,6 +510,7 @@ def test_model_ready_sql_is_real_causal_and_activates_supported_outcomes() -> No
     assert "prior_complete_day_count_28 = 28" in lowered
     assert "'prior_source_not_complete'" in lowered
     assert "split_part(completion.partition_key, '__'" not in lowered
+    assert "chunk.finished_at <= completion.finished_at" not in lowered
     assert "from external_data.real_estate_transactions as outcome" in lowered
     assert "external_data.real_estate_ingestion_runs as ingestion" in lowered
     assert "government-open-data-license-v1" in lowered

@@ -1121,6 +1121,170 @@ def test_postgresql_forecast_view_admits_only_eof_proven_target_and_prior_partit
                     )
                     assert_target_refused(reason)
 
+        # The original full-day run R0 stays SUCCEEDED/EOF. A later run reading
+        # the same UTC day -- a rematerialization of the daily partition with a
+        # new run id, or a backfill window reaching that day -- that quarantined
+        # a later-inserted order (processed=quarantined=1, valid=0, still
+        # reconciled), failed after quarantining it with schema-default zero
+        # counters, failed reconciliation, or is still running adds no
+        # canonical lineage and leaves R0 untouched. R0 must not keep admitting
+        # the now-incomplete target label or prior feature day.
+        later_at = _at(FORECAST_TARGET_DAY + timedelta(days=6), 6)
+        later_bad_runs: tuple[tuple[str, dict[str, Any]], ...] = (
+            (
+                "quarantined",
+                {"finished_at": later_at, "processed_count": 1, "quarantined_count": 1},
+            ),
+            (
+                "failed-default-zero",
+                {
+                    "finished_at": later_at,
+                    "status": "FAILED",
+                    "reconciled": False,
+                    "partition_complete": False,
+                },
+            ),
+            (
+                "reconciliation-failed",
+                {
+                    "finished_at": later_at,
+                    "status": "RECONCILIATION_FAILED",
+                    "processed_count": 1,
+                    "reconciled": False,
+                },
+            ),
+            (
+                "running",
+                {
+                    "finished_at": None,
+                    "status": "RUNNING",
+                    "reconciled": False,
+                    "partition_complete": False,
+                },
+            ),
+        )
+        # Runs that never read any of the 29 days: another source kind, and
+        # orders partitions strictly after the target / before the first day.
+        unrelated_bad_scopes = (
+            ("transaction", FORECAST_TARGET_DAY.isoformat()),
+            ("transaction", FORECAST_PRIOR_DAY.isoformat()),
+            ("orders", (FORECAST_TARGET_DAY + timedelta(days=1)).isoformat()),
+            (
+                "orders",
+                f"{(FORECAST_TARGET_DAY + timedelta(days=1)).isoformat()}__"
+                f"{(FORECAST_TARGET_DAY + timedelta(days=2)).isoformat()}",
+            ),
+            (
+                "orders",
+                f"{(FORECAST_FIRST_DAY - timedelta(days=3)).isoformat()}__"
+                f"{(FORECAST_FIRST_DAY - timedelta(days=1)).isoformat()}",
+            ),
+        )
+        for index, (source_kind, partition_key) in enumerate(unrelated_bad_scopes):
+            with connection.transaction(force_rollback=True):
+                _insert_run(
+                    connection,
+                    name=f"forecast-unrelated-bad:{index}",
+                    source_kind=source_kind,
+                    partition_key=partition_key,
+                    finished_at=later_at,
+                    processed_count=1,
+                    quarantined_count=1,
+                )
+                (unrelated_row,) = source.load(spec, bounds).rows
+                assert unrelated_row["date"] == FORECAST_TARGET_DAY
+                assert unrelated_row["label_maturity_time"] == (
+                    loaded_row["label_maturity_time"]
+                )
+        for day, run, reason in (
+            (FORECAST_TARGET_DAY, target_run, "SOURCE_RUN_NOT_COMPLETE"),
+            (FORECAST_PRIOR_DAY, prior_run, "PRIOR_SOURCE_NOT_COMPLETE"),
+        ):
+            retained_r0 = _rows_as_dicts(
+                connection,
+                "SELECT status, partition_complete FROM data_plane.ingestion_runs "
+                "WHERE run_id = %s",
+                (run,),
+            )
+            assert retained_r0 == [{"status": "SUCCEEDED", "partition_complete": True}]
+            later_keys = (
+                day.isoformat(),
+                f"{day.isoformat()}__{(day + timedelta(days=1)).isoformat()}",
+                f"{(day - timedelta(days=3)).isoformat()}__{day.isoformat()}",
+            )
+            for partition_key in later_keys:
+                for label, overrides in later_bad_runs:
+                    with connection.transaction(force_rollback=True):
+                        _insert_run(
+                            connection,
+                            name=f"forecast-later-bad:{partition_key}:{label}",
+                            source_kind="orders",
+                            partition_key=partition_key,
+                            **overrides,
+                        )
+                        assert_target_refused(reason)
+
+            # Lawful later rematerialization: a clean zero-new-row run reaching
+            # EOF again keeps the day admitted on its original clocks, while a
+            # clean bounded chunk that loads a later-inserted order keeps the
+            # day out until a later EOF proves it, and only from that EOF on.
+            with connection.transaction(force_rollback=True):
+                _insert_run(
+                    connection,
+                    name=f"forecast-later-clean-eof:{day.isoformat()}",
+                    source_kind="orders",
+                    partition_key=day.isoformat(),
+                    finished_at=later_at,
+                )
+                (clean_row,) = source.load(spec, bounds).rows
+                assert clean_row["label_maturity_time"] == loaded_row["label_maturity_time"]
+                assert clean_row["feature_snapshot_time"] == (
+                    loaded_row["feature_snapshot_time"]
+                )
+                assert clean_row["daily_net_revenue"] == pytest.approx(
+                    loaded_row["daily_net_revenue"]
+                )
+            late_order_eof_at = _at(FORECAST_TARGET_DAY + timedelta(days=7), 6)
+            with connection.transaction(force_rollback=True):
+                late_chunk = _insert_run(
+                    connection,
+                    name=f"forecast-later-clean-chunk:{day.isoformat()}",
+                    source_kind="orders",
+                    partition_key=day.isoformat(),
+                    finished_at=later_at,
+                    processed_count=1,
+                    valid_loaded=1,
+                    partition_complete=False,
+                )
+                _insert_transaction(
+                    connection,
+                    tenant_id=tenant_id,
+                    store_id=store_id,
+                    name=f"forecast-late-order:{day.isoformat()}",
+                    event_time=_at(day, 21),
+                    amount=28.0,
+                    daily_runs={day: late_chunk},
+                )
+                assert_target_refused(reason)
+                _insert_run(
+                    connection,
+                    name=f"forecast-later-clean-chunk-eof:{day.isoformat()}",
+                    source_kind="orders",
+                    partition_key=day.isoformat(),
+                    finished_at=late_order_eof_at,
+                )
+                (late_order_row,) = source.load(spec, bounds).rows
+                if day == FORECAST_TARGET_DAY:
+                    assert late_order_row["daily_net_revenue"] == pytest.approx(
+                        128.0 + 28.0
+                    )
+                    assert late_order_row["label_maturity_time"] == late_order_eof_at
+                else:
+                    assert late_order_row["rolling_mean_28"] == pytest.approx(
+                        loaded_row["rolling_mean_28"] + 28.0 / 28.0
+                    )
+                    assert late_order_row["feature_snapshot_time"] == late_order_eof_at
+
         # product_ops.data_platform.backfill._windows accepts sub-day timestamps
         # (e.g. 12:00..00:00, omitting a 09:00 order while loading a 15:00 order)
         # yet emits a 'YYYY-MM-DD__YYYY-MM-DD' partition key, and ingestion_runs
