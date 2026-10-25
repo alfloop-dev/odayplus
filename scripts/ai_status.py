@@ -6372,7 +6372,6 @@ _FORBIDDEN_OPTIONAL_PIN_CORRECTION_TASK_KEYS = (
     "verified_head",
     "workspace_path",
     "worktree_path",
-    "helper_execution_lease",
     "execution_evidence",
     "verification_evidence",
     "verification_runs",
@@ -6604,7 +6603,6 @@ def _validate_assign_optional_pin_removal(
             or forbidden_key
             in {
                 "branch",
-                "helper_execution_lease",
                 "pr_number",
                 "pr_url",
                 "review_submission",
@@ -6722,7 +6720,55 @@ def _validate_assign_optional_pin_removal(
             f"Cannot clear frozen_evidence_base_sha on {task_id}: "
             f"assign audit timestamp ({assign_ts!r}) does not match pristine task creation timestamp ({task_last_update!r})."
         )
+    config = status_runtime_config()
+    # A capacity reservation is not a worker/process lease. Check the native
+    # unbound shape without repairing or expiring it; the ordinary runtime,
+    # queue, Git and evidence refusals below still apply in full.
+    claim = task.get("helper_execution_lease")
+    if "helper_execution_lease" in task:
+        import capacity_controller
+
+        claim_keys = {
+            "claimed_by", "original_owner", "generation", "claimed_at",
+            "lease_expires_at", "reason",
+        }
+        if not isinstance(claim, dict) or set(claim) != claim_keys:
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                "helper_execution_lease is malformed, unknown, or run-bound."
+            )
+        claimant = resolve_actor_reference(claim.get("claimed_by"), field="helper_execution_lease claimant")
+        claimed_at = parse_timestamp(claim.get("claimed_at"))
+        created_at = parse_timestamp(assign_ts)
+        if (
+            claimant not in configured_agent_names()
+            or claimant in {recorded_owner, recorded_reviewer}
+            or canonical_agent_name(claim.get("original_owner")) != recorded_owner
+            or type(claim.get("generation")) is not int
+            # Native cleanup removes the whole claim. A fresh unused claim
+            # starts at 1; replacement/renewal history is not this narrow case.
+            or claim["generation"] != 1
+            or claim.get("reason") != "owner_capacity_saturated_or_dispatch_sla_exceeded"
+            or claimed_at is None
+            or created_at is None
+            or claimed_at < created_at
+            or capacity_controller.helper_claim_task_ids_to_release(
+                config, [task], {"workers": {}}, now=claimed_at
+            )
+        ):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                "helper_execution_lease is not an original unbound capacity reservation."
+            )
+
     task_queue_event_ids: set[str] = set()
+    # Validate retained native routing audit, not just its type labels. An
+    # unmatched lease must be exactly the canonical reservation; a release is
+    # usable only after expiry (the original cleanup rule for an unbound claim).
+    # No claim transition is performed by assign.
+    reserved_entry: dict[str, Any] | None = None
+    previous_routing_ts = parse_timestamp(assign_ts)
+    last_release_ts = previous_routing_ts
     for entry in task_log_entries[1:]:
         entry_type = str(entry.get("type") or "").strip()
         entry_ts = str(entry.get("ts") or "").strip()
@@ -6740,6 +6786,53 @@ def _validate_assign_optional_pin_removal(
             and entry_ts == assign_ts
         ):
             continue
+        if entry_type in {"helper_claim_leased", "helper_claim_released"}:
+            routing_ts = parse_timestamp(entry_ts)
+            expected_keys = {"ts", "agent", "type", "task_id", "message"}
+            valid_routing = (
+                entry.get("agent") == "Orchestrator"
+                and entry.get("task_id") == task_id
+                and routing_ts is not None
+                and previous_routing_ts is not None
+                and routing_ts >= previous_routing_ts
+            )
+            if entry_type == "helper_claim_leased":
+                expected_keys.update({"claimed_by", "owner", "lease_expires_at"})
+                leased_to = resolve_actor_reference(
+                    entry.get("claimed_by"), field="helper_execution_lease audit claimant"
+                )
+                expires_at = parse_timestamp(entry.get("lease_expires_at"))
+                valid_routing = (
+                    valid_routing
+                    and reserved_entry is None
+                    and leased_to in configured_agent_names()
+                    and leased_to not in {recorded_owner, recorded_reviewer}
+                    and canonical_agent_name(entry.get("owner")) == recorded_owner
+                    and expires_at is not None
+                    and routing_ts < expires_at
+                    and entry.get("message")
+                    == "Idle capacity leased existing canonical work without changing owner."
+                )
+                reserved_entry = entry
+            else:
+                expires_at = parse_timestamp((reserved_entry or {}).get("lease_expires_at"))
+                valid_routing = (
+                    valid_routing
+                    and reserved_entry is not None
+                    and expires_at is not None
+                    and routing_ts >= expires_at
+                    and entry.get("message")
+                    == "Helper execution lease released because its launched run is no longer live."
+                )
+                reserved_entry = None
+                last_release_ts = routing_ts
+            if not valid_routing or set(entry) != expected_keys:
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    "incomplete or non-native helper reservation audit."
+                )
+            previous_routing_ts = routing_ts
+            continue
         if entry_type not in _ALLOWED_OPTIONAL_PIN_CORRECTION_LOG_TYPES:
             raise SystemExit(
                 f"Cannot clear frozen_evidence_base_sha on {task_id}: "
@@ -6754,7 +6847,22 @@ def _validate_assign_optional_pin_removal(
         if q_event_id:
             task_queue_event_ids.add(q_event_id)
 
-    config = status_runtime_config()
+    if claim is not None or reserved_entry is not None:
+        reserved_at = parse_timestamp((reserved_entry or {}).get("ts"))
+        if (
+            not isinstance(claim, dict)
+            or reserved_entry is None
+            or canonical_agent_name(reserved_entry.get("claimed_by")) != claimant
+            or reserved_entry.get("lease_expires_at") != claim["lease_expires_at"]
+            or reserved_at is None
+            or claimed_at > reserved_at
+            or claimed_at < last_release_ts
+        ):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                "helper_execution_lease does not match complete canonical reservation audit."
+            )
+
     if orchestrator_common.load_verification_receipts(config, task_id=task_id):
         raise SystemExit(
             f"Cannot clear frozen_evidence_base_sha on {task_id}: "

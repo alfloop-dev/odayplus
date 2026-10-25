@@ -4159,6 +4159,259 @@ class AssignOptionalPinCorrectionTests(unittest.TestCase):
         self.assertEqual(post_request.metadata.get("base_sha"), self.base_sha)
         self.assertEqual(post_request.metadata.get("workspace_branch"), f"task/{self.TASK_ID}")
 
+    def _reserve_unused_helper(self, *, claimed_at: str = "2026-10-25T20:39:00Z") -> dict[str, Any]:
+        """Run the original native grant/CAS/audit, isolating fleet decisions only."""
+        from contextlib import ExitStack
+        from datetime import datetime
+
+        import supervisor
+
+        config = ai_status.status_runtime_config()
+        config["ready_dispatcher"] = {
+            "helper_execution_lease": {"enabled": True, "require_owner_saturated": False},
+        }
+        orch_state = json.loads(ai_status.ORCHESTRATOR_STATE_FILE.read_text(encoding="utf-8"))
+        fixed_now = datetime.fromisoformat(claimed_at.replace("Z", "+00:00"))
+        with ExitStack() as stack:
+            # These advisory/recovery paths are unrelated to an initial todo;
+            # none may call GitHub, providers, or an external status launcher.
+            for name in (
+                "repair_open_task_metadata", "repair_unsubmitted_review_tasks",
+                "reassign_tasks_after_review_churn", "normalize_task_assignment_integrity",
+                "normalize_mainline_task_assignment", "reassign_unavailable_reviewers",
+                "reconcile_task_reality", "advance_approved_prs_to_merge",
+                "recover_conflicted_review_prs", "recover_failed_ci_review_prs",
+            ):
+                stack.enter_context(mock.patch.object(supervisor, name, return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None))
+            stack.enter_context(mock.patch.object(supervisor, "agent_can_take_task", return_value=True))
+            stack.enter_context(mock.patch.object(supervisor, "resolve_task_progress_head", return_value=None))
+            # Real CAS writer is retained; no subprocess may launch a live CLI.
+            stack.enter_context(mock.patch.object(supervisor, "sync_status_pipeline", return_value=True))
+            clock = stack.enter_context(mock.patch.object(supervisor, "datetime", wraps=datetime))
+            clock.now.return_value = fixed_now
+            stack.enter_context(mock.patch.object(ai_status.orchestrator_common, "utc_now", return_value=claimed_at))
+            queue = stack.enter_context(mock.patch.object(supervisor, "queue_dispatch_event_safely", return_value=True))
+            supervisor.dispatch_ready_tasks(config, orch_state, provider_report={}, agent_ids_override=["claude"])
+            queue.assert_called_once()
+            event = queue.call_args.args[1]
+        self.assertEqual(event["reason"], "helper_claim_dispatch")
+        task = ai_status.get_task(ai_status.load_state(), self.TASK_ID)
+        self.assertEqual(task["helper_execution_lease"], event["task"]["helper_execution_lease"])
+        self.assertEqual(task["helper_execution_lease"]["claimed_by"], "Claude")
+        self.assertNotIn("run_id", task["helper_execution_lease"])
+        return event
+
+    def _release_unused_helper(self) -> None:
+        import supervisor
+
+        config = ai_status.status_runtime_config()
+        orch_state = json.loads(ai_status.ORCHESTRATOR_STATE_FILE.read_text(encoding="utf-8"))
+        # The original capacity classifier, canonical CAS writer and native
+        # release audit all run. Only derived-view subprocess sync is isolated.
+        with (
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+            mock.patch.object(ai_status.orchestrator_common, "utc_now", return_value="2026-10-25T21:11:00Z"),
+        ):
+            self.assertEqual(supervisor.release_dead_helper_claims(config, orch_state), (True, True))
+        task = ai_status.get_task(ai_status.load_state(), self.TASK_ID)
+        self.assertNotIn("helper_execution_lease", task)
+
+    def test_native_unused_reservation_preserved_and_stale_snapshot_uses_current_dev(self) -> None:
+        from copy import deepcopy
+        from datetime import UTC, datetime
+
+        import supervisor
+        import worker_workspace
+        from adapters.base import DeliveryRequest
+
+        # The actual caller's earlier reservation was normally released; its
+        # complete audit stays in place when the next reservation is made.
+        self._reserve_unused_helper()
+        self._release_unused_helper()
+        event = self._reserve_unused_helper(claimed_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"))
+        config = ai_status.status_runtime_config()
+        orch_state = json.loads(ai_status.ORCHESTRATOR_STATE_FILE.read_text(encoding="utf-8"))
+        before_state = ai_status.load_state()
+        task_before = deepcopy(ai_status.get_task(before_state, self.TASK_ID))
+        lease_bytes = json.dumps(task_before["helper_execution_lease"], ensure_ascii=False)
+        request = DeliveryRequest(
+            agent_id="claude", provider="claude", delivery_mode="cli", message="Dispatch original G2",
+            task_id=self.TASK_ID, reason="helper_claim_dispatch",
+            metadata={"task": deepcopy(task_before)},
+        )
+        # Before correction the original prepare fails *before* any branch,
+        # worktree or run lease exists, despite the valid capacity reservation.
+        ok, error = worker_workspace.prepare_worker_workspace(
+            config, orch_state, request, queue_event_id="evt-unused", target_agent="Claude",
+        )
+        self.assertFalse(ok)
+        self.assertIn("frozen_evidence_task_branch_unavailable", error or "")
+        self.assertEqual(orch_state["worker_worktrees"]["leases"], {})
+        self.assertEqual(orch_state["workers"], {})
+        self.assertFalse((self.worktree_root / "pantheon" / self.TASK_ID.lower()).exists())
+        self.assertEqual(self._git(self.status_root, "branch", "--list", f"task/{self.TASK_ID}").strip(), "")
+        # Record the original lifecycle's failed (not accepted/pending) queue
+        # outcome. A retained event is permitted only with that same outcome.
+        orch_state["queue"]["events"]["evt-unused"] = {
+            "status": "failed", "error": f"Worker workspace preflight blocked: {error}",
+        }
+        ai_status.ORCHESTRATOR_STATE_FILE.write_text(json.dumps(orch_state), encoding="utf-8")
+        queued_snapshot = {
+            **event, "event_id": "evt-unused", "target_agent": "claude", "target_display_name": "Claude",
+            "metadata": {"task": deepcopy(task_before)}, "event_key": "older-key-drift",
+        }
+        event_queue = self.status_root / ".orchestrator" / "event-queue.jsonl"
+        event_queue.write_text(json.dumps(queued_snapshot) + "\n", encoding="utf-8")
+        logs_before = ai_status.load_logs(strict=True)
+        self.assertEqual(self._run_assign(
+            actor="Codex", task_id=self.TASK_ID, owner="Pi", reviewer="Codex2",
+            metadata={"frozen_evidence_base_sha": None},
+        ), 0)
+        after_state = ai_status.load_state()
+        task_after = ai_status.get_task(after_state, self.TASK_ID)
+        self.assertEqual(json.dumps(task_after["helper_execution_lease"], ensure_ascii=False), lease_bytes)
+        self.assertEqual(
+            {k: v for k, v in task_before.items() if k not in {"last_update", "frozen_evidence_base_sha"}},
+            {k: v for k, v in task_after.items() if k != "last_update"},
+        )
+        self.assertEqual(len(before_state["tasks"]), len(after_state["tasks"]))
+        self.assertEqual(before_state["handoffs"], after_state["handoffs"])
+        self.assertEqual(before_state["blockers"], after_state["blockers"])
+        self.assertEqual(ai_status.load_logs(strict=True)[:-1], logs_before)
+        # Pin and last_update do not cancel old events. The original live
+        # claimant/generation/status/dependency/policy gate still decides.
+        with mock.patch.object(supervisor, "resolve_task_progress_head", return_value=None):
+            self.assertEqual(
+                supervisor.ready_dispatch_signature(task_before, request.reason, {self.TASK_ID: task_before}),
+                supervisor.ready_dispatch_signature(task_after, request.reason, {self.TASK_ID: task_after}),
+            )
+            self.assertIsNone(supervisor.stale_dispatch_skip_message(config, queued_snapshot, {self.TASK_ID: task_after}))
+            foreign_event = deepcopy(queued_snapshot)
+            foreign_event["target_display_name"] = "Codex"
+            self.assertIn("another helper", supervisor.stale_dispatch_skip_message(config, foreign_event, {self.TASK_ID: task_after}) or "")
+            old_generation = deepcopy(queued_snapshot)
+            old_generation["metadata"]["task"]["helper_execution_lease"]["generation"] = 2
+            self.assertIn("generation mismatch", supervisor.stale_dispatch_skip_message(config, old_generation, {self.TASK_ID: task_after}) or "")
+
+        # Move dev so the stale snapshot's frozen SHA is visibly wrong. The
+        # original prepare re-reads canonical even with that same old request.
+        self._git(self.status_root, "commit", "--allow-empty", "-m", "Advance dev after reservation")
+        current_dev = self._git(self.status_root, "rev-parse", "HEAD").strip()
+        self._git(self.status_root, "push", "origin", "dev")
+        self.assertNotEqual(current_dev, self.base_sha)
+        ok, error = worker_workspace.prepare_worker_workspace(
+            config, orch_state, request, queue_event_id="evt-unused", target_agent="Claude",
+        )
+        self.assertTrue(ok, msg=error)
+        self.assertEqual(request.metadata["base_sha"], current_dev)
+        self.assertNotIn("frozen_evidence_base_sha", request.metadata)
+        self.assertEqual(request.metadata["task"]["frozen_evidence_base_sha"], self.base_sha)
+        self.assertEqual(ai_status.get_task(ai_status.load_state(), self.TASK_ID), task_after)
+        # An old Supervisor snapshot cannot restore the pin or replace a claim.
+        self.assertFalse(supervisor.write_status_snapshot_if_current(config, before_state))
+        self.assertEqual(ai_status.get_task(ai_status.load_state(), self.TASK_ID), task_after)
+
+    def test_native_released_unused_routing_history_remains_correctable(self) -> None:
+        self._reserve_unused_helper()
+        self._release_unused_helper()
+        before = ai_status.get_task(ai_status.load_state(), self.TASK_ID).copy()
+        logs = ai_status.load_logs(strict=True)
+        self.assertEqual(self._run_assign(
+            actor="Codex", task_id=self.TASK_ID, owner="Pi", reviewer="Codex2",
+            metadata={"frozen_evidence_base_sha": None},
+        ), 0)
+        after = ai_status.get_task(ai_status.load_state(), self.TASK_ID)
+        self.assertEqual(
+            {k: v for k, v in before.items() if k not in {"last_update", "frozen_evidence_base_sha"}},
+            {k: v for k, v in after.items() if k != "last_update"},
+        )
+        self.assertEqual(ai_status.load_logs(strict=True)[:-1], logs)
+        self.assertNotIn("helper_execution_lease", after)
+
+    def test_refuses_run_bound_foreign_unknown_and_malformed_reservations_atomically(self) -> None:
+        self._reserve_unused_helper()
+        original = ai_status.STATUS_FILE.read_text(encoding="utf-8")
+        mutations = [
+            {"run_id": "actual-run"}, {"run_id": None}, {"unknown": "value"},
+            {"original_owner": "Claude"}, {"claimed_by": "Codex2"},
+            {"claimed_by": "UnregisteredWorker"}, {"claimed_by": "Human/Ops"},
+            {"generation": True}, {"generation": "1"}, {"generation": 2},
+            {"claimed_at": "bad"}, {"claimed_at": "2026-10-25T18:00:00Z"},
+            {"lease_expires_at": "bad"}, {"reason": "manual-bypass"},
+        ]
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                state = json.loads(original)
+                task = ai_status.get_task(state, self.TASK_ID)
+                task["helper_execution_lease"].update(mutation)
+                ai_status.save_state(state)
+                self._assert_clear_refused("helper_execution_lease")
+        ai_status.STATUS_FILE.write_text(original, encoding="utf-8")
+
+    def test_refuses_partial_forged_or_run_marked_routing_audit_atomically(self) -> None:
+        self._reserve_unused_helper()
+        original_logs = ai_status.load_logs(strict=True)
+        lease_idx = next(i for i, entry in enumerate(original_logs) if entry.get("type") == "helper_claim_leased")
+        from copy import deepcopy
+
+        variants = []
+        variants.append([e for e in original_logs if e.get("type") != "helper_claim_leased"])
+        for mutation in (
+            {"agent": "Pi"}, {"owner": "Codex"}, {"claimed_by": "Pi"},
+            {"claimed_by": "UnregisteredWorker"}, {"run_id": "run-1"},
+            {"lease_expires_at": "bad"}, {"lease_expires_at": "2026-10-25T21:10:00Z"},
+            {"message": "pretend reservation"},
+        ):
+            changed = deepcopy(original_logs)
+            changed[lease_idx].update(mutation)
+            variants.append(changed)
+        variants.append(original_logs + [original_logs[lease_idx]])
+        variants.append(original_logs + [{
+            "ts": "2026-10-25T20:40:00Z", "agent": "Orchestrator", "task_id": self.TASK_ID,
+            "type": "helper_claim_released",
+            "message": "Helper execution lease released because its launched run is no longer live.",
+        }])
+        for logs in variants:
+            with self.subTest(logs=logs[lease_idx:]):
+                ai_status.LOG_FILE.write_text("".join(json.dumps(e) + "\n" for e in logs), encoding="utf-8")
+                self._assert_clear_refused("helper")
+        ai_status.LOG_FILE.write_text("".join(json.dumps(e) + "\n" for e in original_logs), encoding="utf-8")
+        # A lease label with no matching canonical reservation is also not proof.
+        state = ai_status.load_state()
+        ai_status.get_task(state, self.TASK_ID).pop("helper_execution_lease")
+        ai_status.save_state(state)
+        self._assert_clear_refused("does not match complete canonical reservation audit")
+
+    def test_unused_reservation_does_not_bypass_runtime_queue_worker_or_worktree_proof(self) -> None:
+        self._reserve_unused_helper()
+        original = ai_status.ORCHESTRATOR_STATE_FILE.read_text(encoding="utf-8")
+        for queue_status in ("queued", "pending", "started", "completed", "accepted"):
+            with self.subTest(queue_status=queue_status):
+                orch = json.loads(original)
+                orch["queue"]["events"]["evt-preflight-1"] = {"status": queue_status}
+                ai_status.ORCHESTRATOR_STATE_FILE.write_text(json.dumps(orch), encoding="utf-8")
+                self._assert_clear_refused("pending or active queue event")
+        for worker_status in ("running", "completed", "failed"):
+            with self.subTest(worker_status=worker_status):
+                orch = json.loads(original)
+                orch["workers"]["run-1"] = {"task_id": self.TASK_ID, "status": worker_status}
+                ai_status.ORCHESTRATOR_STATE_FILE.write_text(json.dumps(orch), encoding="utf-8")
+                self._assert_clear_refused("orchestrator worker record exists")
+        orch = json.loads(original)
+        orch["worker_worktrees"]["leases"][self.TASK_ID] = {"task_id": self.TASK_ID}
+        ai_status.ORCHESTRATOR_STATE_FILE.write_text(json.dumps(orch), encoding="utf-8")
+        self._assert_clear_refused("worker worktree lease exists")
+        ai_status.ORCHESTRATOR_STATE_FILE.write_text(original, encoding="utf-8")
+        branch_ref = f"refs/heads/task/{self.TASK_ID}"
+        self._git(self.status_root, "update-ref", branch_ref, self.base_sha)
+        self._assert_clear_refused("task branch ref already exists")
+        self._git(self.status_root, "update-ref", "-d", branch_ref)
+        event_queue = self.status_root / ".orchestrator" / "event-queue.jsonl"
+        event_queue.write_text(json.dumps({"event_id": "pending-helper", "task_id": self.TASK_ID}) + "\n", encoding="utf-8")
+        self._assert_clear_refused("pending or active dispatch event")
+        event_queue.write_text("", encoding="utf-8")
+
     def test_ordinary_omitted_key_assign_preserves_existing_frozen_evidence_pin(self) -> None:
         rc = self._run_assign(
             actor="Codex",
