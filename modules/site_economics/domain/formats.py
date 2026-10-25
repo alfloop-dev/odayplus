@@ -268,7 +268,7 @@ class TargetFormatSpec:
             **{key: float(data[key]) if data[key] is not None else None for key in (
                 "target_area_ping_min", "target_area_ping_max", "recommended_area_ping")},
             **{key: data.get(key) for key in (
-                "package_total_untaxed", "unallocated_package_cost", "daily_operating_hours")}, 
+                "package_total_untaxed", "unallocated_package_cost", "daily_operating_hours")},
             machine_mix=MachineMixSpec.from_dict(data["machine_mix"]),
             fitout_spec=FitoutSpec.from_dict(data["fitout_spec"]),
             **{key: kind.from_dict(data[key]) if data[key] is not None else None
@@ -387,7 +387,7 @@ def require_oday_g2_configuration(spec: TargetFormatSpec) -> None:
         return
 
     def refuse() -> None:
-        raise ValueError("ODAY_G2_CONFIGURATION_REQUIRED: supply a versioned three-large/three-medium all-in-one configuration; retained mixed v1 is not the specified target")
+        raise ValueError("ODAY_G2_CONFIGURATION_REQUIRED: supply a complete versioned three-large/three-medium all-in-one configuration with allocated package costs and known financial inputs; retained mixed v1 is not the specified target")
 
     def number(value: Any, *, positive: bool = False, maximum: float | None = None) -> None:
         try:
