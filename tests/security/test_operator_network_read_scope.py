@@ -17,12 +17,20 @@ from apps.api.oday_api.security.dependencies import (
 from modules.opsboard.application.network_listings import NetworkListingService
 from modules.opsboard.application.network_reviews import NetworkReviewService
 from modules.opsboard.application.network_scoring import NetworkScoringService
-from modules.opsboard.auth import AuthBoundaryConfig, AuthenticationBoundary, SigningKey, encode_compact_jwt
+from modules.opsboard.auth import (
+    AuthBoundaryConfig,
+    AuthenticationBoundary,
+    SigningKey,
+    encode_compact_jwt,
+)
 from shared.auth import Action
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.engine import SqliteEngine
 from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
-from shared.infrastructure.persistence.repositories import DurableListingRepository, DurableSiteScoreRepository
+from shared.infrastructure.persistence.repositories import (
+    DurableListingRepository,
+    DurableSiteScoreRepository,
+)
 from tests.integration._operation_flag_fixtures import (
     SITE_GO_FLAG,
     enable_operation_flag,
