@@ -5,6 +5,7 @@ import styles from "../networkFindAreas.module.css";
 import type { SiteScoreLabRow } from "../networkFindAreasViewModel";
 import {
   recommendationTone,
+  type NetworkTargetFormat,
   type ScoreCard,
   type ScoringCandidate,
   type ScoreExecutionReceipt,
@@ -39,7 +40,9 @@ export function SiteScorePanel({
   executionRequest,
   executionError,
   requireRescoreReason,
+  targetFormat,
 }: {
+  targetFormat?: NetworkTargetFormat | null;
   busyCandidateId?: string | null;
   candidates: ScoringCandidate[];
   fallbackRows: SiteScoreLabRow[];
@@ -92,6 +95,8 @@ export function SiteScorePanel({
           {modelVersion ?? cards[0]?.modelVersion ?? "尚無評分模型資訊"} · 需求／租金／侵蝕／回本四構面
         </span>
       </div>
+
+      {targetFormat ? <StandardFormatAssumptions format={targetFormat} /> : null}
 
       {executionRequest ? <p role="status" data-testid="sitescore-execution-status">{executionRequest.candidateSiteId} · 評分工作 {executionRequest.status}{executionRequest.status === "SUCCEEDED" ? ` · 報告版本 ${executionRequest.result?.report_version}` : " · 已保存報告仍可查閱"}</p> : null}
       {executionError ? <p role="alert">{executionError}</p> : null}
@@ -193,6 +198,45 @@ export function SiteScorePanel({
         <div className={styles.emptyState}>No SiteScore runs</div>
       )}
     </div>
+  );
+}
+
+// Shared by the existing ready panel and the workspace's canonical empty
+// assumptions area. No financial calculation or action qualification lives here.
+export function StandardFormatAssumptions({ format }: { format: NetworkTargetFormat }) {
+  const assetLabels: Record<NetworkTargetFormat["capital_assets"][number]["asset_kind"], string> = {
+    PAYMENT_SYSTEM: "支付系統", KIOSK: "Kiosk", VENDING: "販賣機", CAMERA_SYSTEM: "監視系統", FURNITURE: "家具備品",
+  };
+  const amount = (value: number | null) => value === null ? "未知" : money(value);
+  const measurement = (value: number | null) => value === null ? "未知" : value;
+  return (
+    <section className={styles.scoreCard} aria-label="目前標準配置（唯讀）" data-testid="sitescore-target-format">
+      <div className={styles.filterTitle}>目前標準配置（唯讀） · {format.format_code} · {format.format_version}</div>
+      <p className={styles.muted}>{format.format_name}；不是已保存報告的假設，亦不代表可評分或財務核准。</p>
+      <dl className={styles.scoreMeta}>
+        <div><dt>完整未稅套裝</dt><dd>{money(format.package_total_untaxed)}</dd></div>
+        <div><dt>套裝內未分配金額</dt><dd>{money(format.unallocated_package_cost)}（已含於總價，非額外費用；升級／保固／保險分配未知）</dd></div>
+        <div><dt>營業時數</dt><dd>{format.daily_operating_hours} 小時／日；週期僅為理論產能依據，不是預測需求或利用率。</dd></div>
+      </dl>
+      <div className={styles.tableWrap}>
+        <table className={styles.dataTable} aria-label="標準洗烘一體機配置">
+          <thead><tr><th>洗烘一體機</th><th>台數</th><th>單價（未稅）</th><th>每次價格</th><th>週期</th><th>使用年限／殘值比</th><th>基準轉數／日</th><th>水 L／電 kWh／氣 kg（每次）</th><th>洗劑／每台月維護</th></tr></thead>
+          <tbody>{format.machine_mix.items.map(({ quantity, machine_model: model }) => <tr key={model.model_id}>
+            <td>{model.capacity_kg} kg · {model.model_id}</td><td>{quantity}</td><td>{money(model.unit_capex)}</td>
+            <td>{money(model.base_cycle_price)}</td><td>{model.cycle_minutes} 分鐘</td>
+            <td>{model.useful_life_months} 月／{model.residual_value_ratio}</td><td>{measurement(model.baseline_turns_per_day)}</td>
+            <td>{measurement(model.water_liters_per_cycle)}／{measurement(model.electricity_kwh_per_cycle)}／{measurement(model.gas_kg_per_cycle)}</td>
+            <td>{amount(model.detergent_cost_per_cycle)}／{amount(model.monthly_maintenance_per_unit)}</td>
+          </tr>)}</tbody>
+        </table>
+      </div>
+      <dl className={styles.scoreMeta}>
+        {format.capital_assets.map((asset) => <div key={asset.asset_id}><dt>{assetLabels[asset.asset_kind]}</dt>
+          <dd>{asset.quantity} 件 × {money(asset.unit_capex)}；{asset.useful_life_months} 月／殘值比 {asset.residual_value_ratio}；每月營運成本 {amount(asset.monthly_fixed_operating_cost)}</dd></div>)}
+        <div><dt>工程裝修（未稅）</dt><dd>{money(format.fitout_spec.base_fitout_cost)}；{format.fitout_spec.fitout_useful_life_months} 月或較短租期</dd></div>
+        <div><dt>財務政策與營運輸入</dt><dd>水電費率、維護、融資、稅、殘值政策、爬坡與季節性：未知。未計算 ROI、折舊或報告 CAPEX。</dd></div>
+      </dl>
+    </section>
   );
 }
 
