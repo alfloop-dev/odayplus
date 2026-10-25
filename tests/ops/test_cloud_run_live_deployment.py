@@ -2763,6 +2763,13 @@ def test_scheduler_trigger_restore_handles_paused_state(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     cloud_env, state_path, gcloud_log = _scheduler_restore_spy(tmp_path, snapshot)
+    cloud = json.loads(state_path.read_text())
+    current = cloud["triggers"]["paused-trigger"]
+    current.update(schedule="5 * * * *", timeZone="Asia/Taipei")
+    current["httpTarget"]["uri"] = (
+        "https://run.googleapis.com/v2/projects/test-project/locations/test-region/jobs/candidate-job:run"
+    )
+    state_path.write_text(json.dumps(cloud))
     command = (
         f'source "{TRAFFIC_SHELL_HELPER}"\n'
         + _SCHEDULER_RESTORE_SPY
@@ -2786,8 +2793,13 @@ def test_scheduler_trigger_restore_handles_paused_state(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     call = "\n".join(" ".join(json.loads(line)) for line in gcloud_log.read_text(encoding="utf-8").splitlines())
+    assert "scheduler jobs update http paused-trigger" in call
+    assert "--schedule=0 12 * * *" in call and "--time-zone=UTC" in call
     assert "scheduler jobs resume paused-trigger" not in call
-    assert json.loads(state_path.read_text())["triggers"]["paused-trigger"]["state"] == "PAUSED"
+    actual = json.loads(state_path.read_text())["triggers"]["paused-trigger"]
+    assert actual["state"] == "PAUSED"
+    assert actual["schedule"] == "0 12 * * *" and actual["timeZone"] == "UTC"
+    assert actual["httpTarget"]["uri"].endswith("/jobs/scheduler-job:run")
 
 
 def test_scheduler_trigger_restore_deletes_absent_pre_deploy_trigger(tmp_path: Path) -> None:
