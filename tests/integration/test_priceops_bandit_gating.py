@@ -499,7 +499,7 @@ def test_priceops_exploration_api_endpoints() -> None:
     from shared.auth import Role
     from tests.integration._authz import auth_headers
 
-    headers = auth_headers(Role.PRICING_MANAGER)
+    headers = {**auth_headers(Role.PRICING_MANAGER), "x-tenant-id": TENANT_ID}
     client = TestClient(create_app(), headers={**headers, "x-correlation-id": "corr-priceops-api"})
 
     now = datetime.now(UTC)

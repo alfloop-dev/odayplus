@@ -25,7 +25,7 @@ from tests.integration._authz import PRICEOPS_HEADERS
 
 
 def _client() -> TestClient:
-    return TestClient(create_app(), headers=PRICEOPS_HEADERS)
+    return TestClient(create_app(), headers={**PRICEOPS_HEADERS, "x-tenant-id": "tenant-ml3"})
 
 
 def _loglog_observations() -> list[dict[str, float]]:

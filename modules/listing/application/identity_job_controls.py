@@ -19,14 +19,19 @@ class IdentityJobControls:
 
     def context(self, tenant: str, decision_id: str, *, for_update: bool = True) -> dict:
         """Caller owns the snapshot; mutation callers lock in worker order."""
-        locking = " FOR UPDATE" if for_update else ""
         reference = self.graph._one("SELECT job_id FROM workflow.jobs WHERE tenant_id=? "
             "AND aggregate_id=? AND aggregate_type='identity_decision' AND job_type='identity-execution'",
             (tenant, decision_id))
         job_id = reference["job_id"]
-        self.graph._one("SELECT job_id FROM durable_jobs WHERE job_id=?" + locking, (job_id,))
+        self.graph._one(
+            ("SELECT job_id FROM durable_jobs WHERE job_id=? FOR UPDATE"
+             if for_update else "SELECT job_id FROM durable_jobs WHERE job_id=?"),
+            (job_id,),
+        )
         delivery = self.graph.queue.get(job_id)
-        job = self.graph._one("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?" + locking,
+        job = self.graph._one(
+            ("SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=? FOR UPDATE"
+             if for_update else "SELECT * FROM workflow.jobs WHERE tenant_id=? AND job_id=?"),
             (tenant, job_id))
         if (delivery is None or delivery.job_type != self.graph.job_type
                 or set(delivery.payload) != {"job_id", "tenant_id", "attempt_token"}

@@ -84,13 +84,16 @@ class CanonicalIdentityGraphRepository:
         return row
 
     def _case(self, tenant: str, case_id: str, *, for_update: bool = True) -> tuple[dict, dict]:
-        locking = " FOR UPDATE" if for_update else ""
         case = self._one(
-            "SELECT * FROM identity.match_cases WHERE tenant_id=? AND match_case_id=?" + locking,
+            ("SELECT * FROM identity.match_cases WHERE tenant_id=? AND match_case_id=? FOR UPDATE"
+             if for_update else
+             "SELECT * FROM identity.match_cases WHERE tenant_id=? AND match_case_id=?"),
             (tenant, case_id),
         )
         intake = self._one(
-            "SELECT * FROM intake.intakes WHERE tenant_id=? AND intake_id=?" + locking,
+            ("SELECT * FROM intake.intakes WHERE tenant_id=? AND intake_id=? FOR UPDATE"
+             if for_update else
+             "SELECT * FROM intake.intakes WHERE tenant_id=? AND intake_id=?"),
             (tenant, case["intake_id"]),
         )
         return case, intake
