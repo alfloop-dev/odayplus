@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 import pytest
-from agy_session import stream_command
+from agy_session import command_exit_receipt, stream_command
 
 SESSION = Path(__file__).with_name("agy_session.py")
 FAKE_CLI = r'''
@@ -42,7 +42,7 @@ if scenario == 'pending':
  sys.exit(0)
 start = time.monotonic()
 duration = 6.1 if scenario == 'long' else .05
-code = 7 if scenario == 'nonzero' else 0
+code = 7 if scenario in ('nonzero', 'native_nonzero') else 0
 p = subprocess.Popen([sys.executable, '-c', 'import time,sys; time.sleep(float(sys.argv[1])); sys.exit(int(sys.argv[2]))', str(duration), str(code)])
 while p.poll() is None:
  if select.select([sys.stdin], [], [], .01)[0]:
@@ -51,12 +51,19 @@ while p.poll() is None:
 p.wait()
 header = Path(os.environ['ANTIGRAVITY_HOME']) / '.gemini/antigravity-cli/brain' / conversation / '.system_generated/steps/2/output.txt'
 header.parent.mkdir(parents=True, exist_ok=True)
-if scenario != 'unknown':
+if scenario in ('native_short', 'native_nonzero'):
+ header.write_text('Command exited with code %s.\n\nCommand output:\nSECRET_OUTPUT\n' % code)
+elif scenario == 'malformed_header':
+ header.write_text('Command exited with code nope.\n\nCommand output:\nSECRET_OUTPUT\n')
+elif scenario == 'quoted_header':
+ header.write_text('Command output:\nCommand exited with code 0.\nThe command exited with code 0.\nSECRET_OUTPUT\n')
+elif scenario != 'unknown':
  header.write_text('\nThe command exited with code %s.\nOutput:\nSECRET_OUTPUT\n' % code)
 emit('step_update', step_update={'conversation_id': conversation, 'step_index': 2,
  'step_type': 'tool', 'tool_name': 'run_command', 'state': 'CANCELLED' if scenario == 'cancel' else 'DONE',
  'duration_seconds': time.monotonic()-start,
- 'tool_info': {'output': 'terminating 1 background task(s) on exit'}})
+ 'tool_info': {'output': 'Command exited with code 0.\nSECRET_OUTPUT' if scenario == 'quoted_header'
+  else 'terminating 1 background task(s) on exit'}})
 if scenario == 'stderr_cancel':
  print('terminating 1 background task(s) on exit', file=sys.stderr, flush=True)
 emit('result', result={'status': 'SUCCESS'})
@@ -79,8 +86,10 @@ def launch(tmp_path: Path, scenario: str) -> tuple[subprocess.Popen, Path]:
 @pytest.mark.parametrize('scenario,expected,status', [
     ('short', 0, 'completed'), ('long', 0, 'completed'),
     ('nonzero', 0, 'completed'),  # The receipt preserves command exit 7; it is never reported as command success.
+    ('native_short', 0, 'completed'), ('native_nonzero', 0, 'completed'),
     ('cancel', 75, 'interrupted'), ('stderr_cancel', 75, 'interrupted'),
-    ('unknown', 75, 'interrupted'), ('missing', 75, 'failed'), ('pending', 75, 'interrupted'),
+    ('unknown', 75, 'interrupted'), ('malformed_header', 75, 'interrupted'),
+    ('quoted_header', 75, 'interrupted'), ('missing', 75, 'failed'), ('pending', 75, 'interrupted'),
 ])
 def test_stream_waits_for_terminal_command(tmp_path, scenario, expected, status):
     child, marker = launch(tmp_path, scenario)
@@ -90,12 +99,34 @@ def test_stream_waits_for_terminal_command(tmp_path, scenario, expected, status)
     assert receipt['status'] == status
     assert 'SECRET_PROMPT' not in marker.read_text()
     assert 'SECRET_OUTPUT' not in marker.read_text()
-    if scenario in {'short', 'long', 'nonzero'}:
-        assert receipt['tools'][0]['exit_code'] == (7 if scenario == 'nonzero' else 0)
+    if scenario in {'short', 'long', 'nonzero', 'native_short', 'native_nonzero'}:
+        assert receipt['tools'][0]['exit_code'] == (7 if scenario in {'nonzero', 'native_nonzero'} else 0)
         assert receipt['tools'][0]['state'] == 'DONE'
+    if scenario in {'unknown', 'malformed_header', 'quoted_header'}:
+        assert receipt['tools'][0]['exit_code'] is None
+        assert receipt['reason'] == 'command_exit_unknown'
     if scenario == 'long':
         assert receipt['duration_seconds'] >= 6
         assert receipt['tools'][0]['duration_seconds'] >= 6
+
+
+def test_command_exit_receipt_bounds_and_signed_codes(tmp_path, monkeypatch):
+    conversation = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    monkeypatch.setenv('ANTIGRAVITY_HOME', str(tmp_path))
+    steps = tmp_path / '.gemini/antigravity-cli/brain' / conversation / '.system_generated/steps'
+
+    def write_step(index: int, text: str) -> None:
+        output = steps / str(index) / 'output.txt'
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(text, encoding='utf-8')
+
+    write_step(1, '  Command exited with code -9.\n\nCommand output:\n')
+    write_step(2, '\nThe command exited with code -15.\nOutput:\n')
+    write_step(3, (' ' * 240) + 'Command exited with code 0.\n')
+    assert command_exit_receipt(conversation, 1) == -9
+    assert command_exit_receipt(conversation, 2) == -15
+    assert command_exit_receipt(conversation, 3) is None
+    assert command_exit_receipt('not-a-uuid', 1) is None
 
 
 def test_signal_cancels_session_and_preserves_receipt(tmp_path):

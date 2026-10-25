@@ -24,7 +24,7 @@ from worker_runner import write_json
 
 TERMINAL = {"DONE", "ERROR", "CANCELLED", "CANCELED"}
 INTERRUPTED = re.compile(r"^terminating [1-9]\d* background task\(s\) on exit$", re.I)
-COMMAND_EXIT = re.compile(r"^\s*The command exited with code (-?\d+)\.")
+COMMAND_EXIT = re.compile(r"^\s*(?:The command|Command) exited with code (-?\d+)\.")
 CONVERSATION_ID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 
 
