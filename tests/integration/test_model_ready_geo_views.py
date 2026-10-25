@@ -1285,6 +1285,132 @@ def test_postgresql_forecast_view_admits_only_eof_proven_target_and_prior_partit
                     )
                     assert late_order_row["feature_snapshot_time"] == late_order_eof_at
 
+        # The orders source reads every tenant and store of a partition in one
+        # _id order and process_partition stops at its record bound. After the
+        # full-day EOF R0, two orders of the day are inserted above the
+        # checkpoint: another store's first, then this store's. A clean bounded
+        # chunk R1 loads only the other store's order and stops before ours, so
+        # this store gains no R1 lineage. R0 must stop proving the day for every
+        # store until a later run of the partition reaches EOF, and only from
+        # that EOF on -- whether it loads our remaining order or finds none.
+        cross_chunk_at = _at(FORECAST_TARGET_DAY + timedelta(days=6), 6)
+        cross_eof_at = _at(FORECAST_TARGET_DAY + timedelta(days=8), 6)
+        other_stores = (("forecast", "cross-store"), ("forecast-other", "store"))
+        for day, run, reason in (
+            (FORECAST_TARGET_DAY, target_run, "SOURCE_RUN_NOT_COMPLETE"),
+            (FORECAST_PRIOR_DAY, prior_run, "PRIOR_SOURCE_NOT_COMPLETE"),
+        ):
+            for other_tenant, other_store in other_stores:
+                for remaining_amount in (None, 42.0):
+                    label = f"{day.isoformat()}:{other_tenant}:{other_store}:{remaining_amount}"
+                    with connection.transaction(force_rollback=True):
+                        other_tenant_id, other_store_id, _ = _insert_store(
+                            connection,
+                            tenant=other_tenant,
+                            store=other_store,
+                            opened_on=date(2024, 1, 1),
+                        )
+                        cross_chunk = _insert_run(
+                            connection,
+                            name=f"forecast-cross-store-chunk:{label}",
+                            source_kind="orders",
+                            partition_key=day.isoformat(),
+                            finished_at=cross_chunk_at,
+                            processed_count=1,
+                            valid_loaded=1,
+                            partition_complete=False,
+                        )
+                        _insert_transaction(
+                            connection,
+                            tenant_id=other_tenant_id,
+                            store_id=other_store_id,
+                            name=f"forecast-cross-store-order:{label}",
+                            event_time=_at(day, 20),
+                            amount=11.0,
+                            daily_runs={day: cross_chunk},
+                        )
+                        assert _rows_as_dicts(
+                            connection,
+                            "SELECT run_id, status, partition_complete "
+                            "FROM data_plane.ingestion_runs WHERE run_id = %s",
+                            (run,),
+                        ) == [{"run_id": run, "status": "SUCCEEDED", "partition_complete": True}]
+                        assert_target_refused(reason)
+
+                        cross_eof = _insert_run(
+                            connection,
+                            name=f"forecast-cross-store-eof:{label}",
+                            source_kind="orders",
+                            partition_key=day.isoformat(),
+                            finished_at=cross_eof_at,
+                            processed_count=0 if remaining_amount is None else 1,
+                            valid_loaded=0 if remaining_amount is None else 1,
+                        )
+                        if remaining_amount is not None:
+                            _insert_transaction(
+                                connection,
+                                tenant_id=tenant_id,
+                                store_id=store_id,
+                                name=f"forecast-cross-store-remaining:{label}",
+                                event_time=_at(day, 21),
+                                amount=remaining_amount,
+                                daily_runs={day: cross_eof},
+                            )
+                        added = remaining_amount or 0.0
+                        (cross_row,) = source.load(spec, bounds).rows
+                        assert cross_row["date"] == FORECAST_TARGET_DAY
+                        assert cross_row["tenant_id"] == tenant_id
+                        assert cross_row["store_id"] == store_id
+                        if day == FORECAST_TARGET_DAY:
+                            assert cross_row["daily_net_revenue"] == pytest.approx(
+                                128.0 + added
+                            )
+                            assert cross_row["label_maturity_time"] == cross_eof_at
+                            assert cross_row["feature_snapshot_time"] == cross_eof_at
+                        else:
+                            assert cross_row["rolling_mean_28"] == pytest.approx(
+                                loaded_row["rolling_mean_28"] + added / 28.0
+                            )
+                            assert cross_row["label_maturity_time"] == (
+                                loaded_row["label_maturity_time"]
+                            )
+                            assert cross_row["feature_snapshot_time"] == cross_eof_at
+
+            # Bounded chunks that never read this day, or that stopped before
+            # R0 reached EOF, leave the original proof and its clocks intact.
+            unrelated_chunks = (
+                ("transaction", day.isoformat(), cross_chunk_at),
+                ("orders", (FORECAST_TARGET_DAY + timedelta(days=1)).isoformat(), cross_chunk_at),
+                (
+                    "orders",
+                    f"{(FORECAST_FIRST_DAY - timedelta(days=3)).isoformat()}__"
+                    f"{(FORECAST_FIRST_DAY - timedelta(days=1)).isoformat()}",
+                    cross_chunk_at,
+                ),
+                ("orders", day.isoformat(), _at(day, 22)),
+            )
+            for index, (source_kind, partition_key, finished_at) in enumerate(
+                unrelated_chunks
+            ):
+                with connection.transaction(force_rollback=True):
+                    _insert_run(
+                        connection,
+                        name=f"forecast-unrelated-chunk:{day.isoformat()}:{index}",
+                        source_kind=source_kind,
+                        partition_key=partition_key,
+                        finished_at=finished_at,
+                        processed_count=1,
+                        valid_loaded=1,
+                        partition_complete=False,
+                    )
+                    (unrelated_chunk_row,) = source.load(spec, bounds).rows
+                    assert unrelated_chunk_row["label_maturity_time"] == (
+                        loaded_row["label_maturity_time"]
+                    )
+                    assert unrelated_chunk_row["feature_snapshot_time"] == (
+                        loaded_row["feature_snapshot_time"]
+                    )
+
         # product_ops.data_platform.backfill._windows accepts sub-day timestamps
         # (e.g. 12:00..00:00, omitting a 09:00 order while loading a 15:00 order)
         # yet emits a 'YYYY-MM-DD__YYYY-MM-DD' partition key, and ingestion_runs

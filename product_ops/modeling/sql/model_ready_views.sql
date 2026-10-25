@@ -47,6 +47,12 @@ WITH authoritative_order_partitions AS (
     -- rematerialization or a backfill window reaching the day that quarantined
     -- or failed on an order adds no canonical lineage and leaves the earlier
     -- EOF untouched, so it must revoke that proof rather than be ignored.
+    -- A clean bounded chunk finishing no earlier than the proof revokes it too:
+    -- the orders source reads every tenant and store in one _id order, so a
+    -- chunk that stopped at its record bound after loading another store's
+    -- later-inserted order leaves this day's remaining records unread, and the
+    -- older EOF no longer proves any store of the day complete until a later
+    -- run of the partition reaches EOF again.
     -- Backfill keys are compared as ISO date text (no cast) over the inclusive
     -- start/end dates that _windows derives from the window bounds.
     SELECT
@@ -75,12 +81,18 @@ WITH authoritative_order_partitions AS (
                             AND split_part(chunk.partition_key, '__', 2)
                 )
             )
-            AND NOT (
-                chunk.status = 'SUCCEEDED'
-                AND chunk.reconciled
-                AND chunk.quarantined_count = 0
-                AND chunk.processed_count = chunk.valid_loaded
-                AND chunk.finished_at IS NOT NULL
+            AND (
+                NOT (
+                    chunk.status = 'SUCCEEDED'
+                    AND chunk.reconciled
+                    AND chunk.quarantined_count = 0
+                    AND chunk.processed_count = chunk.valid_loaded
+                    AND chunk.finished_at IS NOT NULL
+                )
+                OR (
+                    NOT chunk.partition_complete
+                    AND chunk.finished_at >= completion.finished_at
+                )
             )
       )
 ),

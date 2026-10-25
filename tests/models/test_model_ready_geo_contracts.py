@@ -37,9 +37,18 @@ def test_forecast_sql_requires_eof_proven_partitions_for_target_and_prior_days()
     # FAILED/abandoned chunks keep default zero counters, so only fully
     # succeeded chunks may read the day -- including chunks finishing after the
     # proof, which must revoke a retained earlier EOF rather than be ignored.
-    assert "chunk.status = 'SUCCEEDED'\n                AND chunk.reconciled" in body
+    assert "chunk.status = 'SUCCEEDED'\n                    AND chunk.reconciled" in body
     assert "AND chunk.finished_at IS NOT NULL" in body
     assert "chunk.finished_at <= completion.finished_at" not in body
+    # The orders source reads every store in one _id order, so a clean bounded
+    # chunk of the day finishing at or after the proof leaves records of any
+    # store unread and revokes the older EOF until a later run reaches EOF.
+    assert (
+        "OR (\n"
+        "                    NOT chunk.partition_complete\n"
+        "                    AND chunk.finished_at >= completion.finished_at\n"
+        "                )"
+    ) in body
     # Backfill windows reaching the day revoke its proof, compared as ISO date
     # text over the window's inclusive start/end dates.
     assert (
