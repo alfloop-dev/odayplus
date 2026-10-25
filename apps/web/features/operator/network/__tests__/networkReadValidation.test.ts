@@ -1411,6 +1411,26 @@ describe("read-only standard configuration in the existing SiteScore flow", () =
     }
   });
 
+  it("discards configuration when the authenticated session guard is revoked during the read", async () => {
+    setupRead(emptyWithFormat);
+    let authenticated = true;
+    let finish: (response: Response) => void = () => undefined;
+    let reads = 0;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      if (String(input).includes("network-scoring")) {
+        reads += 1; return new Promise<Response>((resolve) => { finish = resolve; });
+      }
+      return Promise.resolve(new Response("{}", { status: 403 }));
+    }));
+    render(createElement(NetworkFindAreasWorkspace, { ...props,
+      createAuthenticatedReadGuard: (current: () => boolean) => async () => authenticated && current() }));
+    await vi.waitFor(() => expect(reads).toBe(1));
+    authenticated = false;
+    await act(async () => { finish(new Response(JSON.stringify(emptyWithFormat), { status: 200 })); });
+    expect(screen.queryByTestId("sitescore-target-format")).toBeNull();
+    expect(screen.queryByRole("button", { name: /重新評分|送審/ })).toBeNull();
+  });
+
   it("invalidates already displayed config immediately on a role switch", async () => {
     const mock = setupRead(emptyWithFormat);
     const view = render(createElement(NetworkFindAreasWorkspace, props));

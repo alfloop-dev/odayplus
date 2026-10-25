@@ -167,7 +167,7 @@ function validTargetFormat(value: unknown): boolean {
     && nonnegative(item.machine_model.base_cycle_price) && positive(item.machine_model.cycle_minutes)
     && count(item.machine_model.useful_life_months) && ratio(item.machine_model.residual_value_ratio)
     && ["baseline_turns_per_day", "water_liters_per_cycle", "electricity_kwh_per_cycle", "gas_kg_per_cycle",
-      "detergent_cost_per_cycle", "monthly_maintenance_per_unit"].every((key) => unknownAmount(item.machine_model[key])))) return false;
+      "detergent_cost_per_cycle", "monthly_maintenance_per_unit"].every((key) => unknownAmount((item.machine_model as Row)[key])))) return false;
   return new Set(items.map((item) => item.machine_model.model_id)).size === items.length
     && value.capital_assets.every((asset) => readObject(asset) && readId(asset.asset_id)
       && oneOf(asset.asset_kind, ["PAYMENT_SYSTEM", "KIOSK", "VENDING", "CAMERA_SYSTEM", "FURNITURE"])

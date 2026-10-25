@@ -23,12 +23,12 @@ from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.engine import SqliteEngine
 from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
 from shared.infrastructure.persistence.repositories import DurableListingRepository, DurableSiteScoreRepository
-from tests.unit.test_network_candidate_report_projection import ReadOnlyRuntime, _draft, _report
 from tests.integration._operation_flag_fixtures import (
     SITE_GO_FLAG,
     enable_operation_flag,
     new_operation_flags,
 )
+from tests.unit.test_network_candidate_report_projection import ReadOnlyRuntime, _draft, _report
 
 HEADERS = {
     "X-Subject-Id": "read-admin", "X-Roles": "platform_admin,operator_viewer",
@@ -406,7 +406,7 @@ def test_template_uses_existing_grant_union_and_all_http_scope_fences(canonical_
 
 def test_fixture_service_never_exposes_standard_template_even_to_existing_sitescore_grant():
     _, _, _, client = services_and_client()
-    response = client.get("/network-scoring", headers={**HEADERS, "X-Roles": "site_reviewer"})
+    response = client.get("/network-scoring", headers={**HEADERS, "X-Roles": "site_reviewer", "X-Operator-Role": "expansion-manager"})
     assert response.status_code == 200
     assert response.json()["targetFormat"] is None
 
