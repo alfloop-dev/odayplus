@@ -108,8 +108,8 @@ function ReportAction({ storeId, categories }: Props) {
   const mountedRef = useRef(true);
   const draftRevisionRef = useRef(0);
   const submittedRevisionRef = useRef<number | null>(null);
-  const idempotencyKeyRef = useRef<string | null>(null);
-  if (idempotencyKeyRef.current === null) {
+  const idempotencyKeyRef = useRef("");
+  if (idempotencyKeyRef.current === "") {
     idempotencyKeyRef.current = newShellIdempotencyKey("fr-report", storeId);
   }
 
@@ -120,21 +120,21 @@ function ReportAction({ storeId, categories }: Props) {
     };
   }, []);
 
-  function handleCategoryChange(nextCategory: string) {
+  function recordDraftEdit() {
     draftRevisionRef.current += 1;
     if (submittedRevisionRef.current !== null) {
       idempotencyKeyRef.current = newShellIdempotencyKey("fr-report", storeId);
       submittedRevisionRef.current = null;
     }
+  }
+
+  function handleCategoryChange(nextCategory: string) {
+    recordDraftEdit();
     setCategory(nextCategory);
   }
 
   function handleMessageChange(nextMessage: string) {
-    draftRevisionRef.current += 1;
-    if (submittedRevisionRef.current !== null) {
-      idempotencyKeyRef.current = newShellIdempotencyKey("fr-report", storeId);
-      submittedRevisionRef.current = null;
-    }
+    recordDraftEdit();
     setMessage(nextMessage);
   }
 
@@ -145,13 +145,6 @@ function ReportAction({ storeId, categories }: Props) {
     const submittedCategory = category;
     const submittedMessage = message;
     const submittedRevision = draftRevisionRef.current;
-    if (
-      idempotencyKeyRef.current === null ||
-      (submittedRevisionRef.current !== null &&
-        submittedRevisionRef.current !== submittedRevision)
-    ) {
-      idempotencyKeyRef.current = newShellIdempotencyKey("fr-report", submittedStoreId);
-    }
     const submittedKey = idempotencyKeyRef.current;
     submittedRevisionRef.current = submittedRevision;
 
