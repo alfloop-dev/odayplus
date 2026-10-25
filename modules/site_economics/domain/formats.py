@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from modules.site_economics.domain.models import (
+    CapitalAssetKind,
     CapitalAssetSpec,
     FinancingSpec,
     FitoutSpec,
@@ -178,25 +179,30 @@ _KNOWN_MACHINE_MODELS = {model.model_id: model for model in (
 
 @dataclass(frozen=True, slots=True)
 class TargetFormatSpec:
-    """Complete specification of a store target format and its versioned parameter set."""
+    """Versioned configuration; unknown inputs are readable, not calculable."""
 
     format_code: str
     format_name: str
     format_version: str
     description: str
-    target_area_ping_min: float
-    target_area_ping_max: float
-    recommended_area_ping: float
+    target_area_ping_min: float | None
+    target_area_ping_max: float | None
+    recommended_area_ping: float | None
     machine_mix: MachineMixSpec
     fitout_spec: FitoutSpec
-    utilities_spec: UtilitiesCostSpec
-    maintenance_spec: MaintenanceSpec
-    financing_spec: FinancingSpec
-    tax_spec: TaxSpec
-    residual_spec: ResidualValueSpec
-    ramp_spec: RampCurveSpec
-    seasonality_spec: SeasonalitySpec
+    utilities_spec: UtilitiesCostSpec | None
+    maintenance_spec: MaintenanceSpec | None
+    financing_spec: FinancingSpec | None
+    tax_spec: TaxSpec | None
+    residual_spec: ResidualValueSpec | None
+    ramp_spec: RampCurveSpec | None
+    seasonality_spec: SeasonalitySpec | None
     capital_assets: tuple[CapitalAssetSpec, ...] = ()
+    # Package amounts are untaxed TWD, versioned with this configuration.
+    # They exclude lease deposits and working capital, and are not cash-flow outputs.
+    package_total_untaxed: float | None = None
+    unallocated_package_cost: float | None = None
+    daily_operating_hours: float | None = None
 
     def __post_init__(self) -> None:
         if type(self.capital_assets) is not tuple or any(type(asset) is not CapitalAssetSpec for asset in self.capital_assets):
@@ -215,12 +221,33 @@ class TargetFormatSpec:
                 finite = all(math.isfinite(value) for value in (
                     self.total_equipment_capex,
                     sum(asset.total_residual_value for asset in self.capital_assets),
-                    sum(asset.total_monthly_operating_cost for asset in self.capital_assets),
+                    # Validate the known subtotal, never interpret an unknown
+                    # charge as a zero-valued observation or aggregate.
+                    sum(asset.total_monthly_operating_cost for asset in self.capital_assets
+                        if asset.total_monthly_operating_cost is not None),
                 ))
             except OverflowError:
                 finite = False
             if not finite:
                 raise ValueError("CAPITAL_ASSET_INVALID: aggregate asset costs must be finite")
+        if self.package_total_untaxed is not None or self.unallocated_package_cost is not None:
+            amounts = (self.package_total_untaxed, self.unallocated_package_cost,
+                self.fitout_spec.base_fitout_cost, self.fitout_spec.cost_per_ping,
+                self.fitout_spec.plumbing_upgrade_cost, self.fitout_spec.electrical_upgrade_cost,
+                self.fitout_spec.gas_piping_upgrade_cost, self.fitout_spec.facade_signage_cost,
+                self.fitout_spec.telemetry_smart_hub_cost, self.total_equipment_capex)
+            try:
+                valid = all(type(value) in (int, float) and math.isfinite(value) and value >= 0
+                            for value in amounts)
+                # A fixed package cannot carry an additional area-based charge.
+                valid = valid and self.fitout_spec.cost_per_ping == 0 and math.isclose(
+                    self.package_total_untaxed,
+                    self.total_equipment_capex + self.fitout_spec.compute_total_fitout(0)
+                    + self.unallocated_package_cost, rel_tol=0, abs_tol=0.01)
+            except OverflowError:
+                valid = False
+            if not valid:
+                raise ValueError("ODAY_G2_CONFIGURATION_REQUIRED: declared package must conserve classified and unallocated untaxed cost")
 
     @property
     def total_equipment_capex(self) -> float:
@@ -238,18 +265,17 @@ class TargetFormatSpec:
             format_name=str(data["format_name"]),
             format_version=str(data["format_version"]),
             description=str(data.get("description", "")),
-            target_area_ping_min=float(data["target_area_ping_min"]),
-            target_area_ping_max=float(data["target_area_ping_max"]),
-            recommended_area_ping=float(data["recommended_area_ping"]),
+            **{key: float(data[key]) if data[key] is not None else None for key in (
+                "target_area_ping_min", "target_area_ping_max", "recommended_area_ping")},
+            **{key: data.get(key) for key in (
+                "package_total_untaxed", "unallocated_package_cost", "daily_operating_hours")}, 
             machine_mix=MachineMixSpec.from_dict(data["machine_mix"]),
             fitout_spec=FitoutSpec.from_dict(data["fitout_spec"]),
-            utilities_spec=UtilitiesCostSpec.from_dict(data["utilities_spec"]),
-            maintenance_spec=MaintenanceSpec.from_dict(data["maintenance_spec"]),
-            financing_spec=FinancingSpec.from_dict(data["financing_spec"]),
-            tax_spec=TaxSpec.from_dict(data["tax_spec"]),
-            residual_spec=ResidualValueSpec.from_dict(data["residual_spec"]),
-            ramp_spec=RampCurveSpec.from_dict(data["ramp_spec"]),
-            seasonality_spec=SeasonalitySpec.from_dict(data["seasonality_spec"]),
+            **{key: kind.from_dict(data[key]) if data[key] is not None else None
+               for key, kind in (("utilities_spec", UtilitiesCostSpec),
+                   ("maintenance_spec", MaintenanceSpec), ("financing_spec", FinancingSpec),
+                   ("tax_spec", TaxSpec), ("residual_spec", ResidualValueSpec),
+                   ("ramp_spec", RampCurveSpec), ("seasonality_spec", SeasonalitySpec))},
             capital_assets=tuple(CapitalAssetSpec.from_dict(asset) for asset in assets),
         )
 
@@ -264,14 +290,15 @@ class TargetFormatSpec:
             "recommended_area_ping": self.recommended_area_ping,
             "machine_mix": self.machine_mix.to_dict(),
             "fitout_spec": self.fitout_spec.to_dict(),
-            "utilities_spec": self.utilities_spec.to_dict(),
-            "maintenance_spec": self.maintenance_spec.to_dict(),
-            "financing_spec": self.financing_spec.to_dict(),
-            "tax_spec": self.tax_spec.to_dict(),
-            "residual_spec": self.residual_spec.to_dict(),
-            "ramp_spec": self.ramp_spec.to_dict(),
-            "seasonality_spec": self.seasonality_spec.to_dict(),
+            **{key: value.to_dict() if value is not None else None for key, value in (
+                ("utilities_spec", self.utilities_spec), ("maintenance_spec", self.maintenance_spec),
+                ("financing_spec", self.financing_spec), ("tax_spec", self.tax_spec),
+                ("residual_spec", self.residual_spec), ("ramp_spec", self.ramp_spec),
+                ("seasonality_spec", self.seasonality_spec))},
         }
+        for key in ("package_total_untaxed", "unallocated_package_cost", "daily_operating_hours"):
+            if getattr(self, key) is not None:
+                result[key] = getattr(self, key)
         # Preserve every retained no-asset snapshot and catalog serialization.
         if self.capital_assets:
             result["capital_assets"] = [asset.to_dict() for asset in self.capital_assets]
@@ -293,22 +320,58 @@ def _require_g2_numeric_payload(data: Mapping[str, Any]) -> None:
         if not valid:
             raise ValueError("ODAY_G2_CONFIGURATION_REQUIRED: G2 parameters must be finite numeric measurements, not coercible declarations")
 
-    for key in ("target_area_ping_min", "target_area_ping_max", "recommended_area_ping"):
-        number(data[key])
+    def identity(value: Any) -> None:
+        if type(value) is not str or not value.strip() or value != value.strip():
+            raise ValueError("ODAY_G2_CONFIGURATION_REQUIRED: identities must be nonempty strings")
+
+    for key in ("format_code", "format_name", "format_version"):
+        identity(data[key])
+    for key in ("target_area_ping_min", "target_area_ping_max", "recommended_area_ping",
+                "package_total_untaxed", "unallocated_package_cost", "daily_operating_hours"):
+        if data.get(key) is not None:
+            number(data[key])
     mix = data["machine_mix"]
+    for key in ("spec_id", "version"):
+        identity(mix[key])
     if "installation_and_delivery_fee" in mix:
         number(mix["installation_and_delivery_fee"])
+    nullable_machine_fields = {"baseline_turns_per_day", "water_liters_per_cycle",
+        "electricity_kwh_per_cycle", "gas_kg_per_cycle", "detergent_cost_per_cycle",
+        "monthly_maintenance_per_unit", "cycle_minutes"}
     for item in mix["items"]:
-        if type(item["quantity"]) is not int:
-            raise ValueError("ODAY_G2_CONFIGURATION_REQUIRED: machine counts must be actual integers")
+        if type(item["quantity"]) is not int or item["quantity"] < 1:
+            raise ValueError("ODAY_G2_CONFIGURATION_REQUIRED: machine counts must be actual positive integers")
         for key in ("custom_price_per_cycle", "custom_turns_per_day"):
             if item.get(key) is not None:
                 number(item[key])
         for key, value in item["machine_model"].items():
-            if key == "useful_life_months" and type(value) is not int:
-                raise ValueError("ODAY_G2_CONFIGURATION_REQUIRED: useful life must be an actual integer month count")
-            if key not in {"model_id", "machine_class", "model_name"}:
+            if key in {"model_id", "machine_class", "model_name"}:
+                identity(value)
+            elif key == "useful_life_months":
+                if type(value) is not int or value < 1:
+                    raise ValueError("ODAY_G2_CONFIGURATION_REQUIRED: useful life must be an actual positive integer month count")
+            elif value is not None or key not in nullable_machine_fields:
                 number(value)
+    for key in ("fitout_spec", "utilities_spec", "maintenance_spec", "financing_spec",
+                "tax_spec", "residual_spec", "ramp_spec", "seasonality_spec"):
+        subspec = data[key]
+        if subspec is None and key != "fitout_spec":
+            continue
+        if not isinstance(subspec, Mapping):
+            raise ValueError("ODAY_G2_CONFIGURATION_REQUIRED: financial specifications must be objects or explicit unknowns")
+        for field, value in subspec.items():
+            if field in {"spec_id", "version", "depreciation_method"}:
+                identity(value)
+            elif field == "recover_lease_deposit":
+                if type(value) is not bool:
+                    raise ValueError("ODAY_G2_CONFIGURATION_REQUIRED: deposit recovery must be boolean")
+            elif field in {"monthly_multipliers", "monthly_factors"}:
+                for entry in value:
+                    number(entry)
+            else:
+                number(value)
+                if field.endswith(("_months", "_years")) and type(value) is not int:
+                    raise ValueError("ODAY_G2_CONFIGURATION_REQUIRED: policy durations must be integer counts")
 
 
 def require_oday_g2_configuration(spec: TargetFormatSpec) -> None:
@@ -335,6 +398,16 @@ def require_oday_g2_configuration(spec: TargetFormatSpec) -> None:
             valid = False
         if not valid:
             refuse()
+
+    if spec.unallocated_package_cost is not None and spec.unallocated_package_cost != 0:
+        refuse()
+    if any(value is None for value in (
+        spec.utilities_spec, spec.maintenance_spec, spec.financing_spec, spec.tax_spec,
+        spec.residual_spec, spec.ramp_spec, spec.seasonality_spec,
+    )) or any(asset.monthly_fixed_operating_cost is None for asset in spec.capital_assets):
+        refuse()
+    if spec.daily_operating_hours is not None:
+        number(spec.daily_operating_hours, positive=True, maximum=24)
 
     mix = spec.machine_mix
     if type(mix) is not MachineMixSpec or type(mix.items) is not tuple or len(mix.items) != 2:
@@ -371,6 +444,8 @@ def require_oday_g2_configuration(spec: TargetFormatSpec) -> None:
                 model.monthly_maintenance_per_unit):
             number(value)
         number(model.max_turns_per_day, positive=True)
+        if model.cycle_minutes is not None:
+            number(model.cycle_minutes, positive=True)
         if model.baseline_turns_per_day > model.max_turns_per_day:
             refuse()
         if type(model.useful_life_months) is not int or model.useful_life_months < 1:
@@ -436,6 +511,63 @@ def build_default_g2_standard_v1() -> TargetFormatSpec:
         ),
         ramp_spec=RampCurveSpec(spec_id="RAMP-V1", version="1.0.0"),
         seasonality_spec=SeasonalitySpec(spec_id="SEAS-V1", version="1.0.0"),
+    )
+
+
+def build_accepted_g2_v2() -> TargetFormatSpec:
+    """Accepted costs only, not a complete financial scenario or admission.
+
+    Original contract 1-KgkrnZdoq8_f2Aeg-K01pKYRTyAalKlcRVdmKA7kk4;
+    seven-row discount decision 2026-10-21. No throughput observations follow
+    from theoretical 24h / 55-minute capacity.
+    """
+    version = "2.0.0"
+    items = tuple(MachineMixItem(MachineModelSpec(
+        model_id=f"G2-COMBO-{kg}KG-V2", machine_class=MachineClass.COMBO,
+        model_name=f"ODay G2 {kg}kg all-in-one", capacity_kg=kg,
+        unit_capex=cost, base_cycle_price=price, baseline_turns_per_day=None,
+        max_turns_per_day=24 * 60 / 55, cycle_minutes=55,
+        water_liters_per_cycle=None, electricity_kwh_per_cycle=None,
+        gas_kg_per_cycle=None, detergent_cost_per_cycle=None,
+        monthly_maintenance_per_unit=None, useful_life_months=60,
+        residual_value_ratio=0), 3) for kg, cost, price in (
+            (27, 730_000, 150), (17, 630_000, 120)))
+    assets = tuple(CapitalAssetSpec(
+        asset_id=f"G2-{kind.value}-V2", asset_kind=kind, version=version,
+        quantity=1, unit_capex=cost, useful_life_months=60,
+        residual_value_ratio=0, monthly_fixed_operating_cost=None,
+    ) for kind, cost in ((CapitalAssetKind.PAYMENT_SYSTEM, 100_000),
+        (CapitalAssetKind.KIOSK, 160_000), (CapitalAssetKind.VENDING, 40_000),
+        (CapitalAssetKind.CAMERA_SYSTEM, 29_122), (CapitalAssetKind.FURNITURE, 21_633)))
+    return TargetFormatSpec(
+        format_code="ODAY_G2", format_name="ODay G2 accepted untaxed package",
+        format_version=version,
+        description=(
+            "Accepted contract 1-KgkrnZdoq8_f2Aeg-K01pKYRTyAalKlcRVdmKA7kk4; "
+            "TWD untaxed 5546000 = classified 5346000 + unallocated 200000 "
+            "(upgrade/warranty/insurance split, insurance amount and coverage unknown). "
+            "附件二 2026-10-21: 水電300000→249612; 土木250000→208010; "
+            "風管100000→83204; 天然氣／避雷350000→291215; 招牌／SI100000→83204; "
+            "監視系統35000→29122; 家具備品26000→21633. "
+            "All seven rows ×322/387, floor then largest remainders: gas/lightning "
+            "and camera +1 each; total966000, engineering915245. "
+            "Engineering/signage/water tank/pipes included, no extra installation. "
+            "Named assets: 60 months, zero residual; fitout 60 months or shorter lease, "
+            "premises leases at least five years. 24h/55min is theoretical capacity, "
+            "not customer turns. Site area, consumption, maintenance, operating inputs "
+            "and financial policies remain unknown; not calculable or production admitted."
+        ),
+        target_area_ping_min=None, target_area_ping_max=None, recommended_area_ping=None,
+        machine_mix=MachineMixSpec(spec_id="MIX-G2-ACCEPTED-V2", version=version,
+            items=items, installation_and_delivery_fee=0),
+        fitout_spec=FitoutSpec(spec_id="FIT-G2-ACCEPTED-V2", version=version,
+            base_fitout_cost=915_245, cost_per_ping=0, plumbing_upgrade_cost=0,
+            electrical_upgrade_cost=0, gas_piping_upgrade_cost=0, facade_signage_cost=0,
+            telemetry_smart_hub_cost=0, fitout_useful_life_months=60),
+        utilities_spec=None, maintenance_spec=None, financing_spec=None, tax_spec=None,
+        residual_spec=None, ramp_spec=None, seasonality_spec=None, capital_assets=assets,
+        package_total_untaxed=5_546_000, unallocated_package_cost=200_000,
+        daily_operating_hours=24,
     )
 
 
@@ -561,6 +693,7 @@ class TargetFormatRegistry:
 
     def _register_defaults(self) -> None:
         self.register(build_default_g2_standard_v1())
+        self.register(build_accepted_g2_v2())
         self.register(build_default_g3_compact_v1())
         self.register(build_default_flagship_v1())
 

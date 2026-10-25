@@ -262,8 +262,9 @@ def test_target_format_registry_and_resolution() -> None:
 
     g2 = reg.get("ODAY_G2")
     assert g2.format_code == "ODAY_G2"
-    assert g2.format_version == "1.0.0"
-    assert g2.recommended_area_ping == 25.0
+    assert g2.format_version == "2.0.0"
+    assert g2.recommended_area_ping is None
+    assert g2.package_total_untaxed == 5_546_000
 
     # Test area-based recommendation
     best_small = reg.find_best_format_for_area(16.0)
@@ -280,7 +281,7 @@ def test_target_format_registry_and_resolution() -> None:
     custom_v2 = TargetFormatSpec(
         format_code="ODAY_G2",
         format_name="ODay G2 Revised",
-        format_version="2.0.0",
+        format_version="3.0.0",
         description="Upgraded 2.0 version",
         target_area_ping_min=20.0,
         target_area_ping_max=40.0,
@@ -297,7 +298,7 @@ def test_target_format_registry_and_resolution() -> None:
     )
     reg.register(custom_v2)
     latest_g2 = reg.get("ODAY_G2")
-    assert latest_g2.format_version == "2.0.0"
+    assert latest_g2.format_version == "3.0.0"
     v1_g2 = reg.get("ODAY_G2", "1.0.0")
     assert v1_g2.format_version == "1.0.0"
 
