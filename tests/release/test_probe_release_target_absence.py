@@ -390,9 +390,16 @@ def test_an_ambiguous_lookup_is_refused_rather_than_narrowed(
 
 
 @pytest.mark.parametrize("environment", ["staging", "production"])
-def test_only_dev_may_be_probed_for_a_first_release(
+def test_long_lived_names_cannot_seal_a_staging_or_production_first_release(
     monkeypatch: pytest.MonkeyPatch, fake_gcloud: Path, tmp_path: Path, environment: str
 ) -> None:
+    """Staging is read back by release id only; production is never a build target.
+
+    ODP-CORE-OPS-FIRST-RELEASE-ROLLBACK-001 opened both to the first-release
+    path, but not through this door: ``--target`` names are refused for
+    staging, and production is read only at admission (``--manifest``).
+    """
+
     set_cloud_state(monkeypatch)
 
     assert (
