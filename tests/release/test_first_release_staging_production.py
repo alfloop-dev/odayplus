@@ -828,6 +828,8 @@ def _admit(
     now: datetime | None = None,
     lineage: str | None = "production",
     production_records: list[dict] | None = None,
+    component_images: dict[str, str] | None = None,
+    target_registry: str | None = None,
 ) -> tuple[int, dict, dict, LeaseStateStore]:
     """Admit *manifest* into *environment* with separate per-environment stores.
 
@@ -899,6 +901,11 @@ def _admit(
             argv += ["--lineage-state-uri", str(production_dir)]
     elif lineage is not None:
         argv += ["--lineage-state-uri", lineage]
+    for name, image in (component_images or {}).items():
+        argv += ["--component-image", f"{name}={image}"]
+    if target_registry is not None:
+        # `=` form: an unresolved registry starts with "-".
+        argv += [f"--target-registry={target_registry}"]
     code = admission_main(argv)
     result = json.loads((tmp_path / "receipt.json").read_text(encoding="utf-8"))
     return code, result, lease, store
@@ -1674,3 +1681,211 @@ def test_production_admissions_are_serialised_by_the_workflow_concurrency_group(
     # The lease-consuming jobs do not opt out into a group of their own.
     for job in ("admission", "automatic_admission", "deploy"):
         assert "concurrency" not in workflow["jobs"][job]
+
+
+# --------------------------------------------------------------------------
+# ODP-PROD-IMAGE-PROMOTION-001: production deploys from its own registry
+# --------------------------------------------------------------------------
+
+PRODUCTION_REGISTRY = "asia-east1-docker.pkg.dev/odayplus-prod/oday-plus"
+
+
+def _manifest_images(manifest: dict) -> dict[str, str]:
+    return {name: component["image"] for name, component in manifest["components"].items()}
+
+
+def _promoted_images(manifest: dict, registry: str = PRODUCTION_REGISTRY) -> dict[str, str]:
+    return {
+        name: release_manifest.promoted_image_ref(image, registry)
+        for name, image in _manifest_images(manifest).items()
+    }
+
+
+def test_the_promoted_reference_replaces_only_the_repository_root() -> None:
+    image = f"{REPO}/oday-staging-api@sha256:{'1' * 64}"
+    assert release_manifest.promoted_image_ref(image, PRODUCTION_REGISTRY) == (
+        f"{PRODUCTION_REGISTRY}/oday-staging-api@sha256:{'1' * 64}"
+    )
+    nested = f"{REPO}/team/api@sha256:{'1' * 64}"
+    assert release_manifest.promoted_image_ref(nested, PRODUCTION_REGISTRY) == (
+        f"{PRODUCTION_REGISTRY}/team/api@sha256:{'1' * 64}"
+    )
+    for not_promotable in (
+        f"{REPO}/api:release-{SHA}",
+        f"ghcr.io/alfloop-dev/api@sha256:{'1' * 64}",
+        f"{REPO}@sha256:{'1' * 64}",
+        f"{REPO}/API@sha256:{'1' * 64}",
+        None,
+    ):
+        assert release_manifest.promoted_image_ref(not_promotable, PRODUCTION_REGISTRY) is None
+    for registry in ("-docker.pkg.dev//", PRODUCTION_REGISTRY + "/", "asia-east1-docker.pkg.dev/odayplus-prod", "ghcr.io/a/b", None):
+        assert release_manifest.promoted_image_ref(image, registry) is None
+
+
+@pytest.mark.parametrize(
+    "handoff,target_registry",
+    [("manifest", None), ("manifest", PRODUCTION_REGISTRY), ("promoted", PRODUCTION_REGISTRY)],
+    ids=["manifest-images", "manifest-images-with-registry", "promoted-images"],
+)
+def test_production_admits_the_manifest_images_or_their_promoted_copies(
+    tmp_path: Path, staging_manifest: dict, handoff: str, target_registry: str | None
+) -> None:
+    images = (
+        _manifest_images(staging_manifest)
+        if handoff == "manifest"
+        else _promoted_images(staging_manifest)
+    )
+    code, result, lease, store = _admit(
+        tmp_path, staging_manifest, environment="production",
+        receipt=_fresh(staging_manifest, "production"),
+        component_images=images, target_registry=target_registry,
+    )
+
+    assert code == 0, result.get("errors")
+    assert store.get(lease["lease_id"])["state"] == STATE_CONSUMED
+    assert result["component_images"] == dict(sorted(images.items()))
+    assert result["target_registry"] == target_registry
+    # The lease stays bound to the unchanged manifest.
+    assert result["manifest_digest"] == staging_manifest["manifest_digest"]
+
+
+def _refused_handoffs(manifest: dict) -> list[tuple[str, dict[str, str], str | None]]:
+    promoted = _promoted_images(manifest)
+    api_digest = promoted["api"].split("@", 1)[1]
+
+    def with_api(image: str) -> dict[str, str]:
+        return {**promoted, "api": image}
+
+    return [
+        ("other-digest", with_api(f"{PRODUCTION_REGISTRY}/api@sha256:{'e' * 64}"), PRODUCTION_REGISTRY),
+        ("other-name", with_api(f"{PRODUCTION_REGISTRY}/web@{api_digest}"), PRODUCTION_REGISTRY),
+        ("nested-name", with_api(f"{PRODUCTION_REGISTRY}/x/api@{api_digest}"), PRODUCTION_REGISTRY),
+        (
+            "third-registry",
+            with_api(f"asia-east1-docker.pkg.dev/someone-else/oday-plus/api@{api_digest}"),
+            PRODUCTION_REGISTRY,
+        ),
+        ("other-region", with_api(f"us-central1-docker.pkg.dev/odayplus-prod/oday-plus/api@{api_digest}"), PRODUCTION_REGISTRY),
+        ("tag", with_api(f"{PRODUCTION_REGISTRY}/api:release-{SHA}"), PRODUCTION_REGISTRY),
+        # Without the target registry production is held to the exact manifest refs.
+        ("promoted-without-registry", promoted, None),
+        # The registry named to admission is the only extra one accepted.
+        ("promoted-into-another-registry", _promoted_images(manifest, "asia-east1-docker.pkg.dev/odayplus-other/oday-plus"), PRODUCTION_REGISTRY),
+        ("unresolved-variables", _manifest_images(manifest), "-docker.pkg.dev//"),
+        ("registry-without-repository", promoted, "asia-east1-docker.pkg.dev/odayplus-prod"),
+    ]
+
+
+@pytest.mark.parametrize("case", range(10), ids=[
+    "other-digest", "other-name", "nested-name", "third-registry", "other-region", "tag",
+    "promoted-without-registry", "promoted-into-another-registry", "unresolved-variables",
+    "registry-without-repository",
+])
+def test_production_refuses_any_other_handoff_with_the_lease_unspent(
+    tmp_path: Path, staging_manifest: dict, case: int
+) -> None:
+    _name, images, target_registry = _refused_handoffs(staging_manifest)[case]
+    code, result, lease, store = _admit(
+        tmp_path, staging_manifest, environment="production",
+        receipt=_fresh(staging_manifest, "production"),
+        component_images=images, target_registry=target_registry,
+    )
+
+    assert code != 0
+    assert result["admitted"] is False
+    assert any("handoff image" in e or "target registry" in e for e in result["errors"])
+    assert store.get(lease["lease_id"])["state"] == STATE_ISSUED
+
+
+@pytest.mark.parametrize("handoff", ["manifest", "promoted"])
+def test_staging_is_refused_a_target_registry_with_the_lease_unspent(
+    tmp_path: Path, staging_manifest: dict, handoff: str
+) -> None:
+    """dev and staging deploy what the manifest records; nothing widens that."""
+
+    images = (
+        _manifest_images(staging_manifest)
+        if handoff == "manifest"
+        else _promoted_images(staging_manifest)
+    )
+    code, result, lease, store = _admit(
+        tmp_path, staging_manifest, environment="staging",
+        receipt=_fresh(staging_manifest, "staging"),
+        component_images=images, target_registry=PRODUCTION_REGISTRY,
+    )
+
+    assert code != 0
+    assert any("--target-registry is accepted only for ['production']" in e for e in result["errors"])
+    assert store.get(lease["lease_id"])["state"] == STATE_ISSUED
+
+
+def test_staging_still_admits_exactly_the_manifest_images(
+    tmp_path: Path, staging_manifest: dict
+) -> None:
+    code, result, lease, store = _admit(
+        tmp_path, staging_manifest, environment="staging",
+        receipt=_fresh(staging_manifest, "staging"),
+        component_images=_manifest_images(staging_manifest),
+    )
+
+    assert code == 0, result.get("errors")
+    assert result["target_registry"] is None
+    assert store.get(lease["lease_id"])["state"] == STATE_CONSUMED
+
+
+def test_mutation_binding_on_digest_alone_would_admit_another_image_name(
+    tmp_path: Path, staging_manifest: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The name and registry checks, not the digest, are what refuse these."""
+
+    def digest_only(manifest, images, *, target_registry=None):
+        recorded = {
+            name: component["image"].split("@", 1)[1]
+            for name, component in manifest["components"].items()
+        }
+        return [
+            f"handoff image for {name!r} has another digest"
+            for name, image in images.items()
+            if image.split("@", 1)[-1] != recorded.get(name)
+        ]
+
+    for case in ("other-name", "third-registry"):
+        index = [name for name, _, _ in _refused_handoffs(staging_manifest)].index(case)
+        _name, images, target_registry = _refused_handoffs(staging_manifest)[index]
+        real_dir = tmp_path / f"real-{case}"
+        real_dir.mkdir()
+        code, _, _, _ = _admit(
+            real_dir, staging_manifest, environment="production",
+            receipt=_fresh(staging_manifest, "production"),
+            component_images=images, target_registry=target_registry,
+        )
+        assert code != 0
+
+        with monkeypatch.context() as patch:
+            patch.setattr(check_runtime_admission, "component_binding_errors", digest_only)
+            mutated_dir = tmp_path / f"mutated-{case}"
+            mutated_dir.mkdir()
+            code, result, lease, store = _admit(
+                mutated_dir, staging_manifest, environment="production",
+                receipt=_fresh(staging_manifest, "production"),
+                component_images=images, target_registry=target_registry,
+            )
+        assert code == 0, result.get("errors")
+        assert store.get(lease["lease_id"])["state"] == STATE_CONSUMED
+
+
+def test_mutation_without_the_environment_restriction_staging_would_admit_promoted_images(
+    tmp_path: Path, staging_manifest: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        check_runtime_admission, "IMAGE_PROMOTION_ENVIRONMENTS", ("staging", "production")
+    )
+    code, result, lease, store = _admit(
+        tmp_path, staging_manifest, environment="staging",
+        receipt=_fresh(staging_manifest, "staging"),
+        component_images=_promoted_images(staging_manifest),
+        target_registry=PRODUCTION_REGISTRY,
+    )
+
+    assert code == 0, result.get("errors")
+    assert store.get(lease["lease_id"])["state"] == STATE_CONSUMED

@@ -68,7 +68,7 @@ Task: ODP-CORE-OPS-RELEASE-PROFILE-001 · Owner: Claude2 · Reviewer: Codex2
 為什麼不比 `full` 弱：
 
 1. `full` 的 manifest 不綁任何環境。`core-ops` 只在明確的晉升路徑上可 admission。
-2. production 的 core-ops 必然是 staging 演練過的同一份 manifest：digest 相同，四個 component image digest 也相同。production lease 針對同一個 digest 簽發。另外，`staging_closeout` 的「staging digest == production digest」斷言仍然生效。
+2. production 的 core-ops 必然是 staging 演練過的同一份 manifest：digest 相同，四個 component image digest 也相同。production lease 針對同一個 digest 簽發。另外，`staging_closeout` 的「staging digest == production digest」斷言仍然生效。production 部署前會把這四個 image 以相同 digest 複製到 production 自己的 registry，manifest 不改寫（§13）。
 3. 正向測試 `test_core_ops_admission_matches_full_on_its_promotion_path` 在同一套 lease、registry、admission harness 下，證明 dev→dev、staging→staging、staging→production 都和 `full` 一樣被 admit，lease 被 consumed，receipt 記錄 `release_profile=core-ops`。
 4. 反向測試 `test_core_ops_off_its_promotion_path_is_refused_with_the_lease_unconsumed` 證明不在路徑上的組合被拒絕，lease 未被消耗。
 
@@ -224,6 +224,7 @@ Task: ODP-CORE-OPS-FIRST-RELEASE-ROLLBACK-001 · Owner: Claude2 · Reviewer: Cod
 | F3 gate-3 | Model and Solver Gate 的 passed-with-deviation 由 Human/Ops 具名簽署（見 §8 草稿），或維持 blocked | Product Owner + ML Risk Owner |
 | F4 `ODP-CORE-OPS-STAGING-LIVE-GATE` | 在 staging 跑完整的 `check_live_e2e_gate.py`。**程式已由 ODP-CORE-OPS-STAGING-LIVE-GATE-001 實作（見 §12）**；實際 live 執行仍需 §12.5 的 Human/Ops 前置條件 | Release owner |
 | F5 | production 的 `staging-verified` registry stage 與 blue-green 路徑（既有阻擋，不屬於本 task） | Release owner |
+| F6 | production image promotion 的 IAM 與 repository 前置：production deployer 對 staging AR repository 的 reader、對 production AR repository 的 writer、production repository 存在（§13.5；確切指令見 `docs/evidence/runtime/ODP-PROD-IMAGE-PROMOTION-001/README.md`）。未完成前 production 部署在 promotion 步驟失敗，Cloud Run 不被變更 | Human/Ops（IAM、Artifact Registry） |
 
 ## 8. gate-3 passed-with-deviation 草稿（DRAFT — 未簽署）
 
@@ -382,3 +383,80 @@ Task: ODP-CORE-OPS-STAGING-LIVE-GATE-001 · Owner: Claude2 · Reviewer: Codex2
 - smoke 身分是 release 擁有、會隨 release 刪除的資源。
 
 本 task 沒有部署、沒有觸發 deploy workflow、沒有修改 `RELEASE_GATE_REGISTRY`、IAM 或 secret。
+
+## 13. production 部署前的 image promotion（ODP-PROD-IMAGE-PROMOTION-001）
+
+Task: ODP-PROD-IMAGE-PROMOTION-001 · Owner: Claude · Reviewer: Human/Ops
+
+### 13.0 決策來源（逐字記錄）
+
+> 決策依據：2026-10-24 負責人蔡尚志在『production 跨專案拉 image』兩案中選 (b)：把 image 複製到 production 自己的 registry，不讓 production runtime 依賴 staging 專案（staging 專案 odayplus-runtime-20260825 曾因 BILLING_ISSUE 暫停）。
+
+- 決策日期：2026-10-24。決策人：負責人蔡尚志。
+- 另一案 (a)（production 跨專案從 staging registry 拉 image）不採用：production runtime 會依賴 staging 專案的存續與 billing。
+
+### 13.1 問題（以 `origin/dev` 2af1e333d 核對）
+
+- build 綁 `<env>-build` environment，image 推到 `${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT}/${GCP_AR_REPO}`（`deploy-dev.yml` 505–618，`REPO_PATH` 在 510；handoff 在 620）。staging-build 的值是 `asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev`。
+- core-ops 只能以 staging 封存的 manifest 原樣晉升 production（`release_manifest.py` 509 的 `RELEASE_PROFILE_PROMOTIONS`）。
+- `component_binding_errors`（`release_manifest.py` 2319）要求 handoff image 與 manifest 記錄的字串完全相同。
+- `deploy_cloud_run_waji.sh` 以 `--image` 原樣部署（824、891、923、941、1102）。
+- `infra/terraform/checks.tf` 要求 prod 的 API／Web image 以 `${region}-docker.pkg.dev/${var.project_id}/` 開頭。
+- repo 內沒有任何跨專案 Artifact Registry 讀取授權。
+
+結果：首次 production release 只能部署 staging 專案的 image，與上面的決策衝突，而且 production runtime 會依賴 staging 專案。
+
+### 13.2 規則（已實作）
+
+| 規則 | 實作 |
+|---|---|
+| 推導 promoted reference 的唯一位置 | `release_manifest.promoted_image_ref(image, registry)`：只把 repository 根（`<region>-docker.pkg.dev/<project>/<repository>`）換成目標 registry，image 名稱與 `sha256` digest 原樣保留。image 不是 Artifact Registry 的 `@sha256` reference，或 registry 形狀不對（例如變數沒解析出的 `-docker.pkg.dev//`），就回傳 `None`。image 名稱不改：staging 建置的 `oday-staging-api` 在 production registry 仍叫 `oday-staging-api` |
+| admission 綁定 | `component_binding_errors(manifest, images, target_registry=...)`：handoff image 必須是 manifest 記錄的 reference，或它的 `promoted_image_ref`。digest 不同、image 名稱不同（含多一層路徑）、registry 是第三者、tag 而不是 digest，一律拒絕，lease 不消耗。manifest 本身與 lease 綁定的 digest 不變 |
+| 只有 production 可以帶目標 registry | `IMAGE_PROMOTION_ENVIRONMENTS = ("production",)`。`check_runtime_admission.py --target-registry` 在其他環境會被拒絕（lease 不消耗）；workflow 的 admission step 只在 `production` 傳入，值由 production environment 的 `GCP_REGION`／`GCP_PROJECT_ID`／`GCP_AR_REPO` 組成，以 `--target-registry=VALUE` 傳遞，讓未解析的值也能被 verifier 讀到並拒絕 |
+| promotion 步驟的位置 | `deploy-dev.yml` deploy job（只在 `production`）：WIF 驗證與 Cosign 安裝之後，先下載 build run 的 manifest artifact，再執行 `Promote the admitted images into the production registry`。它在 pre-switch blue-green 狀態擷取、Cloud SQL 備份與 `Deploy Cloud Run by immutable digest` 之前，沒有 `continue-on-error` |
+| promotion 內容 | `delivery_toolchain/release/promote_release_images.py`：manifest 必須等於 admission 消耗 lease 的 `manifest_digest` 並記錄這次 release SHA；admission 收到的 handoff 以同一條 `component_binding_errors` 重新核對；四個可部署 component（`migration` 與 worker 共用 image，隨 worker 一起複製）各自以 `cosign copy <manifest image> <production repo>:release-<sha>`（不加 `--force`：內容相同就略過、不同就拒絕覆寫）複製 image、Cosign 簽章與 SBOM attestation。來源永遠是 manifest 記錄的 reference，不是 handoff |
+| 讀回與驗簽 | 對 tag 與 `@sha256` reference 用 build 相同的 `gcloud artifacts docker images describe --format='value(image_summary.digest)'` 讀回，digest 必須逐一等於 manifest；`sha256-<hex>.sig`／`.att` 讀回的 digest 必須是 manifest `signature_refs`／`sbom_refs` 記錄的那一份（換成 production registry）；最後用既有的 `sign_images.sh verify` 在 production registry 上驗簽。沒有新增第二套簽章或 registry 機制 |
+| 不移動既有 tag | production 已有 `release-<sha>` tag 但指向別的 digest 時拒絕，不複製。指向同一 digest（重跑）時 cosign 略過相同內容，照常讀回與驗簽 |
+| deploy 只拿 promoted reference | deploy step 的 `API_IMAGE` 等改為 `steps.promote-images.outputs.* \|\| needs.build.outputs.* \|\| inputs.*`；promotion 只在成功時寫 output，dev 的值與 job 層 env 完全相同 |
+| deploy 腳本的最後一道 | `deploy_cloud_run_waji.sh` 在 deploy-by-digest 時，若 `ODP_DEPLOY_ENV` 是 `prod`／`production`，每個 image 都必須以 `${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT}/${GCP_AR_REPO}/` 開頭，否則在任何 `gcloud`／`docker` 呼叫前拒絕。這與 `checks.tf` 的 production 規則一致。dev 不受影響 |
+| 證據 | promotion receipt（`production-image-promotion.json`，kind `release-image-promotion`）記錄每個 component 的來源、promoted reference、digest、簽章與 attestation reference，失敗時記錄原因；以 artifact `production-image-promotion-<sha>-<attempt>` 上傳 |
+
+### 13.3 Fail closed
+
+以下任一情況，promotion 以非零結束、不寫 output，job 停在 Cloud Run 變更之前：
+
+- 環境不是 production；目標 registry 形狀不對（含變數未解析）
+- manifest digest 或 candidate SHA 與 admission 不符
+- handoff 的 digest 或 image 名稱與 manifest 不符；handoff 的 component 集合與 manifest 可部署的 component 不同；共用 image 的 component 記錄了另一個 image
+- `cosign copy` 失敗；tag 或 digest 讀回不等於 manifest digest
+- production 的簽章或 attestation 讀不到，或 digest 不是 manifest 記錄的那一份
+- `sign_images.sh verify` 失敗
+- production 的 release tag 已指向別的 digest
+
+admission 端的拒絕（handoff 不是 manifest image 也不是它的 promoted copy、目標 registry 形狀不對、非 production 帶目標 registry）都在 lease 消耗前發生，lease 保持 `issued`。
+
+### 13.4 「staging digest == production digest」斷言的核對
+
+task 要求把 `deploy_cloud_run_waji.sh` 與 `staging_closeout` 的這個斷言改為比 digest、不比 registry 路徑。以 `origin/dev` 核對的結果：
+
+- `staging_closeout` 的 `Read staging recovery bundle with staging identity`（`deploy-dev.yml` 1955）比的是 staging tfvars 的 `manifest_digest` 與 production admission 的 `MANIFEST_DIGEST`。這是 manifest digest，裡面沒有 registry 路徑；manifest 又封存了四個 component image digest。promotion 不改寫 manifest，所以這個斷言照常成立，沒有修改，也沒有放寬。
+- `deploy_cloud_run_waji.sh` 沒有比對 staging 與 production image 的斷言。它只檢查 reference 是 `@sha256` 形式；本 task 在這裡加上「production 只部署自己 registry 的 image」（§13.2）。
+- 「production 部署的 digest 等於 staging 演練的 digest」由兩處保證：admission 只接受 manifest image 或同 digest 的 promoted copy；promotion 讀回的 digest 必須逐一等於 manifest。兩處都比 digest 與 image 名稱，沒有任何地方只比名稱。
+
+### 13.5 Human/Ops 前置（本 task 只記錄，不執行）
+
+確切指令與檢查方式在 `docs/evidence/runtime/ODP-PROD-IMAGE-PROMOTION-001/README.md`：
+
+- production deployer（`github-deployer@odayplus-prod-20260826.iam.gserviceaccount.com`）對 staging AR repository `oday-plus-dev`（`odayplus-runtime-20260825`，`asia-east1`）的 `roles/artifactregistry.reader`
+- 同一個身分對 production AR repository `oday-plus`（`odayplus-prod-20260826`，`asia-east1`）的 `roles/artifactregistry.writer`
+- production AR repository `oday-plus` 必須存在
+
+未完成前，production 部署會在 promotion 步驟失敗（讀不到 staging image 或寫不進 production），Cloud Run 不被變更。lease 在 admission 已消耗；這與其他 deploy job 失敗相同，重跑需要新的 lease。
+
+### 13.6 測試
+
+- `tests/release/test_first_release_staging_production.py`：`promoted_image_ref` 的形狀；production 接受 manifest image 或 promoted copy 並消耗 lease；十種錯誤 handoff 或 registry 被拒絕且 lease 未消耗；staging 帶目標 registry 被拒絕；staging 照舊只收 manifest image；mutation：只比 digest 時錯名與第三者 registry 會被 admit、拿掉環境限制時 staging 會 admit promoted image。
+- `tests/contract/test_runtime_release_workflow.py`：以 cosign／gcloud spy 實跑 workflow 的 promotion step：成功時從 manifest 來源複製、在 production 驗簽、output 是 promoted reference；重跑同一 tag 可通過；十三種失敗都不寫 output；共用 image 的 component 不會漏複製；步驟順序在 admission 之後、任何 production 變更之前；deploy step 對 production 用 promoted reference、對 dev 與原本相同；admission 只對 production 傳目標 registry。
+- `tests/ops/test_deploy_workflow_contract.py`：deploy 腳本在 production 拒絕 staging registry 與相似前綴的 repository，dev 不變。
+
+本 task 沒有部署、沒有觸發 workflow、沒有修改 `RELEASE_GATE_REGISTRY`、IAM 或 secret。live 的 promotion 尚未執行過；第一次 production release 時才會實際跑。
