@@ -1240,6 +1240,197 @@ def test_postgresql_forecast_view_admits_only_eof_proven_target_and_prior_partit
                     )
                     assert_target_refused(reason)
 
+        # Authority promotion: a transaction first projected by a clean
+        # 'transaction' run remains non-authoritative until 'orders' promotes
+        # data_plane.transaction_authority, and once promoted by a clean
+        # full-day 'orders' run it is admitted even though canonical_lineage
+        # retains the earlier 'transaction' snapshot row.
+        promotion_eof_at = _at(FORECAST_TARGET_DAY + timedelta(days=4), 18)
+        for day, run, reason in (
+            (FORECAST_TARGET_DAY, target_run, "SOURCE_RUN_NOT_COMPLETE"),
+            (FORECAST_PRIOR_DAY, prior_run, "PRIOR_SOURCE_NOT_COMPLETE"),
+        ):
+            txn_id = _id(f"transaction:forecast:{day.isoformat()}")
+            orders_snapshot_id = _id(f"snapshot:forecast:{day.isoformat()}")
+            initial_txn_name = f"forecast-initial-transaction:{day.isoformat()}"
+            initial_txn_snapshot_id = _id(f"snapshot:{initial_txn_name}")
+
+            # Current non-authoritative 'transaction' ownership on an additional
+            # same-day row must reject the day rather than be silently omitted
+            # from the day's revenue sum.
+            with connection.transaction(force_rollback=True):
+                extra_txn_run = _insert_run(
+                    connection,
+                    name=f"forecast-unpromoted-extra-run:{day.isoformat()}",
+                    source_kind="transaction",
+                    partition_key=day.isoformat(),
+                    finished_at=_at(day, 20),
+                    processed_count=1,
+                    valid_loaded=1,
+                )
+                extra_txn_name = f"forecast-unpromoted-extra:{day.isoformat()}"
+                extra_txn_id = _id(f"transaction:{extra_txn_name}")
+                connection.execute(
+                    """
+                    INSERT INTO core.transactions (
+                        transaction_id, store_id, event_time, observation_time,
+                        ingested_at, net_amount, currency, transaction_status
+                    ) VALUES (%s, %s, %s, %s, %s, 19, 'TWD', 'succeeded')
+                    """,
+                    (
+                        extra_txn_id,
+                        store_id,
+                        _at(day, 14),
+                        _at(day, 15),
+                        _at(day, 16),
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO data_plane.transaction_authority (
+                        transaction_id, source_kind, source_snapshot_id
+                    ) VALUES (%s, 'transaction', %s)
+                    """,
+                    (extra_txn_id, _id(f"snapshot:{extra_txn_name}")),
+                )
+                _insert_lineage(
+                    connection,
+                    name=extra_txn_name,
+                    run_id=extra_txn_run,
+                    tenant_id=tenant_id,
+                    table="core.transactions",
+                    entity_id=extra_txn_id,
+                    projected_at=_at(day, 17),
+                )
+                assert_target_refused(reason)
+
+            with connection.transaction(force_rollback=True):
+                initial_txn_run = _insert_run(
+                    connection,
+                    name=f"forecast-initial-transaction-run:{day.isoformat()}",
+                    source_kind="transaction",
+                    partition_key=day.isoformat(),
+                    finished_at=_at(day, 18),
+                    processed_count=1,
+                    valid_loaded=1,
+                )
+                # Step 1: before 'orders' promotion, the row is owned by the
+                # 'transaction' source and only has the 'transaction' lineage.
+                connection.execute(
+                    "DELETE FROM data_plane.canonical_lineage WHERE canonical_id = %s",
+                    (txn_id,),
+                )
+                connection.execute(
+                    "DELETE FROM data_plane.ingestion_runs WHERE run_id = %s",
+                    (run,),
+                )
+                connection.execute(
+                    """
+                    UPDATE data_plane.transaction_authority
+                    SET source_kind = 'transaction',
+                        source_snapshot_id = %s
+                    WHERE transaction_id = %s
+                    """,
+                    (initial_txn_snapshot_id, txn_id),
+                )
+                _insert_lineage(
+                    connection,
+                    name=initial_txn_name,
+                    run_id=initial_txn_run,
+                    tenant_id=tenant_id,
+                    table="core.transactions",
+                    entity_id=txn_id,
+                    projected_at=_at(day, 17),
+                )
+                assert_target_refused(reason)
+
+                # Even if a full-day 'orders' run exists on that date, the row
+                # remains rejected until 'orders' actually promotes authority
+                # and projects its authoritative lineage snapshot.
+                promoting_orders_run = _insert_run(
+                    connection,
+                    name=f"forecast-promoting-orders-run:{day.isoformat()}",
+                    source_kind="orders",
+                    partition_key=day.isoformat(),
+                    finished_at=promotion_eof_at,
+                    processed_count=1,
+                    valid_loaded=1,
+                )
+                assert_target_refused(reason)
+
+                # Claiming 'orders' authority while pointing at the 'transaction'
+                # snapshot must still fail closed.
+                connection.execute(
+                    """
+                    UPDATE data_plane.transaction_authority
+                    SET source_kind = 'orders',
+                        source_snapshot_id = %s
+                    WHERE transaction_id = %s
+                    """,
+                    (initial_txn_snapshot_id, txn_id),
+                )
+                assert_target_refused(reason)
+
+                # Step 2: the full-day 'orders' run loads the matching orderId,
+                # updates core.transactions, promotes transaction_authority to
+                # the 'orders' snapshot, and appends the 'orders' lineage row
+                # while retaining the earlier 'transaction' lineage row.
+                connection.execute(
+                    """
+                    UPDATE core.transactions
+                    SET net_amount = net_amount + 35,
+                        observation_time = %s,
+                        ingested_at = %s
+                    WHERE transaction_id = %s
+                    """,
+                    (_at(day, 19), _at(day, 20), txn_id),
+                )
+                connection.execute(
+                    """
+                    UPDATE data_plane.transaction_authority
+                    SET source_kind = 'orders',
+                        source_snapshot_id = %s
+                    WHERE transaction_id = %s
+                    """,
+                    (orders_snapshot_id, txn_id),
+                )
+                _insert_lineage(
+                    connection,
+                    name=f"forecast:{day.isoformat()}",
+                    run_id=promoting_orders_run,
+                    tenant_id=tenant_id,
+                    table="core.transactions",
+                    entity_id=txn_id,
+                    projected_at=_at(day, 21),
+                )
+
+                promoted_view_row = _forecast_rows(connection, tenant_id, store_id)[
+                    FORECAST_TARGET_DAY
+                ]
+                assert promoted_view_row["is_training_eligible"] is True
+                assert promoted_view_row["exclusion_reason"] is None
+                assert str(initial_txn_snapshot_id) in promoted_view_row["source_snapshot_ids"]
+                assert str(orders_snapshot_id) in promoted_view_row["source_snapshot_ids"]
+
+                (promoted_row,) = source.load(spec, bounds).rows
+                assert promoted_row["date"] == FORECAST_TARGET_DAY
+                assert str(initial_txn_snapshot_id) in promoted_row["source_snapshot_ids"]
+                assert str(orders_snapshot_id) in promoted_row["source_snapshot_ids"]
+                if day == FORECAST_TARGET_DAY:
+                    assert promoted_row["daily_net_revenue"] == pytest.approx(128.0 + 35.0)
+                    assert promoted_row["label_maturity_time"] == promotion_eof_at
+                else:
+                    assert promoted_row["rolling_mean_28"] == pytest.approx(
+                        loaded_row["rolling_mean_28"] + 35.0 / 28.0
+                    )
+                    assert promoted_row["feature_snapshot_time"] == promotion_eof_at
+
+                # Retained historical lineage still enforces run integrity: if
+                # the earlier 'transaction' run was unreconciled or quarantined,
+                # promotion does not mask the broken lineage run.
+                _set_run(connection, initial_txn_run, "reconciled = FALSE")
+                assert_target_refused(reason)
+
         # Late completion of one prior day moves the feature clock of exactly
         # the rows whose 28-day window contains that day.
         prior_eof_at = _at(FORECAST_TARGET_DAY + timedelta(days=5), 6)

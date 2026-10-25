@@ -38,6 +38,11 @@ def test_forecast_sql_requires_eof_proven_partitions_for_target_and_prior_days()
     # succeeded chunk may precede the proof.
     assert "chunk.finished_at IS NULL" in body
     assert "chunk.status = 'SUCCEEDED'\n                AND chunk.reconciled" in body
+    assert "LEFT JOIN data_plane.transaction_authority AS authority" in body
+    assert "authority.source_kind = 'orders'" in body
+    assert "lineage.source_snapshot_id = authority.source_snapshot_id" in body
+    assert "AND ingestion.source_kind = 'orders'" in body
+    assert "bool_and(\n                ingestion.source_kind = 'orders'" not in body
     assert "proof.partition_date = transaction_daily.date" in body
     assert "proof.finished_at >= transaction_daily.source_run_finished_at" in body
     assert "partition_proof.finished_at,\n" in body

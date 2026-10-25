@@ -88,19 +88,30 @@ transaction_source AS (
     FROM core.transactions AS txn
     INNER JOIN core.stores AS store
         ON store.store_id = txn.store_id
+    LEFT JOIN data_plane.transaction_authority AS authority
+        ON authority.transaction_id = txn.transaction_id
     LEFT JOIN LATERAL (
         SELECT
             array_agg(
                 DISTINCT lineage.source_snapshot_id::text
                 ORDER BY lineage.source_snapshot_id::text
             ) AS source_snapshot_ids,
-            bool_and(
-                ingestion.source_kind = 'orders'
-                AND ingestion.status = 'SUCCEEDED'
-                AND ingestion.reconciled
-                AND ingestion.quarantined_count = 0
-                AND ingestion.processed_count = ingestion.valid_loaded
-                AND ingestion.finished_at IS NOT NULL
+            (
+                authority.source_kind = 'orders'
+                AND coalesce(
+                    bool_or(
+                        lineage.source_snapshot_id = authority.source_snapshot_id
+                        AND ingestion.source_kind = 'orders'
+                    ),
+                    FALSE
+                )
+                AND bool_and(
+                    ingestion.status = 'SUCCEEDED'
+                    AND ingestion.reconciled
+                    AND ingestion.quarantined_count = 0
+                    AND ingestion.processed_count = ingestion.valid_loaded
+                    AND ingestion.finished_at IS NOT NULL
+                )
             ) AS source_run_complete,
             max(ingestion.finished_at) AS source_run_finished_at
         FROM data_plane.canonical_lineage AS lineage
@@ -1404,7 +1415,8 @@ INSERT INTO model_ready.view_contracts (
             'core.transactions',
             'core.stores',
             'data_plane.canonical_lineage',
-            'data_plane.ingestion_runs'
+            'data_plane.ingestion_runs',
+            'data_plane.transaction_authority'
         ],
         'ACTIVE',
         TRUE,

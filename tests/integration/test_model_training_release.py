@@ -504,6 +504,8 @@ def test_model_ready_sql_is_real_causal_and_activates_supported_outcomes() -> No
     assert "forecast-training-view-v2" in lowered
     assert "authoritative_order_partitions" in lowered
     assert "completion.partition_key ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'" in lowered
+    assert "left join data_plane.transaction_authority as authority" in lowered
+    assert "lineage.source_snapshot_id = authority.source_snapshot_id" in lowered
     assert "proof.partition_date = transaction_daily.date" in lowered
     assert "prior_complete_day_count_28 = 28" in lowered
     assert "'prior_source_not_complete'" in lowered
