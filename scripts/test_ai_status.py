@@ -3641,6 +3641,993 @@ class AssignmentSourceDocumentTests(unittest.TestCase):
             self.assertEqual(task["source_docs"], ["docs/source.md"])
 
 
+class AssignmentAuditReaderTests(unittest.TestCase):
+    def setUp(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory(prefix="assignment-audit-reader-")
+        self.addCleanup(tmpdir.cleanup)
+        self.log_file = Path(tmpdir.name) / "activity.jsonl"
+        patcher = mock.patch.object(ai_status, "LOG_FILE", self.log_file)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_missing_log_preserves_legacy_empty_history_but_strict_refuses(self) -> None:
+        self.assertEqual(ai_status.load_logs(), [])
+        with self.assertRaisesRegex(ValueError, "canonical activity log is missing"):
+            ai_status.load_logs(strict=True)
+        self.assertFalse(self.log_file.exists())
+
+    def test_malformed_json_is_skipped_only_in_legacy_mode(self) -> None:
+        entries = [{"type": "assign"}, {"type": "dispatch_preflight_blocked"}]
+        content = json.dumps(entries[0]) + "\n\n{malformed-json\n" + json.dumps(entries[1]) + "\n"
+        self.log_file.write_text(content, encoding="utf-8")
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(ai_status.load_logs(), entries)
+        self.assertIn("skipping malformed ai-activity-log.jsonl line 3", stderr.getvalue())
+        with self.assertRaisesRegex(ValueError, "malformed JSON in canonical activity log line 3"):
+            ai_status.load_logs(strict=True)
+        self.assertEqual(self.log_file.read_text(encoding="utf-8"), content)
+
+    def test_io_errors_propagate_in_legacy_mode_and_are_chained_in_strict_mode(self) -> None:
+        self.log_file.write_text('{"type": "assign"}\n', encoding="utf-8")
+        error = PermissionError("canonical activity log is not readable")
+        with mock.patch.object(Path, "read_text", side_effect=error):
+            with self.assertRaises(PermissionError) as legacy:
+                ai_status.load_logs()
+            self.assertIs(legacy.exception, error)
+            with self.assertRaisesRegex(ValueError, "canonical activity log is unreadable") as strict:
+                ai_status.load_logs(strict=True)
+            self.assertIs(strict.exception.__cause__, error)
+        self.assertEqual(self.log_file.read_text(encoding="utf-8"), '{"type": "assign"}\n')
+
+    def test_invalid_utf8_propagates_in_legacy_mode_and_fails_closed_in_strict_mode(self) -> None:
+        content = b'{"type": "assign"}\n\xff\n'
+        self.log_file.write_bytes(content)
+        with self.assertRaises(UnicodeDecodeError):
+            ai_status.load_logs()
+        with self.assertRaisesRegex(ValueError, "canonical activity log is unreadable") as strict:
+            ai_status.load_logs(strict=True)
+        self.assertIsInstance(strict.exception.__cause__, UnicodeDecodeError)
+        self.assertEqual(self.log_file.read_bytes(), content)
+
+
+class AssignOptionalPinCorrectionTests(unittest.TestCase):
+    TASK_ID = "ODP-G2-SCORING-READBACK-261025"
+    VERIFICATION_DECLARATIONS = [
+        "uv run --frozen --all-extras --python 3.12 pytest -q tests/contracts/test_g2_scoring_methodology_contract.py",
+        "uv run --frozen --all-extras --python 3.12 pytest -q services/bff/tests/test_sites_router.py -k site_score",
+        "npm --prefix web exec vitest run src/test/siteScoreBreakdownCard.test.tsx",
+        "npm --prefix web run typecheck",
+        "git diff --check",
+    ]
+
+    def setUp(self) -> None:
+        self._tmpdir = tempfile.TemporaryDirectory(prefix="assign-optional-pin-")
+        self.addCleanup(self._tmpdir.cleanup)
+        self.base_dir = Path(self._tmpdir.name).resolve()
+        self.origin_root = self.base_dir / "alfloop-dev" / "odayplus.git"
+        self.status_root = self.base_dir / "repo"
+        self.worktree_root = self.base_dir / "worktrees"
+        self.origin_root.mkdir(parents=True)
+        self.status_root.mkdir(parents=True)
+        self.worktree_root.mkdir(parents=True)
+
+        self._git(self.origin_root, "init", "--bare")
+        self._git(self.status_root, "init")
+        self._git(self.status_root, "config", "user.email", "test@odayplus.local")
+        self._git(self.status_root, "config", "user.name", "Test Runner")
+        self._git(self.status_root, "checkout", "-b", "dev")
+        (self.status_root / "docs" / "contracts").mkdir(parents=True)
+        doc_path = self.status_root / "docs" / "contracts" / "g2_scoring_methodology.md"
+        doc_path.write_text("# G2 Scoring Methodology\n", encoding="utf-8")
+        self._git(self.status_root, "add", ".")
+        self._git(self.status_root, "commit", "-m", "Initial dev commit")
+        self.base_sha = self._git(self.status_root, "rev-parse", "HEAD").strip()
+        self._git(self.status_root, "remote", "add", "origin", str(self.origin_root))
+        self._git(self.status_root, "push", "-u", "origin", "dev")
+
+        self.config_payload = {
+            "paths": {
+                "status_file": "ai-status.json",
+                "activity_log": "ai-activity-log.jsonl",
+                "current_work": "current-work.md",
+                "dashboard": "docs-site/index.html",
+                "state_file": ".orchestrator/state.json",
+                "event_queue": ".orchestrator/event-queue.jsonl",
+                "approval_queue": ".orchestrator/approval-queue.json",
+            },
+            "worker_worktrees": {
+                "root": str(self.worktree_root),
+                "git_network_timeout_seconds": 5,
+            },
+            "coordination": {
+                "enabled": True,
+                "repositories": {
+                    "pantheon": {
+                        "repo": "alfloop-dev/odayplus",
+                        "local_path": ".",
+                        "default_branch": "dev",
+                    },
+                    "odayplus": {
+                        "repo": "alfloop-dev/odayplus",
+                        "local_path": ".",
+                        "default_branch": "dev",
+                    },
+                },
+            },
+            "account_pools": {
+                "codex_main": {"state": "healthy", "max_concurrent": 2},
+                "codex_review": {"state": "healthy", "max_concurrent": 2},
+                "pi_main": {"state": "healthy", "max_concurrent": 2},
+                "claude_main": {"state": "healthy", "max_concurrent": 2},
+            },
+            "agents": {
+                "codex": {
+                    "display_name": "Codex",
+                    "provider": "codex",
+                    "account_pool": "codex_main",
+                },
+                "codex2": {
+                    "display_name": "Codex2",
+                    "provider": "codex",
+                    "account_pool": "codex_review",
+                },
+                "pi": {
+                    "display_name": "Pi",
+                    "provider": "pi",
+                    "account_pool": "pi_main",
+                },
+                "claude": {
+                    "display_name": "Claude",
+                    "provider": "claude",
+                    "account_pool": "claude_main",
+                },
+            },
+        }
+        orch_dir = self.status_root / ".orchestrator"
+        orch_dir.mkdir(parents=True, exist_ok=True)
+        self.config_file = orch_dir / "config.json"
+        self.config_file.write_text(
+            json.dumps(self.config_payload, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        (orch_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "queue": {
+                        "events": {
+                            "evt-preflight-1": {
+                                "status": "failed",
+                                "error": (
+                                    "Worker workspace preflight blocked: Cannot lease isolated "
+                                    f"worker worktree for {self.TASK_ID}: failed to resolve worker base "
+                                    f"(frozen_evidence_task_branch_unavailable:task/{self.TASK_ID})."
+                                ),
+                                "processed_at": "2026-10-25T18:42:41Z",
+                            }
+                        }
+                    },
+                    "workers": {},
+                    "worker_worktrees": {"leases": {}, "handoff_blocks": {}},
+                    "worker_worktree_lease_blocks": {},
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (orch_dir / "event-queue.jsonl").write_text("", encoding="utf-8")
+
+        self._env_patcher = mock.patch.dict(
+            os.environ,
+            {
+                "PANTHEON_STATUS_ROOT": str(self.status_root),
+                "ORCH_STATUS_ROOT": str(self.status_root),
+                "ORCH_CONFIG_PATH": str(self.config_file),
+                "PANTHEON_CONFIG_PATH": str(self.config_file),
+            },
+            clear=False,
+        )
+        self._env_patcher.start()
+        self.addCleanup(self._env_patcher.stop)
+
+        self._saved_ai_paths = {
+            name: getattr(ai_status, name) for name in _AI_STATUS_ROOT_ATTRIBUTES
+        }
+        self._saved_archive_paths = {
+            name: getattr(task_archive, name) for name in _TASK_ARCHIVE_ROOT_ATTRIBUTES
+        }
+        self.addCleanup(self._restore_paths)
+
+        ai_status.STATUS_ROOT = self.status_root
+        ai_status.STATUS_FILE = self.status_root / "ai-status.json"
+        ai_status.LOG_FILE = self.status_root / "ai-activity-log.jsonl"
+        ai_status.CURRENT_WORK_FILE = self.status_root / "current-work.md"
+        ai_status.DOCS_SITE_DIR = self.status_root / "docs-site"
+        ai_status.CONFIG_FILE = self.config_file
+        ai_status.STATUS_ROOT_CONFIG_LOCAL_FILE = orch_dir / "config.local.json"
+        ai_status.PLANNING_STATE_FILE = orch_dir / "planning-state.json"
+        ai_status.ORCHESTRATOR_STATE_FILE = orch_dir / "state.json"
+        ai_status.APPROVAL_QUEUE_FILE = orch_dir / "approval-queue.json"
+        ai_status.DASHBOARD_BUNDLE_FILE = self.status_root / "dashboard-bundle.json"
+
+        task_archive.STATUS_ROOT = self.status_root
+        task_archive.ARCHIVE_DIR = self.status_root / "ai-task-archive"
+        task_archive.ARCHIVE_TASKS_DIR = task_archive.ARCHIVE_DIR / "tasks"
+        task_archive.ARCHIVE_INDEX_FILE = task_archive.ARCHIVE_DIR / "index.json"
+        ai_status.ARCHIVE_TASKS_DIR = task_archive.ARCHIVE_TASKS_DIR
+        ai_status._MERGED_CONFIG_CACHE.clear()
+
+        initial_state = {
+            "project": "ODay Plus",
+            "sprint": "Sprint 1",
+            "objective": "Test optional pin correction",
+            "updated_at": "2026-10-25T18:40:00Z",
+            "agents": [],
+            "tasks": [],
+            "handoffs": [],
+            "blockers": [],
+        }
+        ai_status.STATUS_FILE.write_text(
+            json.dumps(initial_state, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        ai_status.LOG_FILE.write_text("", encoding="utf-8")
+
+        self.initial_metadata = {
+            "repository": "alfloop-dev/odayplus",
+            "task_class": "product",
+            "priority": "P1",
+            "owned_paths": [
+                "services/bff/src/oday_bff/routers/sites.py",
+                "web/src/components/sites/SiteScoreBreakdownCard.tsx",
+            ],
+            "forbidden_paths": [
+                ".orchestrator/supervisor.py",
+                "ai-status.json",
+            ],
+            "frozen_evidence_base_sha": self.base_sha,
+            "source_docs": ["docs/contracts/g2_scoring_methodology.md"],
+            "implementation_contract": {
+                "existing_entrypoint": "services/bff/src/oday_bff/routers/sites.py",
+                "integration_mode": "extend_existing_sites_score_and_assumptions_readback_only",
+            },
+            "verification": list(self.VERIFICATION_DECLARATIONS),
+            "no_live_operations": True,
+        }
+        with mock.patch.object(ai_status, "iso_now", return_value="2026-10-25T18:42:41Z"):
+            self._run_assign(
+                actor="Codex",
+                task_id=self.TASK_ID,
+                owner="Pi",
+                reviewer="Codex2",
+                title="G2標準配置接回既有SiteScore API與唯讀假設區",
+                summary_zh="沿原 SiteScore GET 與原假設區讀回已確認 G2 標準配置；保留財務未知與所有權限／動作邊界",
+                metadata=self.initial_metadata,
+            )
+        for idx in range(2):
+            self._append_raw_log(
+                {
+                    "ts": f"2026-10-25T18:4{idx + 2}:41Z",
+                    "agent": "Orchestrator",
+                    "type": "wake_queued",
+                    "task_id": self.TASK_ID,
+                    "target_agent": "Pi",
+                    "provider": "pi",
+                    "queue_event_id": f"evt-preflight-{idx + 1}",
+                    "message": "Wake-up queued for supervisor: owned_ready_dispatch",
+                }
+            )
+            self._append_raw_log(
+                {
+                    "ts": f"2026-10-25T18:4{idx + 2}:42Z",
+                    "agent": "Orchestrator",
+                    "type": "dispatch_blocked_worktree_base",
+                    "task_id": self.TASK_ID,
+                    "workspace_task_id": self.TASK_ID,
+                    "target_agent": "Pi",
+                    "queue_event_id": f"evt-preflight-{idx + 1}",
+                    "repository_id": "pantheon",
+                    "default_branch": "dev",
+                    "message": (
+                        f"Cannot lease isolated worker worktree for {self.TASK_ID}: "
+                        f"failed to resolve worker base (frozen_evidence_task_branch_unavailable:task/{self.TASK_ID})."
+                    ),
+                }
+            )
+            self._append_raw_log(
+                {
+                    "ts": f"2026-10-25T18:4{idx + 2}:42Z",
+                    "agent": "Orchestrator",
+                    "type": "dispatch_preflight_blocked",
+                    "task_id": self.TASK_ID,
+                    "target_agent": "Pi",
+                    "provider": "pi",
+                    "queue_event_id": f"evt-preflight-{idx + 1}",
+                    "message": (
+                        "Worker workspace preflight blocked: Cannot lease isolated worker "
+                        f"worktree for {self.TASK_ID}: failed to resolve worker base "
+                        f"(frozen_evidence_task_branch_unavailable:task/{self.TASK_ID})."
+                    ),
+                }
+            )
+
+    def _restore_paths(self) -> None:
+        for name, value in self._saved_ai_paths.items():
+            setattr(ai_status, name, value)
+        for name, value in self._saved_archive_paths.items():
+            setattr(task_archive, name, value)
+        ai_status._MERGED_CONFIG_CACHE.clear()
+
+    def _git(self, cwd: Path, *args: str) -> str:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return proc.stdout
+
+    def _append_raw_log(self, entry: dict[str, Any]) -> None:
+        with ai_status.LOG_FILE.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    def _run_assign(
+        self,
+        *,
+        actor: str,
+        task_id: str,
+        owner: str,
+        reviewer: str,
+        metadata: dict[str, Any] | None = None,
+        title: str | None = None,
+        summary_zh: str | None = None,
+        extra_env: dict[str, str] | None = None,
+    ) -> int:
+        env = {
+            "AI_NAME": actor,
+            "PANTHEON_STATUS_ROOT": str(self.status_root),
+            "ORCH_STATUS_ROOT": str(self.status_root),
+            "ORCH_CONFIG_PATH": str(self.config_file),
+            "PANTHEON_CONFIG_PATH": str(self.config_file),
+        }
+        if metadata is not None:
+            env["TASK_METADATA_JSON"] = json.dumps(metadata, ensure_ascii=False)
+        if summary_zh is not None:
+            env["TASK_SUMMARY_ZH"] = summary_zh
+        if extra_env:
+            env.update(extra_env)
+        argv = ["ai_status.py", "assign", task_id, owner, reviewer]
+        if title is not None:
+            argv.append(title)
+        cleaned_keys = (
+            "TASK_METADATA_JSON",
+            "TASK_TITLE",
+            "TASK_SUMMARY_ZH",
+            "TASK_DEPENDS_ON",
+            "TASK_PHASE",
+            "TASK_ARTIFACTS",
+            "TASK_ACCEPTANCE",
+            "TASK_BRANCH",
+            "TASK_CLASS",
+            "TASK_PRIORITY",
+            "TASK_HELPER_PARENT",
+            "TASK_HELPER_KIND",
+            "TASK_AUTO_CREATED_BY",
+            "TASK_AUTO_GENERATED",
+            "TASK_MUTATES_CANONICAL",
+            "TASK_SOURCE_DOCS",
+        )
+        with mock.patch.dict(os.environ, {}, clear=False):
+            for key in cleaned_keys:
+                os.environ.pop(key, None)
+            os.environ.update(env)
+            ai_status._MERGED_CONFIG_CACHE.clear()
+            with mock.patch("sys.stdout", new_callable=io.StringIO):
+                return ai_status.main(argv)
+
+    def _assert_clear_refused(
+        self,
+        expected_substring: str,
+        *,
+        actor: str = "Codex",
+        task_id: str | None = None,
+        owner: str = "Pi",
+        reviewer: str = "Codex2",
+        metadata: dict[str, Any] | None = None,
+        title: str | None = None,
+        summary_zh: str | None = None,
+        extra_env: dict[str, str] | None = None,
+    ) -> None:
+        status_before = ai_status.STATUS_FILE.read_text(encoding="utf-8")
+        log_exists_before = ai_status.LOG_FILE.exists()
+        log_before = ai_status.LOG_FILE.read_text(encoding="utf-8") if log_exists_before else None
+        with self.assertRaises(SystemExit) as ctx:
+            self._run_assign(
+                actor=actor,
+                task_id=task_id or self.TASK_ID,
+                owner=owner,
+                reviewer=reviewer,
+                metadata={"frozen_evidence_base_sha": None} if metadata is None else metadata,
+                title=title,
+                summary_zh=summary_zh,
+                extra_env=extra_env,
+            )
+        self.assertIn(expected_substring, str(ctx.exception))
+        self.assertEqual(ai_status.STATUS_FILE.read_text(encoding="utf-8"), status_before)
+        if log_exists_before:
+            self.assertEqual(ai_status.LOG_FILE.read_text(encoding="utf-8"), log_before)
+        else:
+            self.assertFalse(ai_status.LOG_FILE.exists())
+
+    def test_legitimate_newly_assigned_never_run_task_clears_optional_pin_and_restores_worker_base(self) -> None:
+        from copy import deepcopy
+
+        import worker_workspace
+        from adapters.base import DeliveryRequest
+
+        config = ai_status.status_runtime_config()
+        orch_state = json.loads(ai_status.ORCHESTRATOR_STATE_FILE.read_text(encoding="utf-8"))
+        task_before = deepcopy(ai_status.get_task(ai_status.load_state(), self.TASK_ID))
+        self.assertIsNotNone(task_before)
+        self.assertEqual(task_before.get("frozen_evidence_base_sha"), self.base_sha)
+
+        pre_request = DeliveryRequest(
+            agent_id="pi",
+            provider="pi",
+            delivery_mode="cli",
+            message="Dispatch G2",
+            task_id=self.TASK_ID,
+            reason="owned_ready_dispatch",
+            metadata={"task": deepcopy(task_before), "queue_event_id": "evt-preflight-1"},
+        )
+        ok_before, err_before = worker_workspace.prepare_worker_workspace(
+            config,
+            orch_state,
+            pre_request,
+            queue_event_id="evt-preflight-1",
+            target_agent="Pi",
+        )
+        self.assertFalse(ok_before)
+        self.assertIn(
+            f"frozen_evidence_task_branch_unavailable:task/{self.TASK_ID}",
+            err_before or "",
+        )
+
+        logs_before = ai_status.load_logs()
+        rc = self._run_assign(
+            actor="Codex",
+            task_id=self.TASK_ID,
+            owner="Pi",
+            reviewer="Codex2",
+            metadata={"frozen_evidence_base_sha": None},
+        )
+        self.assertEqual(rc, 0)
+
+        state_after = ai_status.load_state()
+        task_after = ai_status.get_task(state_after, self.TASK_ID)
+        self.assertIsNotNone(task_after)
+        self.assertNotIn("frozen_evidence_base_sha", task_after)
+        self.assertEqual(task_after["id"], self.TASK_ID)
+        self.assertEqual(task_after["owner"], "Pi")
+        self.assertEqual(task_after["reviewer"], "Codex2")
+        self.assertEqual(task_after["status"], "todo")
+        self.assertEqual(task_after["task_class"], "product")
+        self.assertEqual(task_after["next"], "Assignment created")
+        self.assertEqual(task_after["source_docs"], self.initial_metadata["source_docs"])
+        self.assertEqual(
+            task_after["implementation_contract"],
+            self.initial_metadata["implementation_contract"],
+        )
+        self.assertEqual(task_after["owned_paths"], self.initial_metadata["owned_paths"])
+        self.assertEqual(task_after["forbidden_paths"], self.initial_metadata["forbidden_paths"])
+        self.assertEqual(task_after["verification"], self.VERIFICATION_DECLARATIONS)
+
+        logs_after = ai_status.load_logs()
+        self.assertEqual(len(logs_after), len(logs_before) + 1)
+        self.assertEqual(logs_after[:-1], logs_before)
+        correction_log = logs_after[-1]
+        self.assertEqual(correction_log["type"], "assign")
+        self.assertEqual(correction_log["agent"], "Codex")
+        self.assertEqual(correction_log["task_id"], self.TASK_ID)
+        self.assertEqual(correction_log["previous_frozen_evidence_base_sha"], self.base_sha)
+        self.assertIsNone(correction_log["frozen_evidence_base_sha"])
+        self.assertEqual(correction_log["cleared_optional_pin"], "frozen_evidence_base_sha")
+        self.assertIn(self.base_sha, correction_log["message"])
+
+        post_request = DeliveryRequest(
+            agent_id="pi",
+            provider="pi",
+            delivery_mode="cli",
+            message="Dispatch G2 after optional pin removal",
+            task_id=self.TASK_ID,
+            reason="owned_ready_dispatch",
+            metadata={"task": deepcopy(task_after), "queue_event_id": "evt-after-clear"},
+        )
+        ok_after, err_after = worker_workspace.prepare_worker_workspace(
+            config,
+            orch_state,
+            post_request,
+            queue_event_id="evt-after-clear",
+            target_agent="Pi",
+        )
+        self.assertTrue(ok_after, msg=err_after)
+        self.assertIsNone(err_after)
+        self.assertNotIn("frozen_evidence_base_sha", post_request.metadata)
+        self.assertEqual(post_request.metadata.get("base_sha"), self.base_sha)
+        self.assertEqual(post_request.metadata.get("workspace_branch"), f"task/{self.TASK_ID}")
+
+    def test_ordinary_omitted_key_assign_preserves_existing_frozen_evidence_pin(self) -> None:
+        rc = self._run_assign(
+            actor="Codex",
+            task_id=self.TASK_ID,
+            owner="Pi",
+            reviewer="Codex2",
+            metadata={"priority": "P1"},
+        )
+        self.assertEqual(rc, 0)
+        task = ai_status.get_task(ai_status.load_state(), self.TASK_ID)
+        self.assertIsNotNone(task)
+        self.assertEqual(task.get("frozen_evidence_base_sha"), self.base_sha)
+        self.assertEqual(task.get("next"), "Ownership updated")
+
+    def test_other_null_metadata_semantics_are_not_converted_to_deletion(self) -> None:
+        state = ai_status.load_state()
+        task = ai_status.get_task(state, self.TASK_ID)
+        task["custom_optional_note"] = "keep-key-present"
+        ai_status.save_state(state)
+
+        self._assert_clear_refused(
+            "null metadata value for 'custom_optional_note' is forbidden",
+            metadata={"frozen_evidence_base_sha": None, "custom_optional_note": None},
+        )
+        self._assert_clear_refused(
+            "cannot mutate priority during optional-pin correction",
+            metadata={"frozen_evidence_base_sha": None, "priority": "P2"},
+        )
+        self._assert_clear_refused(
+            "cannot mutate metadata field 'owned_paths'",
+            metadata={"frozen_evidence_base_sha": None, "owned_paths": ["other/path.py"]},
+        )
+
+        rc = self._run_assign(
+            actor="Codex",
+            task_id=self.TASK_ID,
+            owner="Pi",
+            reviewer="Codex2",
+            metadata={"custom_optional_note": None},
+        )
+        self.assertEqual(rc, 0)
+        updated_task = ai_status.get_task(ai_status.load_state(), self.TASK_ID)
+        self.assertIn("custom_optional_note", updated_task)
+        self.assertIsNone(updated_task["custom_optional_note"])
+        self.assertEqual(updated_task.get("frozen_evidence_base_sha"), self.base_sha)
+
+    def test_refuses_wrong_actor_wrong_owner_and_wrong_reviewer(self) -> None:
+        self._assert_clear_refused(
+            "actor Claude is not the proven original assigning actor (Codex)",
+            actor="Claude",
+        )
+        self._assert_clear_refused(
+            "owner (Claude) and reviewer (Codex2) must remain unchanged (Pi / Codex2)",
+            owner="Claude",
+        )
+        self._assert_clear_refused(
+            "owner (Pi) and reviewer (Claude) must remain unchanged (Pi / Codex2)",
+            reviewer="Claude",
+        )
+
+    def test_refuses_new_task_clear_attempt_and_absent_or_already_cleared_pin(self) -> None:
+        self._assert_clear_refused(
+            "task does not exist on the active board (new-task clear attempts are forbidden)",
+            task_id="ODP-NEVER-CREATED-261025",
+        )
+
+        rc = self._run_assign(
+            actor="Codex",
+            task_id=self.TASK_ID,
+            owner="Pi",
+            reviewer="Codex2",
+            metadata={"frozen_evidence_base_sha": None},
+        )
+        self.assertEqual(rc, 0)
+        self._assert_clear_refused("task has no prior frozen_evidence_base_sha pin to clear")
+
+    def test_refuses_when_branch_worktree_worker_pending_dispatch_or_helper_lease_exists(self) -> None:
+        branch_ref = f"refs/heads/task/{self.TASK_ID}"
+        self._git(self.status_root, "update-ref", branch_ref, self.base_sha)
+        try:
+            self._assert_clear_refused("task branch ref already exists in git")
+        finally:
+            self._git(self.status_root, "update-ref", "-d", branch_ref)
+
+        remote_ref = f"refs/remotes/origin/task/{self.TASK_ID}"
+        self._git(self.status_root, "update-ref", remote_ref, self.base_sha)
+        try:
+            self._assert_clear_refused("task remote-tracking branch ref already exists in git")
+        finally:
+            self._git(self.status_root, "update-ref", "-d", remote_ref)
+
+        config_original = self.config_file.read_text(encoding="utf-8")
+        lane_branch_ref = f"refs/heads/lane/{self.TASK_ID}"
+        lane_remote_ref = f"refs/remotes/origin/lane/{self.TASK_ID}"
+        try:
+            cfg_with_lane = json.loads(config_original)
+            cfg_with_lane["branch_workflow"] = {"task_branch_prefix": "lane/"}
+            self.config_file.write_text(
+                json.dumps(cfg_with_lane, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            ai_status._MERGED_CONFIG_CACHE.clear()
+
+            self._git(self.status_root, "update-ref", lane_branch_ref, self.base_sha)
+            try:
+                self._assert_clear_refused("task branch ref already exists in git (refs/heads/lane/")
+            finally:
+                self._git(self.status_root, "update-ref", "-d", lane_branch_ref)
+
+            self._git(self.status_root, "update-ref", lane_remote_ref, self.base_sha)
+            try:
+                self._assert_clear_refused("task remote-tracking branch ref already exists in git (refs/remotes/origin/lane/")
+            finally:
+                self._git(self.status_root, "update-ref", "-d", lane_remote_ref)
+        finally:
+            self.config_file.write_text(config_original, encoding="utf-8")
+            ai_status._MERGED_CONFIG_CACHE.clear()
+
+        managed_wt_dir = self.worktree_root / "pantheon" / self.TASK_ID.lower()
+        managed_wt_dir.mkdir(parents=True)
+        try:
+            self._assert_clear_refused("managed worktree directory exists on disk")
+        finally:
+            managed_wt_dir.rmdir()
+
+        orch_original = ai_status.ORCHESTRATOR_STATE_FILE.read_text(encoding="utf-8")
+        try:
+            orch_with_lease = json.loads(orch_original)
+            orch_with_lease["worker_worktrees"]["leases"][self.TASK_ID] = {
+                "task_id": self.TASK_ID,
+                "branch": f"task/{self.TASK_ID}",
+                "path": str(managed_wt_dir),
+            }
+            ai_status.ORCHESTRATOR_STATE_FILE.write_text(
+                json.dumps(orch_with_lease, ensure_ascii=False), encoding="utf-8"
+            )
+            self._assert_clear_refused("worker worktree lease exists")
+
+            orch_with_worker = json.loads(orch_original)
+            orch_with_worker["workers"]["pi-run-1"] = {
+                "run_id": "pi-run-1",
+                "task_id": self.TASK_ID,
+                "status": "running",
+            }
+            ai_status.ORCHESTRATOR_STATE_FILE.write_text(
+                json.dumps(orch_with_worker, ensure_ascii=False), encoding="utf-8"
+            )
+            self._assert_clear_refused("orchestrator worker record exists")
+
+            orch_with_native_queue = json.loads(orch_original)
+            orch_with_native_queue["queue"]["events"]["evt-preflight-2"] = {
+                "attempt_count": 0,
+                "status": "queued",
+            }
+            ai_status.ORCHESTRATOR_STATE_FILE.write_text(
+                json.dumps(orch_with_native_queue, ensure_ascii=False), encoding="utf-8"
+            )
+            self._assert_clear_refused(
+                "pending or active queue event 'evt-preflight-2' exists in orchestrator state"
+            )
+        finally:
+            ai_status.ORCHESTRATOR_STATE_FILE.write_text(orch_original, encoding="utf-8")
+
+        eq_path = self.status_root / ".orchestrator" / "event-queue.jsonl"
+        eq_path.write_text(
+            json.dumps(
+                {
+                    "event_id": "evt-pending-1",
+                    "task_id": self.TASK_ID,
+                    "reason": "owned_ready_dispatch",
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        try:
+            self._assert_clear_refused("pending or active dispatch event (evt-pending-1) exists in event queue")
+        finally:
+            eq_path.write_text("", encoding="utf-8")
+
+        state_original = ai_status.STATUS_FILE.read_text(encoding="utf-8")
+        try:
+            state = ai_status.load_state()
+            task = ai_status.get_task(state, self.TASK_ID)
+            task["helper_execution_lease"] = {
+                "claimed_by": "Claude",
+                "lease_expires_at": "2099-01-01T00:00:00Z",
+            }
+            ai_status.save_state(state)
+            self._assert_clear_refused("helper_execution_lease")
+        finally:
+            ai_status.STATUS_FILE.write_text(state_original, encoding="utf-8")
+
+    def test_refuses_original_writer_rotation_and_later_different_actor_reassign(self) -> None:
+        state_original = ai_status.STATUS_FILE.read_text(encoding="utf-8")
+        log_original = ai_status.LOG_FILE.read_text(encoding="utf-8")
+        try:
+            rotate_cfg = ai_status.status_runtime_config()
+            rotate_cfg.setdefault("paths", {})["activity_log_rotate_bytes"] = 1
+            with mock.patch.object(ai_status.orchestrator_common, "ROOT", self.status_root):
+                ai_status.orchestrator_common.write_activity_log(
+                    rotate_cfg,
+                    {
+                        "type": "wake_queued",
+                        "task_id": self.TASK_ID,
+                        "target_agent": "Pi",
+                        "provider": "pi",
+                        "queue_event_id": "evt-preflight-rotate",
+                        "message": "Wake-up queued for supervisor: owned_ready_dispatch",
+                    },
+                )
+            archive_dir = self.status_root / ".orchestrator" / "logs" / "activity-log-archive"
+            self.assertTrue(list(archive_dir.glob("ai-activity-log-*.jsonl.gz")))
+
+            self._assert_clear_refused(
+                "no original assign audit entry found in canonical activity log",
+                actor="Codex",
+            )
+            self._assert_clear_refused(
+                "no original assign audit entry found in canonical activity log",
+                actor="Claude",
+            )
+
+            rc = self._run_assign(
+                actor="Claude",
+                task_id=self.TASK_ID,
+                owner="Pi",
+                reviewer="Codex2",
+            )
+            self.assertEqual(rc, 0)
+            reassigned_task = ai_status.get_task(ai_status.load_state(), self.TASK_ID)
+            self.assertEqual(reassigned_task.get("next"), "Ownership updated")
+            self.assertEqual(reassigned_task.get("frozen_evidence_base_sha"), self.base_sha)
+
+            self._assert_clear_refused(
+                "only a pristine initial assignment ('Assignment created') can be corrected",
+                actor="Claude",
+            )
+            self._assert_clear_refused(
+                "only a pristine initial assignment ('Assignment created') can be corrected",
+                actor="Codex",
+            )
+
+            state = ai_status.load_state()
+            task = ai_status.get_task(state, self.TASK_ID)
+            task["next"] = "Assignment created"
+            ai_status.save_state(state)
+            self._assert_clear_refused(
+                "initial creation assign audit entry is missing or rotated",
+                actor="Claude",
+            )
+        finally:
+            ai_status.STATUS_FILE.write_text(state_original, encoding="utf-8")
+            ai_status.LOG_FILE.write_text(log_original, encoding="utf-8")
+
+    def test_refuses_prior_execution_or_verification_evidence_or_receipts(self) -> None:
+        state_original = ai_status.STATUS_FILE.read_text(encoding="utf-8")
+        log_original = ai_status.LOG_FILE.read_text(encoding="utf-8")
+
+        try:
+            state = ai_status.load_state()
+            task = ai_status.get_task(state, self.TASK_ID)
+            task["status"] = "in_progress"
+            ai_status.save_state(state)
+            self._assert_clear_refused("task status must be 'todo'")
+        finally:
+            ai_status.STATUS_FILE.write_text(state_original, encoding="utf-8")
+
+        try:
+            self._append_raw_log(
+                {
+                    "ts": "2026-10-25T18:45:00Z",
+                    "agent": "Pi",
+                    "type": "start",
+                    "task_id": self.TASK_ID,
+                    "message": "Started work",
+                }
+            )
+            self._assert_clear_refused("canonical activity log records post-assignment activity ('start')")
+        finally:
+            ai_status.LOG_FILE.write_text(log_original, encoding="utf-8")
+
+        try:
+            state = ai_status.load_state()
+            task = ai_status.get_task(state, self.TASK_ID)
+            task["verification"] = [{"command": "pytest", "exit_code": 0, "passed": True}]
+            ai_status.save_state(state)
+            self._assert_clear_refused("verification field must contain only declared command strings")
+        finally:
+            ai_status.STATUS_FILE.write_text(state_original, encoding="utf-8")
+
+        ev_dir = self.status_root / ".orchestrator" / "evidence"
+        ev_dir.mkdir(parents=True, exist_ok=True)
+        slug = ai_status.orchestrator_common.verification_evidence.receipt_slug(self.TASK_ID)
+        receipt_path = ev_dir / f"verification-receipt-{slug}-deadbeef.json"
+        receipt_path.write_text(
+            json.dumps({"kind": "verification_receipt", "task_id": self.TASK_ID}),
+            encoding="utf-8",
+        )
+        try:
+            self._assert_clear_refused("verification receipt")
+        finally:
+            receipt_path.unlink(missing_ok=True)
+
+    def test_refuses_review_approval_pr_reopens_and_human_continuation_history(self) -> None:
+        state_original = ai_status.STATUS_FILE.read_text(encoding="utf-8")
+        mutations: list[tuple[str, Any, str]] = [
+            ("pr_number", 1500, "pr_number"),
+            ("pr_url", "https://github.com/alfloop-dev/odayplus/pull/1500", "pr_url"),
+            ("review_submission", {"pr_number": 1500, "remote_sha": self.base_sha}, "review_submission"),
+            ("approved_head", self.base_sha, "approved_head"),
+            ("last_approved_head", self.base_sha, "last_approved_head"),
+            ("review_reopen_count", 1, "review_reopen_count"),
+            ("review_reopen_history", [{"count": 1, "by": "Codex2"}], "review_reopen_history"),
+            ("last_reopened_at", "2026-10-25T18:50:00Z", "last_reopened_at"),
+            ("human_continuation_approval", {"approval_id": "app-1", "status": "issued"}, "human_continuation_approval"),
+            ("human_continuation_approval_history", [{"approval_id": "app-0"}], "human_continuation_approval_history"),
+            ("blocker_provenance", {"record_id": "bp-1"}, "blocker_provenance"),
+            ("blocker_provenance_history", [{"record_id": "bp-0"}], "blocker_provenance_history"),
+        ]
+        for field_name, field_value, expected_err in mutations:
+            with self.subTest(field=field_name):
+                try:
+                    state = ai_status.load_state()
+                    task = ai_status.get_task(state, self.TASK_ID)
+                    task[field_name] = field_value
+                    ai_status.save_state(state)
+                    self._assert_clear_refused(expected_err)
+                finally:
+                    ai_status.STATUS_FILE.write_text(state_original, encoding="utf-8")
+
+        try:
+            state = ai_status.load_state()
+            state["handoffs"].append(
+                {
+                    "task_id": self.TASK_ID,
+                    "from": "Pi",
+                    "to": "Codex2",
+                    "message": "Ready for review",
+                    "status": "pending",
+                    "created_at": "2026-10-25T18:50:00Z",
+                }
+            )
+            ai_status.save_state(state)
+            self._assert_clear_refused("task has handoff history")
+        finally:
+            ai_status.STATUS_FILE.write_text(state_original, encoding="utf-8")
+
+        try:
+            state = ai_status.load_state()
+            state["blockers"].append(
+                {
+                    "task_id": self.TASK_ID,
+                    "owner": "Pi",
+                    "waiting_for": "Codex",
+                    "message": "Blocked",
+                    "status": "resolved",
+                    "created_at": "2026-10-25T18:50:00Z",
+                }
+            )
+            ai_status.save_state(state)
+            self._assert_clear_refused("task has blocker history")
+        finally:
+            ai_status.STATUS_FILE.write_text(state_original, encoding="utf-8")
+
+    def test_refuses_when_evidence_proof_is_missing_or_corrupted(self) -> None:
+        self.assertFalse(hasattr(ai_status, "_load_strict_activity_logs_for_pin_removal"))
+        log_original = ai_status.LOG_FILE.read_text(encoding="utf-8")
+        try:
+            ai_status.LOG_FILE.unlink()
+            self.assertEqual(ai_status.load_logs(), [])
+            with self.assertRaisesRegex(ValueError, "canonical activity log is missing"):
+                ai_status.load_logs(strict=True)
+            self._assert_clear_refused("canonical activity log is missing")
+        finally:
+            ai_status.LOG_FILE.write_text(log_original, encoding="utf-8")
+
+        try:
+            ai_status.LOG_FILE.write_text("", encoding="utf-8")
+            self._assert_clear_refused("no original assign audit entry found in canonical activity log")
+        finally:
+            ai_status.LOG_FILE.write_text(log_original, encoding="utf-8")
+
+        try:
+            ai_status.LOG_FILE.write_text(log_original + "{malformed-json\n", encoding="utf-8")
+            with mock.patch("sys.stderr", new_callable=io.StringIO):
+                tolerant_entries = ai_status.load_logs()
+            self.assertGreaterEqual(len(tolerant_entries), 1)
+            with self.assertRaisesRegex(ValueError, "malformed JSON in canonical activity log"):
+                ai_status.load_logs(strict=True)
+            self._assert_clear_refused("malformed JSON in canonical activity log")
+        finally:
+            ai_status.LOG_FILE.write_text(log_original, encoding="utf-8")
+
+        try:
+            ai_status.LOG_FILE.write_text(log_original + "[]\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "non-object entry in canonical activity log"):
+                ai_status.load_logs(strict=True)
+            self._assert_clear_refused("non-object entry in canonical activity log")
+        finally:
+            ai_status.LOG_FILE.write_text(log_original, encoding="utf-8")
+
+        orch_original = ai_status.ORCHESTRATOR_STATE_FILE.read_text(encoding="utf-8")
+        try:
+            ai_status.ORCHESTRATOR_STATE_FILE.unlink()
+            self._assert_clear_refused("orchestrator runtime state is missing")
+        finally:
+            ai_status.ORCHESTRATOR_STATE_FILE.write_text(orch_original, encoding="utf-8")
+
+        try:
+            ai_status.ORCHESTRATOR_STATE_FILE.write_text("", encoding="utf-8")
+            self._assert_clear_refused("orchestrator runtime state is empty or truncated")
+
+            ai_status.ORCHESTRATOR_STATE_FILE.write_text("{}\n", encoding="utf-8")
+            self._assert_clear_refused("orchestrator runtime state must be a non-empty JSON object")
+
+            for missing_key, expected_err in (
+                ("workers", "orchestrator workers table is missing or malformed"),
+                ("worker_worktrees", "orchestrator worker_worktrees state is missing or malformed"),
+                ("worker_worktree_lease_blocks", "orchestrator worker_worktree_lease_blocks table is missing or malformed"),
+                ("queue", "orchestrator queue state is missing or malformed"),
+            ):
+                truncated_state = json.loads(orch_original)
+                truncated_state.pop(missing_key, None)
+                ai_status.ORCHESTRATOR_STATE_FILE.write_text(
+                    json.dumps(truncated_state, ensure_ascii=False), encoding="utf-8"
+                )
+                self._assert_clear_refused(expected_err)
+
+            no_leases_state = json.loads(orch_original)
+            no_leases_state["worker_worktrees"].pop("leases", None)
+            ai_status.ORCHESTRATOR_STATE_FILE.write_text(
+                json.dumps(no_leases_state, ensure_ascii=False), encoding="utf-8"
+            )
+            self._assert_clear_refused("orchestrator worktree leases table is missing or malformed")
+
+            no_hb_state = json.loads(orch_original)
+            no_hb_state["worker_worktrees"].pop("handoff_blocks", None)
+            ai_status.ORCHESTRATOR_STATE_FILE.write_text(
+                json.dumps(no_hb_state, ensure_ascii=False), encoding="utf-8"
+            )
+            self._assert_clear_refused("orchestrator worktree handoff_blocks table is missing or malformed")
+
+            no_events_state = json.loads(orch_original)
+            no_events_state["queue"].pop("events", None)
+            ai_status.ORCHESTRATOR_STATE_FILE.write_text(
+                json.dumps(no_events_state, ensure_ascii=False), encoding="utf-8"
+            )
+            self._assert_clear_refused("orchestrator queue events table is missing or malformed")
+        finally:
+            ai_status.ORCHESTRATOR_STATE_FILE.write_text(orch_original, encoding="utf-8")
+
+        eq_path = self.status_root / ".orchestrator" / "event-queue.jsonl"
+        eq_original = eq_path.read_text(encoding="utf-8")
+        try:
+            eq_path.unlink()
+            self._assert_clear_refused("event queue file is missing")
+        finally:
+            eq_path.write_text(eq_original, encoding="utf-8")
+
+        with mock.patch.object(
+            ai_status,
+            "resolve_task_repository",
+            return_value=mock.Mock(resolved=False, root=None, error="repository_checkout_unavailable"),
+        ):
+            self._assert_clear_refused("task repository checkout is unavailable")
+
+
 class HumanOpsAgentTests(unittest.TestCase):
     def test_human_gate_can_belong_to_human_ops_without_blocking_worker(self) -> None:
         state = {
