@@ -27,6 +27,8 @@ def test_forecast_sql_requires_eof_proven_partitions_for_target_and_prior_days()
     )
 
     assert "completion.source_kind = 'orders'" in body
+    assert "completion.partition_key ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'" in body
+    assert "completion.partition_key::date AS partition_date" in body
     assert "completion.reconciled" in body
     assert "completion.partition_complete" in body
     assert "completion.quarantined_count = 0" in body
@@ -36,12 +38,15 @@ def test_forecast_sql_requires_eof_proven_partitions_for_target_and_prior_days()
     # succeeded chunk may precede the proof.
     assert "chunk.finished_at IS NULL" in body
     assert "chunk.status = 'SUCCEEDED'\n                AND chunk.reconciled" in body
-    assert "proof.partition_start <= transaction_daily.date" in body
-    assert "proof.partition_end > transaction_daily.date" in body
+    assert "proof.partition_date = transaction_daily.date" in body
     assert "proof.finished_at >= transaction_daily.source_run_finished_at" in body
     assert "partition_proof.finished_at,\n" in body
     assert "AND prior_complete_day_count_28 = 28" in body
     assert "'PRIOR_SOURCE_NOT_COMPLETE'" in body
+    # Backfill 'start__end' keys accept sub-day timestamps and must not prove
+    # full-day UTC coverage.
+    assert "__[0-9]{4}-[0-9]{2}-[0-9]{2}" not in body
+    assert "split_part(completion.partition_key, '__'" not in body
     # A per-chunk completion flag would reject legitimately resumed partitions.
     assert "bool_and(ingestion.partition_complete" not in body
     assert "'forecast-training-view-v2'::text AS view_version" in body

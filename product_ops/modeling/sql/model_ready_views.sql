@@ -32,48 +32,29 @@ COMMENT ON TABLE model_ready.view_contracts IS
 
 CREATE OR REPLACE VIEW model_ready.forecast_training_view AS
 WITH authoritative_order_partitions AS (
-    -- EOF proof for one bounded order partition, using the authoritative
-    -- order-run predicate of candidate_site_view/heatzone_training_view and the
-    -- UTC dates its window reads ('YYYY-MM-DD' daily or 'start__end' backfill).
-    -- A resumed chunk that stopped at its record bound is legitimate once a
-    -- later run of the same partition reaches EOF, but every chunk of that
-    -- partition up to the proof must itself have succeeded, reconciled and
-    -- loaded every record it processed. A FAILED or abandoned RUNNING chunk
-    -- keeps its schema-default zero counters while its checkpoint may already
-    -- have advanced past a quarantined record, so it can never prove that the
-    -- resumed partition dropped nothing.
+    -- EOF proof for one full UTC-day order partition ('YYYY-MM-DD'), using the
+    -- authoritative order-run predicate of candidate_site_view and
+    -- heatzone_training_view. Backfill 'start__end' keys are excluded because
+    -- backfill windows accept arbitrary sub-day timestamps while ingestion_runs
+    -- persists no window bounds. A resumed chunk that stopped at its record
+    -- bound is legitimate once a later run of the same daily partition reaches
+    -- EOF, but every chunk of that partition up to the proof must itself have
+    -- succeeded, reconciled and loaded every record it processed. A FAILED or
+    -- abandoned RUNNING chunk keeps its schema-default zero counters while its
+    -- checkpoint may already have advanced past a quarantined record, so it can
+    -- never prove that the resumed partition dropped nothing.
     SELECT
-        completion.finished_at,
-        scope.partition_start,
-        scope.partition_end
+        completion.partition_key::date AS partition_date,
+        completion.finished_at
     FROM data_plane.ingestion_runs AS completion
-    CROSS JOIN LATERAL (
-        SELECT
-            CASE
-                WHEN completion.partition_key ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
-                    THEN completion.partition_key::date
-                WHEN completion.partition_key
-                    ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}__[0-9]{4}-[0-9]{2}-[0-9]{2}$'
-                    THEN split_part(completion.partition_key, '__', 1)::date
-                ELSE NULL
-            END AS partition_start,
-            CASE
-                WHEN completion.partition_key ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
-                    THEN completion.partition_key::date + 1
-                WHEN completion.partition_key
-                    ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}__[0-9]{4}-[0-9]{2}-[0-9]{2}$'
-                    THEN split_part(completion.partition_key, '__', 2)::date
-                ELSE NULL
-            END AS partition_end
-    ) AS scope
     WHERE completion.source_kind = 'orders'
+      AND completion.partition_key ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
       AND completion.status = 'SUCCEEDED'
       AND completion.reconciled
       AND completion.partition_complete
       AND completion.quarantined_count = 0
       AND completion.processed_count = completion.valid_loaded
       AND completion.finished_at IS NOT NULL
-      AND scope.partition_start < scope.partition_end
       AND NOT EXISTS (
           SELECT 1
           FROM data_plane.ingestion_runs AS chunk
@@ -114,7 +95,11 @@ transaction_source AS (
                 ORDER BY lineage.source_snapshot_id::text
             ) AS source_snapshot_ids,
             bool_and(
-                ingestion.status = 'SUCCEEDED'
+                ingestion.source_kind = 'orders'
+                AND ingestion.status = 'SUCCEEDED'
+                AND ingestion.reconciled
+                AND ingestion.quarantined_count = 0
+                AND ingestion.processed_count = ingestion.valid_loaded
                 AND ingestion.finished_at IS NOT NULL
             ) AS source_run_complete,
             max(ingestion.finished_at) AS source_run_finished_at
@@ -190,8 +175,8 @@ transaction_daily AS (
         daily_source_ids.source_snapshot_ids
 ),
 daily_partition_proof AS (
-    -- A day's revenue is complete only after an order partition covering that
-    -- date reached EOF no earlier than the last run that loaded the day's
+    -- A day's revenue is complete only after its full-day order partition
+    -- reached EOF no earlier than the last run that loaded the day's
     -- transactions; that proof's finish is when the complete label exists.
     SELECT
         transaction_daily.tenant_id,
@@ -200,8 +185,7 @@ daily_partition_proof AS (
         min(proof.finished_at) AS finished_at
     FROM transaction_daily
     INNER JOIN authoritative_order_partitions AS proof
-        ON proof.partition_start <= transaction_daily.date
-       AND proof.partition_end > transaction_daily.date
+        ON proof.partition_date = transaction_daily.date
        AND proof.finished_at >= transaction_daily.source_run_finished_at
     GROUP BY
         transaction_daily.tenant_id,

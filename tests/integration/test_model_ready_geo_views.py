@@ -23,6 +23,7 @@ from modules.sitescore.domain import (
     score_sites_from_model_predictions,
     to_sitescore_model_row,
 )
+from product_ops.data_platform.backfill import _windows
 from product_ops.modeling.contracts import MODEL_SPECS, DataBounds
 from product_ops.modeling.install_views import (
     ELIGIBILITY_PREREQUISITE_SQL,
@@ -1120,58 +1121,124 @@ def test_postgresql_forecast_view_admits_only_eof_proven_target_and_prior_partit
                     )
                     assert_target_refused(reason)
 
-        # The poisoned daily chain stays refused; a covering re-read partition
-        # that itself reached EOF cleanly is the lawful recovery, available
-        # only from its own finish.
-        recovery_key = (
-            f"{FORECAST_TARGET_DAY.isoformat()}__"
-            f"{(FORECAST_TARGET_DAY + timedelta(days=1)).isoformat()}"
-        )
+        # product_ops.data_platform.backfill._windows accepts sub-day timestamps
+        # (e.g. 12:00..00:00, omitting a 09:00 order while loading a 15:00 order)
+        # yet emits a 'YYYY-MM-DD__YYYY-MM-DD' partition key, and ingestion_runs
+        # persists no window bounds. Neither a single-day nor a multi-day
+        # 'start__end' backfill run may satisfy full-day completeness for the
+        # target day or any of its 28 prior feature days, whether as the sole
+        # reconciled/EOF run that loaded the afternoon transaction or as a
+        # completion candidate after a partial/failed daily run.
         recovery_eof_at = _at(FORECAST_TARGET_DAY + timedelta(days=4), 6)
-        with connection.transaction(force_rollback=True):
-            _set_run(connection, target_run, "partition_complete = FALSE")
-            for name, status, finished_at in (
-                ("forecast-recovery-failed-chunk", "FAILED", _at(FORECAST_TARGET_DAY + timedelta(days=1), 6)),
-                ("forecast-recovery-daily-eof", "SUCCEEDED", target_eof_at),
-            ):
-                _insert_run(
-                    connection,
-                    name=name,
-                    source_kind="orders",
-                    partition_key=FORECAST_TARGET_DAY.isoformat(),
-                    finished_at=finished_at,
-                    status=status,
-                    reconciled=status == "SUCCEEDED",
-                    partition_complete=status == "SUCCEEDED",
-                )
-            assert_target_refused("SOURCE_RUN_NOT_COMPLETE")
-            _insert_run(
-                connection,
-                name="forecast-recovery-reread-eof",
-                source_kind="orders",
-                partition_key=recovery_key,
-                finished_at=recovery_eof_at,
+        for day, run, reason in (
+            (FORECAST_TARGET_DAY, target_run, "SOURCE_RUN_NOT_COMPLETE"),
+            (FORECAST_PRIOR_DAY, prior_run, "PRIOR_SOURCE_NOT_COMPLETE"),
+        ):
+            (afternoon_window,) = _windows(
+                _at(day, 12),
+                _at(day + timedelta(days=1), 0),
+                partition_days=1,
+                max_partitions=1,
             )
-            (recovered_row,) = source.load(spec, bounds).rows
-            assert recovered_row["date"] == FORECAST_TARGET_DAY
-            assert recovered_row["label_maturity_time"] == recovery_eof_at
+            assert afternoon_window.partition_key == (
+                f"{day.isoformat()}__{(day + timedelta(days=1)).isoformat()}"
+            )
+            assert not (
+                afternoon_window.start <= _at(day, 9) < afternoon_window.end
+            )
+            assert afternoon_window.start <= _at(day, 15) < afternoon_window.end
 
-        # A multi-day backfill partition whose window covers the date is the
-        # same original partition authority as a daily one.
-        backfill_key = (
-            f"{(FORECAST_TARGET_DAY - timedelta(days=3)).isoformat()}__"
-            f"{(FORECAST_TARGET_DAY + timedelta(days=1)).isoformat()}"
-        )
-        with connection.transaction(force_rollback=True):
-            _set_run(connection, target_run, "partition_complete = FALSE")
-            _insert_run(
-                connection,
-                name="forecast-target-backfill-eof",
-                source_kind="orders",
-                partition_key=backfill_key,
-                finished_at=target_eof_at,
+            with connection.transaction(force_rollback=True):
+                afternoon_run = _insert_run(
+                    connection,
+                    name=f"forecast-afternoon-backfill:{day.isoformat()}",
+                    source_kind="orders",
+                    partition_key=afternoon_window.partition_key,
+                    finished_at=_at(day + timedelta(days=1), 1),
+                    processed_count=1,
+                    valid_loaded=1,
+                )
+                txn_id = _id(f"transaction:forecast:{day.isoformat()}")
+                connection.execute(
+                    """
+                    UPDATE core.transactions
+                    SET event_time = %s,
+                        observation_time = %s,
+                        ingested_at = %s
+                    WHERE transaction_id = %s
+                    """,
+                    (
+                        _at(day, 15),
+                        _at(day, 16),
+                        _at(day, 17),
+                        txn_id,
+                    ),
+                )
+                connection.execute(
+                    "UPDATE data_plane.canonical_lineage SET run_id = %s WHERE canonical_id = %s",
+                    (afternoon_run, txn_id),
+                )
+                connection.execute(
+                    "DELETE FROM data_plane.ingestion_runs WHERE run_id = %s",
+                    (run,),
+                )
+                assert_target_refused(reason)
+
+                # Once a canonical full-day 'YYYY-MM-DD' order partition reads
+                # [00:00, 24:00), loads the omitted 09:00 morning order, and
+                # reaches EOF after the afternoon backfill run, the full day is
+                # proven and its complete revenue/feature value is admitted.
+                full_day_run = _insert_run(
+                    connection,
+                    name=f"forecast-full-day-after-backfill:{day.isoformat()}",
+                    source_kind="orders",
+                    partition_key=day.isoformat(),
+                    finished_at=recovery_eof_at,
+                    processed_count=2,
+                    valid_loaded=2,
+                )
+                _insert_transaction(
+                    connection,
+                    tenant_id=tenant_id,
+                    store_id=store_id,
+                    name=f"forecast-morning:{day.isoformat()}",
+                    event_time=_at(day, 9),
+                    amount=56.0,
+                    daily_runs={day: full_day_run},
+                )
+                (recovered_row,) = source.load(spec, bounds).rows
+                assert recovered_row["date"] == FORECAST_TARGET_DAY
+                if day == FORECAST_TARGET_DAY:
+                    assert recovered_row["daily_net_revenue"] == pytest.approx(
+                        128.0 + 56.0
+                    )
+                    assert recovered_row["label_maturity_time"] == recovery_eof_at
+                else:
+                    assert recovered_row["rolling_mean_28"] == pytest.approx(
+                        loaded_row["rolling_mean_28"] + 56.0 / 28.0
+                    )
+                    assert recovered_row["feature_snapshot_time"] == recovery_eof_at
+
+            multi_day_backfill_key = (
+                f"{(day - timedelta(days=3)).isoformat()}__"
+                f"{(day + timedelta(days=1)).isoformat()}"
             )
-            assert _forecast_target(connection, tenant_id, store_id) == (True, None)
+            for backfill_key in (
+                afternoon_window.partition_key,
+                multi_day_backfill_key,
+            ):
+                with connection.transaction(force_rollback=True):
+                    _set_run(connection, run, "partition_complete = FALSE")
+                    _insert_run(
+                        connection,
+                        name=f"forecast-backfill-eof:{day.isoformat()}:{backfill_key}",
+                        source_kind="orders",
+                        partition_key=backfill_key,
+                        finished_at=recovery_eof_at,
+                        processed_count=1,
+                        valid_loaded=1,
+                    )
+                    assert_target_refused(reason)
 
         # Late completion of one prior day moves the feature clock of exactly
         # the rows whose 28-day window contains that day.
