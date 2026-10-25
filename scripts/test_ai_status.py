@@ -4208,6 +4208,9 @@ class AssignOptionalPinCorrectionTests(unittest.TestCase):
         return event
 
     def _release_unused_helper(self) -> None:
+        from datetime import datetime
+
+        import capacity_controller
         import supervisor
 
         config = ai_status.status_runtime_config()
@@ -4216,15 +4219,17 @@ class AssignOptionalPinCorrectionTests(unittest.TestCase):
         # release audit all run. Only derived-view subprocess sync is isolated.
         with (
             mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+            mock.patch.object(capacity_controller, "datetime", wraps=datetime) as clock,
             mock.patch.object(ai_status.orchestrator_common, "utc_now", return_value="2026-10-25T21:11:00Z"),
         ):
+            clock.now.return_value = datetime.fromisoformat("2026-10-25T21:11:00+00:00")
             self.assertEqual(supervisor.release_dead_helper_claims(config, orch_state), (True, True))
         task = ai_status.get_task(ai_status.load_state(), self.TASK_ID)
         self.assertNotIn("helper_execution_lease", task)
 
     def test_native_unused_reservation_preserved_and_stale_snapshot_uses_current_dev(self) -> None:
         from copy import deepcopy
-        from datetime import UTC, datetime
+        from datetime import datetime
 
         import supervisor
         import worker_workspace
@@ -4234,7 +4239,7 @@ class AssignOptionalPinCorrectionTests(unittest.TestCase):
         # complete audit stays in place when the next reservation is made.
         self._reserve_unused_helper()
         self._release_unused_helper()
-        event = self._reserve_unused_helper(claimed_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"))
+        event = self._reserve_unused_helper(claimed_at="2026-10-25T21:11:01Z")
         config = ai_status.status_runtime_config()
         orch_state = json.loads(ai_status.ORCHESTRATOR_STATE_FILE.read_text(encoding="utf-8"))
         before_state = ai_status.load_state()
@@ -4245,29 +4250,36 @@ class AssignOptionalPinCorrectionTests(unittest.TestCase):
             task_id=self.TASK_ID, reason="helper_claim_dispatch",
             metadata={"task": deepcopy(task_before)},
         )
-        # Before correction the original prepare fails *before* any branch,
-        # worktree or run lease exists, despite the valid capacity reservation.
-        ok, error = worker_workspace.prepare_worker_workspace(
-            config, orch_state, request, queue_event_id="evt-unused", target_agent="Claude",
-        )
-        self.assertFalse(ok)
-        self.assertIn("frozen_evidence_task_branch_unavailable", error or "")
-        self.assertEqual(orch_state["worker_worktrees"]["leases"], {})
-        self.assertEqual(orch_state["workers"], {})
-        self.assertFalse((self.worktree_root / "pantheon" / self.TASK_ID.lower()).exists())
-        self.assertEqual(self._git(self.status_root, "branch", "--list", f"task/{self.TASK_ID}").strip(), "")
-        # Record the original lifecycle's failed (not accepted/pending) queue
-        # outcome. A retained event is permitted only with that same outcome.
-        orch_state["queue"]["events"]["evt-unused"] = {
-            "status": "failed", "error": f"Worker workspace preflight blocked: {error}",
-        }
-        ai_status.ORCHESTRATOR_STATE_FILE.write_text(json.dumps(orch_state), encoding="utf-8")
         queued_snapshot = {
             **event, "event_id": "evt-unused", "target_agent": "claude", "target_display_name": "Claude",
             "metadata": {"task": deepcopy(task_before)}, "event_key": "older-key-drift",
         }
         event_queue = self.status_root / ".orchestrator" / "event-queue.jsonl"
         event_queue.write_text(json.dumps(queued_snapshot) + "\n", encoding="utf-8")
+        # Original lifecycle checks the live claim, then original workspace
+        # preflight fails before any branch/worktree/process lease is created.
+        # No claim/base/dispatch gate is replaced by a mock here.
+        with (
+            mock.patch.object(supervisor, "datetime", wraps=datetime) as clock,
+            mock.patch.object(supervisor, "resolve_task_progress_head", return_value=None),
+            mock.patch.object(supervisor, "build_request", return_value=request),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(supervisor, "select_dispatch_agent_id", return_value="claude"),
+            mock.patch.object(supervisor, "start_worker_for_request", side_effect=AssertionError("must not launch")) as launch,
+        ):
+            clock.now.return_value = datetime.fromisoformat("2026-10-25T21:15:00+00:00")
+            self.assertTrue(supervisor.worker_lifecycle.process_queue(config, orch_state, provider_report={}))
+            launch.assert_not_called()
+        record = orch_state["queue"]["events"]["evt-unused"]
+        self.assertEqual(record["status"], "failed")
+        self.assertIn("frozen_evidence_task_branch_unavailable", record["error"])
+        self.assertNotIn("run_id", record)
+        self.assertNotIn("lease_owner", record)
+        self.assertEqual(orch_state["worker_worktrees"]["leases"], {})
+        self.assertEqual(orch_state["workers"], {})
+        self.assertFalse((self.worktree_root / "pantheon" / self.TASK_ID.lower()).exists())
+        self.assertEqual(self._git(self.status_root, "branch", "--list", f"task/{self.TASK_ID}").strip(), "")
+        ai_status.ORCHESTRATOR_STATE_FILE.write_text(json.dumps(orch_state), encoding="utf-8")
         logs_before = ai_status.load_logs(strict=True)
         self.assertEqual(self._run_assign(
             actor="Codex", task_id=self.TASK_ID, owner="Pi", reviewer="Codex2",
@@ -4286,7 +4298,11 @@ class AssignOptionalPinCorrectionTests(unittest.TestCase):
         self.assertEqual(ai_status.load_logs(strict=True)[:-1], logs_before)
         # Pin and last_update do not cancel old events. The original live
         # claimant/generation/status/dependency/policy gate still decides.
-        with mock.patch.object(supervisor, "resolve_task_progress_head", return_value=None):
+        with (
+            mock.patch.object(supervisor, "datetime", wraps=datetime) as clock,
+            mock.patch.object(supervisor, "resolve_task_progress_head", return_value=None),
+        ):
+            clock.now.return_value = datetime.fromisoformat("2026-10-25T21:15:00+00:00")
             self.assertEqual(
                 supervisor.ready_dispatch_signature(task_before, request.reason, {self.TASK_ID: task_before}),
                 supervisor.ready_dispatch_signature(task_after, request.reason, {self.TASK_ID: task_after}),
