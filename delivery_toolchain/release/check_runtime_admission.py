@@ -60,7 +60,8 @@ to keep secret, and one it does not have to share at all:
 * `--lineage-state-uri` / `ODP_PRODUCTION_RELEASE_LEASE_STATE_URI` - production's
   lease store, read only by a staging admission of an initial-release manifest
   (production's history is not in the staging store). Unset or unreadable, that
-  admission is refused before the lease is consumed.
+  admission is refused before the lease is consumed. Like the lease store, the
+  workflow refuses it before authentication unless it is a `gs://bucket/prefix`.
 * the private key, which stays with the Supervisor and is never needed here.
 """
 
@@ -547,7 +548,8 @@ def main(argv: list[str] | None = None) -> int:
             "for a staging admission of an initial-release manifest so staging can "
             "prove production never admitted another release. Required then; a "
             "production admission reads its own --lease-state-dir and refuses a "
-            "different value here."
+            "different value here. Hosted admission accepts only gs://bucket/prefix, "
+            "as for --lease-state-dir."
         ),
     )
     parser.add_argument("--receipt", type=Path, default=None)

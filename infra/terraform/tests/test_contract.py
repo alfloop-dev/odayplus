@@ -285,6 +285,63 @@ class TerraformProductionContractTests(unittest.TestCase):
             network_tf,
         )
 
+    def _errors_after_replacing(self, relative: str, old: str, new: str) -> list[str]:
+        with tempfile.TemporaryDirectory() as directory:
+            copy_root = Path(directory)
+            for path in validator.REQUIRED_FILES:
+                destination = copy_root / path
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_text((ROOT / path).read_text(encoding="utf-8"), encoding="utf-8")
+            target = copy_root / relative
+            text = target.read_text(encoding="utf-8")
+            self.assertIn(old, text)
+            target.write_text(text.replace(old, new, 1), encoding="utf-8")
+            return validator.validate(copy_root)
+
+    def test_monitoring_api_must_be_enabled(self) -> None:
+        errors = self._errors_after_replacing("main.tf", '    "monitoring.googleapis.com",\n', "")
+        self.assertTrue(any("monitoring.googleapis.com" in error for error in errors))
+
+    def test_hard_coded_notification_email_is_rejected(self) -> None:
+        errors = self._errors_after_replacing(
+            "monitoring.tf",
+            "email_address = each.value",
+            'email_address = "alerts@ops.invalid"',
+        )
+        self.assertTrue(any("hard-code notification email" in error for error in errors))
+
+    def test_notification_email_default_must_be_empty(self) -> None:
+        errors = self._errors_after_replacing(
+            "variables.tf",
+            'Production requires this or monitoring_notification_channel_ids."\n  default     = []',
+            'Production requires this or monitoring_notification_channel_ids."\n  default     = ["alerts@ops.invalid"]',
+        )
+        self.assertTrue(any("monitoring_notification_emails must default" in error for error in errors))
+
+    def test_alert_policy_without_notification_channels_is_rejected(self) -> None:
+        errors = self._errors_after_replacing(
+            "monitoring.tf",
+            "  notification_channels = local.monitoring_notification_channels\n",
+            "",
+        )
+        self.assertTrue(any("must route to local.monitoring_notification_channels" in error for error in errors))
+
+    def test_production_monitoring_precondition_is_required(self) -> None:
+        errors = self._errors_after_replacing(
+            "checks.tf",
+            "length(var.monitoring_notification_emails) + length(var.monitoring_notification_channel_ids) > 0\n        &&",
+            "true\n        &&",
+        )
+        self.assertTrue(any("fail closed without an alert notification target" in error for error in errors))
+
+    def test_ratified_api_latency_threshold_is_asserted(self) -> None:
+        errors = self._errors_after_replacing(
+            "monitoring.tf",
+            "monitoring_api_latency_p95_threshold_ms = 3000",
+            "monitoring_api_latency_p95_threshold_ms = 5000",
+        )
+        self.assertTrue(any("monitoring_api_latency_p95_threshold_ms = 3000" in error for error in errors))
+
 
 if __name__ == "__main__":
     unittest.main()

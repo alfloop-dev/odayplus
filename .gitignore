@@ -30,6 +30,13 @@ venv/
 env/
 ENV/
 
+# Keep the versioned Terraform examples while ignoring local environment values.
+!infra/terraform/env/
+infra/terraform/env/*
+!infra/terraform/env/dev.tfvars.example
+!infra/terraform/env/staging.tfvars.example
+!infra/terraform/env/prod.tfvars.example
+
 # Tooling caches
 .pytest_cache/
 .ruff_cache/

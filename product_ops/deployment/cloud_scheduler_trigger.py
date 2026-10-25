@@ -5,11 +5,25 @@ from __future__ import annotations
 
 import argparse
 import base64
+import copy
 import json
+import re
 import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from delivery_toolchain.release.release_receipts import redact_secrets  # noqa: E402
+
+
+def validate_trigger_state(state: str) -> str:
+    if state not in ("ENABLED", "PAUSED"):
+        raise ValueError("scheduler state must be ENABLED or PAUSED")
+    return state
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -37,6 +51,8 @@ def _get_auth_info(payload: Mapping[str, Any]) -> tuple[str, str, str]:
     if not isinstance(http_target, Mapping):
         raise ValueError("scheduler snapshot is missing httpTarget")
 
+    if "oidcToken" in http_target and "oauthToken" in http_target:
+        raise ValueError("scheduler snapshot has ambiguous authentication")
     if "oidcToken" in http_target and isinstance(http_target["oidcToken"], Mapping):
         token = http_target["oidcToken"]
         email = str(token.get("serviceAccountEmail", "")).strip()
@@ -56,8 +72,35 @@ def _get_auth_info(payload: Mapping[str, Any]) -> tuple[str, str, str]:
     raise ValueError("scheduler snapshot is missing auth token (oidcToken or oauthToken)")
 
 
-def validate_snapshot(payload: dict[str, Any]) -> None:
+def _job_target(payload: Mapping[str, Any]) -> tuple[str, str, str]:
+    """Parse only the Cloud Run v2 :run URI used by the release entrypoints."""
+    uri = payload.get("httpTarget", {}).get("uri", "")
+    match = re.fullmatch(
+        r"https://run\.googleapis\.com/v2/projects/([^/]+)/locations/([^/]+)/jobs/([a-z][a-z0-9-]{0,62}):run", str(uri)
+    )
+    if match is None:
+        raise ValueError("scheduler target must be an exact Cloud Run :run Job URI")
+    return match.group(1), match.group(2), match.group(3)
+
+
+def validate_snapshot(
+    payload: dict[str, Any], *, trigger: str | None = None,
+    project: str | None = None, location: str | None = None,
+    identity_only: bool = False,
+) -> None:
+    contextual = any(value is not None for value in (trigger, project, location))
+    if contextual:
+        if not all((trigger, project, location)):
+            raise ValueError("trigger, project and location are all required for scoped snapshot validation")
+        expected_name = f"projects/{project}/locations/{location}/jobs/{trigger}"
+        if payload.get("name") != expected_name:
+            raise ValueError("scheduler snapshot belongs to another trigger/project/location")
     if not _exists(payload):
+        return
+    validate_trigger_state(payload.get("state"))
+    if identity_only:
+        if not contextual:
+            raise ValueError("identity-only reads require an explicit trigger/project/location")
         return
     for field in ("schedule", "timeZone"):
         val = payload.get(field)
@@ -73,6 +116,23 @@ def validate_snapshot(payload: dict[str, Any]) -> None:
         raise ValueError("scheduler snapshot field httpTarget.uri must be non-empty string")
 
     _get_auth_info(payload)
+    target = None
+    if contextual or "jobBinding" in payload:
+        target = _job_target(payload)
+        name = re.fullmatch(r"projects/([^/]+)/locations/([^/]+)/jobs/([^/]+)", str(payload.get("name", "")))
+        if name is None or target[:2] != (name.group(1), name.group(2)):
+            raise ValueError("scheduler target and trigger must share the exact project/location")
+    if "jobBinding" in payload:
+        binding = payload["jobBinding"]
+        if (not isinstance(binding, Mapping) or not binding.get("job_name")
+                or not re.fullmatch(r"[^@\s]+@sha256:[0-9a-f]{64}", str(binding.get("job_image", "")))
+                or not re.fullmatch(r"[0-9a-f]{40}", str(binding.get("release_sha", "")))):
+            raise ValueError("scheduler snapshot has an invalid immutable job binding")
+        assert target is not None
+        target_project, target_location, target_job = target
+        resource = f"projects/{target_project}/locations/{target_location}/jobs/{target_job}"
+        if binding["job_name"] not in (target_job, resource):
+            raise ValueError("scheduler snapshot Job binding does not match its exact :run URI")
 
 
 def _value(payload: Mapping[str, Any], field: str) -> str:
@@ -132,6 +192,8 @@ def generate_restore_args(payload: dict[str, Any], location: str, project: str) 
         f"--schedule={payload['schedule']}",
         f"--time-zone={payload['timeZone']}",
     ]
+    args.append(f"--attempt-deadline={payload.get('attemptDeadline', '180s')}")
+    args.append(f"--description={payload.get('description', '')}")
 
     http_target = payload.get("httpTarget", {})
     uri = http_target.get("uri", "")
@@ -168,28 +230,36 @@ def generate_restore_args(payload: dict[str, Any], location: str, project: str) 
         if extra:
             args.append(f"--oauth-token-scope={extra}")
 
-    retry = payload.get("retryConfig")
-    if isinstance(retry, Mapping):
-        attempts = retry.get("maxRetryAttempts") or retry.get("retryCount")
-        if attempts is not None:
-            args.append(f"--max-retry-attempts={attempts}")
-        if retry.get("maxRetryDuration"):
-            args.append(f"--max-retry-duration={retry['maxRetryDuration']}")
-        if retry.get("minBackoffDuration"):
-            # gcloud renamed the Scheduler retry flags; the old
-            # *-duration spellings are rejected by current Cloud SDKs.
-            args.append(f"--min-backoff={retry['minBackoffDuration']}")
-        if retry.get("maxBackoffDuration"):
-            args.append(f"--max-backoff={retry['maxBackoffDuration']}")
-        if retry.get("maxDoublings") is not None:
-            args.append(f"--max-doublings={retry['maxDoublings']}")
+    retry = _normalized_retry(payload)
+    args.extend((f"--max-retry-attempts={retry['maxRetryAttempts']}",
+                 f"--max-retry-duration={retry['maxRetryDuration']}",
+                 f"--min-backoff={retry['minBackoffDuration']}",
+                 f"--max-backoff={retry['maxBackoffDuration']}",
+                 f"--max-doublings={retry['maxDoublings']}"))
 
     return args
 
 
+def _normalized_retry(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Scheduler omits proto default values in describe; preserve their meaning."""
+    retry = payload.get("retryConfig", {})
+    if not isinstance(retry, Mapping):
+        raise ValueError("retryConfig must be an object")
+    if "maxRetryAttempts" in retry and "retryCount" in retry and retry["maxRetryAttempts"] != retry["retryCount"]:
+        raise ValueError("retry count aliases disagree")
+    return {
+        "maxRetryAttempts": int(retry.get("maxRetryAttempts", retry.get("retryCount", 0))),
+        "maxRetryDuration": str(retry.get("maxRetryDuration", "0s")),
+        "minBackoffDuration": str(retry.get("minBackoffDuration", "5s")),
+        "maxBackoffDuration": str(retry.get("maxBackoffDuration", "3600s")),
+        "maxDoublings": int(retry.get("maxDoublings", 5)),
+    }
+
+
 def redact_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize configuration for equality; this does not remove secrets."""
     if not _exists(payload):
-        return {"exists": False}
+        return {"exists": False, **({"name": payload["name"]} if "name" in payload else {})}
 
     http_target = payload.get("httpTarget", {})
     auth_type, sa_email, extra = _get_auth_info(payload)
@@ -223,34 +293,124 @@ def redact_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
             "auth": auth_dict,
         },
     }
+    if "name" in payload:
+        norm["name"] = payload["name"]
 
-    retry = payload.get("retryConfig")
-    if isinstance(retry, Mapping):
-        norm_retry: dict[str, Any] = {}
-        attempts = retry.get("maxRetryAttempts") or retry.get("retryCount")
-        if attempts is not None:
-            norm_retry["maxRetryAttempts"] = int(attempts)
-        for key in ("maxRetryDuration", "minBackoffDuration", "maxBackoffDuration"):
-            if retry.get(key):
-                norm_retry[key] = str(retry[key])
-        if retry.get("maxDoublings") is not None:
-            norm_retry["maxDoublings"] = int(retry["maxDoublings"])
-        norm["retryConfig"] = norm_retry
+    norm["retryConfig"] = _normalized_retry(payload)
+    norm["attemptDeadline"] = payload.get("attemptDeadline", "180s")
+    norm["description"] = payload.get("description", "")
 
     return norm
 
 
-def compare_snapshots(before_payload: dict[str, Any], after_payload: dict[str, Any]) -> bool:
+def compare_snapshots(
+    before_payload: dict[str, Any], after_payload: dict[str, Any], *, expected_state: str | None = None,
+) -> bool:
+    validate_snapshot(before_payload)
+    validate_snapshot(after_payload)
     norm_before = redact_snapshot(before_payload)
+    if expected_state is not None:
+        norm_before["state"] = validate_trigger_state(expected_state)
     norm_after = redact_snapshot(after_payload)
     return norm_before == norm_after
+
+
+def verified_resume_state(candidate: dict[str, Any], actual: dict[str, Any], desired: str) -> str:
+    """Accept only paused preparation or the exact already-completed desired state."""
+    validate_trigger_state(desired)
+    current = actual.get("state")
+    if current not in {"PAUSED", desired} or not compare_snapshots(candidate, actual, expected_state=current):
+        raise ValueError("scheduler resume readback configuration/state drift detected")
+    return str(current)
+
+
+def recovery_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep fully restorable configuration; this is restricted recovery data."""
+    validate_snapshot(payload)
+    keys = ("name", "exists", "schedule", "timeZone", "state", "httpTarget", "retryConfig",
+            "attemptDeadline", "description", "jobBinding")
+    result = {key: copy.deepcopy(payload[key]) for key in keys if key in payload}
+    if not _exists(payload):
+        return result
+    target = result["httpTarget"]
+    if set(target) - {"uri", "httpMethod", "headers", "body", "oauthToken", "oidcToken"}:
+        raise ValueError("scheduler HTTP target contains fields this recovery contract cannot restore")
+    auth_type, _, _ = _get_auth_info(result)
+    auth_key = "oauthToken" if auth_type == "oauth" else "oidcToken"
+    auth_fields = {"serviceAccountEmail", "scope" if auth_type == "oauth" else "audience"}
+    if set(target[auth_key]) - auth_fields:
+        raise ValueError("scheduler authentication contains fields unsafe for recovery publication")
+    if "jobBinding" in result:
+        result["jobBinding"] = {key: result["jobBinding"][key] for key in ("job_name", "job_image", "release_sha")}
+    normalized = redact_snapshot(result)
+    content = normalized["httpTarget"]
+    try:
+        content["body"] = json.loads(content["body"])
+    except (ValueError, TypeError) as exc:
+        raise ValueError("scheduler recovery HTTP body must be a JSON object") from exc
+    if not isinstance(content["body"], dict):
+        raise ValueError("scheduler recovery HTTP body must be a JSON object")
+    safe, _ = redact_secrets(normalized)
+    if safe != normalized:
+        raise ValueError("scheduler recovery configuration contains sensitive values; refusing artifact publication")
+    return result
+
+
+def candidate_snapshot(
+    before: dict[str, Any], *, trigger: str, project: str, location: str, job: str,
+    cron: str, time_zone: str, service_account: str,
+) -> dict[str, Any]:
+    """The deploy and manual paths share one release-scoped :run target."""
+    validate_snapshot(before, trigger=trigger, project=project, location=location)
+    if not all((project, location, cron, time_zone, service_account)) or not re.fullmatch(r"[a-z][a-z0-9-]{0,62}", job):
+        raise ValueError("complete scheduler settings and exact job name are required")
+    candidate = copy.deepcopy(before) if _exists(before) else {}
+    candidate.pop("exists", None)
+    candidate.pop("jobBinding", None)
+    candidate["name"] = f"projects/{project}/locations/{location}/jobs/{trigger}"
+    candidate.update(schedule=cron, timeZone=time_zone, state="PAUSED")
+    if not _exists(before):
+        candidate["attemptDeadline"] = "180s"
+        candidate["retryConfig"] = {
+            "retryCount": 0, "maxRetryDuration": "0s", "minBackoffDuration": "5s",
+            "maxBackoffDuration": "3600s", "maxDoublings": 5,
+        }
+    headers = dict(candidate.get("httpTarget", {}).get("headers", {}))
+    headers = {key: value for key, value in headers.items() if key.lower() != "content-type"}
+    headers["Content-Type"] = "application/json"
+    candidate["httpTarget"] = {
+        "uri": f"https://run.googleapis.com/v2/projects/{project}/locations/{location}/jobs/{job}:run",
+        "httpMethod": "POST", "body": "e30=", "headers": headers,
+        "oauthToken": {"serviceAccountEmail": service_account, "scope": "https://www.googleapis.com/auth/cloud-platform"},
+    }
+    validate_snapshot(candidate, trigger=trigger, project=project, location=location)
+    return candidate
+
+
+def validate_job_receipt(receipt: dict[str, Any], *, release: str, job: str, image: str, kind: str) -> None:
+    """Consume the existing jobs-smoke report, including its immutable binding."""
+    expected_job = job.rsplit("/", 1)[-1]
+    if receipt.get("ok") is not True or receipt.get("expected_sha") != release or receipt.get("job_kind") != kind:
+        raise ValueError("a passing jobs-smoke receipt for the same release and kind is required")
+    if receipt.get("job_name") not in (job, expected_job) or receipt.get("execution_job_name") not in (job, expected_job):
+        raise ValueError("jobs-smoke receipt job binding does not match")
+    if receipt.get("job_image") != image or receipt.get("execution_image") != image or not receipt.get("execution_name"):
+        raise ValueError("jobs-smoke receipt lacks the exact immutable job/execution image binding; regenerate old receipts")
+    execution = str(receipt["execution_name"])
+    local_execution = execution.removeprefix(job + "/executions/")
+    if not re.fullmatch(r"[a-z][a-z0-9-]{0,62}", local_execution):
+        raise ValueError("jobs-smoke execution must belong to this exact Job/project/location")
+    checks = receipt.get("checks")
+    required = {f"jobs-smoke:{kind}:{name}" for name in ("release_sha", "entrypoint", "secret_bindings", "execution", "execution_receipt", "immutable_binding")}
+    if not isinstance(checks, list) or not checks or any(not isinstance(check, dict) or check.get("ok") is not True for check in checks) or not required.issubset({check.get("name") for check in checks}):
+        raise ValueError("jobs-smoke receipt is missing successful verification checks")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "command",
-        choices=("validate", "write-absent", "exists", "field", "restore-args", "redact", "compare"),
+        choices=("validate", "write-absent", "exists", "field", "restore-args", "redact", "compare", "candidate", "receipt", "target-job", "attach-binding", "first-state", "resume-state", "recovery"),
     )
     parser.add_argument("--description", type=Path)
     parser.add_argument("--before", type=Path)
@@ -258,15 +418,33 @@ def main() -> int:
     parser.add_argument("--field")
     parser.add_argument("--location", default="")
     parser.add_argument("--project", default="")
+    parser.add_argument("--trigger")
+    parser.add_argument("--job", default="")
+    parser.add_argument("--cron", default="")
+    parser.add_argument("--time-zone", default="")
+    parser.add_argument("--service-account", default="")
+    parser.add_argument("--release", default="")
+    parser.add_argument("--image", default="")
+    parser.add_argument("--kind", choices=("worker", "scheduler"))
+    parser.add_argument("--binding", type=Path)
+    parser.add_argument("--state")
+    parser.add_argument("--identity-only", action="store_true")
     args = parser.parse_args()
+
+    if args.command == "first-state":
+        print(validate_trigger_state(args.state))
+        return 0
 
     if args.command == "write-absent":
         if not args.description:
             raise ValueError("--description is required for write-absent")
-        args.description.write_text('{"exists": false}\n', encoding="utf-8")
+        payload = {"exists": False}
+        if args.trigger:
+            payload["name"] = f"projects/{args.project}/locations/{args.location}/jobs/{args.trigger}"
+        args.description.write_text(json.dumps(payload) + "\n", encoding="utf-8")
         return 0
 
-    if args.command == "compare":
+    if args.command in ("compare", "resume-state"):
         if not args.before or not args.after:
             raise ValueError("--before and --after are required for compare")
         try:
@@ -276,31 +454,51 @@ def main() -> int:
             print(f"Readback comparison failed: unparseable snapshot file ({exc})", file=sys.stderr)
             return 1
 
-        if compare_snapshots(before_data, after_data):
+        if args.command == "resume-state":
+            print(verified_resume_state(before_data, after_data, args.state))
+            return 0
+        if compare_snapshots(before_data, after_data, expected_state=args.state):
             print("Readback equality verified.")
             return 0
         else:
-            diff_before = redact_snapshot(before_data)
-            diff_after = redact_snapshot(after_data)
             print("Readback configuration drift detected!", file=sys.stderr)
-            print(f"Pre-deploy snapshot (redacted): {json.dumps(diff_before, indent=2)}", file=sys.stderr)
-            print(f"Post-rollback readback (redacted): {json.dumps(diff_after, indent=2)}", file=sys.stderr)
             return 1
 
     if not args.description:
         raise ValueError("--description is required")
 
     payload = _load(args.description)
+    if args.command == "recovery":
+        args.description.write_text(json.dumps(recovery_snapshot(payload)) + "\n", encoding="utf-8")
+        return 0
+    if args.command == "target-job":
+        validate_snapshot(payload, trigger=args.trigger, project=args.project, location=args.location)
+        print(_job_target(payload)[2])
+        return 0
+    if args.command == "attach-binding":
+        if args.binding is None:
+            raise ValueError("--binding is required")
+        payload["jobBinding"] = _load(args.binding)
+        validate_snapshot(payload)
+        args.description.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+        return 0
+    if args.command == "candidate":
+        print(json.dumps(candidate_snapshot(payload, trigger=args.trigger, project=args.project, location=args.location, job=args.job,
+                                            cron=args.cron, time_zone=args.time_zone, service_account=args.service_account)))
+        return 0
+    if args.command == "receipt":
+        validate_job_receipt(payload, release=args.release, job=args.job, image=args.image, kind=args.kind)
+        return 0
     if args.command == "exists":
         print("true" if _exists(payload) else "false")
         return 0
-    if not _exists(payload):
-        if args.command in ("validate", "field", "restore-args", "redact"):
-            raise ValueError("scheduler trigger did not exist in the snapshot")
-
     if args.command == "validate":
-        validate_snapshot(payload)
+        validate_snapshot(payload, trigger=args.trigger, project=args.project or None, location=args.location or None,
+                          identity_only=args.identity_only)
         return 0
+    if not _exists(payload):
+        if args.command in ("field", "restore-args", "redact"):
+            raise ValueError("scheduler trigger did not exist in the snapshot")
 
     if args.command == "field":
         if not args.field:

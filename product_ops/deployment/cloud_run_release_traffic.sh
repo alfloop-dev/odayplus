@@ -5,6 +5,21 @@
 
 ODP_TRAFFIC_HELPER="${ODP_TRAFFIC_HELPER:-product_ops/deployment/cloud_run_traffic.py}"
 ODP_SCHEDULER_HELPER="${ODP_SCHEDULER_HELPER:-product_ops/deployment/cloud_scheduler_trigger.py}"
+ODP_JOB_VALIDATOR="${ODP_JOB_VALIDATOR:-product_ops/deployment/validate_cloud_run_live_deployment.py}"
+
+resolve_image_digest() {
+  local image="$1" digest
+  if [[ "${image}" =~ ^[^[:space:]]+@sha256:[0-9a-f]{64}$ ]]; then
+    printf '%s' "${image}"
+    return 0
+  fi
+  digest="$(gcloud artifacts docker images describe "${image}" \
+    --format='value(image_summary.digest)' 2>/dev/null | tr -d '\r\n')" || return 1
+  if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    return 1
+  fi
+  printf '%s@%s' "${image%:*}" "${digest}"
+}
 
 capture_service_traffic() {
   local service="$1"
@@ -29,7 +44,7 @@ capture_service_traffic() {
     --region="${GCP_REGION}" \
     --project="${GCP_PROJECT}" \
     --format=json >"${output}"
-  python3 "${ODP_TRAFFIC_HELPER}" restore-arg --description="${output}" >/dev/null
+  python3 "${ODP_TRAFFIC_HELPER}" restore-arg --description="${output}" >/dev/null || return 1
   python3 "${ODP_TRAFFIC_HELPER}" service-url --description="${output}" >/dev/null
 }
 
@@ -264,13 +279,29 @@ promote_service_traffic() {
     --region="${GCP_REGION}" \
     --project="${GCP_PROJECT}" \
     --to-revisions="${revision}=100" \
-    --quiet
+    --quiet || return 1
+  verify_service_traffic "${service}" "${revision}=100"
+}
+
+verify_service_traffic() {
+  local service="$1" expected="$2" readback actual
+  readback="$(mktemp)"
+  if ! gcloud run services describe "${service}" --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" --format=json >"${readback}"; then
+    rm -f "${readback}"
+    return 1
+  fi
+  actual="$(python3 "${ODP_TRAFFIC_HELPER}" restore-arg --description="${readback}")" || { rm -f "${readback}"; return 1; }
+  rm -f "${readback}"
+  [ "${actual}" = "${expected}" ] || { echo "Error: traffic readback drift for ${service}." >&2; return 1; }
 }
 
 restore_service_traffic() {
   local service="$1"
   local snapshot="$2"
-  if [ "$(python3 "${ODP_TRAFFIC_HELPER}" exists --description="${snapshot}")" != "true" ]; then
+  local exists
+  exists="$(python3 "${ODP_TRAFFIC_HELPER}" exists --description="${snapshot}")" || return 1
+  if [ "${exists}" != "true" ]; then
     local existing
     existing="$(gcloud run services list \
       --region="${GCP_REGION}" \
@@ -289,16 +320,23 @@ restore_service_traffic() {
       --region="${GCP_REGION}" \
       --project="${GCP_PROJECT}" \
       --quiet || return 1
+    existing="$(gcloud run services list --region="${GCP_REGION}" --project="${GCP_PROJECT}" \
+      --filter="metadata.name=${service}" --format='value(metadata.name)')" || return 1
+    if [ -n "${existing}" ]; then
+      echo "Error: deleted bootstrap service '${service}' is still present in readback." >&2
+      return 1
+    fi
     return 0
   fi
   local traffic
-  traffic="$(python3 "${ODP_TRAFFIC_HELPER}" restore-arg --description="${snapshot}")"
+  traffic="$(python3 "${ODP_TRAFFIC_HELPER}" restore-arg --description="${snapshot}")" || return 1
   echo "Restoring ${service} traffic to ${traffic}..." >&2
   gcloud run services update-traffic "${service}" \
     --region="${GCP_REGION}" \
     --project="${GCP_PROJECT}" \
     --to-revisions="${traffic}" \
-    --quiet
+    --quiet || return 1
+  verify_service_traffic "${service}" "${traffic}"
 }
 
 # Which recovery this release can actually perform, read from what was captured
@@ -387,44 +425,207 @@ capture_scheduler_trigger() {
   local trigger="$1"
   local output="$2"
   local existing
+  local validation_args=()
+  if [ "${3:-}" = "identity-only" ]; then
+    validation_args=(--identity-only)
+  fi
   existing="$(gcloud scheduler jobs list \
     --location="${GCP_REGION}" \
     --project="${GCP_PROJECT}" \
-    --filter="name:${trigger}" \
-    --format='value(name)')"
+    --filter="name=projects/${GCP_PROJECT}/locations/${GCP_REGION}/jobs/${trigger}" \
+    --format='value(name)')" || return 1
   if [ -n "${existing}" ]; then
+    if [ "${existing}" != "projects/${GCP_PROJECT}/locations/${GCP_REGION}/jobs/${trigger}" ]; then
+      echo "Error: ambiguous scheduler lookup for ${trigger}." >&2
+      return 1
+    fi
     gcloud scheduler jobs describe "${trigger}" \
       --location="${GCP_REGION}" \
       --project="${GCP_PROJECT}" \
-      --format=json >"${output}"
-    python3 "${ODP_SCHEDULER_HELPER}" validate --description="${output}"
+      --format=json >"${output}" || return 1
+    python3 "${ODP_SCHEDULER_HELPER}" validate --description="${output}" --trigger="${trigger}" \
+      --project="${GCP_PROJECT}" --location="${GCP_REGION}" "${validation_args[@]}" || return 1
+    if [ "${3:-}" = "with-job-binding" ]; then
+      local job description binding
+      job="$(python3 "${ODP_SCHEDULER_HELPER}" target-job --description="${output}" \
+        --project="${GCP_PROJECT}" --location="${GCP_REGION}" --trigger="${trigger}")" || return 1
+      description="$(mktemp)"
+      binding="$(mktemp)"
+      if ! gcloud run jobs describe "${job}" --region="${GCP_REGION}" --project="${GCP_PROJECT}" --format=json >"${description}" \
+        || ! python3 "${ODP_JOB_VALIDATOR}" job-binding --job-description="${description}" \
+          --expected-job="projects/${GCP_PROJECT}/locations/${GCP_REGION}/jobs/${job}" --record >"${binding}" \
+        || ! python3 "${ODP_SCHEDULER_HELPER}" attach-binding --description="${output}" --binding="${binding}"; then
+        rm -f "${description}" "${binding}"
+        return 1
+      fi
+      rm -f "${description}" "${binding}"
+      python3 "${ODP_SCHEDULER_HELPER}" recovery --description="${output}" \
+        || { rm -f "${output}"; return 1; }
+    fi
     return
   fi
-  python3 "${ODP_SCHEDULER_HELPER}" write-absent --description="${output}"
+  python3 "${ODP_SCHEDULER_HELPER}" write-absent --description="${output}" --trigger="${trigger}" \
+    --project="${GCP_PROJECT}" --location="${GCP_REGION}"
+}
+
+pause_scheduler_trigger() {
+  local trigger="$1" readback state
+  readback="$(mktemp)"
+  capture_scheduler_trigger "${trigger}" "${readback}" identity-only || { rm -f "${readback}"; return 1; }
+  if [ "$(python3 "${ODP_SCHEDULER_HELPER}" exists --description="${readback}")" = "false" ]; then
+    rm -f "${readback}"
+    return 0
+  fi
+  state="$(python3 "${ODP_SCHEDULER_HELPER}" field --description="${readback}" --field=state)" || { rm -f "${readback}"; return 1; }
+  if [ "${state}" = "ENABLED" ]; then
+    gcloud scheduler jobs pause "${trigger}" --location="${GCP_REGION}" --project="${GCP_PROJECT}" --quiet \
+      || { rm -f "${readback}"; return 1; }
+  fi
+  gcloud scheduler jobs describe "${trigger}" --location="${GCP_REGION}" --project="${GCP_PROJECT}" \
+    --format=json >"${readback}" || { rm -f "${readback}"; return 1; }
+  python3 "${ODP_SCHEDULER_HELPER}" validate --description="${readback}" --trigger="${trigger}" \
+    --project="${GCP_PROJECT}" --location="${GCP_REGION}" --identity-only \
+    || { rm -f "${readback}"; return 1; }
+  state="$(python3 "${ODP_SCHEDULER_HELPER}" field --description="${readback}" --field=state)" || { rm -f "${readback}"; return 1; }
+  rm -f "${readback}"
+  [ "${state}" = "PAUSED" ]
+}
+
+verify_release_job() {
+  local job="$1" image="$2" release="$3" readback execution_file
+  local execution_args=()
+  readback="$(mktemp)"
+  execution_file="$(mktemp)"
+  if [ -n "${4:-}" ]; then
+    if ! gcloud run jobs executions describe "$4" --region="${GCP_REGION}" --project="${GCP_PROJECT}" \
+      --format=json >"${execution_file}"; then
+      rm -f "${readback}" "${execution_file}"
+      return 1
+    fi
+    execution_args=(--execution="${execution_file}" --expected-execution="$4")
+  fi
+  if ! gcloud run jobs describe "${job}" --region="${GCP_REGION}" --project="${GCP_PROJECT}" \
+    --format=json >"${readback}" \
+    || ! python3 "${ODP_JOB_VALIDATOR}" job-binding --job-description="${readback}" \
+      --expected-job="projects/${GCP_PROJECT}/locations/${GCP_REGION}/jobs/${job}" \
+      --expected-image="${image}" --expected-sha="${release}" "${execution_args[@]}"; then
+    rm -f "${readback}" "${execution_file}"
+    return 1
+  fi
+  rm -f "${readback}" "${execution_file}"
+}
+
+upsert_scheduler_trigger() {
+  local trigger="$1" job="$2" image="$3" cron="$4" timezone="$5" account="$6" before="$7" release="$8"
+  local candidate
+  verify_release_job "${job}" "${image}" "${release}" || return 1
+  candidate="$(mktemp)"
+  if ! python3 "${ODP_SCHEDULER_HELPER}" candidate --description="${before}" --trigger="${trigger}" \
+      --project="${GCP_PROJECT}" --location="${GCP_REGION}" --job="${job}" \
+      --cron="${cron}" --time-zone="${timezone}" --service-account="${account}" >"${candidate}" \
+    || ! restore_scheduler_trigger "${trigger}" "${candidate}" \
+    || ! verify_release_job "${job}" "${image}" "${release}"; then
+    rm -f "${candidate}"
+    return 1
+  fi
+  rm -f "${candidate}"
+}
+
+verify_scheduler_snapshot() {
+  local trigger="$1" snapshot="$2" expected_state="$3" readback
+  readback="$(mktemp)"
+  if ! capture_scheduler_trigger "${trigger}" "${readback}"; then
+    echo "Error: failed to capture or validate readback snapshot for Cloud Scheduler trigger '${trigger}'." >&2
+    rm -f "${readback}"
+    return 1
+  fi
+  if ! python3 "${ODP_SCHEDULER_HELPER}" compare --before="${snapshot}" --after="${readback}" --state="${expected_state}"; then
+    echo "Error: trigger '${trigger}' readback configuration drift detected." >&2
+    rm -f "${readback}"
+    return 1
+  fi
+  rm -f "${readback}"
+}
+
+resume_scheduler_trigger() {
+  local trigger="$1" job="$2" image="$3" cron="$4" timezone="$5" account="$6" before="$7" release="$8" kind="$9"
+  local receipt="${10}" first_state="${11}" candidate readback desired execution current resume_status=0
+  python3 "${ODP_SCHEDULER_HELPER}" first-state --state="${first_state}" >/dev/null || return 1
+  python3 "${ODP_SCHEDULER_HELPER}" receipt --description="${receipt}" --release="${release}" \
+    --job="projects/${GCP_PROJECT}/locations/${GCP_REGION}/jobs/${job}" --image="${image}" --kind="${kind}" || return 1
+  execution="$(python3 "${ODP_SCHEDULER_HELPER}" field --description="${receipt}" --field=execution_name)" || return 1
+  verify_release_job "${job}" "${image}" "${release}" "${execution}" || return 1
+  candidate="$(mktemp)"
+  readback="$(mktemp)"
+  desired="${first_state}"
+  if [ "$(python3 "${ODP_SCHEDULER_HELPER}" exists --description="${before}")" = "true" ]; then
+    desired="$(python3 "${ODP_SCHEDULER_HELPER}" field --description="${before}" --field=state)" || { rm -f "${candidate}" "${readback}"; return 1; }
+  fi
+  if ! python3 "${ODP_SCHEDULER_HELPER}" candidate --description="${before}" --trigger="${trigger}" \
+      --project="${GCP_PROJECT}" --location="${GCP_REGION}" --job="${job}" \
+      --cron="${cron}" --time-zone="${timezone}" --service-account="${account}" >"${candidate}" \
+    || ! capture_scheduler_trigger "${trigger}" "${readback}" \
+    || ! current="$(python3 "${ODP_SCHEDULER_HELPER}" resume-state --before="${candidate}" --after="${readback}" --state="${desired}")"; then
+    rm -f "${candidate}" "${readback}"
+    return 1
+  fi
+  rm -f "${readback}"
+  if [ "${12:-resume}" = "verify-only" ] || [ "${current}" = "${desired}" ]; then
+    rm -f "${candidate}"
+    return 0
+  fi
+  gcloud scheduler jobs resume "${trigger}" --location="${GCP_REGION}" --project="${GCP_PROJECT}" --quiet || resume_status=$?
+  # A lost response is resolved by the exact positive postcondition, never by
+  # accepting an unverified RPC failure or changing the intended prior state.
+  if ! verify_scheduler_snapshot "${trigger}" "${candidate}" "${desired}" \
+    || ! verify_release_job "${job}" "${image}" "${release}" "${execution}"; then
+    echo "Error: resume verification failed for '${trigger}' (resume RPC status ${resume_status})." >&2
+    rm -f "${candidate}"
+    return 1
+  fi
+  if [ "${resume_status}" -ne 0 ]; then
+    echo "Resume RPC for '${trigger}' returned ${resume_status}; exact desired state was read back and verified." >&2
+  fi
+  rm -f "${candidate}"
 }
 
 restore_scheduler_trigger() {
   local trigger="$1"
   local snapshot="$2"
   local failed=0
+  local old_job="" old_image="" old_release=""
+  python3 "${ODP_SCHEDULER_HELPER}" validate --description="${snapshot}" --trigger="${trigger}" \
+    --project="${GCP_PROJECT}" --location="${GCP_REGION}" || return 1
+  if python3 "${ODP_SCHEDULER_HELPER}" field --description="${snapshot}" --field=jobBinding.job_name >/dev/null 2>&1; then
+    old_job="$(python3 "${ODP_SCHEDULER_HELPER}" field --description="${snapshot}" --field=jobBinding.job_name)" || return 1
+    old_image="$(python3 "${ODP_SCHEDULER_HELPER}" field --description="${snapshot}" --field=jobBinding.job_image)" || return 1
+    old_release="$(python3 "${ODP_SCHEDULER_HELPER}" field --description="${snapshot}" --field=jobBinding.release_sha)" || return 1
+    verify_release_job "${old_job##*/}" "${old_image}" "${old_release}" || return 1
+  fi
+  local current
+  current="$(mktemp)"
+  capture_scheduler_trigger "${trigger}" "${current}" identity-only || { rm -f "${current}"; return 1; }
 
   echo "Restoring Cloud Scheduler trigger '${trigger}'..." >&2
 
   if [ "$(python3 "${ODP_SCHEDULER_HELPER}" exists --description="${snapshot}")" != "true" ]; then
     echo "Trigger '${trigger}' was absent prior to deploy; deleting candidate if present..." >&2
-    gcloud scheduler jobs delete "${trigger}" \
-      --location="${GCP_REGION}" \
-      --project="${GCP_PROJECT}" \
-      --quiet >/dev/null 2>&1 || true
+    if [ "$(python3 "${ODP_SCHEDULER_HELPER}" exists --description="${current}")" = "true" ]; then
+      gcloud scheduler jobs delete "${trigger}" --location="${GCP_REGION}" \
+        --project="${GCP_PROJECT}" --quiet || { rm -f "${current}"; return 1; }
+    fi
+    capture_scheduler_trigger "${trigger}" "${current}" \
+      && python3 "${ODP_SCHEDULER_HELPER}" compare --before="${snapshot}" --after="${current}" || failed=1
+    rm -f "${current}"
+    [ "${failed}" -eq 0 ] || return 1
     return 0
   fi
 
   local action="create"
-  if gcloud scheduler jobs describe "${trigger}" \
-    --location="${GCP_REGION}" \
-    --project="${GCP_PROJECT}" >/dev/null 2>&1; then
+  if [ "$(python3 "${ODP_SCHEDULER_HELPER}" exists --description="${current}")" = "true" ]; then
     action="update"
   fi
+  rm -f "${current}"
 
   local gcloud_args=()
   mapfile -d '' gcloud_args < <(python3 "${ODP_SCHEDULER_HELPER}" restore-args \
@@ -448,6 +649,31 @@ restore_scheduler_trigger() {
         gcloud_args[$i]="--update-headers=${gcloud_args[$i]#--headers=}"
       fi
     done
+    pause_scheduler_trigger "${trigger}" || return 1
+    gcloud scheduler jobs update http "${trigger}" --location="${GCP_REGION}" \
+      --project="${GCP_PROJECT}" --clear-headers --quiet || return 1
+  else
+    # Cloud Scheduler has no create-paused flag. Bootstrap with GET, which
+    # cannot invoke the POST-only :run endpoint, then pause before installing
+    # the actual POST target. This also closes the first-release cron race.
+    local bootstrap_args=() arg
+    for arg in "${gcloud_args[@]}"; do
+      case "${arg}" in
+        --message-body=*) ;;
+        --http-method=*) bootstrap_args+=(--http-method=GET) ;;
+        *) bootstrap_args+=("${arg}") ;;
+      esac
+    done
+    gcloud scheduler jobs create http "${trigger}" "${bootstrap_args[@]}" --quiet || return 1
+    gcloud scheduler jobs pause "${trigger}" --location="${GCP_REGION}" --project="${GCP_PROJECT}" --quiet || return 1
+    pause_scheduler_trigger "${trigger}" || return 1
+    action="update"
+    local i
+    for i in "${!gcloud_args[@]}"; do
+      if [[ "${gcloud_args[$i]}" == --headers=* ]]; then
+        gcloud_args[$i]="--update-headers=${gcloud_args[$i]#--headers=}"
+      fi
+    done
   fi
 
   if ! gcloud scheduler jobs "${action}" http "${trigger}" "${gcloud_args[@]}" --quiet; then
@@ -456,42 +682,28 @@ restore_scheduler_trigger() {
   fi
 
   local desired_state
-  desired_state="$(python3 "${ODP_SCHEDULER_HELPER}" field --description="${snapshot}" --field=state 2>/dev/null || echo "ENABLED")"
-  if [ "${desired_state}" = "PAUSED" ]; then
-    echo "Pausing trigger '${trigger}' to match recorded pre-deploy state..." >&2
-    if ! gcloud scheduler jobs pause "${trigger}" \
-      --location="${GCP_REGION}" \
-      --project="${GCP_PROJECT}" \
-      --quiet; then
-      echo "Error: failed to pause Cloud Scheduler trigger '${trigger}'." >&2
+  desired_state="$(python3 "${ODP_SCHEDULER_HELPER}" field --description="${snapshot}" --field=state)" || return 1
+  # The current resource needs identity/state validation to be safely paused;
+  # the restored configuration must pass full validation before any resume.
+  pause_scheduler_trigger "${trigger}" || return 1
+  verify_scheduler_snapshot "${trigger}" "${snapshot}" PAUSED || return 1
+  if [ -n "${old_job}" ]; then
+    verify_release_job "${old_job##*/}" "${old_image}" "${old_release}" || return 1
+  fi
+  if [ "${desired_state}" = "ENABLED" ]; then
+    local resume_status=0
+    gcloud scheduler jobs resume "${trigger}" --location="${GCP_REGION}" \
+      --project="${GCP_PROJECT}" --quiet || resume_status=$?
+    if ! verify_scheduler_snapshot "${trigger}" "${snapshot}" ENABLED; then
+      echo "Error: restored trigger '${trigger}' failed ENABLED readback (resume RPC status ${resume_status})." >&2
+      pause_scheduler_trigger "${trigger}" || echo "Error: failed to hold '${trigger}' PAUSED after restore verification failure." >&2
       return 1
     fi
-  elif [ "${desired_state}" = "ENABLED" ]; then
-    gcloud scheduler jobs resume "${trigger}" \
-      --location="${GCP_REGION}" \
-      --project="${GCP_PROJECT}" \
-      --quiet >/dev/null 2>&1 || true
+    if [ -n "${old_job}" ] && ! verify_release_job "${old_job##*/}" "${old_image}" "${old_release}"; then
+      pause_scheduler_trigger "${trigger}" || echo "Error: failed to hold '${trigger}' PAUSED after Job drift." >&2
+      return 1
+    fi
   fi
-
-  local readback_file
-  readback_file="$(mktemp)"
-  if ! gcloud scheduler jobs describe "${trigger}" \
-    --location="${GCP_REGION}" \
-    --project="${GCP_PROJECT}" \
-    --format=json >"${readback_file}" 2>/dev/null \
-    || [ ! -s "${readback_file}" ] \
-    || ! python3 "${ODP_SCHEDULER_HELPER}" validate --description="${readback_file}" >/dev/null 2>&1; then
-    echo "Error: failed to capture or validate readback snapshot for Cloud Scheduler trigger '${trigger}'." >&2
-    rm -f "${readback_file}"
-    return 1
-  fi
-
-  if ! python3 "${ODP_SCHEDULER_HELPER}" compare --before="${snapshot}" --after="${readback_file}"; then
-    echo "Error: trigger '${trigger}' readback configuration drift detected." >&2
-    rm -f "${readback_file}"
-    return 1
-  fi
-  rm -f "${readback_file}"
 
   echo "Cloud Scheduler trigger '${trigger}' successfully restored." >&2
   return 0

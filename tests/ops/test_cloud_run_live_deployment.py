@@ -78,6 +78,12 @@ def test_preflight_does_not_require_unselected_listing_partner_config() -> None:
     assert "secret-reference:ODP_LISTING_PROVIDER_API_KEY_SECRET" not in by_name
 
 
+def test_preflight_rejects_invalid_first_create_scheduler_state() -> None:
+    env = {**complete_env(), "ODP_NEW_SCHEDULER_STATE": "enabled"}
+    checks = validator.preflight_checks(env=env, expected_environment="dev", expected_sha=EXPECTED_SHA, root=ROOT)
+    assert next(check for check in checks if check.name == "config:ODP_NEW_SCHEDULER_STATE").ok is False
+
+
 def test_preflight_requires_listing_config_when_listing_is_selected() -> None:
     env = {
         "ODP_PRODUCTION_PROVIDER_IDS": "listing.partner_feed",
@@ -2298,7 +2304,8 @@ def test_deploy_script_preflights_before_build_and_uses_secret_references() -> N
     assert 'gcloud run jobs deploy "${SCHEDULER_CANDIDATE_JOB}"' in text
     assert 'execute_job "worker" "${WORKER_CANDIDATE_JOB}"' in text
     assert 'execute_job "scheduler" "${SCHEDULER_CANDIDATE_JOB}"' in text
-    assert "gcloud scheduler jobs" in text
+    assert 'source product_ops/deployment/cloud_run_release_traffic.sh' in text
+    assert "gcloud scheduler jobs" in TRAFFIC_SHELL_HELPER.read_text(encoding="utf-8")
     assert "jobs-smoke" in text
     assert "validate_cloud_run_live_deployment.py smoke" in text
     assert "validate_cloud_run_live_deployment.py compatibility-smoke" in text
@@ -2317,6 +2324,13 @@ def test_deploy_script_preflights_before_build_and_uses_secret_references() -> N
     web_cut = text.index('promote_service_traffic "${WEB_SERVICE}"')
     committed = text.index("DEPLOYMENT_COMMITTED=true")
     assert migration_gate < candidate_smoke < api_cut < web_cut < committed
+    assert text.index('pause_scheduler_trigger "${SCHEDULER_SCHEDULE_NAME}"') < text.index(
+        'execute_job "scheduler" "${SCHEDULER_CANDIDATE_JOB}"'
+    )
+    assert text.index('--output "${LIVE_E2E_REPORT}"') < text.index(
+        'resume_scheduler_trigger "${SCHEDULER_SCHEDULE_NAME}"'
+    ) < committed
+    assert "upsert_scheduler_trigger()" not in text
     assert '--set-secrets="${API_SECRET_BINDINGS}"' in text
     assert '--set-secrets="${WEB_SECRET_BINDINGS}"' in text
     assert "ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}" in text
@@ -2493,7 +2507,7 @@ fi
     calls = gcloud_log.read_text(encoding="utf-8").splitlines()
     assert any("update-traffic api-service" in call for call in calls)
     assert any("update-traffic web-service" in call for call in calls)
-    assert all("--to-revisions=service-old-a=80,service-old-b=20" in call for call in calls)
+    assert all("--to-revisions=service-old-a=80,service-old-b=20" in call for call in calls if "update-traffic" in call)
 
 
 def test_bootstrap_rollback_deletes_service_that_was_previously_absent(
@@ -2512,7 +2526,10 @@ def test_bootstrap_rollback_deletes_service_that_was_previously_absent(
     fake_gcloud.write_text(
         """#!/usr/bin/env bash
 printf '%s\n' "$*" >>"${GCLOUD_LOG}"
-if [ "${1:-} ${2:-} ${3:-}" = "run services list" ]; then
+if [ "${1:-} ${2:-} ${3:-}" = "run services delete" ]; then
+  touch "${GCLOUD_LOG}.deleted"
+fi
+if [ "${1:-} ${2:-} ${3:-}" = "run services list" ] && [ ! -e "${GCLOUD_LOG}.deleted" ]; then
   printf '%s\n' "api-service"
 fi
 """,
@@ -2554,10 +2571,12 @@ def test_scheduler_trigger_restore_uses_recorded_target_and_schedule(
     snapshot.write_text(
         json.dumps(
             {
+                "name": "projects/test-project/locations/test-region/jobs/worker-trigger",
                 "schedule": "17 * * * *",
                 "timeZone": "Asia/Taipei",
+                "state": "PAUSED",
                 "httpTarget": {
-                    "uri": "https://run.googleapis.com/v2/projects/p/locations/r/jobs/old-job:run",
+                    "uri": "https://run.googleapis.com/v2/projects/test-project/locations/test-region/jobs/old-job:run",
                     "oauthToken": {
                         "serviceAccountEmail": "scheduler@example.test",
                         "scope": "https://www.googleapis.com/auth/cloud-platform",
@@ -2612,11 +2631,12 @@ def test_scheduler_trigger_restore_supports_oidc_token(tmp_path: Path) -> None:
     snapshot.write_text(
         json.dumps(
             {
+                "name": "projects/test-project/locations/test-region/jobs/worker-trigger",
                 "schedule": "0 * * * *",
                 "timeZone": "Asia/Taipei",
                 "state": "ENABLED",
                 "httpTarget": {
-                    "uri": "https://run.googleapis.com/v2/projects/p/locations/r/jobs/worker-job:run",
+                    "uri": "https://run.googleapis.com/v2/projects/test-project/locations/test-region/jobs/worker-job:run",
                     "httpMethod": "POST",
                     "headers": {
                         "Content-Type": "application/json",
@@ -2625,7 +2645,7 @@ def test_scheduler_trigger_restore_supports_oidc_token(tmp_path: Path) -> None:
                     "body": "e30=",
                     "oidcToken": {
                         "serviceAccountEmail": "scheduler-sa@example.test",
-                        "audience": "https://run.googleapis.com/v2/projects/p/locations/r/jobs/worker-job:run",
+                        "audience": "https://run.googleapis.com/v2/projects/test-project/locations/test-region/jobs/worker-job:run",
                     },
                 },
                 "retryConfig": {
@@ -2644,11 +2664,23 @@ def test_scheduler_trigger_restore_supports_oidc_token(tmp_path: Path) -> None:
     fake_bin.mkdir()
     fake_gcloud = fake_bin / "gcloud"
     fake_gcloud.write_text(
-        '#!/usr/bin/env bash\n'
-        'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n'
-        'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
-        f'  cat "{snapshot}"\n'
-        'fi\n',
+        f"""#!/usr/bin/env bash
+printf '%s\\n' "$*" >>"${{GCLOUD_LOG}}"
+if [[ "$*" == *"scheduler jobs list"* ]]; then
+  echo "projects/test-project/locations/test-region/jobs/worker-trigger"
+fi
+if [[ "$*" == *"scheduler jobs pause"* ]]; then touch "${{GCLOUD_LOG}}.paused"; fi
+if [[ "$*" == *"scheduler jobs resume"* ]]; then rm -f "${{GCLOUD_LOG}}.paused"; fi
+if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then
+  python3 - "{snapshot}" "${{GCLOUD_LOG}}.paused" <<'PY'
+import json, os, sys
+payload = json.load(open(sys.argv[1]))
+if os.path.exists(sys.argv[2]):
+    payload["state"] = "PAUSED"
+print(json.dumps(payload))
+PY
+fi
+""",
         encoding="utf-8",
     )
     fake_gcloud.chmod(0o755)
@@ -2675,7 +2707,7 @@ def test_scheduler_trigger_restore_supports_oidc_token(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     call = gcloud_log.read_text(encoding="utf-8")
     assert "--oidc-service-account-email=scheduler-sa@example.test" in call
-    assert "--oidc-token-audience=https://run.googleapis.com/v2/projects/p/locations/r/jobs/worker-job:run" in call
+    assert "--oidc-token-audience=https://run.googleapis.com/v2/projects/test-project/locations/test-region/jobs/worker-job:run" in call
     assert "--max-retry-attempts=3" in call
     assert "--min-backoff=10s" in call
     assert "--max-backoff=600s" in call
@@ -2685,7 +2717,7 @@ def test_scheduler_trigger_restore_supports_oidc_token(tmp_path: Path) -> None:
         "--update-headers=Content-Type=application/json,User-Agent=Google-Cloud-Scheduler"
         in call
     )
-    assert "--headers=Content-Type=application/json" not in call
+    assert all("--headers=" not in line for line in call.splitlines() if "scheduler jobs update" in line)
 
 
 def test_scheduler_trigger_restore_handles_paused_state(tmp_path: Path) -> None:
@@ -2693,11 +2725,12 @@ def test_scheduler_trigger_restore_handles_paused_state(tmp_path: Path) -> None:
     snapshot.write_text(
         json.dumps(
             {
+                "name": "projects/test-project/locations/test-region/jobs/paused-trigger",
                 "schedule": "0 12 * * *",
                 "timeZone": "UTC",
                 "state": "PAUSED",
                 "httpTarget": {
-                    "uri": "https://run.googleapis.com/v2/projects/p/locations/r/jobs/scheduler-job:run",
+                    "uri": "https://run.googleapis.com/v2/projects/test-project/locations/test-region/jobs/scheduler-job:run",
                     "oidcToken": {
                         "serviceAccountEmail": "scheduler-sa@example.test",
                     },
@@ -2746,7 +2779,7 @@ def test_scheduler_trigger_restore_handles_paused_state(tmp_path: Path) -> None:
 
 def test_scheduler_trigger_restore_deletes_absent_pre_deploy_trigger(tmp_path: Path) -> None:
     snapshot = tmp_path / "scheduler.json"
-    snapshot.write_text('{"exists": false}\n', encoding="utf-8")
+    snapshot.write_text('{"exists": false, "name": "projects/test-project/locations/test-region/jobs/absent-trigger"}\n', encoding="utf-8")
     gcloud_log = tmp_path / "gcloud.log"
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -2778,7 +2811,9 @@ def test_scheduler_trigger_restore_deletes_absent_pre_deploy_trigger(tmp_path: P
 
     assert result.returncode == 0, result.stderr
     call = gcloud_log.read_text(encoding="utf-8")
-    assert "scheduler jobs delete absent-trigger" in call
+    # Already absent is a verified no-op, not a swallowed delete failure.
+    assert "scheduler jobs list" in call
+    assert "scheduler jobs delete absent-trigger" not in call
 
 
 def test_scheduler_trigger_restore_partial_failure_continues_and_reports_diagnostics(
@@ -2788,10 +2823,12 @@ def test_scheduler_trigger_restore_partial_failure_continues_and_reports_diagnos
     snap1.write_text(
         json.dumps(
             {
+                "name": "projects/test-project/locations/test-region/jobs/trigger1",
                 "schedule": "0 * * * *",
                 "timeZone": "UTC",
+                "state": "PAUSED",
                 "httpTarget": {
-                    "uri": "https://example.test/1",
+                    "uri": "https://run.googleapis.com/v2/projects/test-project/locations/test-region/jobs/job1:run",
                     "oidcToken": {"serviceAccountEmail": "sa1@example.test"},
                 },
             }
@@ -2802,10 +2839,12 @@ def test_scheduler_trigger_restore_partial_failure_continues_and_reports_diagnos
     snap2.write_text(
         json.dumps(
             {
+                "name": "projects/test-project/locations/test-region/jobs/trigger2",
                 "schedule": "0 * * * *",
                 "timeZone": "UTC",
+                "state": "PAUSED",
                 "httpTarget": {
-                    "uri": "https://example.test/2",
+                    "uri": "https://run.googleapis.com/v2/projects/test-project/locations/test-region/jobs/job2:run",
                     "oidcToken": {"serviceAccountEmail": "sa2@example.test"},
                 },
             }
@@ -2869,10 +2908,12 @@ def test_scheduler_trigger_restore_fails_closed_when_readback_describe_fails(
     snapshot.write_text(
         json.dumps(
             {
+                "name": "projects/test-project/locations/test-region/jobs/worker-trigger",
                 "schedule": "0 * * * *",
                 "timeZone": "Asia/Taipei",
+                "state": "PAUSED",
                 "httpTarget": {
-                    "uri": "https://example.test/job:run",
+                    "uri": "https://run.googleapis.com/v2/projects/test-project/locations/test-region/jobs/job:run",
                     "oidcToken": {"serviceAccountEmail": "sa@example.test"},
                 },
             }
@@ -2924,10 +2965,12 @@ def test_scheduler_trigger_restore_fails_closed_when_readback_drift_detected(
     snapshot.write_text(
         json.dumps(
             {
+                "name": "projects/test-project/locations/test-region/jobs/worker-trigger",
                 "schedule": "0 * * * *",
                 "timeZone": "Asia/Taipei",
+                "state": "PAUSED",
                 "httpTarget": {
-                    "uri": "https://example.test/job:run",
+                    "uri": "https://run.googleapis.com/v2/projects/test-project/locations/test-region/jobs/job:run",
                     "oidcToken": {"serviceAccountEmail": "sa@example.test"},
                 },
             }
@@ -2938,10 +2981,12 @@ def test_scheduler_trigger_restore_fails_closed_when_readback_drift_detected(
     drifted_snapshot.write_text(
         json.dumps(
             {
+                "name": "projects/test-project/locations/test-region/jobs/worker-trigger",
                 "schedule": "0 * * * *",
                 "timeZone": "UTC",  # drifted timeZone
+                "state": "PAUSED",
                 "httpTarget": {
-                    "uri": "https://example.test/job:run",
+                    "uri": "https://run.googleapis.com/v2/projects/test-project/locations/test-region/jobs/job:run",
                     "oidcToken": {"serviceAccountEmail": "sa@example.test"},
                 },
             }
@@ -3044,6 +3089,25 @@ def test_scheduler_trigger_compare_verifies_redacted_equality_and_detects_drift(
 
     assert helper.compare_snapshots(before, after_same) is True
     assert helper.compare_snapshots(before, after_drift) is False
+
+
+def test_scheduler_describe_omitted_zero_and_default_fields_equal_explicit_defaults() -> None:
+    from product_ops.deployment.cloud_scheduler_trigger import compare_snapshots
+    observed = {
+        "name": "projects/p/locations/r/jobs/worker-trigger", "schedule": "17 * * * *",
+        "timeZone": "Asia/Taipei", "state": "PAUSED",
+        "httpTarget": {"uri": "https://run.googleapis.com/v2/projects/p/locations/r/jobs/worker:run",
+                       "body": "e30=", "httpMethod": "POST", "headers": {"Content-Type": "application/json"},
+                       "oauthToken": {"serviceAccountEmail": "scheduler@example.test"}},
+        "retryConfig": {"minBackoffDuration": "5s", "maxBackoffDuration": "3600s", "maxDoublings": 5},
+    }
+    explicit = json.loads(json.dumps(observed))
+    explicit["retryConfig"].update(retryCount=0, maxRetryDuration="0s")
+    explicit.update(attemptDeadline="180s", description="")
+    assert compare_snapshots(explicit, observed)
+    assert compare_snapshots(observed, explicit)
+    explicit["retryConfig"]["retryCount"] = 1
+    assert not compare_snapshots(explicit, observed)
 
 
 def test_web_image_carries_release_and_live_binding_metadata() -> None:
@@ -5032,6 +5096,40 @@ def test_job_smoke_supports_migration_worker_and_scheduler_schemas(kind: str) ->
     assert v2_report["secret_bound_env_vars"] == sorted(
         ("ODAY_DATABASE_URL", *SELECTED_PROVIDER_SECRET_ENVS)
     )
+
+
+@pytest.mark.parametrize("kind", ["migration", "worker", "scheduler"])
+@pytest.mark.parametrize("dialect", ["knative", "v2"])
+def test_job_smoke_binds_exact_job_execution_and_immutable_image(kind: str, dialect: str) -> None:
+    name = f"oday-{kind}"
+    image = f"registry/{kind}@sha256:" + "b" * 64
+    execution = _succeeded_execution(name + "-execution")
+    if dialect == "knative":
+        job = _knative_job(kind=kind, name=name)
+        job["spec"]["template"]["spec"]["template"]["spec"]["containers"][0]["image"] = image
+        execution["metadata"]["labels"] = {"run.googleapis.com/job": name}
+        execution["spec"] = {"template": {"spec": {"containers": [{"image": image}]}}}
+    else:
+        job = _v2_job(kind=kind)
+        job["template"]["template"]["containers"][0]["image"] = image
+        execution["job"] = f"projects/oday/locations/asia-east1/jobs/{name}"
+        execution["template"] = {"containers": [{"image": image}]}
+    checks, report = validator.cloud_run_job_checks(
+        kind=kind, job_description=job, execution=execution,
+        expected_sha=RUN_30376737123_SHA, expected_image=image,
+        expected_job=f"projects/oday/locations/asia-east1/jobs/{name}",
+    )
+    assert all(check.ok for check in checks), _failed_names(checks)
+    assert report["job_image"] == report["execution_image"] == image
+    assert report["execution_name"] == name + "-execution"
+    execution["status"]["failedCount"] = 1
+    checks, _ = validator.cloud_run_job_checks(
+        kind=kind, job_description=job, execution=execution,
+        expected_sha=RUN_30376737123_SHA, expected_image=image,
+        expected_job=f"projects/oday/locations/asia-east1/jobs/{name}",
+    )
+    assert f"jobs-smoke:{kind}:execution" in _failed_names(checks)
+    assert f"jobs-smoke:{kind}:immutable_binding" in _failed_names(checks)
 
 
 def test_job_smoke_rejects_failed_execution_and_missing_provider_secrets() -> None:
