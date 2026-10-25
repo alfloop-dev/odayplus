@@ -14,6 +14,7 @@ from modules.external_data.application.native_parser_artifacts import (
 from modules.external_data.application.native_parser_output import (
     validate_native_manual_parser_output,
 )
+from modules.listing.application.native_intake_parser_job_proof import NativeParserJobProof
 from modules.listing.application.native_intake_parser_policy import NativeParserConflict
 from modules.listing.application.native_intake_parser_prerequisites import (
     NativeParserCommandBudget,
@@ -64,6 +65,7 @@ from tests.integration.test_native_intake_parser_input_postgresql import (
 from tests.integration.test_native_intake_parser_input_postgresql import (
     waiting as waiting,
 )
+from tests.security.test_native_intake_parser_prerequisites import RootGuardedJob
 from tests.security.test_native_parser_artifacts import installed_bytes, write_archive
 
 pytestmark = pytest.mark.requires_live_env
@@ -217,3 +219,23 @@ def test_foreign_transaction_tenant_cannot_read_an_existing_run(parser_storage_c
         row = queued(parser_storage_case, before)
         with pytest.raises(NativeParserConflict):
             store.get(str(uuid4()), row["parser_run_id"], before=before)
+
+
+@pytest.mark.parametrize("method", ["admission", "acceptance", "get"])
+@pytest.mark.parametrize("root_change", ["read_committed", "foreign_tenant"])
+def test_parser_owners_require_current_serializable_tenant_root(parser_storage_case, method, root_change):
+    owner, tenant, *_ = parser_storage_case
+    error = "NATIVE_PARSER_RUN_CAS_REJECTED" if method == "get" else "NATIVE_PARSER_ADMISSION_PROOF_REJECTED"
+    with owner.engine.transaction():
+        if root_change == "foreign_tenant":
+            owner.engine.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+        else:
+            owner.engine.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+        actual_tenant = str(uuid4()) if root_change == "foreign_tenant" else tenant
+        owner.engine.query_one("SELECT set_config('app.tenant_id', ?, true)", (actual_tenant,))
+        before = NativeParserCommandBudget(NativeParserSQLClock(owner.engine))
+        with pytest.raises(NativeParserConflict, match="^" + error + "$"):
+            if method == "get":
+                CanonicalNativeParserRunRepository(owner.engine).get(tenant, str(uuid4()), before=before)
+            else:
+                getattr(NativeParserJobProof(owner.graph), method)(RootGuardedJob(tenant_id=tenant), {}, before=before)

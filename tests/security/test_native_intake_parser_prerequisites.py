@@ -19,9 +19,19 @@ from modules.listing.application.native_intake_parser_prerequisites import (
     NativeParserSQLClock,
     native_parser_run_id,
 )
+from modules.listing.application.native_intake_parser_runs import CanonicalNativeParserRunRepository
 from tests.security.test_native_intake_parser_policy import TENANT
 from tests.security.test_native_intake_parser_policy import configured as configured
 from tests.security.test_native_parser_artifacts import artifact_case as artifact_case
+
+
+class RootGuardedJob(dict):
+    """Fail if a negative root case reaches any later evidence lookup."""
+
+    def __getitem__(self, key):
+        if key != "tenant_id":
+            pytest.fail("Root assertion did not reject before parser evidence")
+        return super().__getitem__(key)
 
 
 class RecordingEngine:
@@ -104,8 +114,8 @@ def test_manual_reader_preserves_original_parser_root_deadline_error_identity():
     assert caught.value is original and engine.calls == []
 
 
-@pytest.mark.parametrize("method", ["admission", "acceptance"])
-def test_parser_job_proof_preserves_expired_original_budget_without_another_sql_read(method):
+@pytest.mark.parametrize("method", ["admission", "acceptance", "get"])
+def test_parser_owners_preserve_expired_original_budget_without_another_sql_read(method):
     engine = RecordingEngine()
     graph = SimpleNamespace(engine=engine, queue=object())
     before = NativeParserCommandBudget(NativeParserSQLClock(engine))
@@ -113,8 +123,38 @@ def test_parser_job_proof_preserves_expired_original_budget_without_another_sql_
     before._monotonic_deadline = time.monotonic() - 1
     calls = list(engine.calls)
     with pytest.raises(NativeParserConflict, match="^NATIVE_PARSER_ROOT_DEADLINE_EXPIRED$"):
-        getattr(NativeParserJobProof(graph), method)({"tenant_id": str(uuid4())}, {}, before=before)
+        if method == "get":
+            CanonicalNativeParserRunRepository(engine).get(str(uuid4()), str(uuid4()), before=before)
+        else:
+            getattr(NativeParserJobProof(graph), method)(RootGuardedJob(tenant_id=str(uuid4())), {}, before=before)
     assert engine.calls == calls and before.deadline == original_deadline
+
+
+@pytest.mark.parametrize("method", ["admission", "acceptance", "get"])
+@pytest.mark.parametrize("change", ["foreign_budget", "invalid_budget", "non_postgres", "no_local", "no_connection"])
+def test_parser_owners_refuse_unowned_roots_before_any_sql_read(method, change):
+    engine = RecordingEngine()
+    graph = SimpleNamespace(engine=engine, queue=object())
+    before = NativeParserCommandBudget(NativeParserSQLClock(engine))
+    if change == "foreign_budget":
+        before = NativeParserCommandBudget(NativeParserSQLClock(RecordingEngine()))
+    elif change == "invalid_budget":
+        def before():
+            pytest.fail("Invalid budget reached SQL")
+    elif change == "non_postgres":
+        engine.dialect = "sqlite"
+    elif change == "no_local":
+        engine._local = None
+    else:
+        engine._local.connection = None
+    calls = list(engine.calls)
+    error = "NATIVE_PARSER_RUN_CAS_REJECTED" if method == "get" else "NATIVE_PARSER_ADMISSION_PROOF_REJECTED"
+    with pytest.raises(NativeParserConflict, match="^" + error + "$"):
+        if method == "get":
+            CanonicalNativeParserRunRepository(engine).get(str(uuid4()), str(uuid4()), before=before)
+        else:
+            getattr(NativeParserJobProof(graph), method)(RootGuardedJob(tenant_id=str(uuid4())), {}, before=before)
+    assert engine.calls == calls
 
 
 @pytest.mark.parametrize("change", ["non_postgres", "no_local", "no_connection"])

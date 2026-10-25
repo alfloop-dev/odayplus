@@ -69,6 +69,22 @@ class NativeParserCommandBudget(NativeIntakeCommandBudget):
             raise NativeParserConflict("NATIVE_PARSER_ROOT_DEADLINE_EXPIRED") from None
 
 
+def assert_native_parser_root(engine, tenant, before, *, rejection_code):
+    """Prove the caller's existing root without acquiring or renewing one."""
+    tenant = native_intake_uuid(tenant)
+    if (not isinstance(before, NativeParserCommandBudget) or before.source.engine is not engine
+            or getattr(engine, "dialect", None) != "postgresql"
+            or getattr(getattr(engine, "_local", None), "connection", None) is None):
+        raise NativeParserConflict(rejection_code) from None
+    before()
+    root = engine.query_one("SELECT current_setting('transaction_isolation') AS isolation, "
+        "current_setting('app.tenant_id',true) AS tenant")
+    if root["isolation"] != "serializable" or root["tenant"] != tenant:
+        raise NativeParserConflict(rejection_code) from None
+    before.check_in_memory()
+    return tenant
+
+
 def native_parser_run_id(tenant, snapshot, release):
     tenant, snapshot, release = (native_intake_uuid(value) for value in (tenant, snapshot, release))
     return str(uuid5(UUID(snapshot), f"native-parser-run-v1:{tenant}:{release}"))

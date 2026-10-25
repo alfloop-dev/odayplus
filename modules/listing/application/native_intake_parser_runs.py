@@ -13,7 +13,7 @@ from modules.external_data.application.native_parser_output import NativeParserO
 from modules.listing.application.native_intake_assisted_entry_request_proof import _time
 from modules.listing.application.native_intake_job_runtime import native_intake_uuid
 from modules.listing.application.native_intake_parser_policy import NativeParserConflict
-from modules.listing.application.native_intake_parser_prerequisites import NativeParserCommandBudget
+from modules.listing.application.native_intake_parser_prerequisites import assert_native_parser_root
 
 _READS = (
     "SELECT * FROM intake.parser_runs WHERE tenant_id=? AND parser_run_id=?",
@@ -70,18 +70,8 @@ class CanonicalNativeParserRunRepository:
         self.engine = engine
 
     def _root(self, tenant, before):
-        tenant = native_intake_uuid(tenant)
-        if (not isinstance(before, NativeParserCommandBudget) or before.source.engine is not self.engine
-                or getattr(self.engine, "dialect", None) != "postgresql"
-                or getattr(getattr(self.engine, "_local", None), "connection", None) is None):
-            _reject()
-        before()
-        root = self.engine.query_one("SELECT current_setting('transaction_isolation') AS isolation, "
-            "current_setting('app.tenant_id',true) AS tenant")
-        if root["isolation"] != "serializable" or root["tenant"] != tenant:
-            _reject()
-        before.check_in_memory()
-        return tenant
+        return assert_native_parser_root(self.engine, tenant, before,
+            rejection_code="NATIVE_PARSER_RUN_CAS_REJECTED")
 
     def get(self, tenant, run_id, *, before, for_update=False):
         tenant = self._root(tenant, before)
