@@ -15,10 +15,7 @@ from modules.external_data.application.native_parser_output import (
 )
 from modules.listing.application.native_intake_assisted_entry_request_proof import _time
 from modules.listing.application.native_intake_job_runtime import native_intake_uuid
-from modules.listing.application.native_intake_parser_attempts import (
-    NativeParserAttemptHistory,
-    active_payload_fields,
-)
+from modules.listing.application.native_intake_parser_attempts import active_payload_fields
 from modules.listing.application.native_intake_parser_execution import NativeParserExecutionReads
 from modules.listing.application.native_intake_parser_io import (
     OPERATIONS,
@@ -150,8 +147,11 @@ def commit_parser_output(owner, delivery, leases, observed):
         try:
             state = NativeParserExecutionReads(owner).fresh(delivery, leases.tenant, leases.generation,
                 business_fence=leases.business_fence)
-            prior = NativeParserAttemptHistory(owner.graph).previous(state.job, state.run, state.physical,
-                state.context.original, before=state.before)
+            # fresh() just proved this history in the same locked SQL root;
+            # no IO, write or authority boundary intervenes before consumption.
+            prior = state.previous_attempts
+            if prior is None:
+                _reject()
             current = closed_parser_attempt_journal(state.run, state.payload["admission"], state.context.original,
                 state.payload["acceptance_receipt"], prior.current_items, owner.clock._clock(),
                 timeout_at=state.job["timeout_at"], before=state.before)

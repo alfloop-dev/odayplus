@@ -11,6 +11,7 @@ from modules.listing.application.native_intake_assisted_entry_policy import (
     NativeAssistedEntryConflict,
 )
 from modules.listing.application.native_intake_assisted_entry_request_proof import _object
+from modules.listing.application.native_intake_parser_attempts import NativeParserAttemptHistory
 from modules.listing.application.native_intake_parser_policy import (
     SIGNING_KEY_ENV,
     NativeParserUnavailable,
@@ -63,12 +64,22 @@ pytestmark = pytest.mark.requires_live_env
 @pytest.mark.parametrize("parser_evidence_fields,status,target", [
     (None, "SUCCEEDED", "MATCHING"), ("partial", "PARTIAL", "NEEDS_REVIEW")],
     indirect=["parser_evidence_fields"])
-def test_actual_parser_output_atomically_settles_run_jobs_and_exact_events(parser_io_case, status, target):
+def test_actual_parser_output_atomically_settles_run_jobs_and_exact_events(parser_io_case, monkeypatch, status, target):
     case, io, leases, delivery = parser_io_case
     owner, ids, _, _, _, _, _ = case
     observed = io.read_and_parse()
     original = persisted(case)
-    result = commit_parser_output(owner, delivery, leases, observed)
+    proofs = []
+    previous = NativeParserAttemptHistory.previous
+
+    def record_proof(history, *args, **kwargs):
+        proof = previous(history, *args, **kwargs)
+        proofs.append(proof)
+        return proof
+
+    with monkeypatch.context() as patch:
+        patch.setattr(NativeParserAttemptHistory, "previous", record_proof)
+        result = commit_parser_output(owner, delivery, leases, observed)
     assert result["parser_status"] == status and result["job_status"] == "SUCCEEDED"
     assert result["processing_state"] == target
     current = persisted(case)
@@ -121,6 +132,7 @@ def test_actual_parser_output_atomically_settles_run_jobs_and_exact_events(parse
         "quality_summary": observed.output.quality_summary(), "output_schema_version": release["output_schema_version"]}
     assert owner.graph.audit_sink.writer.verify_chain(ids["tenant"]).ok
     assert leases._thread is None and leases._proof is None
+    assert len(proofs) == 1, "One output command must consume its fresh proof without recalculating it"
 
 
 def test_conflicting_outbox_cause_rolls_back_run_jobs_events_audits_and_intake(parser_io_case, monkeypatch):

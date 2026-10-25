@@ -7,6 +7,7 @@ complete actual previous-attempt proof, never a fabricated historical row.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from modules.listing.application.native_intake_assisted_entry_request_proof import _object, _time
@@ -21,6 +22,11 @@ from modules.listing.application.native_intake_retrieval_policy import (
 )
 from shared.jobs.queue import JobFenceRejectedError, JobStatus
 
+if TYPE_CHECKING:
+    from modules.listing.application.native_intake_parser_attempts import (
+        NativeParserPreviousAttempts,
+    )
+
 
 @dataclass(frozen=True)
 class NativeParserExecutionState:
@@ -30,6 +36,7 @@ class NativeParserExecutionState:
     run: dict
     before: NativeParserCommandBudget
     context: object
+    previous_attempts: NativeParserPreviousAttempts | None = None
 
 
 class NativeParserExecutionReads:
@@ -110,14 +117,16 @@ class NativeParserExecutionReads:
                 or context.attempt_token != physical.payload["attempt_token"]):
             raise JobFenceRejectedError("NATIVE_PARSER_CURRENT_BINDING_REJECTED")
         before.deadline = min(before.deadline, context.classified.valid_until)
+        previous_attempts = None
         if job["status"] == "RUNNING":
             from modules.listing.application.native_intake_parser_attempts import (
                 NativeParserAttemptHistory,
             )
 
-            NativeParserAttemptHistory(self.graph).previous(job, run, physical, context.original, before=before)
+            previous_attempts = NativeParserAttemptHistory(self.graph).previous(
+                job, run, physical, context.original, before=before)
         before.check_in_memory()
-        return NativeParserExecutionState(physical, job, payload, run, before, context)
+        return NativeParserExecutionState(physical, job, payload, run, before, context, previous_attempts)
 
     def accept(self, delivery, tenant, generation):
         with self.graph.transaction(tenant):
