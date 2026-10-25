@@ -1339,7 +1339,7 @@ def load_logs(*, strict: bool = False) -> list[dict[str, Any]]:
     except (OSError, UnicodeDecodeError) as exc:
         if strict:
             raise ValueError(f"canonical activity log is unreadable: {exc}") from exc
-        return []
+        raise
     logs: list[dict[str, Any]] = []
     for line_no, line in enumerate(raw_lines, start=1):
         line = line.strip()

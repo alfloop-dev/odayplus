@@ -3641,6 +3641,55 @@ class AssignmentSourceDocumentTests(unittest.TestCase):
             self.assertEqual(task["source_docs"], ["docs/source.md"])
 
 
+class AssignmentAuditReaderTests(unittest.TestCase):
+    def setUp(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory(prefix="assignment-audit-reader-")
+        self.addCleanup(tmpdir.cleanup)
+        self.log_file = Path(tmpdir.name) / "activity.jsonl"
+        patcher = mock.patch.object(ai_status, "LOG_FILE", self.log_file)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_missing_log_preserves_legacy_empty_history_but_strict_refuses(self) -> None:
+        self.assertEqual(ai_status.load_logs(), [])
+        with self.assertRaisesRegex(ValueError, "canonical activity log is missing"):
+            ai_status.load_logs(strict=True)
+        self.assertFalse(self.log_file.exists())
+
+    def test_malformed_json_is_skipped_only_in_legacy_mode(self) -> None:
+        entries = [{"type": "assign"}, {"type": "dispatch_preflight_blocked"}]
+        content = json.dumps(entries[0]) + "\n\n{malformed-json\n" + json.dumps(entries[1]) + "\n"
+        self.log_file.write_text(content, encoding="utf-8")
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(ai_status.load_logs(), entries)
+        self.assertIn("skipping malformed ai-activity-log.jsonl line 3", stderr.getvalue())
+        with self.assertRaisesRegex(ValueError, "malformed JSON in canonical activity log line 3"):
+            ai_status.load_logs(strict=True)
+        self.assertEqual(self.log_file.read_text(encoding="utf-8"), content)
+
+    def test_io_errors_propagate_in_legacy_mode_and_are_chained_in_strict_mode(self) -> None:
+        self.log_file.write_text('{"type": "assign"}\n', encoding="utf-8")
+        error = PermissionError("canonical activity log is not readable")
+        with mock.patch.object(Path, "read_text", side_effect=error):
+            with self.assertRaises(PermissionError) as legacy:
+                ai_status.load_logs()
+            self.assertIs(legacy.exception, error)
+            with self.assertRaisesRegex(ValueError, "canonical activity log is unreadable") as strict:
+                ai_status.load_logs(strict=True)
+            self.assertIs(strict.exception.__cause__, error)
+        self.assertEqual(self.log_file.read_text(encoding="utf-8"), '{"type": "assign"}\n')
+
+    def test_invalid_utf8_propagates_in_legacy_mode_and_fails_closed_in_strict_mode(self) -> None:
+        content = b'{"type": "assign"}\n\xff\n'
+        self.log_file.write_bytes(content)
+        with self.assertRaises(UnicodeDecodeError):
+            ai_status.load_logs()
+        with self.assertRaisesRegex(ValueError, "canonical activity log is unreadable") as strict:
+            ai_status.load_logs(strict=True)
+        self.assertIsInstance(strict.exception.__cause__, UnicodeDecodeError)
+        self.assertEqual(self.log_file.read_bytes(), content)
+
+
 class AssignOptionalPinCorrectionTests(unittest.TestCase):
     TASK_ID = "ODP-G2-SCORING-READBACK-261025"
     VERIFICATION_DECLARATIONS = [
