@@ -142,6 +142,15 @@ resource "terraform_data" "production_contract" {
       )
       error_message = "Production storage retention is below the one-year artifact/snapshot and seven-year audit baselines."
     }
+
+    precondition {
+      condition = !local.is_prod || (
+        length(var.monitoring_notification_emails) + length(var.monitoring_notification_channel_ids) > 0
+        && length(var.monitoring_api_uptime_host) > 0
+        && var.monitoring_cloud_sql_max_connections != null
+      )
+      error_message = "Production monitoring requires at least one alert notification target, a reachable API uptime host, and the Cloud SQL max_connections used for saturation alerts."
+    }
   }
 }
 
@@ -341,5 +350,24 @@ check "production_forbidden_values" {
       && !can(regex(local.forbidden_production_value_pattern, value))
     ])
     error_message = "Production inputs cannot be empty or contain mock, fixture, synthetic, seed, memory, SQLite, local, stub, replay, sandbox, development, latest, placeholder, example, or TODO markers."
+  }
+}
+
+check "production_monitoring_contract" {
+  assert {
+    condition = !local.is_prod || (
+      length(var.monitoring_notification_emails) + length(var.monitoring_notification_channel_ids) > 0
+    )
+    error_message = "Production alert policies require at least one notification email or existing notification channel id."
+  }
+
+  assert {
+    condition     = !local.is_prod || length(var.monitoring_api_uptime_host) > 0
+    error_message = "Production requires an API uptime check host reachable by Cloud Monitoring uptime checkers."
+  }
+
+  assert {
+    condition     = !local.is_prod || var.monitoring_cloud_sql_max_connections != null
+    error_message = "Production requires monitoring_cloud_sql_max_connections for the Cloud SQL connection saturation alert."
   }
 }

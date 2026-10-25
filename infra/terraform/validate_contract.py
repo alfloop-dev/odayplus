@@ -22,6 +22,7 @@ REQUIRED_FILES = {
     "kms.tf",
     "main.tf",
     "messaging.tf",
+    "monitoring.tf",
     "network.tf",
     "outputs.tf",
     "storage.tf",
@@ -58,6 +59,7 @@ REQUIRED_TOKENS = {
         "ODP_IDENTITY_TOKEN_SIGNING_KEY",
         "ODP_WEB_BASE_URL",
         "ODP_WEB_OIDC_CLIENT_ID",
+        '"monitoring.googleapis.com"',
     },
     "checks.tf": {
         'resource "terraform_data" "production_contract"',
@@ -66,6 +68,11 @@ REQUIRED_TOKENS = {
         'check "production_identity_contract"',
         'check "production_model_runtime_contract"',
         'check "production_forbidden_values"',
+        'check "production_monitoring_contract"',
+        "var.monitoring_notification_emails",
+        "var.monitoring_notification_channel_ids",
+        "var.monitoring_api_uptime_host",
+        "var.monitoring_cloud_sql_max_connections",
         "@sha256:[0-9a-f]{64}$",
         "allUsers",
         "allAuthenticatedUsers",
@@ -81,6 +88,30 @@ REQUIRED_TOKENS = {
         'resource "google_sql_user" "app"',
         'resource "google_secret_manager_secret_version" "database_url"',
         "module.runtime_foundation.cloud_sql_instance_name",
+    },
+    "monitoring.tf": {
+        'resource "google_monitoring_notification_channel" "email"',
+        'resource "google_monitoring_uptime_check_config" "web_login"',
+        'resource "google_monitoring_uptime_check_config" "api_health"',
+        'resource "google_monitoring_alert_policy" "uptime_failure"',
+        'resource "google_monitoring_alert_policy" "cloud_run_5xx_ratio"',
+        'resource "google_monitoring_alert_policy" "api_latency_p95"',
+        'resource "google_monitoring_alert_policy" "cloud_run_job_failed"',
+        'resource "google_monitoring_alert_policy" "cloud_sql_saturation"',
+        'path           = "/login"',
+        'path           = "/platform/health"',
+        'type = "OIDC_TOKEN"',
+        "monitoring_api_latency_p95_threshold_ms = 3000",
+        "monitoring_5xx_ratio_threshold = 0.05",
+        "run.googleapis.com/request_count",
+        "run.googleapis.com/request_latencies",
+        "run.googleapis.com/job/completed_execution_count",
+        "cloudsql.googleapis.com/database/cpu/utilization",
+        "cloudsql.googleapis.com/database/disk/utilization",
+        "cloudsql.googleapis.com/database/postgresql/num_backends",
+        "monitoring.googleapis.com/uptime_check/check_passed",
+        "notification_channels = local.monitoring_notification_channels",
+        "var.monitoring_notification_channel_ids",
     },
     "network.tf": {
         'module "runtime_foundation"',
@@ -280,6 +311,8 @@ def validate(root: Path = ROOT) -> list[str]:
         network = texts.get("network.tf", "")
         errors.extend(validate_egress_contract(network, source_name="network.tf"))
 
+    errors.extend(validate_monitoring_contract(texts))
+
     if not re.search(
         r'ODP_PERSISTENCE\s*=\s*"postgresql"',
         texts.get("main.tf", ""),
@@ -297,6 +330,43 @@ def validate(root: Path = ROOT) -> list[str]:
     if "is_locked        = var.lock_retention_policy" not in texts.get("audit/main.tf", ""):
         errors.append("audit retention lock is not environment-controlled")
 
+    return errors
+
+
+EMAIL_LITERAL = re.compile(r"[A-Za-z0-9._%+-]+@(?!gcp-sa-)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
+
+
+def validate_monitoring_contract(texts: dict[str, str]) -> list[str]:
+    """Alert routing comes from variables, every policy routes to it, and prod fails closed."""
+    errors: list[str] = []
+    monitoring = texts.get("monitoring.tf", "")
+    if EMAIL_LITERAL.search(monitoring):
+        errors.append("monitoring.tf must not hard-code notification email addresses")
+
+    policies = re.findall(
+        r'resource\s+"google_monitoring_alert_policy"\s+"([^"]+)"\s*\{(?P<body>.*?)\n\}',
+        monitoring,
+        re.DOTALL,
+    )
+    for name, body in policies:
+        if "notification_channels = local.monitoring_notification_channels" not in body:
+            errors.append(f"monitoring.tf: alert policy {name!r} must route to local.monitoring_notification_channels")
+
+    variables = texts.get("variables.tf", "")
+    for name in ("monitoring_notification_emails", "monitoring_notification_channel_ids"):
+        match = re.search(rf'variable\s+"{name}"\s*\{{(?P<body>.*?)\n\}}', variables, re.DOTALL)
+        if not match:
+            errors.append(f"variables.tf: missing variable {name!r}")
+        elif not re.search(r"default\s*=\s*\[\]", match.group("body")):
+            errors.append(f"variables.tf: {name} must default to an empty set, not a hard-coded target")
+
+    # Only the lifecycle precondition blocks a plan; check blocks merely warn.
+    contract = texts.get("checks.tf", "").split("\ncheck ", 1)[0]
+    if not re.search(
+        r"!local\.is_prod \|\| \(\s*length\(var\.monitoring_notification_emails\) \+ length\(var\.monitoring_notification_channel_ids\) > 0",
+        contract,
+    ):
+        errors.append("checks.tf: production must fail closed without an alert notification target")
     return errors
 
 
