@@ -15,6 +15,10 @@ const caseSummary = () => ({ match_case_id: id(20), intake_id: id(1), intake_ver
     property_id: id(22), listing_id: null, rank: 1, confidence: "0.9000", observed_property_version: 2, observed_listing_version: null }] });
 const resolution = () => ({ listing_id: id(51), listing_version: 14, lifecycle_state: "ACTIVE", current_revision_id: id(52),
   property_id_at_creation: id(41), effective_property_id: id(42), property_version: 12 });
+const workflow = () => ({ assignment_id: id(61), assignment_version: 2, assignment_status: "UNASSIGNED", owner_subject_id: null,
+  owner_role: null, queue_key: "existing-synthetic-queue", sla_instance_id: id(62), sla_version: 3, sla_state: "ON_TRACK",
+  policy_version: "existing-policy-v1", calendar_version: "existing-calendar-v1", started_at: "2026-10-15T08:00:00Z",
+  due_soon_at: "2026-10-15T09:00:00Z", due_at: "2026-10-15T10:00:00Z", breach_at: "2026-10-15T11:00:00Z" });
 function context(...responses: Response[]) {
   const fetchImpl = vi.fn<typeof fetch>(); responses.forEach((response) => fetchImpl.mockResolvedValueOnce(response));
   const value: CanonicalIntakeReadContext = { fetchImpl, contextKey: "synthetic-A", headers: { "X-Operator-Role": "expansion-manager" } };
@@ -22,6 +26,25 @@ function context(...responses: Response[]) {
 }
 
 describe("canonical Intake read transport", () => {
+  it.each([undefined, null, workflow()])("accepts only the supplied optional workflow facts: %j", async (saved) => {
+    const { value, signal } = context(json({ ...summary(), workflow: saved }), json(caseSummary()));
+    expect((await readCanonicalIntakeCase(value, id(1), signal)).intake.workflow).toEqual(saved);
+  });
+
+  it.each([
+    { assignment_id: "ASG-legacy" }, { assignment_version: 0 }, { assignment_status: "INVENTED" }, { assignment_status: ["ASSIGNED"] },
+    { owner_subject_id: "unknown" }, { owner_role: 7 }, { queue_key: " " },
+    { sla_instance_id: null }, { sla_version: 1.5 }, { sla_state: "INVENTED" }, { sla_state: ["ON_TRACK"] },
+    { policy_version: "" }, { calendar_version: " " }, { due_soon_at: null },
+    { started_at: "2026-10-15T08:00:00" }, { due_at: "2026-10-15T10:00:00" },
+    { due_soon_at: "2026-10-15T07:00:00Z" }, { due_at: "2026-10-15T08:30:00Z" },
+    { breach_at: "2026-10-15T09:30:00Z" },
+  ])("refuses malformed saved workflow before fetching another resource: %j", async (change) => {
+    const { value, signal, fetchImpl } = context(json({ ...summary(), workflow: { ...workflow(), ...change } }), json(caseSummary()));
+    await expect(readCanonicalIntakeCase(value, id(1), signal)).rejects.toMatchObject({ code: "CANONICAL_RESPONSE_INVALID" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it.each([{ match_case_id: id(99) }, { version: 3 }, { intake_version: 4 }])("refuses an append receipt outside its captured case and versions: %j", async (change) => {
     const receipt = { intake_id: id(1), intake_version: 3, match_case_id: id(20), version: 2,
       status: "PENDING_REVIEW", audit_event_id: id(80), correlation_id: id(81), candidate_ids: [id(83)] };

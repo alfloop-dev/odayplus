@@ -1,6 +1,6 @@
 import type {
   CanonicalIdentityPlanningContext, CanonicalIdentityReceipt, CanonicalIdentitySummary,
-  CanonicalIntakeAssistedEntryRequestReceipt, CanonicalIntakeDetail, CanonicalIntakePage, CanonicalIntakeReceipt, CanonicalIntakeSummary,
+  CanonicalIntakeAssistedEntryRequestReceipt, CanonicalIntakeDetail, CanonicalIntakePage, CanonicalIntakeReceipt, CanonicalIntakeSummary, CanonicalIntakeWorkflow,
   CanonicalMatchCasePropertyPage, CreateMatchCaseRequest, MatchCaseReceipt,
   DuplicateProposal, IdentityReviewRequest, ListingConfirmation, MatchCaseSummary, MergeProposal, NativeAssistedEntryCommand, SplitProposal, SubmitCanonicalIntakeRequest,
 } from "@oday-plus/openapi-client";
@@ -65,10 +65,27 @@ function persistedFields(v: unknown): boolean {
     && new Set(v.map((field) => field.field_path)).size === v.length;
 }
 
+function workflow(v: unknown): v is CanonicalIntakeWorkflow {
+  if (!object(v)) return false;
+  return uuid(v.assignment_id) && version(v.assignment_version)
+    && typeof v.assignment_status === "string"
+    && ["UNASSIGNED", "ASSIGNED", "CLAIMED", "TRANSFERRED", "ESCALATED", "COMPLETED"].includes(v.assignment_status)
+    && nullableUuid(v.owner_subject_id) && (v.owner_role === null || text(v.owner_role)) && text(v.queue_key)
+    && uuid(v.sla_instance_id) && version(v.sla_version)
+    && typeof v.sla_state === "string"
+    && ["ON_TRACK", "DUE_SOON", "OVERDUE", "BREACHED", "COMPLETED", "PAUSED"].includes(v.sla_state)
+    && text(v.policy_version) && text(v.calendar_version)
+    && timestamp(v.started_at) && timestamp(v.due_soon_at) && timestamp(v.due_at) && timestamp(v.breach_at)
+    && Date.parse(v.started_at) <= Date.parse(v.due_soon_at) && Date.parse(v.due_soon_at) <= Date.parse(v.due_at)
+    && Date.parse(v.due_at) <= Date.parse(v.breach_at);
+}
+
 function detail(v: unknown): v is CanonicalIntakeDetail {
   if (!object(v)) return false;
   const result = v.resolution;
-  return intake(v) && (result === undefined || result === null || object(result)
+  const savedWorkflow = v.workflow;
+  return intake(v) && (savedWorkflow === undefined || savedWorkflow === null || workflow(savedWorkflow))
+    && (result === undefined || result === null || object(result)
     && uuid(result.listing_id) && version(result.listing_version) && nullableUuid(result.current_revision_id)
     && ["ACTIVE", "REMOVED", "EXPIRED", "STALE", "QUARANTINED", "ARCHIVED"].includes(String(result.lifecycle_state))
     && uuid(result.property_id_at_creation) && uuid(result.effective_property_id) && version(result.property_version)

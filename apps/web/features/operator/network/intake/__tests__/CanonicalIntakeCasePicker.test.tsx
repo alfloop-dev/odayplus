@@ -29,6 +29,32 @@ const select = (n: number) => fireEvent.click(screen.getByRole("button", { name:
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("native Intake and case selection", () => {
+  it("shows fresh persisted assignment and SLA before a match case exists without exposing unconnected actions", async () => {
+    const parent = { ...intake(1), processing_state: "SUBMITTED", workflow: {
+      assignment_id: id(61), assignment_version: 2, assignment_status: "UNASSIGNED", owner_subject_id: null, owner_role: null,
+      queue_key: "existing-synthetic-queue", sla_instance_id: id(62), sla_version: 3, sla_state: "ON_TRACK",
+      policy_version: "existing-policy-v1", calendar_version: "existing-calendar-v1", started_at: "2000-01-01T08:00:00Z",
+      due_soon_at: "2000-01-01T09:00:00Z", due_at: "2000-01-01T10:00:00Z", breach_at: "2000-01-01T11:00:00Z",
+    } };
+    const context = makeContext((path) => path.startsWith("/api/v1/canonical-intakes?") ? json({ items: [parent], next_cursor: null })
+      : path.endsWith("/match-case") ? json({ detail: "CANONICAL_MATCH_CASE_NOT_FOUND" }, 404) : json(parent));
+    const view = render(<CanonicalIntakeCasePicker context={context} />); open();
+    await screen.findByRole("button", { name: new RegExp(id(1)) }); select(1);
+    const summary = await screen.findByTestId("assignment-sla-summary");
+    expect(summary).toHaveTextContent("尚未指派");
+    expect(summary).toHaveTextContent("existing-synthetic-queue");
+    expect(within(summary).getByTestId("asg-sla-status")).toHaveTextContent("正常 (On Track)");
+    expect(summary).not.toHaveTextContent(id(61));
+    expect(summary).not.toHaveTextContent(id(62));
+    expect(within(summary).queryByRole("button")).not.toBeInTheDocument();
+    expect(summary).not.toHaveTextContent("RESOURCE_VERSION_UNAVAILABLE");
+    expect(posts(context)).toHaveLength(0);
+    expect(screen.getByText("這筆收件目前沒有比對案件。")).toBeVisible();
+    view.rerender(<CanonicalIntakeCasePicker context={{ ...context, contextKey: "B" }} />);
+    expect(screen.queryByTestId("assignment-sla-summary")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("appends observed manual roots to the original case, retries the captured versions, and requires fresh read before a plan", async () => {
     const original = matchCase(1);
     const properties = [41, 42].map((n) => ({ property_id: id(n), version: n - 39,

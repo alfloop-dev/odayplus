@@ -12,6 +12,7 @@ import { AddListingFromUrlDialog } from "./AddListingFromUrlDialog";
 import { AssistedEntryForm } from "./AssistedEntryForm";
 import { useCanonicalIntakeCommand } from "./useCanonicalIntakeCommand";
 import { CanonicalMatchCaseCreation } from "./CanonicalMatchCaseCreation";
+import { AssignmentSlaSummary } from "./AssignmentSlaSummary";
 import styles from "./intake.module.css";
 
 type Load<T> = { status: "loading" } | { status: "ready"; value: T } | { status: "error"; error: unknown };
@@ -104,6 +105,16 @@ function SelectionDialog({ context, onClose }: { context: CanonicalIntakeReadCon
           {detail.status === "loading" ? <p role="status">正在讀取所選收件與案件…</p> : detail.status === "error" ? <ReadFailure error={detail.error} /> : (
             <>
               <p>收件 {detail.value.intake.intake_id} · 版本 {detail.value.intake.version} · {CANONICAL_INTAKE_STAGE_LABEL[detail.value.intake.processing_state]}</p>
+              {detail.value.intake.workflow ? <AssignmentSlaSummary record={{
+                owner: null, ownerSubjectId: detail.value.intake.workflow.owner_subject_id,
+                assignedQueue: detail.value.intake.workflow.queue_key,
+                assignmentId: detail.value.intake.workflow.assignment_id,
+                assignmentStatus: detail.value.intake.workflow.assignment_status,
+                slaInstanceId: detail.value.intake.workflow.sla_instance_id,
+                slaState: detail.value.intake.workflow.sla_state, dueAt: detail.value.intake.workflow.due_at,
+              }} assignmentResourceVersion={detail.value.intake.workflow.assignment_version}
+                slaResourceVersion={detail.value.intake.workflow.sla_version} />
+                : <p>尚無可讀取的指派與 SLA 資料。</p>}
               {detail.value.intake.resolution ? <section aria-label="已落庫物件" className={styles.noteBox}>
                 <p>物件 {detail.value.intake.resolution.listing_id} · 版本 {detail.value.intake.resolution.listing_version} · {detail.value.intake.resolution.lifecycle_state}</p>
                 <p>目前主體 {detail.value.intake.resolution.effective_property_id} · 版本 {detail.value.intake.resolution.property_version}</p>
