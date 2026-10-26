@@ -44,7 +44,15 @@ def test_dry_run_record_cannot_claim_staging_verified() -> None:
     assert "staging-verified" not in json.dumps(record)
 
 
-def test_source_manifest_placeholder_digests_are_explicit_blocker() -> None:
+def test_source_manifest_placeholder_digests_match_recorded_blocker_state() -> None:
+    """The record must track the composed source manifest, not a stale one.
+
+    Composing origin/dev brought in a dev Runtime Release manifest whose
+    digests are real Artifact Registry references.  The record may therefore
+    mark B1 as resolved, but only at the dev layer: it must still describe the
+    exact manifest it read and keep the superseded placeholder record for
+    audit, so the previous 11-placeholder state cannot silently disappear.
+    """
     manifest, errors = load_manifest(MANIFEST_PATH)
     assert errors == []
     assert manifest is not None
@@ -61,9 +69,31 @@ def test_source_manifest_placeholder_digests_are_explicit_blocker() -> None:
 
     placeholder_values = [value for value in digest_values if is_placeholder_digest(value)]
     record = json.loads(DRY_RUN_PATH.read_text(encoding="utf-8"))
-    assert len(placeholder_values) == record["release_manifest"]["placeholder_digest_count"]
-    assert len(placeholder_values) == 11
-    assert any(blocker["id"] == "B1" for blocker in record["blockers"])
+    recorded = record["release_manifest"]
+    assert len(placeholder_values) == recorded["placeholder_digest_count"]
+    assert recorded["manifest_digest"] == manifest["manifest_digest"]
+    assert recorded["candidate_sha"] == manifest["candidate_sha"]
+    assert recorded["release_id"] == manifest["release_id"]
+    assert recorded["superseded_record"]["placeholder_digest_count"] == 11
+
+    blockers = {blocker["id"]: blocker for blocker in record["blockers"]}
+    if placeholder_values:
+        assert blockers["B1"].get("status", "open") == "open"
+    else:
+        assert blockers["B1"]["status"] == "resolved_at_dev_layer"
+    for component in manifest["components"].values():
+        assert "ghcr.io" not in component["image"]
+
+
+def test_resolved_dev_layer_blockers_do_not_admit_staging() -> None:
+    record = json.loads(DRY_RUN_PATH.read_text(encoding="utf-8"))
+    statuses = {blocker["id"]: blocker.get("status", "open") for blocker in record["blockers"]}
+    allowed = {"open", "partially_resolved", "resolved_at_dev_layer"}
+    assert set(statuses.values()) <= allowed
+    assert any(status != "resolved_at_dev_layer" for status in statuses.values())
+    assert record["evidence_status"] == "blocked"
+    assert record["latest_recheck"]["deployment_observed"] is False
+    assert record["latest_recheck"]["apply_or_deploy_attempted"] is False
 
 
 def test_placeholder_predicate_rejects_shape_valid_fixture_digests() -> None:

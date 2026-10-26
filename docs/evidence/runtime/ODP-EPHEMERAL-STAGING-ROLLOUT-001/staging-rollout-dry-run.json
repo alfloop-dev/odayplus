@@ -36,7 +36,10 @@
     ],
     "artifact_registry": {
       "repository": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev",
-      "packages_observed": ["oday-data-platform", "oday-mlflow"],
+      "packages_observed": [
+        "oday-data-platform",
+        "oday-mlflow"
+      ],
       "application_image_handoff_observed": false,
       "data_platform_image_digests_observed": [
         "sha256:0c97ba05aeaa7763786a3297d825d2fbc8ee8515ac82fcaabc69e302fc057593",
@@ -51,13 +54,18 @@
       "cloud_kms_api_enabled": true,
       "cloud_kms_key_observed": true,
       "cloud_kms_key": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-runtime/cryptoKeys/runtime",
-      "cloud_sql_instances": ["oday-dev-sql", "oday-staging-sql"],
+      "cloud_sql_instances": [
+        "oday-dev-sql",
+        "oday-staging-sql"
+      ],
       "staging_cloud_sql_state": "RUNNABLE",
       "staging_cloud_sql_private_ip_observed": true,
       "staging_database_observed": "oday",
       "staging_database_user_observed": "oday_app",
       "isolated_staging_cloud_sql_instance_observed": true,
-      "cloud_run_services": ["oday-mlflow"],
+      "cloud_run_services": [
+        "oday-mlflow"
+      ],
       "staging_cloud_run_services_observed": false,
       "cloud_scheduler_jobs": [],
       "staging_scheduler_observed": false,
@@ -93,7 +101,10 @@
       "release_lease_public_key_observed": false,
       "release_lease_state_dir_observed": false,
       "secret_names_observed": [],
-      "registered_workflows_observed": ["Deploy Dev", "Deploy/Verify Staging"],
+      "registered_workflows_observed": [
+        "Deploy Dev",
+        "Deploy/Verify Staging"
+      ],
       "missing_runtime_release_variables": [
         "MLFLOW_TRACKING_URI",
         "ODP_AUTH_AUDIENCES",
@@ -121,42 +132,82 @@
     }
   },
   "latest_recheck": {
-    "recorded_at": "2026-08-26T01:18:58Z",
-    "origin_dev_sha": "8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3",
-    "registered_workflows_observed": ["Deploy Dev", "Deploy/Verify Staging"],
-    "runtime_release_workflow_registered": false,
-    "missing_runtime_release_variables_unchanged": true,
+    "recorded_at": "2026-10-26T03:58:00Z",
+    "recorded_by": "Antigravity3",
+    "origin_dev_sha": "09ede4db62d7706e492e66c227f7f1446bb60be7",
+    "trigger": "base composition of origin/dev into the task branch",
+    "registered_workflows_observed": [
+      "Deploy Dev",
+      "Deploy/Verify Staging"
+    ],
+    "registered_workflow_note": "GitHub lists .github/workflows/deploy-dev.yml under the display name 'Deploy Dev'; the file is named 'Runtime Release' and accepts environment=staging.",
+    "staging_environment_variable_count": 51,
+    "staging_environment_lease_variables_present": [
+      "ODP_RELEASE_LEASE_PUBLIC_KEY",
+      "ODP_RELEASE_LEASE_STATE_URI"
+    ],
+    "staging_environment_required_reviewers": 2,
     "secret_names_observed": [],
-    "artifact_registry_packages_observed": ["oday-data-platform", "oday-mlflow"],
-    "cloud_run_services_observed": ["oday-mlflow"],
-    "staging_snapshot_bucket_objects_observed": false,
-    "staging_scheduler_jobs_observed": [],
-    "staging_namespace_workloads_observed": false,
+    "last_staging_workflow_run": {
+      "workflow": "Deploy/Verify Staging",
+      "created_at": "2026-08-07T12:25:19Z",
+      "conclusion": "failure",
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/31178110763"
+    },
+    "recent_dev_runtime_release_runs": [
+      {
+        "run_id": 40260645830,
+        "head_sha": "fa93da27291b8d1cb09a2ff6ae0443f9d3b53b84",
+        "status": "completed",
+        "conclusion": "failure",
+        "failed_step": "Deploy Cloud Run by immutable digest",
+        "failure": "migration Cloud Run Job failed; deployment stopped"
+      },
+      {
+        "run_id": 40265674132,
+        "head_sha": "09ede4db62d7706e492e66c227f7f1446bb60be7",
+        "status": "in_progress",
+        "conclusion": null
+      }
+    ],
+    "gcp_readback_performed": false,
+    "gcp_readback_blocker": "local gcloud credentials require interactive reauthentication; not bypassed",
     "deployment_observed": false,
     "apply_or_deploy_attempted": false
   },
   "release_manifest": {
     "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
-    "release_id": "odp-20260730-001",
-    "candidate_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
-    "current_origin_dev_sha": "8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3",
-    "manifest_digest": "sha256:23a6d45acc00d10540bd536574a2f0da85bce1bb583f55d997c03b597411b271",
+    "release_id": "odp-6140d0ef633c",
+    "candidate_sha": "6140d0ef633cbf94522c171d9927103ab200257f",
+    "created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@6140d0ef633cbf94522c171d9927103ab200257f",
+    "release_status": "ready",
+    "current_origin_dev_sha": "09ede4db62d7706e492e66c227f7f1446bb60be7",
+    "manifest_digest": "sha256:d286dd009978a5b9aaa9ee9fc01d1c1be1d8b846855539be63b18504ad368108",
     "manifest_digest_recomputes": true,
-    "placeholder_digest_count": 11,
-    "placeholder_digest_fields": [
-      "components.api.image",
-      "components.web.image",
-      "components.data_platform.image",
-      "components.migration.image",
-      "components.worker.image",
-      "components.scheduler.image",
-      "migration_digest",
-      "data_contract_digest",
-      "source_policy_digest",
-      "sbom_refs[0]",
-      "signature_refs[0]"
-    ],
-    "candidate_is_current_dev": false
+    "placeholder_digest_count": 0,
+    "placeholder_digest_fields": [],
+    "candidate_is_current_dev": false,
+    "admission_scope_note": "Manifest digests come from the dev Runtime Release build handoff; they are dev-admitted artifacts only and are not staging admission or staging deployment proof.",
+    "superseded_record": {
+      "recorded_at": "2026-08-26T01:18:58Z",
+      "release_id": "odp-20260730-001",
+      "candidate_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+      "manifest_digest": "sha256:23a6d45acc00d10540bd536574a2f0da85bce1bb583f55d997c03b597411b271",
+      "placeholder_digest_count": 11,
+      "placeholder_digest_fields": [
+        "components.api.image",
+        "components.web.image",
+        "components.data_platform.image",
+        "components.migration.image",
+        "components.worker.image",
+        "components.scheduler.image",
+        "migration_digest",
+        "data_contract_digest",
+        "source_policy_digest",
+        "sbom_refs[0]",
+        "signature_refs[0]"
+      ]
+    }
   },
   "deployment_path": {
     "workflow": ".github/workflows/deploy-dev.yml",
@@ -176,37 +227,63 @@
       "id": "B1",
       "severity": "blocking",
       "summary": "The source release manifest contains placeholder digests.",
-      "required_action": "Build and sign the release once, then record the Artifact Registry digests returned by gcloud artifacts docker images describe."
+      "required_action": "Build and sign the release once, then record the Artifact Registry digests returned by gcloud artifacts docker images describe.",
+      "status": "resolved_at_dev_layer",
+      "status_note": "Composed origin/dev 09ede4db RELEASE_MANIFEST.json carries 0 placeholder digests (release odp-6140d0ef633c, built by deploy-dev.yml). This removes the placeholder blocker for the source manifest only; no staging digest admission is implied.",
+      "status_recorded_at": "2026-10-26T03:58:00Z"
     },
     {
       "id": "B2",
       "severity": "blocking",
       "summary": "The prior evidence used ghcr.io references, but this repository deploys from Google Artifact Registry.",
-      "required_action": "Regenerate every deployment and receipt reference from the actual Runtime Release handoff."
+      "required_action": "Regenerate every deployment and receipt reference from the actual Runtime Release handoff.",
+      "status": "resolved_at_dev_layer",
+      "status_note": "Composed manifest references only asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/...@sha256 images; no ghcr.io references remain.",
+      "status_recorded_at": "2026-10-26T03:58:00Z"
     },
     {
       "id": "B3",
       "severity": "blocking",
       "summary": "The source manifest candidate is stale and does not identify the current dev release.",
-      "required_action": "Create a new release manifest for the current candidate after a successful build."
+      "required_action": "Create a new release manifest for the current candidate after a successful build.",
+      "status": "open",
+      "status_note": "Manifest candidate 6140d0ef633cbf94522c171d9927103ab200257f is not the current origin/dev head 09ede4db62d7706e492e66c227f7f1446bb60be7, and every Runtime Release dev run observed on 2026-10-25/26 failed at the migration Cloud Run Job (see B7). A staging candidate must be the one admitted by a successful dev run.",
+      "status_recorded_at": "2026-10-26T03:58:00Z"
     },
     {
       "id": "B4",
       "severity": "blocking",
       "summary": "Runtime Release is not registered in GitHub Actions, and no successful staging workflow dispatch or remote staging proof was found for this task.",
-      "required_action": "Human/Ops must publish the origin/dev Runtime Release workflow, provide protected runtime variables, lease authority, and approval authority, then dispatch it with environment=staging."
+      "required_action": "Human/Ops must publish the origin/dev Runtime Release workflow, provide protected runtime variables, lease authority, and approval authority, then dispatch it with environment=staging.",
+      "status": "partially_resolved",
+      "status_note": "GitHub staging environment now exposes 51 variables, including ODP_RELEASE_LEASE_PUBLIC_KEY, ODP_RELEASE_LEASE_STATE_URI and ODP_STAGING_* foundation/Cloud Run variables, and keeps 2 required reviewers. No staging dispatch of Runtime Release has been observed (last 'Deploy/Verify Staging' run 2026-08-07, failure). Staging admission still needs a Supervisor lease and human environment approval.",
+      "status_recorded_at": "2026-10-26T03:58:00Z"
     },
     {
       "id": "B5",
       "severity": "blocking",
       "summary": "The staging foundation is only partial: KMS, private RUNNABLE staging SQL, the snapshot bucket, namespace default-deny egress policy, and KSA/GSA workload identity binding are observed, but the bucket is empty and release-scoped snapshot/database/tenant/IAM ownership, application workloads, Cloud Run services, Scheduler jobs, and TTL are not.",
-      "required_action": "Complete the dependent staging bootstrap/IAC and masked snapshot materialization, then provide redacted readback for release-scoped bucket/database/tenant/IAM ownership, Cloud Run services, paused Scheduler jobs, and TTL before application deploy."
+      "required_action": "Complete the dependent staging bootstrap/IAC and masked snapshot materialization, then provide redacted readback for release-scoped bucket/database/tenant/IAM ownership, Cloud Run services, paused Scheduler jobs, and TTL before application deploy.",
+      "status": "open",
+      "status_note": "Not re-read this run: local gcloud credentials require interactive reauthentication, so no GCP readback was performed and the 2026-08-26 foundation readback is not refreshed.",
+      "status_recorded_at": "2026-10-26T03:58:00Z"
     },
     {
       "id": "B6",
       "severity": "blocking",
       "summary": "Only data-platform and mlflow artifacts are present in the configured Artifact Registry; the four ODay Plus application image handoff digests were not observed.",
-      "required_action": "Run one authoritative Runtime Release build/sign handoff for the exact candidate and use its Artifact Registry API/Web/Worker/Scheduler digests; do not build per environment or hand-write references."
+      "required_action": "Run one authoritative Runtime Release build/sign handoff for the exact candidate and use its Artifact Registry API/Web/Worker/Scheduler digests; do not build per environment or hand-write references.",
+      "status": "resolved_at_dev_layer",
+      "status_note": "Composed manifest records api/web/worker/scheduler/migration Artifact Registry digests from the dev build handoff.",
+      "status_recorded_at": "2026-10-26T03:58:00Z"
+    },
+    {
+      "id": "B7",
+      "severity": "blocking",
+      "status": "open",
+      "status_recorded_at": "2026-10-26T03:58:00Z",
+      "summary": "Runtime Release dev deploys are failing: runs 40234550449, 40238065702, 40242673217 and 40260645830 (2026-10-25T21:14Z to 2026-10-26T02:45Z) concluded failure; run 40260645830 failed in 'Deploy Cloud Run by immutable digest' because the migration Cloud Run Job execution failed, after which the recorded API/Web traffic split was restored. Run 40265674132 for origin/dev 09ede4db was still in progress at readback time.",
+      "required_action": "Restore a successful dev Runtime Release (migration job included) for the candidate that staging will promote by identical digest before dispatching environment=staging."
     }
   ],
   "desired_state_not_observed": {
@@ -246,6 +323,6 @@
     "terraform -chdir=infra/terraform/modules/ephemeral_staging validate"
   ],
   "secret_values_redacted": true,
-  "recorded_at": "2026-08-26T01:18:58Z",
-  "recorded_by": "Codex"
+  "recorded_at": "2026-10-26T03:58:00Z",
+  "recorded_by": "Antigravity3"
 }

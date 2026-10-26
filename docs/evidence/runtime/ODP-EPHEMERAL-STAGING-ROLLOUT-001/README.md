@@ -29,6 +29,39 @@
 - 處置：已把 `DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` 加進本 task 的 `depends_on`，用來停止空轉重派。等它 done、`gate-2` 有綁定 candidate 的 receipt，再由 Human/Ops 以 staging 為目標登記 lease request，才能開始 rehearsal。
 - 在那之前，本目錄仍然沒有 `staging-verified` 收據。
 
+## 2026-10-26 base composition 重查（Antigravity3）
+
+本輪把 `origin/dev`（`09ede4db62d7706e492e66c227f7f1446bb60be7`）以一般 merge 合入 task branch（未 reset、未 force），只解了 `docs/audits/code-boundary-inventory.csv` 與 `tests/release/test_release_manifest.py` 兩處衝突（兩邊內容都保留）。依賴清單已改為 core-ops release profile 路線，`DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` 不再是本 task 的依賴，所列依賴全部 done。
+
+合入後 `docs/evidence/gates/RELEASE_MANIFEST.json` 已是 dev Runtime Release 產出的真實 manifest（release `odp-6140d0ef633c`、candidate `6140d0ef633cbf94522c171d9927103ab200257f`、manifest `sha256:d286dd00…8108`，0 個 placeholder digest，self-hash 可重算）。所以 [`staging-rollout-dry-run.json`](staging-rollout-dry-run.json) 的 `release_manifest` 已改成讀這份 manifest，舊的 11-placeholder 紀錄移到 `superseded_record`。各 blocker 都加上 `status`：
+
+| Blocker | 狀態 | 說明 |
+|---|---|---|
+| B1 placeholder digest | `resolved_at_dev_layer` | 只代表 source manifest 不再是 fixture，不代表 staging 已准入。 |
+| B2 registry provenance | `resolved_at_dev_layer` | manifest 只引用 `asia-east1-docker.pkg.dev/.../oday-plus-dev/...@sha256`。 |
+| B3 candidate stale | `open` | candidate 不是目前 dev head，而且最近的 dev run 都失敗（見 B7）。 |
+| B4 staging workflow / authority | `partially_resolved` | staging environment 現有 51 個 variables（含 `ODP_RELEASE_LEASE_PUBLIC_KEY`、`ODP_RELEASE_LEASE_STATE_URI`、`ODP_STAGING_*`），仍有 2 位 required reviewers；從沒觀測到 `environment=staging` 的 Runtime Release dispatch。 |
+| B5 staging foundation | `open` | 本機 gcloud 憑證要互動式重新登入，所以本輪沒有做 GCP readback，也沒有繞過。 |
+| B6 app image handoff | `resolved_at_dev_layer` | manifest 已有 api/web/worker/scheduler/migration digests。 |
+| B7（新）dev Runtime Release 失敗 | `open` | 2026-10-25T21:14Z 到 2026-10-26T02:45Z 的 4 次 dev run 都失敗；run `40260645830` 停在 `Deploy Cloud Run by immutable digest`，因為 migration Cloud Run Job 執行失敗，之後已還原 traffic。origin/dev `09ede4db` 的 run `40265674132` 在 readback 時還在跑。 |
+
+結論不變：還沒有任何 staging 部署、migration、E2E、job、backup/restore 或 rollback 被觀測到，本目錄仍不能有 `staging-verified` 收據。要開始真正的 rehearsal，必須先有成功的 dev Runtime Release（含 migration），再由 Human/Ops 登記 staging lease 並核准 `environment=staging` dispatch。
+
+本輪驗證：
+
+```text
+git merge --no-ff origin/dev   # 解兩處衝突
+gh workflow list --all
+gh run list --workflow 'Deploy/Verify Staging' --limit 10
+gh run list --workflow 'Deploy Dev' --limit 5
+gh run view 40260645830 --log-failed
+gh variable list --env staging --json name
+gh secret list --env staging --json name
+gh api repos/alfloop-dev/odayplus/environments/staging
+gcloud run services list ...   # 失敗：需要互動式 reauth，未繞過
+uv run --python 3.12 pytest -q tests/ops/test_staging_rollout.py tests/release/test_release_manifest.py
+```
+
 ## Blockers 與解除條件
 
 | Blocker | 解除條件 |
