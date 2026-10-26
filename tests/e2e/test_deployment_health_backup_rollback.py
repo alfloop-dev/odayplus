@@ -759,6 +759,42 @@ def test_main_report_write_failure_preserves_failure_and_cleanup(
     assert not capsys.readouterr().out
 
 
+def test_main_report_and_stderr_failure_preserve_primary(full_drill_context, monkeypatch, capsys):
+    context = full_drill_context
+    original_run = vdr.run
+
+    def failing_run(command, **kwargs):
+        if "--build" in command:
+            raise RuntimeError("primary setup failure")
+        return original_run(command, **kwargs)
+
+    def failing_report(*args, **kwargs):
+        raise OSError("report storage unavailable")
+
+    class BrokenStderr:
+        writes = 0
+
+        def write(self, text):
+            self.writes += 1
+            raise BrokenPipeError("stderr unavailable")
+
+        def flush(self):
+            pass
+
+    monkeypatch.setattr(vdr, "run", failing_run)
+    monkeypatch.setattr(vdr, "write_report", failing_report)
+    broken_stderr = BrokenStderr()
+    with monkeypatch.context() as patch:
+        patch.setattr(vdr.sys, "stderr", broken_stderr)
+        with pytest.raises(RuntimeError, match="primary setup failure"):
+            vdr.main(context.argv)
+
+    assert broken_stderr.writes > 0
+    assert sum("down" in cmd for cmd, _, _ in context.executed_commands) == 2
+    assert not (context.diagnostics_dir / vdr.REPORT_NAME).exists()
+    assert not capsys.readouterr().out
+
+
 @pytest.mark.parametrize("keep_by_env", [False, True])
 def test_main_explicit_keep_stack_preserves_success(full_drill_context, monkeypatch, keep_by_env):
     context = full_drill_context

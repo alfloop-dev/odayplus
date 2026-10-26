@@ -335,7 +335,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             error = sanitize_text(f"DR report write failed: {exc}", secret_values=env_secrets)
             if not primary_failure:
                 raise RuntimeError(error) from exc
-            print(error, file=sys.stderr)
+            try:
+                print(error, file=sys.stderr)
+            except OSError:
+                pass  # Preserve the primary failure even if its diagnostics cannot be written.
 
     if finalization_errors:
         raise RuntimeError(report["error"])
