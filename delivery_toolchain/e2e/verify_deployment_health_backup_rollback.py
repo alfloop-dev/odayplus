@@ -273,9 +273,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             "remote_staging_rollout": "not configured because ODP_STAGING_DEPLOY_URL/host variables are placeholders",
         }
         report["result"] = "passed"
-    except Exception as exc:
+    except (Exception, KeyboardInterrupt) as exc:
         report["result"] = "failed"
-        report["error"] = sanitize_text(str(exc), secret_values=env_secrets)
+        report["error"] = sanitize_text(str(exc) or type(exc).__name__, secret_values=env_secrets)
         raise
     finally:
         run(

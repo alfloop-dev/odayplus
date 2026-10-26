@@ -674,6 +674,34 @@ def test_main_cleanup_failure_cannot_publish_passed(full_drill_context, capsys, 
     assert "cleanup-secret-12345" not in json.dumps(report)
 
 
+@pytest.mark.parametrize("stage", ["setup", "seed"])
+@pytest.mark.parametrize("returncode,timed_out", [(2, False), (124, True)])
+def test_main_cleanup_failure_preserves_keyboard_interrupt(
+    full_drill_context, monkeypatch, capsys, stage, returncode, timed_out,
+):
+    context = full_drill_context
+    context.final_cleanup.update(returncode=returncode, timed_out=timed_out)
+    original_run = vdr.run
+
+    def interrupted_run(command, **kwargs):
+        if (stage == "setup" and "--build" in command) or (
+            stage == "seed" and "delivery_toolchain/e2e/seed_product_e2e_data.py" in command
+        ):
+            raise KeyboardInterrupt
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(vdr, "run", interrupted_run)
+    with pytest.raises(KeyboardInterrupt):
+        vdr.main(context.argv)
+
+    report = json.loads((context.diagnostics_dir / vdr.REPORT_NAME).read_text())
+    assert report["result"] == "failed"
+    assert report["error"] == "KeyboardInterrupt"
+    assert report["cleanup"]["result"] == "failed"
+    assert report["report_sha256"] == vdr.sha256_json(report)
+    assert not capsys.readouterr().out
+
+
 @pytest.mark.parametrize("keep_by_env", [False, True])
 def test_main_explicit_keep_stack_preserves_success(full_drill_context, monkeypatch, keep_by_env):
     context = full_drill_context
