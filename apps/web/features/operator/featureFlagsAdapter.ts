@@ -106,7 +106,8 @@ export const DEFAULT_FEATURE_FLAGS: FeatureFlagDto[] = [
 function validScopeMetadata(flag: Record<string, unknown>): boolean {
   if (!["scope", "bindings", "configuration_version"].some((key) => key in flag)) return true;
   if (
-    !["global", "per-tenant", "per-tenant-per-source", "global-per-tenant"].includes(String(flag.scope)) ||
+    typeof flag.scope !== "string" ||
+    !["global", "per-tenant", "per-tenant-per-source", "global-per-tenant"].includes(flag.scope) ||
     !Number.isSafeInteger(flag.configuration_version) || Number(flag.configuration_version) < 1 ||
     !Array.isArray(flag.bindings)
   ) return false;

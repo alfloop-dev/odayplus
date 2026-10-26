@@ -673,7 +673,9 @@ describe("original flag confirmation with scope and version", () => {
     expect(screen.getByRole("dialog")).toHaveTextContent("設定版本：7");
     expect(read.mock.calls).toHaveLength(1);
     confirmChosenCommand();
-    expect(await screen.findByText("○ DISABLED")).toBeVisible();
+    expect(await screen.findByText(/Kill-Switch engaged:/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "已停用 (1)" }));
+    expect(screen.getByText("○ DISABLED")).toBeVisible();
     expect(read).toHaveBeenLastCalledWith("/api/v1/admin/feature-flags/unit.scoped.flag/disable", {
       method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify(proof),
     });
@@ -757,6 +759,50 @@ describe("original flag confirmation with scope and version", () => {
       expect(JSON.parse(String(read.mock.calls[1][1]?.body))).toEqual({ ...proof, configuration_version: 7 });
       view.unmount();
     }
+  });
+
+  it.each([
+    { label: "changed configuration", returned: scopedFlag({ configuration_version: 8 }) },
+    { label: "missing scoped version", returned: { ...scopedFlag(), configuration_version: null } },
+    { label: "malformed binding", returned: { ...scopedFlag(), bindings: [{ tenant_id: tenantA }] } },
+  ])("retains reviewed scoped state and proof for a $label command response", async ({ returned }) => {
+    const initial = scopedFlag();
+    const read = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => Promise.resolve(init?.method === "POST"
+      ? commandResponse(returned) : response([initial])));
+    vi.stubGlobal("fetch", read);
+    render(<FeatureFlagsAdminWorkspace />);
+    expect(await screen.findByText(initial.key)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /啟用功能/ }));
+    confirmChosenCommand();
+    expect(await screen.findByRole("alert")).toHaveTextContent("回應格式無效");
+    expect(screen.getByRole("dialog")).toHaveTextContent("設定版本：7");
+    expect(screen.getByRole("textbox", { name: /操作理由/ })).toHaveValue(reasonText);
+    expect(screen.getByRole("checkbox")).toBeChecked();
+    expect(screen.getByText("○ DISABLED")).toBeVisible();
+    expect(read.mock.calls).toHaveLength(2);
+  });
+
+  it.each(["per-tenant", "global-per-tenant"] as const)("displays exact tenant-only units for %s in the same confirmation", async (scope) => {
+    const initial = scopedFlag({ scope, bindings: [{ tenant_id: tenantA, source_id: null }] });
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(response([initial]))));
+    render(<FeatureFlagsAdminWorkspace />);
+    expect(await screen.findByText(initial.key)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /啟用功能/ }));
+    const modal = screen.getByRole("dialog");
+    expect(modal).toHaveTextContent(`範圍：${scope}`);
+    expect(modal).toHaveTextContent("設定版本：7");
+    expect(within(modal).getAllByRole("listitem").filter((item) => item.textContent?.includes("Tenant:"))).toHaveLength(1);
+    expect(within(modal).getByRole("list", { name: "精確範圍單位" })).toHaveTextContent(`Tenant: ${tenantA} · Source: 不限定來源`);
+  });
+
+  it("labels omitted global metadata as legacy rather than inventing a reviewed version", async () => {
+    const initial = flag({ enabled: false, is_active: false });
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(response([initial]))));
+    render(<FeatureFlagsAdminWorkspace />);
+    expect(await screen.findByText(initial.key)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /啟用功能/ }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("範圍：global（舊版 API）");
+    expect(screen.getByRole("dialog")).toHaveTextContent("設定版本：未提供（舊版 global API）");
   });
 
   it("renders malformed scoped reads as errors, not legacy globals or command controls", async () => {
