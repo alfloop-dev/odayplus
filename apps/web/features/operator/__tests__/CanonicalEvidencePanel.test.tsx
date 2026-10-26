@@ -102,6 +102,29 @@ describe("ordinary canonical evidence in the original Govern export area", () =>
     expect(screen.getByRole("button", { name: "下載 PDF" })).toBeDisabled();
   });
 
+  it.each(["mixed-null", "changed-source"])("keeps export disabled for partial WAIT with %s", async (change) => {
+    const value = pairedNullWaitPreviewValue();
+    if (change === "mixed-null") value.document.recorded_chain.prediction.payback_p50_months = 2;
+    else {
+      value.document.source_digest = "b".repeat(64);
+      value.document.recorded_chain.source_digest = value.document.source_digest;
+      value.document.sections.decision_log[0].source_digest = value.document.source_digest;
+    }
+    const ordinary = transport();
+    const fetcher = vi.fn((input: RequestInfo | URL, init?: RequestInit) => String(input).endsWith("/preview")
+      ? Promise.resolve(reply(value)) : ordinary(input, init));
+    vi.stubGlobal("fetch", fetcher);
+    render(<CanonicalEvidencePanel roleId="pm-audit" canExport />);
+    await screen.findByRole("option", { name: /candidate-engineering/ });
+    fireEvent.change(screen.getByLabelText("決策來源（SiteScore）"), { target: { value: source.decision_id } });
+    fireEvent.change(screen.getByLabelText("匯出理由"), { target: { value: selection.reason } });
+    fireEvent.click(screen.getByRole("button", { name: "預覽實際欄位與遮罩" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(change === "mixed-null" ? "尚未完整驗證" : "決策來源已變更");
+    expect(screen.queryByTestId("canonical-evidence-preview")).not.toBeInTheDocument();
+    expect(screen.getByTestId("governance-export-button")).toBeDisabled();
+    expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith("/export"))).toHaveLength(0);
+  });
+
   it("does not fetch or fabricate sources without server-verified export authority", () => {
     const fetcher = transport();
     render(<CanonicalEvidencePanel roleId="pm-audit" canExport={false} />);
@@ -304,6 +327,38 @@ describe("real ordinary evidence client fail-closed transport contracts", () => 
   it("shows unavailable transport and missing-source metadata as failures instead of fixtures", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => reply({ sources: [source] })));
     await expect(fetchCanonicalEvidenceSources("pm-audit")).rejects.toThrow(/尚未完整驗證/);
+  });
+
+  it.each(["json", "download"])("keeps the original deadline through stalled %s response-body consumption", async (kind) => {
+    vi.useFakeTimers();
+    try {
+      let signal!: AbortSignal;
+      const response = reply({});
+      const consume = () => new Promise<never>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      });
+      if (kind === "json") vi.spyOn(response, "json").mockImplementation(consume);
+      else {
+        response.headers.set("Content-Type", "application/pdf");
+        response.headers.set("X-Artifact-SHA256", digest);
+        vi.spyOn(response, "arrayBuffer").mockImplementation(consume);
+      }
+      vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        signal = init?.signal as AbortSignal;
+        expect(init?.credentials).toBe("same-origin");
+        expect(init?.cache).toBe("no-store");
+        return response;
+      }));
+      const operation = kind === "json" ? previewCanonicalEvidence(selection, "pm-audit")
+        : downloadCanonicalEvidence("engineering-export", "pdf", "pm-audit");
+      const rejected = expect(operation).rejects.toMatchObject({ name: "AbortError" });
+      await vi.advanceTimersByTimeAsync(19_999);
+      expect(signal.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await rejected;
+      expect(signal.aborted).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
   });
 
   it.each(["valid", "hash", "media", "magic"])("verifies actual downloaded %s response bytes before creating a file", async (change) => {
