@@ -2316,7 +2316,58 @@ def validate_release_admission(
     return errors
 
 
-def component_binding_errors(manifest: Any, images: dict[str, str]) -> list[str]:
+#: ODP-PROD-IMAGE-PROMOTION-001：只有這些 admission 環境會把 manifest 的 image
+#: 以相同 digest 複製到自己的 Artifact Registry 再部署。production 只收 staging
+#: 封存的 manifest，而 staging 的 image 在 staging 專案；production runtime 不得
+#: 依賴那個專案（2026-10-24 負責人決策）。dev 與 staging 部署 manifest 原樣記錄
+#: 的 image，不經過這條路。
+IMAGE_PROMOTION_ENVIRONMENTS = ("production",)
+
+#: ``<region>-docker.pkg.dev/<project>/<repository>``：一個 Artifact Registry docker
+#: repository。workflow 由 ``GCP_REGION``／``GCP_PROJECT_ID``／``GCP_AR_REPO`` 組出
+#: 目標環境自己的這個值；變數沒有解析時（``-docker.pkg.dev//``）不符合，一律拒絕。
+ARTIFACT_REGISTRY_REPOSITORY_PATTERN = re.compile(
+    r"^[a-z0-9]+(?:-[a-z0-9]+)*-docker\.pkg\.dev"
+    r"/[a-z][a-z0-9-]{4,28}[a-z0-9]"
+    r"/[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+)
+_IMAGE_NAME = r"[a-z0-9]+(?:[._-]+[a-z0-9]+)*"
+_ARTIFACT_REGISTRY_IMAGE_PATTERN = re.compile(
+    rf"^(?P<repository>[^/@\s]+/[^/@\s]+/[^/@\s]+)"
+    rf"/(?P<name>{_IMAGE_NAME}(?:/{_IMAGE_NAME})*)"
+    r"@(?P<digest>sha256:[0-9a-f]{64})$"
+)
+
+
+def promoted_image_ref(image: Any, registry: Any) -> str | None:
+    """Return *image* -- same image name, same digest -- under *registry*.
+
+    This is the one place the promoted reference is derived: the promotion step
+    copies to it and admission accepts it.  Only the repository root
+    (``<region>-docker.pkg.dev/<project>/<repository>``) is replaced; the image
+    name after it and the ``sha256`` digest are carried over verbatim.  ``None``
+    when *registry* is not an Artifact Registry repository or *image* is not an
+    Artifact Registry ``@sha256`` reference, so a caller cannot derive a
+    promoted reference from something it cannot parse.
+    """
+
+    if not isinstance(registry, str) or not ARTIFACT_REGISTRY_REPOSITORY_PATTERN.fullmatch(
+        registry
+    ):
+        return None
+    match = (
+        _ARTIFACT_REGISTRY_IMAGE_PATTERN.fullmatch(image) if isinstance(image, str) else None
+    )
+    if match is None or not ARTIFACT_REGISTRY_REPOSITORY_PATTERN.fullmatch(
+        match["repository"]
+    ):
+        return None
+    return f"{registry}/{match['name']}@{match['digest']}"
+
+
+def component_binding_errors(
+    manifest: Any, images: dict[str, str], *, target_registry: str | None = None
+) -> list[str]:
     """Return why *images* are not the artifacts this manifest identifies.
 
     A lease authorises deploying *a release*, not *any image*.  The Runtime
@@ -2325,6 +2376,14 @@ def component_binding_errors(manifest: Any, images: dict[str, str]) -> list[str]
     build phase never produced, signed, or recorded an SBOM for.  Binding the
     handoff back to ``manifest.components`` is what makes "build once, deploy
     that exact artifact" an enforced property rather than a convention.
+
+    *target_registry* is the admission environment's own Artifact Registry
+    repository, given only where the image is promoted before it is deployed
+    (``IMAGE_PROMOTION_ENVIRONMENTS``).  It admits one more reference per
+    component: the recorded image's ``promoted_image_ref`` -- same image name,
+    same digest, in that registry.  Any other registry, image name or digest is
+    still refused, and the manifest itself (and the digest a lease names) is
+    unchanged.
     """
 
     if not isinstance(manifest, dict):
@@ -2332,6 +2391,14 @@ def component_binding_errors(manifest: Any, images: dict[str, str]) -> list[str]
     components = manifest.get("components")
     if not isinstance(components, dict) or not components:
         return ["manifest.components must be a non-empty object"]
+    if target_registry is not None and not (
+        isinstance(target_registry, str)
+        and ARTIFACT_REGISTRY_REPOSITORY_PATTERN.fullmatch(target_registry)
+    ):
+        return [
+            f"target registry {target_registry!r} is not an Artifact Registry "
+            "repository <region>-docker.pkg.dev/<project>/<repository>"
+        ]
 
     errors: list[str] = []
     for name in sorted(images):
@@ -2347,7 +2414,21 @@ def component_binding_errors(manifest: Any, images: dict[str, str]) -> list[str]
                 f"manifest has no component {name!r}; this release never built that artifact"
             )
             continue
-        if component.get("image") != image:
+        recorded = component.get("image")
+        if recorded == image:
+            continue
+        if target_registry is not None and image == promoted_image_ref(
+            recorded, target_registry
+        ):
+            continue
+        if target_registry is not None:
+            errors.append(
+                f"handoff image for {name!r} is neither the image recorded by the "
+                "manifest nor that image (same name and digest) in the target "
+                f"environment's registry {target_registry}; the deploy would run an "
+                "artifact this release did not build"
+            )
+        else:
             errors.append(
                 f"handoff image for {name!r} is not the image recorded by the manifest; "
                 "the deploy would run an artifact this release did not build"
@@ -3089,7 +3170,10 @@ __all__ = [
     "release_profile_errors",
     "build_sources_off_egress_evidence",
     "build_sources_off_attestation",
+    "ARTIFACT_REGISTRY_REPOSITORY_PATTERN",
+    "IMAGE_PROMOTION_ENVIRONMENTS",
     "component_binding_errors",
+    "promoted_image_ref",
     "compute_data_contract_digest",
     "compute_file_set_digest",
     "compute_manifest_digest",
