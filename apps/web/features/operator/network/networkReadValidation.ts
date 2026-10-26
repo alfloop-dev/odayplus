@@ -143,9 +143,43 @@ export function hasVerifiedCurrentScoreAdmission(candidate: unknown): boolean {
     && readId(admission.checkedAt) && Number.isFinite(Date.parse(admission.checkedAt))
     && ["currentInputs", "source", "pit", "model"].every((key) => readObject(admission[key]) && admission[key].state === "verified");
 }
+function validTargetFormat(value: unknown): boolean {
+  if (value === undefined || value === null) return true; // retained legacy envelopes
+  const nonnegative = (x: unknown) => number(x) && x >= 0;
+  const positive = (x: unknown) => number(x) && x > 0;
+  const count = (x: unknown) => positive(x) && Number.isSafeInteger(x);
+  const ratio = (x: unknown) => nonnegative(x) && (x as number) <= 1;
+  const unknownAmount = (x: unknown) => x === null || nonnegative(x);
+  if (!readObject(value) || value.format_code !== "ODAY_G2" || value.format_version !== "2.0.0"
+    || !readId(value.format_name) || !nonnegative(value.package_total_untaxed)
+    || !nonnegative(value.unallocated_package_cost) || !positive(value.daily_operating_hours)
+    || (value.daily_operating_hours as number) > 24
+    || !readObject(value.machine_mix) || !Array.isArray(value.machine_mix.items) || !value.machine_mix.items.length
+    || !Array.isArray(value.capital_assets) || !value.capital_assets.length
+    || !readObject(value.fitout_spec) || !nonnegative(value.fitout_spec.base_fitout_cost)
+    || !count(value.fitout_spec.fitout_useful_life_months)
+    || !["utilities_spec", "maintenance_spec", "financing_spec", "tax_spec", "residual_spec", "ramp_spec", "seasonality_spec"]
+      .every((key) => value[key] === null)) return false;
+  const items = value.machine_mix.items;
+  if (!items.every((item) => readObject(item) && count(item.quantity) && readObject(item.machine_model)
+    && readId(item.machine_model.model_id) && item.machine_model.machine_class === "COMBO"
+    && positive(item.machine_model.capacity_kg) && nonnegative(item.machine_model.unit_capex)
+    && nonnegative(item.machine_model.base_cycle_price) && positive(item.machine_model.cycle_minutes)
+    && count(item.machine_model.useful_life_months) && ratio(item.machine_model.residual_value_ratio)
+    && ["baseline_turns_per_day", "water_liters_per_cycle", "electricity_kwh_per_cycle", "gas_kg_per_cycle",
+      "detergent_cost_per_cycle", "monthly_maintenance_per_unit"].every((key) => unknownAmount((item.machine_model as Row)[key])))) return false;
+  return new Set(items.map((item) => item.machine_model.model_id)).size === items.length
+    && value.capital_assets.every((asset) => readObject(asset) && readId(asset.asset_id)
+      && oneOf(asset.asset_kind, ["PAYMENT_SYSTEM", "KIOSK", "VENDING", "CAMERA_SYSTEM", "FURNITURE"])
+      && count(asset.quantity) && nonnegative(asset.unit_capex) && count(asset.useful_life_months)
+      && ratio(asset.residual_value_ratio) && unknownAmount(asset.monthly_fixed_operating_cost))
+    && new Set(value.capital_assets.map((asset) => asset.asset_id)).size === value.capital_assets.length;
+}
+
 export function hasNetworkScoringRenderShape(value: unknown): boolean {
   if (!readObject(value)) return false;
-  return optionalText(value.modelVersion)
+  return optionalText(value.modelVersion) && validTargetFormat(value.targetFormat)
+    && (value.targetFormat == null || value.source === "canonical")
     && rows(value.candidates, (candidate) => text(candidate.title) && text(candidate.zoneLabel)
       && text(candidate.heatZoneId) && nullableText(candidate.address)
       && nullableText(candidate.modelVersion) && text(candidate.datasetSnapshotId)

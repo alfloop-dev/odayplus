@@ -213,9 +213,37 @@ export type NetworkScoringCompare = {
   empty: boolean;
 };
 
+// Read-only exact-version registry projection, never report assumptions or
+// current scoring admission. Unknown measurements/policies remain explicit.
+export type NetworkTargetFormat = {
+  format_code: "ODAY_G2";
+  format_name: string;
+  format_version: "2.0.0";
+  package_total_untaxed: number;
+  unallocated_package_cost: number;
+  daily_operating_hours: number;
+  machine_mix: { items: Array<{ quantity: number; machine_model: {
+    model_id: string; machine_class: "COMBO"; capacity_kg: number;
+    unit_capex: number; base_cycle_price: number; cycle_minutes: number;
+    useful_life_months: number; residual_value_ratio: number;
+    baseline_turns_per_day: number | null; water_liters_per_cycle: number | null;
+    electricity_kwh_per_cycle: number | null; gas_kg_per_cycle: number | null;
+    detergent_cost_per_cycle: number | null; monthly_maintenance_per_unit: number | null;
+  } }> };
+  capital_assets: Array<{
+    asset_id: string; asset_kind: "PAYMENT_SYSTEM" | "KIOSK" | "VENDING" | "CAMERA_SYSTEM" | "FURNITURE";
+    quantity: number; unit_capex: number; useful_life_months: number;
+    residual_value_ratio: number; monthly_fixed_operating_cost: number | null;
+  }>;
+  fitout_spec: { base_fitout_cost: number; fitout_useful_life_months: number };
+  utilities_spec: null; maintenance_spec: null; financing_spec: null; tax_spec: null;
+  residual_spec: null; ramp_spec: null; seasonality_spec: null;
+};
+
 export type NetworkScoringSnapshot = {
   source?: "api" | "canonical" | "fixture";
   modelVersion: string | null;
+  targetFormat?: NetworkTargetFormat | null;
   candidates: ScoringCandidate[];
   scorecards: ScoreCard[];
   batchResults: BatchResultRow[];
