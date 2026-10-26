@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from apps.api.oday_api.main import create_app
 from models.shared_ml.production_runtime import ProductionModelInputError
 from modules.sitescore.tests.test_sitescore_production_runtime import RecordingRuntime
+from shared.infrastructure.persistence.assisted_listing_intake import _STATE_COLLECTIONS
 from shared.jobs.queue import JobDeliveryState, JobFenceRejectedError, JobRequest, JobStatus
 from tests.intake_registry_fixture import OWNER, TENANT
 from tests.integration.test_intake_registry_calendar_postgresql import _bundle
@@ -136,14 +137,24 @@ def test_generic_intake_score_job_refuses_broken_canonical_parents(bridge_databa
         assert client.get(f"/api/v1/jobs/{job_id}", headers=_reviewer_headers()).status_code == 200
         store = bundle.assisted_intake_store
         store.refresh(TENANT)
+        collection = "intakes" if binding == "intake_tenant" else "promotions"
+        parent_id = receipt["intake_id" if collection == "intakes" else "promotion_decision_id"]
+        corrupted = deepcopy(getattr(store, collection)[parent_id])
+        if binding == "intake_tenant":
+            corrupted["scope"]["tenant_id"] = str(uuid4())
+        else:
+            field = {"promotion_tenant": "tenant_id", "promotion_intake": "intake_id",
+                     "promotion_candidate": "candidate_site_id", "promotion_job": "site_score_job_id"}[binding]
+            corrupted[field] = str(uuid4())
+        # Inject persisted corruption below the normal write boundary. A normal
+        # flush correctly rejects a cross-tenant receipt before job readers run;
+        # this test independently exercises their existing parent-binding guard.
         with store.transaction():
-            if binding == "intake_tenant":
-                store.intakes[receipt["intake_id"]]["scope"]["tenant_id"] = str(uuid4())
-            else:
-                field = {"promotion_tenant": "tenant_id", "promotion_intake": "intake_id",
-                         "promotion_candidate": "candidate_site_id", "promotion_job": "site_score_job_id"}[binding]
-                store.promotions[receipt["promotion_decision_id"]][field] = str(uuid4())
-            store.flush()
+            store._store.put(
+                _STATE_COLLECTIONS[collection], f"{TENANT}:{parent_id}",
+                store._wrap(TENANT, parent_id, corrupted),
+            )
+        store.refresh(TENANT)
         before, physical, delivery = _snapshot(bundle), _physical(bridge_database, job_id), bundle.job_queue.get(job_id).to_dict()
         for prefix in ("/jobs", "/api/v1/jobs"):
             for method, path in ((client.get, f"{prefix}/{job_id}"), (client.post, f"{prefix}/{job_id}/retries")):

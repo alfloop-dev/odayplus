@@ -601,11 +601,17 @@ def live_store(_pg_admin_params):
     psycopg, admin = _pg_admin_params
     dbname = f"dp_delete_{uuid.uuid4().hex[:12]}"
     with psycopg.connect(autocommit=True, **admin) as admin_connection:
-        admin_connection.execute(f'CREATE DATABASE "{dbname}"')
+        admin_connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(dbname)))
+        owned_oid = admin_connection.execute(
+            "SELECT oid FROM pg_database WHERE datname=%s", (dbname,)
+        ).fetchone()[0]
     params = {**admin, "dbname": dbname}
+    connections: list[Any] = []
 
     def connect():
-        return psycopg.connect(**params)
+        connection = psycopg.connect(**params)
+        connections.append(connection)
+        return connection
 
     def build_store() -> PsycopgCanonicalStore:
         store = object.__new__(PsycopgCanonicalStore)
@@ -623,8 +629,24 @@ def live_store(_pg_admin_params):
         build_store().install()
         yield SimpleNamespace(build=build_store, connect=connect, store=build_store())
     finally:
+        # Close only handles opened by this fixture, including direct test reads.
+        # A different database or an outstanding session must never be killed.
+        for connection in connections:
+            connection.close()
         with psycopg.connect(autocommit=True, **admin) as admin_connection:
-            admin_connection.execute(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)')
+            actual_oid = admin_connection.execute(
+                "SELECT oid FROM pg_database WHERE datname=%s", (dbname,)
+            ).fetchone()
+            if actual_oid != (owned_oid,):
+                raise RuntimeError("Delete propagation database ownership changed; cleanup refused")
+            deadline = time.monotonic() + 5
+            while admin_connection.execute(
+                "SELECT count(*) FROM pg_stat_activity WHERE datname=%s", (dbname,)
+            ).fetchone()[0]:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("Owned delete propagation sessions remain; cleanup refused")
+                time.sleep(0.05)
+            admin_connection.execute(sql.SQL("DROP DATABASE {}").format(sql.Identifier(dbname)))
 
 
 def _merchant_document(source_id: str) -> dict[str, Any]:
