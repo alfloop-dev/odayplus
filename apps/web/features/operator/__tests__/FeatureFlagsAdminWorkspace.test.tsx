@@ -2,7 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FeatureFlagsAdminWorkspace } from "../FeatureFlagsAdminWorkspace";
-import { approveFeatureFlag, DEFAULT_FEATURE_FLAGS, disableFeatureFlag, enableFeatureFlag, type FeatureFlagDto } from "../featureFlagsAdapter";
+import { approveFeatureFlag, DEFAULT_FEATURE_FLAGS, disableFeatureFlag, enableFeatureFlag, fetchFeatureFlags, type FeatureFlagDto } from "../featureFlagsAdapter";
 
 // Explicit transport fixtures for this unit suite, not production flag grants.
 function flag(overrides: Partial<FeatureFlagDto> = {}): FeatureFlagDto {
@@ -562,4 +562,250 @@ it.each(seededCommandResponses)("preserves explicit POC command compatibility fo
   const actual = await enableFeatureFlag("unit.actual.flag", ["unit-poc-first", "unit-poc-second"], "", proof);
   expect(actual.flag).toEqual(result.flag);
   expect(read.mock.calls[0][1]).toMatchObject({ body: JSON.stringify({ approvals: ["unit-poc-first", "unit-poc-second"], ...proof }) });
+});
+
+// Frozen H contract from Root/Codex. Every response below is synthetic;
+// these tests do not grant any Intake release/source/model permission.
+const tenantA = "00000000-0000-0000-0000-000000000001";
+const tenantB = "00000000-0000-0000-0000-000000000002";
+function scopedFlag(overrides: Partial<FeatureFlagDto> = {}): FeatureFlagDto {
+  return flag({
+    key: "unit.scoped.flag", enabled: false, is_active: false, high_risk: true,
+    scope: "per-tenant-per-source", configuration_version: 7,
+    bindings: [{ tenant_id: tenantA, source_id: "unit-source-a" }, { tenant_id: tenantB, source_id: "unit-source-b" }],
+    approved_by: ["unit-first", "unit-second"], ...overrides,
+  });
+}
+function commandResponse(value: unknown): Response {
+  return new Response(JSON.stringify({ status: "ok", flag: value }));
+}
+
+const invalidScopedMetadata = [
+  { label: "missing scope", metadata: { bindings: [], configuration_version: 7 } },
+  { label: "missing bindings", metadata: { scope: "per-tenant", configuration_version: 7 } },
+  { label: "missing version", metadata: { scope: "per-tenant", bindings: [] } },
+  { label: "partial global metadata", metadata: { scope: "global" } },
+  { label: "unknown scope", metadata: { scope: "per-source", bindings: [], configuration_version: 7 } },
+  { label: "null scope", metadata: { scope: null, bindings: [], configuration_version: 7 } },
+  ...[null, "7", true, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1].map((version) => ({
+    label: `invalid version ${version}`, metadata: { scope: "per-tenant", bindings: [], configuration_version: version },
+  })),
+  ...[null, {}, [null], [{ tenant_id: "not-a-uuid", source_id: null }], [{ tenant_id: tenantA }],
+    [{ tenant_id: tenantA, source_id: 42 }], [{ tenant_id: tenantA, source_id: null, extra: true }],
+    [{ tenant_id: tenantA, source_id: "unit-source" }],
+    [{ tenant_id: tenantA, source_id: null }, { tenant_id: tenantA, source_id: null }],
+  ].map((bindings, index) => ({ label: `invalid tenant binding ${index}`, metadata: { scope: "per-tenant", bindings, configuration_version: 7 } })),
+  ...[null, "", "  "].map((source_id) => ({
+    label: `invalid paired source ${source_id}`, metadata: { scope: "per-tenant-per-source", bindings: [{ tenant_id: tenantA, source_id }], configuration_version: 7 },
+  })),
+  { label: "duplicate pair", metadata: { scope: "per-tenant-per-source", bindings: [{ tenant_id: tenantA, source_id: "unit-source" }, { tenant_id: tenantA, source_id: "unit-source" }], configuration_version: 7 } },
+  { label: "global with tenant binding", metadata: { scope: "global", bindings: [{ tenant_id: tenantA, source_id: null }], configuration_version: 7 } },
+];
+
+describe("scoped flag adapter contract", () => {
+  it.each(invalidScopedMetadata)("rejects $label on admin reads and every command response", async ({ metadata }) => {
+    const malformed = { ...flag(), ...metadata };
+    const read = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => Promise.resolve(init?.method === "POST"
+      ? commandResponse(malformed) : response([malformed as FeatureFlagDto])));
+    vi.stubGlobal("fetch", read);
+    await expect(fetchFeatureFlags()).rejects.toThrow("資料格式無效");
+    await expect(approveFeatureFlag("unit.actual.flag", "forged", "", proof)).rejects.toThrow("回應格式無效");
+    await expect(enableFeatureFlag("unit.actual.flag", ["forged"], "", proof)).rejects.toThrow("回應格式無效");
+    await expect(disableFeatureFlag("unit.actual.flag", "", proof)).rejects.toThrow("回應格式無效");
+  });
+
+  it.each(["global", "per-tenant", "global-per-tenant", "per-tenant-per-source"] as const)("retains complete %s metadata without expanding pair units", async (scope) => {
+    const actual = scopedFlag({ scope, bindings: scope === "global" ? [] : scope === "per-tenant-per-source"
+      ? scopedFlag().bindings : [{ tenant_id: tenantA, source_id: null }] });
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(response([actual]))));
+    expect(await fetchFeatureFlags()).toEqual([actual]);
+  });
+
+  it("preserves the legacy global DTO and command bodies without inventing metadata", async () => {
+    const legacy = flag();
+    const read = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => Promise.resolve(init?.method === "POST"
+      ? commandResponse(legacy) : response([legacy])));
+    vi.stubGlobal("fetch", read);
+    expect(await fetchFeatureFlags()).toEqual([legacy]);
+    await approveFeatureFlag(legacy.key, "forged", "", proof);
+    await enableFeatureFlag(legacy.key, ["forged"], "", proof);
+    for (const [, init] of read.mock.calls.filter(([, init]) => init?.method === "POST")) expect(JSON.parse(String(init?.body))).toEqual(proof);
+  });
+
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1])("refuses invalid request version %s before transport", async (configuration_version) => {
+    const read = vi.fn();
+    vi.stubGlobal("fetch", read);
+    const invalid = { ...proof, configuration_version };
+    await expect(approveFeatureFlag("unit.scoped.flag", "forged", "", invalid)).rejects.toThrow("設定版本無效");
+    await expect(enableFeatureFlag("unit.scoped.flag", ["forged"], "", invalid)).rejects.toThrow("設定版本無效");
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it.each(["approve", "enable"] as const)("rejects a successful %s response for a different or missing reviewed version", async (command) => {
+    for (const returned of [scopedFlag({ configuration_version: 8 }), flag({ key: "unit.scoped.flag" })]) {
+      vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(commandResponse(returned))));
+      const versionedProof = { ...proof, configuration_version: 7 };
+      await expect(command === "approve"
+        ? approveFeatureFlag(returned.key, "forged", "", versionedProof)
+        : enableFeatureFlag(returned.key, ["forged"], "", versionedProof)).rejects.toThrow("回應格式無效");
+    }
+  });
+});
+
+describe("original flag confirmation with scope and version", () => {
+  it.each([false, true])("keeps the enabled scoped Kill-Switch usable with is_active=false (expired=%s)", async (is_expired) => {
+    const initial = scopedFlag({ enabled: true, is_active: false, is_expired,
+      expires_on: is_expired ? "2000-01-01" : null });
+    const read = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => Promise.resolve(init?.method === "POST"
+      ? commandResponse({ ...initial, enabled: false, approved_by: [], configuration_version: 8 }) : response([initial])));
+    vi.stubGlobal("fetch", read);
+    render(<FeatureFlagsAdminWorkspace />);
+    expect(await screen.findByText(initial.key)).toBeVisible();
+    expect(screen.getByText("● ACTIVE")).toBeVisible(); // explicitly labelled stored configuration
+    expect(screen.getByText(/情境有效性（伺服器）：不生效/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "已啟用 (1)" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "已停用 (0)" }));
+    expect(screen.queryByText(initial.key)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "已啟用 (1)" }));
+    fireEvent.click(screen.getByRole("button", { name: /緊急停用/ }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("儲存設定：已啟用");
+    expect(screen.getByRole("dialog")).toHaveTextContent(`到期判定（伺服器）：${is_expired ? "已到期" : "未到期"}`);
+    expect(screen.getByRole("dialog")).toHaveTextContent("設定版本：7");
+    expect(read.mock.calls).toHaveLength(1);
+    confirmChosenCommand();
+    expect(await screen.findByText("○ DISABLED")).toBeVisible();
+    expect(read).toHaveBeenLastCalledWith("/api/v1/admin/feature-flags/unit.scoped.flag/disable", {
+      method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify(proof),
+    });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByText("設定版本：")).toHaveTextContent("設定版本：8");
+  });
+
+  it("shows only exact reviewed pairs through approval then enable and posts that version without identity claims", async () => {
+    const initial = scopedFlag({ approved_by: ["unit-first"] });
+    const approved = { ...initial, approved_by: ["unit-first", "unit-server-second"] };
+    const read = vi.fn((url: RequestInfo | URL, init?: RequestInit) => Promise.resolve(init?.method !== "POST" ? response([initial])
+      : commandResponse(String(url).endsWith("/approve") ? approved : { ...approved, enabled: true })));
+    vi.stubGlobal("fetch", read);
+    render(<FeatureFlagsAdminWorkspace />);
+    expect(await screen.findByText(initial.key)).toBeVisible();
+    const assertPairs = (root: HTMLElement) => {
+      const rows = within(root).getAllByRole("listitem");
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toHaveTextContent(`Tenant: ${tenantA} · Source: unit-source-a`);
+      expect(rows[0]).not.toHaveTextContent("unit-source-b");
+      expect(rows[1]).toHaveTextContent(`Tenant: ${tenantB} · Source: unit-source-b`);
+      expect(rows[1]).not.toHaveTextContent("unit-source-a");
+    };
+    assertPairs(screen.getByRole("list", { name: "精確範圍單位" }));
+    fireEvent.click(screen.getByRole("button", { name: /簽核明細/ }));
+    fireEvent.click(screen.getByRole("button", { name: "以目前登入帳號核准" }));
+    const modal = screen.getByRole("dialog");
+    assertPairs(within(modal).getByRole("list", { name: "精確範圍單位" }));
+    expect(modal).toHaveTextContent("範圍：per-tenant-per-source");
+    expect(modal).toHaveTextContent("設定版本：7");
+    confirmChosenCommand();
+    expect(await screen.findByText("unit-server-second")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /正式啟用/ }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("設定版本：7");
+    confirmChosenCommand();
+    expect(await screen.findByText("● ACTIVE")).toBeVisible();
+    expect(screen.getByText(/情境有效性（伺服器）：不生效/)).toBeVisible();
+    const posts = read.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(posts.map(([url]) => url)).toEqual(["/api/v1/admin/feature-flags/unit.scoped.flag/approve", "/api/v1/admin/feature-flags/unit.scoped.flag/enable"]);
+    for (const [, init] of posts) expect(JSON.parse(String(init?.body))).toEqual({ ...proof, configuration_version: 7 });
+    // The same original details flow must offer disable, never re-enable, for a stored-enabled flag.
+    fireEvent.click(screen.getByRole("button", { name: /簽核明細/ }));
+    expect(within(screen.getByRole("dialog")).getByRole("button", { name: /緊急停用/ })).toBeEnabled();
+    expect(within(screen.getByRole("dialog")).queryByRole("button", { name: /正式啟用/ })).not.toBeInTheDocument();
+  });
+
+  it("also sends a provided global configuration version from the reviewed confirmation", async () => {
+    const initial = scopedFlag({ scope: "global", bindings: [] });
+    const read = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => Promise.resolve(init?.method === "POST"
+      ? commandResponse({ ...initial, enabled: true, is_active: true }) : response([initial])));
+    vi.stubGlobal("fetch", read);
+    render(<FeatureFlagsAdminWorkspace />);
+    expect(await screen.findByText(initial.key)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /啟用功能/ }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("範圍：global");
+    expect(screen.getByRole("dialog")).toHaveTextContent("設定版本：7");
+    confirmChosenCommand();
+    expect(await screen.findByText("● ACTIVE")).toBeVisible();
+    expect(JSON.parse(String(read.mock.calls[1][1]?.body))).toEqual({ ...proof, configuration_version: 7 });
+  });
+
+  it.each(["approve", "enable"] as const)("preserves proof, reviewed version and server refusal without automatic %s retry/reapproval", async (command) => {
+    for (const status of [409, 403, 503]) {
+      const initial = scopedFlag();
+      const read = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => Promise.resolve(init?.method === "POST"
+        ? new Response(JSON.stringify({ detail: `unit-server-${status}` }), { status }) : response([initial])));
+      vi.stubGlobal("fetch", read);
+      const view = render(<FeatureFlagsAdminWorkspace />);
+      expect(await screen.findByText(initial.key)).toBeVisible();
+      if (command === "approve") {
+        fireEvent.click(screen.getByRole("button", { name: /簽核明細/ }));
+        fireEvent.click(screen.getByRole("button", { name: "以目前登入帳號核准" }));
+      } else fireEvent.click(screen.getByRole("button", { name: /啟用功能/ }));
+      confirmChosenCommand();
+      expect(await screen.findByRole("alert")).toHaveTextContent(`unit-server-${status}`);
+      expect(screen.getByRole("textbox", { name: /操作理由/ })).toHaveValue(reasonText);
+      expect(screen.getByRole("checkbox")).toBeChecked();
+      expect(screen.getByRole("dialog")).toHaveTextContent("設定版本：7");
+      expect(screen.getByText("○ DISABLED")).toBeVisible();
+      expect(read.mock.calls).toHaveLength(2); // no automatic read, retry, reapproval, or enable
+      expect(JSON.parse(String(read.mock.calls[1][1]?.body))).toEqual({ ...proof, configuration_version: 7 });
+      view.unmount();
+    }
+  });
+
+  it("renders malformed scoped reads as errors, not legacy globals or command controls", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(response([flag({ scope: "per-tenant" })]))));
+    render(<FeatureFlagsAdminWorkspace />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("資料格式無效");
+    expectNoFlagFacts();
+  });
+});
+
+// Keep the original context/sequence fences on the scoped path as well.
+describe("scoped command lifecycle isolation", () => {
+  it.each(["approve", "enable", "disable"] as const)("ignores old %s success on changed context, A-B-A and unmount", async (command) => {
+    for (const transition of ["changed", "A-B-A", "unmount"] as const) {
+      const initial = scopedFlag({ enabled: command === "disable" });
+      const pending = deferredRead();
+      let reads = 0;
+      const read = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === "POST") return pending.promise;
+        reads += 1;
+        return Promise.resolve(response([reads === 1 ? initial : scopedFlag({ configuration_version: 19, owner: "unit-new-context" })]));
+      });
+      vi.stubGlobal("fetch", read);
+      const view = render(<FeatureFlagsAdminWorkspace baseUrl="/old" />);
+      expect(await screen.findByText(initial.key)).toBeVisible();
+      if (command === "approve") {
+        fireEvent.click(screen.getByRole("button", { name: /簽核明細/ }));
+        fireEvent.click(screen.getByRole("button", { name: "以目前登入帳號核准" }));
+      } else fireEvent.click(screen.getByRole("button", { name: command === "disable" ? /緊急停用/ : /啟用功能/ }));
+      confirmChosenCommand();
+      if (transition === "unmount") view.unmount();
+      else {
+        view.rerender(<FeatureFlagsAdminWorkspace baseUrl="/new" />);
+        expect(await screen.findByText("unit-new-context")).toBeVisible();
+        if (transition === "A-B-A") {
+          view.rerender(<FeatureFlagsAdminWorkspace baseUrl="/old" />);
+          expect(await screen.findByText("unit-new-context")).toBeVisible();
+        }
+      }
+      await act(async () => { pending.resolve(commandResponse({ ...initial, enabled: command !== "disable",
+        configuration_version: command === "disable" ? 8 : 7, approved_by: ["unit-old-result"] })); });
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(screen.queryByText(/unit-old-result|Kill-Switch engaged:|Feature flag .* enabled!|已記錄目前登入帳號的核准/)).not.toBeInTheDocument();
+      expect(read.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+      if (transition !== "unmount") {
+        expect(screen.getByText("unit-new-context")).toBeVisible();
+        expect(screen.getByText("設定版本：")).toHaveTextContent("設定版本：19");
+      }
+      view.unmount();
+    }
+  });
 });
