@@ -201,9 +201,10 @@ test("Package 10 issue detail exposes the four-light evidence without legacy fil
 
   await page.goto("/operator");
   await page.getByRole("button", { name: /門市營運|Store Ops/ }).click();
+  // The original lazy workspace can compile on first use in the dev-server lane.
   await expect(
     page.locator('[data-screen-label="Store Ops 門市營運"]'),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 30_000 });
 
   await expect(page.locator('[aria-label="門市 Issue queue"]')).toContainText(
     "ISS-1024",
@@ -229,7 +230,7 @@ test("ISS-1024 lifecycle writes through Store Ops API and reloads updated state"
   await page.getByRole("button", { name: /門市營運|Store Ops/ }).click();
   await expect(
     page.locator('[data-screen-label="Store Ops 門市營運"]'),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 30_000 });
 
   await page.getByRole("button", { exact: true, name: "完成 Triage" }).click();
   await page.getByRole("dialog")
@@ -316,7 +317,7 @@ test("camera evidence remains locked until permitted purpose is submitted", asyn
   await expect(page).toHaveURL(/[?&]ws=store(&|$)/);
   await expect(
     page.locator('[data-screen-label="Store Ops 門市營運"]'),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 30_000 });
   // This unlabelled mocked API is a canonical response, even in E2E/POC.
   // Wait for its stable unavailable tile rather than the initial demo flash.
   const detail = page.locator('[aria-label="ISS-1024 detail"]');
