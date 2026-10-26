@@ -1,13 +1,33 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
+import threading
+import types
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from delivery_toolchain.e2e import verify_deployment_health_backup_rollback as vdr
+from delivery_toolchain.e2e import worker_heartbeat as wh
+
+
+def heartbeat_payload(**updates):
+    return {
+        "time": datetime.now(UTC).isoformat(),
+        "worker": "product-e2e-scheduler",
+        "status": "alive",
+        "persistence": "durable",
+        "db_path": "/data/product-e2e.sqlite3",
+        "pid": os.getpid(),
+        "process_start": wh.process_start(os.getpid()),
+        "worker_tid": threading.get_native_id(),
+        "scheduler_tid": threading.get_native_id(),
+        **updates,
+    }
 
 
 def test_entrypoint_subprocess_help_executes_from_repo_root() -> None:
@@ -187,14 +207,15 @@ def test_command_result_write_to(tmp_path: Path) -> None:
 
 
 def test_wait_for_worker_heartbeat_success(monkeypatch) -> None:
-    heartbeat_payload = {"worker": "product-e2e-scheduler", "timestamp": "2026-06-29T12:00:00Z"}
+    payload = heartbeat_payload()
 
     def fake_run(command, **kwargs):
         assert kwargs.get("timeout") == vdr.DEFAULT_HEARTBEAT_EXEC_TIMEOUT
+        assert command[-3:] == ["python", "delivery_toolchain/e2e/worker_heartbeat.py", "--check"]
         completed = subprocess.CompletedProcess(
             args=command,
             returncode=0,
-            stdout=json.dumps(heartbeat_payload),
+            stdout=json.dumps(payload),
             stderr="",
         )
         return vdr.CommandResult(completed)
@@ -202,7 +223,7 @@ def test_wait_for_worker_heartbeat_success(monkeypatch) -> None:
     monkeypatch.setattr(vdr, "run", fake_run)
 
     heartbeat = vdr.wait_for_worker_heartbeat(["docker", "compose"], env={})
-    assert heartbeat == heartbeat_payload
+    assert heartbeat == payload
 
 
 def test_wait_for_worker_heartbeat_timeout(monkeypatch) -> None:
@@ -234,8 +255,8 @@ def test_wait_for_worker_heartbeat_reports_sanitized_timeout_diagnostics(monkeyp
         )
 
     monkeypatch.setattr(subprocess, "run", fake_subprocess_run)
-    clock = iter([0.0, 0.0, 61.0])
-    monkeypatch.setattr(vdr.time, "time", lambda: next(clock))
+    clock = iter([0.0, 0.0, 61.0, 61.0])
+    monkeypatch.setattr(vdr.time, "monotonic", lambda: next(clock))
     monkeypatch.setattr(vdr.time, "sleep", lambda _seconds: None)
 
     with pytest.raises(RuntimeError) as excinfo:
@@ -250,6 +271,158 @@ def test_wait_for_worker_heartbeat_reports_sanitized_timeout_diagnostics(monkeyp
     assert "command timed out after 15.0s" in message
     assert "docker compose exec -T worker" in message
     assert secret not in message
+
+
+@pytest.mark.parametrize("returncode,timed_out", [(1, False), (0, True), (124, True)])
+def test_dr_rejects_valid_json_from_unsuccessful_exec(monkeypatch, returncode, timed_out):
+    def fake_run(command, **kwargs):
+        assert kwargs["timeout"] == 3.0  # Clamp remote exec to the remaining wait.
+        return vdr.CommandResult(
+            subprocess.CompletedProcess(command, returncode, json.dumps(heartbeat_payload()), ""),
+            timed_out=timed_out,
+        )
+
+    clock = iter([0.0, 0.0, 4.0, 4.0])
+    monkeypatch.setattr(vdr.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(vdr.time, "sleep", lambda _: None)
+    monkeypatch.setattr(vdr, "run", fake_run)
+    with pytest.raises(RuntimeError, match="worker heartbeat not observed"):
+        vdr.wait_for_worker_heartbeat(["docker", "compose"], {}, timeout_seconds=3)
+
+
+@pytest.mark.parametrize("payload", [
+    [], None, {}, {"status": "alive"}, "alive", 1,
+    heartbeat_payload(status="failed"),
+    heartbeat_payload(time=(datetime.now(UTC) - timedelta(seconds=46)).isoformat()),
+    heartbeat_payload(time=(datetime.now(UTC) + timedelta(hours=1)).isoformat()),
+])
+def test_dr_rejects_non_heartbeat_json(monkeypatch, payload):
+    monkeypatch.setattr(vdr, "run", lambda command, **kw: vdr.CommandResult(
+        subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+    ))
+    clock = iter([0.0, 0.0, 61.0, 61.0])
+    monkeypatch.setattr(vdr.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(vdr.time, "sleep", lambda _: None)
+    with pytest.raises(RuntimeError, match="worker heartbeat not observed"):
+        vdr.wait_for_worker_heartbeat(["docker", "compose"], {})
+
+
+@pytest.mark.parametrize("age,accepted", [(0, True), (45, True), (45.001, False), (-0.001, False)])
+def test_heartbeat_freshness_boundary(age, accepted):
+    now = datetime.now(UTC)
+    event = heartbeat_payload(time=(now - timedelta(seconds=age)).isoformat())
+    if accepted:
+        assert wh.validate_heartbeat(event, now=now) == event
+    else:
+        with pytest.raises(ValueError):
+            wh.validate_heartbeat(event, now=now)
+
+
+@pytest.mark.parametrize("updates", [
+    {"status": "failed"}, {"worker": "other"}, {"time": "not-a-time"},
+    {"time": "2026-01-01T00:00:00"}, {"time": None}, {"pid": True},
+    {"worker_tid": 0}, {"scheduler_tid": "1"}, {"process_start": 42},
+    {"persistence": None}, {"db_path": []},
+])
+def test_heartbeat_rejects_invalid_shape(updates):
+    with pytest.raises(ValueError):
+        wh.validate_heartbeat(heartbeat_payload(**updates))
+
+
+@pytest.mark.parametrize("updates", [
+    {"pid": 2**30}, {"process_start": "0"},
+    {"worker_tid": 2**30}, {"scheduler_tid": 2**30},
+])
+def test_check_rejects_dead_or_reused_tasks(tmp_path, updates):
+    path = tmp_path / "heartbeat.jsonl"
+    path.write_text(json.dumps(heartbeat_payload(**updates)) + "\n")
+    with pytest.raises((ValueError, OSError)):
+        wh.check_heartbeat(path)
+
+
+def test_bounded_tail_rejects_bad_latest_record_without_fallback(tmp_path):
+    path = tmp_path / "heartbeat.jsonl"
+    event = heartbeat_payload()
+    path.write_bytes(b"x" * 1_000_000 + b"\n" + json.dumps(event).encode() + b"\n")
+    assert wh.check_heartbeat(path) == event
+    for suffix in (b"{", b"bad\n", b"\n", b"x" * (wh.HEARTBEAT_TAIL_BYTES + 1) + b"\n"):
+        with path.open("ab") as handle:
+            handle.write(suffix)
+        with pytest.raises(ValueError):
+            wh.check_heartbeat(path)
+
+
+@pytest.mark.parametrize("contents,expected", [("valid", 0), ("missing", 1), ("invalid", 1), ("stale", 1), ("future", 1)])
+def test_actual_health_cli_is_read_only_without_runtime_imports(tmp_path, contents, expected):
+    path = tmp_path / "heartbeat.jsonl"
+    db = tmp_path / "must-not-create" / "db.sqlite3"
+    if contents != "missing":
+        offset = {"stale": -46, "future": 60}.get(contents, 0)
+        event = heartbeat_payload(time=(datetime.now(UTC) + timedelta(seconds=offset)).isoformat())
+        path.write_text("bad\n" if contents == "invalid" else json.dumps(event) + "\n")
+    before = path.read_bytes() if path.exists() else None
+    result = subprocess.run(
+        [sys.executable, "-S", str(vdr.ROOT / "delivery_toolchain/e2e/worker_heartbeat.py"), "--check"],
+        env={**os.environ, "ODP_E2E_WORKER_HEARTBEAT": str(path),
+             "ODP_PERSISTENCE": "invalid-probe-must-not-initialize", "ODP_DB_PATH": str(db)},
+        capture_output=True, text=True, timeout=5,
+    )
+    assert result.returncode == expected, result.stderr
+    assert not db.parent.exists()
+    assert (path.read_bytes() if path.exists() else None) == before
+    if expected == 0:
+        assert json.loads(result.stdout) == event
+    else:
+        assert not result.stdout
+
+
+def test_dr_consumer_executes_actual_check_cli(tmp_path, monkeypatch):
+    path = tmp_path / "heartbeat.jsonl"
+    event = heartbeat_payload()
+    path.write_text(json.dumps(event) + "\n")
+
+    original_run = vdr.run
+
+    def run_local(command, **kwargs):
+        assert command[:6] == ["docker", "compose", "exec", "-T", "worker", "python"]
+        return original_run([sys.executable, "-S", *command[6:]], **kwargs)
+
+    monkeypatch.setattr(vdr, "run", run_local)
+    assert vdr.wait_for_worker_heartbeat(["docker", "compose"], {
+        **os.environ, "ODP_E2E_WORKER_HEARTBEAT": str(path),
+    }) == event
+
+
+@pytest.mark.parametrize("dead", ["worker", "scheduler"])
+def test_writer_fails_if_either_real_background_thread_exits(tmp_path, monkeypatch, dead):
+    path = tmp_path / "heartbeat.jsonl"
+    stopped = []
+
+    class Runtime:
+        def __init__(self, _persistence):
+            pass
+
+        def loop(self, stop, *_args):
+            stop.wait()
+
+    class DeadRuntime(Runtime):
+        def loop(self, stop, *_args):
+            stopped.append(True)
+
+    for name, cls in (("worker", "ODayWorker"), ("scheduler", "ODayScheduler")):
+        module = types.ModuleType(f"apps.{name}.oday_{name}.main")
+        setattr(module, cls, DeadRuntime if name == dead else Runtime)
+        monkeypatch.setitem(sys.modules, module.__name__, module)
+    factory = types.ModuleType("shared.infrastructure.persistence.factory")
+    factory.build_persistence = lambda: object()
+    monkeypatch.setitem(sys.modules, factory.__name__, factory)
+    monkeypatch.setenv("ODP_E2E_WORKER_HEARTBEAT", str(path))
+    assert wh.main([]) == 1
+    assert stopped
+    events = [json.loads(line) for line in path.read_text().splitlines()]
+    assert events[-1]["status"] == "failed"
+    with pytest.raises(ValueError):
+        wh.check_heartbeat(path)
 
 
 def test_create_and_restore_backup(monkeypatch) -> None:
@@ -307,7 +480,7 @@ def test_main_full_drill_success(tmp_path: Path, monkeypatch, capsys) -> None:
         if "seed_product_e2e_data.py" in cmd_str:
             stdout = json.dumps({"seeded": True})
         elif "exec -T worker" in cmd_str:
-            stdout = json.dumps({"worker": "product-e2e-scheduler"})
+            stdout = json.dumps(heartbeat_payload())
         elif "exec -T api" in cmd_str and "sqlite3" in cmd_str:
             stdout = json.dumps({"path": "/storage/backups/product-e2e.sqlite3.backup", "sha256": "sha123", "size_bytes": 100})
         elif "run --rm --no-deps api" in cmd_str:

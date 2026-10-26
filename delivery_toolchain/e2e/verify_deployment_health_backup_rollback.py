@@ -23,7 +23,10 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from delivery_toolchain.e2e.worker_heartbeat import validate_heartbeat  # noqa: E402
+from delivery_toolchain.e2e.worker_heartbeat import (  # noqa: E402
+    HEARTBEAT_TAIL_BYTES,
+    validate_heartbeat,
+)
 from delivery_toolchain.release.release_receipts import (  # noqa: E402
     _is_sensitive_key,
     redact,
@@ -561,7 +564,7 @@ def wait_for_worker_heartbeat(
         last_output = result.stdout.strip()
         if result.timed_out or result.returncode != 0:
             last_diagnostic = result.diagnostic_text()
-        elif last_output and len(last_output.encode("utf-8")) <= 8192:
+        elif last_output and len(last_output.encode("utf-8")) <= HEARTBEAT_TAIL_BYTES:
             try:
                 return validate_heartbeat(json.loads(last_output))
             except (ValueError, TypeError):
