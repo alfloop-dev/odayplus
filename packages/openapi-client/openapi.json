@@ -3171,6 +3171,16 @@
             "minimum": 1.0,
             "title": "Version",
             "type": "integer"
+          },
+          "workflow": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CanonicalIntakeWorkflow"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -3461,6 +3471,110 @@
           "scope"
         ],
         "title": "CanonicalIntakeSummary",
+        "type": "object"
+      },
+      "CanonicalIntakeWorkflow": {
+        "properties": {
+          "assignment_id": {
+            "format": "uuid",
+            "title": "Assignment Id",
+            "type": "string"
+          },
+          "assignment_status": {
+            "$ref": "#/components/schemas/AssignmentState"
+          },
+          "assignment_version": {
+            "minimum": 1.0,
+            "title": "Assignment Version",
+            "type": "integer"
+          },
+          "breach_at": {
+            "format": "date-time",
+            "title": "Breach At",
+            "type": "string"
+          },
+          "calendar_version": {
+            "title": "Calendar Version",
+            "type": "string"
+          },
+          "due_at": {
+            "format": "date-time",
+            "title": "Due At",
+            "type": "string"
+          },
+          "due_soon_at": {
+            "format": "date-time",
+            "title": "Due Soon At",
+            "type": "string"
+          },
+          "owner_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Role"
+          },
+          "owner_subject_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Subject Id"
+          },
+          "policy_version": {
+            "title": "Policy Version",
+            "type": "string"
+          },
+          "queue_key": {
+            "title": "Queue Key",
+            "type": "string"
+          },
+          "sla_instance_id": {
+            "format": "uuid",
+            "title": "Sla Instance Id",
+            "type": "string"
+          },
+          "sla_state": {
+            "$ref": "#/components/schemas/SlaState"
+          },
+          "sla_version": {
+            "minimum": 1.0,
+            "title": "Sla Version",
+            "type": "integer"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "assignment_id",
+          "assignment_version",
+          "assignment_status",
+          "owner_subject_id",
+          "owner_role",
+          "queue_key",
+          "sla_instance_id",
+          "sla_version",
+          "sla_state",
+          "policy_version",
+          "calendar_version",
+          "started_at",
+          "due_soon_at",
+          "due_at",
+          "breach_at"
+        ],
+        "title": "CanonicalIntakeWorkflow",
         "type": "object"
       },
       "CanonicalListingInputField": {
@@ -14347,8 +14461,8 @@
           "DUE_SOON",
           "OVERDUE",
           "BREACHED",
-          "PAUSED",
-          "COMPLETED"
+          "COMPLETED",
+          "PAUSED"
         ],
         "title": "SlaState",
         "type": "string"

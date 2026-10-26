@@ -583,6 +583,7 @@ export type CanonicalIntakeDetail = {
   submitter_subject_id: string;
   tenant_id: string;
   version: number;
+  workflow?: CanonicalIntakeWorkflow | null;
 };
 
 /** CanonicalIntakePage */
@@ -639,6 +640,25 @@ export type CanonicalIntakeSummary = {
   submitter_subject_id: string;
   tenant_id: string;
   version: number;
+};
+
+/** CanonicalIntakeWorkflow */
+export type CanonicalIntakeWorkflow = {
+  assignment_id: string;
+  assignment_status: AssignmentState;
+  assignment_version: number;
+  breach_at: string;
+  calendar_version: string;
+  due_at: string;
+  due_soon_at: string;
+  owner_role: string | null;
+  owner_subject_id: string | null;
+  policy_version: string;
+  queue_key: string;
+  sla_instance_id: string;
+  sla_state: SlaState;
+  sla_version: number;
+  started_at: string;
 };
 
 /** CanonicalListingInputField */
@@ -2641,7 +2661,7 @@ export type SlaReceipt = {
 };
 
 /** SlaState */
-export type SlaState = "ON_TRACK" | "DUE_SOON" | "OVERDUE" | "BREACHED" | "PAUSED" | "COMPLETED";
+export type SlaState = "ON_TRACK" | "DUE_SOON" | "OVERDUE" | "BREACHED" | "COMPLETED" | "PAUSED";
 
 /** SourcePolicyState */
 export type SourcePolicyState = "APPROVED_RETRIEVAL" | "ASSISTED_ENTRY_ONLY" | "AUTH_REQUIRED" | "SOURCE_BLOCKED" | "POLICY_UNKNOWN";

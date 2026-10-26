@@ -18,6 +18,7 @@ from modules.listing.application.intake_authorization import (
     mask_intake,
     native_intake_authorization_resource,
 )
+from modules.listing.application.intake_workflow_bootstrap import IntakeWorkflowUnavailable
 from modules.listing.domain.identity_graph import IdentityConflictError, IdentityNotFoundError
 from shared.audit.backlog import AuditBacklogBlocked, AuditBacklogUnavailable, CanonicalAuditBacklog
 from shared.audit.errors import CanonicalAuditUnavailable
@@ -127,6 +128,8 @@ def _http_errors():
         raise HTTPException(409, str(exc)) from exc
     except (CanonicalAuditUnavailable, AuditBacklogBlocked, AuditBacklogUnavailable) as exc:
         raise HTTPException(503, "CANONICAL_AUDIT_UNAVAILABLE") from exc
+    except IntakeWorkflowUnavailable as exc:
+        raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     except Exception as exc:

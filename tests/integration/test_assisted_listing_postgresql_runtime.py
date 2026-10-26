@@ -185,6 +185,7 @@ def test_full_assisted_intake_stack_applies_and_validates(
         "003_promotion_state.sql",
         "004_tenant_rls_lineage.sql",
         "005_decision_service_actor.sql",
+        "006_workflow_schedule.sql",
     )
     assert result.required_tables == ALL_TABLES
     with intake_blank_db.connect() as connection:
@@ -273,7 +274,7 @@ def test_full_stack_composes_after_canonical_migration_and_is_idempotent(
             """
             SELECT manifest_sha256
             FROM odp_runtime.assisted_intake_schema_migrations
-            WHERE migration_name = '001-005'
+            WHERE migration_name = '001-006'
             """
         ).fetchone()
         assert marker is not None

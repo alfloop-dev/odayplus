@@ -153,10 +153,11 @@ def test_recorded_populated_four_step_install_upgrades_without_reapplying_or_rew
         old_rows = _snapshot(connection)["rows"]
     first = migration.apply_upgrade_to_database(database.url())
     assert first == migration.apply_upgrade_to_database(database.url())
-    assert first.steps[-1] == "005_decision_service_actor.sql"
+    assert first.steps[-2:] == ("005_decision_service_actor.sql", "006_workflow_schedule.sql")
     with database.connect() as connection:
         assert connection.execute("SELECT * FROM odp_runtime.assisted_intake_schema_migrations WHERE migration_name='001-004'").fetchone() == old_receipt
-        assert connection.execute("SELECT manifest_sha256 FROM odp_runtime.assisted_intake_schema_migrations WHERE migration_name='001-005'").fetchone() == (first.manifest_sha256,)
+        assert connection.execute("SELECT manifest_sha256 FROM odp_runtime.assisted_intake_schema_migrations WHERE migration_name='001-005'").fetchone() == (migration.manifest_checksum(migration.migration_steps()[:5]),)
+        assert connection.execute("SELECT manifest_sha256 FROM odp_runtime.assisted_intake_schema_migrations WHERE migration_name='001-006'").fetchone() == (first.manifest_sha256,)
         assert [(dict(row[0], proposer_service_principal=None),) for row in old_rows] == _snapshot(connection)["rows"]
 
 
@@ -197,7 +198,7 @@ def test_installed_receipts_cannot_claim_unknown_or_incomplete_prefixes(old_deci
                 "VALUES ('001-099',%s)", ("a" * 64,))
         else:
             connection.execute("UPDATE odp_runtime.assisted_intake_schema_migrations SET migration_name='001-005',manifest_sha256=%s",
-                (migration.manifest_checksum(),))
+                (migration.manifest_checksum(migration.migration_steps()[:5]),))
         before = _snapshot(connection)
         receipts = connection.execute("SELECT * FROM odp_runtime.assisted_intake_schema_migrations ORDER BY migration_name").fetchall()
     with pytest.raises(migration.AssistedIntakeSchemaError, match="manifest"):

@@ -60,6 +60,10 @@ _UPGRADE_STEPS: tuple[tuple[str, str], ...] = (
         "005_decision_service_actor.sql",
         "ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0005_DECISION_SERVICE_ACTOR_PATCH.sql",
     ),
+    (
+        "006_workflow_schedule.sql",
+        "ODAY_PLUS_ASSISTED_LISTING_INTAKE_SCHEMA_0006_WORKFLOW_SCHEDULE_PATCH.sql",
+    ),
 )
 DOWNGRADE_FILE = "downgrade.sql"
 
@@ -645,9 +649,9 @@ def apply_upgrade_to_database(database_url: str) -> MigrationApplyResult:
 
     steps = migration_steps()
     statements = upgrade_statements()
-    prefixes = ((4, "001-004"), (len(steps), "001-005"))
+    prefixes = ((4, "001-004"), (5, "001-005"), (6, "001-006"))
     expected_manifests = {name: manifest_checksum(steps[:count]) for count, name in prefixes}
-    expected_manifest = expected_manifests["001-005"]
+    expected_manifest = expected_manifests["001-006"]
     try:
         with psycopg.connect(
             _psycopg_url(database_url),
@@ -680,7 +684,8 @@ def apply_upgrade_to_database(database_url: str) -> MigrationApplyResult:
                 ).fetchall()
                 applied = {row["migration_name"]: row["manifest_sha256"] for row in rows}
                 if (any(expected_manifests.get(name) != digest for name, digest in applied.items())
-                        or ("001-005" in applied and "001-004" not in applied)):
+                        or any(marker in applied and any(prior not in applied for _, prior in prefixes[:index])
+                               for index, (_, marker) in enumerate(prefixes))):
                     raise AssistedIntakeSchemaError(
                         "Installed Assisted Intake schema manifest does not match the declared ordered stack"
                     )
@@ -711,6 +716,17 @@ def apply_upgrade_to_database(database_url: str) -> MigrationApplyResult:
                                 )
                             # The additive migration's own replay validates
                             # its exact actor constraint/function/trigger.
+                            connection.execute(_without_transaction_control(statements[count - 1][1]))
+                        elif marker == "001-006":
+                            present = connection.execute(
+                                "SELECT count(*) AS present FROM pg_attribute WHERE attrelid="
+                                "to_regclass('workflow.sla_instances') AND NOT attisdropped AND attname "
+                                "IN ('assignment_id','calendar_version','due_soon_at','breach_at')"
+                            ).fetchone()["present"]
+                            if present != 4:
+                                raise AssistedIntakeSchemaError(
+                                    "Recorded workflow schedule is missing; repair is not an upgrade"
+                                )
                             connection.execute(_without_transaction_control(statements[count - 1][1]))
                         installed_count = count
                         continue
@@ -746,7 +762,7 @@ def apply_upgrade_to_database(database_url: str) -> MigrationApplyResult:
         raise
     except Exception as exc:
         raise AssistedIntakeSchemaError(
-            "Unable to apply the Assisted Listing Intake 001-005 schema stack"
+            "Unable to apply the Assisted Listing Intake 001-006 schema stack"
         ) from exc
 
     return MigrationApplyResult(

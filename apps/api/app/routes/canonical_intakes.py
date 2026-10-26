@@ -49,7 +49,12 @@ from modules.listing.application.native_intake_source_policy_recheck import (
 from modules.listing.application.native_intake_submission_validation import (
     validate_native_intake_url,
 )
-from modules.listing.domain.intake_states import IntakeStage, ListingState
+from modules.listing.domain.intake_states import (
+    AssignmentState,
+    IntakeStage,
+    ListingState,
+    SlaState,
+)
 from shared.audit.backlog import CanonicalAuditBacklog
 from shared.auth import Role
 from shared.jobs.queue import JobFenceRejectedError
@@ -151,8 +156,27 @@ class CanonicalIntakeResolution(BaseModel):
     fields: list[CanonicalPersistedListingField] = Field(default_factory=list, max_length=100)
 
 
+class CanonicalIntakeWorkflow(BaseModel):
+    assignment_id: UUID
+    assignment_version: int = Field(ge=1)
+    assignment_status: AssignmentState
+    owner_subject_id: UUID | None
+    owner_role: str | None
+    queue_key: str
+    sla_instance_id: UUID
+    sla_version: int = Field(ge=1)
+    sla_state: SlaState
+    policy_version: str
+    calendar_version: str
+    started_at: AwareDatetime
+    due_soon_at: AwareDatetime
+    due_at: AwareDatetime
+    breach_at: AwareDatetime
+
+
 class CanonicalIntakeDetail(CanonicalIntakeSummary):
     resolution: CanonicalIntakeResolution | None = None
+    workflow: CanonicalIntakeWorkflow | None = None
 
 
 class CancelCanonicalIntakeAuthorizationWaitRequest(BaseModel):
@@ -412,7 +436,8 @@ def create_canonical_intakes_router(store) -> APIRouter:
                         "property_version": prop["version"], "fields": fields}
                 response.headers["ETag"] = f'W/"{row["version"]}"'
                 response.headers["Cache-Control"] = "no-store"
-                return {**row, "scope": {key: row[key] for key in NativeIntakeScope.model_fields}, "resolution": resolution}
+                return {**row, "scope": {key: row[key] for key in NativeIntakeScope.model_fields},
+                        "resolution": resolution, "workflow": repo.workflow(principal.tenant_id, str(intake_id))}
 
     @router.post("/canonical-intakes", operation_id="submitCanonicalIntake", status_code=201,
                  response_model=CanonicalIntakeReceipt, responses=errors)

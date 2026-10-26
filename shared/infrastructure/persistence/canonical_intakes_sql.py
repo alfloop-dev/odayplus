@@ -1,9 +1,15 @@
 """Create real native Intake anchors without inventing processed evidence."""
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 from modules.listing.application.intake_authorization import authorize_intake_action
+from modules.listing.application.intake_workflow_bootstrap import (
+    IntakeWorkflowUnavailable,
+    initialize_intake_workflow,
+    schedule_from_record,
+)
 from modules.listing.domain.identity_graph import IdentityConflictError
 from modules.listing.domain.intake_states import (
     Actor,
@@ -20,8 +26,9 @@ from shared.jobs.queue import JobStatus
 
 
 class CanonicalIntakeRepository:
-    def __init__(self, graph):
+    def __init__(self, graph, workflow_policy=None):
         self.graph, self.engine = graph, graph.engine
+        self.workflow_policy = workflow_policy
 
     def get(self, tenant: str, intake_id: str) -> dict:
         UUID(intake_id)
@@ -30,6 +37,95 @@ class CanonicalIntakeRepository:
                 "SELECT * FROM intake.intakes WHERE tenant_id=? AND intake_id=? AND deleted_at IS NULL",
                 (tenant, intake_id),
             )
+
+    def workflow(self, tenant: str, intake_id: str) -> dict | None:
+        """Read recorded workflow facts after the caller authorizes its Intake.
+
+        Older native rows without workflow remain unknown. A partial binding is
+        unavailable; neither current policy nor a legacy document fills it in.
+        """
+        with self.graph.transaction(tenant):
+            row = self.engine.query_one(
+                "SELECT a.assignment_id,a.version AS assignment_version,a.status AS assignment_status,"
+                "a.owner_subject_id,a.owner_role,a.queue_key,a.due_at AS assignment_due_at,"
+                "s.tenant_id,s.assignment_id AS bound_assignment_id,s.sla_instance_id,s.version AS sla_version,s.state AS sla_state,"
+                "s.policy_version,s.calendar_version,s.started_at,s.due_soon_at,s.due_at,s.breach_at "
+                "FROM workflow.sla_instances s LEFT JOIN workflow.assignments a "
+                "ON a.tenant_id=s.tenant_id AND a.intake_id=s.intake_id AND a.assignment_id=s.assignment_id "
+                "WHERE s.tenant_id=? AND s.intake_id=?", (tenant, intake_id),
+            )
+            if row is None:
+                if self.engine.query_one("SELECT 1 FROM workflow.assignments WHERE tenant_id=? AND intake_id=? LIMIT 1",
+                                         (tenant, intake_id)) is not None:
+                    raise IntakeWorkflowUnavailable("Native workflow binding is incomplete")
+                return None
+            if row["bound_assignment_id"] is None and all(row[key] is None for key in (
+                "calendar_version", "due_soon_at", "breach_at",
+            )):
+                # The additive migration deliberately leaves this historical
+                # binding unknown. Keep the authorized Intake detail readable
+                # without substituting today's policy or an old document.
+                return None
+            schedule = schedule_from_record({"schedule": {key: row[key] for key in (
+                "tenant_id", "policy_version", "calendar_version", "started_at", "due_soon_at", "due_at", "breach_at",
+            )}})
+            if (row["assignment_id"] is None or row["assignment_due_at"] is None
+                    or datetime.fromisoformat(row["assignment_due_at"]) != schedule.due_at):
+                raise IntakeWorkflowUnavailable("Native Assignment/SLA binding differs")
+            return {key: value for key, value in row.items()
+                    if key not in {"tenant_id", "assignment_due_at", "bound_assignment_id"}}
+
+    def _initialize_workflow(self, row: dict, *, reason: str, idempotency_key: str) -> None:
+        """Persist the shared bootstrap in this native submission's SQL unit.
+
+        This request-local assembly is never flushed to durable_documents. Its
+        policy, initial facts and evidence come from the existing bootstrap.
+        """
+        state = SimpleNamespace(assignments={}, slas={}, workflow_audits={}, workflow_outbox={})
+        tenant, intake_id, actor = row["tenant_id"], row["intake_id"], row["submitter_subject_id"]
+        scope = {"tenant_id": tenant, **{key: row[key] for key in (
+            "brand_id", "region_id", "assigned_area_id", "heat_zone_id",
+        )}}
+        context = {"intake_id": intake_id, "scope": scope, "submitted_by": actor,
+                   "submitted_at": row["submitted_at"], "correlation_id": row["correlation_id"]}
+        assignment_id, sla_id = initialize_intake_workflow(
+            state, context, self.workflow_policy, record_submission=False,
+        )
+        assignment, sla = state.assignments[assignment_id], state.slas[sla_id]
+        self.engine.execute(
+            "INSERT INTO workflow.assignments (assignment_id,tenant_id,intake_id,status,queue_key,"
+            "owner_subject_id,owner_role,due_at,version,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            tuple(assignment[key] for key in ("assignment_id", "tenant_id", "intake_id", "status", "queue_key",
+                "owner_subject_id", "owner_role", "due_at", "version", "created_at", "updated_at")),
+        )
+        self.engine.execute(
+            "INSERT INTO workflow.sla_instances (sla_instance_id,tenant_id,intake_id,assignment_id,policy_version,"
+            "calendar_version,state,started_at,due_soon_at,due_at,breach_at,version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            tuple(sla[key] for key in ("sla_instance_id", "tenant_id", "intake_id", "assignment_id", "policy_version",
+                "calendar_version", "state", "started_at", "due_soon_at", "due_at", "breach_at", "version")),
+        )
+        at, correlation = row["submitted_at"], row["correlation_id"]
+        self.engine.execute(
+            "INSERT INTO workflow.assignment_transitions (assignment_transition_id,tenant_id,assignment_id,"
+            "sequence_no,from_status,to_status,actor_subject_id,service_principal,permission,reason,"
+            "resulting_version,idempotency_key,correlation_id,occurred_at) "
+            "VALUES (?,?,?,1,NULL,?,?,'intake_workflow','assignment.create',?,1,?,?,?)",
+            (str(uuid4()), tenant, assignment_id, assignment["status"], actor, reason, idempotency_key, correlation, at),
+        )
+        self.engine.execute(
+            "INSERT INTO workflow.sla_transitions (sla_transition_id,tenant_id,sla_instance_id,sequence_no,"
+            "from_state,to_state,actor_subject_id,service_principal,permission,reason,due_at_after,"
+            "resulting_version,idempotency_key,correlation_id,occurred_at) "
+            "VALUES (?,?,?,1,NULL,?,?,'intake_workflow','sla.create',?,?,1,?,?,?)",
+            (str(uuid4()), tenant, sla_id, sla["state"], actor, reason, sla["due_at"], idempotency_key, correlation, at),
+        )
+        for audit in state.workflow_audits.values():
+            self.graph.audit_sink.persist(audit, scope)
+        for value in state.workflow_outbox.values():
+            self.graph._outbox(DomainEvent(
+                **{**value, "occurred_at": datetime.fromisoformat(value["occurred_at"])},
+                actor_ref=actor, policy_version=sla["policy_version"], schema_ref="#/payloads/SlaStateChangedV1",
+            ))
 
     def page(self, tenant: str, *, scope, owner: str | None, state: str | None,
              before: tuple[str, str] | None, limit: int) -> list[dict]:
@@ -211,4 +307,5 @@ class CanonicalIntakeRepository:
                          "submitted_at": at, "scope": native_scope},
             )
             self.graph._outbox(event)
+            self._initialize_workflow(row, reason=reason, idempotency_key=idempotency_key)
             return {**receipt, "outbox_event_id": event.event_id}

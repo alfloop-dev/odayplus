@@ -33,7 +33,7 @@ from modules.listing.application.intake_workflow_bootstrap import (
     record_workflow_change,
     schedule_from_record,
 )
-from modules.listing.domain.intake_states import DomainValidationError, PrincipalRole
+from modules.listing.domain.intake_states import DomainValidationError, PrincipalRole, SlaState
 from shared.audit import InMemoryAuditLog
 
 _CURSOR_SIGNING_KEY_ENV = "ODP_INTAKE_CURSOR_SIGNING_KEY"
@@ -232,14 +232,6 @@ else:
     class JobDeliveryState(str, Enum):
         RETRYING = "RETRYING"
         DEAD_LETTER = "DEAD_LETTER"
-
-    class SlaState(str, Enum):
-        ON_TRACK = "ON_TRACK"
-        DUE_SOON = "DUE_SOON"
-        OVERDUE = "OVERDUE"
-        BREACHED = "BREACHED"
-        PAUSED = "PAUSED"
-        COMPLETED = "COMPLETED"
 
     class AssignmentStatus(str, Enum):
         ASSIGNED = "ASSIGNED"

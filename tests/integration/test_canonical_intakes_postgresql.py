@@ -3,6 +3,7 @@
 import gc
 import json
 from dataclasses import replace
+from datetime import datetime, timedelta
 from types import MethodType, SimpleNamespace
 from uuid import uuid4
 
@@ -19,6 +20,7 @@ from shared.domain.events import validate_event
 from shared.infrastructure.persistence import PostgresDocumentStore
 from shared.infrastructure.persistence.assisted_listing_intake import DurableAssistedIntakeStore
 from shared.infrastructure.persistence.factory import PersistenceBundle
+from tests.intake_workflow_fixture import SyntheticIntakeWorkflowPolicy
 from tests.integration.test_assisted_listing_identity import canonical_graph as canonical_graph
 
 pytestmark = pytest.mark.requires_live_env
@@ -29,7 +31,8 @@ def native_api(canonical_graph, monkeypatch):
     graph, ids, _, _ = canonical_graph
     store = DurableAssistedIntakeStore(PostgresDocumentStore(graph.engine))
     store.configure_canonical_audit(graph.audit_sink)
-    bundle = SimpleNamespace(engine=graph.engine, job_queue=graph.queue, assisted_intake_store=store)
+    bundle = SimpleNamespace(engine=graph.engine, job_queue=graph.queue, assisted_intake_store=store,
+                             assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
     for name in ("canonical_identity_graph", "canonical_intakes"):
         setattr(bundle, name, MethodType(getattr(PersistenceBundle, name), bundle))
     caller = {"principal": Principal(ids["actor"], frozenset({Role.EXPANSION_USER}), Scope(tenant_id=ids["tenant"]))}
@@ -52,7 +55,9 @@ def snapshot(case):
     graph, ids, _, _ = case
     with graph.transaction(ids["tenant"]):
         tables = ("intake.intakes", "intake.intake_stage_transitions", "identity.match_cases", "expansion.listings",
-                  "workflow.jobs", "audit.audit_events", "workflow.outbox_events")
+                  "workflow.jobs", "audit.audit_events", "workflow.outbox_events",
+                  "workflow.assignments", "workflow.assignment_transitions", "workflow.sla_instances",
+                  "workflow.sla_transitions", "workflow.sla_pause_intervals")
         rows = {table: sorted(graph.engine.query("SELECT * FROM " + table + " WHERE tenant_id=?", (ids["tenant"],)),
                               key=lambda row: json.dumps(row, sort_keys=True)) for table in tables}
         rows["documents"] = graph.engine.query("SELECT collection, doc_id, data FROM durable_documents ORDER BY collection, doc_id")
@@ -62,7 +67,7 @@ def snapshot(case):
 
 @pytest.mark.parametrize("method", ["MANUAL", "URL"])
 def test_native_submission_is_atomic_durable_and_never_claims_processing(canonical_graph, native_api, method):
-    from shared.infrastructure.persistence.postgresql import PostgresEngine
+    from tests.integration.test_assisted_listing_identity import independent_canonical_graph
 
     graph, ids, _, db = canonical_graph
     client, _, store = native_api
@@ -101,25 +106,66 @@ def test_native_submission_is_atomic_durable_and_never_claims_processing(canonic
     sensitive = event_row["sensitive_fields"]
     assert (json.loads(sensitive) if isinstance(sensitive, str) else sensitive) == event["sensitive_fields"]
     assert "original_url" not in event["payload"]
+    assignment, = [r for r in after["workflow.assignments"] if r["intake_id"] == receipt["intake_id"]]
+    sla, = [r for r in after["workflow.sla_instances"] if r["intake_id"] == receipt["intake_id"]]
+    assert assignment["status"] == "UNASSIGNED" and assignment["version"] == 1
+    assert assignment["owner_subject_id"] is None and assignment["queue_key"] == "synthetic-review-queue"
+    assert sla["assignment_id"] == assignment["assignment_id"] and sla["version"] == 1
+    started = datetime.fromisoformat(native["submitted_at"])
+    assert datetime.fromisoformat(sla["started_at"]) == started
+    for key, hours in (("due_soon_at", 3), ("due_at", 4), ("breach_at", 5)):
+        assert datetime.fromisoformat(sla[key]) == started + timedelta(hours=hours)
+    assert sla["calendar_version"] == "synthetic-calendar-v1"
+    workflow = selected.json()["workflow"]
+    assert workflow["assignment_id"] == assignment["assignment_id"]
+    assert workflow["sla_instance_id"] == sla["sla_instance_id"]
+    assert workflow["assignment_version"] == workflow["sla_version"] == 1
+    assert workflow["assignment_status"] == "UNASSIGNED" and workflow["sla_state"] == "ON_TRACK"
+    assert workflow["owner_subject_id"] is None and workflow["owner_role"] is None
+    assert workflow["queue_key"] == assignment["queue_key"]
+    assert workflow["calendar_version"] == sla["calendar_version"]
+    assert workflow["policy_version"] == sla["policy_version"]
+    for table in ("workflow.assignment_transitions", "workflow.sla_transitions"):
+        bound = [r for r in after[table] if r["correlation_id"] == receipt["correlation_id"]]
+        assert len(bound) == 1 and bound[0]["sequence_no"] == bound[0]["resulting_version"] == 1
+    created_audits = [r for r in after["audit.audit_events"] if r["correlation_id"] == receipt["correlation_id"]]
+    assert sorted(r["action"] for r in created_audits) == ["assignment.create", "intake.create", "sla.create"]
+    created_events = [r for r in after["workflow.outbox_events"] if r["correlation_id"] == receipt["correlation_id"]]
+    assert sorted(r["event_type"] for r in created_events) == ["intake.submitted", "sla.state_changed"]
+    assert not {"operator.assisted_intakes", "assisted_intake.assignments", "assisted_intake.slas"}.intersection(
+        r["collection"] for r in after["documents"])
     assert graph.audit_sink.writer.verify_chain(ids["tenant"]).ok
     replay = client.post("/api/v1/canonical-intakes", headers=headers, json=body)
     assert replay.status_code == 201 and replay.json() == receipt and replay.headers["Idempotency-Replayed"] == "true"
     assert snapshot(canonical_graph) == after
     assert client.post("/api/v1/canonical-intakes", headers=headers, json=command(reason="Different synthetic intent")).status_code == 409
     assert snapshot(canonical_graph) == after
-    reopened_engine = PostgresEngine(db.url(), bootstrap=False, validate_schema=False)
-    try:
-        reopened = DurableAssistedIntakeStore(PostgresDocumentStore(reopened_engine))
+    with independent_canonical_graph(graph, db) as reopened_graph:
+        reopened = DurableAssistedIntakeStore(PostgresDocumentStore(reopened_graph.engine))
+        reopened.configure_canonical_audit(reopened_graph.audit_sink)
+        bundle = SimpleNamespace(engine=reopened_graph.engine, job_queue=reopened_graph.queue,
+            assisted_intake_store=reopened, assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
+        for name in ("canonical_identity_graph", "canonical_intakes"):
+            setattr(bundle, name, MethodType(getattr(PersistenceBundle, name), bundle))
+        app = FastAPI()
+        app.state.persistence_bundle, app.state.audit_log = bundle, InMemoryAuditLog()
+        app.include_router(create_assisted_intake_router(reopened), prefix="/api/v1")
+        with TestClient(app) as restarted:
+            restarted_detail = restarted.get(path)
+            assert restarted_detail.status_code == 200, restarted_detail.text
+            assert restarted_detail.json()["workflow"] == workflow
+            replayed = restarted.post("/api/v1/canonical-intakes", json=body, headers=headers)
+            assert replayed.status_code == 201 and replayed.json() == receipt
+            assert replayed.headers["Idempotency-Replayed"] == "true"
         reopened.refresh(ids["tenant"])
         assert next(iter(reopened.replays.values()))[1] == receipt
-        assert reopened_engine.query_one("SELECT version, processing_state FROM intake.intakes WHERE intake_id=?",
+        assert reopened_graph.engine.query_one("SELECT version, processing_state FROM intake.intakes WHERE intake_id=?",
                                          (receipt["intake_id"],)) == {"version": 1, "processing_state": "SUBMITTED"}
-    finally:
-        reopened_engine.close()
+        assert snapshot(canonical_graph) == after
     store.refresh(ids["tenant"])
 
 
-@pytest.mark.parametrize("mutation", ["audit", "outbox", "receipt"])
+@pytest.mark.parametrize("mutation", ["audit", "outbox", "receipt", "assignment", "sla", "workflow_event"])
 def test_failure_rolls_back_intake_transition_audit_outbox_and_receipt(canonical_graph, native_api, monkeypatch, mutation):
     graph, _, _, _ = canonical_graph
     client, _, store = native_api
@@ -132,10 +178,99 @@ def test_failure_rolls_back_intake_transition_audit_outbox_and_receipt(canonical
         monkeypatch.setattr(graph.audit_sink, "persist", fail)
     elif mutation == "outbox":
         monkeypatch.setattr(type(graph), "_outbox", fail)
+    elif mutation in {"assignment", "sla"}:
+        execute = graph.engine.execute
+        table = "workflow.assignments" if mutation == "assignment" else "workflow.sla_instances"
+
+        def fail_workflow(sql, *args, **kwargs):
+            if sql.startswith("INSERT INTO " + table):
+                fail()
+            return execute(sql, *args, **kwargs)
+
+        monkeypatch.setattr(graph.engine, "execute", fail_workflow)
+    elif mutation == "workflow_event":
+        outbox = type(graph)._outbox
+
+        def fail_workflow_event(owner, event):
+            if event.event_type == "sla.state_changed":
+                fail()
+            return outbox(owner, event)
+
+        monkeypatch.setattr(type(graph), "_outbox", fail_workflow_event)
     else:
         monkeypatch.setattr(store, "flush", fail)
     response = client.post("/api/v1/canonical-intakes", json=command(), headers={"Idempotency-Key": "synthetic-native-rollback-001"})
     assert response.status_code == 503, response.text
+    assert snapshot(canonical_graph) == before
+
+
+def test_native_submission_without_workflow_policy_fails_closed(canonical_graph, native_api):
+    client, _, _ = native_api
+    client.app.state.persistence_bundle.assisted_intake_workflow_policy = None
+    before = snapshot(canonical_graph)
+    response = client.post("/api/v1/canonical-intakes", json=command(), headers={
+        "Idempotency-Key": "synthetic-native-no-workflow-001",
+    })
+    assert response.status_code == 503, response.text
+    assert snapshot(canonical_graph) == before
+
+
+@pytest.mark.parametrize("damage", ["missing_checkpoint", "assignment_due", "calendar"])
+def test_native_workflow_detail_refuses_partial_or_inconsistent_recorded_facts(canonical_graph, native_api, damage):
+    graph, ids, _, _ = canonical_graph
+    client, _, _ = native_api
+    created = client.post("/api/v1/canonical-intakes", json=command(), headers={
+        "Idempotency-Key": "synthetic-native-damaged-workflow-001",
+    })
+    assert created.status_code == 201, created.text
+    iid = created.json()["intake_id"]
+    statements = {
+        "missing_checkpoint": "UPDATE workflow.sla_instances SET due_soon_at=NULL WHERE tenant_id=? AND intake_id=?",
+        "assignment_due": "UPDATE workflow.assignments SET due_at=due_at+INTERVAL '1 hour' WHERE tenant_id=? AND intake_id=?",
+        "calendar": "UPDATE workflow.sla_instances SET calendar_version='' WHERE tenant_id=? AND intake_id=?",
+    }
+    with graph.transaction(ids["tenant"]):
+        graph.engine.execute(statements[damage], (ids["tenant"], iid))
+    before = snapshot(canonical_graph)
+    response = client.get("/api/v1/canonical-intakes/" + iid)
+    assert response.status_code == 503, response.text
+    assert snapshot(canonical_graph) == before
+
+
+def test_native_workflow_history_prevents_deleting_its_sla(canonical_graph, native_api):
+    from psycopg import errors
+
+    graph, ids, _, _ = canonical_graph
+    client, _, _ = native_api
+    created = client.post("/api/v1/canonical-intakes", json=command(), headers={
+        "Idempotency-Key": "synthetic-native-protected-sla-001",
+    })
+    assert created.status_code == 201, created.text
+    iid = created.json()["intake_id"]
+    before = snapshot(canonical_graph)
+    with pytest.raises(errors.ForeignKeyViolation) as error, graph.transaction(ids["tenant"]):
+        graph.engine.execute("DELETE FROM workflow.sla_instances WHERE tenant_id=? AND intake_id=?", (ids["tenant"], iid))
+    assert error.value.diag.constraint_name == "fk_sla_transition_tenant"
+    assert snapshot(canonical_graph) == before
+    assert client.get("/api/v1/canonical-intakes/" + iid).status_code == 200
+
+
+def test_historical_workflow_without_recorded_binding_keeps_detail_readable_and_unknown(canonical_graph, native_api):
+    graph, ids, _, _ = canonical_graph
+    aid = str(uuid4())
+    with graph.transaction(ids["tenant"]):
+        graph.engine.execute("INSERT INTO workflow.assignments (assignment_id,tenant_id,intake_id,status,queue_key,due_at) "
+            "VALUES (?,?,?,'UNASSIGNED','synthetic-historical-queue','2026-10-13T04:00:00Z')",
+            (aid, ids["tenant"], ids["intake"]))
+        graph.engine.execute("INSERT INTO workflow.sla_instances (tenant_id,intake_id,policy_version,state,started_at,due_at) "
+            "VALUES (?,?,'synthetic-historical-policy','ON_TRACK','2026-10-13T00:00:00Z','2026-10-13T04:00:00Z')",
+            (ids["tenant"], ids["intake"]))
+    before = snapshot(canonical_graph)
+    client, _, _ = native_api
+    response = client.get("/api/v1/canonical-intakes/" + ids["intake"])
+    assert response.status_code == 200, response.text
+    assert response.json()["workflow"] is None
+    assert "synthetic-historical-policy" not in response.text
     assert snapshot(canonical_graph) == before
 
 

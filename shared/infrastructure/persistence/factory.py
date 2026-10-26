@@ -255,7 +255,9 @@ class PersistenceBundle:
             CanonicalIntakeRepository,
         )
 
-        return CanonicalIntakeRepository(self.canonical_identity_graph())
+        return CanonicalIntakeRepository(
+            self.canonical_identity_graph(), self.assisted_intake_workflow_policy,
+        )
 
 
     def canonical_intake_start(self) -> Any:
