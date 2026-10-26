@@ -42,7 +42,12 @@ WITH authoritative_order_partitions AS (
     -- itself have succeeded, reconciled and loaded every record it processed.
     -- A FAILED or abandoned RUNNING chunk keeps its schema-default zero
     -- counters while its checkpoint may already have advanced past a
-    -- quarantined record, so it can never prove that nothing was dropped.
+    -- quarantined record, so a later resumed EOF cannot clear that failure.
+    -- A first attempt failing before any projection/quarantine is different:
+    -- a later successful full-day read with resumed_from IS NULL really starts
+    -- from the beginning. Only that EOF may retire the earlier empty failure,
+    -- and only if the failure finished before the reread started. Its actual
+    -- finished_at remains the availability/maturity boundary below.
     -- This holds for runs finishing after the proof as well: a later
     -- rematerialization or a backfill window reaching the day that quarantined
     -- or failed on an order adds no canonical lineage and leaves the earlier
@@ -93,6 +98,27 @@ WITH authoritative_order_partitions AS (
                     NOT chunk.partition_complete
                     AND chunk.finished_at >= completion.finished_at
                 )
+            )
+            AND NOT coalesce(
+                chunk.status = 'FAILED'
+                AND chunk.partition_key = completion.partition_key
+                AND chunk.finished_at < completion.started_at
+                AND completion.started_at <= completion.finished_at
+                AND completion.resumed_from IS NULL
+                AND chunk.processed_count = 0
+                AND chunk.valid_loaded = 0
+                AND chunk.quarantined_count = 0
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM data_plane.canonical_lineage AS failed_lineage
+                    WHERE failed_lineage.run_id = chunk.run_id
+                )
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM data_plane.quarantined_records AS failed_quarantine
+                    WHERE failed_quarantine.run_id = chunk.run_id
+                ),
+                FALSE
             )
       )
 ),

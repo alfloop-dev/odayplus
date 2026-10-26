@@ -144,6 +144,8 @@ def _install_minimal_authoritative_schema(connection) -> None:
             quarantined_count BIGINT NOT NULL,
             reconciled BOOLEAN NOT NULL,
             partition_complete BOOLEAN NOT NULL,
+            resumed_from TEXT,
+            started_at TIMESTAMPTZ NOT NULL,
             finished_at TIMESTAMPTZ
         );
 
@@ -207,6 +209,8 @@ def _insert_run(
     quarantined_count: int = 0,
     reconciled: bool = True,
     partition_complete: bool = True,
+    resumed_from: str | None = None,
+    started_at: datetime | None = None,
 ) -> UUID:
     run_id = _id(f"run:{name}")
     connection.execute(
@@ -214,8 +218,8 @@ def _insert_run(
         INSERT INTO data_plane.ingestion_runs (
             run_id, source_kind, partition_key, status,
             processed_count, valid_loaded, quarantined_count,
-            reconciled, partition_complete, finished_at
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            reconciled, partition_complete, resumed_from, started_at, finished_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             run_id,
@@ -227,6 +231,8 @@ def _insert_run(
             quarantined_count,
             reconciled,
             partition_complete,
+            resumed_from,
+            started_at or (finished_at - timedelta(days=1) if finished_at else _at(ORIGIN, 0)),
             finished_at,
         ),
     )
@@ -1076,6 +1082,7 @@ def test_postgresql_forecast_view_admits_only_eof_proven_target_and_prior_partit
             _insert_run(
                 connection,
                 name="forecast-target-resume-eof",
+                resumed_from="target-chunk-last-order",
                 source_kind="orders",
                 partition_key=FORECAST_TARGET_DAY.isoformat(),
                 finished_at=target_eof_at,
@@ -1107,6 +1114,7 @@ def test_postgresql_forecast_view_admits_only_eof_proven_target_and_prior_partit
             _insert_run(
                 connection,
                 name="forecast-target-resume-eof-after-quarantine",
+                resumed_from="quarantined-chunk-last-order",
                 source_kind="orders",
                 partition_key=FORECAST_TARGET_DAY.isoformat(),
                 finished_at=target_eof_at,
@@ -1142,6 +1150,7 @@ def test_postgresql_forecast_view_admits_only_eof_proven_target_and_prior_partit
                     _insert_run(
                         connection,
                         name=f"forecast-uncounted-chunk-eof:{day.isoformat()}:{label}",
+                        resumed_from="uncounted-chunk-last-order",
                         source_kind="orders",
                         partition_key=day.isoformat(),
                         finished_at=target_eof_at,
@@ -1757,6 +1766,7 @@ def test_postgresql_forecast_view_admits_only_eof_proven_target_and_prior_partit
             _insert_run(
                 connection,
                 name="forecast-prior-resume-eof",
+                resumed_from="prior-chunk-last-order",
                 source_kind="orders",
                 partition_key=FORECAST_PRIOR_DAY.isoformat(),
                 finished_at=prior_eof_at,
@@ -1779,6 +1789,193 @@ def test_postgresql_forecast_view_admits_only_eof_proven_target_and_prior_partit
             assert late_row["feature_snapshot_time"] == prior_eof_at
 
         assert _forecast_rows(connection, tenant_id, store_id) == baseline
+
+
+@pytest.mark.parametrize("day", (FORECAST_TARGET_DAY, FORECAST_PRIOR_DAY))
+def test_postgresql_forecast_full_reread_recovers_only_preprojection_failure(
+    intake_blank_db,
+    day: date,
+) -> None:
+    """Synthetic durable states of run_partition: failure before apply_batch /
+    checkpoint, then a new no-checkpoint full-day read fitting below the limit.
+    Exercise the installed SQL and original loader, not a second admission rule.
+    """
+    spec = MODEL_SPECS["forecastops"]
+    bounds = DataBounds(
+        _at(FORECAST_FIRST_DAY, 0),
+        _at(FORECAST_TARGET_DAY + timedelta(days=1), 0),
+        10,
+    )
+    reason = (
+        "SOURCE_RUN_NOT_COMPLETE" if day == FORECAST_TARGET_DAY
+        else "PRIOR_SOURCE_NOT_COMPLETE"
+    )
+    failure_start = _at(day + timedelta(days=1), 1)
+    failure_end = failure_start + timedelta(minutes=1)
+    reread_start = _at(FORECAST_TARGET_DAY + timedelta(days=2), 4)
+    reread_end = reread_start + timedelta(hours=1)
+
+    with intake_blank_db.connect() as connection:
+        _install_minimal_authoritative_schema(connection)
+        tenant_id, store_id, daily_runs = _seed_forecast_history(connection)
+        client = _PsycopgInstallationClient(connection)
+        installed = ModelReadyViewInstaller(client).install()
+        assert installed["forecast"]["view_version"] == spec.expected_view_version
+        assert installed["forecast"]["installer_sha256"] == hashlib.sha256(
+            MODEL_READY_SQL_PATH.read_bytes()
+        ).hexdigest()
+        source = PostgresModelReadySource(client)
+        before = _forecast_rows(connection, tenant_id, store_id)
+        baseline = source.load(spec, bounds)
+        name = f"forecast:{day.isoformat()}"
+        txn_id = _id(f"transaction:{name}")
+
+        # The first attempt has no canonical projection, quarantine or cursor.
+        # Remove the seed's successful day so Rgood really owns its first row;
+        # no failed snapshot is replayed or fabricated as completion lineage.
+        connection.execute(
+            "DELETE FROM data_plane.canonical_lineage WHERE canonical_id = %s", (txn_id,)
+        )
+        connection.execute(
+            "DELETE FROM data_plane.transaction_authority WHERE transaction_id = %s", (txn_id,)
+        )
+        connection.execute("DELETE FROM core.transactions WHERE transaction_id = %s", (txn_id,))
+        connection.execute(
+            "DELETE FROM data_plane.ingestion_runs WHERE run_id = %s", (daily_runs[day],)
+        )
+        failed_run = _insert_run(
+            connection,
+            name=f"forecast-before-projection-failure:{day}",
+            source_kind="orders",
+            partition_key=day.isoformat(),
+            started_at=failure_start,
+            finished_at=failure_end,
+            status="FAILED",
+            reconciled=False,
+            partition_complete=False,
+        )
+        with pytest.raises(ModelReadyDataError, match="not trainable"):
+            source.load(spec, bounds)
+
+        reread_run = _insert_run(
+            connection,
+            name=f"forecast-full-reread:{day}",
+            source_kind="orders",
+            partition_key=day.isoformat(),
+            started_at=reread_start,
+            finished_at=reread_end,
+            resumed_from=None,
+            processed_count=1,
+            valid_loaded=1,
+        )
+        _insert_transaction(
+            connection,
+            tenant_id=tenant_id,
+            store_id=store_id,
+            name=name,
+            event_time=_at(day, 10),
+            amount=before[day]["daily_net_revenue"],
+            daily_runs={day: reread_run},
+        )
+        # A later observation/projection is not backdated to the order's day.
+        connection.execute(
+            "UPDATE core.transactions SET observation_time = %s, ingested_at = %s "
+            "WHERE transaction_id = %s",
+            (reread_start, reread_start, txn_id),
+        )
+        connection.execute(
+            "UPDATE data_plane.canonical_lineage SET projected_at = %s WHERE canonical_id = %s",
+            (reread_start, txn_id),
+        )
+        recovered = _forecast_rows(connection, tenant_id, store_id)
+        assert recovered[day]["label_maturity_time"] == reread_end
+        target = recovered[FORECAST_TARGET_DAY]
+        assert target["is_training_eligible"] is True
+        assert target["exclusion_reason"] is None
+        assert target["feature_snapshot_time"] == reread_end
+        assert target["prediction_origin_time"] == reread_end + timedelta(microseconds=1)
+        assert target["source_snapshot_ids"] == before[FORECAST_TARGET_DAY]["source_snapshot_ids"]
+        if day == FORECAST_PRIOR_DAY:
+            assert target["label_maturity_time"] == before[FORECAST_TARGET_DAY]["label_maturity_time"]
+        for earlier_day in (date_ for date_ in before if date_ < day):
+            assert recovered[earlier_day] == before[earlier_day]
+        loaded = source.load(spec, bounds)
+        assert loaded.bounds == bounds
+        assert loaded.relation == spec.relation
+        assert loaded.query_sha256 == baseline.query_sha256
+        (row,) = loaded.rows
+        assert row["view_version"] == spec.expected_view_version
+        assert row["tenant_id"] == tenant_id
+        assert row["store_id"] == store_id
+        assert row["daily_net_revenue"] == baseline.rows[0]["daily_net_revenue"]
+        assert row["rolling_mean_28"] == baseline.rows[0]["rolling_mean_28"]
+        assert row["feature_snapshot_time"] == reread_end
+        # Rbad is retained as FAILED, not rewritten into a successful run.
+        assert connection.execute(
+            "SELECT status FROM data_plane.ingestion_runs WHERE run_id = %s", (failed_run,)
+        ).fetchone() == ("FAILED",)
+
+        def assert_refused() -> None:
+            assert _forecast_target(connection, tenant_id, store_id) == (False, reason)
+            with pytest.raises(ModelReadyDataError, match="not trainable"):
+                source.load(spec, bounds)
+
+        # Same successful EOF but resumed after a checkpoint (including zero
+        # new rows) is not a full reread. Nor is a read overlapping the failure,
+        # an inverted run interval, or an unrelated source/date/backfill key.
+        for assignment in (
+            "resumed_from = 'failed-chunk-last-order'",
+            "resumed_from = 'failed-chunk-last-order', processed_count = 0, valid_loaded = 0",
+            f"started_at = '{failure_end.isoformat()}'",
+            f"started_at = '{failure_start.isoformat()}'",
+            f"started_at = '{(reread_end + timedelta(seconds=1)).isoformat()}'",
+            "source_kind = 'trade'",
+            f"partition_key = '{(day + timedelta(days=1)).isoformat()}'",
+            f"partition_key = '{day.isoformat()}__{(day + timedelta(days=1)).isoformat()}'",
+            "partition_complete = FALSE",
+        ):
+            with connection.transaction(force_rollback=True):
+                _set_run(connection, reread_run, assignment)
+                assert_refused()
+
+        # A bad attempt with durable quarantined records cannot be called a
+        # preprojection transient failure just because fail_run left zeros.
+        with connection.transaction(force_rollback=True):
+            _insert_quarantine(
+                connection,
+                name=f"forecast-failed-reread-boundary:{day}",
+                source_id=f"other-quarantined-order:{day}",
+                run_id=failed_run,
+                partition_key=day.isoformat(),
+                quarantined_at=failure_end,
+            )
+            assert_refused()
+
+        # Durable projection evidence likewise rules out the empty-failure
+        # exception, even when the failed run's counters remain zero.
+        with connection.transaction(force_rollback=True):
+            _insert_lineage(
+                connection,
+                name=f"forecast-failed-projection:{day}",
+                run_id=failed_run,
+                tenant_id=tenant_id,
+                table="core.stores",
+                entity_id=store_id,
+                projected_at=failure_end,
+            )
+            assert_refused()
+
+        # A failure still open when the reread starts cannot be retired by it.
+        for assignment in (
+            f"finished_at = '{reread_start.isoformat()}'",
+            "finished_at = NULL",
+            "status = 'RUNNING'",
+        ):
+            with connection.transaction(force_rollback=True):
+                _set_run(connection, failed_run, assignment)
+                assert_refused()
+
+        assert _forecast_target(connection, tenant_id, store_id) == (True, None)
 
 
 def _insert_quarantine(

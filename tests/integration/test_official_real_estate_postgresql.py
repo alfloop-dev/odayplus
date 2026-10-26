@@ -929,6 +929,8 @@ def _create_model_view_prerequisites(database: Any) -> None:
                 quarantined_count BIGINT NOT NULL,
                 reconciled BOOLEAN NOT NULL,
                 partition_complete BOOLEAN NOT NULL,
+                resumed_from TEXT,
+                started_at TIMESTAMPTZ NOT NULL,
                 finished_at TIMESTAMPTZ
             );
             CREATE TABLE data_plane.canonical_lineage (
@@ -943,6 +945,7 @@ def _create_model_view_prerequisites(database: Any) -> None:
             );
             CREATE TABLE data_plane.quarantined_records (
                 source_snapshot_id UUID PRIMARY KEY,
+                run_id UUID NOT NULL,
                 source_kind TEXT NOT NULL,
                 source_id TEXT NOT NULL,
                 quarantined_at TIMESTAMPTZ NOT NULL,

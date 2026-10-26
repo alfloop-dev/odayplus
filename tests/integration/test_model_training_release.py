@@ -608,6 +608,31 @@ def test_model_ready_view_preflight_requires_opening_and_geo_columns() -> None:
     assert preflight.prerequisite_counts == {}
 
 
+@pytest.mark.parametrize(
+    ("relation", "column"),
+    (
+        ("data_plane.ingestion_runs", "started_at"),
+        ("data_plane.ingestion_runs", "resumed_from"),
+        ("data_plane.quarantined_records", "run_id"),
+    ),
+)
+def test_model_ready_sql_recovery_prerequisites_fail_closed(
+    relation: str,
+    column: str,
+) -> None:
+    client = FakeInstallationClient()
+    client.columns[relation] = tuple(
+        name for name in client.columns[relation] if name != column
+    )
+    installer = ModelReadyViewInstaller(client)
+    preflight = installer.preflight()
+    assert not preflight.ready
+    assert preflight.missing_columns == {relation: (column,)}
+    with pytest.raises(RuntimeError, match="prerequisites are incomplete"):
+        installer.install()
+    assert client.executions == []
+
+
 def test_model_ready_view_install_rejects_non_active_geo_contract() -> None:
     class InactiveGeoContractClient(FakeInstallationClient):
         def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:

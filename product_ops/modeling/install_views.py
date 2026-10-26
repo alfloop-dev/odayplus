@@ -73,9 +73,12 @@ REQUIRED_PREREQUISITE_COLUMNS: Mapping[str, tuple[str, ...]] = {
         "quarantined_count",
         "reconciled",
         "partition_complete",
+        "resumed_from",
+        "started_at",
         "finished_at",
     ),
     "data_plane.quarantined_records": (
+        "run_id",
         "source_kind",
         "source_id",
         "quarantined_at",

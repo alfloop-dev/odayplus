@@ -40,6 +40,16 @@ def test_forecast_sql_requires_eof_proven_partitions_for_target_and_prior_days()
     assert "chunk.status = 'SUCCEEDED'\n                    AND chunk.reconciled" in body
     assert "AND chunk.finished_at IS NOT NULL" in body
     assert "chunk.finished_at <= completion.finished_at" not in body
+    # Only a later full-day from-beginning EOF can retire a failed attempt
+    # that left no projection or quarantine; NULL/open/overlapping runs cannot.
+    assert "AND NOT coalesce(" in body
+    assert "chunk.status = 'FAILED'" in body
+    assert "AND chunk.partition_key = completion.partition_key" in body
+    assert "AND chunk.finished_at < completion.started_at" in body
+    assert "AND completion.started_at <= completion.finished_at" in body
+    assert "AND completion.resumed_from IS NULL" in body
+    assert "failed_lineage.run_id = chunk.run_id" in body
+    assert "failed_quarantine.run_id = chunk.run_id" in body
     # The orders source reads every store in one _id order, so a clean bounded
     # chunk of the day finishing at or after the proof leaves records of any
     # store unread and revokes the older EOF until a later run reaches EOF.
