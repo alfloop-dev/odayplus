@@ -582,7 +582,9 @@ jobs:
     needs: change-scope
     if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Budget covers dependency setup, all supplemental and fixed130 gates,
+    # evidence upload and cleanup; individual test/service deadlines stay unchanged.
+    timeout-minutes: 45
     services:
       listing-search-postgres:
         image: postgis/postgis:16-3.5
