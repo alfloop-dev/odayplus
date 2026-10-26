@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NetworkFindAreasWorkspace as GrantedReadNetworkWorkspace, inspectNetworkListingsSnapshot, inspectNetworkScoringSnapshot } from "../../NetworkFindAreasWorkspace";
 import { SiteScorePanel } from "../SiteScorePanel";
+import styles from "../../networkFindAreas.module.css";
 
 // Explicit read-grant fixture: shell projects listing and SiteScore read families.
 // This is a renderer premise, not a real Principal/production permission grant.
@@ -1332,7 +1333,7 @@ describe("read-only standard configuration in the existing SiteScore flow", () =
   function expectCompactFormatSummary(block: HTMLElement) {
     const summaries = block.querySelectorAll("dl");
     expect(summaries).toHaveLength(1);
-    expect(summaries[0]).toHaveClass("scoreMeta");
+    expect(summaries[0]).toHaveClass(styles.scoreMeta);
     expect(block.querySelector("table, thead, th, td")).toBeNull();
     expect(block.querySelector("input, select, textarea, button")).toBeNull();
     expect(block).toHaveTextContent("ODAY_G2 · 2.0.0");
