@@ -18,6 +18,24 @@ export type FeatureFlagsAdminWorkspaceProps = {
   baseUrl?: string;
 };
 
+function FlagScopeFacts({ flag }: { flag: FeatureFlagDto }) {
+  return (
+    <div className={styles.scopeFacts}>
+      <p>範圍：<strong>{flag.scope ?? "global（舊版 API）"}</strong></p>
+      <p>設定版本：<strong>{flag.configuration_version ?? "未提供（舊版 global API）"}</strong></p>
+      {flag.bindings && flag.bindings.length > 0 ? (
+        <ul aria-label="精確範圍單位">
+          {flag.bindings.map((binding) => (
+            <li key={JSON.stringify([binding.tenant_id, binding.source_id])}>
+              Tenant: <code>{binding.tenant_id}</code> · Source: <code>{binding.source_id ?? "不限定來源"}</code>
+            </li>
+          ))}
+        </ul>
+      ) : <p>{flag.scope && flag.scope !== "global" ? "尚無綁定範圍單位" : "全域範圍（無租戶／來源綁定）"}</p>}
+    </div>
+  );
+}
+
 export function FeatureFlagsAdminWorkspace({
   initialFlags,
   baseUrl = "",
@@ -112,7 +130,7 @@ export function FeatureFlagsAdminWorkspace({
   };
 
   const handleToggle = (flag: FeatureFlagDto) => {
-    chooseCommand(flag, flag.is_active ? "disable" : flag.high_risk && flag.approved_by.length < 2 ? null : "enable");
+    chooseCommand(flag, flag.enabled ? "disable" : flag.high_risk && flag.approved_by.length < 2 ? null : "enable");
   };
 
   const closeModal = () => {
@@ -133,6 +151,14 @@ export function FeatureFlagsAdminWorkspace({
     // The server remains authoritative for expiry and two distinct approvals.
     if (command === "enable" && modalFlag.high_risk && modalFlag.approved_by.length < 2) return;
     const proof: FeatureFlagCommandProof = { reason: reason.trim(), riskAcknowledged: true };
+    if (command !== "disable") {
+      // Bind approval/enable to the exact DTO shown in this confirmation, not a refreshed row.
+      if (modalFlag.scope && modalFlag.scope !== "global" && modalFlag.configuration_version === undefined) {
+        setProofError("範圍旗標缺少設定版本，請重新讀取後檢視並確認。");
+        return;
+      }
+      if (modalFlag.configuration_version !== undefined) proof.configuration_version = modalFlag.configuration_version;
+    }
     const selectedFlag = modalFlag;
     const selectedCommand = command;
     const token = {};
@@ -180,8 +206,8 @@ export function FeatureFlagsAdminWorkspace({
 
   const stats = useMemo(() => {
     const total = flags.length;
-    const active = flags.filter((f) => f.is_active).length;
-    const disabled = flags.filter((f) => !f.is_active).length;
+    const active = flags.filter((f) => f.enabled).length;
+    const disabled = flags.filter((f) => !f.enabled).length;
     const highRisk = flags.filter((f) => f.high_risk).length;
     const expired = flags.filter((f) => f.is_expired).length;
     return { total, active, disabled, highRisk, expired };
@@ -196,8 +222,8 @@ export function FeatureFlagsAdminWorkspace({
 
       if (!matchesSearch) return false;
 
-      if (filter === "active") return f.is_active;
-      if (filter === "disabled") return !f.is_active;
+      if (filter === "active") return f.enabled;
+      if (filter === "disabled") return !f.enabled;
       if (filter === "high_risk") return f.high_risk;
       if (filter === "expired") return f.is_expired;
       return true;
@@ -241,7 +267,7 @@ export function FeatureFlagsAdminWorkspace({
           <span className={styles.statValue}>{stats.total}</span>
         </div>
         <div className={styles.statCard}>
-          <span className={styles.statLabel}>Active</span>
+          <span className={styles.statLabel}>Enabled (stored)</span>
           <span className={`${styles.statValue} ${styles.statValueActive}`}>
             {stats.active}
           </span>
@@ -308,18 +334,23 @@ export function FeatureFlagsAdminWorkspace({
             <div>
               <div className={styles.flagHeader}>
                 <span className={styles.flagKey}>{flag.key}</span>
-                <span
-                  className={`${styles.badge} ${
-                    flag.is_active ? styles.badgeActive : styles.badgeDisabled
-                  }`}
-                >
-                  {flag.is_active ? "● ACTIVE" : "○ DISABLED"}
-                </span>
+                <div>
+                  <span>儲存設定：</span>
+                  <span
+                    className={`${styles.badge} ${
+                      flag.enabled ? styles.badgeActive : styles.badgeDisabled
+                    }`}
+                  >
+                    {flag.enabled ? "● ACTIVE" : "○ DISABLED"}
+                  </span>
+                </div>
               </div>
 
               <p className={styles.flagDescription}>
                 {flag.description || "無詳細描述"}
               </p>
+              <p>情境有效性（伺服器）：{flag.is_active ? "有效" : "不生效"}；非全域啟用判定</p>
+              <FlagScopeFacts flag={flag} />
 
               <div className={styles.badgesGroup}>
                 {flag.high_risk && (
@@ -347,12 +378,12 @@ export function FeatureFlagsAdminWorkspace({
               <div className={styles.actionRow}>
                 <button
                   className={`${styles.toggleBtn} ${
-                    flag.is_active ? styles.toggleBtnDisable : styles.toggleBtnEnable
+                    flag.enabled ? styles.toggleBtnDisable : styles.toggleBtnEnable
                   }`}
                   onClick={() => handleToggle(flag)}
                   disabled={submitting}
                 >
-                  {flag.is_active ? "🛑 緊急停用 (Kill-Switch)" : "▶️ 啟用功能"}
+                  {flag.enabled ? "🛑 緊急停用 (Kill-Switch)" : "▶️ 啟用功能"}
                 </button>
 
                 {flag.high_risk && (
@@ -380,7 +411,10 @@ export function FeatureFlagsAdminWorkspace({
           closeDisabled={submitting}
         >
           <p>Flag: <strong>{modalFlag.key}</strong> · Owner: {modalFlag.owner}</p>
-          <p>目前狀態：{modalFlag.is_active ? "已啟用" : "已停用"}；到期日：{modalFlag.expires_on ?? "未設定"}</p>
+          <p>儲存設定：{modalFlag.enabled ? "已啟用" : "已停用"}；到期日：{modalFlag.expires_on ?? "未設定"}</p>
+          <p>情境有效性（伺服器）：{modalFlag.is_active ? "有效" : "不生效"}；非全域啟用判定</p>
+          <p>到期判定（伺服器）：{modalFlag.is_expired ? "已到期" : "未到期"}</p>
+          <FlagScopeFacts flag={modalFlag} />
           {modalFlag.high_risk && <p>高風險功能啟用仍須 2 個獨立核准者；本次確認不會取代雙人核准。</p>}
           <div>
             <p>目前已簽核人員 ({modalFlag.approved_by.length}/2):</p>
@@ -394,11 +428,11 @@ export function FeatureFlagsAdminWorkspace({
                 {fixturesAllowed ? "+ 簽名" : "以目前登入帳號核准"}
               </button>
               <button
-                className={`${styles.toggleBtn} ${styles.toggleBtnEnable}`}
-                disabled={modalFlag.high_risk && modalFlag.approved_by.length < 2}
-                onClick={() => chooseCommand(modalFlag, "enable")}
+                className={`${styles.toggleBtn} ${modalFlag.enabled ? styles.toggleBtnDisable : styles.toggleBtnEnable}`}
+                disabled={!modalFlag.enabled && modalFlag.high_risk && modalFlag.approved_by.length < 2}
+                onClick={() => chooseCommand(modalFlag, modalFlag.enabled ? "disable" : "enable")}
               >
-                🚀 正式啟用 (核准數 {modalFlag.approved_by.length}/2)
+                {modalFlag.enabled ? "🛑 緊急停用 (Kill-Switch)" : `🚀 正式啟用 (核准數 ${modalFlag.approved_by.length}/2)`}
               </button>
             </div>
           ) : (
