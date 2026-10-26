@@ -26,28 +26,39 @@ def test_forecast_sql_requires_eof_proven_partitions_for_target_and_prior_days()
         "CREATE OR REPLACE VIEW model_ready.candidate_site_view",
     )
 
-    assert "completion.source_kind = 'orders'" in body
+    assert "ingestion.source_kind = 'orders'" in body
+    assert "FROM clean_order_runs AS completion" in body
+    assert "FROM clean_order_runs AS predecessor" in body
+    assert "FROM clean_order_runs AS clean" in body
     assert "completion.partition_key ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'" in body
     assert "completion.partition_key::date AS partition_date" in body
-    assert "completion.reconciled" in body
+    assert "ingestion.reconciled" in body
     assert "completion.partition_complete" in body
-    assert "completion.quarantined_count = 0" in body
-    assert "completion.processed_count = completion.valid_loaded" in body
+    assert "ingestion.quarantined_count = 0" in body
+    assert "ingestion.processed_count = ingestion.valid_loaded" in body
     assert "chunk.partition_key = completion.partition_key" in body
     # FAILED/abandoned chunks keep default zero counters, so only fully
     # succeeded chunks may read the day -- including chunks finishing after the
     # proof, which must revoke a retained earlier EOF rather than be ignored.
-    assert "chunk.status = 'SUCCEEDED'\n                    AND chunk.reconciled" in body
-    assert "AND chunk.finished_at IS NOT NULL" in body
+    assert "ingestion.status = 'SUCCEEDED'" in body
+    assert "AND ingestion.finished_at IS NOT NULL" in body
+    assert "clean.run_id = chunk.run_id" in body
     assert "chunk.finished_at <= completion.finished_at" not in body
-    # Only a later full-day from-beginning EOF can retire a failed attempt
-    # that left no projection or quarantine; NULL/open/overlapping runs cannot.
+    # Only a later full-day from-beginning chain ending at EOF can retire an
+    # empty failure. Every predecessor must match the persisted cursor and day;
+    # NULL/open/overlapping runs cannot prove recovery.
     assert "AND NOT coalesce(" in body
     assert "chunk.status = 'FAILED'" in body
     assert "AND chunk.partition_key = completion.partition_key" in body
-    assert "AND chunk.finished_at < completion.started_at" in body
     assert "AND completion.started_at <= completion.finished_at" in body
-    assert "AND completion.resumed_from IS NULL" in body
+    assert "WITH RECURSIVE reread AS" in body
+    assert "predecessor.final_cursor = successor.resumed_from" in body
+    assert "predecessor.partition_key = completion.partition_key" in body
+    assert "predecessor.finished_at <= successor.started_at" in body
+    assert "predecessor.started_at < successor.started_at" in body
+    assert "predecessor.started_at <= predecessor.finished_at" in body
+    assert "WHERE reread.resumed_from IS NULL" in body
+    assert "AND chunk.finished_at < reread.started_at" in body
     assert "failed_lineage.run_id = chunk.run_id" in body
     assert "failed_quarantine.run_id = chunk.run_id" in body
     # The orders source reads every store in one _id order, so a clean bounded

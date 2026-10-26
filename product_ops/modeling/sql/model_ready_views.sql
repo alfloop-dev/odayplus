@@ -31,7 +31,19 @@ COMMENT ON TABLE model_ready.view_contracts IS
     'Fail-closed registry for versioned model-ready relations and outcome readiness.';
 
 CREATE OR REPLACE VIEW model_ready.forecast_training_view AS
-WITH authoritative_order_partitions AS (
+WITH clean_order_runs AS (
+    -- One reconciliation rule for EOF candidates, bounded predecessors and
+    -- the historical bad-run veto below. No per-chunk EOF requirement.
+    SELECT ingestion.*
+    FROM data_plane.ingestion_runs AS ingestion
+    WHERE ingestion.source_kind = 'orders'
+      AND ingestion.status = 'SUCCEEDED'
+      AND ingestion.reconciled
+      AND ingestion.quarantined_count = 0
+      AND ingestion.processed_count = ingestion.valid_loaded
+      AND ingestion.finished_at IS NOT NULL
+),
+authoritative_order_partitions AS (
     -- EOF proof for one full UTC-day order partition ('YYYY-MM-DD'), using the
     -- authoritative order-run predicate of candidate_site_view and
     -- heatzone_training_view. Backfill 'start__end' keys never prove a day
@@ -45,9 +57,11 @@ WITH authoritative_order_partitions AS (
     -- quarantined record, so a later resumed EOF cannot clear that failure.
     -- A first attempt failing before any projection/quarantine is different:
     -- a later successful full-day read with resumed_from IS NULL really starts
-    -- from the beginning. Only that EOF may retire the earlier empty failure,
-    -- and only if the failure finished before the reread started. Its actual
-    -- finished_at remains the availability/maturity boundary below.
+    -- from the beginning. That read may span bounded runs: walk backwards from
+    -- EOF through persisted final_cursor/resumed_from matches, on this exact
+    -- source/day and non-overlapping run intervals, to its NULL-cursor start.
+    -- Only a chain starting after the empty failure may retire it. The actual
+    -- EOF finished_at remains the availability/maturity boundary below.
     -- This holds for runs finishing after the proof as well: a later
     -- rematerialization or a backfill window reaching the day that quarantined
     -- or failed on an order adds no canonical lineage and leaves the earlier
@@ -63,15 +77,9 @@ WITH authoritative_order_partitions AS (
     SELECT
         completion.partition_key::date AS partition_date,
         completion.finished_at
-    FROM data_plane.ingestion_runs AS completion
-    WHERE completion.source_kind = 'orders'
-      AND completion.partition_key ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
-      AND completion.status = 'SUCCEEDED'
-      AND completion.reconciled
+    FROM clean_order_runs AS completion
+    WHERE completion.partition_key ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
       AND completion.partition_complete
-      AND completion.quarantined_count = 0
-      AND completion.processed_count = completion.valid_loaded
-      AND completion.finished_at IS NOT NULL
       AND NOT EXISTS (
           SELECT 1
           FROM data_plane.ingestion_runs AS chunk
@@ -87,12 +95,9 @@ WITH authoritative_order_partitions AS (
                 )
             )
             AND (
-                NOT (
-                    chunk.status = 'SUCCEEDED'
-                    AND chunk.reconciled
-                    AND chunk.quarantined_count = 0
-                    AND chunk.processed_count = chunk.valid_loaded
-                    AND chunk.finished_at IS NOT NULL
+                NOT EXISTS (
+                    SELECT 1 FROM clean_order_runs AS clean
+                    WHERE clean.run_id = chunk.run_id
                 )
                 OR (
                     NOT chunk.partition_complete
@@ -102,9 +107,26 @@ WITH authoritative_order_partitions AS (
             AND NOT coalesce(
                 chunk.status = 'FAILED'
                 AND chunk.partition_key = completion.partition_key
-                AND chunk.finished_at < completion.started_at
                 AND completion.started_at <= completion.finished_at
-                AND completion.resumed_from IS NULL
+                AND EXISTS (
+                    WITH RECURSIVE reread AS (
+                        SELECT completion.run_id, completion.resumed_from,
+                               completion.started_at
+                        UNION
+                        SELECT predecessor.run_id, predecessor.resumed_from,
+                               predecessor.started_at
+                        FROM clean_order_runs AS predecessor
+                        INNER JOIN reread AS successor
+                            ON predecessor.final_cursor = successor.resumed_from
+                           AND predecessor.finished_at <= successor.started_at
+                           AND predecessor.started_at < successor.started_at
+                        WHERE predecessor.partition_key = completion.partition_key
+                          AND predecessor.started_at <= predecessor.finished_at
+                    )
+                    SELECT 1 FROM reread
+                    WHERE reread.resumed_from IS NULL
+                      AND chunk.finished_at < reread.started_at
+                )
                 AND chunk.processed_count = 0
                 AND chunk.valid_loaded = 0
                 AND chunk.quarantined_count = 0

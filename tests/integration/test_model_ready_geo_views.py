@@ -145,6 +145,7 @@ def _install_minimal_authoritative_schema(connection) -> None:
             reconciled BOOLEAN NOT NULL,
             partition_complete BOOLEAN NOT NULL,
             resumed_from TEXT,
+            final_cursor TEXT,
             started_at TIMESTAMPTZ NOT NULL,
             finished_at TIMESTAMPTZ
         );
@@ -210,6 +211,7 @@ def _insert_run(
     reconciled: bool = True,
     partition_complete: bool = True,
     resumed_from: str | None = None,
+    final_cursor: str | None = None,
     started_at: datetime | None = None,
 ) -> UUID:
     run_id = _id(f"run:{name}")
@@ -218,8 +220,8 @@ def _insert_run(
         INSERT INTO data_plane.ingestion_runs (
             run_id, source_kind, partition_key, status,
             processed_count, valid_loaded, quarantined_count,
-            reconciled, partition_complete, resumed_from, started_at, finished_at
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            reconciled, partition_complete, resumed_from, final_cursor, started_at, finished_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             run_id,
@@ -232,6 +234,7 @@ def _insert_run(
             reconciled,
             partition_complete,
             resumed_from,
+            final_cursor,
             started_at or (finished_at - timedelta(days=1) if finished_at else _at(ORIGIN, 0)),
             finished_at,
         ),
@@ -1797,8 +1800,9 @@ def test_postgresql_forecast_full_reread_recovers_only_preprojection_failure(
     day: date,
 ) -> None:
     """Synthetic durable states of run_partition: failure before apply_batch /
-    checkpoint, then a new no-checkpoint full-day read fitting below the limit.
-    Exercise the installed SQL and original loader, not a second admission rule.
+    checkpoint, then a new no-checkpoint read, either single-run or bounded and
+    resumed to EOF. Exercise the installed SQL and original loader, not a
+    second admission rule or a replay of failed snapshots.
     """
     spec = MODEL_SPECS["forecastops"]
     bounds = DataBounds(
@@ -1976,6 +1980,148 @@ def test_postgresql_forecast_full_reread_recovers_only_preprojection_failure(
                 assert_refused()
 
         assert _forecast_target(connection, tenant_id, store_id) == (True, None)
+
+        # The same from-beginning reread can exceed a per-run bound. R1 owns
+        # this store's first order; R2 loads another store's order; R3 resumes
+        # R2's durable final_cursor and reaches EOF with zero or one new order.
+        # Neither partial chunk is a completion proof, even though both are
+        # fully reconciled. No old FAILED row is rewritten or replayed.
+        for eof_rows in (0, 1):
+            with connection.transaction(force_rollback=True):
+                _set_run(
+                    connection, reread_run,
+                    "partition_complete = FALSE, final_cursor = 'reread-cursor-1'",
+                )
+                assert_refused()
+                other_tenant, other_store, _ = _insert_store(
+                    connection, tenant="bounded-other", store="store",
+                    opened_on=date(2024, 1, 1),
+                )
+                middle_start = reread_end + timedelta(minutes=1)
+                middle_end = middle_start + timedelta(hours=1)
+                middle_run = _insert_run(
+                    connection,
+                    name=f"forecast-bounded-middle:{day}:{eof_rows}",
+                    source_kind="orders",
+                    partition_key=day.isoformat(),
+                    resumed_from="reread-cursor-1",
+                    final_cursor="reread-cursor-2",
+                    started_at=middle_start,
+                    finished_at=middle_end,
+                    processed_count=1,
+                    valid_loaded=1,
+                    partition_complete=False,
+                )
+                _insert_transaction(
+                    connection, tenant_id=other_tenant, store_id=other_store,
+                    name=f"bounded-other:{day}:{eof_rows}",
+                    event_time=_at(day, 11), amount=999.0,
+                    daily_runs={day: middle_run},
+                )
+                assert_refused()
+                eof_start = middle_end + timedelta(days=1)
+                eof_end = eof_start + timedelta(hours=1)
+                eof_run = _insert_run(
+                    connection,
+                    name=f"forecast-bounded-eof:{day}:{eof_rows}",
+                    source_kind="orders",
+                    partition_key=day.isoformat(),
+                    resumed_from="reread-cursor-2",
+                    final_cursor="reread-cursor-3" if eof_rows else "reread-cursor-2",
+                    started_at=eof_start,
+                    finished_at=eof_end,
+                    processed_count=eof_rows,
+                    valid_loaded=eof_rows,
+                )
+                if eof_rows:
+                    extra_name = f"bounded-eof-order:{day}"
+                    _insert_transaction(
+                        connection, tenant_id=tenant_id, store_id=store_id,
+                        name=extra_name, event_time=_at(day, 12), amount=7.0,
+                        daily_runs={day: eof_run},
+                    )
+                    extra_id = _id(f"transaction:{extra_name}")
+                    connection.execute(
+                        "UPDATE core.transactions SET observation_time = %s, ingested_at = %s "
+                        "WHERE transaction_id = %s", (eof_start, eof_start, extra_id),
+                    )
+                    connection.execute(
+                        "UPDATE data_plane.canonical_lineage SET projected_at = %s "
+                        "WHERE canonical_id = %s", (eof_start, extra_id),
+                    )
+                bounded = _forecast_rows(connection, tenant_id, store_id)
+                assert bounded[day]["label_maturity_time"] == eof_end
+                target = bounded[FORECAST_TARGET_DAY]
+                assert target["is_training_eligible"] is True
+                assert target["exclusion_reason"] is None
+                assert target["feature_snapshot_time"] == eof_end
+                assert target["prediction_origin_time"] == eof_end + timedelta(microseconds=1)
+                if day == FORECAST_PRIOR_DAY:
+                    assert target["label_maturity_time"] == before[FORECAST_TARGET_DAY][
+                        "label_maturity_time"
+                    ]
+                for earlier_day in (date_ for date_ in before if date_ < day):
+                    assert bounded[earlier_day] == before[earlier_day]
+                bounded_loaded = source.load(spec, bounds)
+                assert bounded_loaded.bounds == bounds
+                assert bounded_loaded.relation == spec.relation
+                assert bounded_loaded.query_sha256 == baseline.query_sha256
+                (bounded_row,) = bounded_loaded.rows
+                assert bounded_row["view_version"] == spec.expected_view_version
+                assert bounded_row["tenant_id"] == tenant_id
+                assert bounded_row["store_id"] == store_id
+                assert bounded_row["feature_snapshot_time"] == eof_end
+                assert bounded_row["daily_net_revenue"] == pytest.approx(
+                    baseline.rows[0]["daily_net_revenue"]
+                    + (7.0 * eof_rows if day == FORECAST_TARGET_DAY else 0.0)
+                )
+                assert bounded_row["rolling_mean_28"] == pytest.approx(
+                    baseline.rows[0]["rolling_mean_28"]
+                    + (7.0 * eof_rows / 28 if day == FORECAST_PRIOR_DAY else 0.0)
+                )
+                # EOF carries availability, not synthetic run IDs as snapshots.
+                expected_snapshots = set(before[FORECAST_TARGET_DAY]["source_snapshot_ids"])
+                if eof_rows:
+                    expected_snapshots.add(str(_id(f"snapshot:{extra_name}")))
+                assert set(bounded_row["source_snapshot_ids"]) == expected_snapshots
+                assert connection.execute(
+                    "SELECT status, partition_complete FROM data_plane.ingestion_runs "
+                    "WHERE run_id = %s", (failed_run,),
+                ).fetchone() == ("FAILED", False)
+
+                # A clean EOF alone is insufficient. Break either cursor edge,
+                # source/date scope, temporal ordering, or any run's integrity;
+                # it must not accidentally join an unrelated from-beginning read.
+                broken_chain = (
+                    (reread_run, "resumed_from = 'unproven-checkpoint'"),
+                    (reread_run, "final_cursor = 'wrong-root-cursor'"),
+                    (reread_run, f"started_at = '{failure_end.isoformat()}'"),
+                    (middle_run, "resumed_from = 'wrong-middle-cursor'"),
+                    (middle_run, "final_cursor = NULL"),
+                    (middle_run, "source_kind = 'trade'"),
+                    (middle_run, f"partition_key = '{(day + timedelta(days=1)).isoformat()}'"),
+                    (middle_run, f"started_at = '{reread_start.isoformat()}'"),
+                    (middle_run, f"finished_at = '{(eof_start + timedelta(seconds=1)).isoformat()}'"),
+                    (middle_run, "reconciled = FALSE"),
+                    (middle_run, "processed_count = 2"),
+                    (middle_run, "quarantined_count = 1"),
+                    (middle_run, "status = 'FAILED', processed_count = 0, valid_loaded = 0"),
+                    (eof_run, "resumed_from = 'wrong-eof-cursor'"),
+                    (eof_run, "partition_complete = FALSE"),
+                    (eof_run, f"finished_at = '{(middle_start - timedelta(seconds=1)).isoformat()}'"),
+                )
+                for run, assignment in broken_chain:
+                    with connection.transaction(force_rollback=True):
+                        _set_run(connection, run, assignment)
+                        assert_refused()
+                with connection.transaction(force_rollback=True):
+                    _insert_quarantine(
+                        connection, name=f"bounded-failed-quarantine:{day}:{eof_rows}",
+                        source_id="unresolved-failed-order", run_id=failed_run,
+                        partition_key=day.isoformat(), quarantined_at=failure_end,
+                    )
+                    assert_refused()
+                assert _forecast_target(connection, tenant_id, store_id) == (True, None)
 
 
 def _insert_quarantine(
