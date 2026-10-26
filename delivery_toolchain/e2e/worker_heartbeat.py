@@ -61,11 +61,20 @@ def check_heartbeat(path: Path) -> dict[str, Any]:
     """Read only a bounded final record; never import or initialize the runtime."""
     with path.open("rb") as handle:
         handle.seek(0, os.SEEK_END)
-        handle.seek(max(0, handle.tell() - HEARTBEAT_TAIL_BYTES))
-        tail = handle.read(HEARTBEAT_TAIL_BYTES)
+        # One extra byte can prove the left newline boundary of a max-size
+        # record. Never parse a suffix of an oversized/malformed JSONL line.
+        offset = max(0, handle.tell() - HEARTBEAT_TAIL_BYTES - 1)
+        handle.seek(offset)
+        tail = handle.read(HEARTBEAT_TAIL_BYTES + 1)
     if not tail.endswith(b"\n"):
         raise ValueError("heartbeat final record is incomplete")
-    event = validate_heartbeat(json.loads(tail.split(b"\n")[-2]))
+    record_start = tail.rfind(b"\n", 0, len(tail) - 1) + 1
+    if record_start == 0 and offset != 0:
+        raise ValueError("heartbeat final record has no known left boundary")
+    record = tail[record_start:]
+    if len(record) > HEARTBEAT_TAIL_BYTES:
+        raise ValueError("heartbeat final record is oversized")
+    event = validate_heartbeat(json.loads(record))
     pid = event["pid"]
     if process_start(pid) != event["process_start"]:
         raise ValueError("heartbeat process identity changed")

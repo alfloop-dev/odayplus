@@ -393,6 +393,56 @@ def test_dr_consumer_executes_actual_check_cli(tmp_path, monkeypatch):
     }) == event
 
 
+@pytest.mark.parametrize("prefix,record_size,newline,accepted", [
+    (prefix, size, b"\n", accepted)
+    for prefix in (b"", b"previous record\n")
+    for size, accepted in ((8191, True), (8192, True), (8193, False))
+] + [
+    (b"garbage", 9000, b"\n", False),
+    (b"garbage", 9000, b"", False),
+    (b"", 500, b"", False),
+])
+def test_actual_cli_and_dr_enforce_complete_record_boundaries(
+    tmp_path, monkeypatch, prefix, record_size, newline, accepted,
+):
+    path = tmp_path / "heartbeat.jsonl"
+    stop = threading.Event()
+    thread = threading.Thread(target=stop.wait)
+    thread.start()
+    try:
+        event = heartbeat_payload(scheduler_tid=thread.native_id)
+        record = json.dumps(event).encode() + newline
+        # Leading whitespace is legal JSON, but must not hide an oversized or
+        # malformed line whose bounded suffix alone would parse as healthy.
+        path.write_bytes(prefix + b" " * (record_size - len(record)) + record)
+        before = path.read_bytes()
+        if prefix == b"garbage":
+            with pytest.raises(json.JSONDecodeError):
+                json.loads(before)
+        env = {**os.environ, "ODP_E2E_WORKER_HEARTBEAT": str(path)}
+        command = [sys.executable, "-S", "delivery_toolchain/e2e/worker_heartbeat.py", "--check"]
+        result = subprocess.run(command, cwd=vdr.ROOT, env=env, capture_output=True, text=True, timeout=5)
+        assert result.returncode == (0 if accepted else 1), result.stderr
+        assert (json.loads(result.stdout) == event) if accepted else not result.stdout
+
+        original_run = vdr.run
+
+        def run_local(command, **kwargs):
+            assert command[:6] == ["docker", "compose", "exec", "-T", "worker", "python"]
+            return original_run([sys.executable, "-S", *command[6:]], **kwargs)
+
+        monkeypatch.setattr(vdr, "run", run_local)
+        if accepted:
+            assert vdr.wait_for_worker_heartbeat(["docker", "compose"], env) == event
+        else:
+            with pytest.raises(RuntimeError, match="worker heartbeat not observed"):
+                vdr.wait_for_worker_heartbeat(["docker", "compose"], env, timeout_seconds=0.5)
+        assert path.read_bytes() == before
+    finally:
+        stop.set()
+        thread.join(timeout=5)
+
+
 @pytest.mark.parametrize("dead", ["worker", "scheduler"])
 def test_writer_fails_if_either_real_background_thread_exits(tmp_path, monkeypatch, dead):
     path = tmp_path / "heartbeat.jsonl"
