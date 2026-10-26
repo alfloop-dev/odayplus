@@ -1795,6 +1795,173 @@ def test_postgresql_forecast_view_admits_only_eof_proven_target_and_prior_partit
 
 
 @pytest.mark.parametrize("day", (FORECAST_TARGET_DAY, FORECAST_PRIOR_DAY))
+@pytest.mark.parametrize("update_partition", ("daily", "backfill"))
+def test_postgresql_forecast_corrections_require_the_actual_source_partition_eof(
+    intake_blank_db,
+    day: date,
+    update_partition: str,
+) -> None:
+    """Synthetic durable writer states, not DataPlaneRunner execution: D loaded
+    A and B to EOF; updatedAt U corrects both, but a bounded U read projects only
+    A. D resumes beyond both IDs to zero-row EOF. Only U's genuine continuation
+    projecting B to EOF can admit A_new+B_new, on U's completion clock.
+    """
+    spec = MODEL_SPECS["forecastops"]
+    bounds = DataBounds(
+        _at(FORECAST_FIRST_DAY, 0),
+        _at(FORECAST_TARGET_DAY + timedelta(days=1), 0),
+        10,
+    )
+    update_day = FORECAST_TARGET_DAY + timedelta(days=3)
+    update_key = update_day.isoformat()
+    if update_partition == "backfill":
+        (window,) = _windows(
+            _at(update_day, 4), _at(update_day, 12), partition_days=1, max_partitions=1,
+        )
+        update_key = window.partition_key
+    start = _at(update_day, 4)
+    partial_end = _at(update_day, 6)
+    event_eof_end = _at(update_day, 8)
+    eof_start = _at(update_day, 9)
+    eof_end = _at(update_day, 10)
+    cursor_a, cursor_b = "000000000000000000000001", "000000000000000000000002"
+    reason = (
+        "SOURCE_RUN_NOT_COMPLETE" if day == FORECAST_TARGET_DAY
+        else "PRIOR_SOURCE_NOT_COMPLETE"
+    )
+
+    with intake_blank_db.connect() as connection:
+        _install_minimal_authoritative_schema(connection)
+        tenant_id, store_id, daily_runs = _seed_forecast_history(connection)
+        a_name = f"forecast:{day.isoformat()}"
+        a_id = _id(f"transaction:{a_name}")
+        b_name = f"forecast-second:{day.isoformat()}"
+        b_id = _insert_transaction(
+            connection, tenant_id=tenant_id, store_id=store_id, name=b_name,
+            event_time=_at(day, 11), amount=20.0, daily_runs=daily_runs,
+        )
+        connection.execute(
+            "UPDATE data_plane.ingestion_runs SET processed_count = 2, valid_loaded = 2, "
+            "final_cursor = %s WHERE run_id = %s", (cursor_b, daily_runs[day]),
+        )
+        client = _PsycopgInstallationClient(connection)
+        installed = ModelReadyViewInstaller(client).install()
+        assert installed["forecast"]["view_version"] == spec.expected_view_version
+        assert installed["forecast"]["installer_sha256"] == hashlib.sha256(
+            MODEL_READY_SQL_PATH.read_bytes()
+        ).hexdigest()
+        source = PostgresModelReadySource(client)
+        baseline = source.load(spec, bounds)
+        before = _forecast_rows(connection, tenant_id, store_id)
+
+        def assert_refused() -> None:
+            assert _forecast_target(connection, tenant_id, store_id) == (False, reason)
+            with pytest.raises(ModelReadyDataError, match="not trainable"):
+                source.load(spec, bounds)
+
+        def project_correction(name: str, txn_id: UUID, run_id: UUID, observed: datetime) -> str:
+            # A changed document yields a new content-addressed snapshot; keep
+            # both the original source_id and old lineage, as the writer does.
+            corrected_name = f"{name}:corrected"
+            _insert_lineage(
+                connection, name=corrected_name, run_id=run_id, tenant_id=tenant_id,
+                table="core.transactions", entity_id=txn_id, projected_at=observed,
+            )
+            snapshot = _id(f"snapshot:{corrected_name}")
+            connection.execute(
+                "UPDATE data_plane.canonical_lineage SET source_id = %s "
+                "WHERE source_snapshot_id = %s", (name, snapshot),
+            )
+            connection.execute(
+                "UPDATE data_plane.transaction_authority SET source_snapshot_id = %s "
+                "WHERE transaction_id = %s", (snapshot, txn_id),
+            )
+            connection.execute(
+                "UPDATE core.transactions SET net_amount = net_amount + 30, "
+                "observation_time = %s, ingested_at = %s WHERE transaction_id = %s",
+                (observed, observed, txn_id),
+            )
+            return str(snapshot)
+
+        partial = _insert_run(
+            connection, name=f"correction-partial:{day}", source_kind="orders",
+            partition_key=update_key, started_at=start, finished_at=partial_end,
+            final_cursor=cursor_a, processed_count=1, valid_loaded=1, partition_complete=False,
+        )
+        a_snapshot = project_correction(a_name, a_id, partial, start + timedelta(minutes=1))
+        assert_refused()
+        # The event-day checkpoint C=B is unchanged, so _id>C excludes both
+        # corrected orders even though createdAt is still D. The EOF is real
+        # but belongs to D, not the incomplete updatedAt read U.
+        _insert_run(
+            connection, name=f"correction-event-day-empty-eof:{day}", source_kind="orders",
+            partition_key=day.isoformat(), resumed_from=cursor_b, final_cursor=cursor_b,
+            started_at=_at(update_day, 7), finished_at=event_eof_end,
+        )
+        assert connection.execute(
+            "SELECT count(*) FROM data_plane.quarantined_records"
+        ).fetchone() == (0,)
+        assert _forecast_rows(connection, tenant_id, store_id)[day]["daily_net_revenue"] == (
+            before[day]["daily_net_revenue"] + 30
+        )
+        assert_refused()
+
+        eof = _insert_run(
+            connection, name=f"correction-actual-eof:{day}", source_kind="orders",
+            partition_key=update_key, resumed_from=cursor_a, final_cursor=cursor_b,
+            started_at=eof_start, finished_at=eof_end, processed_count=1, valid_loaded=1,
+        )
+        b_snapshot = project_correction(b_name, b_id, eof, eof_start + timedelta(minutes=1))
+        recovered = _forecast_rows(connection, tenant_id, store_id)
+        assert recovered[day]["label_maturity_time"] == eof_end
+        loaded = source.load(spec, bounds)
+        assert loaded.relation == baseline.relation == spec.relation
+        assert loaded.bounds == baseline.bounds == bounds
+        expected_fingerprint = hashlib.sha256(
+            (
+                f"{spec.relation}|{','.join(spec.required_columns)}|"
+                f"{bounds.start.isoformat()}|{bounds.end.isoformat()}|{bounds.max_rows}"
+            ).encode()
+        ).hexdigest()
+        assert loaded.query_sha256 == baseline.query_sha256 == expected_fingerprint
+        (row,) = loaded.rows
+        assert row["view_version"] == spec.expected_view_version
+        assert row["tenant_id"] == tenant_id
+        assert row["store_id"] == store_id
+        assert row["date"] == FORECAST_TARGET_DAY
+        assert row["daily_net_revenue"] == pytest.approx(
+            baseline.rows[0]["daily_net_revenue"] + (60 if day == FORECAST_TARGET_DAY else 0)
+        )
+        assert row["rolling_mean_28"] == pytest.approx(
+            baseline.rows[0]["rolling_mean_28"] + (60 / 28 if day == FORECAST_PRIOR_DAY else 0)
+        )
+        assert row["feature_snapshot_time"] == eof_end > event_eof_end
+        assert row["prediction_origin_time"] == eof_end + timedelta(microseconds=1)
+        assert set(row["source_snapshot_ids"]) == (
+            set(baseline.rows[0]["source_snapshot_ids"]) | {a_snapshot, b_snapshot}
+        )
+        assert row["label_maturity_time"] == (
+            eof_end if day == FORECAST_TARGET_DAY else baseline.rows[0]["label_maturity_time"]
+        )
+        for earlier in (value for value in before if value < day):
+            assert recovered[earlier] == before[earlier]
+
+        # EOF of another source/key, an older EOF or bad reconciliation cannot
+        # finish U; D's newer zero-row EOF still cannot substitute for it.
+        for assignment in (
+            "source_kind = 'trade'",
+            f"partition_key = '{(update_day + timedelta(days=1)).isoformat()}'",
+            f"finished_at = '{(partial_end - timedelta(seconds=1)).isoformat()}'",
+            "partition_complete = FALSE",
+            "reconciled = FALSE",
+            "status = 'FAILED'",
+        ):
+            with connection.transaction(force_rollback=True):
+                _set_run(connection, eof, assignment)
+                assert_refused()
+
+
+@pytest.mark.parametrize("day", (FORECAST_TARGET_DAY, FORECAST_PRIOR_DAY))
 def test_postgresql_forecast_full_reread_recovers_only_preprojection_failure(
     intake_blank_db,
     day: date,

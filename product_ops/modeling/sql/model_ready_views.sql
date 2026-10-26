@@ -44,13 +44,12 @@ WITH clean_order_runs AS (
       AND ingestion.finished_at IS NOT NULL
 ),
 authoritative_order_partitions AS (
-    -- EOF proof for one full UTC-day order partition ('YYYY-MM-DD'), using the
-    -- authoritative order-run predicate of candidate_site_view and
-    -- heatzone_training_view. Backfill 'start__end' keys never prove a day
-    -- because backfill windows accept arbitrary sub-day timestamps while
-    -- ingestion_runs persists no window bounds. A resumed chunk that stopped at
-    -- its record bound is legitimate once a later run of the same daily
-    -- partition reaches EOF, but every orders run that read this UTC day must
+    -- EOF proof for an exact orders source partition, not an event date.
+    -- A backfill key can prove only its own bounded source window complete;
+    -- it never proves a full UTC day (daily_partition_proof below), because
+    -- ingestion_runs persists no backfill window bounds. A resumed chunk that
+    -- stopped at its record bound is legitimate once a later run of the same
+    -- partition reaches EOF, but every orders run that read this partition must
     -- itself have succeeded, reconciled and loaded every record it processed.
     -- A FAILED or abandoned RUNNING chunk keeps its schema-default zero
     -- counters while its checkpoint may already have advanced past a
@@ -78,11 +77,10 @@ authoritative_order_partitions AS (
     -- Backfill keys are compared as ISO date text (no cast) over the inclusive
     -- start/end dates that _windows derives from the window bounds.
     SELECT
-        completion.partition_key::date AS partition_date,
+        completion.partition_key,
         completion.finished_at
     FROM clean_order_runs AS completion
-    WHERE completion.partition_key ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
-      AND completion.partition_complete
+    WHERE completion.partition_complete
       AND NOT EXISTS (
           SELECT 1
           FROM data_plane.ingestion_runs AS chunk
@@ -90,7 +88,8 @@ authoritative_order_partitions AS (
             AND (
                 chunk.partition_key = completion.partition_key
                 OR (
-                    chunk.partition_key
+                    completion.partition_key ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+                    AND chunk.partition_key
                         ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}__[0-9]{4}-[0-9]{2}-[0-9]{2}$'
                     AND completion.partition_key
                         BETWEEN split_part(chunk.partition_key, '__', 1)
@@ -179,7 +178,8 @@ transaction_source AS (
                   AND quarantine.quarantined_at >= source.source_projected_at
             )
         ) AS source_run_complete,
-        source.source_run_finished_at
+        source.source_run_finished_at,
+        source.source_partition_finished_at
     FROM core.transactions AS txn
     INNER JOIN core.stores AS store
         ON store.store_id = txn.store_id
@@ -206,15 +206,31 @@ transaction_source AS (
                     AND ingestion.quarantined_count = 0
                     AND ingestion.processed_count = ingestion.valid_loaded
                     AND ingestion.finished_at IS NOT NULL
+                    AND (
+                        ingestion.source_kind <> 'orders'
+                        OR partition_proof.finished_at IS NOT NULL
+                    )
                 )
             ) AS source_run_complete,
             max(ingestion.finished_at) AS source_run_finished_at,
+            max(partition_proof.finished_at) AS source_partition_finished_at,
             array_agg(DISTINCT lineage.source_id)
                 FILTER (WHERE lineage.source_kind = 'orders') AS order_source_ids,
             max(lineage.projected_at) AS source_projected_at
         FROM data_plane.canonical_lineage AS lineage
         INNER JOIN data_plane.ingestion_runs AS ingestion
             ON ingestion.run_id = lineage.run_id
+        -- createdAt sets event_time, but updatedAt can put a correction in a
+        -- different source partition. Event-day EOF cannot finish that read:
+        -- require the same shared proof for every contributing orders run's
+        -- actual partition, retaining earlier clean partial chunks as lineage.
+        LEFT JOIN LATERAL (
+            SELECT min(proof.finished_at) AS finished_at
+            FROM authoritative_order_partitions AS proof
+            WHERE ingestion.source_kind = 'orders'
+              AND proof.partition_key = ingestion.partition_key
+              AND proof.finished_at >= ingestion.finished_at
+        ) AS partition_proof ON TRUE
         WHERE lineage.tenant_id = store.tenant_id
           AND lineage.canonical_table = 'core.transactions'
           AND lineage.canonical_id = txn.transaction_id
@@ -248,7 +264,8 @@ transaction_daily AS (
         max(
             greatest(
                 source_txn.observation_time,
-                source_txn.ingested_at
+                source_txn.ingested_at,
+                source_txn.source_partition_finished_at
             )
         ) AS source_available_at,
         -- bool_and ignores NULL, so a transaction without lineage rows must
@@ -284,9 +301,12 @@ transaction_daily AS (
         daily_source_ids.source_snapshot_ids
 ),
 daily_partition_proof AS (
-    -- A day's revenue is complete only after its full-day order partition
-    -- reached EOF no earlier than the last run that loaded the day's
-    -- transactions; that proof's finish is when the complete label exists.
+    -- Full-day coverage is separate from the contributing source-partition
+    -- proofs above: only the exact UTC-day key proves the full event day.
+    -- Backfill keys may represent sub-day windows and never satisfy this join.
+    -- Do not order this EOF after another partition's loading/completion run:
+    -- the updatedAt read has its own proof and real availability above. A
+    -- zero-row event-day resume says nothing about that read, in either order.
     SELECT
         transaction_daily.tenant_id,
         transaction_daily.store_id,
@@ -294,8 +314,7 @@ daily_partition_proof AS (
         min(proof.finished_at) AS finished_at
     FROM transaction_daily
     INNER JOIN authoritative_order_partitions AS proof
-        ON proof.partition_date = transaction_daily.date
-       AND proof.finished_at >= transaction_daily.source_run_finished_at
+        ON proof.partition_key = transaction_daily.date::text
     GROUP BY
         transaction_daily.tenant_id,
         transaction_daily.store_id,

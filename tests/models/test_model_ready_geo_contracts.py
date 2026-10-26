@@ -30,8 +30,7 @@ def test_forecast_sql_requires_eof_proven_partitions_for_target_and_prior_days()
     assert "FROM clean_order_runs AS completion" in body
     assert "FROM clean_order_runs AS predecessor" in body
     assert "FROM clean_order_runs AS clean" in body
-    assert "completion.partition_key ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'" in body
-    assert "completion.partition_key::date AS partition_date" in body
+    assert "completion.partition_key," in body
     assert "ingestion.reconciled" in body
     assert "completion.partition_complete" in body
     assert "ingestion.quarantined_count = 0" in body
@@ -92,14 +91,25 @@ def test_forecast_sql_requires_eof_proven_partitions_for_target_and_prior_days()
     assert "AND quarantine.resolved_at IS NULL" in body
     assert "AND quarantine.quarantined_at >= source.source_projected_at" in body
     assert "FILTER (WHERE lineage.source_kind = 'orders') AS order_source_ids" in body
-    assert "proof.partition_date = transaction_daily.date" in body
-    assert "proof.finished_at >= transaction_daily.source_run_finished_at" in body
+    # Every contributing orders partition (including an updatedAt partition)
+    # must reach EOF independently; event-day coverage cannot replace it, and
+    # each real completion clock must reach the shared daily maturity flow.
+    assert "proof.partition_key = ingestion.partition_key" in body
+    assert "proof.finished_at >= ingestion.finished_at" in body
+    assert "OR partition_proof.finished_at IS NOT NULL" in body
+    assert "max(partition_proof.finished_at) AS source_partition_finished_at" in body
+    assert "source_txn.source_partition_finished_at" in body
+    assert "proof.partition_key = transaction_daily.date::text" in body
+    assert "proof.finished_at >= transaction_daily.source_run_finished_at" not in body
     assert "partition_proof.finished_at,\n" in body
     assert "AND prior_complete_day_count_28 = 28" in body
     assert "'PRIOR_SOURCE_NOT_COMPLETE'" in body
-    # Backfill 'start__end' keys accept sub-day timestamps and must not prove
-    # full-day UTC coverage: the only completion key pattern is a single day.
-    assert body.count("completion.partition_key ~ ") == 1
+    # Exact-key partition completion is not full-day coverage. Only the event
+    # date's exact ISO daily key can satisfy daily_partition_proof; backfills
+    # accept arbitrary sub-day windows and never substitute for that day.
+    daily_proof = body.split("daily_partition_proof AS (", 1)[1].split("mature_daily AS (", 1)[0]
+    assert "ON proof.partition_key = transaction_daily.date::text" in daily_proof
+    assert "split_part(" not in daily_proof
     assert "split_part(completion.partition_key, '__'" not in body
     # A per-chunk completion flag would reject legitimately resumed partitions.
     assert "bool_and(ingestion.partition_complete" not in body

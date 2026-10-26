@@ -503,12 +503,14 @@ def test_model_ready_sql_is_real_causal_and_activates_supported_outcomes() -> No
     assert "store_id" in lowered
     assert "forecast-training-view-v2" in lowered
     assert "authoritative_order_partitions" in lowered
-    assert "completion.partition_key ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'" in lowered
+    assert "proof.partition_key = ingestion.partition_key" in lowered
+    assert "proof.finished_at >= ingestion.finished_at" in lowered
+    assert "source_txn.source_partition_finished_at" in lowered
     assert "left join data_plane.transaction_authority as authority" in lowered
     assert "lineage.source_snapshot_id = authority.source_snapshot_id" in lowered
     assert "from data_plane.quarantined_records as quarantine" in lowered
     assert "and quarantine.resolved_at is null" in lowered
-    assert "proof.partition_date = transaction_daily.date" in lowered
+    assert "proof.partition_key = transaction_daily.date::text" in lowered
     assert "prior_complete_day_count_28 = 28" in lowered
     assert "'prior_source_not_complete'" in lowered
     assert "split_part(completion.partition_key, '__'" not in lowered
