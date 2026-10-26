@@ -227,7 +227,7 @@ def test_ci_workflow_command_exact_single_ownership(ci_workflow: dict[str, Any])
     # Canonical acceptance commands from the baseline monolithic product job
     expected_command_lanes = {
         "uv run ruff check tests modules apps shared models solver pipelines infra": "product-lint-unit",
-        'uv run pytest -m "not requires_live_env and not performance" tests modules apps shared models -n auto': "product-lint-unit",
+        'uv run pytest -m "not requires_live_env and not performance" --ignore=tests/tooling tests modules apps shared models -n auto': "product-lint-unit",
         "uv run pytest tests/integration/test_official_real_estate_postgresql.py": "product-db",
         'uv run pytest -m "requires_live_env" tests/contract tests/ops tests/integration -x --tb=short -vv -n2 --dist=loadfile --max-worker-restart=0': "product-db",
         "make api-contract": "product-api-contract",
@@ -248,6 +248,21 @@ def test_ci_workflow_command_exact_single_ownership(ci_workflow: dict[str, Any])
             f"found in: {list(occurrences.keys())}"
         )
         assert occurrences[expected_lane] == 1
+
+
+def test_delivery_tooling_keeps_a_required_unconditional_owner(ci_workflow: dict[str, Any]) -> None:
+    """Moving tooling out of product must never make its only owner optional."""
+    jobs = ci_workflow["jobs"]
+    owner = jobs["orchestrator"]
+    assert owner.get("if") is None
+    assert owner.get("continue-on-error", False) is False
+    command = 'uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling infra'
+    assert count_exact_command_occurrences(jobs, command) == {"orchestrator": 1}
+    step, = [step for step in owner["steps"] if step.get("name") == "Test orchestrator and infrastructure code"]
+    assert step.get("if") is None
+    assert step.get("continue-on-error", False) is False
+    policy = json.loads((ROOT / ".github/branch-protection/policy.json").read_text())
+    assert "orchestrator" in policy["required_status_checks"]
 
 
 def test_ci_workflow_pytest_addopts_are_reporting_only(ci_workflow: dict[str, Any]) -> None:

@@ -215,8 +215,11 @@ jobs:
       # it is safe: each worker gets its own mkdtemp data directory, so they
       # cannot corrupt one another. Tests that bind fixed ports are excluded by
       # the `requires_live_env` marker already applied above.
+      # Delivery-tooling tests have one owner: the required, unconditional
+      # orchestrator job above. Exclude that same directory here so product
+      # changes do not execute the identical tooling cases a second time.
       - name: Test product code
-        run: uv run pytest -m "not requires_live_env and not performance" tests modules apps shared models -n auto
+        run: uv run pytest -m "not requires_live_env and not performance" --ignore=tests/tooling tests modules apps shared models -n auto
 
   product-db:
     needs: change-scope
