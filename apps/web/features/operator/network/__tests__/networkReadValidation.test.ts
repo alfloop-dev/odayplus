@@ -1329,15 +1329,43 @@ describe("read-only standard configuration in the existing SiteScore flow", () =
   const props = { activeRoleId: "expansion-manager" as const,
     createAuthenticatedReadGuard: (current: () => boolean) => async () => current() };
 
+  function expectCompactFormatSummary(block: HTMLElement) {
+    const summaries = block.querySelectorAll("dl");
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]).toHaveClass("scoreMeta");
+    expect(block.querySelector("table, thead, th, td")).toBeNull();
+    expect(block.querySelector("input, select, textarea, button")).toBeNull();
+    expect(block).toHaveTextContent("ODAY_G2 · 2.0.0");
+    expect(block).toHaveTextContent("完整未稅套裝NT$5,546,000");
+    expect(block).toHaveTextContent("套裝內未分配金額NT$200,000（已含於總價，非額外費用");
+    expect(block).toHaveTextContent("24 小時／日");
+    expect(block).toHaveTextContent("不是預測需求或利用率");
+    for (const [capacity, cost, price] of [[27, "730,000", "150"], [17, "630,000", "120"]]) {
+      const machine = within(block).getByText(`${capacity} kg 洗烘一體機`, { selector: "dt" }).parentElement!;
+      expect(machine.querySelector("dd")).toHaveTextContent(`3 台 × NT$${cost}（未稅）；每次 NT$${price}／55 分鐘`);
+      expect(machine).toHaveTextContent("使用年限 60 月／殘值比 0；基準轉數／日 未知");
+      expect(machine).toHaveTextContent("每次水 L／電 kWh／氣 kg：未知／未知／未知");
+      expect(machine).toHaveTextContent("洗劑 未知／每台月維護 未知");
+    }
+    for (const [label, cost] of [["支付系統", "100,000"], ["Kiosk", "160,000"], ["販賣機", "40,000"], ["監視系統", "29,122"], ["家具備品", "21,633"]]) {
+      const asset = within(block).getByText(label, { selector: "dt" }).parentElement!;
+      expect(asset.querySelector("dd")).toHaveTextContent(`1 件 × NT$${cost}；60 月／殘值比 0；每月營運成本 未知`);
+    }
+    expect(block).toHaveTextContent("工程裝修（未稅）NT$915,245；60 月或較短租期");
+    expect(block).toHaveTextContent("水電費率、維護、融資、稅、殘值政策、爬坡與季節性：未知");
+    expect(block).toHaveTextContent("未計算 ROI、折舊或報告 CAPEX");
+    for (const { machine_model: model } of targetFormat.machine_mix.items) {
+      expect(document.body).not.toHaveTextContent(model.model_id);
+    }
+    for (const asset of targetFormat.capital_assets) expect(block).not.toHaveTextContent(asset.asset_id);
+  }
+
   it("renders authorized empty configuration without a model/report/action or another tab gate bypass", async () => {
     const fetchMock = setupRead(emptyWithFormat);
     const view = render(createElement(NetworkFindAreasWorkspace, props));
     const block = await screen.findByTestId("sitescore-target-format");
     expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "empty");
-    expect(block).toHaveTextContent("ODAY_G2 · 2.0.0");
-    expect(block).toHaveTextContent("NT$5,546,000"); expect(block).toHaveTextContent("NT$200,000");
-    expect(block).toHaveTextContent("已含於總價"); expect(block).toHaveTextContent("不是預測需求或利用率");
-    expect(block).toHaveTextContent("基準轉數／日"); expect(block).toHaveTextContent("未知");
+    expectCompactFormatSummary(block);
     expect(screen.queryByTestId("sitescore-model-meta")).toBeNull();
     expect(screen.queryByTestId("network-panel-sitescore")).toBeNull();
     expect(screen.queryByText("CAPEX 假設")).toBeNull();
@@ -1351,6 +1379,25 @@ describe("read-only standard configuration in the existing SiteScore flow", () =
     view.rerender(createElement(NetworkFindAreasWorkspace, props));
     await vi.waitFor(() => expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "empty"));
     expect(screen.queryByTestId("network-compare-table")).toBeNull();
+    expect(fetchMock.mock.calls.every(([, init]) => !(init as RequestInit | undefined)?.method)).toBe(true);
+  });
+
+  it("renders the same compact summary through the ready workspace read without replacing saved assumptions", async () => {
+    const body = { ...canonicalProducer, targetFormat, scorecards: [
+      { ...canonicalProducer.scorecards[0], capex: "Historical CAPEX", rentAssumption: "Historical rent" },
+    ] };
+    expect(scoring(body)).toBe("ready");
+    const fetchMock = setupRead(body);
+    render(createElement(NetworkFindAreasWorkspace, props));
+    const block = await screen.findByTestId("sitescore-target-format");
+    expect(screen.queryByTestId("operator-data-unavailable")).toBeNull();
+    expect(screen.getByTestId("network-panel-sitescore")).toContainElement(block);
+    expectCompactFormatSummary(block);
+    const report = screen.getByTestId("sitescore-card-candidate-A");
+    expect(report).toHaveTextContent("Historical CAPEX");
+    expect(report).toHaveTextContent("Historical rent");
+    expect(report).not.toContainElement(block);
+    expect(report).not.toHaveTextContent("5,546,000");
     expect(fetchMock.mock.calls.every(([, init]) => !(init as RequestInit | undefined)?.method)).toBe(true);
   });
 
