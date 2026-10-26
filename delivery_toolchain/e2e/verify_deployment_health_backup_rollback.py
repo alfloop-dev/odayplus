@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from delivery_toolchain.e2e.worker_heartbeat import validate_heartbeat  # noqa: E402
 from delivery_toolchain.release.release_receipts import (  # noqa: E402
     _is_sensitive_key,
     redact,
@@ -533,10 +534,14 @@ def wait_for_worker_heartbeat(
     exec_timeout: float = DEFAULT_HEARTBEAT_EXEC_TIMEOUT,
     secret_values: Sequence[str] = (),
 ) -> dict[str, Any]:
-    deadline = time.time() + timeout_seconds
+    if not math.isfinite(exec_timeout) or exec_timeout <= 0:
+        raise ValueError("heartbeat exec timeout must be positive and finite")
+    if not math.isfinite(timeout_seconds) or timeout_seconds < 0:
+        raise ValueError("heartbeat wait timeout must be non-negative and finite")
+    deadline = time.monotonic() + timeout_seconds
     last_output = ""
     last_diagnostic = ""
-    while time.time() < deadline:
+    while (remaining := deadline - time.monotonic()) > 0:
         result = run(
             compose
             + [
@@ -544,28 +549,24 @@ def wait_for_worker_heartbeat(
                 "-T",
                 "worker",
                 "python",
-                "-c",
-                (
-                    "from pathlib import Path; import json; "
-                    "p=Path('/storage/worker-heartbeat.jsonl'); "
-                    "print(p.read_text().strip().splitlines()[-1] if p.exists() and p.read_text().strip() else '')"
-                ),
+                "delivery_toolchain/e2e/worker_heartbeat.py",
+                "--check",
             ],
             env=env,
             capture=True,
             check=False,
-            timeout=exec_timeout,
+            timeout=min(exec_timeout, remaining),
             secret_values=secret_values,
         )
         last_output = result.stdout.strip()
         if result.timed_out or result.returncode != 0:
             last_diagnostic = result.diagnostic_text()
-        if last_output:
+        elif last_output and len(last_output.encode("utf-8")) <= 8192:
             try:
-                return json.loads(last_output)
-            except json.JSONDecodeError:
+                return validate_heartbeat(json.loads(last_output))
+            except (ValueError, TypeError):
                 pass
-        time.sleep(2)
+        time.sleep(min(2, max(0, deadline - time.monotonic())))
     message = f"worker heartbeat not observed: {last_output}"
     if last_diagnostic:
         message += f"\nlast subprocess diagnostic: {last_diagnostic}"
