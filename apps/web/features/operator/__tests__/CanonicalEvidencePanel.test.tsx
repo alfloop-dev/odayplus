@@ -29,6 +29,18 @@ function transport(options: { exportFailure?: boolean } = {}) {
   vi.stubGlobal("fetch", fetcher);
   return fetcher;
 }
+// Synthetic retained-report read DTO only, not a producer, approval or UAT.
+function pairedNullWaitPreviewValue() {
+  const value = JSON.parse(JSON.stringify(chainPreviewValue()));
+  const chain = value.document.recorded_chain;
+  Object.assign(chain.prediction, { payback_period: null, payback_p50_months: null });
+  Object.assign(chain.recommendation, { recorded_recommendation: "WAIT", recorded_network_action: "WAIT" });
+  value.document.sections.decision_log[0].recorded_network_action = "WAIT";
+  Object.assign(chain.execution, { status: "not_applicable", record: null,
+    reason: "DECISION_DID_NOT_AUTHORIZE_NEW_CANDIDATE_REALIZATION" });
+  chain.coverage.missing = ["outcome"];
+  return value;
+}
 async function chooseAndPreview() {
   await screen.findByRole("option", { name: /candidate-engineering/ });
   fireEvent.change(screen.getByLabelText("決策來源（SiteScore）"), { target: { value: source.decision_id } });
@@ -66,6 +78,28 @@ describe("ordinary canonical evidence in the original Govern export area", () =>
     expect(screen.getByTestId("canonical-evidence-preview").querySelector("pre")).toBeNull();
     expect(screen.queryByText(/NO_CANONICAL_DECISION_BOUND_SITESCORE_OUTCOME_OWNER/)).not.toBeInTheDocument();
     expect(screen.queryByText("unmasked-actor")).not.toBeInTheDocument();
+  });
+
+  it("previews a retained partial WAIT with paired-null payback and uses the normal pending export flow", async () => {
+    const ordinary = transport();
+    const fetcher = vi.fn((input: RequestInfo | URL, init?: RequestInit) => String(input).endsWith("/preview")
+      ? Promise.resolve(reply(pairedNullWaitPreviewValue())) : ordinary(input, init));
+    vi.stubGlobal("fetch", fetcher);
+    render(<CanonicalEvidencePanel roleId="pm-audit" canExport />);
+    await chooseAndPreview();
+    expect(screen.getByText("已記錄決策鏈（PARTIAL）")).toBeInTheDocument();
+    expect(screen.getByText("WAIT／WAIT")).toBeInTheDocument();
+    expect(screen.getByText("此決策未授權新的候選實現")).toBeInTheDocument();
+    expect(screen.getByText("未取得量測")).toBeInTheDocument();
+    expect(screen.getByText("成效紀錄未取得")).toBeInTheDocument();
+    expect(screen.getByTestId("governance-export-button")).toBeEnabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("governance-export-button"));
+    await screen.findByTestId("canonical-evidence-created");
+    const writes = fetcher.mock.calls.filter(([url]) => String(url).endsWith("/export"));
+    expect(writes).toHaveLength(1);
+    expect(JSON.parse(String(writes[0][1]?.body))).toEqual({ ...selection, expected_document_sha256: digest });
+    expect(screen.getByRole("button", { name: "下載 PDF" })).toBeDisabled();
   });
 
   it("does not fetch or fabricate sources without server-verified export authority", () => {
@@ -190,6 +224,43 @@ describe("ordinary canonical evidence in the original Govern export area", () =>
 });
 
 describe("real ordinary evidence client fail-closed transport contracts", () => {
+  it.each(["finite", "paired-null WAIT"])("preserves %s payback in the original preview adapter", async (kind) => {
+    const value = kind === "finite" ? JSON.parse(JSON.stringify(chainPreviewValue())) : pairedNullWaitPreviewValue();
+    vi.stubGlobal("fetch", vi.fn(async () => reply(value)));
+    const result = await previewCanonicalEvidence(selection, "pm-audit");
+    expect(result.document.recorded_chain).toEqual(value.document.recorded_chain);
+    expect(result.document.recorded_chain?.prediction).toMatchObject(kind === "finite"
+      ? { payback_period: { p10: 1, p50: 2, p90: 3 }, payback_p50_months: 2 }
+      : { payback_period: null, payback_p50_months: null });
+  });
+
+  it.each([
+    [null, 2], [{ p10: 1, p50: 2, p90: 3 }, null],
+    [undefined, null], [null, undefined], [undefined, undefined],
+    [2, 2], [[], 2], ["unknown", null], [false, null],
+    [null, "2"], [null, false], [null, {}], [null, []],
+    [{ p10: 1, p50: "2", p90: 3 }, 2], [{ p10: 1, p90: 3 }, 2],
+    [{ p10: 1, p50: 2, p90: 3, raw_report: {} }, 2],
+  ])("refuses malformed/missing payback slots %j / %j", async (period, months) => {
+    const value = pairedNullWaitPreviewValue();
+    Object.assign(value.document.recorded_chain.prediction, { payback_period: period, payback_p50_months: months });
+    vi.stubGlobal("fetch", vi.fn(async () => reply(value)));
+    await expect(previewCanonicalEvidence(selection, "pm-audit")).rejects.toThrow(/尚未完整驗證/);
+  });
+
+  it.each([NaN, Infinity, -Infinity])("refuses non-finite payback values %s without coercion", async (bad) => {
+    for (const slots of [{ payback_period: { p10: 1, p50: bad, p90: 3 }, payback_p50_months: 2 },
+      { payback_period: null, payback_p50_months: bad }]) {
+      const value = pairedNullWaitPreviewValue();
+      Object.assign(value.document.recorded_chain.prediction, slots);
+      const response = reply({});
+      // JSON cannot encode these numbers; also exercise the numeric guard directly.
+      vi.spyOn(response, "json").mockResolvedValue(value);
+      vi.stubGlobal("fetch", vi.fn(async () => response));
+      await expect(previewCanonicalEvidence(selection, "pm-audit")).rejects.toThrow(/尚未完整驗證/);
+    }
+  });
+
   it.each(["extra_field", "unmasked_actor", "wrong_type", "seed"])("rejects %s preview without disclosing an opaque/raw projection", async (tamper) => {
     const value = previewValue();
     if (tamper === "extra_field") Object.assign(value.document.sections.decision_log[0], { raw_report: { notAllowed: true } });
@@ -209,6 +280,23 @@ describe("real ordinary evidence client fail-closed transport contracts", () => 
     else if (change === "report_sha256") chain.prediction.report_sha256 = "b".repeat(64);
     else if (change === "approval_id") chain.human_decision.approval_id = "different-signature";
     else chain.human_decision.actor = "***";
+    vi.stubGlobal("fetch", vi.fn(async () => reply(value)));
+    await expect(previewCanonicalEvidence(selection, "pm-audit")).rejects.toThrow(/尚未完整驗證/);
+  });
+
+  it.each(["raw_prediction", "raw_chain", "unmasked_actor", "report_version", "decision_version", "report_hash", "chain_digest", "reference_digest", "snapshot", "approval"])("still refuses paired-null WAIT with %s", async (change) => {
+    const value = pairedNullWaitPreviewValue();
+    const chain = value.document.recorded_chain;
+    if (change === "raw_prediction") chain.prediction.raw_report = {};
+    else if (change === "raw_chain") chain.raw_report = {};
+    else if (change === "unmasked_actor") chain.human_decision.actor = "unmasked-actor";
+    else if (change === "report_version") chain.prediction.report_version += 1;
+    else if (change === "decision_version") chain.human_decision.decision_version += 1;
+    else if (change === "report_hash") chain.prediction.report_sha256 = "b".repeat(64);
+    else if (change === "chain_digest") chain.source_digest = "b".repeat(64);
+    else if (change === "reference_digest") value.document.sections.decision_log[0].source_digest = "b".repeat(64);
+    else if (change === "snapshot") chain.prediction.source_snapshot_ids = ["foreign-reference"];
+    else chain.human_decision.approval_id = "foreign-signature";
     vi.stubGlobal("fetch", vi.fn(async () => reply(value)));
     await expect(previewCanonicalEvidence(selection, "pm-audit")).rejects.toThrow(/尚未完整驗證/);
   });
