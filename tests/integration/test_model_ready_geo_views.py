@@ -1796,6 +1796,7 @@ def test_postgresql_forecast_view_admits_only_eof_proven_target_and_prior_partit
 
 @pytest.mark.parametrize("day", (FORECAST_TARGET_DAY, FORECAST_PRIOR_DAY))
 @pytest.mark.parametrize("update_partition", ("daily", "backfill"))
+@pytest.mark.parametrize("suffix_change", ("unchanged", "increase", "exit"))
 @pytest.mark.parametrize(
     ("corrected_status", "corrected_currency"),
     (("succeeded", "TWD"), ("refunded", "TWD"), ("failed", "TWD"),
@@ -1807,6 +1808,7 @@ def test_postgresql_forecast_corrections_require_the_actual_source_partition_eof
     update_partition: str,
     corrected_status: str,
     corrected_currency: str,
+    suffix_change: str,
 ) -> None:
     """Synthetic durable writer states, not DataPlaneRunner execution: D loaded
     A and B to EOF; updatedAt U corrects both, but a bounded U read projects only
@@ -1869,7 +1871,7 @@ def test_postgresql_forecast_corrections_require_the_actual_source_partition_eof
 
         def project_correction(
             name: str, txn_id: UUID, run_id: UUID, observed: datetime,
-            *, status: str = "succeeded", currency: str = "TWD",
+            *, status: str = "succeeded", currency: str = "TWD", amount_delta: int = 30,
         ) -> str:
             # A changed document yields a new content-addressed snapshot; keep
             # both the original source_id and old lineage, as the writer does.
@@ -1889,10 +1891,10 @@ def test_postgresql_forecast_corrections_require_the_actual_source_partition_eof
             )
             connection.execute(
                 "UPDATE core.transactions SET "
-                "net_amount = CASE WHEN %s = 'succeeded' THEN net_amount + 30 ELSE 0 END, "
+                "net_amount = CASE WHEN %s = 'succeeded' THEN net_amount + %s ELSE 0 END, "
                 "transaction_status = %s, currency = %s, "
                 "observation_time = %s, ingested_at = %s WHERE transaction_id = %s",
-                (status, status, currency, observed, observed, txn_id),
+                (status, amount_delta, status, currency, observed, observed, txn_id),
             )
             return str(snapshot)
 
@@ -1932,8 +1934,26 @@ def test_postgresql_forecast_corrections_require_the_actual_source_partition_eof
             partition_key=update_key, resumed_from=cursor_a, final_cursor=cursor_b,
             started_at=eof_start, finished_at=eof_end, processed_count=1, valid_loaded=1,
         )
-        b_snapshot = project_correction(b_name, b_id, eof, eof_start + timedelta(minutes=1))
+        b_status = "refunded" if suffix_change == "exit" else "succeeded"
+        b_delta = 30 if suffix_change == "increase" else 0
+        b_snapshot = project_correction(
+            b_name, b_id, eof, eof_start + timedelta(minutes=1),
+            status=b_status, amount_delta=b_delta,
+        )
+        b_after = 0 if suffix_change == "exit" else 20 + b_delta
+        total_delta = revenue_delta + b_after - 20
         recovered = _forecast_rows(connection, tenant_id, store_id)
+        if a_after + b_after == 0:
+            # The original domain has no all-nonrevenue day. Do not invent a
+            # zero target/feature: keep the real gap and refuse the loader.
+            assert day not in recovered
+            if day == FORECAST_PRIOR_DAY:
+                assert _forecast_target(connection, tenant_id, store_id) == (
+                    False, "INSUFFICIENT_28_DAY_HISTORY"
+                )
+            with pytest.raises(ModelReadyDataError, match="not trainable"):
+                source.load(spec, bounds)
+            return
         assert recovered[day]["label_maturity_time"] == eof_end
         loaded = source.load(spec, bounds)
         assert loaded.relation == baseline.relation == spec.relation
@@ -1952,11 +1972,11 @@ def test_postgresql_forecast_corrections_require_the_actual_source_partition_eof
         assert row["date"] == FORECAST_TARGET_DAY
         assert row["daily_net_revenue"] == pytest.approx(
             baseline.rows[0]["daily_net_revenue"]
-            + (revenue_delta + 30 if day == FORECAST_TARGET_DAY else 0)
+            + (total_delta if day == FORECAST_TARGET_DAY else 0)
         )
         assert row["rolling_mean_28"] == pytest.approx(
             baseline.rows[0]["rolling_mean_28"]
-            + ((revenue_delta + 30) / 28 if day == FORECAST_PRIOR_DAY else 0)
+            + (total_delta / 28 if day == FORECAST_PRIOR_DAY else 0)
         )
         assert row["feature_snapshot_time"] == eof_end > event_eof_end
         assert row["prediction_origin_time"] == eof_end + timedelta(microseconds=1)
