@@ -1143,7 +1143,7 @@ def test_prebound_tenant_and_raw_factory_share_state_versions_and_idempotency_na
             forecastops_repository=FakeForecastOpsRepository(), tenant_id=OTHER_TENANT_ID,
         )
     assert foreign_stores.calls == []
-    with pytest.raises(StoreOpsLiveDataUnavailable, match="belongs to another tenant"):
+    with pytest.raises(StoreOpsLiveDataUnavailable, match="repository and document-store tenant scopes differ"):
         DurableStoreOpsRepository(
             TenantScopedDocumentStore(document_store, TENANT_ID), tenant_id=OTHER_TENANT_ID
         )

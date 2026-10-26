@@ -698,14 +698,6 @@ class DurableStoreOpsRepository:
     """
 
     def __init__(self, store: Any, *, tenant_id: str | None = None) -> None:
-        from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
-
-        # The Operator adapter and the materializer use the same opaque
-        # collection partition. Retain that scope exactly once.
-        if isinstance(store, TenantScopedDocumentStore):
-            if tenant_id is not None and str(tenant_id).strip() != store.tenant_id:
-                raise StoreOpsLiveDataUnavailable("Store Ops repository belongs to another tenant")
-            tenant_id, store = store.tenant_id, store._store
         self._store = store
         tenant = None if tenant_id is None else str(tenant_id).strip()
         if tenant_id is not None and not tenant:
