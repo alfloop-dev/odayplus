@@ -519,12 +519,27 @@ def test_write_report_redacts_secrets_and_hashes(tmp_path: Path) -> None:
     assert content["report_sha256"] == redacted["report_sha256"]
 
 
-def test_main_full_drill_success(tmp_path: Path, monkeypatch, capsys) -> None:
+@pytest.fixture
+def full_drill_context(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("ODP_E2E_KEEP_STACK", raising=False)
     diagnostics_dir = tmp_path / "diag"
     executed_commands: list[tuple[list[str], float, bool]] = []
+    backup = {"path": vdr.BACKUP_PATH, "sha256": "a" * 64, "size_bytes": 100}
+    restore = {"restored_path": vdr.DB_PATH, "sha256": "a" * 64, "size_bytes": 100}
+    final_cleanup = {"returncode": 0, "timed_out": False}
 
     def fake_run(command, *, env, capture=False, check=True, timeout=vdr.DEFAULT_SUBPROCESS_TIMEOUT, secret_values=()):
         executed_commands.append((command, timeout, check))
+        if "down" in command and sum("down" in cmd for cmd, _, _ in executed_commands) == 2:
+            return vdr.CommandResult(
+                subprocess.CompletedProcess(
+                    command, final_cleanup["returncode"], "",
+                    "cleanup failed with Bearer cleanup-secret-12345"
+                    if final_cleanup["returncode"] or final_cleanup["timed_out"] else "",
+                ),
+                timed_out=final_cleanup["timed_out"],
+                timeout_seconds=timeout,
+            )
         cmd_str = " ".join(command)
         stdout = ""
         if "seed_product_e2e_data.py" in cmd_str:
@@ -532,9 +547,9 @@ def test_main_full_drill_success(tmp_path: Path, monkeypatch, capsys) -> None:
         elif "exec -T worker" in cmd_str:
             stdout = json.dumps(heartbeat_payload())
         elif "exec -T api" in cmd_str and "sqlite3" in cmd_str:
-            stdout = json.dumps({"path": "/storage/backups/product-e2e.sqlite3.backup", "sha256": "sha123", "size_bytes": 100})
+            stdout = json.dumps(backup)
         elif "run --rm --no-deps api" in cmd_str:
-            stdout = json.dumps({"restored_path": "/data/product-e2e.sqlite3", "sha256": "sha123", "size_bytes": 100})
+            stdout = json.dumps(restore)
         elif "ps" in cmd_str:
             stdout = "api Up\nweb Up\nworker Up\n"
         elif "logs" in cmd_str:
@@ -561,7 +576,7 @@ def test_main_full_drill_success(tmp_path: Path, monkeypatch, capsys) -> None:
 
     def fake_restore_backup(compose, env, **kwargs):
         cases_state["probe_store_id"] = None
-        return {"restored_path": "/data/product-e2e.sqlite3", "sha256": "sha123", "size_bytes": 100}
+        return dict(restore)
 
     monkeypatch.setattr(vdr, "list_cases", fake_list_cases)
     monkeypatch.setattr(vdr, "create_probe_case", fake_create_probe_case)
@@ -577,8 +592,20 @@ def test_main_full_drill_success(tmp_path: Path, monkeypatch, capsys) -> None:
         "--cleanup-timeout",
         "30",
     ]
+    return types.SimpleNamespace(
+        diagnostics_dir=diagnostics_dir,
+        executed_commands=executed_commands,
+        backup=backup,
+        restore=restore,
+        final_cleanup=final_cleanup,
+        argv=argv,
+    )
 
-    rc = vdr.main(argv)
+
+def test_main_full_drill_success(full_drill_context, capsys) -> None:
+    diagnostics_dir = full_drill_context.diagnostics_dir
+    executed_commands = full_drill_context.executed_commands
+    rc = vdr.main(full_drill_context.argv)
     assert rc == 0
 
     # Verify diagnostic files
@@ -589,6 +616,8 @@ def test_main_full_drill_success(tmp_path: Path, monkeypatch, capsys) -> None:
     report_data = json.loads(report_file.read_text(encoding="utf-8"))
     assert report_data["result"] == "passed"
     assert report_data["rollback"]["probe_removed"] is True
+    assert report_data["rollback"]["backup_matches_restore"] is True
+    assert report_data["cleanup"]["result"] == "passed"
 
     # Verify stdout was redacted and contains digest and redaction marker
     captured = capsys.readouterr()
@@ -601,6 +630,65 @@ def test_main_full_drill_success(tmp_path: Path, monkeypatch, capsys) -> None:
     # Verify all commands executed with finite timeouts
     for _cmd, timeout, _check in executed_commands:
         assert timeout > 0
+
+
+@pytest.mark.parametrize("record,updates", [
+    ("restore", {"sha256": "b" * 64}),
+    ("restore", {"size_bytes": 101}),
+    ("both", {"sha256": None}),
+    ("both", {"sha256": "not-a-sha256"}),
+    ("both", {"size_bytes": True}),
+    ("both", {"size_bytes": 0}),
+])
+def test_main_rejects_unverified_restore(full_drill_context, capsys, record, updates):
+    context = full_drill_context
+    for name in ("backup", "restore") if record == "both" else (record,):
+        getattr(context, name).update(updates)
+
+    with pytest.raises(RuntimeError, match="backup/restore integrity"):
+        vdr.main(context.argv)
+
+    report = json.loads((context.diagnostics_dir / vdr.REPORT_NAME).read_text())
+    assert report["result"] == "failed"
+    assert report["rollback"]["restore"] == context.restore
+    assert not capsys.readouterr().out
+    assert not any(cmd[-5:] == ["up", "-d", "api", "web", "worker"] for cmd, _, _ in context.executed_commands)
+    assert sum("down" in cmd for cmd, _, _ in context.executed_commands) == 2
+
+
+@pytest.mark.parametrize("returncode,timed_out", [(2, False), (124, True), (0, True)])
+def test_main_cleanup_failure_cannot_publish_passed(full_drill_context, capsys, returncode, timed_out):
+    context = full_drill_context
+    context.final_cleanup.update(returncode=returncode, timed_out=timed_out)
+
+    with pytest.raises(RuntimeError, match="final cleanup"):
+        vdr.main(context.argv)
+
+    report = json.loads((context.diagnostics_dir / vdr.REPORT_NAME).read_text())
+    assert report["result"] == "failed"
+    assert report["cleanup"]["result"] == "failed"
+    assert report["report_sha256"] == vdr.sha256_json(report)
+    assert not capsys.readouterr().out
+    diagnostic = (context.diagnostics_dir / "compose-cleanup.txt").read_text()
+    assert "cleanup-secret-12345" not in diagnostic
+    assert "cleanup-secret-12345" not in json.dumps(report)
+
+
+@pytest.mark.parametrize("keep_by_env", [False, True])
+def test_main_explicit_keep_stack_preserves_success(full_drill_context, monkeypatch, keep_by_env):
+    context = full_drill_context
+    context.final_cleanup.update(returncode=2)
+    argv = context.argv
+    if keep_by_env:
+        monkeypatch.setenv("ODP_E2E_KEEP_STACK", "1")
+    else:
+        argv = [*argv, "--keep-stack"]
+
+    assert vdr.main(argv) == 0
+    assert sum("down" in cmd for cmd, _, _ in context.executed_commands) == 1
+    report = json.loads((context.diagnostics_dir / vdr.REPORT_NAME).read_text())
+    assert report["result"] == "passed"
+    assert report["cleanup"] == {"result": "skipped", "reason": "keep-stack"}
 
 
 def test_main_fails_closed_and_runs_cleanup_on_up_timeout(tmp_path: Path, monkeypatch) -> None:
@@ -662,6 +750,8 @@ def test_main_cleanup_timeout_does_not_mask_original_failure(tmp_path: Path, mon
     report_data = json.loads(report_file.read_text(encoding="utf-8"))
     assert report_data["result"] == "failed"
     assert "up failed with internal error" in report_data["error"]
+    assert report_data["cleanup"]["result"] == "failed"
+    assert "cleanup timed out" in report_data["cleanup"]["error"]
     assert (diagnostics_dir / "compose-initial-cleanup.txt").exists()
     assert (diagnostics_dir / "compose-cleanup.txt").exists()
     assert "command timed out after" in (diagnostics_dir / "compose-cleanup.txt").read_text(encoding="utf-8")
