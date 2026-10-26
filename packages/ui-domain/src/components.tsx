@@ -485,7 +485,7 @@ export function SiteScoreReportSummary({ report, onRequestReview, "data-testid":
         {report.paybackPeriod ? <IntervalBand label="Payback period" interval={report.paybackPeriod} /> : <Field label="Payback period" value="—" />}
       </Section>
       <FieldGrid>
-        <Field label="Rent reasonableness" value={report.rentReasonableness ? <StatusBadge label={report.rentReasonableness} tone={riskTone[report.rentReasonableness]} /> : "—"} />
+        <Field label="Rent reasonableness" value={report.rentReasonableness ?? "未評估"} />
         <Field label="Cannibalization risk" value={<StatusBadge label={report.cannibalizationRisk} tone={riskTone[report.cannibalizationRisk]} />} />
         <Field label="Decision status" value={report.decisionStatus} />
         <Field label="Model version" value={report.modelVersion} />
