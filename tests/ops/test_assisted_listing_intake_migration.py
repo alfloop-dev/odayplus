@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import re
+
 import pytest
 
 from modules.listing.domain.models import CandidateSiteDraft
@@ -8,6 +12,54 @@ from shared.domain.models import AddressLocation, CandidateSite, Listing
 
 # Mark all tests as requiring a live PostgreSQL 16 server
 pytestmark = pytest.mark.requires_live_env
+
+
+@pytest.fixture(scope="module")
+def migration_pg_server(tmp_path_factory):
+    """Always mint a local cluster; never use an application/environment DSN."""
+    import pgserver
+    import psycopg
+
+    from tests.conftest import IntakePgServer, _install_pgcrypto_stub
+
+    _install_pgcrypto_stub(pgserver)
+    directory = tmp_path_factory.mktemp("migration-input-pg")
+    server = pgserver.get_server(directory)
+    host = re.search(r"host=([^&]+)", server.get_uri()).group(1)
+    try:
+        yield IntakePgServer(psycopg=psycopg, admin_params={"host": host, "dbname": "postgres", "user": "postgres"})
+    finally:
+        server.cleanup()
+
+
+@pytest.fixture
+def intake_blank_db(migration_pg_server):
+    from tests.conftest import IntakeDatabase
+
+    name = migration_pg_server.create_database()
+    try:
+        yield IntakeDatabase(server=migration_pg_server, dbname=name)
+    finally:
+        # A leaked connection fails cleanup instead of being terminated.
+        with migration_pg_server.connect("postgres") as connection:
+            connection.execute(f'DROP DATABASE "{name}"')
+
+
+def synthetic_history(intake_id, raw=None):
+    """Explicit synthetic source facts for positive fixtures, not runtime defaults."""
+    raw = {"synthetic_intake": intake_id} if raw is None else raw
+    return {
+        "submittedBy": "10000000-0000-0000-0000-000000000001",
+        "submittedAt": "2026-07-14T06:10:00Z", "intakeMethod": "URL", "stage": "READY",
+        "version": 7, "rawSnapshot": raw,
+        "rawObjectUri": f"odp-artifact://synthetic/{intake_id}",
+        "rawSnapshotSha256": hashlib.sha256(json.dumps(raw, sort_keys=True, ensure_ascii=False).encode()).hexdigest(),
+        "capturedAt": "2026-07-14T06:11:00Z", "observedAt": "2026-07-14T06:11:00Z",
+        "captureMethod": "SERVER_RETRIEVAL", "mediaType": "application/json", "objectGeneration": 123,
+        "residencyMode": "TW_ONLY",
+        "retentionClass": "STANDARD", "encryptionKeyRef": "kms://synthetic-key",
+        "parserVersion": "1.4", "parserRunStatus": "SUCCEEDED",
+    }
 
 
 @pytest.fixture(name="conn")
@@ -64,11 +116,11 @@ def test_backfill_happy_path(conn) -> None:
             "sourceId": "SRC-591",
             "originalUrl": "https://591.com.tw/detail-2024.html",
             "canonicalUrl": "https://591.com.tw/detail-2024.html",
+            **synthetic_history("IN-2024", {"html": "dummy raw data"}),
             "rawObjectUri": "odp-artifact://snapshots/snap-2024",
-            "rawSnapshotSha256": "a" * 64,
             "sourcePolicyState": "APPROVED_RETRIEVAL",
             "stage": "READY",
-            "heatZoneId": "HZ-01",
+            "heatZoneId": ensure_uuid("HZ-01"),
             "correlationId": "corr-2024",
             "submittedAt": "2026-07-14T06:10:00Z",
             "rawSnapshot": {"html": "dummy raw data"},
@@ -123,6 +175,7 @@ def test_backfill_happy_path(conn) -> None:
         tenant_id=tenant_id,
         parser_release={
             "semantic_version": "1.4",
+            "validation_status": "VALIDATED",
             "artifact_uri": "gs://parser-artifacts/v1.4.tar.gz",
             "artifact_sha256": "c" * 64,
         },
@@ -241,6 +294,8 @@ def test_b2_month_and_source_partition_filtering(conn) -> None:
 
     legacy_intake = {
         "id": "IN-JULY",
+        **synthetic_history("IN-JULY"),
+        "originalUrl": "https://591.com.tw/detail-july.html",
         "tenantId": tenant_id,
         "sourceId": "SRC-591",
         "submittedAt": "2026-07-14T00:00:00Z",
@@ -281,6 +336,7 @@ def test_b3_shadow_comparison_count_and_checksum_proof(conn) -> None:
 
     legacy_intake = {
         "id": "IN-1",
+        **synthetic_history("IN-1"),
         "tenantId": tenant_id,
         "sourceId": "SRC-591",
         "originalUrl": "https://591.com.tw/detail-1.html",
@@ -319,6 +375,7 @@ def test_b3_probe_shadow_proof_persistence_on_fresh_migrator(conn) -> None:
 
     legacy_intake = {
         "id": "IN-FRESH",
+        **synthetic_history("IN-FRESH"),
         "tenantId": tenant_id,
         "sourceId": "SRC-591",
         "originalUrl": "https://591.com.tw/detail-fresh.html",
@@ -357,11 +414,11 @@ def test_b4_snapshot_provenance_and_policy_preservation(conn) -> None:
 
     legacy_intake = {
         "id": "IN-PROV",
+        **synthetic_history("IN-PROV", {"html": "custom snapshot text"}),
         "tenantId": tenant_id,
         "sourceId": "SRC-591",
         "originalUrl": "https://591.com.tw/detail-prov.html",
         "rawObjectUri": "gs://verified-bucket/snapshots/raw-100",
-        "rawSnapshotSha256": "a" * 64,
         "sourcePolicyState": "AUTH_REQUIRED",
         "rawSnapshot": {"html": "custom snapshot text"},
     }
@@ -387,7 +444,7 @@ def test_b4_snapshot_provenance_and_policy_preservation(conn) -> None:
     cur.execute("SELECT raw_object_uri, content_sha256 FROM intake.source_snapshots WHERE intake_id = %s", (ensure_uuid("IN-PROV"),))
     row = cur.fetchone()
     assert row[0] == "gs://verified-bucket/snapshots/raw-100"
-    assert row[1] == "a" * 64
+    assert row[1] == hashlib.sha256(json.dumps({"html": "custom snapshot text"}, sort_keys=True).encode()).hexdigest()
 
     cur.execute("SELECT artifact_uri, artifact_sha256, validation_status FROM intake.parser_releases WHERE semantic_version = '2.0'")
     pr_row = cur.fetchone()
@@ -404,6 +461,7 @@ def test_b5_probe_no_synthetic_intake_creation(conn) -> None:
 
     legacy_intake = {
         "id": "IN-REAL",
+        **synthetic_history("IN-REAL"),
         "tenantId": tenant_id,
         "sourceId": "SRC-591",
         "originalUrl": "https://591.com.tw/detail-real.html",
@@ -440,6 +498,7 @@ def test_major_b_probe_complete_table_scoped_rollback(conn) -> None:
 
     legacy_intake = {
         "id": "IN-ROLLBACK",
+        **synthetic_history("IN-ROLLBACK", {"html": "test snapshot"}),
         "tenantId": tenant_id,
         "sourceId": "SRC-591",
         "originalUrl": "https://591.com.tw/detail-rb.html",
@@ -508,6 +567,7 @@ def test_backfill_dry_run_does_not_commit(conn) -> None:
             "sourceId": "SRC-591",
             "originalUrl": "https://591.com.tw/detail-2024.html",
             "canonicalUrl": "https://591.com.tw/detail-2024.html",
+            **synthetic_history("IN-2024"),
             "stage": "READY",
         }
     ]
@@ -542,6 +602,7 @@ def test_backfill_resume_skips_existing(conn) -> None:
             "sourceId": "SRC-591",
             "originalUrl": "https://591.com.tw/detail-2024.html",
             "canonicalUrl": "https://591.com.tw/detail-2024.html",
+            **synthetic_history("IN-2024"),
             "stage": "READY",
         }
     ]
@@ -575,6 +636,7 @@ def test_blocker3_rollback_preserves_unrelated_tenant_data(conn) -> None:
     # 1. Backfill migration data
     legacy_intake = {
         "id": "IN-MIG-1",
+        **synthetic_history("IN-MIG-1"),
         "tenantId": tenant_id,
         "sourceId": "SRC-591",
         "originalUrl": "https://591.com.tw/detail-mig.html",
@@ -694,6 +756,7 @@ def test_cli_subprocess_against_pg_fixture(intake_blank_db, tmp_path) -> None:
                 "legacy_intakes": [
                     {
                         "id": "IN-CLI-1",
+                        **synthetic_history("IN-CLI-1"),
                         "tenantId": tenant_id,
                         "sourceId": "SRC-591",
                         "originalUrl": "https://591.com.tw/detail-cli.html",
@@ -825,6 +888,7 @@ def test_blocker2_rollback_scoped_to_migration_ref(conn) -> None:
 
     legacy_intake_a = {
         "id": "IN-A-1",
+        **synthetic_history("IN-A-1"),
         "tenantId": tenant_id,
         "sourceId": "SRC-591",
         "originalUrl": "https://591.com.tw/detail-a1.html",
@@ -840,6 +904,7 @@ def test_blocker2_rollback_scoped_to_migration_ref(conn) -> None:
     migrator_b = IntakeMigrator(conn, migration_ref="MIG-REF-B")
     legacy_intake_b = {
         "id": "IN-B-1",
+        **synthetic_history("IN-B-1"),
         "tenantId": tenant_id,
         "sourceId": "SRC-591",
         "originalUrl": "https://591.com.tw/detail-b1.html",
@@ -906,6 +971,7 @@ def test_blocker3_rollback_preserves_live_outbox_and_orphan_properties(conn) -> 
 
     legacy_intake = {
         "id": "IN-MIG",
+        **synthetic_history("IN-MIG"),
         "tenantId": tenant_id,
         "sourceId": "SRC-591",
         "originalUrl": "https://591.com.tw/detail-mig.html",
@@ -944,6 +1010,7 @@ def test_blocker4_resume_then_verify_cutover_path(conn) -> None:
 
     in1 = {
         "id": "IN-R1",
+        **synthetic_history("IN-R1"),
         "tenantId": tenant_id,
         "sourceId": "SRC-591",
         "originalUrl": "https://591.com.tw/detail-r1.html",
@@ -951,6 +1018,7 @@ def test_blocker4_resume_then_verify_cutover_path(conn) -> None:
     }
     in2 = {
         "id": "IN-R2",
+        **synthetic_history("IN-R2"),
         "tenantId": tenant_id,
         "sourceId": "SRC-591",
         "originalUrl": "https://591.com.tw/detail-r2.html",
@@ -996,6 +1064,7 @@ def test_major_c_multi_partition_checksum_and_preexisting_tenant_rows(conn) -> N
         "tenantId": tenant_id,
         "sourceId": "SRC-591",
         "originalUrl": "https://591.com.tw/detail-jan.html",
+        **synthetic_history("IN-JAN"),
         "submittedAt": "2026-01-15T06:10:00Z",
     }
     in_feb = {
@@ -1003,6 +1072,7 @@ def test_major_c_multi_partition_checksum_and_preexisting_tenant_rows(conn) -> N
         "tenantId": tenant_id,
         "sourceId": "SRC-591",
         "originalUrl": "https://591.com.tw/detail-feb.html",
+        **synthetic_history("IN-FEB"),
         "submittedAt": "2026-02-15T06:10:00Z",
     }
 
@@ -1054,6 +1124,7 @@ def test_blocker1_multi_partition_listings_and_candidates(conn) -> None:
         "tenantId": tenant_id,
         "sourceId": "SRC-591",
         "originalUrl": "https://591.com.tw/detail-jan.html",
+        **synthetic_history("IN-JAN"),
         "submittedAt": "2026-01-15T06:10:00Z",
         "matchResult": {"outcome": "NEW", "confidence": 1.0, "targetListingId": "L-JAN"},
     }
@@ -1092,6 +1163,7 @@ def test_blocker1_multi_partition_listings_and_candidates(conn) -> None:
         "tenantId": tenant_id,
         "sourceId": "SRC-591",
         "originalUrl": "https://591.com.tw/detail-feb.html",
+        **synthetic_history("IN-FEB"),
         "submittedAt": "2026-02-15T06:10:00Z",
         "matchResult": {"outcome": "NEW", "confidence": 1.0, "targetListingId": "L-FEB"},
     }
@@ -1162,3 +1234,210 @@ def test_blocker1_multi_partition_listings_and_candidates(conn) -> None:
     assert verify_res["intake_count"] == 2
     assert verify_res["listing_count"] == 2
     assert verify_res["candidate_count"] == 2
+
+
+def migration_input(bridge=False):
+    tenant = "00000000-0000-0000-0000-000000000001"
+    row = {
+        "id": "IN-INPUT", "tenantId": tenant, **synthetic_history("IN-INPUT"),
+        "originalUrl": "https://591.com.tw/input?tracking=synthetic",
+        "canonicalUrl": "https://591.com.tw/input", "sourceId": "SRC-591",
+        "sourcePolicyState": "AUTH_REQUIRED", "intakeMethod": "MANUAL",
+        "stage": "NEEDS_REVIEW", "submitter": "Synthetic display label (not an ID)",
+        "parsedFields": {"rent": 12345}, "normalizedFields": {"rent": 12345}, "matchResult": {"outcome": "NEW", "confidence": 0.5},
+        "heatZoneId": ensure_uuid("synthetic-zone"),
+    }
+    if not bridge:
+        return row
+    names = {
+        "id": "intake_id", "stage": "state", "originalUrl": "original_url",
+        "canonicalUrl": "canonical_url", "sourceId": "source_id", "submittedBy": "submitted_by",
+        "submittedAt": "submitted_at", "intakeMethod": "intake_method", "version": "version",
+        "sourcePolicyState": "policy_state",
+    }
+    return {
+        **{snake: row[camel] for camel, snake in names.items()},
+        "scope": {"tenant_id": tenant, "heat_zone_id": row["heatZoneId"]},
+        "operator_presentation": row,
+    }
+
+
+def parser_provenance(**overrides):
+    return {
+        "semantic_version": "1.4", "artifact_uri": "gs://synthetic-parser/1.4.tar.gz",
+        "artifact_sha256": "c" * 64, "validation_status": "VALIDATED", **overrides,
+    }
+
+
+def test_legacy_bridge_field_and_evidence_parity(conn):
+    """Compare actual SQL fields/evidence, not only the existing ID proof."""
+    tenant = migration_input()["tenantId"]
+    snapshots = []
+    for bridge in (False, True):
+        migrator = IntakeMigrator(conn)
+        result = migrator.backfill([migration_input(bridge)], [], [], tenant_id=tenant, parser_release=parser_provenance())
+        assert result["counts"]["intakes_processed"] == 1
+        assert result["counts"]["findings"] == 0
+        cur = conn.cursor()
+        cur.execute("SELECT submitter_subject_id, submitted_at, intake_method, processing_state, source_id, source_policy_state, original_url, canonical_url, version, heat_zone_id FROM intake.intakes")
+        intake_row = cur.fetchone()
+        assert str(intake_row[0]) == synthetic_history("IN-INPUT")["submittedBy"]
+        assert intake_row[1].isoformat() == "2026-07-14T06:10:00+00:00"
+        assert intake_row[2:9] == ("MANUAL", "NEEDS_REVIEW", "SRC-591", "AUTH_REQUIRED", "https://591.com.tw/input?tracking=synthetic", "https://591.com.tw/input", 1)
+        assert str(intake_row[9]) == ensure_uuid("synthetic-zone")
+        cur.execute("SELECT raw_object_uri, content_sha256, byte_length, captured_at, observed_at, capture_method, media_type, retention_class, encryption_key_ref FROM intake.source_snapshots")
+        snapshot_row = cur.fetchone()
+        assert snapshot_row[:2] == ("odp-artifact://synthetic/IN-INPUT", synthetic_history("IN-INPUT")["rawSnapshotSha256"])
+        assert snapshot_row[2] == len(json.dumps({"synthetic_intake": "IN-INPUT"}).encode())
+        assert snapshot_row[3].isoformat() == "2026-07-14T06:11:00+00:00"
+        assert snapshot_row[5:] == ("SERVER_RETRIEVAL", "application/json", "STANDARD", "kms://synthetic-key")
+        cur.execute("SELECT status, parsed_payload, normalized_payload FROM intake.parser_runs")
+        parser_row = cur.fetchone()
+        assert parser_row == ("SUCCEEDED", {"rent": 12345}, {"rent": 12345})
+        cur.execute("SELECT reason_text, resulting_version, service_principal, occurred_at FROM intake.intake_stage_transitions")
+        transition = cur.fetchone()
+        history = json.loads(transition[0])["source_history"]
+        assert history["version"] == 7
+        assert history["submittedAt"] == "2026-07-14T06:10:00Z"
+        assert transition[1:3] == (1, "migration_worker")
+        assert transition[3] > intake_row[1]
+        cur.execute("SELECT status FROM identity.match_cases")
+        assert cur.fetchone() == ("PENDING_REVIEW",)
+        cur.execute("SELECT count(*) FROM identity.match_decisions")
+        assert cur.fetchone()[0] == 0
+        fresh = IntakeMigrator(conn).verify_shadow_comparison(tenant)
+        assert fresh["blocking_findings"] == 0
+        assert fresh["shadow_comparison_success"] is True
+        assert fresh["proof_scope"] == "counts_and_ids_only_not_field_or_evidence_parity"
+        snapshots.append((intake_row, snapshot_row, parser_row, history))
+        migrator.rollback_migration(tenant_id=tenant)
+    assert snapshots[0] == snapshots[1]
+
+
+@pytest.mark.parametrize("field,value,kind", [
+    ("id", "different-id", "STATE_MAPPING_CONFLICT"),
+    ("tenantId", "00000000-0000-0000-0000-000000000002", "INVALID_SCOPE"),
+    ("stage", "READY", "STATE_MAPPING_CONFLICT"),
+    ("submittedBy", "10000000-0000-0000-0000-000000000002", "STATE_MAPPING_CONFLICT"),
+    ("submittedAt", "2026-08-01T00:00:00Z", "STATE_MAPPING_CONFLICT"),
+    ("intakeMethod", "URL", "STATE_MAPPING_CONFLICT"),
+    ("version", 9, "STATE_MAPPING_CONFLICT"),
+    ("originalUrl", "https://591.com.tw/other", "STATE_MAPPING_CONFLICT"),
+    ("canonicalUrl", "https://591.com.tw/other", "STATE_MAPPING_CONFLICT"),
+    ("sourceId", "SRC-BROKER", "STATE_MAPPING_CONFLICT"),
+    ("sourcePolicyState", "APPROVED_RETRIEVAL", "STATE_MAPPING_CONFLICT"),
+])
+def test_bridge_conflicting_authoritative_aliases_are_findings(conn, field, value, kind):
+    row = migration_input(True)
+    row["operator_presentation"][field] = value
+    tenant = row["scope"]["tenant_id"]
+    result = IntakeMigrator(conn).backfill([row], [], [], tenant_id=tenant)
+    assert result["counts"]["intakes_quarantined"] == 1
+    cur = conn.cursor()
+    for table in ("intake.intakes", "intake.source_snapshots", "intake.parser_runs", "identity.match_decisions"):
+        cur.execute(f"SELECT count(*) FROM {table}")
+        assert cur.fetchone()[0] == 0
+    cur.execute("SELECT finding_type FROM workflow.reconciliation_findings WHERE severity='BLOCKING'")
+    assert cur.fetchall() == [(kind,)]
+    assert IntakeMigrator(conn).verify_shadow_comparison(tenant)["shadow_comparison_success"] is False
+
+
+@pytest.mark.parametrize("field,value", [
+    ("submittedAt", None), ("submittedAt", "not-a-date"), ("submittedAt", "2026-07-14T06:10:00"),
+    ("submittedBy", None), ("submittedBy", "Display Name"),
+    ("intakeMethod", None), ("intakeMethod", "BATCH_ASSISTED_ENTRY"),
+    ("stage", None), ("stage", "COMPLETED"), ("version", 0), ("version", "7"),
+    ("tenantId", None), ("tenantId", "tenant-a"), ("sourceId", None), ("sourceId", "SRC-UNKNOWN"),
+])
+def test_missing_or_invalid_history_never_invents_facts(conn, field, value):
+    row = migration_input()
+    tenant = row["tenantId"]
+    row[field] = value
+    row["submitter"] = "Looks like a person"
+    row["firstSeenAt"] = "2026-07-14T06:10:00Z"  # Not a submission timestamp.
+    result = IntakeMigrator(conn).backfill([row], [], [], tenant_id=tenant)
+    assert result["counts"]["intakes_received"] == 1
+    assert result["counts"]["intakes_processed"] == 0
+    assert result["counts"]["intakes_quarantined"] == 1
+    cur = conn.cursor()
+    for table in ("intake.intakes", "intake.intake_stage_transitions", "intake.source_snapshots", "intake.parser_runs"):
+        cur.execute(f"SELECT count(*) FROM {table}")
+        assert cur.fetchone()[0] == 0
+    cur.execute("SELECT count(*) FROM workflow.reconciliation_findings WHERE severity='BLOCKING'")
+    assert cur.fetchone()[0] >= 1
+
+
+@pytest.mark.parametrize("scope", [None, [], {"tenant_id": "wrong-tenant"}, {}, {"tenant_id": "00000000-0000-0000-0000-000000000001", "heat_zone_id": "bad-zone"}])
+def test_bridge_invalid_scope_cannot_fall_back_to_presentation(conn, scope):
+    row = migration_input(True)
+    row["scope"] = scope
+    tenant = row["operator_presentation"]["tenantId"]
+    result = IntakeMigrator(conn).backfill([row], [], [], tenant_id=tenant)
+    assert result["counts"]["intakes_quarantined"] == 1
+    cur = conn.cursor()
+    cur.execute("SELECT count(*) FROM intake.intakes")
+    assert cur.fetchone()[0] == 0
+    cur.execute("SELECT finding_type FROM workflow.reconciliation_findings WHERE severity='BLOCKING'")
+    assert cur.fetchall() == [("INVALID_SCOPE",)]
+
+
+@pytest.mark.parametrize("field,value,snapshots", [
+    ("rawSnapshot", None, 0), ("rawSnapshot", {}, 0), ("rawSnapshot", "", 0),
+    ("rawSnapshotSha256", "a" * 64, 0), ("rawObjectUri", None, 0),
+    ("rawObjectUri", "unverified://placeholder/snapshot", 0),
+    ("capturedAt", None, 0), ("observedAt", "not-a-date", 0),
+    ("captureMethod", None, 0), ("encryptionKeyRef", None, 0),
+    ("parsedFields", {}, 1), ("parsedFields", None, 1),
+    ("parserVersion", None, 1), ("parserRunStatus", None, 1),
+])
+def test_display_defaults_and_missing_provenance_never_create_success(conn, field, value, snapshots):
+    row = migration_input(True)
+    row["operator_presentation"][field] = value
+    tenant = row["scope"]["tenant_id"]
+    result = IntakeMigrator(conn).backfill([row], [], [], tenant_id=tenant, parser_release=parser_provenance())
+    assert result["counts"]["intakes_processed"] == 1
+    cur = conn.cursor()
+    cur.execute("SELECT count(*) FROM intake.source_snapshots")
+    assert cur.fetchone()[0] == snapshots
+    cur.execute("SELECT count(*) FROM intake.parser_runs")
+    assert cur.fetchone()[0] == 0
+    if field not in {"parsedFields"}:
+        cur.execute("SELECT count(*) FROM workflow.reconciliation_findings WHERE severity='BLOCKING'")
+        assert cur.fetchone()[0] >= 1
+        assert IntakeMigrator(conn).verify_shadow_comparison(tenant)["shadow_comparison_success"] is False
+
+
+@pytest.mark.parametrize("release", [
+    parser_provenance(source_id="SRC-BROKER"), parser_provenance(validation_status="DRAFT"),
+    parser_provenance(artifact_sha256="bad"), parser_provenance(artifact_uri="unverified://parser/missing"),
+])
+def test_parser_provenance_must_be_valid_and_source_bound(conn, release):
+    row = migration_input()
+    IntakeMigrator(conn).backfill([row], [], [], tenant_id=row["tenantId"], parser_release=release)
+    cur = conn.cursor()
+    cur.execute("SELECT count(*) FROM intake.source_snapshots")
+    assert cur.fetchone()[0] == 1
+    cur.execute("SELECT count(*) FROM intake.parser_runs")
+    assert cur.fetchone()[0] == 0
+    cur.execute("SELECT count(*) FROM workflow.reconciliation_findings WHERE severity='BLOCKING'")
+    assert cur.fetchone()[0] >= 1
+
+
+def test_tenant_partition_documents_exclusion_and_dry_run_invalid_input(conn):
+    row = migration_input()
+    tenant = row["tenantId"]
+    row["tenantId"] = "00000000-0000-0000-0000-000000000002"
+    migrator = IntakeMigrator(conn)
+    result = migrator.backfill([row], [], [], tenant_id=tenant)
+    assert result["counts"]["intakes_received"] == result["counts"]["intakes_excluded"] == 1
+    assert result["counts"]["intakes_processed"] == result["counts"]["intakes_quarantined"] == 0
+    cur = conn.cursor()
+    cur.execute("SELECT count(*) FROM intake.intakes")
+    assert cur.fetchone()[0] == 0
+    cur.execute("SELECT expected FROM workflow.reconciliation_findings WHERE severity='INFO'")
+    assert cur.fetchone()[0]["intakes_excluded"] == 1
+    row["tenantId"] = "not-a-tenant"
+    result = migrator.backfill([row], [], [], tenant_id=tenant, dry_run=True)
+    assert result["counts"]["intakes_quarantined"] == 1
+    cur.execute("SELECT count(*) FROM workflow.reconciliation_findings WHERE severity='BLOCKING'")
+    assert cur.fetchone()[0] == 0
