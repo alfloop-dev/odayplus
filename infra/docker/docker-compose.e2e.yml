@@ -136,6 +136,13 @@ services:
       ODP_PERSISTENCE: durable
       ODP_DB_PATH: /data/product-e2e.sqlite3
       ODP_E2E_WORKER_HEARTBEAT: /storage/worker-heartbeat.jsonl
+    # Worker has no HTTP server; use the same read-only check as the DR drill.
+    healthcheck:
+      test: ["CMD", "python", "delivery_toolchain/e2e/worker_heartbeat.py", "--check"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
     volumes:
       - e2e-db:/data
       - e2e-storage:/storage
