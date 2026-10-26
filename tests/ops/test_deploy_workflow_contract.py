@@ -1244,6 +1244,12 @@ def test_deploy_script_uses_digest_refs_for_every_cloud_run_target() -> None:
     assert "deploy-by-digest requires immutable image reference" in script
 
 
+OWN_REGISTRY_ERROR = (
+    "production deploys only images in its own registry "
+    "asia-east1-docker.pkg.dev/project-under-test/runtime;"
+)
+
+
 @pytest.mark.parametrize("deploy_environment", ["prod", "production", "dev"])
 @pytest.mark.parametrize(
     ("deploy_by_digest", "skip_build", "image_override", "image_error"),
@@ -1259,6 +1265,18 @@ def test_deploy_script_uses_digest_refs_for_every_cloud_run_target() -> None:
         pytest.param(
             "true", True, ("SCHEDULER_IMAGE", "registry.invalid/scheduler:mutable"),
             "deploy-by-digest requires immutable image reference", id="mutable-image",
+        ),
+        # ODP-PROD-IMAGE-PROMOTION-001: production deploys only from its own
+        # registry; dev keeps accepting whatever digest reference it is handed.
+        pytest.param(
+            "true", False,
+            ("WEB_IMAGE", "asia-east1-docker.pkg.dev/staging-project/oday-plus-dev/web@sha256:" + "b" * 64),
+            OWN_REGISTRY_ERROR, id="staging-registry-image",
+        ),
+        pytest.param(
+            "true", False,
+            ("WORKER_IMAGE", "asia-east1-docker.pkg.dev/project-under-test/runtime-other/worker@sha256:" + "b" * 64),
+            OWN_REGISTRY_ERROR, id="lookalike-repository-image",
         ),
     ],
 )
@@ -1315,7 +1333,8 @@ def test_deploy_script_production_refuses_the_tag_build_path(
         "GCP_AR_REPO": "runtime",
     }
     for name in ("API_IMAGE", "WEB_IMAGE", "WORKER_IMAGE", "SCHEDULER_IMAGE"):
-        image = f"registry.invalid/{name.lower()}"
+        # The environment's own registry: production refuses any other one.
+        image = f"asia-east1-docker.pkg.dev/project-under-test/runtime/{name.lower()}"
         suffix = "@sha256:" + "b" * 64 if deploy_by_digest == "true" else ":mutable"
         env[name] = image + suffix
     if deploy_by_digest is not None:
@@ -1334,6 +1353,8 @@ def test_deploy_script_production_refuses_the_tag_build_path(
         cwd=ROOT, env=env, capture_output=True, text=True, check=False, timeout=10,
     )
     expected_error = image_error
+    if image_error == OWN_REGISTRY_ERROR and deploy_environment not in {"prod", "production"}:
+        expected_error = None
     if deploy_environment in {"prod", "production"} and deploy_by_digest != "true":
         expected_error = "production deployment requires ODP_DEPLOY_BY_DIGEST=true"
     calls = trace.read_text(encoding="utf-8").splitlines()

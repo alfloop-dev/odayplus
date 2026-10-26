@@ -36,6 +36,14 @@ the deploy phase was handed back to `manifest.components`. Without that binding 
 valid lease would admit any digest, and "build once, deploy that exact artifact"
 would be a convention rather than a control.
 
+Production deploys the staging-sealed manifest from its own Artifact Registry
+(ODP-PROD-IMAGE-PROMOTION-001), so a production admission may also be handed
+`--target-registry`: the production repository the deploy job promotes the
+images into. Each handoff image is then either the manifest's own reference or
+that reference with only the repository root replaced -- same image name, same
+digest. Any other environment is refused that argument before the lease is
+consumed.
+
 Two responsibilities deliberately stay outside this check. GitHub environment
 approval is the human production gate, and the workflow `concurrency` group is
 same-environment mutual exclusion. A lease is not a substitute for either, and
@@ -98,6 +106,7 @@ from delivery_toolchain.release.release_lease import (  # noqa: E402
     load_public_key,
 )
 from delivery_toolchain.release.release_manifest import (  # noqa: E402
+    IMAGE_PROMOTION_ENVIRONMENTS,
     INITIAL_RELEASE_LINEAGE_ENVIRONMENTS,
     INITIAL_RELEASE_LINEAGE_TARGET,
     component_binding_errors,
@@ -371,6 +380,7 @@ def admit_release(
     manifest_digest: str | None = None,
     manifest_errors: list[str] | None = None,
     component_images: dict[str, str] | None = None,
+    target_registry: str | None = None,
     allowed_action: str = DEFAULT_ACTION,
     consumed_by: str,
     initial_release_receipt: Any = None,
@@ -404,12 +414,23 @@ def admit_release(
         for error in release_profile_errors(manifest, environment=environment)
         if error not in extra
     )
+    # dev and staging deploy the manifest's references as recorded; only an
+    # environment that promotes the images first may name its own registry.
+    if target_registry is not None and environment not in IMAGE_PROMOTION_ENVIRONMENTS:
+        extra.append(
+            f"--target-registry is accepted only for {list(IMAGE_PROMOTION_ENVIRONMENTS)} "
+            f"admission, not {environment!r}; {environment} deploys the images the "
+            "manifest records"
+        )
+        target_registry = None
     if component_images:
         # A manifest that failed to load is `None` here, and binding against it
         # reports an error rather than silently skipping the check.
         extra.extend(
             error
-            for error in component_binding_errors(manifest, component_images)
+            for error in component_binding_errors(
+                manifest, component_images, target_registry=target_registry
+            )
             if error not in extra
         )
     extra.extend(
@@ -504,6 +525,17 @@ def main(argv: list[str] | None = None) -> int:
             "Immutable image reference the deploy phase was handed for one manifest "
             "component, e.g. api=repo/api@sha256:... . Repeat per component; each one "
             "must equal the image recorded by manifest.components."
+        ),
+    )
+    parser.add_argument(
+        "--target-registry",
+        default=None,
+        metavar="REGION-docker.pkg.dev/PROJECT/REPOSITORY",
+        help=(
+            "Production only: the admission environment's own Artifact Registry "
+            "repository the deploy job promotes the manifest images into. A handoff "
+            "image may then also be the manifest image with only this repository "
+            "root replaced (same image name and digest)."
         ),
     )
     parser.add_argument("--action", default=DEFAULT_ACTION)
@@ -688,6 +720,7 @@ def main(argv: list[str] | None = None) -> int:
         manifest_digest=manifest_digest,
         manifest_errors=manifest_errors,
         component_images=component_images,
+        target_registry=args.target_registry,
         allowed_action=args.action,
         consumed_by=_consumer_label(args.environment, args.release_sha),
         initial_release_receipt=initial_release_receipt,
@@ -698,6 +731,7 @@ def main(argv: list[str] | None = None) -> int:
     # Digests are not secrets, and an admission receipt that does not say which
     # artifact was admitted cannot be audited against what actually deployed.
     receipt["component_images"] = dict(sorted(component_images.items()))
+    receipt["target_registry"] = args.target_registry
     receipt["manifest_transport"] = manifest_transport()
     # The deploy phase reads the acceptance scope from here and nowhere else, so
     # it is only recorded for a manifest that verified against its digest.

@@ -315,6 +315,20 @@ if [ "${ODP_DEPLOY_BY_DIGEST:-false}" = "true" ]; then
       exit 1
     fi
   done
+  # ODP-PROD-IMAGE-PROMOTION-001: production runs only images in its own
+  # Artifact Registry. The workflow promotes the staging-built images there by
+  # digest before calling this script; a reference into any other project
+  # (the staging registry included) would make production depend on it.
+  case "${ODP_DEPLOY_ENV}" in
+    prod|production)
+      for image in "${API_IMAGE}" "${WEB_IMAGE}" "${WORKER_IMAGE}" "${SCHEDULER_IMAGE}"; do
+        if [[ "${image}" != "${REPO_PATH}/"* ]]; then
+          echo "Error: production deploys only images in its own registry ${REPO_PATH}; got '${image}'. Promote the image by digest first." >&2
+          exit 1
+        fi
+      done
+      ;;
+  esac
 else
   case "${ODP_DEPLOY_ENV}" in
     prod|production)

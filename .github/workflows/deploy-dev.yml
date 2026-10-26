@@ -1053,6 +1053,11 @@ jobs:
           # (production's history is not in the staging store). Unset in the
           # staging environment, that admission is refused before consumption.
           PRODUCTION_LEASE_STATE_URI: ${{ vars.ODP_PRODUCTION_RELEASE_LEASE_STATE_URI }}
+          # Production's own Artifact Registry, the one the deploy job promotes
+          # the manifest images into; read only for a production admission.
+          TARGET_GCP_REGION: ${{ vars.GCP_REGION }}
+          TARGET_GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+          TARGET_GCP_AR_REPO: ${{ vars.GCP_AR_REPO }}
           API_IMAGE_INPUT: ${{ inputs.api_image }}
           WEB_IMAGE_INPUT: ${{ inputs.web_image }}
           WORKER_IMAGE_INPUT: ${{ inputs.worker_image }}
@@ -1075,6 +1080,15 @@ jobs:
           if [ "${RELEASE_ENVIRONMENT}" = "staging" ] && [ -n "${PRODUCTION_LEASE_STATE_URI:-}" ]; then
             initial_release_args+=(--lineage-state-uri "${PRODUCTION_LEASE_STATE_URI}")
           fi
+          # ODP-PROD-IMAGE-PROMOTION-001: production may be handed either the
+          # manifest's references or the same names and digests in its own
+          # registry. dev and staging are not given this, and the verifier
+          # refuses it for them. Unresolved variables make a malformed registry,
+          # which the verifier refuses before the lease is consumed.
+          promotion_args=()
+          if [ "${RELEASE_ENVIRONMENT}" = "production" ]; then
+            promotion_args+=("--target-registry=${TARGET_GCP_REGION}-docker.pkg.dev/${TARGET_GCP_PROJECT}/${TARGET_GCP_AR_REPO}")
+          fi
           uv run python delivery_toolchain/release/check_runtime_admission.py \
             --sha "${EVENT_SHA}" \
             --environment "${RELEASE_ENVIRONMENT}" \
@@ -1090,6 +1104,7 @@ jobs:
             --manifest-digest "${MANIFEST_DIGEST_INPUT}" \
             --require-manifest-digest \
             "${initial_release_args[@]}" \
+            "${promotion_args[@]}" \
             --receipt "${RELEASE_RECEIPT_DIR}/release-admission-receipt.json"
 
       - name: Extract admitted manifest digest
@@ -1460,6 +1475,51 @@ jobs:
           uv run python -m delivery_toolchain.release.automatic_dev scheduler-baseline
           --output "${RUNNER_TEMP}/dev-scheduler-baseline-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
 
+      # ODP-PROD-IMAGE-PROMOTION-001: production deploys from its own Artifact
+      # Registry, never from the staging project the manifest's images were
+      # built in (2026-10-24 owner decision). After admission and before any
+      # Cloud Run change, the four manifest images are copied by digest -- with
+      # their Cosign signatures and SBOM attestations -- into
+      # GCP_REGION/GCP_PROJECT/GCP_AR_REPO of this environment, read back, and
+      # verified there. The manifest is the build run's own artifact, held to the
+      # digest admission consumed the lease for; it is not rewritten. Any failure
+      # stops the job: no outputs, so the deploy step below never receives a
+      # production reference and the deploy script refuses anything else.
+      - name: Download the admitted manifest for production image promotion
+        if: ${{ inputs.environment == 'production' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: runtime-release-manifest-${{ inputs.release_sha }}
+          run-id: ${{ inputs.manifest_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ env.RELEASE_RECEIPT_DIR }}/promotion-manifest
+
+      - name: Promote the admitted images into the production registry
+        id: promote-images
+        if: ${{ inputs.environment == 'production' }}
+        run: >-
+          uv run --frozen python delivery_toolchain/release/promote_release_images.py
+          --environment "${ODP_DEPLOY_ENV}"
+          --manifest "${RELEASE_RECEIPT_DIR}/promotion-manifest/RELEASE_MANIFEST.json"
+          --expected-sha "${ODAY_RELEASE_SHA}"
+          --expected-digest "${MANIFEST_DIGEST}"
+          "--target-registry=${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT}/${GCP_AR_REPO}"
+          --component-image "api=${API_IMAGE}"
+          --component-image "web=${WEB_IMAGE}"
+          --component-image "worker=${WORKER_IMAGE}"
+          --component-image "scheduler=${SCHEDULER_IMAGE}"
+          --receipt "${RELEASE_RECEIPT_DIR}/production-image-promotion.json"
+          --github-output "${GITHUB_OUTPUT}"
+
+      - name: Publish production image promotion receipt
+        if: ${{ always() && inputs.environment == 'production' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-image-promotion-receipt-${{ inputs.release_sha }}-${{ github.run_attempt }}
+          path: .odp_data/release/production-image-promotion.json
+          if-no-files-found: ignore
+          retention-days: 90
+
       # ODP-PROD-DEPLOY-SAFETY-001: the pre-switch production state is what a
       # manual `bluegreen_release.py rollback` after the live gate restores to,
       # so it is captured here, before the deploy script mutates anything, and
@@ -1605,6 +1665,13 @@ jobs:
         id: live-deploy
         if: ${{ inputs.environment != 'staging' }}
         env:
+          # Production deploys the promoted references (same digests, its own
+          # registry); the promotion step is skipped elsewhere, so dev keeps the
+          # job-level build output or handoff input unchanged.
+          API_IMAGE: ${{ steps.promote-images.outputs.api_image || needs.build.outputs.api_image || inputs.api_image }}
+          WEB_IMAGE: ${{ steps.promote-images.outputs.web_image || needs.build.outputs.web_image || inputs.web_image }}
+          WORKER_IMAGE: ${{ steps.promote-images.outputs.worker_image || needs.build.outputs.worker_image || inputs.worker_image }}
+          SCHEDULER_IMAGE: ${{ steps.promote-images.outputs.scheduler_image || needs.build.outputs.scheduler_image || inputs.scheduler_image }}
           # Only the dev-admin profile reads these: the live gate signs in
           # through the Web password form as the single pure platform_admin
           # account, verifies must_change enforcement, first-login rotation
