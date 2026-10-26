@@ -602,25 +602,30 @@ class IntakeMigrator:
                 )
             return
 
-        sem_ver = get_val(parser_release, "semantic_version") or "1.4"
+        sem_ver = get_val(parser_release, "semantic_version")
         art_uri = get_val(parser_release, "artifact_uri")
         art_sha = get_val(parser_release, "artifact_sha256")
 
-        if not _artifact_uri(art_uri) or not isinstance(art_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", art_sha):
+        required_parser_facts = ("source_id", "semantic_version", "package_name", "input_schema_version",
+                                 "output_schema_version", "test_corpus_version", "validation_status")
+        if (not _artifact_uri(art_uri) or not isinstance(art_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", art_sha)
+                or not all(isinstance(get_val(parser_release, key), str) and get_val(parser_release, key).strip()
+                           for key in required_parser_facts)):
             if tenant_id:
                 self._create_finding(
                     tenant_id=ensure_uuid(tenant_id),
                     source_kind="schema",
-                    source_id=sem_ver,
-                    target_ids=[ensure_uuid(f"parser-{sem_ver}")],
+                    source_id=sem_ver or "unknown-parser",
+                    target_ids=[],
                     finding_type="MISSING_EVIDENCE",
                     severity="BLOCKING",
-                    expected={"artifact_uri": "non-empty URI", "artifact_sha256": "64-char sha256"},
+                    expected={"artifact_uri": "non-empty URI", "artifact_sha256": "64-char sha256",
+                              "required_parser_facts": required_parser_facts},
                     actual={"artifact_uri": art_uri, "artifact_sha256": art_sha},
                 )
             return
 
-        parser_source = get_val(parser_release, "source_id") or "SRC-591"
+        parser_source = get_val(parser_release, "source_id")
         check_parser = "SELECT parser_release_id FROM intake.parser_releases WHERE semantic_version = %s AND source_id = %s"
         if not self._execute(check_parser, (sem_ver, parser_source)):
             insert_parser = """
@@ -630,10 +635,10 @@ class IntakeMigrator:
                     artifact_sha256, test_corpus_version, validation_status, version
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
-            parser_id = ensure_uuid(get_val(parser_release, "parser_release_id") or f"parser-{sem_ver}")
-            val_status = get_val(parser_release, "validation_status") or "DRAFT"
-            pkg_name = get_val(parser_release, "package_name") or "listing-parser"
-            src_id = get_val(parser_release, "source_id") or "SRC-591"
+            parser_id = ensure_uuid(get_val(parser_release, "parser_release_id") or f"parser-{parser_source}-{sem_ver}")
+            val_status = get_val(parser_release, "validation_status")
+            pkg_name = get_val(parser_release, "package_name")
+            src_id = parser_source
 
             self._execute(
                 insert_parser,
@@ -642,11 +647,11 @@ class IntakeMigrator:
                     src_id,
                     pkg_name,
                     sem_ver,
-                    "v1.0",
-                    "v1.0",
+                    get_val(parser_release, "input_schema_version"),
+                    get_val(parser_release, "output_schema_version"),
                     art_uri,
                     art_sha,
-                    "v1.0",
+                    get_val(parser_release, "test_corpus_version"),
                     val_status,
                     1,
                 ),
@@ -963,15 +968,19 @@ class IntakeMigrator:
                     )
 
                     if legacy_intake.get("parsedFields"):
-                        parser_rel_id = ensure_uuid(get_val(parser_release, "parser_release_id") or f"parser-{get_val(parser_release, 'semantic_version') or '1.4'}")
                         check_pr_sql = """SELECT parser_release_id FROM intake.parser_releases
-                            WHERE parser_release_id = %s AND source_id = %s AND semantic_version = %s
+                            WHERE source_id = %s AND semantic_version = %s
                             AND artifact_uri = %s AND artifact_sha256 = %s
                             AND validation_status IN ('VALIDATED','CANARY','PRODUCTION','DEPRECATED','ROLLED_BACK')"""
+                        parser_params = (i_source, legacy_intake.get("parserVersion"),
+                                         get_val(parser_release, "artifact_uri"), get_val(parser_release, "artifact_sha256"))
+                        if get_val(parser_release, "parser_release_id"):
+                            check_pr_sql += " AND parser_release_id = %s"
+                            parser_params += (ensure_uuid(get_val(parser_release, "parser_release_id")),)
+                        parser_rows = self._execute(check_pr_sql, parser_params)
                         if (isinstance(legacy_intake["parsedFields"], dict)
-                                and legacy_intake.get("parserRunStatus") == "SUCCEEDED"
-                                and self._execute(check_pr_sql, (parser_rel_id, i_source, legacy_intake.get("parserVersion"),
-                                                                get_val(parser_release, "artifact_uri"), get_val(parser_release, "artifact_sha256")))):
+                                and legacy_intake.get("parserRunStatus") == "SUCCEEDED" and parser_rows):
+                            parser_rel_id = parser_rows[0]["parser_release_id"]
                             parsed_fields = legacy_intake["parsedFields"]
                             insert_parser_run_sql = """
                                 INSERT INTO intake.parser_runs (

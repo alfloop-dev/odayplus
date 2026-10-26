@@ -173,12 +173,7 @@ def test_backfill_happy_path(conn) -> None:
         legacy_listings=legacy_listings,
         legacy_candidates=legacy_candidates,
         tenant_id=tenant_id,
-        parser_release={
-            "semantic_version": "1.4",
-            "validation_status": "VALIDATED",
-            "artifact_uri": "gs://parser-artifacts/v1.4.tar.gz",
-            "artifact_sha256": "c" * 64,
-        },
+        parser_release=parser_provenance(artifact_uri="gs://parser-artifacts/v1.4.tar.gz"),
     )
 
     assert res["counts"]["intakes_processed"] == 1
@@ -428,12 +423,9 @@ def test_b4_snapshot_provenance_and_policy_preservation(conn) -> None:
         legacy_listings=[],
         legacy_candidates=[],
         tenant_id=tenant_id,
-        parser_release={
-            "semantic_version": "2.0",
-            "artifact_uri": "gs://verified-parser-artifacts/v2.0.tar.gz",
-            "artifact_sha256": "b" * 64,
-            "validation_status": "VALIDATED",
-        },
+        parser_release=parser_provenance(
+            semantic_version="2.0", artifact_uri="gs://verified-parser-artifacts/v2.0.tar.gz", artifact_sha256="b" * 64,
+        ),
     )
 
     cur = conn.cursor()
@@ -1245,7 +1237,8 @@ def migration_input(bridge=False):
         "sourcePolicyState": "AUTH_REQUIRED", "intakeMethod": "MANUAL",
         "stage": "NEEDS_REVIEW", "submitter": "Synthetic display label (not an ID)",
         "parsedFields": {"rent": 12345}, "normalizedFields": {"rent": 12345}, "matchResult": {"outcome": "NEW", "confidence": 0.5},
-        "heatZoneId": ensure_uuid("synthetic-zone"),
+        "heatZoneId": ensure_uuid("synthetic-zone"), "brandId": ensure_uuid("synthetic-brand"),
+        "regionId": ensure_uuid("synthetic-region"), "assignedAreaId": ensure_uuid("synthetic-area"),
     }
     if not bridge:
         return row
@@ -1257,13 +1250,16 @@ def migration_input(bridge=False):
     }
     return {
         **{snake: row[camel] for camel, snake in names.items()},
-        "scope": {"tenant_id": tenant, "heat_zone_id": row["heatZoneId"]},
+        "scope": {"tenant_id": tenant, "heat_zone_id": row["heatZoneId"],
+                  "brand_id": row["brandId"], "region_id": row["regionId"], "assigned_area_id": row["assignedAreaId"]},
         "operator_presentation": row,
     }
 
 
 def parser_provenance(**overrides):
     return {
+        "source_id": "SRC-591", "package_name": "synthetic-parser", "input_schema_version": "synthetic-input-v2",
+        "output_schema_version": "synthetic-output-v3", "test_corpus_version": "synthetic-corpus-v4",
         "semantic_version": "1.4", "artifact_uri": "gs://synthetic-parser/1.4.tar.gz",
         "artifact_sha256": "c" * 64, "validation_status": "VALIDATED", **overrides,
     }
@@ -1285,12 +1281,18 @@ def test_legacy_bridge_field_and_evidence_parity(conn):
         assert intake_row[1].isoformat() == "2026-07-14T06:10:00+00:00"
         assert intake_row[2:9] == ("MANUAL", "NEEDS_REVIEW", "SRC-591", "AUTH_REQUIRED", "https://591.com.tw/input?tracking=synthetic", "https://591.com.tw/input", 1)
         assert str(intake_row[9]) == ensure_uuid("synthetic-zone")
+        cur.execute("SELECT brand_id, region_id, assigned_area_id FROM intake.intakes")
+        assert tuple(str(value) for value in cur.fetchone()) == tuple(ensure_uuid("synthetic-" + name) for name in ("brand", "region", "area"))
         cur.execute("SELECT raw_object_uri, content_sha256, byte_length, captured_at, observed_at, capture_method, media_type, retention_class, encryption_key_ref FROM intake.source_snapshots")
         snapshot_row = cur.fetchone()
         assert snapshot_row[:2] == ("odp-artifact://synthetic/IN-INPUT", synthetic_history("IN-INPUT")["rawSnapshotSha256"])
         assert snapshot_row[2] == len(json.dumps({"synthetic_intake": "IN-INPUT"}).encode())
         assert snapshot_row[3].isoformat() == "2026-07-14T06:11:00+00:00"
         assert snapshot_row[5:] == ("SERVER_RETRIEVAL", "application/json", "STANDARD", "kms://synthetic-key")
+        cur.execute("SELECT object_generation, residency_mode FROM intake.source_snapshots")
+        assert cur.fetchone() == (123, "TW_ONLY")
+        cur.execute("SELECT input_schema_version, output_schema_version, test_corpus_version FROM intake.parser_releases")
+        assert cur.fetchone() == ("synthetic-input-v2", "synthetic-output-v3", "synthetic-corpus-v4")
         cur.execute("SELECT status, parsed_payload, normalized_payload FROM intake.parser_runs")
         parser_row = cur.fetchone()
         assert parser_row == ("SUCCEEDED", {"rent": 12345}, {"rent": 12345})
@@ -1410,6 +1412,8 @@ def test_display_defaults_and_missing_provenance_never_create_success(conn, fiel
 @pytest.mark.parametrize("release", [
     parser_provenance(source_id="SRC-BROKER"), parser_provenance(validation_status="DRAFT"),
     parser_provenance(artifact_sha256="bad"), parser_provenance(artifact_uri="unverified://parser/missing"),
+    parser_provenance(source_id=None), parser_provenance(semantic_version=None),
+    parser_provenance(input_schema_version=None), parser_provenance(test_corpus_version=None),
 ])
 def test_parser_provenance_must_be_valid_and_source_bound(conn, release):
     row = migration_input()
