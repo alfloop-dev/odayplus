@@ -702,6 +702,63 @@ def test_main_cleanup_failure_preserves_keyboard_interrupt(
     assert not capsys.readouterr().out
 
 
+@pytest.mark.parametrize("filename", ["compose-ps.txt", "compose-tail.log", "compose-cleanup.txt"])
+@pytest.mark.parametrize("primary_failure", [False, True])
+def test_main_diagnostic_write_failure_still_cleans_up(
+    full_drill_context, monkeypatch, capsys, filename, primary_failure,
+):
+    context = full_drill_context
+    original_run = vdr.run
+    original_write_to = vdr.CommandResult.write_to
+
+    def failing_run(command, **kwargs):
+        if primary_failure and "--build" in command:
+            raise RuntimeError("primary setup failure")
+        return original_run(command, **kwargs)
+
+    def failing_write_to(self, path):
+        if path.name == filename:
+            raise PermissionError("diagnostic storage unavailable")
+        return original_write_to(self, path)
+
+    monkeypatch.setattr(vdr, "run", failing_run)
+    monkeypatch.setattr(vdr.CommandResult, "write_to", failing_write_to)
+    with pytest.raises(RuntimeError, match="primary setup failure" if primary_failure else "diagnostic|cleanup"):
+        vdr.main(context.argv)
+
+    assert sum("down" in cmd for cmd, _, _ in context.executed_commands) == 2
+    report = json.loads((context.diagnostics_dir / vdr.REPORT_NAME).read_text())
+    assert report["result"] == "failed"
+    if primary_failure:
+        assert report["error"] == "primary setup failure"
+    assert not capsys.readouterr().out
+
+
+@pytest.mark.parametrize("primary_failure", [False, True])
+def test_main_report_write_failure_preserves_failure_and_cleanup(
+    full_drill_context, monkeypatch, capsys, primary_failure,
+):
+    context = full_drill_context
+    original_run = vdr.run
+
+    def failing_run(command, **kwargs):
+        if primary_failure and "--build" in command:
+            raise RuntimeError("primary setup failure")
+        return original_run(command, **kwargs)
+
+    def failing_report(*args, **kwargs):
+        raise OSError("report storage unavailable")
+
+    monkeypatch.setattr(vdr, "run", failing_run)
+    monkeypatch.setattr(vdr, "write_report", failing_report)
+    with pytest.raises(RuntimeError, match="primary setup failure" if primary_failure else "report"):
+        vdr.main(context.argv)
+
+    assert sum("down" in cmd for cmd, _, _ in context.executed_commands) == 2
+    assert not (context.diagnostics_dir / vdr.REPORT_NAME).exists()
+    assert not capsys.readouterr().out
+
+
 @pytest.mark.parametrize("keep_by_env", [False, True])
 def test_main_explicit_keep_stack_preserves_success(full_drill_context, monkeypatch, keep_by_env):
     context = full_drill_context

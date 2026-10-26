@@ -164,6 +164,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "compose_file": COMPOSE_FILE,
         "diagnostics_dir": str(diagnostics_dir),
     }
+    primary_failure = False
 
     try:
         initial_cleanup = run(
@@ -274,27 +275,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         }
         report["result"] = "passed"
     except (Exception, KeyboardInterrupt) as exc:
+        primary_failure = True
         report["result"] = "failed"
         report["error"] = sanitize_text(str(exc) or type(exc).__name__, secret_values=env_secrets)
         raise
     finally:
-        run(
-            compose + ["ps"],
-            env=env,
-            capture=True,
-            check=False,
-            timeout=DEFAULT_DIAGNOSTICS_TIMEOUT,
-            secret_values=env_secrets,
-        ).write_to(diagnostics_dir / "compose-ps.txt")
-        run(
-            compose + ["logs", "--no-color", "--tail=200"],
-            env=env,
-            capture=True,
-            check=False,
-            timeout=DEFAULT_DIAGNOSTICS_TIMEOUT,
-            secret_values=env_secrets,
-        ).write_to(diagnostics_dir / "compose-tail.log")
-        cleanup_failed_after_success = False
+        finalization_errors: list[str] = []
+        for arguments, filename in (
+            (["ps"], "compose-ps.txt"),
+            (["logs", "--no-color", "--tail=200"], "compose-tail.log"),
+        ):
+            try:
+                run(
+                    compose + arguments,
+                    env=env,
+                    capture=True,
+                    check=False,
+                    timeout=DEFAULT_DIAGNOSTICS_TIMEOUT,
+                    secret_values=env_secrets,
+                ).write_to(diagnostics_dir / filename)
+            except OSError as exc:
+                error = sanitize_text(f"diagnostic {filename} write failed: {exc}", secret_values=env_secrets)
+                report.setdefault("diagnostic_errors", []).append(error)
+                finalization_errors.append(error)
         if args.keep_stack or os.environ.get("ODP_E2E_KEEP_STACK") == "1":
             report["cleanup"] = {"result": "skipped", "reason": "keep-stack"}
         else:
@@ -305,26 +308,36 @@ def main(argv: Sequence[str] | None = None) -> int:
                 timeout=args.cleanup_timeout,
                 secret_values=env_secrets,
             )
-            final_cleanup.write_to(diagnostics_dir / "compose-cleanup.txt")
-            cleanup_failed = final_cleanup.returncode != 0 or final_cleanup.timed_out
+            cleanup_errors: list[str] = []
+            if final_cleanup.returncode != 0 or final_cleanup.timed_out:
+                cleanup_errors.append(sanitize_text(
+                    f"final cleanup failed: {final_cleanup.diagnostic_text()}",
+                    secret_values=env_secrets,
+                ))
+            try:
+                final_cleanup.write_to(diagnostics_dir / "compose-cleanup.txt")
+            except OSError as exc:
+                cleanup_errors.append(sanitize_text(f"final cleanup diagnostic write failed: {exc}", secret_values=env_secrets))
             report["cleanup"] = {
-                "result": "failed" if cleanup_failed else "passed",
+                "result": "failed" if cleanup_errors else "passed",
                 "returncode": final_cleanup.returncode,
                 "timed_out": final_cleanup.timed_out,
             }
-            if cleanup_failed:
-                cleanup_error = sanitize_text(
-                    f"final cleanup failed: {final_cleanup.diagnostic_text()}",
-                    secret_values=env_secrets,
-                )
-                report["cleanup"]["error"] = cleanup_error
-                if report["result"] == "passed":
-                    report["result"] = "failed"
-                    report["error"] = cleanup_error
-                    cleanup_failed_after_success = True
-        final_report = write_report(diagnostics_dir, report, secret_values=env_secrets)
+            if cleanup_errors:
+                report["cleanup"]["error"] = "; ".join(cleanup_errors)
+                finalization_errors.extend(cleanup_errors)
+        if finalization_errors and report["result"] == "passed":
+            report["result"] = "failed"
+            report["error"] = finalization_errors[0]
+        try:
+            final_report = write_report(diagnostics_dir, report, secret_values=env_secrets)
+        except OSError as exc:
+            error = sanitize_text(f"DR report write failed: {exc}", secret_values=env_secrets)
+            if not primary_failure:
+                raise RuntimeError(error) from exc
+            print(error, file=sys.stderr)
 
-    if cleanup_failed_after_success:
+    if finalization_errors:
         raise RuntimeError(report["error"])
     print(json.dumps(final_report, indent=2, sort_keys=True))
     return 0
