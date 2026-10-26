@@ -977,6 +977,7 @@ def native_scheduler(exact_service_case, monkeypatch):
     from apps.scheduler.oday_scheduler.main import ODayScheduler
     from modules.external_data.application.native_parser_deployments import DEPLOYMENTS_ENV
     from shared.infrastructure.persistence.factory import build_persistence
+    from tests.intake_workflow_fixture import SyntheticIntakeWorkflowPolicy
 
     case, _, identity, _, policy, store = exact_service_case
     _configure_full_scheduler_runtime(case, monkeypatch)
@@ -986,8 +987,11 @@ def native_scheduler(exact_service_case, monkeypatch):
         "artifact_uri": deployment.archive_uri, "archive_path": str(deployment.archive_path),
         "matching_policy_version_id": policy}]}))
     monkeypatch.setenv("ODP_NATIVE_INTAKE_MATCHER_BEARER_TOKEN", os.environ["ODP_NATIVE_INTAKE_IDENTITY_BEARER_TOKEN"])
+    # The whole-pipeline fixture submits new SQL Intakes. Supply its explicit
+    # synthetic workflow dependency; memory construction has no runtime grant.
     bundle = replace(build_persistence(mode="memory"), engine=identity.engine,
-        job_queue=identity.graph.queue, assisted_intake_store=store)
+        job_queue=identity.graph.queue, assisted_intake_store=store,
+        assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
     return ODayScheduler(persistence=bundle, tenant_id=case[1]["tenant"])
 
 

@@ -272,7 +272,10 @@ def case_api(canonical_graph, monkeypatch):
     graph, ids, _, _ = canonical_graph
     store = DurableAssistedIntakeStore(PostgresDocumentStore(graph.engine))
     store.configure_canonical_audit(graph.audit_sink)
-    bundle = SimpleNamespace(engine=graph.engine, job_queue=graph.queue, assisted_intake_store=store)
+    # Match the real bundle's explicit unavailable policy for these historical
+    # graph rows. Detail reads must not invent a submission-policy grant.
+    bundle = SimpleNamespace(engine=graph.engine, job_queue=graph.queue,
+        assisted_intake_store=store, assisted_intake_workflow_policy=None)
     for name in ("canonical_identity_graph", "canonical_intakes", "canonical_match_cases", "canonical_identity_decisions"):
         setattr(bundle, name, MethodType(getattr(PersistenceBundle, name), bundle))
     # Explicit synthetic authentication result. Production uses the existing

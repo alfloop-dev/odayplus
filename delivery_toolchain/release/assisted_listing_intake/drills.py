@@ -89,7 +89,11 @@ def _drill_uuid(name: str) -> str:
 
 
 def _legacy_fixture(tenant_id: str, count: int) -> dict[str, Any]:
-    """Small deterministic legacy dataset for the staging backfill drill."""
+    """Explicit synthetic history for the local staging backfill surrogate.
+
+    Artifact URIs name fixture evidence only; no source retrieval, GCS object,
+    human approval or production parser validation is asserted by this drill.
+    """
     from modules.listing.domain.models import CandidateSiteDraft
     from shared.domain.models import AddressLocation, CandidateSite, Listing
 
@@ -99,7 +103,8 @@ def _legacy_fixture(tenant_id: str, count: int) -> dict[str, Any]:
     suffix = tenant_id[-2:]
     for index in range(count):
         listing_id = f"L-REL-{suffix}-{index:04d}"
-        content_sha = hashlib.sha256(f"legacy-{tenant_id}-{index}".encode()).hexdigest()
+        raw = f"<html>synthetic legacy snapshot {tenant_id}/{index}</html>"
+        content_sha = hashlib.sha256(raw.encode("utf-8")).hexdigest()
         intakes.append(
             {
                 "id": f"IN-REL-{suffix}-{index:04d}",
@@ -107,14 +112,26 @@ def _legacy_fixture(tenant_id: str, count: int) -> dict[str, Any]:
                 "sourceId": "SRC-591",
                 "originalUrl": f"https://591.com.tw/rel-{suffix}-{index}.html",
                 "canonicalUrl": f"https://591.com.tw/rel-{suffix}-{index}.html",
-                "rawObjectUri": f"gs://{APPROVED_BUCKET}/tenants/{tenant_id}/snapshots/rel-{suffix}-{index}/raw",
+                "rawObjectUri": f"odp-artifact://release-drill/tenants/{tenant_id}/snapshots/rel-{suffix}-{index}/raw",
                 "rawSnapshotSha256": content_sha,
                 "sourcePolicyState": "APPROVED_RETRIEVAL",
                 "stage": "READY",
-                "heatZoneId": "HZ-01",
-                "correlationId": f"corr-rel-{suffix}-{index}",
+                "heatZoneId": _drill_uuid(f"heat-zone-{tenant_id}"),
+                "correlationId": _drill_uuid(f"corr-rel-{suffix}-{index}"),
+                "submittedBy": _drill_uuid(f"synthetic-submitter-{tenant_id}"),
                 "submittedAt": "2026-07-20T06:00:00Z",
-                "rawSnapshot": {"html": f"legacy snapshot {index}"},
+                "intakeMethod": "URL",
+                "version": 7,
+                "rawSnapshot": raw,
+                "capturedAt": "2026-07-20T06:01:00Z",
+                "observedAt": "2026-07-20T06:01:00Z",
+                "captureMethod": "SERVER_RETRIEVAL",
+                "mediaType": "text/html",
+                "retentionClass": "SYNTHETIC_DRILL",
+                "encryptionKeyRef": "kms://synthetic-release-drill",
+                "residencyMode": "TW_ONLY",
+                "parserVersion": "1.4",
+                "parserRunStatus": "SUCCEEDED",
                 "parsedFields": {"rent": 50000 + index, "address": f"台北市信義區松仁路 {suffix} 段 {index} 號"},
                 "matchResult": {"outcome": "NEW", "confidence": 1.0, "targetListingId": listing_id},
             }
@@ -147,7 +164,7 @@ def _legacy_fixture(tenant_id: str, count: int) -> dict[str, Any]:
                     address_id=f"ADDR-{listing_id}",
                     site_status="new",
                 ),
-                heat_zone_id="HZ-01",
+                heat_zone_id=_drill_uuid(f"heat-zone-{tenant_id}"),
                 status="CANDIDATE",
             )
         )
@@ -188,9 +205,15 @@ def run_migration_reconciliation(workdir: Path, *, rows_per_tenant: int = 8) -> 
                 legacy_candidates=fixture["legacy_candidates"],
                 tenant_id=tenant_id,
                 parser_release={
+                    "source_id": "SRC-591",
+                    "package_name": "synthetic-release-drill-parser",
                     "semantic_version": "1.4",
-                    "artifact_uri": "gs://parser-artifacts/v1.4.tar.gz",
-                    "artifact_sha256": "c" * 64,
+                    "input_schema_version": "synthetic-html-v1",
+                    "output_schema_version": "synthetic-listing-v1",
+                    "test_corpus_version": "synthetic-release-drill-v1",
+                    "validation_status": "VALIDATED",  # synthetic corpus only
+                    "artifact_uri": "odp-artifact://release-drill/parser/1.4",
+                    "artifact_sha256": hashlib.sha256(b"synthetic-release-drill-parser-v1.4").hexdigest(),
                 },
             )
             verify = migrator.verify_shadow_comparison(tenant_id=tenant_id)
