@@ -1,6 +1,7 @@
 """Real service envelopes, offline inputs only; never live grant evidence."""
 
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import FastAPI
@@ -16,12 +17,26 @@ from apps.api.oday_api.security.dependencies import (
 from modules.opsboard.application.network_listings import NetworkListingService
 from modules.opsboard.application.network_reviews import NetworkReviewService
 from modules.opsboard.application.network_scoring import NetworkScoringService
+from modules.opsboard.auth import (
+    AuthBoundaryConfig,
+    AuthenticationBoundary,
+    SigningKey,
+    encode_compact_jwt,
+)
 from shared.auth import Action
+from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+from shared.infrastructure.persistence.engine import SqliteEngine
+from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
+from shared.infrastructure.persistence.repositories import (
+    DurableListingRepository,
+    DurableSiteScoreRepository,
+)
 from tests.integration._operation_flag_fixtures import (
     SITE_GO_FLAG,
     enable_operation_flag,
     new_operation_flags,
 )
+from tests.unit.test_network_candidate_report_projection import ReadOnlyRuntime, _draft, _report
 
 HEADERS = {
     "X-Subject-Id": "read-admin", "X-Roles": "platform_admin,operator_viewer",
@@ -311,6 +326,134 @@ def test_listing_fields_outside_the_contract_and_foreign_evidence_are_withheld()
     assert target["mergedSourceListingIds"] == [] and target["mergeReason"] is None
     assert target["duplicateOfId"] is None and target["candidateId"] is None
     assert "L-2025" not in response.text and "IN-9" not in response.text and "L-2024-X" not in response.text
+
+
+@pytest.fixture
+def canonical_scoring_read(tmp_path):
+    """Real isolated tenant repositories, signed identity and original HTTP guard."""
+    engine = SqliteEngine(tmp_path / "target-format-read.sqlite3")
+    scoped = TenantScopedDocumentStore(SqliteDocumentStore(engine), "tenant-a")
+    listings, reports = DurableListingRepository(scoped), DurableSiteScoreRepository(scoped)
+    runtime = ReadOnlyRuntime()
+    service = NetworkScoringService(seed_fixtures=False, require_canonical=True, tenant_id="tenant-a",
+                                    listing_repository=listings, sitescore_repository=reports, model_runtime=runtime)
+    key = SigningKey(kid="g2-read", algorithm="HS256", secret=b"synthetic-g2-read-local-only")
+
+    def mount(*, roles=("site_reviewer",), scope=None, session_service=None):
+        boundary = AuthenticationBoundary(AuthBoundaryConfig(
+            issuer="https://g2.example.invalid", audiences=frozenset({"g2-read"}),
+            signing_keys={key.kid: key}, principal_mappings={"reader": {
+                "roles": list(roles), "scope": {"tenant_id": "tenant-a", **(scope or {})},
+            }},
+        ))
+        app = FastAPI()
+        app.include_router(create_network_scoring_sub_router(
+            service, require_view_permission_fn=require_operator_permission(
+                "sitescore", Action.VIEW, boundary=boundary, session_service=session_service,
+                scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE),
+            require_write_permission_fn=require_operator_permission("sitescore", Action.EXECUTE, boundary=boundary),
+            allow_reset=False,
+        ), prefix="/api/v1/operator")
+        now = datetime.now(UTC)
+        token = encode_compact_jwt({"sub": "reader", "iss": "https://g2.example.invalid", "aud": "g2-read",
+                                    "iat": now.timestamp(), "exp": (now + timedelta(hours=1)).timestamp()}, key)
+        return TestClient(app), {"Authorization": "Bearer " + token}
+
+    yield service, listings, reports, runtime, engine, mount
+    engine.close()
+
+
+def test_canonical_clean_empty_has_authorized_template_but_no_model_report_or_writes(canonical_scoring_read):
+    service, _, _, runtime, engine, mount = canonical_scoring_read
+    before = engine.query("SELECT * FROM durable_documents")
+    client, headers = mount()
+    response = client.get("/api/v1/operator/network-scoring", headers=headers)
+    assert response.status_code == 200, response.text
+    snap = response.json()
+    assert snap["source"] == "canonical" and snap["modelVersion"] is None
+    assert snap["candidates"] == snap["scorecards"] == snap["batchResults"] == snap["compareSet"] == []
+    assert snap["compare"]["empty"] is True
+    assert snap["counts"] == {"candidates": 0, "scored": 0, "gateBlocked": 0}
+    assert snap["targetFormat"]["format_version"] == "2.0.0"
+    assert runtime.calls == 0 and engine.query("SELECT * FROM durable_documents") == before
+    # A caller's filtering principal is not the trusted read principal.
+    assert service.snapshot()["targetFormat"] is None
+
+
+@pytest.mark.parametrize("axis", ["brand_ids", "region_ids", "store_ids", "assigned_area_ids", "heat_zone_ids"])
+@pytest.mark.parametrize("roles", [("site_reviewer",), ("operator_viewer", "site_reviewer")])
+def test_global_template_is_withheld_for_every_actual_restricted_axis(canonical_scoring_read, axis, roles):
+    _, _, _, runtime, _, mount = canonical_scoring_read
+    client, headers = mount(roles=roles, scope={axis: ["scoped-object"]})
+    response = client.get("/api/v1/operator/network-scoring", headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["targetFormat"] is None and runtime.calls == 0
+
+
+@pytest.mark.parametrize(("roles", "scope", "status", "visible"), [
+    (("operator_viewer",), {}, 200, False),
+    (("operator_viewer", "site_reviewer"), {}, 200, True),
+    (("expansion_user",), {}, 200, True),
+    (("site_reviewer",), {"tenant_id": "unrelated-tenant"}, 200, False),
+    (("site_reviewer",), {"tenant_id": None}, 403, False),
+    (("site_reviewer",), {"clearance": "INTERNAL"}, 403, False),
+    (("site_reviewer",), {"modules": ["another-module"]}, 403, False),
+    (("platform_admin",), {}, 403, False),
+])
+def test_template_uses_existing_grant_union_and_all_http_scope_fences(canonical_scoring_read, roles, scope, status, visible):
+    _, _, _, runtime, _, mount = canonical_scoring_read
+    client, headers = mount(roles=roles, scope=scope)
+    response = client.get("/api/v1/operator/network-scoring", headers=headers)
+    assert response.status_code == status, response.text
+    if status == 200:
+        assert (response.json()["targetFormat"] is not None) is visible
+    else:
+        assert "targetFormat" not in response.text
+    assert runtime.calls == 0
+
+
+def test_fixture_service_never_exposes_standard_template_even_to_existing_sitescore_grant():
+    _, _, _, client = services_and_client()
+    response = client.get("/network-scoring", headers={**HEADERS, "X-Roles": "site_reviewer", "X-Operator-Role": "expansion-manager"})
+    assert response.status_code == 200
+    assert response.json()["targetFormat"] is None
+
+
+def test_template_does_not_replace_historical_report_or_current_admission(canonical_scoring_read):
+    _, listings, reports, runtime, _, mount = canonical_scoring_read
+    listings.save_candidate(_draft("historical", tenant="tenant-a"))
+    report = reports.save_report(_report("historical", "historical-model"))
+    client, headers = mount()
+    response = client.get("/api/v1/operator/network-scoring", headers=headers)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["targetFormat"]["package_total_untaxed"] == 5546000
+    card = body["scorecards"][0]
+    assert card["reportId"] == report.report_id and card["reportVersion"] == report.report_version
+    assert card["capex"] is None and card["rentAssumption"] is None
+    assert body["candidates"][0]["currentAdmission"]["model"]["state"] != "verified"
+    assert reports.get_report(report.report_id) == report and runtime.calls == 0
+
+
+def test_entitled_registry_failure_is_original_503_not_v1_or_fixture_fallback(canonical_scoring_read):
+    service, _, _, runtime, _, mount = canonical_scoring_read
+
+    class UnavailableRegistry:
+        def get(self, code, version):
+            assert (code, version) == ("ODAY_G2", "2.0.0")
+            raise KeyError("unavailable")
+
+    service._format_registry = UnavailableRegistry()
+    client, headers = mount()
+    response = client.get("/api/v1/operator/network-scoring", headers={**headers, "X-Correlation-Id": "g2-unavailable"})
+    assert response.status_code == 503
+    assert response.json()["detail"] == {"code": "SITESCORE_TARGET_FORMAT_UNAVAILABLE",
+                                          "message": "canonical target format read is unavailable", "retryable": True}
+    assert "targetFormat" not in response.text and runtime.calls == 0
+    # No catalog dependency (or leak) for a non-entitled scoped reader.
+    client, headers = mount(roles=("operator_viewer",))
+    assert client.get("/api/v1/operator/network-scoring", headers=headers).json()["targetFormat"] is None
+    assert client.get("/api/v1/operator/network-scoring").status_code == 401
 
 
 # The Console always sends selectedHeatZoneId once a zone is chosen. A filter

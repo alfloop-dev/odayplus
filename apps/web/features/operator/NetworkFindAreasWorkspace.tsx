@@ -51,7 +51,7 @@ import { ReviewSubmissionDialog } from "./network/ReviewSubmissionDialog";
 import { canOfferReviewSubmission, hasReviewSubmissionContext, reviewSubmissionTargetsMatch, reviewSubmissionReceiptMatches, reviewSubmissionReadbackMatches, reviewSubmissionOffers } from "./network/networkReviewSubmission";
 import type { ReviewSubmissionContext, ReviewSubmissionBody, ReviewSubmissionForm, ReviewSubmissionOffer, ReviewSubmissionReceipt } from "./network/networkReviewSubmissionTypes";
 import { CandidatePanel } from "./network/CandidatePanel";
-import { SiteScorePanel } from "./network/SiteScorePanel";
+import { SiteScorePanel, StandardFormatAssumptions } from "./network/SiteScorePanel";
 import { ComparePanel } from "./network/ComparePanel";
 import { ReviewPanel, resolveEffectiveReviews } from "./network/ReviewPanel";
 import { hasRecordedReviewReport, inspectReviewsReadProjection, isReviewPending } from "./network/networkReviewProjection";
@@ -1273,7 +1273,8 @@ export function NetworkFindAreasWorkspace({
         setScoringWorkflowProvenance(inspectScoringWorkflowProvenance(snapshot));
         const inspection = inspectNetworkScoringSnapshot(snapshot);
         setScoringSnapshot(
-          inspection === "ready" || fixturesAllowed && hasNetworkScoringRenderShape(snapshot)
+          inspection === "ready" || inspection === "empty" && snapshot.source === "canonical" && hasNetworkScoringRenderShape(snapshot)
+            || fixturesAllowed && hasNetworkScoringRenderShape(snapshot)
             ? snapshot
             : null,
         );
@@ -1615,7 +1616,9 @@ export function NetworkFindAreasWorkspace({
     if (read.ok) {
       setScoringWorkflowProvenance(inspectScoringWorkflowProvenance(read.snapshot));
       const inspection = inspectNetworkScoringSnapshot(read.snapshot);
-      setScoringSnapshot(inspection === "ready" || fixturesAllowed && hasNetworkScoringRenderShape(read.snapshot) ? read.snapshot : null);
+      setScoringSnapshot(inspection === "ready"
+        || inspection === "empty" && read.snapshot.source === "canonical" && hasNetworkScoringRenderShape(read.snapshot)
+        || fixturesAllowed && hasNetworkScoringRenderShape(read.snapshot) ? read.snapshot : null);
       setScoringLoadFailure(null);
       setScoringLoadState(inspection);
     } else {
@@ -2730,12 +2733,16 @@ export function NetworkFindAreasWorkspace({
       >
         {!useFixtureWorkflow && <CandidateWorkflowFacts read={workflowProjection.candidateId ? nativeWorkflow?.[workflowProjection.candidateId] : undefined} />}
         {activeTabGateState ? (
-          <OperatorDataUnavailableGate
-            detail={activeTabGateDetail}
-            failure={activeTabGateFailure}
-            onRetry={() => window.location.reload()}
-            status={activeTabGateState}
-          />
+          <>
+            <OperatorDataUnavailableGate
+              detail={activeTabGateDetail}
+              failure={activeTabGateFailure}
+              onRetry={() => window.location.reload()}
+              status={activeTabGateState}
+            />
+            {activeTab === 3 && activeTabGateState === "empty" && scoringSnapshot?.source === "canonical" && scoringSnapshot.targetFormat
+              ? <StandardFormatAssumptions format={scoringSnapshot.targetFormat} /> : null}
+          </>
         ) : activeTab === 1 ? (
           listingRadarPanel
         ) : activeTab === 2 ? (
@@ -2768,6 +2775,7 @@ export function NetworkFindAreasWorkspace({
             candidates={scoringSnapshot?.candidates ?? []}
             fallbackRows={fixturesAllowed ? viewModel.siteScoreLab : []}
             modelVersion={scoringSnapshot?.modelVersion}
+            targetFormat={scoringSnapshot?.targetFormat}
             onRescore={scoringSnapshot?.source === "canonical" || fixturesAllowed ? runSiteScore : undefined}
             requireRescoreReason={scoringSnapshot?.source === "canonical"}
             executionRequest={scoreExecution}
