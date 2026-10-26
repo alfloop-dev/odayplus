@@ -1796,15 +1796,23 @@ def test_postgresql_forecast_view_admits_only_eof_proven_target_and_prior_partit
 
 @pytest.mark.parametrize("day", (FORECAST_TARGET_DAY, FORECAST_PRIOR_DAY))
 @pytest.mark.parametrize("update_partition", ("daily", "backfill"))
+@pytest.mark.parametrize(
+    ("corrected_status", "corrected_currency"),
+    (("succeeded", "TWD"), ("refunded", "TWD"), ("failed", "TWD"),
+     ("succeeded", "USD"), ("refunded", "USD"), ("failed", "USD")),
+)
 def test_postgresql_forecast_corrections_require_the_actual_source_partition_eof(
     intake_blank_db,
     day: date,
     update_partition: str,
+    corrected_status: str,
+    corrected_currency: str,
 ) -> None:
     """Synthetic durable writer states, not DataPlaneRunner execution: D loaded
     A and B to EOF; updatedAt U corrects both, but a bounded U read projects only
-    A. D resumes beyond both IDs to zero-row EOF. Only U's genuine continuation
-    projecting B to EOF can admit A_new+B_new, on U's completion clock.
+    A, including supported nonrevenue corrections. D resumes beyond both IDs to
+    zero-row EOF. Only U's genuine continuation projecting B to EOF can admit
+    the corrected TWD revenue, retaining A's lineage and U's completion clock.
     """
     spec = MODEL_SPECS["forecastops"]
     bounds = DataBounds(
@@ -1859,7 +1867,10 @@ def test_postgresql_forecast_corrections_require_the_actual_source_partition_eof
             with pytest.raises(ModelReadyDataError, match="not trainable"):
                 source.load(spec, bounds)
 
-        def project_correction(name: str, txn_id: UUID, run_id: UUID, observed: datetime) -> str:
+        def project_correction(
+            name: str, txn_id: UUID, run_id: UUID, observed: datetime,
+            *, status: str = "succeeded", currency: str = "TWD",
+        ) -> str:
             # A changed document yields a new content-addressed snapshot; keep
             # both the original source_id and old lineage, as the writer does.
             corrected_name = f"{name}:corrected"
@@ -1877,9 +1888,11 @@ def test_postgresql_forecast_corrections_require_the_actual_source_partition_eof
                 "WHERE transaction_id = %s", (snapshot, txn_id),
             )
             connection.execute(
-                "UPDATE core.transactions SET net_amount = net_amount + 30, "
+                "UPDATE core.transactions SET "
+                "net_amount = CASE WHEN %s = 'succeeded' THEN net_amount + 30 ELSE 0 END, "
+                "transaction_status = %s, currency = %s, "
                 "observation_time = %s, ingested_at = %s WHERE transaction_id = %s",
-                (observed, observed, txn_id),
+                (status, status, currency, observed, observed, txn_id),
             )
             return str(snapshot)
 
@@ -1888,7 +1901,15 @@ def test_postgresql_forecast_corrections_require_the_actual_source_partition_eof
             partition_key=update_key, started_at=start, finished_at=partial_end,
             final_cursor=cursor_a, processed_count=1, valid_loaded=1, partition_complete=False,
         )
-        a_snapshot = project_correction(a_name, a_id, partial, start + timedelta(minutes=1))
+        a_snapshot = project_correction(
+            a_name, a_id, partial, start + timedelta(minutes=1),
+            status=corrected_status, currency=corrected_currency,
+        )
+        a_before = before[day]["daily_net_revenue"] - 20
+        a_after = a_before + 30 if (corrected_status, corrected_currency) == (
+            "succeeded", "TWD"
+        ) else 0
+        revenue_delta = a_after - a_before
         assert_refused()
         # The event-day checkpoint C=B is unchanged, so _id>C excludes both
         # corrected orders even though createdAt is still D. The EOF is real
@@ -1902,7 +1923,7 @@ def test_postgresql_forecast_corrections_require_the_actual_source_partition_eof
             "SELECT count(*) FROM data_plane.quarantined_records"
         ).fetchone() == (0,)
         assert _forecast_rows(connection, tenant_id, store_id)[day]["daily_net_revenue"] == (
-            before[day]["daily_net_revenue"] + 30
+            before[day]["daily_net_revenue"] + revenue_delta
         )
         assert_refused()
 
@@ -1930,10 +1951,12 @@ def test_postgresql_forecast_corrections_require_the_actual_source_partition_eof
         assert row["store_id"] == store_id
         assert row["date"] == FORECAST_TARGET_DAY
         assert row["daily_net_revenue"] == pytest.approx(
-            baseline.rows[0]["daily_net_revenue"] + (60 if day == FORECAST_TARGET_DAY else 0)
+            baseline.rows[0]["daily_net_revenue"]
+            + (revenue_delta + 30 if day == FORECAST_TARGET_DAY else 0)
         )
         assert row["rolling_mean_28"] == pytest.approx(
-            baseline.rows[0]["rolling_mean_28"] + (60 / 28 if day == FORECAST_PRIOR_DAY else 0)
+            baseline.rows[0]["rolling_mean_28"]
+            + ((revenue_delta + 30) / 28 if day == FORECAST_PRIOR_DAY else 0)
         )
         assert row["feature_snapshot_time"] == eof_end > event_eof_end
         assert row["prediction_origin_time"] == eof_end + timedelta(microseconds=1)

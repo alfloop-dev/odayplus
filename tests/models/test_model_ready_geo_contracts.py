@@ -99,6 +99,16 @@ def test_forecast_sql_requires_eof_proven_partitions_for_target_and_prior_days()
     assert "OR partition_proof.finished_at IS NOT NULL" in body
     assert "max(partition_proof.finished_at) AS source_partition_finished_at" in body
     assert "source_txn.source_partition_finished_at" in body
+    # Revenue exits must keep their source-partition and clock evidence. Filter
+    # only the revenue aggregates; retain real gaps rather than zero-fill days.
+    transaction_source = body.split("transaction_source AS (", 1)[1].split(
+        "daily_source_ids AS (", 1
+    )[0]
+    assert "WHERE txn.transaction_status" not in transaction_source
+    assert "AS contributes_revenue" in transaction_source
+    assert "txn.transaction_status = 'succeeded' AND txn.currency = 'TWD'" in transaction_source
+    assert "sum(source_txn.net_amount) FILTER (WHERE source_txn.contributes_revenue)" in body
+    assert "HAVING count(*) FILTER (WHERE source_txn.contributes_revenue) > 0" in body
     assert "proof.partition_key = transaction_daily.date::text" in body
     assert "proof.finished_at >= transaction_daily.source_run_finished_at" not in body
     assert "partition_proof.finished_at,\n" in body

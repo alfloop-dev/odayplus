@@ -159,6 +159,8 @@ transaction_source AS (
         txn.observation_time,
         txn.ingested_at,
         txn.net_amount,
+        (txn.transaction_status = 'succeeded' AND txn.currency = 'TWD')
+            AS contributes_revenue,
         source.source_snapshot_ids,
         (
             source.source_run_complete
@@ -235,8 +237,10 @@ transaction_source AS (
           AND lineage.canonical_table = 'core.transactions'
           AND lineage.canonical_id = txn.transaction_id
     ) AS source ON TRUE
-    WHERE txn.transaction_status = 'succeeded'
-      AND txn.currency = 'TWD'
+    -- Status/currency select revenue, not evidence. A refund or currency exit
+    -- can remove revenue while another order in this day remains stale until
+    -- the correction's updatedAt partition reaches EOF. Retain its identity,
+    -- lineage, completion proof and real availability in the daily verdict.
 ),
 daily_source_ids AS (
     SELECT
@@ -259,8 +263,9 @@ transaction_daily AS (
         source_txn.tenant_id,
         source_txn.store_id,
         (source_txn.event_time AT TIME ZONE 'UTC')::date AS date,
-        sum(source_txn.net_amount)::double precision AS daily_net_revenue,
-        count(*)::bigint AS transaction_count,
+        sum(source_txn.net_amount) FILTER (WHERE source_txn.contributes_revenue)
+            ::double precision AS daily_net_revenue,
+        count(*) FILTER (WHERE source_txn.contributes_revenue)::bigint AS transaction_count,
         max(
             greatest(
                 source_txn.observation_time,
@@ -299,6 +304,9 @@ transaction_daily AS (
         source_txn.store_id,
         (source_txn.event_time AT TIME ZONE 'UTC')::date,
         daily_source_ids.source_snapshot_ids
+    -- Preserve the original revenue-day domain: an all-nonrevenue day is a
+    -- real gap, not a manufactured zero label or a zero-filled feature day.
+    HAVING count(*) FILTER (WHERE source_txn.contributes_revenue) > 0
 ),
 daily_partition_proof AS (
     -- Full-day coverage is separate from the contributing source-partition
