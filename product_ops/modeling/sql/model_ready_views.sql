@@ -55,13 +55,16 @@ authoritative_order_partitions AS (
     -- A FAILED or abandoned RUNNING chunk keeps its schema-default zero
     -- counters while its checkpoint may already have advanced past a
     -- quarantined record, so a later resumed EOF cannot clear that failure.
-    -- A first attempt failing before any projection/quarantine is different:
-    -- a later successful full-day read with resumed_from IS NULL really starts
-    -- from the beginning. That read may span bounded runs: walk backwards from
-    -- EOF through persisted final_cursor/resumed_from matches, on this exact
-    -- source/day and non-overlapping run intervals, to its NULL-cursor start.
-    -- Only a chain starting after the empty failure may retire it. The actual
-    -- EOF finished_at remains the availability/maturity boundary below.
+    -- An attempt failing before any projection/quarantine is different. Walk
+    -- backwards from EOF through clean persisted final_cursor/resumed_from
+    -- matches on this exact source/day and non-overlapping run intervals. A
+    -- segment starting after the empty failure can recover it either by reading
+    -- from the beginning (NULL cursor), or by resuming the very same boundary
+    -- the failed attempt read. This applies before, between and after bounded
+    -- chunks, including retries after an earlier EOF. A changed checkpoint is
+    -- not recovery: it may have skipped failed work. Every other bad chunk is
+    -- still vetoed independently, and the actual recovering EOF finished_at
+    -- remains the availability/maturity boundary below.
     -- This holds for runs finishing after the proof as well: a later
     -- rematerialization or a backfill window reaching the day that quarantined
     -- or failed on an order adds no canonical lineage and leaves the earlier
@@ -107,6 +110,7 @@ authoritative_order_partitions AS (
             AND NOT coalesce(
                 chunk.status = 'FAILED'
                 AND chunk.partition_key = completion.partition_key
+                AND chunk.started_at <= chunk.finished_at
                 AND completion.started_at <= completion.finished_at
                 AND EXISTS (
                     WITH RECURSIVE reread AS (
@@ -124,7 +128,10 @@ authoritative_order_partitions AS (
                           AND predecessor.started_at <= predecessor.finished_at
                     )
                     SELECT 1 FROM reread
-                    WHERE reread.resumed_from IS NULL
+                    WHERE (
+                        reread.resumed_from IS NULL
+                        OR reread.resumed_from = chunk.resumed_from
+                    )
                       AND chunk.finished_at < reread.started_at
                 )
                 AND chunk.processed_count = 0

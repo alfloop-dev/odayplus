@@ -2124,6 +2124,236 @@ def test_postgresql_forecast_full_reread_recovers_only_preprojection_failure(
                 assert _forecast_target(connection, tenant_id, store_id) == (True, None)
 
 
+@pytest.mark.parametrize("day", (FORECAST_TARGET_DAY, FORECAST_PRIOR_DAY))
+@pytest.mark.parametrize("partial_chunks", (1, 3))
+@pytest.mark.parametrize("eof_rows", (0, 1))
+def test_postgresql_forecast_empty_failures_at_every_resume_boundary(
+    intake_blank_db,
+    day: date,
+    partial_chunks: int,
+    eof_rows: int,
+) -> None:
+    """All subsets of failures before R1, between each clean bounded chunk and
+    EOF, and after EOF. Two empty attempts at each selected boundary retain the
+    original cursor; only a later matching clean suffix to EOF recovers them.
+    These are synthetic writer states, not a DataPlaneRunner execution.
+    """
+    spec = MODEL_SPECS["forecastops"]
+    bounds = DataBounds(
+        _at(FORECAST_FIRST_DAY, 0),
+        _at(FORECAST_TARGET_DAY + timedelta(days=1), 0),
+        10,
+    )
+    reason = (
+        "SOURCE_RUN_NOT_COMPLETE" if day == FORECAST_TARGET_DAY
+        else "PRIOR_SOURCE_NOT_COMPLETE"
+    )
+    start = _at(FORECAST_TARGET_DAY + timedelta(days=3), 4)
+
+    with intake_blank_db.connect() as connection:
+        _install_minimal_authoritative_schema(connection)
+        tenant_id, store_id, daily_runs = _seed_forecast_history(connection)
+        client = _PsycopgInstallationClient(connection)
+        installed = ModelReadyViewInstaller(client).install()
+        assert installed["forecast"]["view_version"] == spec.expected_view_version
+        assert installed["forecast"]["installer_sha256"] == hashlib.sha256(
+            MODEL_READY_SQL_PATH.read_bytes()
+        ).hexdigest()
+        source = PostgresModelReadySource(client)
+        baseline = source.load(spec, bounds)
+        before = _forecast_rows(connection, tenant_id, store_id)
+        expected_fingerprint = hashlib.sha256(
+            (
+                f"{spec.relation}|{','.join(spec.required_columns)}|"
+                f"{bounds.start.isoformat()}|{bounds.end.isoformat()}|{bounds.max_rows}"
+            ).encode()
+        ).hexdigest()
+        other_tenant, other_store, _ = _insert_store(
+            connection, tenant="boundary-other", store="store", opened_on=date(2024, 1, 1),
+        )
+        # R1 owns this store's row; intermediate chunks own another tenant's
+        # rows. The final EOF may load one more real order or zero new rows.
+        root = daily_runs[day]
+        connection.execute(
+            "UPDATE data_plane.ingestion_runs SET partition_complete = FALSE, "
+            "started_at = %s, finished_at = %s, final_cursor = 'boundary-1' WHERE run_id = %s",
+            (start, start + timedelta(hours=1), root),
+        )
+        txn_id = _id(f"transaction:forecast:{day.isoformat()}")
+        connection.execute(
+            "UPDATE core.transactions SET observation_time = %s, ingested_at = %s "
+            "WHERE transaction_id = %s", (start, start, txn_id),
+        )
+        connection.execute(
+            "UPDATE data_plane.canonical_lineage SET projected_at = %s WHERE canonical_id = %s",
+            (start, txn_id),
+        )
+        segments = [root]
+        for index in range(1, partial_chunks + 1):
+            is_eof = index == partial_chunks
+            segment_start = start + timedelta(hours=3 * index)
+            count = eof_rows if is_eof else 1
+            run = _insert_run(
+                connection, name=f"boundary-segment:{day}:{index}",
+                source_kind="orders", partition_key=day.isoformat(),
+                resumed_from=f"boundary-{index}",
+                final_cursor=f"boundary-{index + 1}" if count else f"boundary-{index}",
+                started_at=segment_start, finished_at=segment_start + timedelta(hours=1),
+                processed_count=count, valid_loaded=count, partition_complete=is_eof,
+            )
+            segments.append(run)
+            if count:
+                name = f"boundary-order:{day}:{index}"
+                new_txn = _insert_transaction(
+                    connection,
+                    tenant_id=tenant_id if is_eof else other_tenant,
+                    store_id=store_id if is_eof else other_store,
+                    name=name, event_time=_at(day, 11), amount=7.0,
+                    daily_runs={day: run},
+                )
+                connection.execute(
+                    "UPDATE core.transactions SET observation_time = %s, ingested_at = %s "
+                    "WHERE transaction_id = %s", (segment_start, segment_start, new_txn),
+                )
+                connection.execute(
+                    "UPDATE data_plane.canonical_lineage SET projected_at = %s "
+                    "WHERE canonical_id = %s", (segment_start, new_txn),
+                )
+        eof_end = start + timedelta(hours=3 * partial_chunks + 1)
+        tail_start = start + timedelta(hours=3 * (partial_chunks + 1))
+        final_cursor = f"boundary-{partial_chunks + eof_rows}"
+        snapshots = set(before[FORECAST_TARGET_DAY]["source_snapshot_ids"])
+        if eof_rows:
+            snapshots.add(str(_id(f"snapshot:boundary-order:{day}:{partial_chunks}")))
+
+        def assert_refused() -> None:
+            assert _forecast_target(connection, tenant_id, store_id) == (False, reason)
+            with pytest.raises(ModelReadyDataError, match="not trainable"):
+                source.load(spec, bounds)
+
+        def assert_admitted(expected_eof: datetime) -> None:
+            rows = _forecast_rows(connection, tenant_id, store_id)
+            assert rows[day]["label_maturity_time"] == expected_eof
+            assert rows[FORECAST_TARGET_DAY]["exclusion_reason"] is None
+            loaded = source.load(spec, bounds)
+            assert loaded.relation == spec.relation
+            assert loaded.bounds == bounds
+            assert loaded.query_sha256 == baseline.query_sha256 == expected_fingerprint
+            (row,) = loaded.rows
+            assert row["view_version"] == spec.expected_view_version
+            assert row["tenant_id"] == tenant_id
+            assert row["store_id"] == store_id
+            assert row["date"] == FORECAST_TARGET_DAY
+            assert row["feature_snapshot_time"] == expected_eof
+            assert row["prediction_origin_time"] == expected_eof + timedelta(microseconds=1)
+            assert row["daily_net_revenue"] == pytest.approx(
+                baseline.rows[0]["daily_net_revenue"]
+                + (7.0 * eof_rows if day == FORECAST_TARGET_DAY else 0.0)
+            )
+            assert row["rolling_mean_28"] == pytest.approx(
+                baseline.rows[0]["rolling_mean_28"]
+                + (7.0 * eof_rows / 28 if day == FORECAST_PRIOR_DAY else 0.0)
+            )
+            assert set(row["source_snapshot_ids"]) == snapshots
+            if day == FORECAST_PRIOR_DAY:
+                assert row["label_maturity_time"] == baseline.rows[0]["label_maturity_time"]
+            for earlier_day in (value for value in before if value < day):
+                assert rows[earlier_day] == before[earlier_day]
+
+        assert_admitted(eof_end)
+        # Bitmask enumerates every nonempty combination of boundary positions,
+        # not merely a single failure placed before the from-beginning root.
+        for mask in range(1, 1 << (partial_chunks + 2)):
+            with connection.transaction(force_rollback=True):
+                failures = []
+                for slot in range(partial_chunks + 2):
+                    if not mask & (1 << slot):
+                        continue
+                    successor_start = start + timedelta(hours=3 * slot)
+                    cursor = None if slot == 0 else (
+                        final_cursor if slot == partial_chunks + 1 else f"boundary-{slot}"
+                    )
+                    for attempt in range(2):
+                        failure_start = successor_start - timedelta(minutes=50 - 20 * attempt)
+                        failure_end = failure_start + timedelta(minutes=10)
+                        run = _insert_run(
+                            connection, name=f"boundary-empty:{mask}:{slot}:{attempt}",
+                            source_kind="orders", partition_key=day.isoformat(),
+                            status="FAILED", reconciled=False, partition_complete=False,
+                            resumed_from=cursor, started_at=failure_start, finished_at=failure_end,
+                        )
+                        failures.append((slot, run, successor_start, failure_end))
+                has_tail_failure = bool(mask & (1 << (partial_chunks + 1)))
+                expected_eof = eof_end
+                if has_tail_failure:
+                    # Keeping the original successful EOF must not mask even
+                    # an empty later failed attempt. Only a later retry counts.
+                    assert_refused()
+                    expected_eof = tail_start + timedelta(hours=1)
+                    _insert_run(
+                        connection, name=f"boundary-tail-eof:{mask}",
+                        source_kind="orders", partition_key=day.isoformat(),
+                        resumed_from=final_cursor, final_cursor=final_cursor,
+                        started_at=tail_start, finished_at=expected_eof,
+                    )
+                assert_admitted(expected_eof)
+
+                # For singleton slots exercise every trust boundary as well as
+                # the all-positions positives above. Empty default counters
+                # cannot hide projection/quarantine or an advanced checkpoint.
+                if mask.bit_count() == 1:
+                    slot, failed, successor_start, failure_end = failures[-1]
+                    assignments = [
+                        "status = 'RUNNING', finished_at = NULL",
+                        "finished_at = NULL",
+                        "processed_count = 1",
+                        "valid_loaded = 1",
+                        "quarantined_count = 1",
+                        f"finished_at = '{successor_start.isoformat()}'",
+                    ]
+                    if slot:
+                        assignments.append("resumed_from = 'skipped-failed-boundary'")
+                    for assignment in assignments:
+                        with connection.transaction(force_rollback=True):
+                            _set_run(connection, failed, assignment)
+                            assert_refused()
+                    with connection.transaction(force_rollback=True):
+                        _insert_quarantine(
+                            connection, name=f"boundary-quarantine:{slot}",
+                            source_id="unread-order", run_id=failed,
+                            partition_key=day.isoformat(), quarantined_at=failure_end,
+                        )
+                        assert_refused()
+                    with connection.transaction(force_rollback=True):
+                        _insert_lineage(
+                            connection, name=f"boundary-projection:{slot}", run_id=failed,
+                            tenant_id=tenant_id, table="core.stores", entity_id=store_id,
+                            projected_at=failure_end,
+                        )
+                        assert_refused()
+                    # Break the suffix linking this retry to EOF. An unrelated
+                    # cursor/day/source or overlapping interval cannot retire it.
+                    successor = segments[slot] if slot <= partial_chunks else _id(
+                        f"run:boundary-tail-eof:{mask}"
+                    )
+                    for assignment in (
+                        "resumed_from = 'advanced-checkpoint'",
+                        "source_kind = 'trade'",
+                        f"partition_key = '{(day + timedelta(days=1)).isoformat()}'",
+                        f"started_at = '{failure_end.isoformat()}'",
+                        "partition_complete = FALSE" if slot >= partial_chunks
+                        else "final_cursor = 'broken-cursor-edge'",
+                    ):
+                        with connection.transaction(force_rollback=True):
+                            _set_run(connection, successor, assignment)
+                            assert_refused()
+                assert connection.execute(
+                    "SELECT count(*) FROM data_plane.ingestion_runs "
+                    "WHERE status = 'FAILED' AND partition_key = %s", (day.isoformat(),),
+                ).fetchone() == (len(failures),)
+                assert_admitted(expected_eof)
+
+
 def _insert_quarantine(
     connection,
     *,

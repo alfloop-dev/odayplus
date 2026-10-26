@@ -44,9 +44,9 @@ def test_forecast_sql_requires_eof_proven_partitions_for_target_and_prior_days()
     assert "AND ingestion.finished_at IS NOT NULL" in body
     assert "clean.run_id = chunk.run_id" in body
     assert "chunk.finished_at <= completion.finished_at" not in body
-    # Only a later full-day from-beginning chain ending at EOF can retire an
-    # empty failure. Every predecessor must match the persisted cursor and day;
-    # NULL/open/overlapping runs cannot prove recovery.
+    # Recovery must reach EOF from a later clean read of the failed boundary
+    # (or from the beginning). Every predecessor matches cursor/day/time;
+    # open/overlapping runs and advanced checkpoints cannot prove recovery.
     assert "AND NOT coalesce(" in body
     assert "chunk.status = 'FAILED'" in body
     assert "AND chunk.partition_key = completion.partition_key" in body
@@ -57,7 +57,9 @@ def test_forecast_sql_requires_eof_proven_partitions_for_target_and_prior_days()
     assert "predecessor.finished_at <= successor.started_at" in body
     assert "predecessor.started_at < successor.started_at" in body
     assert "predecessor.started_at <= predecessor.finished_at" in body
-    assert "WHERE reread.resumed_from IS NULL" in body
+    assert "reread.resumed_from IS NULL" in body
+    assert "OR reread.resumed_from = chunk.resumed_from" in body
+    assert "AND chunk.started_at <= chunk.finished_at" in body
     assert "AND chunk.finished_at < reread.started_at" in body
     assert "failed_lineage.run_id = chunk.run_id" in body
     assert "failed_quarantine.run_id = chunk.run_id" in body
