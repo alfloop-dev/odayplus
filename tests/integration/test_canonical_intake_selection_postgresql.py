@@ -263,8 +263,8 @@ def test_current_read_grants_allow_other_owners_only_inside_scope(canonical_grap
     assert [row["intake_id"] for row in response.json()["items"]] == [expected]
 
 
-@pytest.mark.parametrize("revocation", ["role", "scope", "actor", "tenant", "anonymous"])
-def test_cursor_never_preserves_previous_authority(canonical_graph, native_api, revocation):
+@pytest.mark.parametrize("revocation", ["role", "scope", "actor", "tenant", "enrolled-tenant", "anonymous"])
+def test_cursor_never_preserves_previous_authority(canonical_graph, native_api, monkeypatch, revocation):
     client, caller, _ = native_api
     for _ in range(3):
         seed(canonical_graph)
@@ -277,15 +277,40 @@ def test_cursor_never_preserves_previous_authority(canonical_graph, native_api, 
         caller["principal"] = replace(principal, scope=replace(principal.scope, region_ids=frozenset({str(uuid4())})))
     elif revocation == "actor":
         caller["principal"] = replace(principal, subject_id=str(uuid4()))
-    elif revocation == "tenant":
-        caller["principal"] = replace(principal, scope=Scope(tenant_id=str(uuid4())))
+    elif revocation in {"tenant", "enrolled-tenant"}:
+        next_tenant = str(uuid4())
+        if revocation == "enrolled-tenant":
+            from shared.auth.feature_flags import FlagScopeBinding
+            from shared.infrastructure.persistence.feature_flags import COLLECTION, DOCUMENT
+
+            # Explicit synthetic enrollment lets this case reach the cursor
+            # boundary; an unenrolled current tenant must fail at the flag first.
+            owner = canonical_graph[0].queue._flags
+            flags, version = owner.read_versioned()
+            key = "assisted_intake_v1_read"
+            flags[key] = replace(flags[key], bindings=(*flags[key].bindings, FlagScopeBinding(next_tenant)))
+            assert owner.store.compare_and_put(
+                COLLECTION, DOCUMENT, owner._encode(flags), expected_version=version,
+            ) is not None
+        caller["principal"] = replace(principal, scope=Scope(tenant_id=next_tenant))
     else:
         caller["principal"] = replace(principal, authenticated=False)
+    if revocation not in {"scope", "actor"}:
+        def forbidden_page(*args, **kwargs):
+            pytest.fail("Revoked authority or a foreign-tenant cursor reached the repository page")
+
+        monkeypatch.setattr(type(client.app.state.persistence_bundle.canonical_intakes()), "page", forbidden_page)
     response = get(client, cursor=first.json()["next_cursor"])
     if revocation in {"scope", "actor"}:
         assert response.status_code == 200 and response.json() == {"items": [], "next_cursor": None}
     else:
-        assert response.status_code == {"role": 403, "tenant": 422, "anonymous": 401}[revocation], response.text
+        assert response.status_code == {
+            "role": 403, "tenant": 403, "enrolled-tenant": 422, "anonymous": 401,
+        }[revocation], response.text
+        if revocation in {"tenant", "enrolled-tenant"}:
+            assert response.json() == {"detail": (
+                "FEATURE_FLAG_DISABLED" if revocation == "tenant" else "CANONICAL_INTAKE_CURSOR_QUERY_MISMATCH"
+            )}
 
 
 @pytest.mark.parametrize("cursor", ["!", "e30=", base64.urlsafe_b64encode(b'{"version":2}').decode()])
