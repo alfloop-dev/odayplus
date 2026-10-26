@@ -1427,6 +1427,119 @@ def test_parser_provenance_must_be_valid_and_source_bound(conn, release):
     assert cur.fetchone()[0] >= 1
 
 
+@pytest.mark.parametrize("overrides", [
+    {},  # matching pre-existing release remains usable
+    {"source_id": "SRC-BROKER"}, {"semantic_version": "2.0"},
+    {"input_schema_version": None}, {"output_schema_version": None},
+    {"test_corpus_version": None}, {"package_name": None},
+    {"package_name": "different-package"}, {"input_schema_version": "different-input"},
+    {"output_schema_version": "different-output"}, {"test_corpus_version": "different-corpus"},
+    {"validation_status": "DRAFT"}, {"artifact_uri": "gs://other/parser.tar.gz"},
+    {"artifact_sha256": "d" * 64}, {"parser_release_id": ensure_uuid("different-release")},
+    {"parser_release_id": ensure_uuid("pre-existing-release")},
+])
+def test_parser_input_cannot_borrow_preexisting_release(conn, overrides):
+    row = migration_input()
+    tenant = row["tenantId"]
+    migrator = IntakeMigrator(conn)
+    migrator.apply_schema()
+    existing = parser_provenance(parser_release_id=ensure_uuid("pre-existing-release"))
+    migrator.register_sources_and_parsers(parser_release=existing, tenant_id=tenant)
+    conn.commit()
+
+    # A new migrator must validate this call, not rely on registration or history
+    # from the previous invocation. All cases start with the same VALIDATED row.
+    result = IntakeMigrator(conn).backfill(
+        [row], [], [], tenant_id=tenant, parser_release=parser_provenance(**overrides),
+    )
+    assert result["counts"]["intakes_processed"] == 1
+    cur = conn.cursor()
+    cur.execute("SELECT count(*) FROM intake.source_snapshots")
+    assert cur.fetchone()[0] == 1
+    cur.execute("SELECT source_id, package_name, semantic_version, input_schema_version, output_schema_version, artifact_uri, artifact_sha256, test_corpus_version, validation_status FROM intake.parser_releases WHERE parser_release_id = %s", (existing["parser_release_id"],))
+    assert cur.fetchone() == tuple(existing[key] for key in (
+        "source_id", "package_name", "semantic_version", "input_schema_version", "output_schema_version",
+        "artifact_uri", "artifact_sha256", "test_corpus_version", "validation_status",
+    ))
+    accepted = not overrides or overrides == {"parser_release_id": existing["parser_release_id"]}
+    cur.execute("SELECT parser_release_id, status FROM intake.parser_runs")
+    runs = cur.fetchall()
+    cur.execute("SELECT count(*) FROM workflow.reconciliation_findings WHERE severity='BLOCKING'")
+    blocking = cur.fetchone()[0]
+    if accepted:
+        assert [(str(release_id), status) for release_id, status in runs] == [(existing["parser_release_id"], "SUCCEEDED")]
+        assert blocking == result["counts"]["findings"] == 0
+    else:
+        assert runs == []
+        assert blocking >= 1
+    assert IntakeMigrator(conn).verify_shadow_comparison(tenant)["shadow_comparison_success"] is accepted
+
+
+@pytest.mark.parametrize("bridge", [False, True])
+@pytest.mark.parametrize("partition", ["tenant", "source"])
+def test_malformed_excluded_history_never_enters_partition_findings(conn, bridge, partition):
+    row = migration_input(bridge)
+    tenant = migration_input()["tenantId"]
+    if bridge:
+        row["submitted_at"] = row["operator_presentation"]["submittedAt"] = None
+        if partition == "tenant":
+            row["scope"]["tenant_id"] = row["operator_presentation"]["tenantId"] = "00000000-0000-0000-0000-000000000002"
+        else:
+            row["source_id"] = row["operator_presentation"]["sourceId"] = "SRC-BROKER"
+    else:
+        row["submittedAt"] = None
+        if partition == "tenant":
+            row["tenantId"] = "00000000-0000-0000-0000-000000000002"
+        else:
+            row["sourceId"] = "SRC-BROKER"
+    result = IntakeMigrator(conn).backfill(
+        [row], [], [], tenant_id=tenant, source_id="SRC-591", parser_release=parser_provenance(),
+    )
+    counts = result["counts"]
+    assert counts["intakes_received"] == counts["intakes_excluded"] == 1
+    assert counts["intakes_processed"] == counts["intakes_quarantined"] == counts["quarantined"] == counts["findings"] == 0
+    cur = conn.cursor()
+    for table in ("intake.intakes", "intake.intake_stage_transitions", "intake.source_snapshots", "intake.parser_runs"):
+        cur.execute(f"SELECT count(*) FROM {table}")
+        assert cur.fetchone()[0] == 0
+    cur.execute("SELECT tenant_id, severity, expected, actual FROM workflow.reconciliation_findings")
+    findings = cur.fetchall()
+    assert len(findings) == 1  # Only the aggregate count/ID proof, no excluded row history.
+    saved_tenant, severity, expected, actual = findings[0]
+    assert str(saved_tenant) == tenant
+    assert severity == "INFO"
+    assert expected == actual
+    assert expected["intakes_received"] == expected["intakes_excluded"] == 1
+    assert expected["intakes"] == expected["intakes_quarantined"] == 0
+    serialized = json.dumps(expected)
+    assert "IN-INPUT" not in serialized and "source_history" not in serialized
+    assert synthetic_history("IN-INPUT")["submittedBy"] not in serialized
+    assert "00000000-0000-0000-0000-000000000002" not in serialized
+    assert IntakeMigrator(conn).verify_shadow_comparison(tenant)["shadow_comparison_success"] is True
+
+
+@pytest.mark.parametrize("invalid_scope", ["missing", "conflicting"])
+def test_excluded_source_does_not_hide_untrusted_tenant_scope(conn, invalid_scope):
+    row = migration_input(True)
+    tenant = row["scope"]["tenant_id"]
+    row["source_id"] = row["operator_presentation"]["sourceId"] = "SRC-BROKER"
+    if invalid_scope == "missing":
+        row["scope"].pop("tenant_id")
+    else:
+        row["operator_presentation"]["tenantId"] = "00000000-0000-0000-0000-000000000002"
+    result = IntakeMigrator(conn).backfill(
+        [row], [], [], tenant_id=tenant, source_id="SRC-591", parser_release=parser_provenance(),
+    )
+    assert result["counts"]["intakes_excluded"] == result["counts"]["intakes_processed"] == 0
+    assert result["counts"]["intakes_quarantined"] == 1
+    cur = conn.cursor()
+    cur.execute("SELECT finding_type FROM workflow.reconciliation_findings WHERE severity='BLOCKING'")
+    assert cur.fetchall() == [("INVALID_SCOPE",)]
+    cur.execute("SELECT count(*) FROM intake.intakes")
+    assert cur.fetchone()[0] == 0
+    assert IntakeMigrator(conn).verify_shadow_comparison(tenant)["shadow_comparison_success"] is False
+
+
 def test_tenant_partition_documents_exclusion_and_dry_run_invalid_input(conn):
     row = migration_input()
     tenant = row["tenantId"]

@@ -557,8 +557,8 @@ class IntakeMigrator:
         sources: list[tuple[str, str, str, list[str]]] | None = None,
         parser_release: dict[str, Any] | None = None,
         tenant_id: str | None = None,
-    ) -> None:
-        """Register sources and parser releases using supplied verified provenance."""
+    ) -> dict[str, Any] | None:
+        """Register provenance and return only the caller's matching registry release."""
         default_sources = [
             ("SRC-591", "591 licensed broker intake", "APPROVED_RETRIEVAL", ["591.com.tw"]),
             ("SRC-BROKER", "Broker confirmation", "ASSISTED_ENTRY_ONLY", []),
@@ -626,7 +626,7 @@ class IntakeMigrator:
             return
 
         parser_source = get_val(parser_release, "source_id")
-        check_parser = "SELECT parser_release_id FROM intake.parser_releases WHERE semantic_version = %s AND source_id = %s"
+        check_parser = "SELECT * FROM intake.parser_releases WHERE semantic_version = %s AND source_id = %s"
         if not self._execute(check_parser, (sem_ver, parser_source)):
             insert_parser = """
                 INSERT INTO intake.parser_releases (
@@ -657,6 +657,23 @@ class IntakeMigrator:
                 ),
             )
 
+        registered = self._execute(check_parser, (sem_ver, parser_source))[0]
+        provenance_fields = (*required_parser_facts, "artifact_uri", "artifact_sha256")
+        conflicts = [key for key in provenance_fields if registered[key] != get_val(parser_release, key)]
+        supplied_id = get_val(parser_release, "parser_release_id")
+        if supplied_id and str(registered["parser_release_id"]) != ensure_uuid(supplied_id):
+            conflicts.append("parser_release_id")
+        if conflicts:
+            if tenant_id:
+                self._create_finding(
+                    tenant_id=ensure_uuid(tenant_id), source_kind="parser_release",
+                    source_id=sem_ver, target_ids=[], finding_type="MISSING_EVIDENCE",
+                    severity="BLOCKING", expected={"matching_registered_provenance": True},
+                    actual={"conflicting_fields": conflicts},
+                )
+            return None
+        return registered
+
     def backfill(
         self,
         legacy_intakes: list[dict[str, Any]],
@@ -681,8 +698,10 @@ class IntakeMigrator:
             if len(input_tenants) != 1 or any("tenantId" in errors for _, errors in normalized_inputs):
                 raise ValueError("An explicit valid tenant partition is required")
             target_tenant = input_tenants.pop()
-        legacy_intakes = [row for row, errors in normalized_inputs if not errors]
-        self.register_sources_and_parsers(sources=sources, parser_release=parser_release, tenant_id=target_tenant)
+        legacy_intakes = []
+        registered_parser = self.register_sources_and_parsers(
+            sources=sources, parser_release=parser_release, tenant_id=target_tenant,
+        )
 
         reconciled_count = 0
         skipped_count = 0
@@ -691,6 +710,20 @@ class IntakeMigrator:
         intake_quarantined = 0
         intake_excluded = 0
         for row, errors in normalized_inputs:
+            # Exclude only on unambiguous scope, before saving unrelated history
+            # failures into this tenant's findings. Missing/conflicting scope
+            # still fails closed rather than being hidden by a source filter.
+            foreign_tenant = "tenantId" not in errors and str(uuid.UUID(row["tenantId"])) != target_tenant
+            foreign_source = (
+                source_id and "sourceId" not in errors and row["sourceId"] != source_id
+                and "INVALID_SCOPE" not in errors.values()
+            )
+            if foreign_tenant or foreign_source:
+                intake_excluded += 1
+                continue
+            if not errors:
+                legacy_intakes.append(row)
+                continue
             if errors:
                 intake_quarantined += 1
                 quarantined_count += 1
@@ -762,9 +795,6 @@ class IntakeMigrator:
                 i_date_str = legacy_intake["submittedAt"]
                 i_month = i_date_str[:7] if (i_date_str and isinstance(i_date_str, str)) else None
 
-                if i_tenant != target_tenant or (source_id and i_source != source_id):
-                    intake_excluded += 1
-                    continue
                 if not self._execute("SELECT source_id FROM intake.source_registry WHERE source_id = %s", (i_source,)):
                     findings_count += 1
                     quarantined_count += 1
@@ -968,19 +998,15 @@ class IntakeMigrator:
                     )
 
                     if legacy_intake.get("parsedFields"):
-                        check_pr_sql = """SELECT parser_release_id FROM intake.parser_releases
-                            WHERE source_id = %s AND semantic_version = %s
-                            AND artifact_uri = %s AND artifact_sha256 = %s
-                            AND validation_status IN ('VALIDATED','CANARY','PRODUCTION','DEPRECATED','ROLLED_BACK')"""
-                        parser_params = (i_source, legacy_intake.get("parserVersion"),
-                                         get_val(parser_release, "artifact_uri"), get_val(parser_release, "artifact_sha256"))
-                        if get_val(parser_release, "parser_release_id"):
-                            check_pr_sql += " AND parser_release_id = %s"
-                            parser_params += (ensure_uuid(get_val(parser_release, "parser_release_id")),)
-                        parser_rows = self._execute(check_pr_sql, parser_params)
+                        # Use only the complete provenance accepted at registration;
+                        # never substitute an older release found by intake aliases.
                         if (isinstance(legacy_intake["parsedFields"], dict)
-                                and legacy_intake.get("parserRunStatus") == "SUCCEEDED" and parser_rows):
-                            parser_rel_id = parser_rows[0]["parser_release_id"]
+                                and legacy_intake.get("parserRunStatus") == "SUCCEEDED"
+                                and registered_parser
+                                and registered_parser["source_id"] == i_source
+                                and registered_parser["semantic_version"] == legacy_intake.get("parserVersion")
+                                and registered_parser["validation_status"] in {"VALIDATED", "CANARY", "PRODUCTION", "DEPRECATED", "ROLLED_BACK"}):
+                            parser_rel_id = registered_parser["parser_release_id"]
                             parsed_fields = legacy_intake["parsedFields"]
                             insert_parser_run_sql = """
                                 INSERT INTO intake.parser_runs (
