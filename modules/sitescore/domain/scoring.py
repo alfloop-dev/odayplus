@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any
@@ -81,21 +82,23 @@ class SiteScoreFeatureInput:
     prior_90d_cell_store_count: int | None = None
     heat_zone_score: float = 0.0  # 0..100 demand signal from HeatZone Radar
     poi_demand_index: float = 0.0  # 0..1 fallback demand when heat_zone_score missing
-    monthly_rent: float = 0.0
+    monthly_rent: float | None = None
     area_ping: float = 0.0
     frontage_m: float = 0.0
     competitor_count: int = 0
     own_store_count_nearby: int = 0  # cannibalization driver
     comparable_store_count: int = 0
     comparable_monthly_revenue_p50: float = 0.0
-    buildout_capex: float = 2_500_000.0
-    gross_margin_ratio: float = 0.55
+    buildout_capex: float | None = None
+    gross_margin_ratio: float | None = None
     average_confidence: float | None = None
     data_quality_score: float | None = None
     source_snapshot_ids: tuple[str, ...] = ()
 
     @property
-    def rent_per_ping(self) -> float:
+    def rent_per_ping(self) -> float | None:
+        if self.monthly_rent is None:
+            return None
         if self.area_ping <= 0:
             return 0.0
         return self.monthly_rent / self.area_ping
@@ -127,8 +130,8 @@ class SiteScoreFeatureInput:
             poi_demand_index=_bounded(
                 _first_present(data, "poi_demand_index", "poiDemandIndex", default=0.0)
             ),
-            monthly_rent=float(
-                _first_present(data, "monthly_rent", "rent_amount", "rent", default=0.0)
+            monthly_rent=_financial_number(
+                _first_present(data, "monthly_rent", "rent_amount", "rent", default=None)
             ),
             area_ping=float(_first_present(data, "area_ping", "area", default=0.0)),
             frontage_m=float(_first_present(data, "frontage_m", "frontage", default=0.0)),
@@ -144,11 +147,12 @@ class SiteScoreFeatureInput:
                     data, "comparable_monthly_revenue_p50", "comparable_revenue", default=0.0
                 )
             ),
-            buildout_capex=float(
-                _first_present(data, "buildout_capex", "capex", default=2_500_000.0)
+            buildout_capex=_financial_number(
+                _first_present(data, "buildout_capex", "capex", default=None)
             ),
-            gross_margin_ratio=_bounded(
-                _first_present(data, "gross_margin_ratio", "gross_margin", default=0.55)
+            gross_margin_ratio=_financial_number(
+                _first_present(data, "gross_margin_ratio", "gross_margin", default=None),
+                maximum=1,
             ),
             average_confidence=(
                 _bounded(raw_conf)
@@ -186,9 +190,9 @@ class SiteScoreReport:
     m3: Interval
     m6: Interval
     m12: Interval
-    payback_period: Interval
-    payback_p50_months: float
-    rent_reasonableness: float
+    payback_period: Interval | None
+    payback_p50_months: float | None
+    rent_reasonableness: float | None
     cannibalization_risk: float
     comparable_stores: int
     key_positive_factors: tuple[str, ...]
@@ -211,6 +215,29 @@ class SiteScoreReport:
     warnings: tuple[str, ...] = ()
     report_version: int = 1
     report_id: str = field(default_factory=lambda: str(uuid4()))
+    # Retain the actual legacy calculation inputs, never a current global
+    # template. Historical reports without them remain readable, but their
+    # finite payback alone cannot prove that inputs were supplied. These are
+    # calculation assumptions, not source admission or V3 financial approval.
+    buildout_capex: float | None = None
+    gross_margin_ratio: float | None = None
+    monthly_rent: float | None = None
+
+    @property
+    def has_financial_result(self) -> bool:
+        inputs = (
+            _financial_number(getattr(self, "buildout_capex", None)),
+            _financial_number(getattr(self, "gross_margin_ratio", None), maximum=1),
+            _financial_number(getattr(self, "monthly_rent", None)),
+        )
+        if any(value is None for value in inputs) or not isinstance(self.payback_period, Interval):
+            return False
+        values = tuple(_financial_number(value) for value in (
+            self.payback_period.p10, self.payback_period.p50, self.payback_period.p90,
+            self.payback_p50_months,
+        ))
+        return (all(value is not None for value in values)
+                and values[0] <= values[1] <= values[2] and values[1] == values[3])
 
     @property
     def horizons(self) -> dict[str, Interval]:
@@ -226,7 +253,7 @@ class SiteScoreReport:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "sitescore_run_id": self.sitescore_run_id,
             "report_id": self.report_id,
             "report_version": self.report_version,
@@ -237,7 +264,7 @@ class SiteScoreReport:
             "m3": self.m3.to_dict(),
             "m6": self.m6.to_dict(),
             "m12": self.m12.to_dict(),
-            "payback_period": self.payback_period.to_dict(),
+            "payback_period": self.payback_period.to_dict() if self.payback_period is not None else None,
             "payback_p50_months": self.payback_p50_months,
             "rent_reasonableness": self.rent_reasonableness,
             "cannibalization_risk": self.cannibalization_risk,
@@ -255,6 +282,11 @@ class SiteScoreReport:
             "source_snapshot_ids": list(self.source_snapshot_ids),
             "warnings": list(self.warnings),
         }
+        # An old unpickled report has no instance attributes for new inputs.
+        # Keep its original canonical JSON/hash rather than append null keys.
+        payload.update({name: self.__dict__[name] for name in
+            ("buildout_capex", "gross_margin_ratio", "monthly_rent") if name in self.__dict__})
+        return payload
 
     def to_summary_dict(self) -> dict[str, Any]:
         """Camel-cased shape matching the SiteScoreReportSummary contract (ODP-UX)."""
@@ -266,7 +298,7 @@ class SiteScoreReport:
             "m3": self.m3.to_dict(),
             "m6": self.m6.to_dict(),
             "m12": self.m12.to_dict(),
-            "paybackPeriod": self.payback_period.to_dict(),
+            "paybackPeriod": self.payback_period.to_dict() if self.payback_period is not None else None,
             "rentReasonableness": self.rent_reasonableness,
             "cannibalizationRisk": self.cannibalization_risk,
             "comparableStores": self.comparable_stores,
@@ -396,7 +428,10 @@ def _score_feature(
 
     recommendation = _recommend(
         payback_p50_months=payback_p50,
-        gross_margin_p50=horizons["m12"].p50 * feature.gross_margin_ratio - feature.monthly_rent,
+        gross_margin_p50=(
+            horizons["m12"].p50 * feature.gross_margin_ratio - feature.monthly_rent
+            if feature.gross_margin_ratio is not None and feature.monthly_rent is not None else None
+        ),
         rent_reasonableness=rent_reasonableness,
         cannibalization=cannibalization,
         confidence=confidence,
@@ -422,7 +457,7 @@ def _score_feature(
         m12=horizons["m12"],
         payback_period=payback,
         payback_p50_months=payback_p50,
-        rent_reasonableness=round(rent_reasonableness, 4),
+        rent_reasonableness=round(rent_reasonableness, 4) if rent_reasonableness is not None else None,
         cannibalization_risk=round(cannibalization, 4),
         comparable_stores=feature.comparable_store_count,
         key_positive_factors=positives,
@@ -441,7 +476,11 @@ def _score_feature(
             confidence,
             feature_snapshot_time=feature_snapshot_time,
             snapshot_time_missing=snapshot_time_missing,
+            financial_inputs_available=payback_p50 is not None,
         ),
+        buildout_capex=feature.buildout_capex,
+        gross_margin_ratio=feature.gross_margin_ratio,
+        monthly_rent=feature.monthly_rent,
     )
 
 
@@ -461,8 +500,14 @@ def _interval(p50: float, spread: float) -> Interval:
     )
 
 
-def _payback(m12: Interval, feature: SiteScoreFeatureInput) -> tuple[Interval, float]:
-    capex = max(0.0, feature.buildout_capex)
+def _payback(m12: Interval, feature: SiteScoreFeatureInput) -> tuple[Interval | None, float | None]:
+    # Partial assessment retains model revenue, without manufacturing a
+    # financial result from absent cost, margin or rent (original UX-03).
+    if any(value is None for value in (
+        feature.buildout_capex, feature.gross_margin_ratio, feature.monthly_rent,
+    )):
+        return None, None
+    capex = feature.buildout_capex
 
     def months(monthly_revenue: float) -> float:
         gross_margin = monthly_revenue * feature.gross_margin_ratio - feature.monthly_rent
@@ -477,7 +522,9 @@ def _payback(m12: Interval, feature: SiteScoreFeatureInput) -> tuple[Interval, f
     )
 
 
-def _rent_reasonableness(monthly_rent: float, mature_p50: float) -> float:
+def _rent_reasonableness(monthly_rent: float | None, mature_p50: float) -> float | None:
+    if monthly_rent is None:
+        return None
     if mature_p50 <= 0:
         return 0.0
     rent_ratio = monthly_rent / mature_p50
@@ -501,9 +548,9 @@ def _confidence(feature: SiteScoreFeatureInput) -> float | None:
 
 def _recommend(
     *,
-    payback_p50_months: float,
-    gross_margin_p50: float,
-    rent_reasonableness: float,
+    payback_p50_months: float | None,
+    gross_margin_p50: float | None,
+    rent_reasonableness: float | None,
     cannibalization: float,
     confidence: float,
     comparable_store_count: int,
@@ -511,11 +558,13 @@ def _recommend(
     if confidence < INVESTIGATE_MAX_CONFIDENCE or comparable_store_count == 0:
         return SiteScoreRecommendation.INVESTIGATE
     if (
-        gross_margin_p50 <= 0
-        or payback_p50_months > REJECT_PAYBACK_MONTHS
-        or rent_reasonableness < REJECT_MAX_RENT_REASONABLENESS
+        (rent_reasonableness is not None and rent_reasonableness < REJECT_MAX_RENT_REASONABLENESS)
         or cannibalization >= REJECT_MIN_CANNIBALIZATION
     ):
+        return SiteScoreRecommendation.REJECT
+    if payback_p50_months is None or gross_margin_p50 is None or rent_reasonableness is None:
+        return SiteScoreRecommendation.WAIT
+    if gross_margin_p50 <= 0 or payback_p50_months > REJECT_PAYBACK_MONTHS:
         return SiteScoreRecommendation.REJECT
     if (
         payback_p50_months <= GO_PAYBACK_MONTHS
@@ -530,9 +579,9 @@ def _recommend(
 def _factors(
     *,
     demand: float,
-    rent_reasonableness: float,
+    rent_reasonableness: float | None,
     cannibalization: float,
-    payback_p50_months: float,
+    payback_p50_months: float | None,
     comparable_store_count: int,
     confidence: float,
     feature: SiteScoreFeatureInput,
@@ -541,17 +590,19 @@ def _factors(
     negatives: list[str] = []
     if demand >= 0.65:
         positives.append("strong_local_demand")
-    if rent_reasonableness >= 0.6:
+    if rent_reasonableness is not None and rent_reasonableness >= 0.6:
         positives.append("rent_within_benchmark")
-    if payback_p50_months <= GO_PAYBACK_MONTHS:
+    if payback_p50_months is not None and payback_p50_months <= GO_PAYBACK_MONTHS:
         positives.append("payback_within_target")
     if comparable_store_count >= 3:
         positives.append("sufficient_comparable_evidence")
     if demand < 0.4:
         negatives.append("weak_local_demand")
-    if rent_reasonableness < REJECT_MAX_RENT_REASONABLENESS:
+    if rent_reasonableness is not None and rent_reasonableness < REJECT_MAX_RENT_REASONABLENESS:
         negatives.append("rent_above_benchmark")
-    if payback_p50_months > REJECT_PAYBACK_MONTHS:
+    if payback_p50_months is None:
+        negatives.append("financial_inputs_unavailable")
+    elif payback_p50_months > REJECT_PAYBACK_MONTHS:
         negatives.append("payback_too_long")
     if cannibalization >= 0.5:
         negatives.append("cannibalization_risk")
@@ -572,8 +623,11 @@ def _warnings(
     *,
     feature_snapshot_time: datetime,
     snapshot_time_missing: bool,
+    financial_inputs_available: bool,
 ) -> tuple[str, ...]:
     warnings: list[str] = []
+    if not financial_inputs_available:
+        warnings.append("financial_inputs_unavailable")
     if confidence < 0.5:
         warnings.append("low_confidence")
     if feature.average_confidence is None:
@@ -617,8 +671,24 @@ def _coerce_feature(
     feature: SiteScoreFeatureInput | Mapping[str, Any],
 ) -> SiteScoreFeatureInput:
     if isinstance(feature, SiteScoreFeatureInput):
-        return feature
+        return replace(feature,
+            monthly_rent=_financial_number(feature.monthly_rent),
+            buildout_capex=_financial_number(feature.buildout_capex),
+            gross_margin_ratio=_financial_number(feature.gross_margin_ratio, maximum=1),
+        )
     return SiteScoreFeatureInput.from_mapping(feature)
+
+
+def _financial_number(value: Any, *, maximum: float | None = None) -> float | None:
+    """One normalization for explicit financial inputs and retained results."""
+    if type(value) not in (int, float):
+        return None
+    try:
+        if math.isfinite(value) and value >= 0 and (maximum is None or value <= maximum):
+            return float(value)
+    except OverflowError:
+        pass
+    return None
 
 
 SITESCORE_FEATURE_MAX_AGE = timedelta(days=90)

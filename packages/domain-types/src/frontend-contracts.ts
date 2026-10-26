@@ -91,8 +91,8 @@ export type SiteScoreReportSummaryContract = {
   m6: Interval;
   m12: Interval;
   mature?: Interval;
-  paybackPeriod: Interval;
-  rentReasonableness: RiskLevel;
+  paybackPeriod: Interval | null;
+  rentReasonableness: RiskLevel | null;
   cannibalizationRisk: RiskLevel;
   comparableStores: ComparableStore[];
   keyPositiveFactors: Factor[];

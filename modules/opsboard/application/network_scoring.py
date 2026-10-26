@@ -949,8 +949,8 @@ class NetworkScoringService:
                 "rentReasonableness": report.rent_reasonableness,
                 "cannibalization": report.cannibalization_risk,
             },
-            "capex": None,
-            "rentAssumption": None,
+            "capex": str(value) if (value := getattr(report, "buildout_capex", None)) is not None else None,
+            "rentAssumption": str(value) if (value := getattr(report, "monthly_rent", None)) is not None else None,
             "drivers": list(report.key_positive_factors),
             "reasons": list(report.key_positive_factors),
             "risks": list(report.key_negative_factors),
@@ -1206,7 +1206,8 @@ class NetworkScoringService:
                 "key": key,
                 "label": label,
                 "values": [
-                    {"id": card["id"], "text": str(pick(card)), "isBest": bool(best and card["id"] == best["id"])}
+                    {"id": card["id"], "text": "—" if (value := pick(card)) is None else str(value),
+                     "isBest": bool(best and card["id"] == best["id"])}
                     for card in selected
                 ],
             }

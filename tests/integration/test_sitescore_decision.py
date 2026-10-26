@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -96,6 +97,69 @@ def test_score_sites_recommends_go_reject_and_investigate() -> None:
     assert by_id["CS-REJ-002"].recommendation is SiteScoreRecommendation.REJECT
     assert by_id["CS-INV-003"].recommendation is SiteScoreRecommendation.INVESTIGATE
     assert "no_comparable_evidence" in by_id["CS-INV-003"].key_negative_factors
+
+
+@pytest.mark.parametrize(("name", "value"), [
+    ("buildout_capex", None), ("gross_margin_ratio", None), ("monthly_rent", None),
+    ("buildout_capex", float("nan")), ("gross_margin_ratio", float("inf")),
+    ("monthly_rent", True), ("buildout_capex", -1), ("gross_margin_ratio", 1.1),
+])
+def test_partial_assessment_keeps_revenue_without_inventing_payback(name, value) -> None:
+    complete = score_sites([GO_SITE], scored_at=PREDICTION_TIME)[0]
+    partial = score_sites([replace(GO_SITE, **{name: value})], scored_at=PREDICTION_TIME)[0]
+    assert partial.horizons == complete.horizons
+    assert partial.payback_period is None and partial.payback_p50_months is None
+    assert partial.recommendation is SiteScoreRecommendation.WAIT
+    assert not partial.has_financial_result
+    assert "financial_inputs_unavailable" in partial.warnings
+    assert "financial_inputs_unavailable" in partial.key_negative_factors
+    assert "payback_within_target" not in partial.key_positive_factors
+    assert partial.to_dict()["payback_period"] is None
+    assert partial.to_summary_dict()["paybackPeriod"] is None
+
+
+@pytest.mark.parametrize("network_action", [None, "GO"])
+def test_missing_financial_result_blocks_native_go_before_any_transition(network_action) -> None:
+    audit = InMemoryAuditLog()
+    hook = CandidateSiteRealizationHook()
+    workflow = SiteScoreDecisionWorkflow(audit_log=audit, hooks=[hook])
+    report = score_sites([replace(GO_SITE, buildout_capex=None)], scored_at=PREDICTION_TIME)[0]
+    decision = workflow.open_decision(report, created_by="analyst-a")
+    pending = workflow.submit_for_review(decision.decision_id, submitted_by="analyst-a")
+    before_audit = audit.list_events()
+    with pytest.raises(SiteScoreDecisionError, match="complete financial inputs and payback"):
+        workflow.decide(decision.decision_id, action=DecisionAction.APPROVE, actor="director-b",
+            reason="Acknowledgement cannot create missing financial evidence",
+            network_action=network_action, override_ack=True)
+    assert workflow.get(decision.decision_id) == pending
+    assert audit.list_events() == before_audit
+    assert hook.get(report.candidate_site_id) is None
+    # A conditional WAIT remains a valid separate human action, without opening.
+    outcome = workflow.decide(decision.decision_id, action=DecisionAction.APPROVE,
+        actor="director-b", reason="補齊財務資料後再審", network_action="WAIT",
+        conditions="取得經確認的成本與營運假設")
+    assert outcome.decision.status is DecisionStatus.APPROVED
+    assert outcome.realization_events == ()
+    assert hook.get(report.candidate_site_id) is None
+
+
+def test_historical_numeric_payback_is_readable_without_granting_new_go() -> None:
+    report = score_sites([GO_SITE], scored_at=PREDICTION_TIME)[0]
+    old_payback = report.payback_p50_months
+    old_payload = {key: value for key, value in report.to_dict().items()
+        if key not in ("buildout_capex", "gross_margin_ratio", "monthly_rent")}
+    # These attributes were absent from reports written by the old class.
+    for name in ("buildout_capex", "gross_margin_ratio", "monthly_rent"):
+        object.__delattr__(report, name)
+    assert report.to_dict()["payback_p50_months"] == old_payback
+    assert report.to_dict() == old_payload
+    assert not report.has_financial_result
+    workflow = SiteScoreDecisionWorkflow()
+    decision = workflow.open_decision(report, created_by="analyst-a")
+    workflow.submit_for_review(decision.decision_id, submitted_by="analyst-a")
+    with pytest.raises(SiteScoreDecisionError, match="complete financial inputs and payback"):
+        workflow.decide(decision.decision_id, action=DecisionAction.APPROVE,
+            actor="director-b", reason="Historical output does not prove financial inputs")
 
 
 def test_summary_dict_matches_report_contract_fields() -> None:

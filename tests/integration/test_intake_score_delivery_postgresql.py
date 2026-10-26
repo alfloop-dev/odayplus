@@ -256,8 +256,12 @@ def test_actual_worker_commits_one_result_and_duplicate_restart_is_read_only(bri
         assert report is not None and report.candidate_site_id == candidate_id
         assert report.model_version == "sitescore:approved-2026.07.24"
         assert report.m12.p50 == 106_531.25
+        assert report.payback_period is None and report.payback_p50_months is None
+        assert "financial_inputs_unavailable" in report.warnings
+        assert not report.has_financial_result
         assert report.sitescore_run_id == current["result"]["sitescore_run_id"]
-        assert reports.get_sitescore_run(report.sitescore_run_id) is not None
+        summary = reports.get_sitescore_run(report.sitescore_run_id)
+        assert summary is not None and summary.payback_p50_months is None
         assert reports.get_prediction_run(current["result"]["prediction_run_id"]) is not None
         assert len(reports.get_predictions(current["result"]["prediction_run_id"])) == 1
         assert len(reports.history(candidate_id)) == 1
@@ -279,6 +283,9 @@ def test_actual_worker_commits_one_result_and_duplicate_restart_is_read_only(bri
         assert bundle.outbox_repository.get_unpublished_events() == before_events
         assert bundle.listing_repository_for_tenant(TENANT).list_candidates() == before_candidate
         assert len(_report_repository(bundle).history(candidate_id)) == 1
+        restored = _report_repository(bundle).get_report(report.report_id)
+        assert restored is not None and restored.payback_p50_months is None
+        assert restored.m12 == report.m12
     finally:
         bundle.engine.close()
 

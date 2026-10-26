@@ -482,10 +482,10 @@ export function SiteScoreReportSummary({ report, onRequestReview, "data-testid":
         <IntervalBand label="M6" interval={report.m6} />
         <IntervalBand label="M12" interval={report.m12} />
         {report.mature ? <IntervalBand label="Mature" interval={report.mature} /> : null}
-        <IntervalBand label="Payback period" interval={report.paybackPeriod} />
+        {report.paybackPeriod ? <IntervalBand label="Payback period" interval={report.paybackPeriod} /> : <Field label="Payback period" value="—" />}
       </Section>
       <FieldGrid>
-        <Field label="Rent reasonableness" value={<StatusBadge label={report.rentReasonableness} tone={riskTone[report.rentReasonableness]} />} />
+        <Field label="Rent reasonableness" value={report.rentReasonableness ? <StatusBadge label={report.rentReasonableness} tone={riskTone[report.rentReasonableness]} /> : "—"} />
         <Field label="Cannibalization risk" value={<StatusBadge label={report.cannibalizationRisk} tone={riskTone[report.cannibalizationRisk]} />} />
         <Field label="Decision status" value={report.decisionStatus} />
         <Field label="Model version" value={report.modelVersion} />

@@ -29,6 +29,9 @@ def report(candidate_id="synthetic-review-candidate-a", **changes):
         confidence=0.84, model_version="synthetic-model-a", feature_version="synthetic-view",
         feature_snapshot_time=at, prediction_origin_time=at, scored_at=at,
         source_snapshot_ids=("synthetic-snapshot-a",), heat_zone_id="synthetic-zone-a",
+        # Explicit synthetic assumptions for tests exercising a complete GO;
+        # production candidate builders must never borrow these fixture facts.
+        buildout_capex=1_800_000, gross_margin_ratio=0.6, monthly_rent=40000,
     )
     return replace(value, **changes)
 

@@ -12,6 +12,7 @@ from modules.opsboard.audit.application.sitescore_evidence import (
     SiteScoreEvidenceDenied,
     SiteScoreEvidenceUnavailable,
 )
+from modules.sitescore.domain.scoring import SiteScoreRecommendation
 from shared.audit.integrity import sha256_hex
 from shared.auth import DataClassification
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
@@ -37,21 +38,25 @@ from tests.unit.test_network_review_canonical_action_metadata import (
 
 
 @pytest.fixture
-def approved_chain(tmp_path):
+def approved_chain(tmp_path, request):
     parts = components(tmp_path / "owned-chain-engineering.sqlite")
     engine, scores, decisions, _audit, workflow, service = parts
     try:
         approvals, _intake, _candidate = install_real_related_producers(engine, decisions, workflow, service)
         realized = DurableRealizedSiteStore(TenantScopedDocumentStore(SqliteDocumentStore(engine), TENANT))
         workflow.register_hook(CandidateSiteRealizationHook(realized))
-        frozen = scores.save_report(report())
+        partial = getattr(request, "param", None) == "partial"
+        value = replace(report(), payback_period=None, payback_p50_months=None,
+            buildout_capex=None, recommendation=SiteScoreRecommendation.WAIT) if partial else report()
+        frozen = scores.save_report(value)
         decision = workflow.open_decision(frozen, created_by="engineering-proposer", tenant_id=TENANT,
             correlation_id="engineering-chain-create", verified_creator=True)
         workflow.submit_for_review(decision.decision_id, submitted_by="engineering-proposer",
             verified_submitter=True, submission_summary="Engineering canonical producer, not human acceptance",
             correlation_id="engineering-chain-submit")
         outcome = workflow.decide(decision.decision_id, action=DecisionAction.APPROVE, actor=ACTOR,
-            reason="Recorded engineering approval, not a human UAT signoff", network_action="GO",
+            reason="Recorded engineering approval, not a human UAT signoff", network_action="WAIT" if partial else "GO",
+            conditions="Financial evidence is still required" if partial else None,
             actor_role_id="siteReviewer", correlation_id="engineering-chain-decide")
         yield parts, approvals, outcome, realized, frozen
     finally:
@@ -87,6 +92,20 @@ def test_true_frozen_prediction_human_signature_and_realization_joins_are_partia
     after_saved = rows(parts[0])
     assert reader.read(principal(), selected(outcome)) == result
     assert rows(parts[0]) == after_saved and after_saved != before
+
+
+@pytest.mark.parametrize("approved_chain", ["partial"], indirect=True)
+def test_partial_financial_report_wait_decision_has_truthful_readonly_audit(approved_chain):
+    parts, approvals, outcome, realized, frozen = approved_chain
+    before = rows(parts[0])
+    value = SiteScoreRecordedDecisionChainReader(resolver(parts, approvals), realized).read(
+        principal(), selected(outcome)).document()
+    assert value["prediction"]["intervals"]["m12"] == frozen.m12.to_dict()
+    assert value["prediction"]["payback_period"] is None
+    assert value["prediction"]["payback_p50_months"] is None
+    assert value["human_decision"]["approval_id"] == outcome.decision.approval_id
+    assert value["execution"]["status"] == "not_applicable"
+    assert rows(parts[0]) == before
 
 
 def test_event_realized_count_without_real_owner_does_not_claim_execution(approved_chain):

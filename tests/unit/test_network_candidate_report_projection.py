@@ -85,6 +85,32 @@ def _listing_repo(*drafts):
     return repo
 
 
+def test_canonical_http_preserves_partial_payback_and_text_financial_contract():
+    candidate_id = "candidate-partial-finance"
+    reports = InMemorySiteScoreRepository()
+    saved = reports.save_report(replace(_report(candidate_id, "recorded-partial-model"),
+        payback_period=None, payback_p50_months=None, rent_reasonableness=None,
+        monthly_rent=40000, key_negative_factors=("financial_inputs_unavailable",)))
+    service = _service(_listing_repo(_draft(candidate_id)), reports, ReadOnlyRuntime())
+    with _client(lambda: service) as client:
+        response = client.get("/network-scoring")
+    assert response.status_code == 200
+    card = response.json()["scorecards"][0]
+    assert card["reportId"] == saved.report_id
+    assert card["payback"] is None and card["capex"] is None
+    assert card["rentAssumption"] == "40000"
+    assert card["revenuePath"]["m12"] == saved.m12.to_dict()
+    assert card["conditions"] == ["financial_inputs_unavailable"]
+
+
+def test_recorded_complete_financial_numbers_keep_existing_text_dto():
+    saved = replace(_report("candidate-complete-finance", "recorded-complete-model"),
+        buildout_capex=5546000, gross_margin_ratio=0.6, monthly_rent=40000)
+    card = NetworkScoringService._scorecard_from_report(saved)
+    assert card["capex"] == "5546000" and card["rentAssumption"] == "40000"
+    assert card["payback"] == 36
+
+
 def _service(listings, reports, runtime=None, *, tenant=TENANT):
     return NetworkScoringService(
         seed_fixtures=False, require_canonical=True, tenant_id=tenant,
