@@ -1,0 +1,18 @@
+{
+  "candidate_kind": "uncommitted integration preview; awaiting prerequisite reviews and merges",
+  "base_sha": "ba58ed6723960244d567c5314bfc200ffdf7bae8",
+  "inputs": {
+    "native_core": "804a00b01901d553ffba50c10eef1eb9fd14ee98",
+    "baseline": "3ef557769d670c73ccc0c36b7ba5cc90b6635200",
+    "sbom_output": "05164662abb41f75fdb6cf40ae25ea9df40371a1"
+  },
+  "file_sha256": {
+    "pyproject.toml": "130f024b80d55f439aa5467f4f469bb127aec955ef71444d2951a93d0f5d0391",
+    "uv.lock": "ba5c393e49538e4da9e59de001cffc28c4cadfab8aebacf6dbf1503eb3a49a5d",
+    "modules/learninghub/infrastructure/evidently_monitor.py": "7f4a6d5f4a4f64cf2bd169ecef1405dde5a757b1795957484ca1a2314faf4e66",
+    "modules/learninghub/infrastructure/native_drift.py": "dc01ad12c840ccec71c65b0ef3e877082e488089e18efd02f051820e71e293a8",
+    "models/shared_ml/oss_capabilities.py": "a603ff8515a85840acca8d8a41a85979e6466860fd57094578265f51b15bbb42",
+    "docs/evidence/sbom.json": "d93ada380b6a90953dc4da2b4900a4568e8bdefb2799e50da82cc3be9552c5d1",
+    "NOTICE-THIRD-PARTY.md": "31898c4a05022b9ecc239d79085ab06c07d56c21b5b0fd293605acf8cc518d5d"
+  }
+}

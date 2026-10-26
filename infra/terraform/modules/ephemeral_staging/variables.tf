@@ -64,6 +64,26 @@ variable "web_image" {
   }
 }
 
+variable "worker_image" {
+  type        = string
+  description = "Immutable Worker image reference with @sha256 digest."
+
+  validation {
+    condition     = can(regex("@sha256:[0-9a-f]{64}$", var.worker_image))
+    error_message = "worker_image must use an immutable @sha256 digest."
+  }
+}
+
+variable "scheduler_image" {
+  type        = string
+  description = "Immutable Scheduler image reference with @sha256 digest."
+
+  validation {
+    condition     = can(regex("@sha256:[0-9a-f]{64}$", var.scheduler_image))
+    error_message = "scheduler_image must use an immutable @sha256 digest."
+  }
+}
+
 variable "ttl_hours" {
   type        = number
   description = "Maximum hours before staging resources are eligible for cleanup."
@@ -92,6 +112,16 @@ variable "owner_task_id" {
   validation {
     condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$", var.owner_task_id))
     error_message = "owner_task_id must be a non-empty task identifier."
+  }
+}
+
+variable "release_profile" {
+  type        = string
+  description = "Release profile of the admitted manifest (ODP-CORE-OPS-RELEASE-PROFILE-001). Written to ODP_RELEASE_PROFILE so the staging runtime reports the scope it rehearses instead of defaulting to full; no default, so a missing profile fails closed."
+
+  validation {
+    condition     = can(regex("^(full|core-ops)$", var.release_profile))
+    error_message = "release_profile must be full or core-ops; dev-admin and unknown profiles never run in staging."
   }
 }
 

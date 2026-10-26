@@ -113,6 +113,56 @@ def _install_pgcrypto_stub(pgserver_module) -> None:
         )
 
 
+def _install_uuid_ossp_stub(pgserver_module) -> None:
+    """Provide ``uuid_generate_v4()`` offline, and nothing else.
+
+    ``infra/db/migrations/000001_baseline_canonical_schema.sql`` and its
+    successors declare ``CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`` and then
+    use ``uuid_generate_v4()`` as a column default. The bundled ``pgserver``
+    build ships no contrib extensions, so those migrations could not apply here
+    at all -- which is why ``tests/integration/test_assisted_listing_postgresql_runtime.py``
+    was the one file in the live-marked set that could not run even locally.
+
+    ``uuid_generate_v4()`` and the core ``gen_random_uuid()`` both return a
+    random version-4 UUID, so aliasing one to the other preserves the semantics
+    exactly rather than approximating them.
+
+    The stub deliberately defines *only* v4. uuid-ossp also offers v1 (time and
+    MAC derived), v3 and v5 (name derived) -- none of which a random generator
+    can stand in for. Leaving them undefined means any future use fails with
+    "function does not exist" rather than silently returning a random UUID where
+    a deterministic one was meant. No migration uses them today; this keeps that
+    true by construction.
+    """
+    from pathlib import Path
+
+    install_root = Path(pgserver_module.__file__).resolve().parent / "pginstall"
+    ext_dir = install_root / "share" / "postgresql" / "extension"
+    if not ext_dir.is_dir():  # pragma: no cover - defensive
+        return
+    control = ext_dir / "uuid-ossp.control"
+    if not control.exists():
+        control.write_text(
+            "comment = 'uuid-ossp stub (v4 only, aliased to core gen_random_uuid)'\n"
+            "default_version = '1.1'\n"
+            "relocatable = true\n",
+            encoding="utf-8",
+        )
+    body = ext_dir / "uuid-ossp--1.1.sql"
+    if not body.exists():
+        body.write_text(
+            "-- uuid-ossp stub: version 4 only.\n"
+            "-- gen_random_uuid() is core in PostgreSQL 13+ and returns a v4 UUID,\n"
+            "-- so this alias is exact. v1/v3/v5 are intentionally absent: a random\n"
+            "-- generator cannot stand in for time- or name-derived UUIDs, and a\n"
+            "-- missing function is a louder failure than a wrong value.\n"
+            "CREATE FUNCTION uuid_generate_v4() RETURNS uuid\n"
+            "    AS 'SELECT gen_random_uuid()'\n"
+            "    LANGUAGE SQL VOLATILE;\n",
+            encoding="utf-8",
+        )
+
+
 @dataclass
 class IntakePgServer:
     """A running PostgreSQL 16 admin endpoint that can mint scratch databases."""
@@ -164,9 +214,11 @@ def intake_pg_server():
         reason="No INTAKE_TEST_DATABASE_URL and pgserver (bundled PostgreSQL 16) unavailable",
     )
     import re
+    import shutil
     import tempfile
 
     _install_pgcrypto_stub(pgserver)
+    _install_uuid_ossp_stub(pgserver)
     data_dir = tempfile.mkdtemp(prefix="intake-pg16-")
     server = pgserver.get_server(data_dir)
     host = re.search(r"host=([^&]+)", server.get_uri()).group(1)
@@ -174,7 +226,23 @@ def intake_pg_server():
     try:
         yield IntakePgServer(psycopg=psycopg, admin_params=admin)
     finally:
-        server.cleanup()
+        # `server.cleanup()` stops PostgreSQL but leaves the data directory it
+        # was given. Each session therefore left ~54MB behind: a live host
+        # accumulated 132 `intake-pg16-*` directories totalling 6.9G, none of
+        # which any process still referenced.
+        #
+        # Removing it is also what keeps the leak bounded when this fixture
+        # does NOT get to finish. A worker killed mid-run (supersede, lease
+        # expiry) never reaches this block at all, and its pgserver -- which
+        # calls setsid(), so no process group reaches it -- outlives the run.
+        # Twelve such servers were still up after three days, and because the
+        # worktree pruner refuses any tree a live process references, each one
+        # also pinned its worktree against reclaim. Cleaning up on the paths we
+        # DO control keeps that failure rare rather than routine.
+        try:
+            server.cleanup()
+        finally:
+            shutil.rmtree(data_dir, ignore_errors=True)
 
 
 @dataclass
@@ -184,6 +252,35 @@ class IntakeDatabase:
 
     def connect(self, *, autocommit: bool = True, **overrides):
         return self.server.connect(self.dbname, autocommit=autocommit, **overrides)
+
+    def url(self, *, driver: str = "") -> str:
+        """Return this database's URL, for callers that need a URL not a socket.
+
+        The fixtures hand out connection parameters, but anything driven through
+        a URL -- ``PostgresEngine``, Alembic's ``sqlalchemy.url`` -- needs the
+        assembled form, and the two differ only by the driver in the scheme.
+        """
+
+        from urllib.parse import quote
+
+        params = self.server.admin_params
+        scheme = f"postgresql+{driver}" if driver else "postgresql"
+        user = quote(str(params.get("user") or "postgres"), safe="")
+        password = params.get("password")
+        credentials = (
+            user if password is None else f"{user}:{quote(str(password), safe='')}"
+        )
+        host = str(params.get("host") or "localhost")
+        if host.startswith("/"):
+            # A Unix socket directory is a path, so it cannot sit in the netloc.
+            # libpq takes it as a `host` query parameter instead, and the
+            # pgserver fallback always hands out one of these.
+            return (
+                f"{scheme}://{credentials}@/{self.dbname}?host={quote(host, safe='')}"
+            )
+        port = params.get("port")
+        netloc = host if port is None else f"{host}:{int(port)}"
+        return f"{scheme}://{credentials}@{netloc}/{self.dbname}"
 
     def apply_migration(self) -> None:
         with self.connect(autocommit=True) as conn:
@@ -253,3 +350,53 @@ def patch_synthetic_dns(request, monkeypatch):
         return original_resolve(host)
 
     monkeypatch.setattr(assisted_listing_retrieval, "_resolve_host", mock_resolve)
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--emgi-proposed-bundle",
+        default=None,
+        help="Explicit EMGI bundle root containing foundation/ and product/schemas.json.",
+    )
+
+
+@pytest.fixture(scope="module")
+def consumer_roundtrip_release(request, release):
+    """Use proposed schemas only for existing consumer-model compatibility samples.
+
+    The module's original release fixture still verifies vendored artifact hashes.
+    This test-only view is not a new pin: catalog, identity, checksums and runtime
+    stay untouched. Do not run exact-pin verify_release on the mixed view.
+    """
+    proposed = request.config.getoption("--emgi-proposed-bundle")
+    if proposed is None:
+        return release
+
+    from collections.abc import Mapping
+    from dataclasses import replace
+    from pathlib import Path
+
+    component = release.pin.release.type
+    if component == "foundation":
+        from packages.oday_data_contracts_client.release import FoundationRelease
+
+        expected_class = FoundationRelease
+    elif component == "product":
+        from packages.oday_data_product_contracts_client.release import ProductRelease
+
+        expected_class = ProductRelease
+    else:
+        pytest.fail(f"Unknown consumer release type: {component!r}")
+    if not isinstance(release, expected_class):
+        pytest.fail(f"{component}: expected {expected_class.__name__}")
+
+    if not proposed or not Path(proposed).is_dir():
+        pytest.fail(f"Proposed EMGI bundle root is not a directory: {proposed!r}")
+    schema_path = Path(proposed) / component / "schemas.json"
+    bundle = json.loads(schema_path.read_text(encoding="utf-8"))
+    schemas = bundle.get("schemas") if isinstance(bundle, Mapping) else None
+    if not isinstance(schemas, Mapping):
+        pytest.fail(f"{schema_path}: bundle has no 'schemas' mapping")
+
+    # Replace, never merge: schema_for must reject missing pinned schema paths.
+    return replace(release, schemas=schemas)

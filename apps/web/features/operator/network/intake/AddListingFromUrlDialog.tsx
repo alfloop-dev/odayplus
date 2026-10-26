@@ -15,14 +15,10 @@ import type { IntakeApiError } from "./intakeClient";
 //                browser; doing that here would let the UI claim a retrieval
 //                permission the backend has not granted).
 
-const HEAT_ZONE_OPTIONS = [
-  { id: "", label: "未指定" },
-  { id: "HZ-01", label: "HZ-01 信義松仁生活圈" },
-  { id: "HZ-02", label: "HZ-02 板橋府中商圈" },
-  { id: "HZ-03", label: "HZ-03 中壢中原學區" },
-  { id: "HZ-04", label: "HZ-04 大安和平住宅圈" },
-  { id: "HZ-05", label: "HZ-05 新莊副都心" },
-];
+export type IntakeHeatZoneOptions = {
+  state: "loading" | "ready" | "error";
+  options: readonly { id: string; label: string }[];
+};
 
 const URL_HINT = "請確認網址格式（需為 http(s):// 開頭的完整物件頁網址）。";
 
@@ -30,6 +26,7 @@ export function AddListingFromUrlDialog({
   busy,
   defaultHeatZoneId,
   error,
+  heatZoneOptions = { state: "loading", options: [] },
   onClose,
   onOpenExisting,
   onSubmit,
@@ -38,6 +35,7 @@ export function AddListingFromUrlDialog({
   busy: boolean;
   defaultHeatZoneId?: string;
   error: IntakeApiError | null;
+  heatZoneOptions?: IntakeHeatZoneOptions;
   onClose: () => void;
   onOpenExisting?: (intakeId: string) => void;
   onSubmit: (input: { url: string; heatZoneId: string }) => void | Promise<void>;
@@ -49,6 +47,13 @@ export function AddListingFromUrlDialog({
   const [submitting, setSubmitting] = useState(false);
   const submitLock = useRef(false);
 
+  // Only the current authenticated Network read supplies selectable zones.
+  // A stale/default ID is not a usable option after a failed or empty read.
+  const availableZones = heatZoneOptions.state === "ready" ? heatZoneOptions.options : [];
+  const selectedZone = availableZones.some((zone) => zone.id === heatZoneId) ? heatZoneId : "";
+  const zoneNote = heatZoneOptions.state === "loading" ? "區域選項載入中，可不指定區域送件。"
+    : heatZoneOptions.state === "error" ? "區域選項暫時無法取得，可不指定區域送件。"
+      : availableZones.length === 0 ? "目前沒有可選區域，可不指定區域送件。" : null;
   const trimmed = url.trim();
   const looksValid = useMemo(() => isHttpUrl(trimmed), [trimmed]);
 
@@ -69,7 +74,7 @@ export function AddListingFromUrlDialog({
     submitLock.current = true;
     setSubmitting(true);
     try {
-      await onSubmit({ url: trimmed, heatZoneId });
+      await onSubmit({ url: trimmed, heatZoneId: selectedZone });
     } finally {
       submitLock.current = false;
       setSubmitting(false);
@@ -143,17 +148,19 @@ export function AddListingFromUrlDialog({
             </label>
             <select
               className={styles.select}
+              aria-describedby={zoneNote ? "intake-area-note" : undefined}
               data-testid="intake-area-select"
+              disabled={heatZoneOptions.state !== "ready" || availableZones.length === 0}
               id="intake-area"
               onChange={(event) => setHeatZoneId(event.target.value)}
-              value={heatZoneId}
+              value={selectedZone}
             >
-              {HEAT_ZONE_OPTIONS.map((option) => (
-                <option key={option.id || "none"} value={option.id}>
-                  {option.label}
-                </option>
+              <option value="">未指定</option>
+              {availableZones.map((option) => (
+                <option key={option.id} value={option.id}>{option.label}</option>
               ))}
             </select>
+            {zoneNote ? <small className={styles.metaValue} data-testid="intake-area-note" id="intake-area-note" role="status">{zoneNote}</small> : null}
           </div>
           <div>
             <span className={styles.fieldLabel}>送件人</span>

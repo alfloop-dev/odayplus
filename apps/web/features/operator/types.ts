@@ -1,3 +1,9 @@
+import type { WorkflowRecord } from "./storeOpsWorkflowRecords";
+import type { OutcomeReviewRecord, ReplyReviewRecord } from "./storeOpsPersistedReviews";
+import type { NativeStoreSummary } from "./storeOpsNativeSummary";
+
+import type { NetworkListingReadResponse } from "@oday-plus/openapi-client";
+
 export const OPERATOR_ROLE_IDS = [
   "opsLead",
   "supportLead",
@@ -63,6 +69,9 @@ export const LISTING_STATUSES = [
 export type ListingStatus = (typeof LISTING_STATUSES)[number];
 
 export const CANDIDATE_STATUSES = [
+  "new",
+  "scored",
+  "SCORING_FAILED",
   "missingdata",
   "scoring",
   "wait",
@@ -169,20 +178,44 @@ export type NavWorkspace = {
 };
 
 export type StoreLightStatus = "green" | "yellow" | "red";
+export type StoreHealthAvailabilityState = "available" | "degraded" | "unavailable";
+export type StoreHealthSlotAvailability = {
+  state: StoreHealthAvailabilityState;
+  source: string | null;
+  reasonCode?: string | null;
+  message?: string | null;
+  recordIds?: string[];
+};
+export type StoreHealthAvailability = {
+  state: StoreHealthAvailabilityState;
+  complete: boolean;
+  lights: Record<"demand" | "operations" | "staffing" | "margin", StoreHealthSlotAvailability>;
+  riskScore: StoreHealthSlotAvailability;
+};
+export type StoreOpsHealthAvailability = {
+  state: StoreHealthAvailabilityState;
+  complete: boolean;
+  totalCount: number;
+  coveredCount: number;
+  unavailableCount: number;
+  warningCount: number;
+};
 
 export type Store = {
+  nativeSummary?: NativeStoreSummary;
   id: string;
   name: string;
   district: string;
   city: string;
   manager: string;
   lights: {
-    demand: StoreLightStatus;
-    operations: StoreLightStatus;
-    staffing: StoreLightStatus;
-    margin: StoreLightStatus;
+    demand: StoreLightStatus | null;
+    operations: StoreLightStatus | null;
+    staffing: StoreLightStatus | null;
+    margin: StoreLightStatus | null;
   };
-  riskScore: number;
+  riskScore: number | null;
+  healthAvailability?: StoreHealthAvailability;
 };
 
 export type Issue = {
@@ -201,6 +234,12 @@ export type Issue = {
   evidenceIds: string[];
   relatedApprovalId?: string;
   relatedGrowthId?: string;
+  /** Optional source-provided before/after comparison; absence is not success. */
+  outcomeMetrics?: Array<{ label: string; before: string; after: string }>;
+  /** Native append-only saved manual reviews; not measured effect or delivery proof. */
+  workflowRecords?: WorkflowRecord[];
+  outcomeReviews?: OutcomeReviewRecord[];
+  replyReviews?: ReplyReviewRecord[];
   summary: string;
 };
 
@@ -212,9 +251,24 @@ export type EvidenceItem = {
   sourceLabel: string;
   summary: string;
   polarity: EvidencePolarity;
-  confidence: number;
+  confidence: number | null;
   occurredAt: string;
   lockedReason?: string;
+  /** Saved CameraPurpose fields; a missing lock reason is not an access receipt. */
+  purpose?: string;
+  cameraLocation?: string;
+  timeWindow?: string;
+  retentionHours?: number;
+  /** Historical purpose receipt time, not an access grant or expiry. */
+  purposeRecordedAt?: string;
+  unlockedAt?: string;
+  /** Optional source-provided payment metric; never derived from confidence. */
+  paymentTrend?: {
+    failureRate: number;
+    baselineDeltaPp: number;
+    baselineRelativeValue?: number;
+    relativeValues: number[];
+  };
 };
 
 export type Segment = {
@@ -256,17 +310,38 @@ export type HeatZoneLens = "demand" | "fit" | "competition" | "cannibalization" 
 export type OperatorHeatZone = {
   id: string;
   label: string;
-  rank: number;
-  centroid: [number, number];
-  demandGap: number;
-  competitionIndex: number;
-  cannibalizationRisk: RiskLevel;
+  rank: number | null;
+  centroid: [number, number] | null;
+  demandGap: number | null;
+  competitionIndex: number | null;
+  cannibalizationRisk: RiskLevel | null;
   rentBand: string;
-  confidence: number;
+  confidence: number | null;
   recommendedLens: HeatZoneLens;
   reasons: string[];
   risks: string[];
   nextStep: string;
+  /** Recorded native HeatZone result; absent on the older operator projection. */
+  mapEvidence?: {
+    h3Index: string;
+    h3Resolution: number;
+    geometry: GeoJSON.Polygon | null;
+    score: number;
+    priorityRank: number;
+    state: "UNTOUCHED" | "PARTIALLY_ABSORBED" | "SATURATED" | "UNDER_REALIZED" | "STILL_EXPANDABLE" | "SUPPRESSED_LOW_CONFIDENCE";
+    confidence: number;
+    unmetDemandScore: number;
+    formatFitScore: number;
+    cannibalizationRisk: number;
+    rentFeasibility: number;
+    listingAvailability: number;
+    modelVersion: string;
+    featureVersion: string;
+    featureSnapshotTime: string;
+    predictionOriginTime: string;
+    lastScoredAt: string;
+    sourceSnapshotIds: string[];
+  };
 };
 
 export type ListingSource = {
@@ -280,15 +355,25 @@ export type ListingSource = {
 export type Listing = {
   id: string;
   sourceId: string;
-  heatZoneId: string;
+  heatZoneId: string | null;
   address: string;
   status: ListingStatus;
   rentPerMonth: number;
   areaPing: number;
-  geocodeConfidence: number;
+  geocodeConfidence: number | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  h3Index?: string | null;
   duplicateOfId?: string;
-  hardRuleFailures: string[];
+  /** Unknown checks must remain distinct from a recorded empty failure list. */
+  hardRuleFailures: NetworkListingReadResponse["hardRuleFailures"];
   candidateId?: string;
+  /** Actual producer revision; absent means versioned writes are unavailable. */
+  version?: number | null;
+  tenantId?: string | null;
+  mergedIntoId?: string | null;
+  hasLegalHold?: boolean | null;
+  legalHold?: boolean | null;
 };
 
 export type Candidate = {
@@ -297,13 +382,18 @@ export type Candidate = {
   heatZoneId: string;
   title: string;
   address: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  geocodeConfidence?: number | null;
+  h3Index?: string | null;
   status: CandidateStatus;
-  score: number;
-  recommendation: "GO" | "WAIT" | "REJECT";
-  modelVersion: string;
-  datasetSnapshotId: string;
+  score: number | null;
+  confidence?: number | null;
+  recommendation: "GO" | "WAIT" | "REJECT" | "INVESTIGATE" | null;
+  modelVersion: string | null;
+  datasetSnapshotId: string | null;
   missingData: string[];
-  reviewId?: string;
+  reviewId?: string | null;
 };
 
 export type SiteReview = {
@@ -317,6 +407,16 @@ export type SiteReview = {
   reasonRequired: boolean;
   reason?: string;
 };
+
+export type ConstraintClass =
+  | "CAPITAL"
+  | "LEASE"
+  | "CONSTRUCTION"
+  | "EQUIPMENT"
+  | "LABOUR"
+  | "COVERAGE"
+  | "DILUTION"
+  | "SEQUENCING";
 
 export type NetPlanDiagnostic = {
   violated_constraint: string;
@@ -347,6 +447,26 @@ export type NetPlanScenarioDetail = {
   solverVersion?: string;
   evidenceIds?: string[];
   selected?: boolean;
+  policy_id?: string;
+  policyId?: string;
+  policy_version?: string;
+  policyVersion?: string;
+  binding_constraints?: string[];
+  bindingConstraints?: string[];
+  modelledConstraintClasses: ConstraintClass[];
+  unmodelledConstraintClasses: ConstraintClass[];
+  modelled_constraint_classes: ConstraintClass[];
+  unmodelled_constraint_classes: ConstraintClass[];
+  // How the submit gate's policy splits the unmodelled set. Optional on the
+  // type because an older payload may omit it; a consumer that finds it absent
+  // must treat every unmodelled class as blocking rather than guessing.
+  blockedConstraintClasses?: ConstraintClass[];
+  acknowledgeableConstraintClasses?: ConstraintClass[];
+  disclosurePolicyVersionId?: string | null;
+  disclosureUndeclared?: boolean;
+  actions?: any[];
+  selected_actions?: any[];
+  dependencies?: any[];
 };
 
 export type RebalanceStore = {
@@ -383,6 +503,8 @@ export type RebalanceStore = {
   avmP50?: number;
   avmP90?: number;
   avmConf?: string;
+  avmQualityScoreStatus?: string;
+  avmQualityDisposition?: string;
   avmReserve?: string;
   avmModelVersion?: string;
   avmSnapshotId?: string;
@@ -412,6 +534,7 @@ export type RebalanceStore = {
     source: string;
   }>;
   netPlanScenarios?: NetPlanScenarioDetail[];
+  netPlanJob?: { id: string; completedAt: string } | null;
 };
 
 export type Approval = {

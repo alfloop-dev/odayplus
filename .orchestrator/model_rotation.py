@@ -5,24 +5,34 @@ idling when one 5-hour limit is hit.
 Self-contained and feature-flagged: only providers whose `antigravity` settings
 carry `model_rotation.enabled = true` are affected. Everything else is a no-op.
 
-State lives in `.orchestrator/runtime/antigravity_model_cooldown.json`, keyed by
-the shared account/profile rather than a worker alias.
+State lives in the canonical status root's
+`.orchestrator/runtime/antigravity_model_cooldown.json`, keyed by the shared
+account/profile rather than a worker alias. A legacy checkout-local state file
+is read once, under the canonical lock, and merged into that authority.
 
 Both the adapter (model selection at dispatch) and the supervisor (recording an
 exhausted pool on capacity/quota failure) call into this one module so their view
 of "which pool is active" can never diverge.
 """
+
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
+import os
 import re
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 # Antigravity/agy reset hint, e.g. "Resets in 2h21m32s." or "refresh in 40 minutes".
-_RESET_HMS = re.compile(r"resets?\s+in\s+(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?\s*(?:(\d+)\s*s)?", re.IGNORECASE)
+_RESET_HMS = re.compile(
+    r"resets?\s+in\s+(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?\s*(?:(\d+)\s*s)?", re.IGNORECASE
+)
 _RESET_MINUTES = re.compile(r"(?:refresh|resets?)\s+in\s+(\d+)\s*minutes?", re.IGNORECASE)
 
 
@@ -40,12 +50,44 @@ def parse_reset_seconds(text: str | None) -> int | None:
         return total or None
     return None
 
+
 UTC = UTC
-_STATE_PATH = Path(__file__).resolve().parent / "runtime" / "antigravity_model_cooldown.json"
-# `agy --model` takes the model ID from `agy models`, not its display label.
-# This was "Claude Sonnet 4.6 (Thinking)" -- the label -- so every quota
-# fallback dispatched an unresolvable model and the claude pool was dead.
-DEFAULT_FALLBACK_MODEL = "claude-sonnet-4-6"
+_STATE_FILENAME = "antigravity_model_cooldown.json"
+_LEGACY_STATE_PATH = Path(__file__).resolve().parent / "runtime" / _STATE_FILENAME
+
+
+def _canonical_state_path() -> Path:
+    """Return the cooldown authority for this process.
+
+    Supervisor-launched workers receive the canonical status root in their
+    environment. Keep the checkout-local path only as the no-environment
+    fallback for standalone development and as the one-time migration source.
+    ``ORCH_STATUS_ROOT`` has the same precedence as the rest of the
+    orchestrator status system; ``PANTHEON_STATUS_ROOT`` remains supported for
+    the existing worker contract.
+    """
+    raw_root = str(
+        os.environ.get("ORCH_STATUS_ROOT") or os.environ.get("PANTHEON_STATUS_ROOT") or ""
+    ).strip()
+    if not raw_root:
+        return _LEGACY_STATE_PATH
+    return (
+        Path(os.path.expanduser(raw_root)).resolve() / ".orchestrator" / "runtime" / _STATE_FILENAME
+    )
+
+
+# This remains a module-level compatibility seam for the existing supervisor
+# tests, which replace it with a per-test file. In production it stays equal to
+# the import-time canonical path while `_state_path()` also tracks a status-root
+# environment selected after module import.
+_DEFAULT_STATE_PATH = _canonical_state_path()
+_STATE_PATH = _DEFAULT_STATE_PATH
+_MIGRATION_MARKER_SUFFIX = ".legacy-migrated"
+# IDs, not display labels. Installed `agy models` receipt (2026-10-04):
+# support/handoffs/dev-automatic-deployment-20261004/agy-supported-model-compatibility.json
+# Explicit operator pins are NOT migrated by these source defaults.
+DEFAULT_FALLBACK_MODEL = "claude-sonnet-5-5-high"
+RETIRED_MODEL_IDS = frozenset({"claude-opus-4-6-thinking", "claude-sonnet-4-6"})
 
 POOLS = ("gemini", "claude")
 # Worker metadata keys: the pool/model a worker was ACTUALLY launched on. Quota
@@ -56,17 +98,29 @@ WORKER_POOL_KEY = "antigravity_model_pool"
 WORKER_MODEL_KEY = "antigravity_model"
 WORKER_MODEL_RISK_TIER_KEY = "antigravity_model_risk_tier"
 WORKER_MODEL_REASON_KEY = "antigravity_model_reason"
+DISPATCH_WAIT_KEY = "antigravity_dispatch_wait"
+
+
+class ModelCooldownWait(RuntimeError):
+    """Environmental pre-launch wait, not a quota failure or task defect."""
+
+    def __init__(self, model: str, pool: str, retry_at: datetime):
+        super().__init__(
+            f"Antigravity high-risk model {model!r} is in quota cooldown; "
+            "dispatch deferred, no standard-model downgrade."
+        )
+        self.metadata = {
+            "kind": "model_cooldown",
+            "model": model,
+            "pool": pool,
+            "retry_at": retry_at.isoformat().replace("+00:00", "Z"),
+        }
 
 DEFAULT_STANDARD_MODEL = "gemini-3.7-flash-high"
-# NOT a gemini pro id. `agy --model gemini-3.1-pro-high` is not honoured: the
-# CLI logs "Model ID gemini-3.1-pro-high not in local config, defaulting to
-# CCPA" and the trajectory records `gemini-pro-default` (MODEL_PLACEHOLDER_M16)
-# instead of the requested model -- i.e. every P0/P1 dispatch silently ran on
-# agy's own default rather than the pro tier we asked for. Measured
-# 2026-08-23 across 19 of 23 runs. `claude-opus-4-6-thinking` and
-# `gemini-3.7-flash-high` both round-trip intact (M26 / M298), so high-risk
-# work goes to the strongest id the account actually resolves.
-DEFAULT_HIGH_RISK_MODEL = "claude-opus-4-6-thinking"
+# Keep the existing standard tier; the current registry still supports it.
+# High-risk work requires an explicit supported high-reasoning Claude ID,
+# never an omitted --model or agy's implicit default.
+DEFAULT_HIGH_RISK_MODEL = "claude-opus-5-5-high"
 DEFAULT_HIGH_RISK_PRIORITIES = ("P0", "P1")
 DEFAULT_HIGH_RISK_KEYWORDS = (
     "core/",
@@ -86,6 +140,8 @@ DEFAULT_HIGH_RISK_KEYWORDS = (
     "temporal",
     "contract",
     "schema",
+    "workflow",
+    "iac",
 )
 DEFAULT_STANDARD_KEYWORDS = (
     "sidecar",
@@ -113,7 +169,7 @@ def pool_for_model(model: Any, default: str = "gemini") -> str:
     on a quota failure, so the pool always follows the id being launched.
     """
     value = str(model or "").strip().lower()
-    if value.startswith("claude-"):
+    if value.startswith(("claude-", "gpt-")):
         return "claude"
     return default
 
@@ -126,12 +182,38 @@ def _parse(ts: Any) -> datetime | None:
     if not ts:
         return None
     try:
-        return datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
     except (TypeError, ValueError):
         return None
+    # A hand-edited or old naive timestamp must not make a dispatch crash when
+    # compared with the aware UTC clock used by the supervisor.
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
-def _provider_antigravity_settings(config: dict[str, Any] | None, provider_id: str | None) -> dict[str, Any]:
+def has_dispatch_cooldown_wait(record: dict[str, Any]) -> bool:
+    """Recognize a durable pre-launch wait, including its due/reset tick.
+
+    Expiry is handled by the normal dispatch/retry path, not orphan pruning.
+    An arbitrary retry_backoff record must not gain this exemption.
+    """
+    wait = record.get(DISPATCH_WAIT_KEY)
+    if record.get("status") != "retry_backoff" or not isinstance(wait, dict):
+        return False
+    retry_at = _parse(wait.get("retry_at"))
+    return bool(
+        wait.get("kind") == "model_cooldown"
+        and str(wait.get("model") or "").strip()
+        and wait.get("pool") in POOLS
+        and retry_at is not None
+        and retry_at == _parse(record.get("next_retry_at"))
+    )
+
+
+def _provider_antigravity_settings(
+    config: dict[str, Any] | None, provider_id: str | None
+) -> dict[str, Any]:
     providers = (config or {}).get("providers", {}) or {}
     key = str(provider_id or "").strip() or "antigravity"
     provider = providers.get(key) or providers.get("antigravity") or {}
@@ -145,7 +227,11 @@ def cooldown_scope(config: dict[str, Any] | None, provider_id: str | None) -> st
     pid = str(provider_id or "").strip()
     provider = providers.get(pid) if isinstance(providers.get(pid), dict) else {}
     settings = _provider_antigravity_settings(config, pid)
-    explicit = provider.get("quota_group") or provider.get("account_group") or settings.get("account_group")
+    explicit = (
+        provider.get("quota_group")
+        or provider.get("account_group")
+        or settings.get("account_group")
+    )
     if explicit:
         return f"account:{str(explicit).strip().lower()}"
     profile = str(settings.get("config_home") or settings.get("home") or "").strip()
@@ -192,7 +278,7 @@ def task_model_decision(
     task: dict[str, Any] | None = None,
     reason: str | None = None,
 ) -> dict[str, str]:
-    """Choose the Gemini model for one dispatch from durable task risk signals."""
+    """Choose an explicit model for one dispatch from durable task risk signals."""
     policy = model_policy_config(config, provider_id)
     if not policy.get("enabled", True):
         return {"model": "", "risk_tier": "static", "reason": "model_policy_disabled"}
@@ -202,7 +288,7 @@ def task_model_decision(
     task_class = str(task.get("task_class") or "").strip().lower()
     corpus_parts = [
         str(task.get(key) or "")
-        for key in ("id", "title", "summary", "scope", "next")
+        for key in ("id", "title", "summary", "summary_zh", "scope", "next")
     ]
     corpus_parts.extend(str(item or "") for item in (task.get("artifacts") or []))
     corpus = " ".join(corpus_parts).casefold().replace("\\", "/")
@@ -231,14 +317,6 @@ def task_model_decision(
             "reason": f"review_reopened_{reopen_count}_time(s)",
         }
 
-    standard_keywords = [str(item).casefold() for item in policy.get("standard_task_keywords", []) if str(item)]
-    if any(keyword in corpus for keyword in standard_keywords):
-        return {
-            "model": str(policy.get("standard_model") or DEFAULT_STANDARD_MODEL).strip(),
-            "risk_tier": "standard",
-            "reason": "bounded_docs_or_lint",
-        }
-
     priority = str(task.get("priority") or "").strip().upper()
     high_priorities = {str(item).strip().upper() for item in policy.get("high_risk_priorities", [])}
     if priority and priority in high_priorities:
@@ -248,13 +326,25 @@ def task_model_decision(
             "reason": f"business_priority_{priority}",
         }
 
-    high_keywords = [str(item).casefold() for item in policy.get("high_risk_keywords", []) if str(item)]
+    high_keywords = [
+        str(item).casefold() for item in policy.get("high_risk_keywords", []) if str(item)
+    ]
     matched_keyword = next((keyword for keyword in high_keywords if keyword in corpus), None)
     if matched_keyword:
         return {
             "model": str(policy.get("high_risk_model") or DEFAULT_HIGH_RISK_MODEL).strip(),
             "risk_tier": "high",
             "reason": f"sensitive_scope:{matched_keyword}",
+        }
+
+    standard_keywords = [
+        str(item).casefold() for item in policy.get("standard_task_keywords", []) if str(item)
+    ]
+    if any(keyword in corpus for keyword in standard_keywords):
+        return {
+            "model": str(policy.get("standard_model") or DEFAULT_STANDARD_MODEL).strip(),
+            "risk_tier": "standard",
+            "reason": "bounded_docs_or_lint",
         }
 
     return {
@@ -270,22 +360,186 @@ def _primary_model(config: dict[str, Any] | None, provider_id: str | None) -> st
 
 
 def _fallback_model(config: dict[str, Any] | None, provider_id: str | None) -> str:
-    return str(rotation_config(config, provider_id).get("fallback_model") or DEFAULT_FALLBACK_MODEL).strip()
+    return str(
+        rotation_config(config, provider_id).get("fallback_model") or DEFAULT_FALLBACK_MODEL
+    ).strip()
+
+
+def _state_path() -> Path:
+    """Resolve the canonical path, retaining `_STATE_PATH` test overrides."""
+    configured = Path(_STATE_PATH)
+    if configured != _DEFAULT_STATE_PATH:
+        return configured
+    return _canonical_state_path()
+
+
+def canonical_state_path() -> Path:
+    """Public introspection helper for the durable cooldown authority."""
+    return _state_path()
+
+
+def _migration_marker_path(state_path: Path) -> Path:
+    return state_path.with_name(state_path.name + _MIGRATION_MARKER_SUFFIX)
+
+
+@contextmanager
+def _state_lock(state_path: Path) -> Iterator[None]:
+    """Lock the canonical state for a complete read/merge/write transaction."""
+    lock_path = state_path.with_name(f"{state_path.name}.lock")
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+
+def _read_state_file(path: Path) -> tuple[bool, bool, dict[str, Any]]:
+    """Read one state file, distinguishing absent from malformed state."""
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return False, True, {}
+    except (OSError, UnicodeError):
+        return True, False, {}
+    if not raw.strip():
+        return True, False, {}
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return True, False, {}
+    if not isinstance(data, dict):
+        return True, False, {}
+    return True, True, data
+
+
+def _write_state_unlocked(state_path: Path, state: dict[str, Any]) -> None:
+    """Atomically replace state; caller must hold `_state_lock`."""
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=state_path.parent, delete=False
+        ) as handle:
+            json.dump(state, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary_path = Path(handle.name)
+        os.replace(temporary_path, state_path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def _write_migration_marker_unlocked(state_path: Path) -> None:
+    """Atomically seal the one-way legacy read after canonical state exists."""
+    marker_path = _migration_marker_path(state_path)
+    marker_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=marker_path.parent, delete=False
+        ) as handle:
+            handle.write("canonical cooldown state owns migration\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary_path = Path(handle.name)
+        os.replace(temporary_path, marker_path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def _merge_legacy_state(canonical: dict[str, Any], legacy: dict[str, Any]) -> dict[str, Any]:
+    """Merge legacy entries while retaining the later expiry per pool."""
+    merged = dict(canonical)
+    for scope, legacy_entry in legacy.items():
+        if not isinstance(legacy_entry, dict):
+            continue
+        current_entry = merged.get(scope)
+        if not isinstance(current_entry, dict):
+            merged[scope] = dict(legacy_entry)
+            continue
+
+        combined = dict(current_entry)
+        for pool in POOLS:
+            field = f"{pool}_until"
+            legacy_until = _parse(legacy_entry.get(field))
+            current_until = _parse(current_entry.get(field))
+            if legacy_until is not None and (current_until is None or legacy_until > current_until):
+                combined[field] = legacy_entry[field]
+        for field in ("scope", "trigger_provider", "last_reason", "updated_at"):
+            if field not in combined and field in legacy_entry:
+                combined[field] = legacy_entry[field]
+        merged[scope] = combined
+    return merged
+
+
+def _load_unlocked(state_path: Path) -> dict[str, Any]:
+    """Load canonical state and perform the one-time legacy migration."""
+    canonical_exists, canonical_valid, canonical = _read_state_file(state_path)
+    # A malformed canonical file is fail-safe: do not resurrect a possibly
+    # stale checkout copy, and do not overwrite the evidence during a read.
+    if canonical_exists and not canonical_valid:
+        return {}
+
+    marker_path = _migration_marker_path(state_path)
+    if marker_path.exists():
+        # A marker is durable proof that the old checkout is no longer an
+        # authority. If the canonical payload was removed, fail safe to an
+        # empty state rather than resurrecting the old runtime copy.
+        return canonical
+
+    legacy_path = Path(_LEGACY_STATE_PATH)
+    legacy_exists = False
+    legacy_valid = True
+    legacy: dict[str, Any] = {}
+    if legacy_path.resolve() != state_path.resolve():
+        legacy_exists, legacy_valid, legacy = _read_state_file(legacy_path)
+
+    if not canonical_exists:
+        # Creating an empty canonical file seals migration even when no usable
+        # legacy state exists. A later-created checkout file must never become
+        # a second read authority.
+        canonical = legacy if legacy_exists and legacy_valid else {}
+    elif legacy_exists and legacy_valid:
+        canonical = _merge_legacy_state(canonical, legacy)
+
+    try:
+        _write_state_unlocked(state_path, canonical)
+        _write_migration_marker_unlocked(state_path)
+    except OSError:
+        # Keep reads fail-safe if a status root becomes temporarily unavailable;
+        # record_exhaustion will surface a write error rather than losing a
+        # requested cooldown silently.
+        pass
+    return canonical
 
 
 def _load() -> dict[str, Any]:
+    state_path = _state_path()
     try:
-        data = json.loads(_STATE_PATH.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except (FileNotFoundError, ValueError, OSError):
+        with _state_lock(state_path):
+            return _load_unlocked(state_path)
+    except OSError:
         return {}
 
 
 def _save(state: dict[str, Any]) -> None:
-    _STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = _STATE_PATH.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(_STATE_PATH)
+    state_path = _state_path()
+    with _state_lock(state_path):
+        _write_state_unlocked(state_path, state)
+        _write_migration_marker_unlocked(state_path)
 
 
 def _entry(state: dict[str, Any], provider_id: str) -> dict[str, Any]:
@@ -293,13 +547,24 @@ def _entry(state: dict[str, Any], provider_id: str) -> dict[str, Any]:
     return entry if isinstance(entry, dict) else {}
 
 
-def pool_cooling(config: dict[str, Any] | None, provider_id: str, pool: str, now: datetime | None = None) -> bool:
+def pool_cooling(
+    config: dict[str, Any] | None, provider_id: str, pool: str, now: datetime | None = None
+) -> bool:
     """Whether one pool is still inside its quota cooldown window."""
+    return pool_cooldown_until(config, provider_id, pool, now) is not None
+
+
+def pool_cooldown_until(
+    config: dict[str, Any] | None, provider_id: str, pool: str, now: datetime | None = None
+) -> datetime | None:
+    """Existing reset deadline for an exhausted pool; never create a new cooldown."""
     until = _parse(_entry(_load(), cooldown_scope(config, provider_id)).get(f"{pool}_until"))
-    return until is not None and _now(now) < until
+    return until if until is not None and _now(now) < until else None
 
 
-def active_pool(config: dict[str, Any] | None, provider_id: str, now: datetime | None = None) -> str | None:
+def active_pool(
+    config: dict[str, Any] | None, provider_id: str, now: datetime | None = None
+) -> str | None:
     """Return 'gemini', 'claude', or None (both pools currently cooling down)."""
     now = _now(now)
     entry = _entry(_load(), cooldown_scope(config, provider_id))
@@ -331,7 +596,11 @@ def resolve_active_selection(
     `pool` is None when rotation is disabled for the provider (legacy static
     model). Callers must persist `pool` on the worker record so a later quota
     failure is attributed to the pool the worker actually ran on."""
-    settings = settings if isinstance(settings, dict) else _provider_antigravity_settings(config, provider_id)
+    settings = (
+        settings
+        if isinstance(settings, dict)
+        else _provider_antigravity_settings(config, provider_id)
+    )
     decision = task_model_decision(config, provider_id, task=task, reason=reason)
     policy_model = str(decision.get("model") or "").strip()
     if not rotation_enabled(config, provider_id):
@@ -345,9 +614,17 @@ def resolve_active_selection(
         }
     pool = active_pool(config, str(provider_id or ""), now=now)
     if pool == "claude":
+        # Gemini quota exhaustion must not replace a high-risk Claude policy
+        # choice with the (possibly legacy/lower-tier) configured fallback.
+        fallback = _fallback_model(config, provider_id)
+        selected_model = (
+            policy_model
+            if decision.get("risk_tier") == "high" and pool_for_model(policy_model) == "claude"
+            else fallback
+        )
         return {
-            "pool": "claude",
-            "model": _fallback_model(config, provider_id),
+            "pool": pool_for_model(selected_model),
+            "model": selected_model,
             "rotating": True,
             "risk_tier": decision.get("risk_tier"),
             "selection_reason": f"quota_pool_fallback:{decision.get('reason')}",
@@ -355,12 +632,12 @@ def resolve_active_selection(
     # 'gemini' or None (both cooling; the probe still goes out on primary) ->
     # primary model (empty string == agy default Gemini).
     selected_model = policy_model or _primary_model(config, provider_id)
-    # The risk policy names the strongest id the account resolves, which for
-    # high-risk work lives in the claude pool. Reaching here means rotation did
-    # NOT grant claude -- either it is cooling, or both pools are -- so billing
-    # that id now would launch straight into the exhausted pool. Drop to the
-    # standard gemini id instead of the tier the policy asked for.
-    if pool_for_model(selected_model) == "claude" and pool_cooling(config, str(provider_id or ""), "claude", now):
+    # Do not launch into an exhausted Claude pool or mislabel a downgrade as
+    # high risk. Bounded standard work retains the existing Gemini fallback.
+    cooldown_until = pool_cooldown_until(config, str(provider_id or ""), "claude", now)
+    if pool_for_model(selected_model) == "claude" and cooldown_until is not None:
+        if decision.get("risk_tier") == "high":
+            raise ModelCooldownWait(selected_model, "claude", cooldown_until)
         selected_model = str(
             model_policy_config(config, provider_id).get("standard_model") or DEFAULT_STANDARD_MODEL
         ).strip()
@@ -373,7 +650,12 @@ def resolve_active_selection(
     }
 
 
-def resolve_active_model(config: dict[str, Any] | None, provider_id: str | None, settings: dict[str, Any] | None = None, now: datetime | None = None) -> str:
+def resolve_active_model(
+    config: dict[str, Any] | None,
+    provider_id: str | None,
+    settings: dict[str, Any] | None = None,
+    now: datetime | None = None,
+) -> str:
     """Model string for `agy --model`. '' means agy default (Gemini).
 
     When rotation is disabled, preserve legacy behaviour: return the static
@@ -381,7 +663,9 @@ def resolve_active_model(config: dict[str, Any] | None, provider_id: str | None,
     return str(resolve_active_selection(config, provider_id, settings, now=now).get("model") or "")
 
 
-def fallback_pool_available(config: dict[str, Any] | None, provider_id: str | None, now: datetime | None = None) -> bool:
+def fallback_pool_available(
+    config: dict[str, Any] | None, provider_id: str | None, now: datetime | None = None
+) -> bool:
     """Whether a rotating provider still has a pool available for redispatch."""
     return bool(
         rotation_enabled(config, provider_id)
@@ -404,7 +688,15 @@ def worker_dispatched_pool(worker: dict[str, Any] | None) -> str | None:
     return normalize_pool(worker.get(WORKER_POOL_KEY))
 
 
-def record_exhaustion(config: dict[str, Any] | None, provider_id: str | None, cooldown_seconds: int, *, reason: str | None = None, pool: str | None = None, now: datetime | None = None) -> dict[str, Any]:
+def record_exhaustion(
+    config: dict[str, Any] | None,
+    provider_id: str | None,
+    cooldown_seconds: int,
+    *,
+    reason: str | None = None,
+    pool: str | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
     """Mark the pool a failed worker was DISPATCHED ON as exhausted for `cooldown_seconds`.
 
     `pool` must be the immutable dispatch-time pool from the worker record.
@@ -424,22 +716,31 @@ def record_exhaustion(config: dict[str, Any] | None, provider_id: str | None, co
     if inferred:
         pool = active_pool(config, pid, now=now)
     if pool is None:
-        return {"exhausted_pool": None, "next_pool": None, "both_exhausted": True,
-                "message": f"{pid}: both Gemini and Claude/GPT pools already cooling."}
+        return {
+            "exhausted_pool": None,
+            "next_pool": None,
+            "both_exhausted": True,
+            "message": f"{pid}: both Gemini and Claude/GPT pools already cooling.",
+        }
     until = (now.replace(microsecond=0)).timestamp() + max(60, int(cooldown_seconds or 900))
     until_iso = datetime.fromtimestamp(until, tz=UTC).isoformat().replace("+00:00", "Z")
-    state = _load()
-    entry = dict(_entry(state, scope))
-    if pool == "gemini":
-        entry["gemini_until"] = until_iso
-    else:
-        entry["claude_until"] = until_iso
-    entry["last_reason"] = (str(reason or "").strip()[:200]) or entry.get("last_reason")
-    entry["updated_at"] = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    entry["scope"] = scope
-    entry["trigger_provider"] = pid
-    state[scope] = entry
-    _save(state)
+    state_path = _state_path()
+    with _state_lock(state_path):
+        # Reload while holding the canonical lock so concurrent quota failures
+        # update different pool/scope fields instead of losing one another.
+        state = _load_unlocked(state_path)
+        entry = dict(_entry(state, scope))
+        if pool == "gemini":
+            entry["gemini_until"] = until_iso
+        else:
+            entry["claude_until"] = until_iso
+        entry["last_reason"] = (str(reason or "").strip()[:200]) or entry.get("last_reason")
+        entry["updated_at"] = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        entry["scope"] = scope
+        entry["trigger_provider"] = pid
+        state[scope] = entry
+        _write_state_unlocked(state_path, state)
+        _write_migration_marker_unlocked(state_path)
     next_pool = active_pool(config, pid, now=now)
     both = next_pool is None
     return {
@@ -463,7 +764,8 @@ def status(provider_id: str | None = None) -> dict[str, Any]:
         if direct:
             return {pid: direct}
         matches = [
-            entry for entry in state.values()
+            entry
+            for entry in state.values()
             if isinstance(entry, dict) and str(entry.get("trigger_provider") or "") == pid
         ]
         return {pid: matches[-1] if matches else {}}

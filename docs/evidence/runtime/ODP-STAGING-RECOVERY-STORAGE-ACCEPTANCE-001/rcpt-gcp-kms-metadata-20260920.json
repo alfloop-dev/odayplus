@@ -1,0 +1,34 @@
+{
+  "receipt_id": "RCPT-GCP-KMS-METADATA-20260920",
+  "name": "admin-kms-metadata",
+  "started_at_utc": "2026-09-20T06:53:16.710155+00:00",
+  "duration_seconds": 2.106,
+  "command": "gcloud --quiet --account=admin@dev.cctech-support.com kms keys describe oday-staging-runtime --keyring=oday-staging-runtime --location=asia-east1 --project=odayplus-runtime-20260825 '--format=json(name,purpose,primary.state,rotationPeriod,nextRotationTime)'",
+  "argv": [
+    "gcloud",
+    "--quiet",
+    "--account=admin@dev.cctech-support.com",
+    "kms",
+    "keys",
+    "describe",
+    "oday-staging-runtime",
+    "--keyring=oday-staging-runtime",
+    "--location=asia-east1",
+    "--project=odayplus-runtime-20260825",
+    "--format=json(name,purpose,primary.state,rotationPeriod,nextRotationTime)"
+  ],
+  "exit_code": 0,
+  "stdout": {
+    "name": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime",
+    "nextRotationTime": "2026-11-25T08:29:35.629640Z",
+    "primary": {
+      "state": "ENABLED"
+    },
+    "purpose": "ENCRYPT_DECRYPT",
+    "rotationPeriod": "7776000s"
+  },
+  "stderr": "",
+  "source_path": "/tmp/odp-recovery-readback-audit-20260920/post-login/admin-kms-metadata.json",
+  "source_sha256": "d3bd138a1e2126ae8597766412f1ac3a8398159f9d84c995f31e420185c0f04e",
+  "scope": "Read-only KMS metadata; explicit admin account; no object/secret contents or IAM changes"
+}

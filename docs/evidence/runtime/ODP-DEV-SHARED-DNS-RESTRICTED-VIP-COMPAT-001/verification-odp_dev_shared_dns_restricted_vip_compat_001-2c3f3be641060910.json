@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "kind": "verification_receipt",
+  "task_id": "ODP-DEV-SHARED-DNS-RESTRICTED-VIP-COMPAT-001",
+  "head_sha": "b42e50aead9c8d22dcd729f3549846cd515b476f",
+  "command": "terraform -chdir=infra/terraform/dev_connector_egress test -no-color",
+  "command_audit": {
+    "command": "terraform -chdir=infra/terraform/dev_connector_egress test -no-color",
+    "ok": true,
+    "violations": [],
+    "details": [],
+    "runner": null
+  },
+  "runner": null,
+  "selection": {
+    "scope": "suite",
+    "items": [],
+    "fingerprint": "846541716505fa057a717f7f527859d2"
+  },
+  "exit_code": 0,
+  "signal": null,
+  "timed_out": false,
+  "outcome": "passed",
+  "passed": true,
+  "duration_seconds": 7.173,
+  "started_at": "2026-10-04T11:12:18Z",
+  "finished_at": "2026-10-04T11:12:26Z",
+  "recorded_at": "2026-10-04T11:12:26Z",
+  "run_kind": "baseline",
+  "attempt": 1,
+  "retry_reason": null,
+  "agent": "Pi",
+  "run_id": "pi-20261004T110247Z-23b900ed",
+  "produced_by": "registered-source-only-offline-verification",
+  "output_tail": "tests/boundary.tftest.hcl... in progress\n  run \"default_noop\"... pass\n  run \"shared_dns_only\"... pass\n  run \"scoped_protection\"... pass\n  run \"reject_staging\"... pass\n  run \"reject_production\"... pass\n  run \"reject_wrong_project\"... pass\n  run \"reject_wrong_region\"... pass\n  run \"reject_wrong_network\"... pass\n  run \"reject_connector_uri\"... pass\n  run \"reject_other_connector\"... pass\n  run \"reject_widened_connector_cidr\"... pass\n  run \"reject_malformed_sql\"... pass\n  run \"reject_broad_sql\"... pass\n  run \"reject_wrong_sql\"... pass\n  run \"reject_malformed_staging_sql\"... pass\n  run \"reject_broad_staging_sql\"... pass\n  run \"reject_wrong_staging_sql\"... pass\n  run \"reject_old_private_google_scope\"... pass\n  run \"reject_widened_google_scope\"... pass\n  run \"reject_unreviewed_dns\"... pass\n  run \"reject_connector_local_dns_claim\"... pass\n  run \"reject_firewall_without_dns\"... pass\n  run \"reject_unreviewed_connector_scope\"... pass\n  run \"reject_live_connector_mismatch\"... pass\n  run \"reject_live_cidr_drift\"... pass\n  run \"reject_not_ready\"... pass\ntests/boundary.tftest.hcl... tearing down\ntests/boundary.tftest.hcl... pass\n\nSuccess! 26 passed, 0 failed.\n",
+  "receipt_id": "2c3f3be641060910"
+}

@@ -14,11 +14,13 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     # ML
     "numpy>=2.0",
+    "pandas>=2.0,<3",
+    "scipy>=1.15,<2",
     "scikit-learn>=1.5",
     "statsmodels>=0.14",
     # Solver / geospatial
     "h3>=4.5.0",
-    "ortools>=9.15.6755",
+    "ortools>=9.15.6755,<9.16",
     # Data
     "duckdb>=1.0",
     "dlt[postgres]>=1.20,<2",
@@ -29,20 +31,28 @@ dependencies = [
     # HTTP client for the live listing-feed adapter (runtime code path).
     "httpx>=0.27",
     # OIDC/JWKS verification for production identity-provider access tokens.
-    "cryptography>=45,<49",
+    "cryptography>=50.0.1,<51",
+    # Argon2id password hashing (ODP-WEB-PASSWORD-FIRST-AUTH-CONTRACT §6.1).
+    "argon2-cffi>=23.1",
+    # Foreground GitHub environment secret binding; standard libsodium sealed boxes.
+    "PyNaCl>=1.6,<2",
     "mlflow>=3.7,<4",
     "catboost>=1.2.8,<2",
     "lightgbm>=4.6,<5",
     "statsforecast>=2,<3",
     "mlforecast>=1,<2",
     "lifelines>=0.30,<1",
-    "cvxpy>=1.7,<2",
+    # OR-Tools 9.15 bundles HiGHS 1.12. Different libhighs SONAMEs
+    # collide in one process; this complete solver profile is tested in both
+    # import orders with actual CP-SAT and CVXPY/HiGHS integer models.
+    "cvxpy>=1.7,<1.8",
+    "highspy==1.12.0",
     "pyomo>=6.9,<7",
     "great-expectations>=1.8,<2",
-    "evidently>=0.7,<1",
     "dagster>=1.12,<2",
     "optuna>=4.9,<5",
     "pymoo>=0.6.1,<0.7",
+    "reportlab>=5.0.1,<6",
 ]
 
 [dependency-groups]
@@ -54,6 +64,7 @@ dev = [
     "pytest>=8",
     "pytest-xdist>=3.6",
     "ruff>=0.6",
+    "pypdf>=6.20,<7",
 ]
 
 # This repo is run as a set of scripts/services, not built as a distributable
@@ -86,6 +97,25 @@ testpaths = [
     "apps",
     "shared",
     "models",
+    "infra",
+]
+# `norecursedirs` replaces pytest's default list rather than extending it, so the
+# defaults are repeated here verbatim; dropping them would let collection descend
+# into `.git`, `build`, `dist` and friends. The one addition is the orchestrator's
+# source-doc cache: it is a local-only checkout of files from other commits (see
+# `.git/info/exclude`), and now that `infra` is collected it holds a second
+# `test_ephemeral_staging.py`, which pytest rejects as a duplicate module name.
+norecursedirs = [
+    "*.egg",
+    ".*",
+    "_darcs",
+    "build",
+    "CVS",
+    "dist",
+    "node_modules",
+    "venv",
+    "{arch}",
+    ".orchestrator/source-doc-cache",
 ]
 python_files = ["test_*.py"]
 addopts = "-q"
@@ -93,4 +123,5 @@ pythonpath = ["."]
 markers = [
     "requires_live_env: test needs a live multi-repo / CLI / local-path environment and is excluded from CI (run with -m 'not requires_live_env')",
     "performance: wall-clock SLO measurement that must own its runner; excluded from the shared product suite and enforced by the dedicated CI performance-gate job (run with -m performance)",
+    "requires_postgis: test needs PostGIS, which the bundled pgserver build does not ship and which cannot be stubbed faithfully (geometry types and spatial predicates have no core equivalent); excluded from the database job until a PostGIS-enabled service container exists",
 ]

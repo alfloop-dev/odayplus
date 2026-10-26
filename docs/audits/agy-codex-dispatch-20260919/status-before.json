@@ -1,0 +1,406 @@
+{
+  "observed_at": "2026-09-19T13:55:11.657462+00:00",
+  "canonical_updated_at": "2026-09-18T11:30:42Z",
+  "open_count": 18,
+  "status_counts": {
+    "todo": 10,
+    "blocked": 8
+  },
+  "supervisor_pid_alive": true,
+  "ready_dispatcher_enabled": false,
+  "active_workers": [],
+  "worker_worktree_lease_blocks": {},
+  "tasks": [
+    {
+      "id": "HUMAN-OSS-LEGAL-APPROVAL-001",
+      "title": "逐一決定每個資料來源與 OSS 的許可及義務",
+      "status": "todo",
+      "owner": "Human/Ops",
+      "reviewer": "Claude2",
+      "non_dispatchable": null,
+      "pr_url": null,
+      "unmet_dependencies": [
+        {
+          "id": "XR-EXT-OSS-FINAL-AUDIT-001",
+          "source": "active",
+          "status": "blocked"
+        }
+      ],
+      "category": "外部來源",
+      "remaining_work": "逐來源、精確資料集許可及義務收據未完成，結構化依賴 XR final audit。既有 D01–D14 方向與 LGPL 四案決定不是待重問項目。"
+    },
+    {
+      "id": "XR-SOURCE-APPROVAL-ACTIVATION-001",
+      "title": "依逐來源許可決定啟用自動更新，未核准來源保持關閉",
+      "status": "todo",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "non_dispatchable": null,
+      "pr_url": null,
+      "unmet_dependencies": [
+        {
+          "id": "HUMAN-OSS-LEGAL-APPROVAL-001",
+          "source": "active",
+          "status": "todo"
+        }
+      ],
+      "category": "外部來源",
+      "remaining_work": "等待逐來源有效收據，之後才執行對應 enabled/receipt 設定及驗證；尚未啟用。"
+    },
+    {
+      "id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "title": "建立 ephemeral staging 並完成全套 release rehearsal",
+      "status": "blocked",
+      "owner": "Antigravity5",
+      "reviewer": "Claude",
+      "non_dispatchable": true,
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1014",
+      "unmet_dependencies": [
+        {
+          "id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "source": "active",
+          "status": "blocked"
+        },
+        {
+          "id": "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
+          "source": "archive",
+          "status": "superseded"
+        }
+      ],
+      "category": "部署",
+      "remaining_work": "等待 dev live rollout；仍依賴已 superseded 的 recovery-bundle task，需裁定正確承接關係；PR #1014 現有合併衝突。OAuth 關閉已定案，不是此項當前阻礙。"
+    },
+    {
+      "id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+      "title": "執行 production 0% green 驗證與 100% blue-green 切換",
+      "status": "todo",
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "non_dispatchable": true,
+      "pr_url": null,
+      "unmet_dependencies": [
+        {
+          "id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+          "source": "active",
+          "status": "blocked"
+        },
+        {
+          "id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+          "source": "active",
+          "status": "blocked"
+        }
+      ],
+      "category": "部署",
+      "remaining_work": "等待 staging 與 bootstrap；production runtime release path 已完成。真實 production 藍綠切換仍未執行。"
+    },
+    {
+      "id": "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001",
+      "title": "完成 production watch、staging cleanup 與 release archive",
+      "status": "todo",
+      "owner": "Antigravity5",
+      "reviewer": "Claude",
+      "non_dispatchable": true,
+      "pr_url": null,
+      "unmet_dependencies": [
+        {
+          "id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+          "source": "active",
+          "status": "todo"
+        }
+      ],
+      "category": "部署",
+      "remaining_work": "等待 production rollout，才能做已定案的 30 分鐘觀察、回滾判定及收尾。"
+    },
+    {
+      "id": "HUMAN-GCP-WEB-OAUTH-CLIENTS-001",
+      "title": "選用功能：Google OAuth 未啟用（帳密登入已定案）",
+      "status": "todo",
+      "owner": "Human/Ops",
+      "reviewer": "Codex",
+      "non_dispatchable": true,
+      "pr_url": null,
+      "unmet_dependencies": [],
+      "category": "非當前必做",
+      "remaining_work": "Google OAuth 已關閉、採本地密碼模式；保留待未來啟用，不阻擋目前基礎部署。"
+    },
+    {
+      "id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+      "title": "以真實 artifact 完成 dev live rollout 並取代 false-done 前提",
+      "status": "blocked",
+      "owner": "Antigravity2",
+      "reviewer": "Claude",
+      "non_dispatchable": false,
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1107",
+      "unmet_dependencies": [
+        {
+          "id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+          "source": "active",
+          "status": "blocked"
+        }
+      ],
+      "category": "部署",
+      "remaining_work": "真實 dev 部署及 live 證據尚未完成；bootstrap 未結案。9/18 調查另指出 candidate/registry 對齊、gate-0/1/4 收據與未建任務的 gate 引用。四案 LGPL 決定已記錄，不應重問；外部核准讀回及內容雜湊仍缺，且未解除其他 gate。"
+    },
+    {
+      "id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+      "title": "補齊 ephemeral staging 的受治理 foundation 與 durable state",
+      "status": "todo",
+      "owner": "Antigravity2",
+      "reviewer": "Claude",
+      "non_dispatchable": null,
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1046",
+      "unmet_dependencies": [],
+      "category": "部署",
+      "remaining_work": "已核准路線 (c)，9/18 續辦核准已消耗：依 candidate 結構把 module 檔案納入 contract digest/proof source，恢復測試，對新 head 重跑並同步收據。P0-2 已撤銷，不應再卡同一裁決；P0-1、P1-3 尚須修。現為 todo，沒有未滿足的結構化前置任務，但全域派工關閉。"
+    },
+    {
+      "id": "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+      "title": "產生可驗證的 EMGI masked release snapshot artifact",
+      "status": "blocked",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "non_dispatchable": null,
+      "pr_url": "https://github.com/alfloop-dev/oday-data-platform/pull/63",
+      "unmet_dependencies": [
+        {
+          "id": "XR-SOURCE-APPROVAL-ACTIVATION-001",
+          "source": "active",
+          "status": "todo"
+        }
+      ],
+      "category": "外部來源",
+      "remaining_work": "尚缺 8 類真實 retained raw、generation/SHA256/讀回，再產 masked release。9/17 任務內 GCS 實測記錄顯示目標 bucket 為空；本次未重新查雲端。來源工程已合併，但 capture→compose→export→GCS retention 的實際執行沒有獨立承接任務；目前另等待 source activation。"
+    },
+    {
+      "id": "ODP-STAGING-STATE-PLAN-QUARANTINE-CLEANUP-001",
+      "title": "清理 staging state bucket 中受 retention 隔離的 non-state plan object",
+      "status": "todo",
+      "owner": "Human/Ops",
+      "reviewer": "Codex2",
+      "non_dispatchable": true,
+      "pr_url": null,
+      "unmet_dependencies": [],
+      "category": "排程未到期",
+      "remaining_work": "既有排程最早 2026-09-26T09:24:24Z 清理；9/19 尚未到期，不阻擋目前部署。本次只核對任務排程，未重新讀取雲端 retention policy。"
+    },
+    {
+      "id": "ODP-NFR-RUNTIME-EVIDENCE-001",
+      "title": "在可信 live rollout 後驗證 SHARED-008 與 PERF／BATCH／AVAIL／RPO",
+      "status": "todo",
+      "owner": "Antigravity3",
+      "reviewer": "Claude",
+      "non_dispatchable": null,
+      "pr_url": null,
+      "unmet_dependencies": [
+        {
+          "id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "source": "active",
+          "status": "blocked"
+        }
+      ],
+      "category": "驗收收尾",
+      "remaining_work": "等待 dev live 環境，才能取得效能、批次、可用性與復原相關真實 runtime 證據。"
+    },
+    {
+      "id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+      "title": "重跑 production-path 證據並關閉 ODP 20 項 structural remediation ledger",
+      "status": "todo",
+      "owner": "Antigravity5",
+      "reviewer": "Claude",
+      "non_dispatchable": null,
+      "pr_url": null,
+      "unmet_dependencies": [
+        {
+          "id": "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+          "source": "archive",
+          "status": "blocked"
+        },
+        {
+          "id": "ODP-NFR-RUNTIME-EVIDENCE-001",
+          "source": "active",
+          "status": "todo"
+        }
+      ],
+      "category": "驗收收尾",
+      "remaining_work": "等待 NFR；另依賴已封存但狀態仍 blocked 的 merge-queue disposition audit。Nullable 已完成，不應繼續列為阻礙。"
+    },
+    {
+      "id": "HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001",
+      "title": "裁決六項仍未關閉的原始需求／資料缺口",
+      "status": "todo",
+      "owner": "Human/Ops",
+      "reviewer": "Claude2",
+      "non_dispatchable": true,
+      "pr_url": null,
+      "unmet_dependencies": [],
+      "category": "缺口彙整",
+      "remaining_work": "H03/H04/H05/H07 彙整任務，與各功能任務重疊的是追蹤責任，不是新增一套實作。文字仍提已完成的 CDC/Nullable，需更新。"
+    },
+    {
+      "id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+      "title": "歷史驗收續辦：ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+      "status": "blocked",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "non_dispatchable": false,
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1314",
+      "unmet_dependencies": [],
+      "category": "部署",
+      "remaining_work": "更正 production authority 證據來源、撤回不適當 supersedes 宣稱、清理被稽核指出無法成立的驗證收據，再送審。已存在的資源及 PR #1338 參數不得重做或被覆蓋。"
+    },
+    {
+      "id": "XR-EXT-OSS-FINAL-AUDIT-001",
+      "title": "歷史驗收續辦：XR-EXT-OSS-FINAL-AUDIT-001",
+      "status": "blocked",
+      "owner": "Antigravity4",
+      "reviewer": "Claude",
+      "non_dispatchable": false,
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1312",
+      "unmet_dependencies": [],
+      "category": "外部來源",
+      "remaining_work": "補真實 DB 快照、歷史對照、runtime image/Secret 與網路流量證據；依 9/17 稽核處理無法由 runner 產生的收據、撤回相關宣稱並真實重跑。原技術稽核與 live 部署/來源核准要求互相等待，需釐清驗收邊界。"
+    },
+    {
+      "id": "ODP-BRAND-TRANSFER-IMPLEMENTATION-001",
+      "title": "實作真實品牌轉移觀測、freshness 與 SiteScore 消費",
+      "status": "blocked",
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "non_dispatchable": true,
+      "pr_url": null,
+      "unmet_dependencies": [],
+      "category": "業務功能",
+      "remaining_work": "內部 hashed consumer lineage 路徑存在。尚缺資料範圍/具名責任者、跨品牌使用範圍、轉移率分母與期間及品牌分類；brand_type 寫死/同步覆蓋、SiteScore 輸入與舊合成 view 仍有工程缺口。"
+    },
+    {
+      "id": "ODP-FORMAT-CONVERSION-IMPLEMENTATION-001",
+      "title": "實作店型轉換事件、停業損失及財務模擬",
+      "status": "blocked",
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "non_dispatchable": true,
+      "pr_url": null,
+      "unmet_dependencies": [],
+      "category": "業務功能",
+      "remaining_work": "已決定可用未來規劃事件，無須等待不存在的歷史轉型資料；仍缺規劃店點/店型路徑及停業、營收基準、Capex、殘值、爬坡等業務定義。"
+    },
+    {
+      "id": "ODP-NET002-LEASE-IMPLEMENTATION-001",
+      "title": "將真實租約與候選檔期接入雙求解器硬限制",
+      "status": "blocked",
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "non_dispatchable": true,
+      "pr_url": null,
+      "unmet_dependencies": [],
+      "category": "業務功能",
+      "remaining_work": "PDF/Excel 租約擷取路徑及 3–5 筆試點方向已定，仍缺實際試點擷取的 12 項欄位與 4 個具名業務角色；試點不得宣稱全台租約完成。"
+    }
+  ],
+  "completed_since_20260913_snapshot": [
+    {
+      "id": "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+      "title": "原子切換六個 canonical model 的 nullable measurement semantics",
+      "status": "done",
+      "terminal_outcome": "completed",
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1327",
+      "dependency_satisfied": true
+    },
+    {
+      "id": "ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001",
+      "title": "依確認來源實作 scoped CDC、checkpoint 與刪除傳播",
+      "status": "done",
+      "terminal_outcome": "completed",
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1340",
+      "dependency_satisfied": true
+    },
+    {
+      "id": "ODP-ORCH-QUOTA-RECOVERY-STATE-001",
+      "title": "修正 quota 解除被舊狀態復活及帳號 cooldown 殘留",
+      "status": "done",
+      "terminal_outcome": "completed",
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1305",
+      "dependency_satisfied": true
+    },
+    {
+      "id": "ODP-ORCH-MERGED-REVIEW-SUBMISSION-001",
+      "title": "修復已合併PR的精確版本送審接續",
+      "status": "done",
+      "terminal_outcome": "completed",
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1325",
+      "dependency_satisfied": true
+    },
+    {
+      "id": "ODP-ORCH-QUOTA-FENCE-HANDOFF-001",
+      "title": "修復 quota 同帳號停派後的修改保全與續接",
+      "status": "done",
+      "terminal_outcome": "completed",
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1326",
+      "dependency_satisfied": true
+    },
+    {
+      "id": "DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001",
+      "title": "接手MOF／RIS局部修正並完成公開來源實測",
+      "status": "done",
+      "terminal_outcome": "completed",
+      "pr_url": "https://github.com/alfloop-dev/oday-data-platform/pull/67",
+      "dependency_satisfied": true
+    },
+    {
+      "id": "DPF-SOURCE-SA-SD-BASELINE-001",
+      "title": "納入外部來源調查與 SA／SD 設計基線",
+      "status": "done",
+      "terminal_outcome": "completed",
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1332",
+      "dependency_satisfied": true
+    },
+    {
+      "id": "DPF-OFFICIAL-SOURCE-ENDPOINT-INTEGRATION-001",
+      "title": "完成CWA／MOI租賃／NLSC真實來源接入",
+      "status": "done",
+      "terminal_outcome": "completed",
+      "pr_url": "https://github.com/alfloop-dev/oday-data-platform/pull/72",
+      "dependency_satisfied": true
+    },
+    {
+      "id": "DPF-TRANSPORT-POI-RELEASE-INTEGRATION-001",
+      "title": "完成OSM／TDX與開放POI真實release接入",
+      "status": "done",
+      "terminal_outcome": "completed",
+      "pr_url": "https://github.com/alfloop-dev/oday-data-platform/pull/71",
+      "dependency_satisfied": true
+    },
+    {
+      "id": "DPF-LISTING-PRODUCTION-ASSET-INTEGRATION-001",
+      "title": "將刊登production asset接到真實來源channel",
+      "status": "done",
+      "terminal_outcome": "completed",
+      "pr_url": "https://github.com/alfloop-dev/oday-data-platform/pull/70",
+      "dependency_satisfied": true
+    },
+    {
+      "id": "DPF-MOBILITY-PRODUCTION-ASSET-INTEGRATION-001",
+      "title": "將observed mobility接到真實聚合資料feed",
+      "status": "done",
+      "terminal_outcome": "completed",
+      "pr_url": "https://github.com/alfloop-dev/oday-data-platform/pull/73",
+      "dependency_satisfied": true
+    },
+    {
+      "id": "DPF-ACQUISITION-RETENTION-BRIDGE-001",
+      "title": "銜接擷取證據與受治理raw retention",
+      "status": "done",
+      "terminal_outcome": "completed",
+      "pr_url": "https://github.com/alfloop-dev/oday-data-platform/pull/68",
+      "dependency_satisfied": true
+    },
+    {
+      "id": "DPF-SITE-CONTEXT-REAL-COMPONENTS-001",
+      "title": "將site market context接到真實component manifests",
+      "status": "done",
+      "terminal_outcome": "completed",
+      "pr_url": "https://github.com/alfloop-dev/oday-data-platform/pull/69",
+      "dependency_satisfied": true
+    }
+  ]
+}

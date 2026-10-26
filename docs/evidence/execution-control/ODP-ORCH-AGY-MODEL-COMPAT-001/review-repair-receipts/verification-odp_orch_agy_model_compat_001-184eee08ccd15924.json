@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "kind": "verification_receipt",
+  "task_id": "ODP-ORCH-AGY-MODEL-COMPAT-001",
+  "head_sha": "cff3436110e737e1b62e27ffcd8895938dc89d07",
+  "command": "git diff --check",
+  "command_audit": {
+    "command": "git diff --check",
+    "ok": true,
+    "violations": [],
+    "details": [],
+    "runner": null
+  },
+  "runner": null,
+  "selection": {
+    "scope": "suite",
+    "items": [],
+    "fingerprint": "846541716505fa057a717f7f527859d2"
+  },
+  "exit_code": 0,
+  "signal": null,
+  "timed_out": false,
+  "outcome": "passed",
+  "passed": true,
+  "duration_seconds": 0.015,
+  "started_at": "2026-10-04T12:08:27Z",
+  "finished_at": "2026-10-04T12:08:27Z",
+  "recorded_at": "2026-10-04T12:08:27Z",
+  "run_kind": "baseline",
+  "attempt": 1,
+  "retry_reason": null,
+  "agent": "Pi",
+  "run_id": "pi-20261004T115741Z-16aae5f5",
+  "produced_by": "delivery_toolchain/git/task_verification.py",
+  "receipt_id": "184eee08ccd15924"
+}

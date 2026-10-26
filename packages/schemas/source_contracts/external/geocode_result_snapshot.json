@@ -11,6 +11,10 @@
   "envelope": "batch",
   "acquisition_method": "api",
   "schema_version": "geocode-v1",
+  "data_owner": "unconfirmed",
+  "target_latency_sla": "unconfirmed",
+  "contact_channel": "unconfirmed",
+  "runtime_capability": "unverified",
   "fields": [
     {"name": "source_geocode_id", "type": "string", "required": true, "description": "Provider geocode request/result id."},
     {"name": "address_raw", "type": "string", "required": true, "description": "Raw address submitted to the geocoder."},

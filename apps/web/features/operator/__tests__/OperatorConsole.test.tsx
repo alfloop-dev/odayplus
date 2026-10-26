@@ -1,7 +1,27 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { Profiler } from "react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { OperatorConsole } from "../OperatorConsole";
+import { OperatorConsole, operatorBootstrapRetryPolicy } from "../OperatorConsole";
+
+vi.mock("../GrowthWorkspace", () => ({
+  GrowthWorkspace: () => <div data-testid="granted-growth-workspace" />,
+}));
+vi.mock("../DesignAlignedWorkspaces", () => ({
+  DesignStoreOpsWorkspace: () => <div data-testid="granted-store-workspace" />,
+}));
+// Existing business assertions keep their transport premise: a current
+// canonical session precedes protected shell reads. No principal/grant is
+// derived from this unit-test response.
+function stubAuthenticatedFetch(read: typeof fetch) {
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => String(input) === "/auth/session"
+    ? Promise.resolve(process.env.NEXT_PUBLIC_PRODUCTION_MODE === "true"
+      ? new Response(JSON.stringify({ subject: "unit-shell-account", expiresAt: Math.floor(Date.now() / 1000) + 3600 }), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }) : new Response(JSON.stringify({ authenticated: false }), { status: 401, headers: { "Content-Type": "application/json" } })) : read(input, init)));
+}
+
+const productionRetryDelays = [...operatorBootstrapRetryPolicy.delaysMs];
 
 const seedEnvelope = {
   meta: {
@@ -101,17 +121,212 @@ const liveEnvelope = {
 describe("OperatorConsole production data gate", () => {
   beforeEach(() => {
     window.sessionStorage.clear();
+    // Cold-start retries pause for seconds in production; keep tests fast.
+    operatorBootstrapRetryPolicy.delaysMs = productionRetryDelays.map(() => 0);
   });
 
   afterEach(() => {
+    operatorBootstrapRetryPolicy.delaysMs = [...productionRetryDelays];
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
 
+  it.each([
+    ["pm-audit", "growth", "query"],
+    ["pm-audit", "growth", "stored"],
+    ["expansion-manager", "store", "query"],
+    ["expansion-manager", "store", "stored"],
+  ] as const)("restores %s's principal-granted %s workspace from %s on refresh", async (roleId, workspace, source) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    window.sessionStorage.setItem("oday.operator.role", roleId);
+    window.sessionStorage.setItem("oday.operator.workspace", source === "stored" ? workspace : "today");
+    const projectedRole = { ...liveEnvelope.meta.role, id: roleId, allowedWorkspaces: ["today", workspace] };
+    let resolveBootstrap!: (response: Response) => void;
+    stubAuthenticatedFetch(vi.fn(() => new Promise<Response>((resolve) => { resolveBootstrap = resolve; })));
+    render(<OperatorConsole searchParams={source === "query" ? { ws: workspace } : {}} />);
+    expect(screen.queryByTestId(`granted-${workspace}-workspace`)).toBeNull();
+    // No static-persona decision is allowed to overwrite the saved preference
+    // while waiting for the principal's verified bootstrap.
+    expect(window.sessionStorage.getItem("oday.operator.workspace")).toBe(source === "stored" ? workspace : "today");
+    await waitFor(() => expect(resolveBootstrap).toBeTypeOf("function"));
+    resolveBootstrap(new Response(JSON.stringify({
+      ...liveEnvelope,
+      meta: { ...liveEnvelope.meta, role: projectedRole },
+      navigation: { ...liveEnvelope.navigation, roles: [projectedRole], allowedWorkspaces: ["today", workspace] },
+    }), { status: 200 }));
+    expect(await screen.findByTestId(`granted-${workspace}-workspace`)).toBeInTheDocument();
+    await waitFor(() => expect(window.sessionStorage.getItem("oday.operator.workspace")).toBe(workspace));
+  });
+
+  it.each([
+    ["pm-audit", "growth"],
+    ["expansion-manager", "store"],
+  ] as const)("keeps principal-granted %s %s when switching persona", async (roleId, workspace) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    const granted = ["today", workspace];
+    const nextRole = { ...liveEnvelope.meta.role, id: roleId, label: `Verified ${roleId}`, allowedWorkspaces: granted };
+    stubAuthenticatedFetch(vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const requestedPersona = new Headers(init?.headers).get("X-Operator-Role");
+      return new Response(JSON.stringify({
+        ...liveEnvelope,
+        meta: { ...liveEnvelope.meta, role: requestedPersona === roleId ? nextRole : { ...liveEnvelope.meta.role, allowedWorkspaces: granted } },
+        navigation: { ...liveEnvelope.navigation, roles: [liveEnvelope.meta.role, nextRole], allowedWorkspaces: granted },
+      }), { status: 200 });
+    }));
+    render(<OperatorConsole searchParams={{ ws: workspace }} />);
+    expect(await screen.findByTestId(`granted-${workspace}-workspace`)).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Live Operations"));
+    fireEvent.click(await screen.findByRole("button", { name: new RegExp(`Verified ${roleId} Production tenant`) }));
+    await waitFor(() => expect(screen.getByTitle(`Verified ${roleId}`)).toBeInTheDocument());
+    expect(await screen.findByTestId(`granted-${workspace}-workspace`)).toBeInTheDocument();
+    expect(window.sessionStorage.getItem("oday.operator.workspace")).toBe(workspace);
+    expect(window.sessionStorage.getItem("oday.operator.role")).toBe(roleId);
+  });
+
+  it.each([
+    ["pm-audit", "growth"],
+    ["expansion-manager", "store"],
+  ] as const)("uses %s's verified %s grant for Back/Forward and refuses an ungranted history target", async (roleId, workspace) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    const originalHref = window.location.href;
+    const granted = ["today", workspace];
+    const projectedRole = { ...liveEnvelope.meta.role, id: roleId, allowedWorkspaces: granted };
+    const read = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      ...liveEnvelope,
+      meta: { ...liveEnvelope.meta, role: projectedRole },
+      navigation: { ...liveEnvelope.navigation, roles: [projectedRole], allowedWorkspaces: granted },
+    }), { status: 200 }));
+    stubAuthenticatedFetch(read);
+    async function traverse(direction: "back" | "forward") {
+      await act(async () => {
+        const observed = new Promise<void>((resolve) => window.addEventListener("popstate", () => resolve(), { once: true }));
+        window.history[direction]();
+        await observed;
+      });
+    }
+    try {
+      window.history.replaceState(null, "", `/operator?ws=${workspace}`);
+      render(<OperatorConsole searchParams={{ ws: workspace }} />);
+      expect(await screen.findByTestId(`granted-${workspace}-workspace`)).toBeInTheDocument();
+      window.history.pushState(null, "", "/operator?ws=today");
+      fireEvent.popState(window);
+      expect(await screen.findByText("Production issue")).toBeInTheDocument();
+      await traverse("back");
+      expect(await screen.findByTestId(`granted-${workspace}-workspace`)).toBeInTheDocument();
+      expect(window.sessionStorage.getItem("oday.operator.workspace")).toBe(workspace);
+      await traverse("forward");
+      expect(await screen.findByText("Production issue")).toBeInTheDocument();
+      expect(screen.queryByTestId(`granted-${workspace}-workspace`)).toBeNull();
+      // Network is present in these static personas, but absent from the
+      // current principal's verified grant. History never authorizes its reads.
+      window.history.pushState(null, "", "/operator?ws=network&tab=review&candidate=denied-candidate&review=denied-review");
+      window.history.pushState(null, "", "/operator?ws=today");
+      await traverse("back");
+      expect(screen.getByText("Production issue")).toBeInTheDocument();
+      expect(window.sessionStorage.getItem("oday.operator.workspace")).toBe("today");
+      expect(screen.queryByTestId("network-find-areas-workspace")).toBeNull();
+      expect(read.mock.calls.map(([input]) => String(input)).filter((url) =>
+        /network-|operator\/(?:growth|store-ops|governance)/.test(url))).toEqual([]);
+    } finally {
+      window.history.replaceState(null, "", originalHref);
+    }
+  });
+
+  it.each([
+    ["pm-audit", "growth"],
+    ["expansion-manager", "store"],
+  ] as const)("preserves %s's pending history intent for %s until verified bootstrap completes", async (roleId, workspace) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    const originalHref = window.location.href;
+    const granted = ["today", workspace];
+    const projectedRole = { ...liveEnvelope.meta.role, id: roleId, allowedWorkspaces: granted };
+    let resolveBootstrap!: (response: Response) => void;
+    stubAuthenticatedFetch(vi.fn(() => new Promise<Response>((resolve) => { resolveBootstrap = resolve; })));
+    try {
+      window.history.replaceState(null, "", "/operator?ws=today");
+      render(<OperatorConsole searchParams={{ ws: "today" }} />);
+      await waitFor(() => expect(resolveBootstrap).toBeTypeOf("function"));
+      window.history.pushState(null, "", `/operator?ws=${workspace}`);
+      fireEvent.popState(window);
+      expect(window.sessionStorage.getItem("oday.operator.workspace")).toBe(workspace);
+      expect(screen.queryByTestId(`granted-${workspace}-workspace`)).toBeNull();
+      resolveBootstrap(new Response(JSON.stringify({
+        ...liveEnvelope,
+        meta: { ...liveEnvelope.meta, role: projectedRole },
+        navigation: { ...liveEnvelope.navigation, roles: [projectedRole], allowedWorkspaces: granted },
+      }), { status: 200 }));
+      expect(await screen.findByTestId(`granted-${workspace}-workspace`)).toBeInTheDocument();
+      expect(window.sessionStorage.getItem("oday.operator.workspace")).toBe(workspace);
+    } finally {
+      window.history.replaceState(null, "", originalHref);
+    }
+  });
+
+  it.each([
+    ["the first commit", ["today", "store"], "store"],
+    ["the bootstrap commit", ["today", "store"], "store"],
+    ["the first commit", ["today"], "today"],
+  ] as const)("keeps Store Ops selected at %s only while bootstrap grants %j", async (moment, granted, expected) => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    window.history.replaceState({}, "", "/operator");
+    const navigation = {
+      ...liveEnvelope.navigation,
+      roles: [{ ...liveEnvelope.navigation.roles[0], allowedWorkspaces: granted }],
+      workspaces: [
+        ...liveEnvelope.navigation.workspaces,
+        { id: "store", label: "門市營運", shortLabel: "Store", description: "Store Ops", allowed: true },
+      ],
+      allowedWorkspaces: granted,
+    };
+    let resolveBootstrap!: (response: Response) => void;
+    stubAuthenticatedFetch(vi.fn(() => new Promise<Response>((resolve) => { resolveBootstrap = resolve; })));
+    const workspaceWrites: string[] = [];
+    const setItem = window.sessionStorage.setItem.bind(window.sessionStorage);
+    vi.spyOn(window.sessionStorage, "setItem").mockImplementation((key, value) => {
+      if (key === "oday.operator.workspace") workspaceWrites.push(value);
+      setItem(key, value);
+    });
+    // Click at the first moment a browser can deliver input after the commit
+    // (the static persona offers Store Ops before bootstrap), as the
+    // production-built E2E did when the verified bootstrap committed.
+    let writesBeforeClick = -1;
+    const clickStoreOpsAfterCommit = () => {
+      if (writesBeforeClick >= 0) return;
+      if (moment === "the bootstrap commit" && !screen.queryByText("Live unresolved")) return;
+      const storeOps = screen.queryByRole("button", { name: /門市營運/ });
+      if (!storeOps) return;
+      writesBeforeClick = workspaceWrites.length;
+      storeOps.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    };
+    render(
+      <Profiler id="operator-console" onRender={clickStoreOpsAfterCommit}>
+        <OperatorConsole searchParams={{}} />
+      </Profiler>,
+    );
+    await waitFor(() => expect(resolveBootstrap).toBeTypeOf("function"));
+    // The verified principal role carries the grant; navigation only mirrors it.
+    const role = { ...liveEnvelope.meta.role, allowedWorkspaces: granted };
+    resolveBootstrap(new Response(JSON.stringify({ ...liveEnvelope, meta: { ...liveEnvelope.meta, role }, navigation }), { status: 200 }));
+    if (expected === "store") {
+      expect(await screen.findByTestId("granted-store-workspace")).toBeInTheDocument();
+      expect(screen.queryByText("Live unresolved")).not.toBeInTheDocument();
+      expect(window.location.search).toBe("?ws=store&tab=overview");
+      expect(window.sessionStorage.getItem("oday.operator.workspace")).toBe("store");
+      // No synchronization may write back the workspace it saw before the click.
+      expect(workspaceWrites.slice(writesBeforeClick)).not.toContain("today");
+    } else {
+      // A selection the verified grants do not include still fails closed.
+      expect(await screen.findByText("Live unresolved")).toBeInTheDocument();
+      expect(screen.queryByTestId("granted-store-workspace")).toBeNull();
+      await waitFor(() => expect(window.sessionStorage.getItem("oday.operator.workspace")).toBe("today"));
+    }
+    expect(writesBeforeClick).toBeGreaterThanOrEqual(0);
+  });
+
   it("blocks seed shell data instead of rendering a workspace fixture", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(
       new Response(JSON.stringify(seedEnvelope), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -130,7 +345,7 @@ describe("OperatorConsole production data gate", () => {
   it("shows an error gate when bootstrap cannot be loaded", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
     const fetchMock = vi.fn().mockRejectedValue(new Error("offline"));
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<OperatorConsole searchParams={{ ws: "store" }} />);
 
@@ -138,7 +353,9 @@ describe("OperatorConsole production data gate", () => {
     await waitFor(() => {
       expect(gate).toHaveAttribute("data-status", "error");
     });
-    expect(screen.getByTestId("operator-console").className).toContain("consoleNetworkParity");
+    // The shared header is unconditional: the data gate keeps the same chrome.
+    expect(screen.getByTestId("operator-topbar-inner")).toBeInTheDocument();
+    expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-failure-kind", "network");
     expect(screen.getByRole("button", { name: /今日工作/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /門市營運/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /營運主管/ })).toBeInTheDocument();
@@ -151,8 +368,7 @@ describe("OperatorConsole production data gate", () => {
 
   it("leaves loading when the bootstrap BFF returns an upstream timeout", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal(
-      "fetch",
+    stubAuthenticatedFetch(
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
@@ -180,7 +396,7 @@ describe("OperatorConsole production data gate", () => {
 
   it("builds the production Today state only from a complete live API payload", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(
       new Response(JSON.stringify(liveEnvelope), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -199,7 +415,7 @@ describe("OperatorConsole production data gate", () => {
 
   it("blocks a nominally live but incomplete API payload", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(
       new Response(JSON.stringify({
         ...liveEnvelope,
         today: {
@@ -246,7 +462,7 @@ describe("OperatorConsole production data gate", () => {
       }
       return new Response(null, { status: 404 });
     });
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<OperatorConsole searchParams={{ ws: "today" }} />);
     expect(await screen.findByText("Production issue")).toBeInTheDocument();
@@ -276,7 +492,7 @@ describe("OperatorConsole production data gate", () => {
       }
       return new Response(null, { status: 404 });
     });
-    vi.stubGlobal("fetch", fetchMock);
+    stubAuthenticatedFetch( fetchMock);
 
     render(<OperatorConsole searchParams={{ ws: "today" }} />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(

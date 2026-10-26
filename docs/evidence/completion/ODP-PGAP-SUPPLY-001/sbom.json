@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-4635727c66e9956390d972d875d54731",
+  "serialNumber": "urn:uuid:sha256-e3073bebdb9d10e4452c4b43267eee9c",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-08-25T10:53:36.555122+00:00",
+    "timestamp": "2026-09-04T10:32:05.904020+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,21 +16,21 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@c856c1f30529fdf59c5b64894ebcd8e364a6c667",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@c856c1f30529fdf59c5b64894ebcd8e364a6c667"
+      "purl": "pkg:generic/alfloop-dev/odayplus@b2ff40be5eb2fdee1a51a097827969d4250993d7",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@b2ff40be5eb2fdee1a51a097827969d4250993d7"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "c856c1f30529fdf59c5b64894ebcd8e364a6c667"
+        "value": "b2ff40be5eb2fdee1a51a097827969d4250993d7"
       },
       {
         "name": "sbom-hash",
-        "value": "4635727c66e9956390d972d875d5473132836af3a7b890a070341a51e4711006"
+        "value": "e3073bebdb9d10e4452c4b43267eee9c2fba6f7607dc020c9aa4217140b6b414"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:5c240dca6d44af9ec58cee5dde68e51e8c0f6dfa052b925c1420b61e4574ee27"
+        "value": "sha256:1db724eb8e1f63f5d68124e17e8a573d345eb7fa85513877b3367601abc35575"
       },
       {
         "name": "container-base-images",
@@ -314,6 +314,30 @@
       ],
       "supplier": {
         "name": "toyobayashi"
+      }
+    },
+    {
+      "name": "@epic-web/invariant",
+      "version": "1.0.0",
+      "type": "library",
+      "purl": "pkg:npm/@epic-web/invariant@1.0.0",
+      "bom-ref": "pkg:npm/@epic-web/invariant@1.0.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "lrTPqgvfFQtR/eY/qkIzp98OGdNJu0m5ji3q/nJI8v3SXkRKEnWiOxMmbvcSoAIzv/cGiuvRy57k4suKQSAdwA=="
+        }
+      ],
+      "supplier": {
+        "name": "Kent C. Dodds <me@kentcdodds.com> (https://kentcdodds.com/)"
       }
     },
     {
@@ -2089,6 +2113,30 @@
       }
     },
     {
+      "name": "@phc/format",
+      "version": "1.0.0",
+      "type": "library",
+      "purl": "pkg:npm/@phc/format@1.0.0",
+      "bom-ref": "pkg:npm/@phc/format@1.0.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "m7X9U6BG2+J+R1lSOdCiITLLrxm+cWlNI3HUFA92oLO77ObGNzaKdh8pMLqdZcshtkKuV84olNNXDfMc4FezBQ=="
+        }
+      ],
+      "supplier": {
+        "name": "Simone Primarosa <simonepri@outlook.com> (https://simoneprimarosa.com)"
+      }
+    },
+    {
       "name": "@playwright/test",
       "version": "1.61.1",
       "type": "library",
@@ -2853,7 +2901,7 @@
       "type": "library",
       "purl": "pkg:npm/@types/node@26.1.1",
       "bom-ref": "pkg:npm/@types/node@26.1.1",
-      "scope": "optional",
+      "scope": "required",
       "licenses": [
         {
           "license": {
@@ -2874,7 +2922,7 @@
       "type": "library",
       "purl": "pkg:npm/@types/node/undici-types@8.3.0",
       "bom-ref": "pkg:npm/@types/node/undici-types@8.3.0",
-      "scope": "optional",
+      "scope": "required",
       "licenses": [
         {
           "license": {
@@ -2907,6 +2955,27 @@
         {
           "alg": "SHA-512",
           "content": "ieXiYmgSRXUDeOntE1InxjWyvEelZGP63M+cGuquuRLuIKKT1osnkXjxev9B7d1nXSug5vpunx+gNlbVxMlC9A=="
+        }
+      ]
+    },
+    {
+      "name": "@types/pg",
+      "version": "8.23.1",
+      "type": "library",
+      "purl": "pkg:npm/@types/pg@8.23.1",
+      "bom-ref": "pkg:npm/@types/pg@8.23.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "fKVHpikPdg4GKks3JuLEhvwSyvwzF23hnabPy6DD8ljVbC7+6J5dQzdv4arV6jqq57djnMgs1HKBxX4P8aBI3A=="
         }
       ]
     },
@@ -4609,6 +4678,86 @@
       }
     },
     {
+      "name": "argon2",
+      "version": "0.45.1",
+      "type": "library",
+      "purl": "pkg:npm/argon2@0.45.1",
+      "bom-ref": "pkg:npm/argon2@0.45.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "skm+/WCjkGqCQxF7FG1LuZXM5yvbFjgbfiCGsud2oLgaDhh6b6dbH0b1EkghbM+xx4Bj8Ape+KKgixoIlWZicQ=="
+        }
+      ],
+      "supplier": {
+        "name": "Ranieri Althoff <ranisalt+argon2@gmail.com>"
+      }
+    },
+    {
+      "name": "argon2-cffi",
+      "version": "25.1.0",
+      "type": "library",
+      "purl": "pkg:pypi/argon2-cffi@25.1.0",
+      "bom-ref": "pkg:pypi/argon2-cffi@25.1.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA256",
+          "content": "694ae5cc8a42f4c4e2bf2ca0e64e51e23a040c6a517a85074683d3959e1346c1"
+        },
+        {
+          "alg": "SHA256",
+          "content": "fdc8b074db390fccb6eb4a3604ae7231f219aa669a2652e0f20e16ba513d5741"
+        }
+      ],
+      "supplier": {
+        "name": "Hynek Schlawack <hs@ox.cx>"
+      }
+    },
+    {
+      "name": "argon2-cffi-bindings",
+      "version": "26.1.0",
+      "type": "library",
+      "purl": "pkg:pypi/argon2-cffi-bindings@26.1.0",
+      "bom-ref": "pkg:pypi/argon2-cffi-bindings@26.1.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA256",
+          "content": "63505c71542a44b68b1e38060450fb006404170da375feb31af153e7f9c6205d"
+        },
+        {
+          "alg": "SHA256",
+          "content": "21ca0396fe5ec995dd54431c32698189666f9224810acfa752e50d2bd94d9df2"
+        }
+      ],
+      "supplier": {
+        "name": "Hynek Schlawack <hs@ox.cx>"
+      }
+    },
+    {
       "name": "argparse",
       "version": "2.0.1",
       "type": "library",
@@ -5883,12 +6032,36 @@
       }
     },
     {
+      "name": "cross-env",
+      "version": "10.1.0",
+      "type": "library",
+      "purl": "pkg:npm/cross-env@10.1.0",
+      "bom-ref": "pkg:npm/cross-env@10.1.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "GsYosgnACZTADcmEyJctkJIoqAhHjttw7RsFrVoJNXbsWWqaq6Ym+7kZjq6mS45O0jij6vtiReppKQEtqWy6Dw=="
+        }
+      ],
+      "supplier": {
+        "name": "Kent C. Dodds <me@kentcdodds.com> (https://kentcdodds.com)"
+      }
+    },
+    {
       "name": "cross-spawn",
       "version": "7.0.6",
       "type": "library",
       "purl": "pkg:npm/cross-spawn@7.0.6",
       "bom-ref": "pkg:npm/cross-spawn@7.0.6",
-      "scope": "optional",
+      "scope": "required",
       "licenses": [
         {
           "license": {
@@ -5908,10 +6081,10 @@
     },
     {
       "name": "cryptography",
-      "version": "48.0.1",
+      "version": "50.0.1",
       "type": "library",
-      "purl": "pkg:pypi/cryptography@48.0.1",
-      "bom-ref": "pkg:pypi/cryptography@48.0.1",
+      "purl": "pkg:pypi/cryptography@50.0.1",
+      "bom-ref": "pkg:pypi/cryptography@50.0.1",
       "scope": "required",
       "licenses": [
         {
@@ -5921,11 +6094,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "266f4ee051abb2f725b74ef8072b521ce1feacf685a3364fa6a6b45548db791a"
+          "content": "5dd9bda1c12b4162f6ff568eeb5e0ff956c28d14406e875cfe8a63a2d414ff20"
         },
         {
           "alg": "SHA256",
-          "content": "3e4a1a3232eef2e6c732827d5722db29a0cc8b27af2a4d865b094cf954be9ca1"
+          "content": "b8f852c65863251b9e3a1b8c150ce21e59b522dbb6a7d4bc80e680d38388e986"
         }
       ],
       "supplier": {
@@ -8501,10 +8674,10 @@
     },
     {
       "name": "gitpython",
-      "version": "3.1.58",
+      "version": "3.1.61",
       "type": "library",
-      "purl": "pkg:pypi/gitpython@3.1.58",
-      "bom-ref": "pkg:pypi/gitpython@3.1.58",
+      "purl": "pkg:pypi/gitpython@3.1.61",
+      "bom-ref": "pkg:pypi/gitpython@3.1.61",
       "scope": "required",
       "licenses": [
         {
@@ -8516,11 +8689,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "621416df10ef3fd0e19fabf9172ddeed0fa704d353d04f194eec56a625a95b22"
+          "content": "f51c24d8c0f733a195447385f5774a5dfe8767f5acfd7994a33755644c6ecc95"
         },
         {
           "alg": "SHA256",
-          "content": "d331e722577f0fd7fc1f857419b3ecc07af66282b933d2a4d95f84a042fdd50f"
+          "content": "8ab28c9da863cdd9e7d7694ec46cf3e6c9a12d8a30a1acd3447aec11975d530c"
         }
       ],
       "supplier": {
@@ -10693,7 +10866,7 @@
       "type": "library",
       "purl": "pkg:npm/isexe@2.0.0",
       "bom-ref": "pkg:npm/isexe@2.0.0",
-      "scope": "optional",
+      "scope": "required",
       "licenses": [
         {
           "license": {
@@ -12198,10 +12371,10 @@
     },
     {
       "name": "mlflow",
-      "version": "3.14.0",
+      "version": "3.16.0",
       "type": "library",
-      "purl": "pkg:pypi/mlflow@3.14.0",
-      "bom-ref": "pkg:pypi/mlflow@3.14.0",
+      "purl": "pkg:pypi/mlflow@3.16.0",
+      "bom-ref": "pkg:pypi/mlflow@3.16.0",
       "scope": "required",
       "licenses": [
         {
@@ -12213,20 +12386,20 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "5a1f818fa003035c724162096ce3ded7bc7bc47a1cae595df6173961983f4718"
+          "content": "e39d3e4dd13aab864f821a3c3d871eb5e2db3d4557e60db8592f23cbafa1e830"
         },
         {
           "alg": "SHA256",
-          "content": "dbf77f7cdb5b5c0ec59b4671c61730b1b914b4dff7a2892e267a547cb5454f56"
+          "content": "c4ac5e8634aacad1a3d7d5a1a31be9279593ebd48b84272843682db11970cf71"
         }
       ]
     },
     {
       "name": "mlflow-skinny",
-      "version": "3.14.0",
+      "version": "3.16.0",
       "type": "library",
-      "purl": "pkg:pypi/mlflow-skinny@3.14.0",
-      "bom-ref": "pkg:pypi/mlflow-skinny@3.14.0",
+      "purl": "pkg:pypi/mlflow-skinny@3.16.0",
+      "bom-ref": "pkg:pypi/mlflow-skinny@3.16.0",
       "scope": "required",
       "licenses": [
         {
@@ -12238,20 +12411,20 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "e50f4506422c7737157ae6643c165122af7898345f2e828fa93c4f10128653cf"
+          "content": "f02330c33f231fc19312bc35c64206e1504a63838fbabdac4b1882d6416bd2b8"
         },
         {
           "alg": "SHA256",
-          "content": "a4880e086365871ef9d78e727a34ea5fb1ce615689579998d48e8c65ee1665a9"
+          "content": "ff4e676eb469d769efc27036f9cb804e0709c125a2645a3902743d917b3771ae"
         }
       ]
     },
     {
       "name": "mlflow-tracing",
-      "version": "3.14.0",
+      "version": "3.16.0",
       "type": "library",
-      "purl": "pkg:pypi/mlflow-tracing@3.14.0",
-      "bom-ref": "pkg:pypi/mlflow-tracing@3.14.0",
+      "purl": "pkg:pypi/mlflow-tracing@3.16.0",
+      "bom-ref": "pkg:pypi/mlflow-tracing@3.16.0",
       "scope": "required",
       "licenses": [
         {
@@ -12263,11 +12436,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "c2f701e001d35964f23fbbdfdda36c818a76c157b912ae83781199fd714be09a"
+          "content": "2b7c8ec19233868b965b141dd3c20f92e5bbdcdaf90f41ae1d2e6b6d1c04e785"
         },
         {
           "alg": "SHA256",
-          "content": "854488dd18068f15e2a56f1cc7b8868c611d09ea39068d0a691a3f07e0048cae"
+          "content": "383b920d5421f8f596a73bbc698f065ac62c4277146d2bdb2352096ec528bcb2"
         }
       ]
     },
@@ -12604,10 +12777,10 @@
     },
     {
       "name": "nltk",
-      "version": "3.10.0",
+      "version": "3.10.3",
       "type": "library",
-      "purl": "pkg:pypi/nltk@3.10.0",
-      "bom-ref": "pkg:pypi/nltk@3.10.0",
+      "purl": "pkg:pypi/nltk@3.10.3",
+      "bom-ref": "pkg:pypi/nltk@3.10.3",
       "scope": "required",
       "licenses": [
         {
@@ -12619,11 +12792,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "4fbac1d98203cbcd1b5d94a2877fb822300072d80604a5e7fae49d2c5f84e8c1"
+          "content": "bb9327a461c3811c2fa4900e03840401f2126adfb30c0072827c433bd2444ea4"
         },
         {
           "alg": "SHA256",
-          "content": "54ff84d4916d3ef127e8953bee0023f6a6b320b75d634a19e06ef056d3d244bf"
+          "content": "ff9598a8e20518ee0d557745890cc4435b9578489e2dcbc69c4f81fa060caf7c"
         }
       ],
       "supplier": {
@@ -12673,6 +12846,27 @@
       ]
     },
     {
+      "name": "node-addon-api",
+      "version": "8.9.2",
+      "type": "library",
+      "purl": "pkg:npm/node-addon-api@8.9.2",
+      "bom-ref": "pkg:npm/node-addon-api@8.9.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "VijLXbi3UACN69I0JVXJsX4tjACjNoQDgv2gTF6sx2wWEi8tkSg2eX8p5gSIFi8z2+DL3oHmY6OyKce38SDolg=="
+        }
+      ]
+    },
+    {
       "name": "node-exports-info",
       "version": "1.6.2",
       "type": "library",
@@ -12694,6 +12888,30 @@
       ],
       "supplier": {
         "name": "Jordan Harband <ljharb@gmail.com>"
+      }
+    },
+    {
+      "name": "node-gyp-build",
+      "version": "4.8.4",
+      "type": "library",
+      "purl": "pkg:npm/node-gyp-build@4.8.4",
+      "bom-ref": "pkg:npm/node-gyp-build@4.8.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "LA4ZjwlnUblHVgq0oBF3Jl/6h/Nvs5fzBLwdEF4nuxnFdsfajde4WfxtJr3CaiH+F6ewcIB/q4jQ4UzPyid+CQ=="
+        }
+      ],
+      "supplier": {
+        "name": "Mathias Buus (@mafintosh)"
       }
     },
     {
@@ -13491,7 +13709,7 @@
       "type": "library",
       "purl": "pkg:npm/path-key@3.1.1",
       "bom-ref": "pkg:npm/path-key@3.1.1",
-      "scope": "optional",
+      "scope": "required",
       "licenses": [
         {
           "license": {
@@ -13716,6 +13934,189 @@
       ],
       "supplier": {
         "name": "S\u00e9bastien Eustace <sebastien@eustace.io>"
+      }
+    },
+    {
+      "name": "pg",
+      "version": "8.23.0",
+      "type": "library",
+      "purl": "pkg:npm/pg@8.23.0",
+      "bom-ref": "pkg:npm/pg@8.23.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "Ip2EQCngowJLGOfCwkFhPXU7/ljlhn6Rxlmy4XYfL2Y+vyRM59+8uR2xqRWKdYmbXmxCFOAmKxBuSUCdF34qLg=="
+        }
+      ],
+      "supplier": {
+        "name": "Brian Carlson <brian.m.carlson@gmail.com>"
+      }
+    },
+    {
+      "name": "pg-cloudflare",
+      "version": "1.4.0",
+      "type": "library",
+      "purl": "pkg:npm/pg-cloudflare@1.4.0",
+      "bom-ref": "pkg:npm/pg-cloudflare@1.4.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "Vo7z/6rrQYxpNRylp4Tlob2elzbh+N/MOQbxFVWCxS7oEx6jF53GTJFxK2WWpKuBRkmiin4Mt+xofFDjx09R0A=="
+        }
+      ]
+    },
+    {
+      "name": "pg-connection-string",
+      "version": "2.14.0",
+      "type": "library",
+      "purl": "pkg:npm/pg-connection-string@2.14.0",
+      "bom-ref": "pkg:npm/pg-connection-string@2.14.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "XwWDGcLRGCXAR8F/AM5bG7Q+A3Wm2s6QeEjlOKZLlH3UYcguiqCWKyWXVag5TLTIjR7oOJUY8kcADaZgWPyLeg=="
+        }
+      ],
+      "supplier": {
+        "name": "Blaine Bublitz <blaine@iceddev.com> (http://iceddev.com/)"
+      }
+    },
+    {
+      "name": "pg-int8",
+      "version": "1.0.1",
+      "type": "library",
+      "purl": "pkg:npm/pg-int8@1.0.1",
+      "bom-ref": "pkg:npm/pg-int8@1.0.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "WCtabS6t3c8SkpDBUlb1kjOs7l66xsGdKpIPZsg4wR+B3+u9UAum2odSsF9tnvxg80h4ZxLWMy4pRjOsFIqQpw=="
+        }
+      ]
+    },
+    {
+      "name": "pg-pool",
+      "version": "3.14.0",
+      "type": "library",
+      "purl": "pkg:npm/pg-pool@3.14.0",
+      "bom-ref": "pkg:npm/pg-pool@3.14.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "gKtPkFdQPU3DksooVLi9LsjZxrsBUZIpa+7aVx+LV5pNh0KzP4Zleud2po+ConrxbuXGBJ6Hfer6hdgpIBpBaw=="
+        }
+      ],
+      "supplier": {
+        "name": "Brian M. Carlson"
+      }
+    },
+    {
+      "name": "pg-protocol",
+      "version": "1.16.0",
+      "type": "library",
+      "purl": "pkg:npm/pg-protocol@1.16.0",
+      "bom-ref": "pkg:npm/pg-protocol@1.16.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "sILXutLVjCLjcDuOmvhX5e2Z4cS5qG/6Bu3VkpFwdf/633ElGLpEh9bgmuI5I4sqKqkifQiGyiCcx1HdtrK7tg=="
+        }
+      ]
+    },
+    {
+      "name": "pg-types",
+      "version": "2.2.0",
+      "type": "library",
+      "purl": "pkg:npm/pg-types@2.2.0",
+      "bom-ref": "pkg:npm/pg-types@2.2.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "qTAAlrEsl8s4OiEQY69wDvcMIdQN6wdz5ojQiOy6YRMuynxenON0O5oCpJI6lshc6scgAY8qvJ2On/p+CXY0GA=="
+        }
+      ],
+      "supplier": {
+        "name": "Brian M. Carlson"
+      }
+    },
+    {
+      "name": "pgpass",
+      "version": "1.0.5",
+      "type": "library",
+      "purl": "pkg:npm/pgpass@1.0.5",
+      "bom-ref": "pkg:npm/pgpass@1.0.5",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "FdW9r/jQZhSeohs1Z3sI1yxFQNFvMcnmfuj4WBMUTxOrAyLMaTcE1aAMBiTlbMNaXvBCQuVi0R7hd8udDSP7ug=="
+        }
+      ],
+      "supplier": {
+        "name": "Hannes H\u00f6rl <hannes.hoerl+pgpass@snowreporter.com>"
       }
     },
     {
@@ -14045,6 +14446,102 @@
       ],
       "supplier": {
         "name": "Andrey Sitnik <andrey@sitnik.es>"
+      }
+    },
+    {
+      "name": "postgres-array",
+      "version": "2.0.0",
+      "type": "library",
+      "purl": "pkg:npm/postgres-array@2.0.0",
+      "bom-ref": "pkg:npm/postgres-array@2.0.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "VpZrUqU5A69eQyW2c5CA1jtLecCsN2U/bD6VilrFDWq5+5UIEVO7nazS3TEcHf1zuPYO/sqGvUvW62g86RXZuA=="
+        }
+      ],
+      "supplier": {
+        "name": "Ben Drucker"
+      }
+    },
+    {
+      "name": "postgres-bytea",
+      "version": "1.0.1",
+      "type": "library",
+      "purl": "pkg:npm/postgres-bytea@1.0.1",
+      "bom-ref": "pkg:npm/postgres-bytea@1.0.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "5+5HqXnsZPE65IJZSMkZtURARZelel2oXUEO8rH83VS/hxH5vv1uHquPg5wZs8yMAfdv971IU+kcPUczi7NVBQ=="
+        }
+      ],
+      "supplier": {
+        "name": "Ben Drucker"
+      }
+    },
+    {
+      "name": "postgres-date",
+      "version": "1.0.7",
+      "type": "library",
+      "purl": "pkg:npm/postgres-date@1.0.7",
+      "bom-ref": "pkg:npm/postgres-date@1.0.7",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "suDmjLVQg78nMK2UZ454hAG+OAW+HQPZ6n++TNDUX+L0+uUlLywnoxJKDou51Zm+zTCjrCl0Nq6J9C5hP9vK/Q=="
+        }
+      ],
+      "supplier": {
+        "name": "Ben Drucker"
+      }
+    },
+    {
+      "name": "postgres-interval",
+      "version": "1.2.0",
+      "type": "library",
+      "purl": "pkg:npm/postgres-interval@1.2.0",
+      "bom-ref": "pkg:npm/postgres-interval@1.2.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "9ZhXKM/rw350N1ovuWHbGxnGh/SNJ4cnxHiM0rxE4VN41wsg8P8zWn9hv/buK00RP4WvlOyr/RBDiptyxVbkZQ=="
+        }
+      ],
+      "supplier": {
+        "name": "Ben Drucker"
       }
     },
     {
@@ -16093,7 +16590,7 @@
       "type": "library",
       "purl": "pkg:npm/shebang-command@2.0.0",
       "bom-ref": "pkg:npm/shebang-command@2.0.0",
-      "scope": "optional",
+      "scope": "required",
       "licenses": [
         {
           "license": {
@@ -16117,7 +16614,7 @@
       "type": "library",
       "purl": "pkg:npm/shebang-regex@3.0.0",
       "bom-ref": "pkg:npm/shebang-regex@3.0.0",
-      "scope": "optional",
+      "scope": "required",
       "licenses": [
         {
           "license": {
@@ -16466,6 +16963,30 @@
       ]
     },
     {
+      "name": "split2",
+      "version": "4.2.0",
+      "type": "library",
+      "purl": "pkg:npm/split2@4.2.0",
+      "bom-ref": "pkg:npm/split2@4.2.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "UcjcJOWknrNkF6PLX83qcHM6KHgVKNkV62Y8a5uYDVv9ydGQVwAHMKqHdJje1VTWpljG0WYpCDhrCdAOYH4TWg=="
+        }
+      ],
+      "supplier": {
+        "name": "Matteo Collina <hello@matteocollina.com>"
+      }
+    },
+    {
       "name": "sqlalchemy",
       "version": "2.0.51",
       "type": "library",
@@ -16523,10 +17044,10 @@
     },
     {
       "name": "sqlparse",
-      "version": "0.5.5",
+      "version": "0.6.0",
       "type": "library",
-      "purl": "pkg:pypi/sqlparse@0.5.5",
-      "bom-ref": "pkg:pypi/sqlparse@0.5.5",
+      "purl": "pkg:pypi/sqlparse@0.6.0",
+      "bom-ref": "pkg:pypi/sqlparse@0.6.0",
       "scope": "required",
       "licenses": [
         {
@@ -16538,11 +17059,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "e20d4a9b0b8585fdf63b10d30066c7c94c5d7a7ec47c889a2d83a3caa93ff28e"
+          "content": "113c35c75365ab9cc9c7231d68c6428fb11c085fc8e9eb1ad659b7ddbf6cd2b9"
         },
         {
           "alg": "SHA256",
-          "content": "12a08b3bf3eec877c519589833aed092e2444e68240a3577e8e26148acc7b1ba"
+          "content": "b861c0288ce2fa56209a9a6412d2e066ac664b3873b89c26c9d8415e8e32996f"
         }
       ],
       "supplier": {
@@ -18450,7 +18971,7 @@
       "type": "library",
       "purl": "pkg:npm/which@2.0.2",
       "bom-ref": "pkg:npm/which@2.0.2",
-      "scope": "optional",
+      "scope": "required",
       "licenses": [
         {
           "license": {
@@ -18714,6 +19235,30 @@
       }
     },
     {
+      "name": "xtend",
+      "version": "4.0.2",
+      "type": "library",
+      "purl": "pkg:npm/xtend@4.0.2",
+      "bom-ref": "pkg:npm/xtend@4.0.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "LKYU1iAXJXUgAXn9URjiu+MWhyUXHsvfp7mcuYm9dSUKK0/CjtrUwFAxD82/mCWbtLsGjFIad0wIsod4zrTAEQ=="
+        }
+      ],
+      "supplier": {
+        "name": "Raynos <raynos2@gmail.com>"
+      }
+    },
+    {
       "name": "yarl",
       "version": "1.24.5",
       "type": "library",
@@ -18796,10 +19341,11 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@c856c1f30529fdf59c5b64894ebcd8e364a6c667",
+      "ref": "pkg:generic/alfloop-dev/odayplus@b2ff40be5eb2fdee1a51a097827969d4250993d7",
       "dependsOn": [
+        "pkg:pypi/argon2-cffi@25.1.0",
         "pkg:pypi/catboost@1.2.10",
-        "pkg:pypi/cryptography@48.0.1",
+        "pkg:pypi/cryptography@50.0.1",
         "pkg:pypi/cvxpy@1.9.2",
         "pkg:pypi/dagster@1.13.15",
         "pkg:pypi/dlt@1.29.1",
@@ -18815,7 +19361,7 @@
         "pkg:pypi/jsonschema@4.26.0",
         "pkg:pypi/lifelines@0.30.3",
         "pkg:pypi/lightgbm@4.7.0",
-        "pkg:pypi/mlflow@3.14.0",
+        "pkg:pypi/mlflow@3.16.0",
         "pkg:pypi/mlforecast@1.1.0",
         "pkg:pypi/numpy@2.5.1",
         "pkg:pypi/openapi-spec-validator@0.9.0",
@@ -18844,9 +19390,12 @@
         "pkg:npm/@deck.gl/layers@9.3.7",
         "pkg:npm/@deck.gl/react@9.3.7",
         "pkg:npm/@deck.gl/widgets@9.3.7",
+        "pkg:npm/@types/pg@8.23.1",
+        "pkg:npm/argon2@0.45.1",
         "pkg:npm/h3-js@4.5.0",
         "pkg:npm/maplibre-gl@5.24.0",
         "pkg:npm/next@15.5.21",
+        "pkg:npm/pg@8.23.0",
         "pkg:npm/react-dom@18.3.1",
         "pkg:npm/react@18.3.1"
       ]
@@ -19229,6 +19778,14 @@
       ]
     },
     {
+      "ref": "pkg:npm/@types/pg@8.23.1",
+      "dependsOn": [
+        "pkg:npm/node@20.14.10",
+        "pkg:npm/pg-protocol@1.16.0",
+        "pkg:npm/pg-types@2.2.0"
+      ]
+    },
+    {
       "ref": "pkg:npm/@types/react@18.3.12",
       "dependsOn": [
         "pkg:npm/@types/prop-types@15.7.15",
@@ -19450,6 +20007,15 @@
       ]
     },
     {
+      "ref": "pkg:npm/argon2@0.45.1",
+      "dependsOn": [
+        "pkg:npm/@phc/format@1.0.0",
+        "pkg:npm/cross-env@10.1.0",
+        "pkg:npm/node-addon-api@8.9.2",
+        "pkg:npm/node-gyp-build@4.8.4"
+      ]
+    },
+    {
       "ref": "pkg:npm/aria-query@5.3.0",
       "dependsOn": [
         "pkg:npm/dequal@2.0.3"
@@ -19597,6 +20163,13 @@
       "ref": "pkg:npm/color-convert@2.0.1",
       "dependsOn": [
         "pkg:npm/color-name@1.1.4"
+      ]
+    },
+    {
+      "ref": "pkg:npm/cross-env@10.1.0",
+      "dependsOn": [
+        "pkg:npm/@epic-web/invariant@1.0.0",
+        "pkg:npm/cross-spawn@7.0.6"
       ]
     },
     {
@@ -20547,6 +21120,32 @@
       ]
     },
     {
+      "ref": "pkg:npm/pg@8.23.0",
+      "dependsOn": [
+        "pkg:npm/pg-connection-string@2.14.0",
+        "pkg:npm/pg-pool@3.14.0",
+        "pkg:npm/pg-protocol@1.16.0",
+        "pkg:npm/pg-types@2.2.0",
+        "pkg:npm/pgpass@1.0.5"
+      ]
+    },
+    {
+      "ref": "pkg:npm/pg-types@2.2.0",
+      "dependsOn": [
+        "pkg:npm/pg-int8@1.0.1",
+        "pkg:npm/postgres-array@2.0.0",
+        "pkg:npm/postgres-bytea@1.0.1",
+        "pkg:npm/postgres-date@1.0.7",
+        "pkg:npm/postgres-interval@1.2.0"
+      ]
+    },
+    {
+      "ref": "pkg:npm/pgpass@1.0.5",
+      "dependsOn": [
+        "pkg:npm/split2@4.2.0"
+      ]
+    },
+    {
       "ref": "pkg:npm/playwright@1.61.1",
       "dependsOn": [
         "pkg:npm/playwright-core@1.61.1"
@@ -20558,6 +21157,12 @@
         "pkg:npm/nanoid@3.3.18",
         "pkg:npm/picocolors@1.1.1",
         "pkg:npm/source-map-js@1.2.1"
+      ]
+    },
+    {
+      "ref": "pkg:npm/postgres-interval@1.2.0",
+      "dependsOn": [
+        "pkg:npm/xtend@4.0.2"
       ]
     },
     {
@@ -21105,6 +21710,18 @@
       ]
     },
     {
+      "ref": "pkg:pypi/argon2-cffi@25.1.0",
+      "dependsOn": [
+        "pkg:pypi/argon2-cffi-bindings@26.1.0"
+      ]
+    },
+    {
+      "ref": "pkg:pypi/argon2-cffi-bindings@26.1.0",
+      "dependsOn": [
+        "pkg:pypi/cffi@2.1.0"
+      ]
+    },
+    {
       "ref": "pkg:pypi/autograd@1.9.1",
       "dependsOn": [
         "pkg:pypi/numpy@2.5.1"
@@ -21180,7 +21797,7 @@
       ]
     },
     {
-      "ref": "pkg:pypi/cryptography@48.0.1",
+      "ref": "pkg:pypi/cryptography@50.0.1",
       "dependsOn": [
         "pkg:pypi/cffi@2.1.0"
       ]
@@ -21268,7 +21885,7 @@
       "dependsOn": [
         "pkg:pypi/click@8.4.2",
         "pkg:pypi/fsspec@2026.6.0",
-        "pkg:pypi/gitpython@3.1.58",
+        "pkg:pypi/gitpython@3.1.61",
         "pkg:pypi/giturlparse@0.15.0",
         "pkg:pypi/humanize@4.16.0",
         "pkg:pypi/jsonpath-ng@1.8.0",
@@ -21306,13 +21923,13 @@
       "ref": "pkg:pypi/evidently@0.7.21",
       "dependsOn": [
         "pkg:pypi/certifi@2026.6.17",
-        "pkg:pypi/cryptography@48.0.1",
+        "pkg:pypi/cryptography@50.0.1",
         "pkg:pypi/deprecation@2.1.0",
         "pkg:pypi/dynaconf@3.3.3",
         "pkg:pypi/fsspec@2026.6.0",
         "pkg:pypi/iterative-telemetry@0.0.10",
         "pkg:pypi/litestar@2.24.0",
-        "pkg:pypi/nltk@3.10.0",
+        "pkg:pypi/nltk@3.10.3",
         "pkg:pypi/numpy@2.5.1",
         "pkg:pypi/opentelemetry-proto@1.44.0",
         "pkg:pypi/pandas@2.3.3",
@@ -21394,7 +22011,7 @@
       ]
     },
     {
-      "ref": "pkg:pypi/gitpython@3.1.58",
+      "ref": "pkg:pypi/gitpython@3.1.61",
       "dependsOn": [
         "pkg:pypi/gitdb@4.0.12"
       ]
@@ -21412,7 +22029,7 @@
     {
       "ref": "pkg:pypi/google-auth@2.56.2",
       "dependsOn": [
-        "pkg:pypi/cryptography@48.0.1",
+        "pkg:pypi/cryptography@50.0.1",
         "pkg:pypi/pyasn1-modules@0.4.2"
       ]
     },
@@ -21465,7 +22082,7 @@
       "ref": "pkg:pypi/great-expectations@1.19.0",
       "dependsOn": [
         "pkg:pypi/altair@6.2.2",
-        "pkg:pypi/cryptography@48.0.1",
+        "pkg:pypi/cryptography@50.0.1",
         "pkg:pypi/jinja2@3.1.6",
         "pkg:pypi/jsonschema@4.26.0",
         "pkg:pypi/marshmallow@3.26.2",
@@ -21647,11 +22264,11 @@
       ]
     },
     {
-      "ref": "pkg:pypi/mlflow@3.14.0",
+      "ref": "pkg:pypi/mlflow@3.16.0",
       "dependsOn": [
         "pkg:pypi/aiohttp@3.14.3",
         "pkg:pypi/alembic@1.18.5",
-        "pkg:pypi/cryptography@48.0.1",
+        "pkg:pypi/cryptography@50.0.1",
         "pkg:pypi/docker@7.2.0",
         "pkg:pypi/flask-cors@6.0.5",
         "pkg:pypi/flask@3.1.3",
@@ -21659,8 +22276,8 @@
         "pkg:pypi/gunicorn@26.0.0",
         "pkg:pypi/huey@3.3.0",
         "pkg:pypi/matplotlib@3.11.1",
-        "pkg:pypi/mlflow-skinny@3.14.0",
-        "pkg:pypi/mlflow-tracing@3.14.0",
+        "pkg:pypi/mlflow-skinny@3.16.0",
+        "pkg:pypi/mlflow-tracing@3.16.0",
         "pkg:pypi/numpy@2.5.1",
         "pkg:pypi/pandas@2.3.3",
         "pkg:pypi/pyarrow@24.0.0",
@@ -21672,14 +22289,15 @@
       ]
     },
     {
-      "ref": "pkg:pypi/mlflow-skinny@3.14.0",
+      "ref": "pkg:pypi/mlflow-skinny@3.16.0",
       "dependsOn": [
+        "pkg:pypi/anyio@4.13.0",
         "pkg:pypi/cachetools@7.1.6",
         "pkg:pypi/click@8.4.2",
         "pkg:pypi/cloudpickle@3.1.2",
         "pkg:pypi/databricks-sdk@0.122.0",
         "pkg:pypi/fastapi@0.138.1",
-        "pkg:pypi/gitpython@3.1.58",
+        "pkg:pypi/gitpython@3.1.61",
         "pkg:pypi/importlib-metadata@9.0.0",
         "pkg:pypi/opentelemetry-api@1.44.0",
         "pkg:pypi/opentelemetry-proto@1.44.0",
@@ -21690,14 +22308,14 @@
         "pkg:pypi/python-dotenv@1.2.2",
         "pkg:pypi/pyyaml@6.0.3",
         "pkg:pypi/requests@2.34.2",
-        "pkg:pypi/sqlparse@0.5.5",
+        "pkg:pypi/sqlparse@0.6.0",
         "pkg:pypi/starlette@1.3.1",
         "pkg:pypi/typing-extensions@4.15.0",
         "pkg:pypi/uvicorn@0.50.2"
       ]
     },
     {
-      "ref": "pkg:pypi/mlflow-tracing@3.14.0",
+      "ref": "pkg:pypi/mlflow-tracing@3.16.0",
       "dependsOn": [
         "pkg:pypi/cachetools@7.1.6",
         "pkg:pypi/databricks-sdk@0.122.0",
@@ -21731,7 +22349,7 @@
       ]
     },
     {
-      "ref": "pkg:pypi/nltk@3.10.0",
+      "ref": "pkg:pypi/nltk@3.10.3",
       "dependsOn": [
         "pkg:pypi/click@8.4.2",
         "pkg:pypi/defusedxml@0.7.1",
@@ -21743,8 +22361,9 @@
     {
       "ref": "pkg:pypi/odayplus@0.1.0",
       "dependsOn": [
+        "pkg:pypi/argon2-cffi@25.1.0",
         "pkg:pypi/catboost@1.2.10",
-        "pkg:pypi/cryptography@48.0.1",
+        "pkg:pypi/cryptography@50.0.1",
         "pkg:pypi/cvxpy@1.9.2",
         "pkg:pypi/dagster@1.13.15",
         "pkg:pypi/dlt@1.29.1",
@@ -21758,7 +22377,7 @@
         "pkg:pypi/httpx@0.28.1",
         "pkg:pypi/lifelines@0.30.3",
         "pkg:pypi/lightgbm@4.7.0",
-        "pkg:pypi/mlflow@3.14.0",
+        "pkg:pypi/mlflow@3.16.0",
         "pkg:pypi/mlforecast@1.1.0",
         "pkg:pypi/numpy@2.5.1",
         "pkg:pypi/optuna@4.9.0",

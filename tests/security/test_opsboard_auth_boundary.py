@@ -42,11 +42,27 @@ def key() -> SigningKey:
 
 @pytest.fixture
 def config(key: SigningKey) -> AuthBoundaryConfig:
+    # Contract §4.4: roles and scope for the service issuer class (and its
+    # legacy ODP_AUTH_ISSUER alias, §8.4) come from ODP_AUTH_PRINCIPAL_MAP,
+    # never from the token's own claims, so `user-1` must be declared here to
+    # authenticate at all (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
     return AuthBoundaryConfig(
         issuer=ISSUER,
         audiences=frozenset({AUDIENCE}),
         signing_keys={key.kid: key},
         leeway_seconds=60,
+        principal_mappings={
+            "user-1": {
+                "roles": ["operations_manager"],
+                "scope": {
+                    "tenant_id": "tenant-a",
+                    "brand_ids": ["brand-x"],
+                    "region_ids": ["north"],
+                    "assigned_area_ids": ["area-7"],
+                    "heat_zone_ids": ["heat-zone-9"],
+                },
+            }
+        },
     )
 
 
@@ -75,7 +91,7 @@ def _boundary(config: AuthBoundaryConfig, **kw: object) -> AuthenticationBoundar
 # --- happy path -------------------------------------------------------------
 
 
-def test_valid_token_authenticates_and_maps_claims(config, key):
+def test_valid_token_authenticates_and_maps_declared_principal(config, key):
     boundary = _boundary(config)
     token = encode_compact_jwt(_claims(), key)
 
@@ -91,6 +107,41 @@ def test_valid_token_authenticates_and_maps_claims(config, key):
     assert outcome.principal.scope.region_ids == frozenset({"north"})
     assert outcome.principal.scope.assigned_area_ids == frozenset({"area-7"})
     assert outcome.principal.scope.heat_zone_ids == frozenset({"heat-zone-9"})
+
+
+def test_declared_principal_overrides_escalated_token_claims(config, key):
+    """The declared mapping is the only role/scope source, even when the
+    token asks for more (ODP-WEB-LOCAL-AUTH-API-TRUST-001)."""
+    boundary = _boundary(config)
+    token = encode_compact_jwt(
+        _claims(roles=["platform_admin"], tenant_id="attacker-tenant"), key
+    )
+
+    outcome = boundary.authenticate(Credentials(bearer_token=token), now=NOW)
+
+    assert outcome.authenticated is True
+    assert outcome.principal.roles == frozenset({Role.OPERATIONS_MANAGER})
+    assert outcome.principal.tenant_id == "tenant-a"
+
+
+def test_undeclared_subject_fails_closed(config, key):
+    """A validly signed token for an undeclared `sub` is rejected outright.
+
+    Regression for ODP-WEB-LOCAL-AUTH-API-TRUST-001: previously such a token
+    authenticated and kept its self-asserted roles/tenant.
+    """
+    boundary = _boundary(config)
+    token = encode_compact_jwt(
+        _claims(sub="attacker", roles=["platform_admin"], tenant_id="attacker-tenant"),
+        key,
+    )
+
+    outcome = boundary.authenticate(Credentials(bearer_token=token), now=NOW)
+
+    assert outcome.authenticated is False
+    assert outcome.reason is AuthFailureReason.UNKNOWN_SERVICE
+    assert outcome.principal.roles == frozenset()
+    assert outcome.principal.tenant_id is None
 
 
 def test_verified_email_mapping_supplies_platform_authorization(config, key):
@@ -140,7 +191,11 @@ def test_unknown_verified_principal_cannot_self_assign_authorization(config, key
         now=NOW,
     )
 
-    assert outcome.authenticated is True
+    # ODP-WEB-LOCAL-AUTH-API-TRUST-001 tightened this from "authenticated
+    # with no privileges" to a fail-closed denial: an undeclared subject has
+    # no authoritative role/scope source at all (contract §4.4).
+    assert outcome.authenticated is False
+    assert outcome.reason is AuthFailureReason.UNKNOWN_SERVICE
     assert outcome.principal.roles == frozenset()
     assert outcome.principal.tenant_id is None
 
@@ -441,3 +496,101 @@ def test_credentials_from_headers_parses_bearer_and_service():
     assert creds.service_id == "scheduler"
     assert creds.service_secret == b"s3cr3t"
     assert creds.correlation_id == "corr-9"
+
+
+def test_config_from_env_with_local_identity_signing_key():
+    secret = "a" * 32
+    cfg = config_from_env(
+        {
+            "ODP_AUTH_LOCAL_ISSUER": "urn:odp:identity:local",
+            "ODP_AUTH_LOCAL_AUDIENCES": "https://api.example.com",
+            "ODP_IDENTITY_TOKEN_SIGNING_KEY": secret,
+        }
+    )
+    assert cfg.is_configured is True
+    assert cfg.has_live_inputs is True
+    assert cfg.issuer == "urn:odp:identity:local"
+    assert "https://api.example.com" in cfg.local_audiences
+    assert "local-default" in cfg.local_signing_keys
+    local_key = cfg.resolve_key("local-default")
+    assert local_key is not None
+    assert local_key.algorithm == "HS256"
+
+    # Verify a token issued by the Web BFF using this signing key can be
+    # decoded and its claims validated (signature + issuer + audience).
+    # Full authentication requires session/identity store support which is
+    # exercised in the integration tests; here we confirm config wiring.
+    local_token = encode_compact_jwt(
+        {
+            "iss": "urn:odp:identity:local",
+            "aud": "https://api.example.com",
+            "sub": "00000000-0000-0000-0000-000000000002",
+            "sid": "00000000-0000-0000-0000-000000000001",
+            "tenant_id": "00000000-0000-0000-0000-000000000003",
+            "iat": NOW.timestamp(),
+            "exp": (NOW + timedelta(minutes=5)).timestamp(),
+        },
+        local_key,
+    )
+    # The token can be verified with the signing key
+    from modules.opsboard.auth.jwt import verify_compact_jwt
+    verified_claims = verify_compact_jwt(local_token, local_key)
+    assert verified_claims["sub"] == "00000000-0000-0000-0000-000000000002"
+    assert verified_claims["iss"] == "urn:odp:identity:local"
+
+
+def test_web_to_api_local_token_roundtrip_with_coexisting_issuers():
+    """Verify production local Web->API token roundtrip when both Google and local issuers coexist."""
+    secret = "b" * 32
+    # In production local deployment, both ODP_AUTH_ISSUER (Google smoke) and
+    # ODP_AUTH_LOCAL_ISSUER (Web local identity) are present in the environment.
+    cfg = config_from_env(
+        {
+            "ODP_AUTH_ISSUER": "https://accounts.google.com",
+            "ODP_AUTH_LOCAL_ISSUER": "urn:odp:identity:local",
+            "ODP_AUTH_AUDIENCES": "https://api.example.com",
+            "ODP_IDENTITY_TOKEN_SIGNING_KEY": secret,
+        }
+    )
+    assert cfg.is_configured is True
+    assert "urn:odp:identity:local" in cfg.trusted_issuers
+    assert "https://accounts.google.com" in cfg.trusted_issuers
+    assert "https://api.example.com" in cfg.audiences
+
+    local_key = cfg.resolve_key("local-default")
+    assert local_key is not None
+
+    # Web-minted local access token: verify signature and claims structure
+    web_local_token = encode_compact_jwt(
+        {
+            "iss": "urn:odp:identity:local",
+            "aud": "https://api.example.com",
+            "sub": "00000000-0000-0000-0000-000000000456",
+            "sid": "00000000-0000-0000-0000-000000000002",
+            "tenant_id": "00000000-0000-0000-0000-000000000789",
+            "iat": NOW.timestamp(),
+            "exp": (NOW + timedelta(minutes=2)).timestamp(),
+        },
+        local_key,
+    )
+    from modules.opsboard.auth.jwt import verify_compact_jwt
+    verified = verify_compact_jwt(web_local_token, local_key)
+    assert verified["sub"] == "00000000-0000-0000-0000-000000000456"
+    assert verified["iss"] == "urn:odp:identity:local"
+
+    # Mismatched/untrusted issuer is still rejected
+    foreign_token = encode_compact_jwt(
+        {
+            "iss": "https://evil.example",
+            "aud": "https://api.example.com",
+            "sub": "00000000-0000-0000-0000-000000000456",
+            "sid": "00000000-0000-0000-0000-000000000002",
+            "iat": NOW.timestamp(),
+            "exp": (NOW + timedelta(minutes=2)).timestamp(),
+        },
+        local_key,
+    )
+    boundary = _boundary(cfg)
+    foreign_outcome = boundary.authenticate(Credentials(bearer_token=foreign_token), now=NOW)
+    assert foreign_outcome.authenticated is False
+    assert foreign_outcome.reason is AuthFailureReason.ISSUER_MISMATCH

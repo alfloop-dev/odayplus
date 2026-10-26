@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+from datetime import datetime
 from typing import Any
 
+from apps.api.oday_api.runtime_mode import live_data_required
 from models.shared_ml import (
     ProductionExecutionConfigurationError,
     production_execution_required,
 )
-from modules.avm.application.valuation import AVMError
+from modules.avm.application.valuation import AVMError, AVMReviewRequiredFailure
 from shared.api.idempotency import IdempotencyConflictError, apply_replay_marker
 from shared.audit import AuditEvent, InMemoryAuditLog
 from shared.infrastructure.persistence.command_receipts import (
@@ -19,12 +22,23 @@ from shared.jobs.queue import InMemoryJobQueue
 
 try:
     from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-    from pydantic import BaseModel, Field
+    from pydantic import BaseModel, Field, field_validator
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
 else:
+    from uuid import uuid4
+
     from apps.api.app.routes._common import durable_store_required
-    from modules.avm.application import AVMProductionExecutor, AVMService
+    from apps.api.app.routes._native_request_owner import (
+        native_audit_actor,
+        native_audit_metadata,
+        native_response,
+    )
+    from modules.avm.application import (
+        AVMProductionExecutor,
+        AVMService,
+        DepreciationRollbackReceipt,
+    )
     from modules.avm.infrastructure import InMemoryAVMRepository
 
 
@@ -38,15 +52,46 @@ else:
         working_capital: float = 0.0
         comparable_multiples: list[float] = Field(default_factory=list)
         liquidity_discount: float = 0.1
-        quality_score: float = 1.0
+        quality_score: float | None = None
         source_snapshot_ids: list[str] = Field(default_factory=list)
         prediction_origin_time: str | None = None
+        equipment_depreciation_basis: str | None = None
+        equipment_original_cost: float | None = Field(default=None, ge=0.0)
+        asset_book_value_includes_equipment: bool | None = None
+        useful_life_months: int | None = Field(default=None, ge=1)
+        residual_value_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
+        depreciation_method: str | None = None
+        depreciation_effective_date: str | None = None
+        asset_in_service_date: str | None = None
         created_by: str = Field(min_length=1)
         idempotency_key: str | None = None
+
+        @field_validator("useful_life_months", mode="before")
+        @classmethod
+        def reject_boolean_useful_life(cls, value: Any) -> Any:
+            # Lax int parsing would turn JSON true into 1 before domain validation.
+            if isinstance(value, bool):
+                raise ValueError("useful_life_months must be an integer >= 1")
+            return value
 
 
     class ActorPayload(BaseModel):
         actor: str = Field(min_length=1)
+
+
+    class RollbackReceiptPayload(BaseModel):
+        decider: str = Field(min_length=1)
+        decision_time: datetime
+        reason: str = Field(min_length=1)
+        target_expiry: datetime
+        depreciation_version_pin: str | None = None
+        receipt_id: str | None = None
+
+
+    class ValueCasePayload(BaseModel):
+        actor: str = Field(min_length=1)
+        depreciation_version_pin: str | None = None
+        rollback_receipt: RollbackReceiptPayload | None = None
 
 
     class FinanceApprovalPayload(BaseModel):
@@ -60,6 +105,24 @@ else:
         reason: str = ""
 
 
+    class DealOutcomePayload(BaseModel):
+        valuation_id: str = Field(min_length=1)
+        store_id: str = Field(min_length=1)
+        sold: bool
+        settlement_price: float | None = None
+        settlement_date: str | None = None
+        duration_days: float = 0.0
+        no_deal_reason_code: str | None = None
+        deal_terms: dict[str, Any] = Field(default_factory=dict)
+        source_authority: str = "official_dealroom"
+
+
+    class DealOutcomeExportPayload(BaseModel):
+        actor: str = Field(min_length=1)
+        role: str | None = None
+        reason: str = ""
+
+
     def create_avm_router(
         *,
         repository: InMemoryAVMRepository | None = None,
@@ -68,6 +131,9 @@ else:
         require_durable_commands: bool | None = None,
         production_executor: AVMProductionExecutor | None = None,
         runtime_mode: str | None = None,
+        depreciation_version_pin: str | None = None,
+        rollback_receipt: DepreciationRollbackReceipt | None = None,
+        request_owner: Any | None = None,
     ) -> APIRouter:
         from apps.api.app.routes._common import runtime_binding_guard
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
@@ -90,6 +156,8 @@ else:
                 repository=active_repository,
                 production_executor=production_executor,
                 runtime_mode=runtime_mode,
+                depreciation_version_pin=depreciation_version_pin,
+                rollback_receipt=rollback_receipt,
             )
         except ProductionExecutionConfigurationError as exc:
             composition_error = exc
@@ -137,6 +205,39 @@ else:
                 )
             return "__local__"
 
+
+        def permission(action):
+            return (request_owner.permission(action) if request_owner is not None else
+                    require_permission("avm", action, engine=authz_engine))
+
+        @contextmanager
+        def owned_service(request, action, body=None):
+            if request_owner is None:
+                # Existing standalone native embedders are an engineering lane.
+                # They cannot become a live HTTP owner through environment drift.
+                if production_required or live_data_required():
+                    raise HTTPException(503, "NATIVE_REQUEST_OWNER_REQUIRED")
+                yield service
+                return
+            review_response = None
+            with request_owner.operation(request, action, body, force_production=production_required) as owner:
+                try:
+                    bound = AVMService(repository=owner.repository, production_executor=production_executor,
+                        runtime_mode=runtime_mode, depreciation_version_pin=depreciation_version_pin,
+                        rollback_receipt=rollback_receipt)
+                except ProductionExecutionConfigurationError as exc:
+                    raise HTTPException(503, {"code": exc.code, "message": str(exc)}) from exc
+                try:
+                    yield bound
+                except HTTPException as exc:
+                    if exc.status_code != 422 or type(exc.__cause__) is not AVMReviewRequiredFailure:
+                        raise
+                    # Finish the same owner transaction, including the named
+                    # failure state, before delivering its unchanged HTTP422.
+                    review_response = exc
+            if review_response is not None:
+                raise review_response
+
         require_runtime_binding = runtime_binding_guard(composition_error)
 
         router = APIRouter(
@@ -158,12 +259,12 @@ else:
             return active_audit_log.record(
                 AuditEvent(
                     event_type=event_type,
-                    actor=actor,
+                    actor=native_audit_actor(request, actor),
                     action=action,
                     resource=resource,
                     outcome=outcome,
                     correlation_id=request.state.correlation_id,
-                    metadata=metadata or {},
+                    metadata=native_audit_metadata(request, metadata),
                 )
             ).event_id
 
@@ -175,249 +276,400 @@ else:
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=str(exc),
                 ) from exc
+            except ValueError as exc:
+                # Domain alignment/validation failures are client errors, not
+                # uncaught 500s (for example an outcome referencing an unknown
+                # valuation report).
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=str(exc),
+                ) from exc
 
-        @router.post("/cases", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("avm", Action.CREATE, engine=authz_engine))])
+        @router.post("/cases", status_code=status.HTTP_201_CREATED, dependencies=[Depends(permission(Action.CREATE))])
         def create_case(
             body: AVMCasePayload,
             request: Request,
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
-            effective_key = body.idempotency_key or idempotency_key
+            with owned_service(request, Action.CREATE, body) as service:
+                effective_key = body.idempotency_key or idempotency_key
 
-            def execute(_receipt_id: str) -> dict[str, Any]:
-                case = service.create_case(
-                    body.model_dump(exclude={"created_by", "idempotency_key"}),
-                    created_by=body.created_by,
-                    correlation_id=request.state.correlation_id,
+                def execute(_receipt_id: str) -> dict[str, Any]:
+                    case = service.create_case(
+                        body.model_dump(exclude={"created_by", "idempotency_key"}),
+                        created_by=body.created_by,
+                        correlation_id=request.state.correlation_id,
+                    )
+                    payload = case.to_dict()
+                    payload["created"] = True
+                    payload["correlation_id"] = request.state.correlation_id
+                    payload["audit_event_id"] = _audit(
+                        event_type="avm.case_created.v1",
+                        actor=body.created_by,
+                        action="create_case",
+                        resource=f"avm/cases/{case.case_id}",
+                        outcome="created",
+                        request=request,
+                        metadata={"idempotency_key": effective_key},
+                    )
+                    return payload
+
+                depreciation_fields = (
+                    "equipment_depreciation_basis",
+                    "equipment_original_cost",
+                    "asset_book_value_includes_equipment",
+                    "useful_life_months",
+                    "residual_value_ratio",
+                    "depreciation_method",
+                    "depreciation_effective_date",
+                    "asset_in_service_date",
                 )
-                payload = case.to_dict()
-                payload["created"] = True
-                payload["correlation_id"] = request.state.correlation_id
-                payload["audit_event_id"] = _audit(
-                    event_type="avm.case_created.v1",
-                    actor=body.created_by,
-                    action="create_case",
-                    resource=f"avm/cases/{case.case_id}",
-                    outcome="created",
-                    request=request,
-                    metadata={"idempotency_key": effective_key},
+                raw_payload = body.model_dump(mode="json")
+                if all(raw_payload.get(k) is None for k in depreciation_fields):
+                    fingerprint_payload = {
+                        k: v for k, v in raw_payload.items() if k not in depreciation_fields
+                    }
+                else:
+                    fingerprint_payload = raw_payload
+
+                try:
+                    outcome = command_store(request).run(
+                        tenant_id=tenant_id(request),
+                        idempotency_key=effective_key,
+                        scope="avm:create_case",
+                        payload=fingerprint_payload,
+                        correlation_id=request.state.correlation_id,
+                        operation=execute,
+                    )
+                except IdempotencyConflictError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "code": "IDEMPOTENCY_KEY_REUSED",
+                            "message": str(exc),
+                        },
+                    ) from exc
+                except CommandReceiptIncompleteError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "code": "COMMAND_RECEIPT_INCOMPLETE",
+                            "message": str(exc),
+                        },
+                    ) from exc
+                except CommandReceiptPersistenceError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail={
+                            "code": "DURABLE_COMMAND_STORE_UNAVAILABLE",
+                            "message": str(exc),
+                        },
+                    ) from exc
+                payload = apply_replay_marker(
+                    outcome.value,
+                    replayed=outcome.replayed,
                 )
-                return payload
+                if outcome.replayed:
+                    payload["created"] = False
+                if request_owner is not None:
+                    service.repository.get_case(payload["case_id"])
+                return native_response(request, payload)
 
-            try:
-                outcome = command_store(request).run(
-                    tenant_id=tenant_id(request),
-                    idempotency_key=effective_key,
-                    scope="avm:create_case",
-                    payload=body.model_dump(mode="json"),
-                    correlation_id=request.state.correlation_id,
-                    operation=execute,
-                )
-            except IdempotencyConflictError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "code": "IDEMPOTENCY_KEY_REUSED",
-                        "message": str(exc),
-                    },
-                ) from exc
-            except CommandReceiptIncompleteError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "code": "COMMAND_RECEIPT_INCOMPLETE",
-                        "message": str(exc),
-                    },
-                ) from exc
-            except CommandReceiptPersistenceError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail={
-                        "code": "DURABLE_COMMAND_STORE_UNAVAILABLE",
-                        "message": str(exc),
-                    },
-                ) from exc
-            payload = apply_replay_marker(
-                outcome.value,
-                replayed=outcome.replayed,
-            )
-            if outcome.replayed:
-                payload["created"] = False
-            return payload
+        @router.get("/cases", dependencies=[Depends(permission(Action.VIEW))])
+        def list_cases(request: Request) -> dict[str, Any]:
+            with owned_service(request, Action.VIEW) as service:
+                items = service.repository.list_cases()
+                return native_response(request, {"items": [item.to_dict() for item in items], "count": len(items)})
 
-        @router.get("/cases", dependencies=[Depends(require_permission("avm", Action.VIEW, engine=authz_engine))])
-        def list_cases() -> dict[str, Any]:
-            items = service.repository.list_cases()
-            return {"items": [item.to_dict() for item in items], "count": len(items)}
+        @router.get("/cases/{case_id}", dependencies=[Depends(permission(Action.VIEW))])
+        def get_case(case_id: str, request: Request) -> dict[str, Any]:
+            with owned_service(request, Action.VIEW) as service:
+                case = service.get_case(case_id)
+                if case is None:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case not found")
+                return native_response(request, case.to_dict())
 
-        @router.get("/cases/{case_id}", dependencies=[Depends(require_permission("avm", Action.VIEW, engine=authz_engine))])
-        def get_case(case_id: str) -> dict[str, Any]:
-            case = service.get_case(case_id)
-            if case is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case not found")
-            return case.to_dict()
-
-        @router.post("/cases/{case_id}/normalize", dependencies=[Depends(require_permission("avm", Action.CREATE, engine=authz_engine))])
+        @router.post("/cases/{case_id}/normalize", dependencies=[Depends(permission(Action.CREATE))])
         def normalize(case_id: str, body: ActorPayload, request: Request) -> dict[str, Any]:
-            margin = _run(
-                lambda: service.normalize(
-                    case_id, actor=body.actor, correlation_id=request.state.correlation_id
+            with owned_service(request, Action.CREATE, body) as service:
+                margin = _run(
+                    lambda: service.normalize(
+                        case_id, actor=body.actor, correlation_id=request.state.correlation_id
+                    )
                 )
-            )
-            _audit(
-                event_type="avm.normalized.v1",
-                actor=body.actor,
-                action="normalize",
-                resource=f"avm/cases/{case_id}",
-                outcome="completed",
-                request=request,
-            )
-            return margin.to_dict()
-
-        @router.post("/cases/{case_id}/value", dependencies=[Depends(require_permission("avm", Action.CREATE, engine=authz_engine))])
-        def value(case_id: str, body: ActorPayload, request: Request) -> dict[str, Any]:
-            report = _run(
-                lambda: service.value(
-                    case_id, actor=body.actor, correlation_id=request.state.correlation_id
+                _audit(
+                    event_type="avm.normalized.v1",
+                    actor=body.actor,
+                    action="normalize",
+                    resource=f"avm/cases/{case_id}",
+                    outcome="completed",
+                    request=request,
                 )
-            )
-            payload = report.to_dict()
-            payload["audit_event_id"] = _audit(
-                event_type="avm.valued.v1",
-                actor=body.actor,
-                action="value",
-                resource=f"avm/cases/{case_id}/report",
-                outcome="review_required",
-                request=request,
-                metadata={
-                    "report_id": report.report_id,
-                    "valuation_version": report.valuation_version,
-                    "confidence": report.confidence,
-                },
-            )
-            return payload
+                return native_response(request, margin.to_dict())
 
-        @router.post("/cases/{case_id}/finance-approval", dependencies=[Depends(require_permission("avm", Action.APPROVE, engine=authz_engine))])
+        @router.post("/cases/{case_id}/value", dependencies=[Depends(permission(Action.CREATE))])
+        def value(case_id: str, body: ValueCasePayload, request: Request) -> dict[str, Any]:
+            with owned_service(request, Action.CREATE, body) as service:
+                receipt_obj: DepreciationRollbackReceipt | None = None
+                if body.rollback_receipt is not None:
+                    receipt_obj = DepreciationRollbackReceipt(
+                        decider=body.rollback_receipt.decider,
+                        decision_time=body.rollback_receipt.decision_time,
+                        reason=body.rollback_receipt.reason,
+                        target_expiry=body.rollback_receipt.target_expiry,
+                        depreciation_version_pin=(
+                            body.rollback_receipt.depreciation_version_pin
+                            or body.depreciation_version_pin
+                            or ""
+                        ),
+                        receipt_id=body.rollback_receipt.receipt_id or f"dep-rollback-{uuid4()}",
+                    )
+                report = _run(
+                    lambda: service.value(
+                        case_id,
+                        actor=body.actor,
+                        correlation_id=request.state.correlation_id,
+                        depreciation_version_pin=body.depreciation_version_pin,
+                        rollback_receipt=receipt_obj,
+                    )
+                )
+                payload = report.to_dict()
+                payload["audit_event_id"] = _audit(
+                    event_type="avm.valued.v1",
+                    actor=body.actor,
+                    action="value",
+                    resource=f"avm/cases/{case_id}/report",
+                    outcome="review_required",
+                    request=request,
+                    metadata={
+                        "report_id": report.report_id,
+                        "valuation_version": report.valuation_version,
+                        "confidence": report.confidence,
+                    },
+                )
+                return native_response(request, payload)
+
+        @router.post("/cases/{case_id}/finance-approval", dependencies=[Depends(permission(Action.APPROVE))])
         def approve_finance(
             case_id: str, body: FinanceApprovalPayload, request: Request
         ) -> dict[str, Any]:
-            report = _run(
-                lambda: service.approve_finance(
-                    case_id,
+            with owned_service(request, Action.APPROVE, body) as service:
+                report = _run(
+                    lambda: service.approve_finance(
+                        case_id,
+                        actor=body.actor,
+                        reason=body.reason,
+                        reserve_price=body.reserve_price,
+                        correlation_id=request.state.correlation_id,
+                    )
+                )
+                payload = report.to_dict()
+                payload["audit_event_id"] = _audit(
+                    event_type="avm.finance_approved.v1",
                     actor=body.actor,
-                    reason=body.reason,
-                    reserve_price=body.reserve_price,
-                    correlation_id=request.state.correlation_id,
-                )
-            )
-            payload = report.to_dict()
-            payload["audit_event_id"] = _audit(
-                event_type="avm.finance_approved.v1",
-                actor=body.actor,
-                action="approve_finance",
-                resource=f"avm/cases/{case_id}/finance-approval",
-                outcome="approved",
-                request=request,
-                metadata={
-                    "reason": body.reason,
-                    "decision_id": report.finance_approval.decision_id
-                    if report.finance_approval
-                    else None,
-                    "reserve_price": report.finance_approval.reserve_price
-                    if report.finance_approval
-                    else None,
-                    "reserve_overridden": (
-                        report.finance_approval.reserve_price != report.reserve_price
+                    action="approve_finance",
+                    resource=f"avm/cases/{case_id}/finance-approval",
+                    outcome="approved",
+                    request=request,
+                    metadata={
+                        "reason": body.reason,
+                        "decision_id": report.finance_approval.decision_id
                         if report.finance_approval
-                        else False
-                    ),
-                    "valuation_version": report.valuation_version,
-                },
-            )
-            return payload
+                        else None,
+                        "reserve_price": report.finance_approval.reserve_price
+                        if report.finance_approval
+                        else None,
+                        "reserve_overridden": (
+                            report.finance_approval.reserve_price != report.reserve_price
+                            if report.finance_approval
+                            else False
+                        ),
+                        "valuation_version": report.valuation_version,
+                    },
+                )
+                return native_response(request, payload)
 
-        @router.post("/cases/{case_id}/dataroom", dependencies=[Depends(require_permission("avm", Action.CREATE, engine=authz_engine))])
+        @router.post("/cases/{case_id}/dataroom", dependencies=[Depends(permission(Action.CREATE))])
         def build_dataroom(case_id: str, body: ActorPayload, request: Request) -> dict[str, Any]:
-            dataroom = _run(
-                lambda: service.build_dataroom(
-                    case_id, actor=body.actor, correlation_id=request.state.correlation_id
+            with owned_service(request, Action.CREATE, body) as service:
+                dataroom = _run(
+                    lambda: service.build_dataroom(
+                        case_id, actor=body.actor, correlation_id=request.state.correlation_id
+                    )
                 )
-            )
-            payload = dataroom.to_dict()
-            payload["audit_event_id"] = _audit(
-                event_type="avm.dataroom_ready.v1",
-                actor=body.actor,
-                action="build_dataroom",
-                resource=f"avm/cases/{case_id}/dataroom",
-                outcome="ready",
-                request=request,
-                metadata={
-                    "dataroom_id": dataroom.dataroom_id,
-                    "completeness": dataroom.completeness,
-                    "missing_documents": list(dataroom.missing_documents),
-                },
-            )
-            return payload
-
-        @router.get("/cases/{case_id}/dataroom", dependencies=[Depends(require_permission("avm", Action.VIEW, engine=authz_engine))])
-        def get_dataroom(case_id: str) -> dict[str, Any]:
-            dataroom = service.dataroom(case_id)
-            if dataroom is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="dataroom not found",
+                payload = dataroom.to_dict()
+                payload["audit_event_id"] = _audit(
+                    event_type="avm.dataroom_ready.v1",
+                    actor=body.actor,
+                    action="build_dataroom",
+                    resource=f"avm/cases/{case_id}/dataroom",
+                    outcome="ready",
+                    request=request,
+                    metadata={
+                        "dataroom_id": dataroom.dataroom_id,
+                        "completeness": dataroom.completeness,
+                        "missing_documents": list(dataroom.missing_documents),
+                    },
                 )
-            return dataroom.to_dict()
+                return native_response(request, payload)
 
-        @router.post("/cases/{case_id}/dataroom/export", dependencies=[Depends(require_permission("avm", Action.EXPORT, engine=authz_engine))])
+        @router.get("/cases/{case_id}/dataroom", dependencies=[Depends(permission(Action.VIEW))])
+        def get_dataroom(case_id: str, request: Request) -> dict[str, Any]:
+            with owned_service(request, Action.VIEW) as service:
+                dataroom = service.dataroom(case_id)
+                if dataroom is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="dataroom not found",
+                    )
+                return native_response(request, dataroom.to_dict())
+
+        @router.post("/cases/{case_id}/dataroom/export", dependencies=[Depends(permission(Action.EXPORT))])
         def export_dataroom(
             case_id: str, body: DataRoomExportPayload, request: Request
         ) -> dict[str, Any]:
-            dataroom = _run(
-                lambda: service.export_dataroom(
-                    case_id,
+            with owned_service(request, Action.EXPORT, body) as service:
+                dataroom = _run(
+                    lambda: service.export_dataroom(
+                        case_id,
+                        actor=body.actor,
+                        reason=body.reason,
+                        correlation_id=request.state.correlation_id,
+                    )
+                )
+                payload = dataroom.to_dict()
+                payload["audit_event_id"] = _audit(
+                    event_type="avm.dataroom_exported.v1",
                     actor=body.actor,
-                    reason=body.reason,
+                    action="export_dataroom",
+                    resource=f"avm/cases/{case_id}/dataroom/export",
+                    outcome="exported",
+                    request=request,
+                    metadata={
+                        "reason": body.reason,
+                        "dataroom_id": dataroom.dataroom_id,
+                        "export_count": len(dataroom.export_audit),
+                        "completeness": dataroom.completeness,
+                    },
+                )
+                return native_response(request, payload)
+
+        @router.get("/cases/{case_id}/reports", dependencies=[Depends(permission(Action.VIEW))])
+        def reports(case_id: str, request: Request) -> dict[str, Any]:
+            with owned_service(request, Action.VIEW) as service:
+                case = service.get_case(case_id)
+                if case is None:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case not found")
+                items = service.report_history(case_id)
+                return native_response(request, {
+                    "items": [item.to_dict() for item in items],
+                    "count": len(items),
+                    "latest_version": items[-1].valuation_version if items else None,
+                })
+
+        @router.get("/cases/{case_id}/report", dependencies=[Depends(permission(Action.VIEW))])
+        def report(case_id: str, request: Request) -> dict[str, Any]:
+            with owned_service(request, Action.VIEW) as service:
+                latest = service.latest_report(case_id)
+                if latest is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND, detail="report not found"
+                    )
+                return native_response(request, latest.to_dict())
+
+        @router.post("/deal-outcomes", status_code=status.HTTP_201_CREATED, dependencies=[Depends(permission(Action.CREATE))])
+        def record_deal_outcome(body: DealOutcomePayload, request: Request) -> dict[str, Any]:
+            with owned_service(request, Action.CREATE, body) as service:
+                outcome = _run(lambda: service.record_deal_outcome(body.model_dump()))
+                payload = outcome.to_dict()
+                payload["audit_event_id"] = _audit(
+                    event_type="avm.deal_outcome_recorded.v1",
+                    actor="system",
+                    action="record_deal_outcome",
+                    resource=f"avm/deal_outcomes/{outcome.outcome_id}",
+                    outcome="recorded",
+                    request=request,
+                    metadata={
+                        "outcome_id": outcome.outcome_id,
+                        "valuation_id": outcome.valuation_id,
+                        "sold": outcome.sold,
+                    },
+                )
+                return native_response(request, payload)
+
+        @router.get("/deal-outcomes", dependencies=[Depends(permission(Action.VIEW))])
+        def list_deal_outcomes(request: Request) -> dict[str, Any]:
+            with owned_service(request, Action.VIEW) as service:
+                from modules.avm.application.calibration import is_finance_view_authorized
+                principal = getattr(request.state, "operator_principal", None)
+                finance_authorized = is_finance_view_authorized(principal)
+                items = service.list_deal_outcomes()
+                return native_response(request, {
+                    "items": [
+                        item.to_dict(redact_settlement_price=not finance_authorized)
+                        for item in items
+                    ],
+                    "count": len(items),
+                    "finance_authorized": finance_authorized,
+                })
+
+        @router.get("/deal-outcomes/{outcome_id}", dependencies=[Depends(permission(Action.VIEW))])
+        def get_deal_outcome(outcome_id: str, request: Request) -> dict[str, Any]:
+            with owned_service(request, Action.VIEW) as service:
+                from modules.avm.application.calibration import is_finance_view_authorized
+                outcome = service.get_deal_outcome(outcome_id)
+                if outcome is None:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="deal outcome not found")
+                principal = getattr(request.state, "operator_principal", None)
+                finance_authorized = is_finance_view_authorized(principal)
+                return native_response(request, outcome.to_dict(redact_settlement_price=not finance_authorized))
+
+        @router.post("/deal-outcomes/export", dependencies=[Depends(permission(Action.EXPORT))])
+        def export_deal_outcomes(body: DealOutcomeExportPayload, request: Request) -> dict[str, Any]:
+            with owned_service(request, Action.EXPORT, body) as service:
+                from modules.avm.application.calibration import record_deal_outcome_export_audit
+                principal = getattr(request.state, "operator_principal", None)
+                if principal is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail={
+                            "code": "CONFIDENTIAL_PRINCIPAL_REQUIRED",
+                            "message": "confidential exports require an authenticated principal",
+                        },
+                    )
+                items = service.list_deal_outcomes()
+                export_result = record_deal_outcome_export_audit(
+                    actor_id=body.actor,
+                    role=body.role,
+                    deal_outcomes=items,
+                    principal=principal,
+                    audit_log=active_audit_log,
+                    tenant_id=tenant_id(request),
                     correlation_id=request.state.correlation_id,
+                    export_reason=body.reason,
                 )
-            )
-            payload = dataroom.to_dict()
-            payload["audit_event_id"] = _audit(
-                event_type="avm.dataroom_exported.v1",
-                actor=body.actor,
-                action="export_dataroom",
-                resource=f"avm/cases/{case_id}/dataroom/export",
-                outcome="exported",
-                request=request,
-                metadata={
-                    "reason": body.reason,
-                    "dataroom_id": dataroom.dataroom_id,
-                    "export_count": len(dataroom.export_audit),
-                    "completeness": dataroom.completeness,
-                },
-            )
-            return payload
+                if export_result["decision"] != "PERMIT":
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail={
+                            "code": "CONFIDENTIAL_EXPORT_DENIED",
+                            "message": export_result["reason"],
+                        },
+                    )
+                return native_response(request, {
+                    "export_metadata": export_result,
+                    "items": [item.to_dict(redact_settlement_price=False) for item in items],
+                    "count": len(items),
+                })
 
-        @router.get("/cases/{case_id}/reports", dependencies=[Depends(require_permission("avm", Action.VIEW, engine=authz_engine))])
-        def reports(case_id: str) -> dict[str, Any]:
-            case = service.get_case(case_id)
-            if case is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case not found")
-            items = service.report_history(case_id)
-            return {
-                "items": [item.to_dict() for item in items],
-                "count": len(items),
-                "latest_version": items[-1].valuation_version if items else None,
-            }
-
-        @router.get("/cases/{case_id}/report", dependencies=[Depends(require_permission("avm", Action.VIEW, engine=authz_engine))])
-        def report(case_id: str) -> dict[str, Any]:
-            latest = service.latest_report(case_id)
-            if latest is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND, detail="report not found"
-                )
-            return latest.to_dict()
+        @router.post("/calibration", dependencies=[Depends(permission(Action.VIEW))])
+        def calibrate_outcomes(request: Request) -> dict[str, Any]:
+            with owned_service(request, Action.VIEW) as service:
+                from modules.avm.application.calibration import is_finance_view_authorized
+                principal = getattr(request.state, "operator_principal", None)
+                finance_authorized = is_finance_view_authorized(principal)
+                report = _run(lambda: service.calibrate_deal_outcomes())
+                return native_response(request, report.to_dict(redact_settlement_price=not finance_authorized))
 
         return router
 
@@ -429,6 +681,9 @@ else:
         "AVMCasePayload",
         "ActorPayload",
         "DataRoomExportPayload",
+        "DealOutcomeExportPayload",
+        "DealOutcomePayload",
         "FinanceApprovalPayload",
+        "ValueCasePayload",
         "create_avm_router",
     ]

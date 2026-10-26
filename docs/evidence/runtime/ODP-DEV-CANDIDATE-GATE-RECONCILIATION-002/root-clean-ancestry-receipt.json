@@ -1,0 +1,12 @@
+{
+  "task_id": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-003",
+  "candidate_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+  "evidence_head": "c09185fdbcde10d22c54f9c134c008e17ccad3ad",
+  "validator": "delivery_toolchain/e2e/check_release_gate_registry.py",
+  "command": "python3 delivery_toolchain/e2e/check_release_gate_registry.py --root /tmp/odp-clean-final-20260908 --registry /tmp/odp-clean-final-20260908/docs/evidence/gates/RELEASE_GATE_REGISTRY.json --expected-sha c09185fdbcde10d22c54f9c134c008e17ccad3ad --json",
+  "exit_code": 0,
+  "integrity_errors": [],
+  "decision": "no-go",
+  "gates_cleared": [],
+  "recorded_at": "2026-09-08T09:12:00Z"
+}

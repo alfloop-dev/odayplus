@@ -1,5 +1,6 @@
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
+from uuid import uuid4
 
 from dagster import (
     AssetExecutionContext,
@@ -15,10 +16,19 @@ from dagster import (
     sensor,
 )
 
+from apps.data_platform.cdc import (
+    CdcDrainResult,
+    MongoChangeStreamFactory,
+    PsycopgCdcStore,
+    ScopedCdcAdapter,
+    ScopedCdcProjector,
+    cdc_policy,
+)
 from apps.data_platform.contracts import BackfillWindow, SourceKind
 from apps.data_platform.pipeline import DataPlaneRunner
 from apps.data_platform.selection import read_limit_for
 from apps.data_platform.source import MongoSource
+from apps.data_platform.store import PsycopgCanonicalStore
 from apps.data_platform.config import DataPlaneConfig
 
 daily_partitions = DailyPartitionsDefinition(start_date="2022-03-23", timezone="UTC")
@@ -318,6 +328,141 @@ def authoritative_transaction_change_sensor(
     )
 
 
+
+# --- Scoped CDC (H07 decision 5: Dagster-resident sensor, no message broker) ---
+#
+# The sensor *is* the consumer: each tick drains a bounded slice of the change
+# stream and writes it straight to `data_plane.cdc_staging_events`, then replays
+# the staged rows into the canonical tables. Nothing is enqueued anywhere else,
+# which is the whole point of the ruling — no Kafka, Redpanda, Pub/Sub or
+# RabbitMQ is introduced.
+#
+# Two things about the shape are deliberate. The tick interval is well under the
+# sub-10s target so queuing delay is not what spends the budget, and the drain
+# is bounded per tick so one busy partition cannot monopolise the sensor daemon.
+#
+# The recovery branch is what keeps hard constraint (a) true in the wiring and
+# not just in the adapter: when a resume token falls outside the oplog window,
+# the tick does not invent a new baseline, it requests a run of the *existing*
+# batch job for the affected partitions. CDC is layered on the snapshot path;
+# the snapshot path is what catches it when it falls.
+
+#: Change events one tick may drain per partition.
+CDC_TICK_LIMIT = 500
+#: Tick interval, chosen against the sub-10s end-to-end target from H07.
+CDC_TICK_SECONDS = 5
+
+#: Batch job each scoped kind falls back to when its resume token expires.
+_CDC_RECOVERY_JOBS = {
+    SourceKind.ORDERS: "fongniao_authoritative_transactions_daily",
+    SourceKind.DEVICE_LOG: "fongniao_bounded_device_log_manual",
+}
+
+
+def _cdc_drain(source_kind: SourceKind, partition_id: str) -> dict[str, Any]:
+    """Run one resident drain-and-replay tick for a scoped collection.
+
+    Built per tick rather than held open across ticks: a sensor daemon can be
+    restarted between evaluations, so a connection cached on the module would
+    outlive the process that validated it. Correctness does not depend on the
+    stream staying open either — the durable resume token is what makes a tick
+    boundary invisible to the data.
+    """
+    config = DataPlaneConfig.from_env()
+    landing = PsycopgCdcStore(config)
+    canonical = PsycopgCanonicalStore(config)
+    adapter = ScopedCdcAdapter(
+        store=landing,
+        stream_factory=MongoChangeStreamFactory(MongoSource(config).database),
+    )
+    run_id = str(uuid4())
+    started_at = datetime.now(UTC)
+    landing.open_tick(run_id, source_kind, partition_id, started_at=started_at)
+    error: BaseException | None = None
+    try:
+        result = adapter.drain(
+            source_kind, partition_id, limit=CDC_TICK_LIMIT, run_id=run_id
+        )
+    except BaseException as exc:  # noqa: BLE001 - recorded, then re-raised
+        error = exc
+        raise
+    finally:
+        if error is not None:
+            landing.close_tick(
+                run_id,
+                CdcDrainResult(
+                    source_kind=source_kind, partition_id=partition_id, run_id=run_id
+                ),
+                started_at=started_at,
+                finished_at=datetime.now(UTC),
+                error=error,
+            )
+    if result.plans:
+        projector = ScopedCdcProjector(canonical_store=canonical, landing_store=landing)
+        projection = projector.apply(source_kind, partition_id, result.plans)
+    else:
+        projection = None
+    landing.close_tick(
+        run_id, result, started_at=started_at, finished_at=datetime.now(UTC)
+    )
+    payload = result.as_dict()
+    payload["projection"] = None if projection is None else projection.as_dict()
+    return payload
+
+
+def _cdc_sensor_tick(
+    context: SensorEvaluationContext, source_kind: SourceKind
+) -> RunRequest | None:
+    """Drain one partition and, only on expiry, ask the batch path to recover.
+
+    The cursor lives in PostgreSQL, not in the Dagster sensor cursor, because
+    it has to survive the sensor daemon being rebuilt and has to be readable by
+    the batch recovery path. The Dagster cursor carries the partition being
+    served, which is scheduling state and nothing more.
+    """
+    policy = cdc_policy(source_kind)
+    partition_id = context.cursor or policy.collection
+    payload = _cdc_drain(source_kind, partition_id)
+    context.update_cursor(partition_id)
+    recovery = payload.get("recovery_plan")
+    if not recovery:
+        return None
+    partitions = recovery.get("partition_keys") or []
+    if not partitions:
+        return None
+    # Re-read the oldest uncovered day first; later ticks walk forward, so a
+    # multi-day gap does not turn into one unbounded backfill run.
+    return RunRequest(
+        run_key=f"cdc-recovery:{source_kind.value}:{partitions[0]}",
+        partition_key=partitions[0],
+    )
+
+
+@sensor(
+    job=authoritative_transaction_job,
+    minimum_interval_seconds=CDC_TICK_SECONDS,
+    default_status=DefaultSensorStatus.STOPPED,
+)
+def scoped_cdc_orders_sensor(context: SensorEvaluationContext) -> RunRequest | None:
+    return _cdc_sensor_tick(context, SourceKind.ORDERS)
+
+
+@sensor(
+    job=device_log_job,
+    minimum_interval_seconds=CDC_TICK_SECONDS,
+    default_status=DefaultSensorStatus.STOPPED,
+)
+def scoped_cdc_device_log_sensor(context: SensorEvaluationContext) -> RunRequest | None:
+    return _cdc_sensor_tick(context, SourceKind.DEVICE_LOG)
+
+
+#: Sensors that open a change stream. They default to STOPPED, unlike the batch
+#: sensors above, because starting one reads `fongniao_prod` through the
+#: `odp_cdc_reader` credential: enabling it is an operator action against a live
+#: cluster, not something a deployment of this code should perform by itself.
+SCOPED_CDC_SENSORS = (scoped_cdc_orders_sensor, scoped_cdc_device_log_sensor)
+
+
 defs = Definitions(
     assets=[
         merchant_dimension,
@@ -360,5 +505,6 @@ defs = Definitions(
         dimension_change_sensor,
         operations_change_sensor,
         authoritative_transaction_change_sensor,
+        *SCOPED_CDC_SENSORS,
     ],
 )

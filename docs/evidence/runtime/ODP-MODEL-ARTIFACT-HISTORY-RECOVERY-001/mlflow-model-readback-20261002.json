@@ -1,0 +1,35 @@
+{
+  "observed_at": "2026-10-02T19:17:36.245685+00:00",
+  "method": "GET",
+  "url": "https://oday-mlflow-767864276141.asia-east1.run.app/api/2.0/mlflow/registered-models/get?name=forecast_revenue_interval",
+  "http_status": 404,
+  "response": {
+    "error_code": "RESOURCE_DOES_NOT_EXIST",
+    "message": "Registered Model with name=forecast_revenue_interval not found",
+    "sqlstate": "KAM00",
+    "error_class": "RESOURCE_NOT_FOUND"
+  },
+  "mutation": false,
+  "interpretation": "Configured dev MLflow registered model readback; historical data coverage remains historical and was not re-queried.",
+  "artifact_store_readback": {
+    "checked_at": "2026-10-02T19:20:19.660820+00:00",
+    "dev_bucket": "gs://odayplus-runtime-20260825-model-artifacts/",
+    "dev_root_listing_exit": 0,
+    "dev_root_listing_entries": 0,
+    "historical_bucket": "gs://alfaloop-data-project-oday-plus-model-artifacts/",
+    "historical_bucket_read_result": "Account problem for requested project; cannot establish whether old artifacts exist. No credentials/access expanded.",
+    "historical_model_tasks": [
+      "ODP-PRODUCTION-MODEL-REGISTRY-001",
+      "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001"
+    ],
+    "current_board_and_archive": "Neither exact ID found in current ai-status.json or ai-task-archive/tasks; no open related model PR in repo; local configured data-platform repo has no status file/model task evidence."
+  },
+  "data_readback_limit": {
+    "recorded_at": "2026-10-02T19:24:45.447881+00:00",
+    "configured_cloud_sql_instance": "odayplus-runtime-20260825:asia-east1:oday-dev-sql",
+    "database_version": "POSTGRES_16",
+    "tcp_probe": "Private/public PostgreSQL endpoints both timed out after3seconds from coordinator host. No SQL query executed, no DB credential retrieved, no network or IAM change.",
+    "current_row_count": "unknown",
+    "conclusion": "Historical4day data coverage cannot establish current count; need authoritative current data/model handoff."
+  }
+}

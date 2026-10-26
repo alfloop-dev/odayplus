@@ -1,0 +1,414 @@
+{
+  "all_dimensions_covered": true,
+  "dimensions": {
+    "data_drift": {
+      "covered": true,
+      "production_entries": [
+        "EvidentlyDriftMonitor.run"
+      ],
+      "production_entries_executed": [
+        "EvidentlyDriftMonitor.run"
+      ],
+      "refusal_outcomes_observed": [],
+      "selected_node_ids": [
+        "tests/models/test_evidently_monitor.py::test_evidently_monitor_persists_real_report_payload",
+        "tests/integration/test_oss_ai_execution_flow.py::test_governed_training_registry_and_monitoring_flow_uses_real_oss"
+      ]
+    },
+    "feature_drift": {
+      "covered": true,
+      "production_entries": [
+        "EvidentlyDriftMonitor.run"
+      ],
+      "production_entries_executed": [
+        "EvidentlyDriftMonitor.run"
+      ],
+      "refusal_outcomes_observed": [],
+      "selected_node_ids": [
+        "tests/models/test_evidently_monitor.py::test_evidently_monitor_detects_shifted_features",
+        "tests/models/test_evidently_monitor_baseline.py::test_first_party_column_list_agrees_with_the_engine_drift_count"
+      ]
+    },
+    "performance_drift": {
+      "covered": true,
+      "production_entries": [
+        "LearningHubService.evaluate_monitoring",
+        "LearningHubService.ingest_outcome_monitoring",
+        "LearningHubService.monitor_release"
+      ],
+      "production_entries_executed": [
+        "LearningHubService.evaluate_monitoring",
+        "LearningHubService.ingest_outcome_monitoring",
+        "LearningHubService.monitor_release"
+      ],
+      "refusal_outcomes_observed": [
+        "raised:LearningHubError"
+      ],
+      "selected_node_ids": [
+        "modules/learninghub/tests/test_performance_drift_and_baseline_comparison.py::test_evaluate_monitoring_triggers_retraining_on_performance_drift",
+        "modules/learninghub/tests/test_performance_drift_and_baseline_comparison.py::test_decision_policy_governs_performance_drift_thresholds",
+        "tests/integration/test_learninghub_release.py::test_release_monitor_api_forwards_explicit_baseline_metrics",
+        "tests/integration/test_learninghub_release.py::test_release_monitor_breach_recommends_rollback_and_leaves_alias_unchanged",
+        "tests/integration/test_learninghub_release.py::test_release_monitor_rejects_unknown_release",
+        "tests/integration/test_production_model_lifecycle.py::test_monitoring_comparison_restart_safety_and_governed_rollback"
+      ]
+    },
+    "prediction_drift": {
+      "covered": true,
+      "production_entries": [
+        "EvidentlyDriftMonitor.run_prediction",
+        "LearningHubService.monitor_prediction_drift"
+      ],
+      "production_entries_executed": [
+        "EvidentlyDriftMonitor.run_prediction",
+        "LearningHubService.monitor_prediction_drift"
+      ],
+      "refusal_outcomes_observed": [
+        "raised:LearningHubError",
+        "raised:ValueError"
+      ],
+      "selected_node_ids": [
+        "modules/learninghub/tests/test_prediction_drift.py::test_prediction_drift_service_persists_receipt_and_alert",
+        "modules/learninghub/tests/test_prediction_drift.py::test_prediction_drift_service_rejects_non_production_model_version",
+        "modules/learninghub/tests/test_prediction_drift.py::test_prediction_drift_rejects_mixed_cohort_and_version_rows"
+      ]
+    }
+  },
+  "duration_seconds": 69.001,
+  "entries": {
+    "EvidentlyDriftMonitor.run": {
+      "call_log": [
+        {
+          "governed_kwargs": {
+            "drift_share_threshold": 0.5
+          },
+          "outcome": "returned"
+        },
+        {
+          "governed_kwargs": {
+            "drift_share_threshold": 0.5
+          },
+          "outcome": "returned"
+        },
+        {
+          "governed_kwargs": {
+            "drift_share_threshold": 0.5
+          },
+          "outcome": "returned"
+        }
+      ],
+      "calls": 3,
+      "observed_governed_kwargs": [
+        "drift_share_threshold"
+      ],
+      "outcomes": {
+        "returned": 3
+      },
+      "production_symbol": "modules.learninghub.infrastructure.evidently_monitor.EvidentlyDriftMonitor.run",
+      "serves_dimensions": [
+        "data_drift",
+        "feature_drift"
+      ]
+    },
+    "EvidentlyDriftMonitor.run_prediction": {
+      "call_log": [
+        {
+          "governed_kwargs": {
+            "cohort_key": "region:north",
+            "model_version": "v1",
+            "output_types": {
+              "keys": [
+                "prediction"
+              ],
+              "kind": "dict"
+            },
+            "policy": "DecisionPolicy(prediction-drift-policy-v1:00000000-0000-0000-0000-000000000001)",
+            "prediction_columns": {
+              "kind": "tuple",
+              "len": 1
+            }
+          },
+          "outcome": "returned"
+        },
+        {
+          "governed_kwargs": {
+            "cohort_key": "region:north",
+            "model_version": "v1",
+            "output_types": {
+              "keys": [
+                "prediction"
+              ],
+              "kind": "dict"
+            },
+            "policy": "DecisionPolicy(prediction-drift-policy-v1:00000000-0000-0000-0000-000000000001)",
+            "prediction_columns": {
+              "kind": "tuple",
+              "len": 1
+            }
+          },
+          "message": "reference row 1 has model_version outside the requested cohort",
+          "outcome": "raised:ValueError"
+        }
+      ],
+      "calls": 2,
+      "observed_governed_kwargs": [
+        "cohort_key",
+        "model_version",
+        "output_types",
+        "policy",
+        "prediction_columns"
+      ],
+      "outcomes": {
+        "raised:ValueError": 1,
+        "returned": 1
+      },
+      "production_symbol": "modules.learninghub.infrastructure.evidently_monitor.EvidentlyDriftMonitor.run_prediction",
+      "serves_dimensions": [
+        "prediction_drift"
+      ]
+    },
+    "LearningHubService.evaluate_monitoring": {
+      "call_log": [
+        {
+          "governed_kwargs": {
+            "signal_type": "DRIFT",
+            "thresholds": {
+              "kind": "tuple",
+              "len": 1
+            }
+          },
+          "outcome": "returned"
+        },
+        {
+          "governed_kwargs": {
+            "policy": "DecisionPolicy(model-perf-policy-v1:tenant-corp)",
+            "signal_type": "DRIFT",
+            "thresholds": {
+              "kind": "tuple",
+              "len": 2
+            }
+          },
+          "outcome": "returned"
+        },
+        {
+          "governed_kwargs": {
+            "signal_type": "DRIFT",
+            "thresholds": {
+              "kind": "tuple",
+              "len": 1
+            }
+          },
+          "outcome": "returned"
+        },
+        {
+          "governed_kwargs": {
+            "policy": null,
+            "signal_type": "OUTCOME",
+            "thresholds": {
+              "kind": "tuple",
+              "len": 1
+            }
+          },
+          "outcome": "returned"
+        }
+      ],
+      "calls": 4,
+      "observed_governed_kwargs": [
+        "policy",
+        "signal_type",
+        "thresholds"
+      ],
+      "outcomes": {
+        "returned": 4
+      },
+      "production_symbol": "modules.learninghub.application.release.LearningHubService.evaluate_monitoring",
+      "serves_dimensions": [
+        "performance_drift"
+      ]
+    },
+    "LearningHubService.ingest_outcome_monitoring": {
+      "call_log": [
+        {
+          "governed_kwargs": {
+            "thresholds": {
+              "kind": "tuple",
+              "len": 1
+            }
+          },
+          "outcome": "returned"
+        }
+      ],
+      "calls": 1,
+      "observed_governed_kwargs": [
+        "thresholds"
+      ],
+      "outcomes": {
+        "returned": 1
+      },
+      "production_symbol": "modules.learninghub.application.release.LearningHubService.ingest_outcome_monitoring",
+      "serves_dimensions": [
+        "performance_drift"
+      ]
+    },
+    "LearningHubService.monitor_prediction_drift": {
+      "call_log": [
+        {
+          "governed_kwargs": {
+            "cohort_key": "region:north",
+            "model_version": "v1",
+            "output_types": null,
+            "policy": "DecisionPolicy(prediction-drift-policy-v1:00000000-0000-0000-0000-000000000001)",
+            "prediction_columns": {
+              "kind": "tuple",
+              "len": 0
+            }
+          },
+          "outcome": "returned"
+        },
+        {
+          "governed_kwargs": {
+            "cohort_key": "region:north",
+            "model_version": "v2",
+            "output_types": {
+              "keys": [
+                "prediction"
+              ],
+              "kind": "dict"
+            },
+            "policy": "DecisionPolicy(prediction-drift-policy-v1:00000000-0000-0000-0000-000000000001)",
+            "prediction_columns": {
+              "kind": "tuple",
+              "len": 1
+            }
+          },
+          "message": "prediction drift monitoring requires the current production model version",
+          "outcome": "raised:LearningHubError"
+        }
+      ],
+      "calls": 2,
+      "observed_governed_kwargs": [
+        "cohort_key",
+        "model_version",
+        "output_types",
+        "policy",
+        "prediction_columns"
+      ],
+      "outcomes": {
+        "raised:LearningHubError": 1,
+        "returned": 1
+      },
+      "production_symbol": "modules.learninghub.application.release.LearningHubService.monitor_prediction_drift",
+      "serves_dimensions": [
+        "prediction_drift"
+      ]
+    },
+    "LearningHubService.monitor_release": {
+      "call_log": [
+        {
+          "governed_kwargs": {
+            "guardrails": {
+              "kind": "list",
+              "len": 1
+            }
+          },
+          "outcome": "returned"
+        },
+        {
+          "governed_kwargs": {
+            "guardrails": {
+              "kind": "tuple",
+              "len": 1
+            }
+          },
+          "outcome": "returned"
+        },
+        {
+          "governed_kwargs": {
+            "guardrails": {
+              "kind": "tuple",
+              "len": 1
+            }
+          },
+          "message": "unknown release does-not-exist",
+          "outcome": "raised:LearningHubError"
+        }
+      ],
+      "calls": 3,
+      "observed_governed_kwargs": [
+        "guardrails"
+      ],
+      "outcomes": {
+        "raised:LearningHubError": 1,
+        "returned": 2
+      },
+      "production_symbol": "modules.learninghub.application.release.LearningHubService.monitor_release",
+      "serves_dimensions": [
+        "performance_drift"
+      ]
+    }
+  },
+  "evidence_id": "ODP-DRIFT-SECURITY-VERIFY-003",
+  "generated_at": "2026-09-08T01:48:10Z",
+  "input_file_sha256": {
+    "apps/api/app/routes/learninghub.py": "a13b411709210063086559fea3b82ee3de3591ee7f6a0ca9f08b7ddc069042f6",
+    "models/shared_ml/validation.py": "2be27dea3826f823753dfb4bc5d8eafc2976fe2a9b46f1aad6260b2de4fbf5b8",
+    "modules/learninghub/application/monitor.py": "b3cdab752e2102c411099f77443baa66bf147cbeaf000b225e280d0051816c4e",
+    "modules/learninghub/application/release.py": "78ed957910b4e9dbcdcf6b4dc708952ef27bb1c839092c47e6f082a1d50338ab",
+    "modules/learninghub/domain/monitoring.py": "866bfe13299d2751fefc5b819adb9ab0dbc3baa84f91a2d6364e537b6c795be6",
+    "modules/learninghub/infrastructure/evidently_monitor.py": "7f4a6d5f4a4f64cf2bd169ecef1405dde5a757b1795957484ca1a2314faf4e66",
+    "modules/learninghub/infrastructure/native_drift.py": "88e4c37d6c63683106a4c5fd3f27f5d8b462d25f3f0bcf2c7653221a71cc721d",
+    "modules/learninghub/tests/test_performance_drift_and_baseline_comparison.py": "ffa0abac934daacdf0ef06a166c74f3e07ed8ef049787a81f59493a27695312c",
+    "modules/learninghub/tests/test_prediction_drift.py": "c9f1c9ac331bf4e5ca6877ab87bbfdafb3444dbd9e94962adf789ad3b0faac5b",
+    "tests/integration/test_learninghub_release.py": "d51cbee3a44d46138deaaa94096eef7e93f027b91cf2ba85df9fe00a454afd59",
+    "tests/integration/test_oss_ai_execution_flow.py": "832774587307754efdbed02fd78a221a575200c8accdfcbbfdd095bd7507d68e",
+    "tests/integration/test_production_model_lifecycle.py": "b10399f29bd26af751c7afdd8fde0761dca8ddee211bba881ae5ec674414f99c",
+    "tests/models/test_evidently_monitor.py": "dd7f1e7a6c94ee368b3480b5b91fd50d661eda53ae72c351c7c80c4e6549b70b",
+    "tests/models/test_evidently_monitor_baseline.py": "e7b7dfaac39d48d8f774cdf92f94b4f3ae0a92d78716fc654a33b1edd357e59c"
+  },
+  "installed_scope_excludes": {
+    "evidently": true,
+    "nltk": true
+  },
+  "platform": "Linux-7.0.0-1011-gcp-x86_64-with-glibc2.39",
+  "pytest_argv": [
+    "-p",
+    "no:cacheprovider",
+    "--tb=short",
+    "tests/models/test_evidently_monitor.py::test_evidently_monitor_persists_real_report_payload",
+    "tests/integration/test_oss_ai_execution_flow.py::test_governed_training_registry_and_monitoring_flow_uses_real_oss",
+    "tests/models/test_evidently_monitor.py::test_evidently_monitor_detects_shifted_features",
+    "tests/models/test_evidently_monitor_baseline.py::test_first_party_column_list_agrees_with_the_engine_drift_count",
+    "modules/learninghub/tests/test_prediction_drift.py::test_prediction_drift_service_persists_receipt_and_alert",
+    "modules/learninghub/tests/test_prediction_drift.py::test_prediction_drift_service_rejects_non_production_model_version",
+    "modules/learninghub/tests/test_prediction_drift.py::test_prediction_drift_rejects_mixed_cohort_and_version_rows",
+    "modules/learninghub/tests/test_performance_drift_and_baseline_comparison.py::test_evaluate_monitoring_triggers_retraining_on_performance_drift",
+    "modules/learninghub/tests/test_performance_drift_and_baseline_comparison.py::test_decision_policy_governs_performance_drift_thresholds",
+    "tests/integration/test_learninghub_release.py::test_release_monitor_api_forwards_explicit_baseline_metrics",
+    "tests/integration/test_learninghub_release.py::test_release_monitor_breach_recommends_rollback_and_leaves_alias_unchanged",
+    "tests/integration/test_learninghub_release.py::test_release_monitor_rejects_unknown_release",
+    "tests/integration/test_production_model_lifecycle.py::test_monitoring_comparison_restart_safety_and_governed_rollback"
+  ],
+  "pytest_exit_code": 0,
+  "pytest_log": "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/production_entry_pytest_log.txt",
+  "pytest_version": "9.1.1",
+  "python_version": "3.12.14 (main, Aug 14 2026, 15:34:45) [Clang 22.1.3 ]",
+  "receipt_kind": "production_entry_execution",
+  "run_branch": "task/ODP-DRIFT-SECURITY-VERIFY-003",
+  "run_sha": "5cd7b74dd44e3991cc9cd3a5b4441a25a02df1fe",
+  "worktree_clean_at_run": false,
+  "worktree_dirty_paths": [
+    "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_junit.xml",
+    "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_junit_exit_code.txt",
+    "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_junit_stdout.txt",
+    "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/github/",
+    "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/native_core_junit.xml",
+    "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/production_entry_probe_stderr.txt",
+    "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/production_entry_pytest_log.txt",
+    "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/test_baseline_equivalence_exit_code.txt",
+    "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/test_baseline_equivalence_receipt.txt",
+    "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/test_native_core_exit_code.txt",
+    "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/test_native_core_receipt.txt",
+    "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/tools/",
+    "tests/security/test_nltk_dependency_removal.py"
+  ]
+}

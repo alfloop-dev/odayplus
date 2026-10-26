@@ -1,0 +1,21 @@
+{
+  "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-orch-quota-recovery-state-001",
+  "head_sha": "a5ab3477b95fd86cdbd94cb4fc6dce6ae6d867de",
+  "tracked_diff_sha256": "1b1676b4afdcdaf953955471cc6bb6e4186f12a27e284af8ab2aa9ee47e2f524",
+  "argv": [
+    ".venv/bin/python",
+    "-m",
+    "pytest",
+    "-o",
+    "addopts=",
+    "-q",
+    "--tb=short",
+    ".orchestrator/test_provider_failure_epoch.py",
+    "-k",
+    "clock_floor_scope"
+  ],
+  "started_at": "2026-09-13T06:38:54.562759+00:00",
+  "duration_seconds": 2.9340069459867664,
+  "exit_code": 1,
+  "output": "1305-post-clear-legacy-red.log"
+}

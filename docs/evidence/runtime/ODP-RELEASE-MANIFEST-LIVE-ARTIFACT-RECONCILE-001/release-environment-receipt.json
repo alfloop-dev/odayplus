@@ -1,0 +1,27 @@
+{
+  "receipt_kind": "runtime-release-environment-binding",
+  "schema_version": 1,
+  "verifier": "delivery_toolchain/release/check_release_environment.py",
+  "scope": "build",
+  "environment": "dev",
+  "github_environment": "dev-build",
+  "release_sha": "ebc4fca5c2dd5871275aee39a18406dd67464f04",
+  "task_id": "ODP-DEV-ROLLOUT-001",
+  "admitted": true,
+  "checked_at": "2026-08-26T19:11:34+00:00",
+  "variables_resolved": {
+    "GCP_WORKLOAD_IDENTITY_PROVIDER": true,
+    "GCP_SERVICE_ACCOUNT": true,
+    "GCP_PROJECT_ID": true,
+    "GCP_REGION": true,
+    "GCP_AR_REPO": true,
+    "ODP_CLOUD_RUN_API_SERVICE": true,
+    "ODP_CLOUD_RUN_WEB_SERVICE": true,
+    "ODP_CLOUD_RUN_WORKER_JOB": true,
+    "ODP_CLOUD_RUN_SCHEDULER_JOB": true
+  },
+  "missing_variables": [],
+  "blockers_zh_tw": [],
+  "summary_zh_tw": "build 階段已綁定 GitHub environment `dev-build`，9 個必要環境變數全部解析成功。",
+  "secret_values_redacted": true
+}

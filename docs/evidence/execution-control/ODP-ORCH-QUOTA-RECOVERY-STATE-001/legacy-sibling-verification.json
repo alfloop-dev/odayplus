@@ -1,0 +1,16 @@
+{
+  "base_head": "4c8b333b15968abd74bcd4595ef5d124115763a4",
+  "scope": "Require an explicit matching dispatch snapshot for sibling promotion; preserve legacy own-pool admission behavior",
+  "source_sha256": {
+    ".orchestrator/worker_failure_policy.py": "e4ea15fc9c8c8a83a22fe2ac65f1157197196ed4c6665420317cfe7c6ab3f8c1",
+    ".orchestrator/test_account_pool_admission.py": "07d6f64ddd10579c70b9a1e571abfad2cec359ba6d4f23902129b753790c26c7"
+  },
+  "red": "4 failed, 2 passed: missing or malformed snapshot promotes same or newer sibling generation",
+  "green": "28 passed, 8 subtests: admission matrix and successful-worker postconditions",
+  "baseline": "114 passed, 77 subtests, 556 deselected: quota/pause/account_pool/config and success controls",
+  "receipts": [
+    "1305-legacy-sibling-red.json",
+    "1305-legacy-sibling-green.json",
+    "1305-legacy-sibling-baseline.json"
+  ]
+}

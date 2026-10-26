@@ -400,18 +400,32 @@ class UserRoleManagementService:
         # seeded principal must still see the event in its own audit trail.
         audit_tenant = tenant_id or resolved_tenant
 
+        existing_scope = (existing.get("scope") or {}) if existing else {}
+        req_scope = dict(scope) if scope is not None else None
+
+        clearance = (
+            req_scope.get("clearance")
+            if req_scope is not None and req_scope.get("clearance")
+            else existing_scope.get("clearance") or DataClassification.CONFIDENTIAL.name
+        )
         updated_scope = {
             "tenant_id": resolved_tenant,
-            "brand_ids": list((scope or {}).get("brand_ids", [])),
-            "region_ids": list((scope or {}).get("region_ids", [])),
-            "store_ids": list((scope or {}).get("store_ids", [])),
-            "assigned_area_ids": list((scope or {}).get("assigned_area_ids", [])),
-            "heat_zone_ids": list((scope or {}).get("heat_zone_ids", [])),
-            "modules": list((scope or {}).get("modules", [])),
-            "clearance": (scope or {}).get(
-                "clearance", DataClassification.CONFIDENTIAL.name
-            ),
+            "clearance": clearance,
         }
+        for axis in (
+            "brand_ids",
+            "region_ids",
+            "store_ids",
+            "assigned_area_ids",
+            "heat_zone_ids",
+            "modules",
+        ):
+            if req_scope is not None and axis in req_scope and req_scope[axis] is not None:
+                updated_scope[axis] = list(req_scope[axis])
+            elif axis in existing_scope:
+                updated_scope[axis] = list(existing_scope[axis])
+            else:
+                updated_scope[axis] = []
 
         updated_record: dict[str, Any] = {
             "subject_id": subject_id,
@@ -519,9 +533,9 @@ class UserRoleManagementService:
         """Return audit trail events recorded by user role management."""
         events: list[dict[str, Any]] = []
         for event in self.audit_log.list_events(tenant_id=tenant_id):
-            if event.event_type.startswith("user_role_management."):
+            if event.event_type.startswith("user_role_management.") or event.event_type.startswith("identity.account."):
                 meta = dict(event.metadata or {})
-                if subject_id and meta.get("subject_id") != subject_id:
+                if subject_id and meta.get("subject_id") != subject_id and meta.get("account_id") != subject_id:
                     continue
                 events.append(
                     {

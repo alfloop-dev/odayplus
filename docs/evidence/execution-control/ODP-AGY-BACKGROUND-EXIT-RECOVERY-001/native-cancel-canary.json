@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "transport": "agy_stream_json",
+  "status": "interrupted",
+  "conversation_id": "dd447d53-317a-4759-af4b-d6833ec61a11",
+  "result_status": "SUCCESS",
+  "cli_exit_code": 0,
+  "signal": null,
+  "duration_seconds": 8.988,
+  "tools": [
+    {
+      "step_index": 2,
+      "tool_name": "run_command",
+      "state": "DONE",
+      "duration_seconds": 2.144829349,
+      "exit_code": null
+    },
+    {
+      "step_index": 4,
+      "tool_name": "manage_task",
+      "state": "DONE",
+      "duration_seconds": 0.022400771
+    }
+  ],
+  "reason": "command_exit_unknown",
+  "evidence_kind": "native_agy_1.2.7_controlled_command_canary",
+  "recorded_at": "2026-09-19T23:03:35.080159+00:00",
+  "original_receipt_sha256": "5b27c7717c862cf765df77ca52dd225f36ced24945a7c883103bf81bdbf0219f",
+  "limits": "Isolated native CLI transport verification; does not itself prove production promotion or product task acceptance.",
+  "controlled_command": "python3 -c \"import time; time.sleep(45); print(14004)\"; then manage_task cancel"
+}

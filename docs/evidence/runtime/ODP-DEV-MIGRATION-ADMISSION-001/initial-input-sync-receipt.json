@@ -1,0 +1,18 @@
+{
+  "at": "2026-09-27T16:19:02.781121+00:00",
+  "authorization": "User replied 確認 to both explicit dev admission and backup/sync requests in this interactive session",
+  "source_merged_dev_commit": "a31e02ae391811a4c323ec4d834b70e200953366",
+  "decision": "no-go pending new admission PR",
+  "files": {
+    "docs/evidence/gates/RELEASE_GATE_REGISTRY.json": {
+      "before_sha256": "ec7dd8b46c1eb1c012501b88a1f815c000e90d08d7da410a014537c04af8ac41",
+      "after_sha256": "9bfd1e1d274c4ca92d4eef81dfe66836f346a75af53b04e0a850317a24c393d5",
+      "matches_reviewed_commit": true
+    },
+    "docs/evidence/gates/RELEASE_MANIFEST.json": {
+      "before_sha256": "487184ed9332431a9ae8abac550fdee4ea3bd99431e21481c0a3244fa285210c",
+      "after_sha256": "914b638840d99bcd2801a580b4dc041887a49e5432dc53f15a9692d50fe532a7",
+      "matches_reviewed_commit": true
+    }
+  }
+}

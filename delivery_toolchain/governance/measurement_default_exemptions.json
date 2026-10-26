@@ -1,0 +1,44 @@
+{
+  "_comment": "Bounded quality/confidence scores that are assumed perfect when nobody measured them, predating check_measurement_defaults.py. Every entry is a place where 'nobody supplied this' currently reads as 'measured, and perfect'. Each needs an owner, a reason and an expiry date; the reason should say what actually happens downstream, not that it is pre-existing. Removing an entry means the field no longer assumes perfect data, and it must be removed in the same commit as the fix. New violations are refused rather than exempted by default.",
+  "_layer_note": "Entries are grouped by remediation batch, not by layer, because one field is the same debt in five places: the AVM quality score is a dataclass default, a Pydantic request default, a mapper fallback and a published OpenAPI default, and fixing any one of them alone leaves the value being restored by the next. The layer key says which shape a given entry is; the shared expiry date says they have to move together.",
+  "_severity_note": "modules/heatzone/v3/contract.py::HeatZoneV3ScoreResult.from_dict.confidence is the sharpest entry and carries the earliest date. ODP-HEATZONE-ABSTENTION-REACHABLE-001 (8c49de09) correctly changed HeatZoneV3Input.confidence and .coverage_ratio to None so an unmeasured zone fails closed into abstention -- and the result mapper one class below still rebuilds a stored result with float(data.get('confidence', 1.0)). A round-tripped batch result therefore comes back claiming perfect confidence for a zone that abstained. It is the reason this check now reads six layers instead of one: the input fix was real, complete for its layer, and not enough.",
+  "_owner_note": "Owners follow the remediation batches so that fields which have to be decided together are not split across people. Batch 1 (2026-11-30) is AVM across dataclass, Pydantic, mapper and OpenAPI. Batch 2 (2026-12-31) is SiteScore, and separately ModelReadyRecord together with the model-ready views that feed it -- source, view, mapper and snapshot admission are accepted on one lineage table, which is why the dbt entries sit with the dataclass ones. Batch 3 (2027-01-31) is the six canonical models in shared/domain/models.py plus their ingestion mappers and their NOT NULL DEFAULT 1.00 columns: whatever absence means for a Listing's confidence it should mean for a Prediction's, and deciding them separately is how the next vocabulary fork starts. The heat zone entry stands alone with the earliest date for the reason given above.",
+  "_expiry_note": "An expiry date is not a deadline for the check; it is a date on which the owner has to say something. Renewing an entry on the day it fires without a changed reason is a decision to keep the defect, and should be visible as one. Removing an entry is only correct in the same commit as the fix -- the stale-exemption check refuses an entry whose field no longer violates, which is what stops the file drifting into a list of debts that were quietly paid or quietly forgotten.",
+  "exemptions": [
+    {
+      "field": "infra/db/migrations/000004_durable_product_domain.sql::data_snapshots.quality_score",
+      "layer": "sql",
+      "owner": "Claude2",
+      "reason": "NOT NULL DEFAULT 1.00. The column cannot hold 'not measured' at all, so making DataSnapshot.quality_score optional in Python has no persistent form to write. Superseded in the live schema by migration 000026 (ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001), which drops the substituting default and adds the measurement_schema_version marker that tells a stored 1.00 apart from a measured one. This entry stays because an applied migration is immutable: the DDL text above is the historical record of what 000004 created, not of what the database holds now.",
+      "expires": "2027-01-31"
+    },
+    {
+      "field": "infra/db/migrations/000004_durable_product_domain.sql::pois.confidence",
+      "layer": "sql",
+      "owner": "Claude2",
+      "reason": "NOT NULL DEFAULT 1.00 under Poi.confidence, and the source of the nulls that geo_grid_view coalesces. The two entries are the same decision seen from either end of the pipeline. Superseded in the live schema by migration 000026 (ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001), which drops the substituting default and adds the measurement_schema_version marker that tells a stored 1.00 apart from a measured one. This entry stays because an applied migration is immutable: the DDL text above is the historical record of what 000004 created, not of what the database holds now.",
+      "expires": "2027-01-31"
+    },
+    {
+      "field": "infra/db/migrations/000004_durable_product_domain.sql::competitor_stores.confidence",
+      "layer": "sql",
+      "owner": "Claude2",
+      "reason": "NOT NULL DEFAULT 1.00 under CompetitorStore.confidence; existing rows carry the substituted value with no marker saying it was substituted. Superseded in the live schema by migration 000026 (ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001), which drops the substituting default and adds the measurement_schema_version marker that tells a stored 1.00 apart from a measured one. This entry stays because an applied migration is immutable: the DDL text above is the historical record of what 000004 created, not of what the database holds now.",
+      "expires": "2027-01-31"
+    },
+    {
+      "field": "infra/db/migrations/000004_durable_product_domain.sql::listings.confidence",
+      "layer": "sql",
+      "owner": "Claude2",
+      "reason": "NOT NULL DEFAULT 1.00 under Listing.confidence. Superseded in the live schema by migration 000026 (ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001), which drops the substituting default and adds the measurement_schema_version marker that tells a stored 1.00 apart from a measured one. This entry stays because an applied migration is immutable: the DDL text above is the historical record of what 000004 created, not of what the database holds now.",
+      "expires": "2027-01-31"
+    },
+    {
+      "field": "infra/db/migrations/000004_durable_product_domain.sql::predictions.confidence",
+      "layer": "sql",
+      "owner": "Claude2",
+      "reason": "NOT NULL DEFAULT 1.00 under Prediction.confidence -- the persisted form of the entry most likely to reach an operator's screen. Superseded in the live schema by migration 000026 (ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001), which drops the substituting default and adds the measurement_schema_version marker that tells a stored 1.00 apart from a measured one. This entry stays because an applied migration is immutable: the DDL text above is the historical record of what 000004 created, not of what the database holds now.",
+      "expires": "2027-01-31"
+    }
+  ]
+}

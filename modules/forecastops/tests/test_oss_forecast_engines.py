@@ -16,14 +16,20 @@ from modules.forecastops import (
     StatsForecastAdapter,
     StoreDayObservation,
     create_forecast_engine,
+    default_forecast_alert_policy,
     run_forecastops_batch_forecast,
 )
 from modules.forecastops.infrastructure import forecast_engines
+from shared.governance import InMemoryDecisionPolicyRepository
 
 ORIGIN = datetime(2026, 7, 20, 9, 0, tzinfo=UTC)
 TENANT_ID = "tenant-forecast-oss-test"
 HAS_STATSFORECAST = find_spec("statsforecast") is not None
 HAS_MLFORECAST = find_spec("mlforecast") is not None
+
+
+def _policy_repository() -> InMemoryDecisionPolicyRepository:
+    return InMemoryDecisionPolicyRepository([default_forecast_alert_policy(TENANT_ID)])
 
 
 def _input(*, days: int = 70, store_id: str = "store-oss-001") -> ForecastInput:
@@ -53,7 +59,7 @@ def _assert_canonical_bands(result) -> None:
 
 
 def test_default_service_keeps_baseline_api_and_adds_metadata() -> None:
-    service = ForecastOpsService()
+    service = ForecastOpsService(policy_repository=_policy_repository())
     forecast_input = _input(days=7)
 
     result = service.forecast([forecast_input], scored_at=ORIGIN)
@@ -106,6 +112,7 @@ def test_application_selects_statsforecast_and_persists_run_metadata() -> None:
         repository=repository,
         engine="statsforecast",
         model_name="seasonal_naive",
+        policy_repository=_policy_repository(),
     )
 
     result = service.forecast([_input()], scored_at=ORIGIN)
@@ -133,6 +140,7 @@ def test_worker_explicitly_selects_mlforecast_without_changing_existing_signatur
         prediction_origin_time=ORIGIN,
         engine="mlforecast",
         engine_options={"max_iter": 25},
+        policy_repository=_policy_repository(),
     )
 
     payload = result.to_dict()
@@ -148,7 +156,9 @@ def test_worker_uses_deployment_selected_oss_engine(
     monkeypatch.setenv("ODP_FORECAST_ENGINE", "statsforecast")
     monkeypatch.setenv("ODP_FORECAST_MODEL", "seasonal_naive")
 
-    result = run_forecastops_batch_forecast(inputs=[_input()])
+    result = run_forecastops_batch_forecast(
+        inputs=[_input()], policy_repository=_policy_repository()
+    )
 
     forecast = result.to_dict()["forecasts"][0]
     assert forecast["engine_name"] == "statsforecast"
@@ -177,7 +187,11 @@ def test_explicit_oss_engine_fails_closed_when_package_is_missing(
 
     monkeypatch.setattr(forecast_engines, "import_module", unavailable)
     repository = InMemoryForecastOpsRepository()
-    service = ForecastOpsService(repository=repository, engine=engine_name)
+    service = ForecastOpsService(
+        repository=repository,
+        engine=engine_name,
+        policy_repository=_policy_repository(),
+    )
 
     with pytest.raises(
         ForecastEngineUnavailableError,
@@ -189,7 +203,10 @@ def test_explicit_oss_engine_fails_closed_when_package_is_missing(
 
 
 def test_selected_oss_engine_rejects_short_history_instead_of_using_heuristic() -> None:
-    service = ForecastOpsService(engine="statsforecast")
+    service = ForecastOpsService(
+        engine="statsforecast",
+        policy_repository=_policy_repository(),
+    )
 
     with pytest.raises(ForecastEngineInputError, match="at least 14 daily observations"):
         service.forecast([_input(days=7)], scored_at=ORIGIN)

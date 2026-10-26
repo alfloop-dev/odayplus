@@ -21,6 +21,7 @@ from shared.observability import new_correlation_id
 class ExternalProviderMode(StrEnum):
     FIXTURE = "fixture"
     LIVE = "live"
+    DISABLED = "disabled"
 
 
 class ProviderCategory(StrEnum):
@@ -330,7 +331,17 @@ def external_provider_mode(env: Mapping[str, str] | None = None) -> ExternalProv
         return ExternalProviderMode.FIXTURE
     if normalized == "live":
         return ExternalProviderMode.LIVE
-    raise ValueError(f"{LIVE_MODE_ENV_VAR} must be fixture or live; got {raw!r}")
+    if normalized in {"disabled", "off", "none"}:
+        return ExternalProviderMode.DISABLED
+    # Fail-closed: an unrecognised value disables every third-party source
+    # rather than raising ValueError.  A ValueError escapes
+    # _configuration_refusal()'s try/except (it only catches
+    # ExternalFetchProviderConfigurationError), so the scheduler produces no
+    # FAILED/BLOCKED run and no audit receipt — breaking the fail-closed
+    # worker contract.  Treating the unknown value as DISABLED ensures the
+    # run records the deterministic refusal and the live E2E gate can assert
+    # the expected reason code on the resulting blocked receipt.
+    return ExternalProviderMode.DISABLED
 
 
 def validate_external_providers(
@@ -356,7 +367,13 @@ def validate_external_providers(
     now = _today_utc(source_env)
     providers = PROVIDER_REGISTRY
 
-    if resolved_mode is ExternalProviderMode.LIVE:
+    if resolved_mode is ExternalProviderMode.DISABLED:
+        # A disabled deployment is a deliberate, governed state: no provider
+        # allowlist is required, no endpoint/credential is read, and no
+        # external fetch can be considered ready.  This is distinct from
+        # fixture mode, which remains local-only test behaviour.
+        providers = ()
+    elif resolved_mode is ExternalProviderMode.LIVE:
         raw_provider_ids = source_env.get(PRODUCTION_PROVIDER_IDS_ENV_VAR, "")
         selected_provider_ids = {
             provider_id.strip()

@@ -1,0 +1,12 @@
+{
+  "case_id": "failure_prediction_identical_snapshot_ids",
+  "description": "Reference and current snapshot ids are the same value.",
+  "failure": {
+    "exception_message": "reference and current snapshot ids must differ",
+    "exception_module": "builtins",
+    "exception_type": "ValueError"
+  },
+  "kind": "prediction_drift",
+  "outcome": "raised",
+  "routing_expectation": "run_prediction snapshot guard"
+}

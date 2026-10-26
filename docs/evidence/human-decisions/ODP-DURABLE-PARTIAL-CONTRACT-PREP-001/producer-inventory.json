@@ -1,0 +1,465 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "metadata": {
+    "task_id": "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001",
+    "work_package": "WP-33A",
+    "inspected_commit_sha": "10113c8cd35444eea721a670dba0f978e60529c2",
+    "inspected_commit_sha_note": "This is the collection baseline: the commit the worktree was checked out at while receipts 5-9 were collected. It is deliberately not called the delivered head, because the commits that deliver this correction are its descendants and no document can cite the SHA of the commit that contains it. Those delivering commits are scope-restricted to docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/ and change no product source.",
+    "inspection_utc": "2026-09-08T18:33:09Z",
+    "inspection_utc_scope": "Clock-derived UTC of the most recent evidence collection (receipts 5-8, all executed at HEAD 10113c8cd35444eea721a670dba0f978e60529c2). This is not a single-instant inspection: receipts 1-4 keep their own earlier collection clock at their own inspected SHA. Read evidence_collection_receipts for the per-command SHA/UTC/argv/raw exit code rather than treating this field as the collection time of every row.",
+    "inventory_type": "static_source_code_inventory",
+    "live_runtime_receipt_status": "static_only_no_production_runtime_access",
+    "historical_evidence_reference": "ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md (date: 2026-09-03, baseline: 04e1572f802a54c2646ba678fe2975226dfbd7c4)",
+    "core_finding": "Zero reachable writes to JobStatus.PARTIAL exist across the codebase. All existing durable worker handlers process single entities/windows and transition directly to SUCCEEDED (delivery_state=NULL) or FAILED/DEAD_LETTER/RETRYING.",
+    "inspected_commit_note": "Re-inspected at task branch HEAD 10113c8cd35444eea721a670dba0f978e60529c2 after a second base advance onto origin/dev 7a2caa0a7ebe7d8f43064d346f033ad37f58a05a. Both base advances merged only sibling human-decision evidence directories. Receipt 8 measures this directly: git diff --name-only b6b729d9..10113c8c -- apps shared modules packages returned empty output with raw exit code 0, so every source line number cited here holds unchanged at the original inspection baseline b6b729d95e575dc3b27ea9e02ce22fb128c3970b, at the intermediate baseline 23b94f2845def9a723a5071a95363942db92007b, and at this collection baseline. The commits delivering this correction sit directly on top of 10113c8c and are scope-restricted to this evidence directory, so they move no product source either; a reviewer can confirm with the same git diff against the PR head.",
+    "provenance_correction": {
+      "corrected_utc": "2026-09-08T18:33:09Z",
+      "corrected_at_sha": "10113c8cd35444eea721a670dba0f978e60529c2",
+      "withdrawn_claim": "Receipts 5-7, metadata.inspection_utc, and the matching narrative lines in README.md, implementation-handoff.md and human-input-request-H06.md previously asserted a collection time of 2026-09-08T18:05:00Z at SHA 23b94f2845def9a723a5071a95363942db92007b.",
+      "why_withdrawn": "That claim is unsupported and is withdrawn, not re-estimated. It was already present in commit f641fa5a6be6fcd54e64282eda21e62be7cad124, whose author and committer timestamps are both 2026-09-08T17:56:30Z, so the asserted collection time postdates the commit that contains it by roughly nine minutes. No original collection receipt for those three probes exists in the delivered package or in the task record, and none could be recovered.",
+      "not_substituted_from": "Verification receipts 31e980105ec63604 and 2f2af3d268e82172 (2026-09-08T17:56:45Z) are artifact-validation receipts for the two declared verification commands. They are deliberately NOT reinterpreted as collection evidence for these probes, and no replacement estimate was inserted.",
+      "remediation": "The three lightweight source probes were recollected at collection baseline 10113c8c with clock-derived UTC (date -u), exact argv, raw exit code and sanitized output; see receipts 5-7. Receipt 8 was added so the cross-baseline line-number equivalence is measured rather than asserted. The recollected findings are identical in substance to the withdrawn ones; only the provenance changed. Receipt 7 output is recorded in the traversal order actually produced by this run, which differs from the earlier transcript in the relative position of command_receipts.py:73 and job_receipts.py:74 - grep -r directory traversal order is not stable across runs, while the matched set is unchanged.",
+      "residual_uncertainty": "The true collection clock of the withdrawn 2026-09-08T18:05:00Z probes remains unknown and is recorded as unknown rather than inferred. Receipts 1-4 are unaffected: they carry per-second clock values (16:49:34Z-16:49:39Z) that precede their containing commit a9dc49ec (2026-09-08T16:51:34Z) and remain internally consistent.",
+      "second_withdrawn_claim": {
+        "withdrawn_claim": "README.md, implementation-handoff.md and human-input-request-H06.md previously described the original inspection baseline as b6b729d95e575dc3b27ea9e02ce22fb128c3970b at 2026-09-08T16:48:00Z, and partial-retry-contract-draft.json carried created_at 2026-09-08T16:48:00Z.",
+        "why_withdrawn": "Found while remediating R1; the same defect class, not previously reported. Two measurements contradict it. (a) All five artifacts first entered git in commit 7a98bef5, committed 2026-09-08T16:14:18Z, so a 16:48:00Z authoring or inspection time postdates the commit that contains it. (b) git merge-base --is-ancestor b6b729d9 7a98bef5 exits 1: b6b729d9 is not an ancestor of the original delivery commit. b6b729d9 landed on dev at 16:15:21Z and first became reachable on this task branch through the base advance merge 33f2eb3d at 16:48:50Z, which is 50 seconds after the asserted inspection time. The original package therefore cannot have been inspected at b6b729d9 at 16:48:00Z.",
+        "correction": "The original delivery baseline is 9048161e058becff5a53593a773d3c42238213fb, the measured parent of 7a98bef5. b6b729d9 is the first-revision baseline: receipts 1-4 were collected against it at 16:49:34Z-16:49:39Z, between the base advance 33f2eb3d (16:48:50Z) and the revision commit a9dc49ec (16:51:34Z), which is internally consistent. The exact authoring clock of the original package is unknown and is recorded as unknown; the only substantiated bound is that it precedes its containing commit 7a98bef5 at 2026-09-08T16:14:18Z.",
+        "impact_on_findings": "None. Receipt 9 measures zero product-source difference from 9048161e through to collection baseline 10113c8c, so every source path and line number cited in the original package remains valid at collection baseline 10113c8c and at the PR head built from it. Only the provenance labels changed."
+      },
+      "delivered_chronology_utc": [
+        "2026-09-08T14:01:11Z commit 9048161e - original delivery baseline (parent of 7a98bef5)",
+        "2026-09-08T16:14:18Z commit 7a98bef5 - first delivery of all five artifacts",
+        "2026-09-08T16:15:21Z commit b6b729d9 - merged into dev; not yet on this task branch",
+        "2026-09-08T16:48:50Z commit 33f2eb3d - first base advance; b6b729d9 becomes reachable here",
+        "2026-09-08T16:49:34Z-16:49:39Z receipts 1-4 collected at b6b729d9",
+        "2026-09-08T16:51:34Z commit a9dc49ec - first revision",
+        "2026-09-08T17:48:32Z commit 23b94f28 - second base advance",
+        "2026-09-08T17:56:30Z commit f641fa5a - second revision (contains the withdrawn 18:05:00Z claim)",
+        "2026-09-08T18:32:48Z commit 10113c8c - third base advance onto origin/dev 7a2caa0a; collection baseline for receipts 5-9",
+        "2026-09-08T18:33:02Z-18:33:09Z receipts 5-7 recollected at 10113c8c",
+        "2026-09-08T18:34:13Z receipt 8 collected at 10113c8c",
+        "2026-09-08T18:37:05Z receipt 9 collected at 10113c8c"
+      ],
+      "chronology_source": "Commit times are git author/committer timestamps read with git log --date=iso-strict; receipt times are the clock-derived values recorded on each receipt. No entry in this list is an estimate."
+    }
+  },
+  "canonical_vocabulary": {
+    "job_status": [
+      "QUEUED",
+      "RUNNING",
+      "SUCCEEDED",
+      "FAILED",
+      "CANCELLED",
+      "PARTIAL"
+    ],
+    "job_delivery_state": [
+      "RETRYING",
+      "DEAD_LETTER"
+    ],
+    "orthogonal_boundary": "JobStatus represents business outcome; JobDeliveryState represents queue delivery mechanics. SUCCEEDED automatically clears delivery_state to NULL. Active retries set QUEUED with delivery_state=RETRYING. Terminal failed jobs set FAILED with delivery_state=DEAD_LETTER upon retry exhaustion or non-retryable error. For multi-item batch PARTIAL completion, transport delivery is finished so delivery_state is cleared to NULL, preserving outcome/delivery separation without conflating PARTIAL with DEAD_LETTER."
+  },
+  "default_worker_registry_jobs": [
+    {
+      "job_type": "forecast",
+      "handler_symbol": "handle_forecast",
+      "handler_source": "apps/worker/oday_worker/handlers.py:255",
+      "enqueue_source": "apps/api/oday_api/main.py:997-1044 (JobRequest at apps/api/oday_api/main.py:1038) -> DurableJobQueue.enqueue at shared/infrastructure/persistence/job_queue.py:65-110 (INSERT ... ON CONFLICT DO NOTHING with idempotency_key replay readback; in-memory twin InMemoryJobQueue.enqueue at shared/jobs/queue.py:139-158)",
+      "queue_dispatch": "Worker.run_once claims at apps/worker/oday_worker/main.py:96 -> DurableJobQueue.claim_next at shared/infrastructure/persistence/job_queue.py:235-329 (in-memory twin InMemoryJobQueue.claim_next at shared/jobs/queue.py:308-336); handler dispatch via Worker.execute_job -> JobRegistry.handle at apps/worker/oday_worker/main.py:263-267",
+      "durable_state_writer": "apps/worker/oday_worker/main.py:141-146 (SUCCEEDED) and apps/worker/oday_worker/main.py:210-222 (QUEUED+RETRYING on retryable failure, FAILED+DEAD_LETTER on exhaustion or NonRetryableJobError) -> DurableJobQueue.update_status at shared/infrastructure/persistence/job_queue.py:384-452 (in-memory twin InMemoryJobQueue.update_status at shared/jobs/queue.py:338-382)",
+      "traceability": "apps/api/oday_api/main.py:997-1044 (JobRequest at apps/api/oday_api/main.py:1038) -> DurableJobQueue.enqueue at shared/infrastructure/persistence/job_queue.py:65-110 (INSERT ... ON CONFLICT DO NOTHING with idempotency_key replay readback; in-memory twin InMemoryJobQueue.enqueue at shared/jobs/queue.py:139-158) -> Worker.run_once claims at apps/worker/oday_worker/main.py:96 -> DurableJobQueue.claim_next at shared/infrastructure/persistence/job_queue.py:235-329 (in-memory twin InMemoryJobQueue.claim_next at shared/jobs/queue.py:308-336); handler dispatch via Worker.execute_job -> JobRegistry.handle at apps/worker/oday_worker/main.py:263-267 -> apps/worker/oday_worker/handlers.py:255 (handle_forecast) -> terminal write apps/worker/oday_worker/main.py:141-146 (SUCCEEDED) and apps/worker/oday_worker/main.py:210-222 (QUEUED+RETRYING on retryable failure, FAILED+DEAD_LETTER on exhaustion or NonRetryableJobError) -> DurableJobQueue.update_status at shared/infrastructure/persistence/job_queue.py:384-452 (in-memory twin InMemoryJobQueue.update_status at shared/jobs/queue.py:338-382)",
+      "item_granularity": "single_store_timeseries",
+      "current_terminal_statuses": [
+        "SUCCEEDED",
+        "FAILED"
+      ],
+      "has_partial_transition": false,
+      "delivery_state_handling": "Transport retry (QUEUED + RETRYING) up to 3 attempts, then terminal failure writes JobStatus.FAILED paired with JobDeliveryState.DEAD_LETTER (apps/worker/oday_worker/main.py:210-222).",
+      "classification": "durable_worker_job_single_item",
+      "partial_assessment": "Inapplicable for canonical PARTIAL in current single-store design because each job evaluates a single store's forecast without independent sub-item aggregates.",
+      "legacy_lease_path_not_in_runtime_chain": "NOT IN THE RUNTIME CHAIN. DurableJobQueue.lease is shared/infrastructure/persistence/job_queue.py:116-175 and its in-memory twin InMemoryJobQueue.lease is shared/jobs/queue.py:164-214. Static probe `grep -rn \"\\.lease(\" --include=*.py apps shared modules` returns zero call sites (original exit code 1) at inspected HEAD 23b94f2845def9a723a5071a95363942db92007b, so no runtime producer reaches a durable terminal state through lease(). Earlier revisions of this inventory routed dispatch through job_queue.py:120-173 (inside lease()); that attribution was incorrect and is corrected below."
+    },
+    {
+      "job_type": "external-fetch",
+      "handler_symbol": "handle_external_fetch",
+      "handler_source": "apps/worker/oday_worker/handlers.py:256",
+      "enqueue_source": "apps/scheduler/oday_scheduler/main.py:180-195 (JobRequest at apps/scheduler/oday_scheduler/main.py:181) and apps/api/oday_api/main.py:1013-1044 (JobRequest at apps/api/oday_api/main.py:1038) -> DurableJobQueue.enqueue at shared/infrastructure/persistence/job_queue.py:65-110 (INSERT ... ON CONFLICT DO NOTHING with idempotency_key replay readback; in-memory twin InMemoryJobQueue.enqueue at shared/jobs/queue.py:139-158)",
+      "queue_dispatch": "Worker.run_once claims at apps/worker/oday_worker/main.py:96 -> DurableJobQueue.claim_next at shared/infrastructure/persistence/job_queue.py:235-329 (in-memory twin InMemoryJobQueue.claim_next at shared/jobs/queue.py:308-336); handler dispatch via Worker.execute_job -> JobRegistry.handle at apps/worker/oday_worker/main.py:263-267",
+      "durable_state_writer": "apps/worker/oday_worker/main.py:141-146 (SUCCEEDED) and apps/worker/oday_worker/main.py:210-222 (QUEUED+RETRYING on retryable failure, FAILED+DEAD_LETTER on exhaustion or NonRetryableJobError) -> DurableJobQueue.update_status at shared/infrastructure/persistence/job_queue.py:384-452 (in-memory twin InMemoryJobQueue.update_status at shared/jobs/queue.py:338-382)",
+      "traceability": "apps/scheduler/oday_scheduler/main.py:180-195 (JobRequest at apps/scheduler/oday_scheduler/main.py:181) and apps/api/oday_api/main.py:1013-1044 (JobRequest at apps/api/oday_api/main.py:1038) -> DurableJobQueue.enqueue at shared/infrastructure/persistence/job_queue.py:65-110 (INSERT ... ON CONFLICT DO NOTHING with idempotency_key replay readback; in-memory twin InMemoryJobQueue.enqueue at shared/jobs/queue.py:139-158) -> Worker.run_once claims at apps/worker/oday_worker/main.py:96 -> DurableJobQueue.claim_next at shared/infrastructure/persistence/job_queue.py:235-329 (in-memory twin InMemoryJobQueue.claim_next at shared/jobs/queue.py:308-336); handler dispatch via Worker.execute_job -> JobRegistry.handle at apps/worker/oday_worker/main.py:263-267 -> apps/worker/oday_worker/handlers.py:256 (handle_external_fetch) -> terminal write apps/worker/oday_worker/main.py:141-146 (SUCCEEDED) and apps/worker/oday_worker/main.py:210-222 (QUEUED+RETRYING on retryable failure, FAILED+DEAD_LETTER on exhaustion or NonRetryableJobError) -> DurableJobQueue.update_status at shared/infrastructure/persistence/job_queue.py:384-452 (in-memory twin InMemoryJobQueue.update_status at shared/jobs/queue.py:338-382)",
+      "item_granularity": "single_provider_window",
+      "current_terminal_statuses": [
+        "SUCCEEDED",
+        "FAILED"
+      ],
+      "has_partial_transition": false,
+      "delivery_state_handling": "Scheduler backoff and circuit breaker; transport retry uses QUEUED + RETRYING, exhausted failure writes FAILED + DEAD_LETTER (apps/worker/oday_worker/main.py:210-222).",
+      "classification": "durable_worker_job_single_item",
+      "partial_assessment": "Data-level partial candidate (accepted vs quarantined records), but currently executed as a single provider/window job returning SUCCEEDED or FAILED at the queue layer without JobStatus.PARTIAL or item-level retry.",
+      "legacy_lease_path_not_in_runtime_chain": "NOT IN THE RUNTIME CHAIN. DurableJobQueue.lease is shared/infrastructure/persistence/job_queue.py:116-175 and its in-memory twin InMemoryJobQueue.lease is shared/jobs/queue.py:164-214. Static probe `grep -rn \"\\.lease(\" --include=*.py apps shared modules` returns zero call sites (original exit code 1) at inspected HEAD 23b94f2845def9a723a5071a95363942db92007b, so no runtime producer reaches a durable terminal state through lease(). Earlier revisions of this inventory routed dispatch through job_queue.py:120-173 (inside lease()); that attribution was incorrect and is corrected below."
+    },
+    {
+      "job_type": "assisted-listing-intake",
+      "handler_symbol": "handle_assisted_listing_intake",
+      "handler_source": "apps/worker/oday_worker/handlers.py:257 (implementation: apps/worker/assisted_listing_intake/worker.py:80-221)",
+      "enqueue_source": "modules/opsboard/application/network_listings.py:1243-1249 (JobRequest at modules/opsboard/application/network_listings.py:1244) -> DurableJobQueue.enqueue at shared/infrastructure/persistence/job_queue.py:65-110 (INSERT ... ON CONFLICT DO NOTHING with idempotency_key replay readback; in-memory twin InMemoryJobQueue.enqueue at shared/jobs/queue.py:139-158)",
+      "queue_dispatch": "Worker.run_once claims at apps/worker/oday_worker/main.py:96 -> DurableJobQueue.claim_next at shared/infrastructure/persistence/job_queue.py:235-329 (in-memory twin InMemoryJobQueue.claim_next at shared/jobs/queue.py:308-336); handler dispatch via Worker.execute_job -> JobRegistry.handle at apps/worker/oday_worker/main.py:263-267",
+      "durable_state_writer": "apps/worker/oday_worker/main.py:141-146 (SUCCEEDED) and apps/worker/oday_worker/main.py:210-222 (QUEUED+RETRYING on retryable failure, FAILED+DEAD_LETTER on exhaustion or NonRetryableJobError) -> DurableJobQueue.update_status at shared/infrastructure/persistence/job_queue.py:384-452 (in-memory twin InMemoryJobQueue.update_status at shared/jobs/queue.py:338-382)",
+      "traceability": "modules/opsboard/application/network_listings.py:1243-1249 (JobRequest at modules/opsboard/application/network_listings.py:1244) -> DurableJobQueue.enqueue at shared/infrastructure/persistence/job_queue.py:65-110 (INSERT ... ON CONFLICT DO NOTHING with idempotency_key replay readback; in-memory twin InMemoryJobQueue.enqueue at shared/jobs/queue.py:139-158) -> Worker.run_once claims at apps/worker/oday_worker/main.py:96 -> DurableJobQueue.claim_next at shared/infrastructure/persistence/job_queue.py:235-329 (in-memory twin InMemoryJobQueue.claim_next at shared/jobs/queue.py:308-336); handler dispatch via Worker.execute_job -> JobRegistry.handle at apps/worker/oday_worker/main.py:263-267 -> apps/worker/oday_worker/handlers.py:257 (handle_assisted_listing_intake) -> apps/worker/assisted_listing_intake/worker.py:80-221 -> terminal write apps/worker/oday_worker/main.py:141-146 (SUCCEEDED) and apps/worker/oday_worker/main.py:210-222 (QUEUED+RETRYING on retryable failure, FAILED+DEAD_LETTER on exhaustion or NonRetryableJobError) -> DurableJobQueue.update_status at shared/infrastructure/persistence/job_queue.py:384-452 (in-memory twin InMemoryJobQueue.update_status at shared/jobs/queue.py:338-382)",
+      "item_granularity": "single_listing_url",
+      "current_terminal_statuses": [
+        "SUCCEEDED",
+        "FAILED"
+      ],
+      "has_partial_transition": false,
+      "delivery_state_handling": "Stage-level error handling; NonRetryableJobError raised on unrecoverable failure, writing terminal JobStatus.FAILED paired with JobDeliveryState.DEAD_LETTER (apps/worker/oday_worker/main.py:210-222).",
+      "classification": "durable_worker_job_single_item",
+      "partial_assessment": "Inapplicable for canonical PARTIAL as-is because it processes a single listing intake through sequential stages. If any unrecoverable error occurs, the single intake fails.",
+      "legacy_lease_path_not_in_runtime_chain": "NOT IN THE RUNTIME CHAIN. DurableJobQueue.lease is shared/infrastructure/persistence/job_queue.py:116-175 and its in-memory twin InMemoryJobQueue.lease is shared/jobs/queue.py:164-214. Static probe `grep -rn \"\\.lease(\" --include=*.py apps shared modules` returns zero call sites (original exit code 1) at inspected HEAD 23b94f2845def9a723a5071a95363942db92007b, so no runtime producer reaches a durable terminal state through lease(). Earlier revisions of this inventory routed dispatch through job_queue.py:120-173 (inside lease()); that attribution was incorrect and is corrected below."
+    }
+  ],
+  "receipt_envelope_exclusions": [
+    {
+      "job_type_pattern": "{service}.receipt",
+      "source_file": "shared/infrastructure/persistence/job_receipts.py:74-105",
+      "exclusion_rule": "shared/jobs/queue.py:10-18 (NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES / is_non_executable_receipt_job_type)",
+      "purpose": "TenantScopedJobReceiptStore writes completed receipt envelopes with JobStatus.SUCCEEDED directly for readback; excluded from worker queue leasing and execution."
+    },
+    {
+      "job_type_pattern": "{service}.command-receipt",
+      "source_file": "shared/infrastructure/persistence/command_receipts.py:70-105",
+      "exclusion_rule": "shared/jobs/queue.py:10-18 (NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES / is_non_executable_receipt_job_type)",
+      "purpose": "TenantScopedCommandReceiptStore writes completed command receipt envelopes with JobStatus.SUCCEEDED directly for idempotency replay; excluded from worker queue leasing and execution."
+    }
+  ],
+  "synchronous_partial_operations_not_durable_jobs": [
+    {
+      "operation_name": "Batch Listing Intake (POST /api/v1/intake-batches)",
+      "route_source": "apps/api/app/routes/listings.py:2225-2265",
+      "helper_source": "apps/api/app/routes/listings.py:1762-1803 (shared nested replay() idempotency-replay closure, paired with load_replay() at :1739-1760), invoked for this endpoint at listings.py:2328",
+      "helper_source_correction": "An earlier revision cited a helper named _execute_with_ownership_and_idempotency at :1730-1799. No such symbol exists: grep -rn \"_execute_with_ownership_and_idempotency\" --include=*.py apps shared modules returned no match. The real mechanism is the replay() closure cited above, which is shared by every idempotent write endpoint in this router rather than being specific to batch intake.",
+      "operation_type": "synchronous_api_command_multi_item",
+      "receipt_structure": "BatchIntakeReceipt (batch_id, submitted_at, accepted_count, rejected_count, rows: list[BatchRowReceipt] with ACCEPTED/REJECTED status, correlation_id); schema at listings.py:357-363, response payload built at listings.py:2321. The member array is named rows, not items.",
+      "http_status": "207 Multi-Status when mixed valid/invalid rows (202 when all accepted)",
+      "is_durable_job": false,
+      "has_job_status_field": false,
+      "notes": "True business partial outcome, but currently synchronous API command execution without durable queue dispatch or JobStatus."
+    },
+    {
+      "operation_name": "XLSX Import Commit",
+      "handler_source": "modules/external_data/application/xlsx_import.py:816-933",
+      "operation_type": "synchronous_api_command_multi_item",
+      "receipt_structure": "XlsxCommitReceipt (accepted_count, rejected_count, committed intake IDs)",
+      "is_durable_job": false,
+      "has_job_status_field": false,
+      "notes": "Partial commit of valid rows during XLSX upload; synchronous command with idempotency replay, not a durable queue job."
+    },
+    {
+      "operation_name": "External Ingestion Store & Quarantine",
+      "store_source": "modules/external_data/application/ingestion_store.py:90-123",
+      "service_source": "modules/external_data/application/ingestion_service.py:307-335",
+      "operation_type": "domain_data_persistence",
+      "receipt_structure": "IngestionRunRecord (accepted_count, quarantined_count, total_count, quarantine issues)",
+      "is_durable_job": false,
+      "has_job_status_field": false,
+      "notes": "Data quality partitioning at domain persistence level; scheduler job level remains SUCCEEDED or FAILED."
+    }
+  ],
+  "module_worker_entrypoints_inventory": [
+    {
+      "module": "avm",
+      "entry_point": "modules/avm/workers/valuation_worker.py:47-73",
+      "current_aggregate_behavior": "Evaluates items sequentially; returns status='succeeded' on completion, raises on error.",
+      "has_partial_outcome": false,
+      "registered_in_job_registry": false
+    },
+    {
+      "module": "sitescore",
+      "entry_point": "modules/sitescore/workers/scoring_worker.py:50-77",
+      "current_aggregate_behavior": "Generates reports per candidate; warnings are domain notices, not failure items; returns status='succeeded'.",
+      "has_partial_outcome": false,
+      "registered_in_job_registry": false
+    },
+    {
+      "module": "forecastops",
+      "entry_point": "modules/forecastops/workers/forecast_worker.py:62-98",
+      "current_aggregate_behavior": "Domain service returning single forecast result; returns status='succeeded'.",
+      "has_partial_outcome": false,
+      "registered_in_job_registry": false
+    },
+    {
+      "module": "heatzone",
+      "entry_point": "modules/heatzone/workers/scoring_worker.py:62-114",
+      "current_aggregate_behavior": "Calculates scores + warnings; domain state PARTIALLY_ABSORBED is spatial density state, not job status; returns status='succeeded'.",
+      "has_partial_outcome": false,
+      "registered_in_job_registry": false
+    },
+    {
+      "module": "adlift",
+      "entry_point": "modules/adlift/workers/incrementality_worker.py:42-59",
+      "current_aggregate_behavior": "Evaluates campaign incrementality; returns status='succeeded'.",
+      "has_partial_outcome": false,
+      "registered_in_job_registry": false
+    },
+    {
+      "module": "netplan",
+      "entry_point": "modules/netplan/workers/solver_worker.py:35-71",
+      "current_aggregate_behavior": "Runs scenario solver; returns 'succeeded' or 'completed_with_infeasible' (domain outcome).",
+      "has_partial_outcome": false,
+      "registered_in_job_registry": false
+    },
+    {
+      "module": "priceops",
+      "entry_point": "modules/priceops/workers/optimizer_worker.py:67-109",
+      "current_aggregate_behavior": "Hard constraint checking; fail-fast aggregate failure, no partial transition.",
+      "has_partial_outcome": false,
+      "registered_in_job_registry": false
+    },
+    {
+      "module": "integration (geocode)",
+      "entry_point": "modules/integration/workers/geocode_worker.py:30-63",
+      "current_aggregate_behavior": "Returns geocoded coordinates + warnings; returns status='succeeded'.",
+      "has_partial_outcome": false,
+      "registered_in_job_registry": false
+    },
+    {
+      "module": "intervention",
+      "entry_point": "modules/intervention/workers/observation_worker.py:20-81",
+      "current_aggregate_behavior": "Sweeps matured_ids/pending_ids/evaluated_ids partition lists; returns SUCCEEDED.",
+      "has_partial_outcome": false,
+      "registered_in_job_registry": false
+    },
+    {
+      "module": "market_survey",
+      "entry_point": "modules/market_survey/workers/expiry_worker.py:19-67",
+      "current_aggregate_behavior": "Sweeps expired surveys and marks status; returns expired_count.",
+      "has_partial_outcome": false,
+      "registered_in_job_registry": false
+    },
+    {
+      "module": "learninghub",
+      "entry_point": "modules/learninghub/workers/release_worker.py:16-153",
+      "current_aggregate_behavior": "Saga evaluation / monitoring drift assessment; returns MonitoringEvaluation with drifted_columns.",
+      "has_partial_outcome": false,
+      "registered_in_job_registry": false
+    }
+  ],
+  "candidate_jobs_for_durable_partial_promotion": [
+    {
+      "candidate_id": "CANDIDATE-01",
+      "name": "batch-listing-intake",
+      "source_operation": "POST /api/v1/intake-batches (apps/api/app/routes/listings.py:2225-2265)",
+      "proposed_job_type": "batch-listing-intake",
+      "item_type": "individual_listing_row",
+      "business_benefit": "Allows large multi-listing uploads (100+ listings) to run asynchronously with itemized progress, durable partial completion, and retry for transient failures without re-uploading valid listings.",
+      "typical_failure_scenarios": [
+        "Missing mandatory address on row 4 (non-retryable permanent input error, retryable: false)",
+        "Downstream geocoding timeout on row 12 (retryable transient error, retryable: true)",
+        "Duplicate external listing ID on row 25 (non-retryable business rejection, retryable: false)"
+      ],
+      "architectural_fit": "High. Business already has 207 Multi-Status per-row receipts in sync API; promotes existing pattern to durable background queue."
+    },
+    {
+      "candidate_id": "CANDIDATE-02",
+      "name": "multi-partition-external-fetch",
+      "source_operation": "apps/scheduler/oday_scheduler/main.py:180-195",
+      "proposed_job_type": "multi-partition-external-fetch",
+      "item_type": "provider_partition_window",
+      "business_benefit": "Enables scheduled external fetches across multiple geographic regions or provider partitions in one job, recording PARTIAL when one provider endpoint fails while others succeed.",
+      "typical_failure_scenarios": [
+        "Provider API 503 for Region A while Region B and C succeed (transient, retryable: true)",
+        "Schema parse error on specific feed payload partition (permanent, retryable: false)",
+        "Rate limit quota exceeded on secondary provider (transient, retryable: true)"
+      ],
+      "architectural_fit": "Medium. Requires redesign of ExternalFetchScheduler from single-provider tick to multi-partition job payload."
+    },
+    {
+      "candidate_id": "CANDIDATE-03",
+      "name": "batch-sitescore-evaluation",
+      "source_operation": "modules/sitescore/workers/scoring_worker.py:50-77",
+      "proposed_job_type": "batch-sitescore-evaluation",
+      "item_type": "candidate_store_location",
+      "business_benefit": "Evaluates 20+ store candidates in one durable job; partial score completion allows operator to inspect succeeded candidate scores while investigating failed candidates.",
+      "typical_failure_scenarios": [
+        "Candidate coordinates outside valid territorial boundary (permanent, retryable: false)",
+        "Underlying demographic cell data missing for candidate 7 (permanent, retryable: false)",
+        "Solver timeout on dense urban trade area optimization (transient, retryable: true)"
+      ],
+      "architectural_fit": "Medium. Operator UI already has SiteScoreJobStatus component displaying PARTIAL state."
+    }
+  ],
+  "evidence_collection_receipts": [
+    {
+      "command": "rg -n --glob '*.py' --glob '*.ts' --glob '*.tsx' 'JobStatus\\s*\\.\\s*PARTIAL' apps modules shared packages",
+      "argv": [
+        "rg",
+        "-n",
+        "--glob",
+        "*.py",
+        "--glob",
+        "*.ts",
+        "--glob",
+        "*.tsx",
+        "JobStatus\\s*\\.\\s*PARTIAL",
+        "apps",
+        "modules",
+        "shared",
+        "packages"
+      ],
+      "raw_exit_code": 1,
+      "inspected_sha": "b6b729d95e575dc3b27ea9e02ce22fb128c3970b",
+      "executed_utc": "2026-09-08T16:49:34Z",
+      "sanitized_stdout": "",
+      "notes": "Verified zero reachable writes to JobStatus.PARTIAL in application, module, shared, and package source code."
+    },
+    {
+      "command": "rg -n --glob '*.py' 'registry\\.register\\(' apps/worker",
+      "argv": [
+        "rg",
+        "-n",
+        "--glob",
+        "*.py",
+        "registry\\.register\\(",
+        "apps/worker"
+      ],
+      "raw_exit_code": 0,
+      "inspected_sha": "b6b729d95e575dc3b27ea9e02ce22fb128c3970b",
+      "executed_utc": "2026-09-08T16:49:36Z",
+      "sanitized_stdout": "apps/worker/oday_worker/handlers.py\n255:    registry.register(FORECAST_JOB_TYPE, handle_forecast)\n256:    registry.register(EXTERNAL_FETCH_JOB_TYPE, handle_external_fetch)\n257:    registry.register(INTAKE_JOB_TYPE, handle_assisted_listing_intake)\n",
+      "notes": "Verified exactly three job types registered in default worker registry."
+    },
+    {
+      "command": "rg -n --glob '*.py' 'JobRequest\\(' apps modules shared | rg -v '/tests?/|test_'",
+      "argv": [
+        "rg",
+        "-n",
+        "--glob",
+        "*.py",
+        "JobRequest\\(",
+        "apps",
+        "modules",
+        "shared"
+      ],
+      "raw_exit_code": 0,
+      "inspected_sha": "b6b729d95e575dc3b27ea9e02ce22fb128c3970b",
+      "executed_utc": "2026-09-08T16:49:37Z",
+      "sanitized_stdout": "shared/infrastructure/persistence/command_receipts.py:74:                JobRequest(\nshared/infrastructure/persistence/job_receipts.py:75:            JobRequest(\nmodules/opsboard/application/network_listings.py:1244:                    JobRequest(\napps/api/oday_api/main.py:1038:                JobRequest(\napps/scheduler/oday_scheduler/main.py:181:                    JobRequest(\n",
+      "notes": "Verified production JobRequest enqueue call sites across apps, modules, and shared persistence layers."
+    },
+    {
+      "command": "rg -n --glob '*.py' 'job_queue\\.update_status\\(' apps modules shared | rg -v '/tests?/|test_'",
+      "argv": [
+        "rg",
+        "-n",
+        "--glob",
+        "*.py",
+        "job_queue\\.update_status\\(",
+        "apps",
+        "modules",
+        "shared"
+      ],
+      "raw_exit_code": 0,
+      "inspected_sha": "b6b729d95e575dc3b27ea9e02ce22fb128c3970b",
+      "executed_utc": "2026-09-08T16:49:39Z",
+      "sanitized_stdout": "apps/worker/oday_worker/main.py:141:                    self.job_queue.update_status(\napps/worker/oday_worker/main.py:210:                        self.job_queue.update_status(\napps/worker/assisted_listing_intake/worker.py:210:            job_queue.update_status(\n",
+      "notes": "Verified production durable state update call sites in worker loops."
+    },
+    {
+      "command": "grep -rn \"\\.lease(\" --include=*.py apps shared modules",
+      "argv": [
+        "grep",
+        "-rn",
+        "\\.lease(",
+        "--include=*.py",
+        "apps",
+        "shared",
+        "modules"
+      ],
+      "raw_exit_code": 1,
+      "inspected_sha": "10113c8cd35444eea721a670dba0f978e60529c2",
+      "executed_utc": "2026-09-08T18:33:02Z",
+      "utc_source": "date -u +%Y-%m-%dT%H:%M:%SZ read immediately before and after the probe in the same shell; both reads returned this value. Recollected under metadata.provenance_correction; the previously asserted 2026-09-08T18:05:00Z is withdrawn as unsupported.",
+      "sanitized_stdout": "",
+      "notes": "Zero call sites for lease() across apps/, shared/ and modules/. Exit code 1 is grep's no-match result, not a tool error. Establishes that DurableJobQueue.lease (shared/infrastructure/persistence/job_queue.py:116-175) and InMemoryJobQueue.lease (shared/jobs/queue.py:164-214) are outside the runtime producer-to-terminal-writer chain, correcting the earlier attribution of dispatch to job_queue.py:120-173."
+    },
+    {
+      "command": "grep -rn \"claim_next\" --include=*.py apps shared modules",
+      "argv": [
+        "grep",
+        "-rn",
+        "claim_next",
+        "--include=*.py",
+        "apps",
+        "shared",
+        "modules"
+      ],
+      "raw_exit_code": 0,
+      "inspected_sha": "10113c8cd35444eea721a670dba0f978e60529c2",
+      "executed_utc": "2026-09-08T18:33:09Z",
+      "utc_source": "date -u +%Y-%m-%dT%H:%M:%SZ read immediately before and after the probe in the same shell; both reads returned this value. Recollected under metadata.provenance_correction; the previously asserted 2026-09-08T18:05:00Z is withdrawn as unsupported.",
+      "sanitized_stdout": "apps/worker/oday_worker/main.py:96:            job = self.job_queue.claim_next(worker_id=self.worker_id)\nshared/infrastructure/persistence/job_queue.py:235:    def claim_next(self, worker_id: str = \"worker-1\") -> JobRecord | None:\nshared/jobs/queue.py:308:    def claim_next(self, worker_id: str = \"worker-1\") -> JobRecord | None:",
+      "notes": "Confirms the single runtime claim site is Worker.run_once at apps/worker/oday_worker/main.py:96, resolving to DurableJobQueue.claim_next (job_queue.py:235-329) with in-memory twin InMemoryJobQueue.claim_next (shared/jobs/queue.py:308-336)."
+    },
+    {
+      "command": "grep -rn \"\\.enqueue(\" --include=*.py apps shared modules",
+      "argv": [
+        "grep",
+        "-rn",
+        "\\.enqueue(",
+        "--include=*.py",
+        "apps",
+        "shared",
+        "modules"
+      ],
+      "raw_exit_code": 0,
+      "inspected_sha": "10113c8cd35444eea721a670dba0f978e60529c2",
+      "executed_utc": "2026-09-08T18:33:09Z",
+      "utc_source": "date -u +%Y-%m-%dT%H:%M:%SZ read immediately before and after the probe in the same shell; both reads returned this value. Recollected under metadata.provenance_correction; the previously asserted 2026-09-08T18:05:00Z is withdrawn as unsupported.",
+      "sanitized_stdout": "apps/scheduler/oday_scheduler/main.py:180:                self.job_queue.enqueue(\napps/api/oday_api/main.py:1037:            job, created = job_queue.enqueue(\nshared/infrastructure/persistence/job_receipts.py:74:        record, created = self.queue.enqueue(\nshared/infrastructure/persistence/command_receipts.py:73:            record, created = self.queue.enqueue(\nmodules/opsboard/application/network_listings.py:1243:                job, created = job_queue.enqueue(",
+      "stdout_order_note": "Recorded in the traversal order this run actually produced. The earlier transcript listed command_receipts.py:73 before job_receipts.py:74; grep -r directory traversal order is not stable across runs, and the matched set is identical.",
+      "notes": "Confirms durable enqueue call sites. The two receipt-store call sites (command_receipts.py:73, job_receipts.py:74) are the receipt envelopes excluded from worker leasing per receipt_envelope_exclusions; the remaining three are the registry job producers."
+    },
+    {
+      "command": "git diff --name-only b6b729d95e575dc3b27ea9e02ce22fb128c3970b 10113c8cd35444eea721a670dba0f978e60529c2 -- apps shared modules packages",
+      "argv": [
+        "git",
+        "diff",
+        "--name-only",
+        "b6b729d95e575dc3b27ea9e02ce22fb128c3970b",
+        "10113c8cd35444eea721a670dba0f978e60529c2",
+        "--",
+        "apps",
+        "shared",
+        "modules",
+        "packages"
+      ],
+      "raw_exit_code": 0,
+      "inspected_sha": "10113c8cd35444eea721a670dba0f978e60529c2",
+      "executed_utc": "2026-09-08T18:34:13Z",
+      "utc_source": "date -u +%Y-%m-%dT%H:%M:%SZ read immediately before and after the probe in the same shell; both reads returned this value.",
+      "sanitized_stdout": "",
+      "notes": "Empty output with exit code 0: no file under apps/, shared/, modules/ or packages/ differs between the first-revision inspection baseline b6b729d9 and collection baseline 10113c8c. This converts the cross-baseline line-number equivalence from an assertion into a measurement, covering both base advances (onto 95646a5c and onto 7a2caa0a). For contrast, the same diff without the pathspec lists 22 files, all of them documentation and sibling human-decision evidence."
+    },
+    {
+      "command": "git diff --name-only 9048161e058becff5a53593a773d3c42238213fb 10113c8cd35444eea721a670dba0f978e60529c2 -- apps shared modules packages",
+      "argv": [
+        "git",
+        "diff",
+        "--name-only",
+        "9048161e058becff5a53593a773d3c42238213fb",
+        "10113c8cd35444eea721a670dba0f978e60529c2",
+        "--",
+        "apps",
+        "shared",
+        "modules",
+        "packages"
+      ],
+      "raw_exit_code": 0,
+      "inspected_sha": "10113c8cd35444eea721a670dba0f978e60529c2",
+      "executed_utc": "2026-09-08T18:37:05Z",
+      "utc_source": "date -u +%Y-%m-%dT%H:%M:%SZ read immediately before and after the probe in the same shell; both reads returned this value.",
+      "sanitized_stdout": "",
+      "notes": "Extends receipt 8 back to 9048161e058becff5a53593a773d3c42238213fb, the parent of the first delivery commit 7a98bef5 and therefore the baseline the original (pre-revision) package was actually written against. Empty output with exit code 0 means no product source file changed anywhere along the chain 9048161e -> 10113c8c. Every source path and line number cited anywhere in this package is therefore valid at every baseline the package has ever named, including collection baseline 10113c8c."
+    }
+  ],
+  "evidence_collection_receipts_note": "Receipts 1-4 were collected at b6b729d95e575dc3b27ea9e02ce22fb128c3970b, each carrying its own clock value between 2026-09-08T16:49:34Z and 2026-09-08T16:49:39Z. Receipts 5-7 were recollected at 10113c8cd35444eea721a670dba0f978e60529c2 between 2026-09-08T18:33:02Z and 2026-09-08T18:33:09Z; their previously asserted 2026-09-08T18:05:00Z collection time is withdrawn as unsupported and is NOT replaced by an estimate (see metadata.provenance_correction). Receipt 8 was collected at the same HEAD at 2026-09-08T18:34:13Z. All eight are read-only static searches over the checked-out worktree; no test suite, runtime, provider or production resource was touched, and no scan, runtime, provider or security gate is claimed to pass. Exit code 1 on receipts 1 and 5 is the no-match result of the search tool, not a tool error."
+}

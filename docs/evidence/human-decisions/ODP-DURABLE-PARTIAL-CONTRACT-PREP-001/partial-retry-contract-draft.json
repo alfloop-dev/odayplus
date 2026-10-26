@@ -1,0 +1,511 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DurableJobPartialRetryContractDraft",
+  "description": "Draft schema and behavioral contract for durable batch jobs supporting JobStatus.PARTIAL, itemized receipts, and member-level idempotency/retry.",
+  "version": "1.1.0-draft.2026-09-08",
+  "metadata": {
+    "task_id": "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001",
+    "work_package": "WP-33A",
+    "target_implementation_stage": "WP-33B",
+    "inspected_commit_sha": "10113c8cd35444eea721a670dba0f978e60529c2",
+    "inspected_commit_note": "Collection baseline 10113c8c (the commit the worktree sat at during evidence collection; the delivering commits are its docs-only descendants). The original draft was written against 9048161e058becff5a53593a773d3c42238213fb (measured parent of the first delivery commit 7a98bef5) and revised against b6b729d9 and 23b94f28. Receipt 9 in producer-inventory.json measures git diff --name-only 9048161e 10113c8c -- apps shared modules packages as empty with raw exit code 0, so every source reference in this draft holds unchanged at that baseline and at the PR head built from it.",
+    "first_committed_at": "2026-09-08T16:14:18Z",
+    "first_committed_at_basis": "Committer timestamp of 7a98bef5, the first commit containing this file, read with git log --date=iso-strict. This is a substantiated upper bound on the authoring time, not the authoring clock itself.",
+    "created_at": "unknown",
+    "created_at_note": "This field previously asserted 2026-09-08T16:48:00Z. That value is withdrawn as unsupported: it postdates first_committed_at (2026-09-08T16:14:18Z), the commit that already contained this file, and no authoring receipt exists. Per the correction policy it is recorded as unknown rather than replaced with another estimate. See metadata.provenance_correction in producer-inventory.json."
+  },
+  "core_principles": {
+    "status_orthogonality": {
+      "business_outcome": "JobStatus: QUEUED | RUNNING | SUCCEEDED | FAILED | CANCELLED | PARTIAL",
+      "delivery_mechanics": "JobDeliveryState: RETRYING | DEAD_LETTER | null",
+      "rule": "JobStatus represents business outcome; JobDeliveryState represents queue delivery mechanics. In the existing system, normal success writes SUCCEEDED with delivery_state=null, active retries write QUEUED with delivery_state=RETRYING, and terminal failures write FAILED paired with delivery_state=DEAD_LETTER upon retry exhaustion or non-retryable errors. For multi-item batch jobs completing as PARTIAL, transport delivery is finished, so delivery_state is cleared (set to null), cleanly separating business partial completion from infrastructure dead-lettering without allowing transport delivery states to overwrite business outcome."
+    },
+    "state_transition_rules": {
+      "single_item_jobs": "Must transition strictly to SUCCEEDED or FAILED (never PARTIAL).",
+      "batch_multi_item_precedence_rules": [
+        "1. Empty batch precedence: If total_count == 0 => JobStatus.SUCCEEDED (with succeeded_count = 0, failed_count = 0, cancelled_count = 0, pending_count = 0).",
+        "2. Non-finalization rule: If pending_count > 0 => Job remains in active non-terminal state (JobStatus.RUNNING or JobStatus.QUEUED); pending items MUST NOT finalize the job into a terminal state.",
+        "3. Cancellation precedence: If cancelled_count > 0 or job was aborted by operator/system => JobStatus.CANCELLED (takes unambiguous precedence over partial counts).",
+        "4. All Succeeded: If succeeded_count == total_count and total_count > 0 and failed_count == 0 and cancelled_count == 0 and pending_count == 0 => JobStatus.SUCCEEDED.",
+        "5. All Failed: If failed_count == total_count and total_count > 0 and succeeded_count == 0 and cancelled_count == 0 and pending_count == 0 => JobStatus.FAILED.",
+        "6. Mixed Partial Outcome: If succeeded_count > 0 and failed_count > 0 and cancelled_count == 0 and pending_count == 0 => JobStatus.PARTIAL."
+      ]
+    },
+    "scoped_retry_policy": {
+      "default_scope": "FAILED_ONLY",
+      "execution_behavior": "Engine reads previous ItemReceipt items; items with item_status == 'SUCCEEDED' are skipped with zero downstream invocations; items with item_status == 'FAILED' and error.retryable == false are permanent bad input and skipped with zero downstream invocations (attempt count unchanged); only items with item_status == 'FAILED' and error.retryable == true are re-executed (attempt incremented by 1).",
+      "convergence_rule": "Retried items that succeed update item_status to SUCCEEDED and increment attempt. When all originally failed items reach SUCCEEDED, the aggregate JobStatus converges from PARTIAL to SUCCEEDED. If non-retryable failed items remain, the aggregate JobStatus remains PARTIAL with updated summary counts."
+    },
+    "replay_identity_and_ordering": {
+      "purpose": "Defines replay identity and stale-result handling so that duplicate message delivery and out-of-order attempt completion cannot corrupt a PARTIAL aggregate. Retry alone is not sufficient: the FAILED_ONLY scoped retry in scoped_retry_policy is a single sequential operation and by construction cannot detect a duplicated delivery of the same attempt, nor an older attempt's result arriving after a newer attempt already succeeded.",
+      "job_replay_identity": "A durable job is identified for replay by job_id. Client-facing enqueue deduplication uses idempotency_key, already implemented at DurableJobQueue.enqueue (shared/infrastructure/persistence/job_queue.py:65-110) via INSERT ... ON CONFLICT DO NOTHING followed by an idempotency_key readback that returns (existing_record, created=False). Re-enqueuing the same idempotency_key must therefore never create a second job and never reset an existing aggregate.",
+      "item_replay_identity": "An item execution is identified by the triple (job_id, item_id, attempt). item_id is unique within the job; attempt is the monotonically increasing execution counter already present on ItemReceipt. A per-item idempotency_key (ItemReceipt.idempotency_key) identifies the downstream business write so that the downstream side can also reject a replay. The triple is the fencing token for applying any item result.",
+      "apply_once_rule": "A result for (job_id, item_id, attempt) is applied at most once. On receiving a result whose triple has already been applied, the engine performs no downstream write, does not increment attempt, does not modify counts in JobSummary, and does not rewrite last_attempt_at. The duplicate is acknowledged and discarded.",
+      "stale_result_rule": "A result is stale, and must be discarded without any state change, when either: (a) its attempt is lower than the attempt currently recorded on the ItemReceipt; or (b) the ItemReceipt is already in item_status == 'SUCCEEDED'. In particular a late-arriving failure from an older attempt must never overwrite a SUCCEEDED item_status, must never null out an existing result_ref, and must never re-populate error on a succeeded item.",
+      "monotonicity_rule": "attempt is non-decreasing per item. item_status transitions out of SUCCEEDED are forbidden for the same job run; SUCCEEDED is terminal at item level. result_ref, once set on a SUCCEEDED item, is immutable.",
+      "aggregate_derivation_rule": "JobSummary counts and the aggregate JobStatus are derived deterministically from the persisted ItemReceipt set by applying state_transition_rules.batch_multi_item_precedence_rules. They are never incremented ad hoc by message handling. Consequently the final aggregate is a pure function of the item receipts and is identical after a restart, and identical regardless of the arrival order or multiplicity of duplicate messages.",
+      "cancellation_interaction": "The stale_result_rule applies to cancellation as well: a result arriving for an item already recorded CANCELLED with attempt == 0 (cancelled before execution) must not resurrect that item to SUCCEEDED or FAILED; it is discarded and reported as a stale-delivery observation.",
+      "scope_note": "This is an A-stage contract and test specification only. No implementation and no test execution is performed or claimed by ODP-DURABLE-PARTIAL-CONTRACT-PREP-001; the corresponding acceptance cases are specified in implementation-handoff.md section 4 test 5 and are WP-33B work."
+    }
+  },
+  "definitions": {
+    "ItemError": {
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "Machine-readable error code (e.g. MISSING_MANDATORY_ADDRESS, GEOCODING_UPSTREAM_TIMEOUT, CANCELLED_BEFORE_EXECUTION)"
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable explanation of failure"
+        },
+        "retryable": {
+          "type": "boolean",
+          "description": "True if transient failure eligible for retry; false if permanent bad input or deterministic rejection"
+        },
+        "details": {
+          "type": "object",
+          "description": "Optional arbitrary diagnostic payload",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "ItemReceipt": {
+      "type": "object",
+      "required": [
+        "item_id",
+        "item_status",
+        "attempt",
+        "result_ref",
+        "error"
+      ],
+      "properties": {
+        "item_id": {
+          "type": "string",
+          "description": "Unique identifier of the item within the job (e.g. row-001, loc-42)"
+        },
+        "item_status": {
+          "type": "string",
+          "enum": [
+            "SUCCEEDED",
+            "FAILED",
+            "CANCELLED",
+            "PENDING"
+          ],
+          "description": "Terminal or lifecycle outcome for this specific member"
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total execution attempts made for this item (0 for unstarted PENDING or pre-execution CANCELLED items; >=1 for items that executed at least once)"
+        },
+        "result_ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Pointer to created resource or receipt (e.g. intake-991823); null for failed, cancelled, or pending items"
+        },
+        "error": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/ItemError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "idempotency_key": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Per-item client idempotency key if supplied"
+        },
+        "last_attempt_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Timestamp of last execution attempt, or null if attempt == 0"
+        }
+      },
+      "additionalProperties": false
+    },
+    "JobSummary": {
+      "type": "object",
+      "required": [
+        "total_count",
+        "succeeded_count",
+        "failed_count",
+        "cancelled_count",
+        "pending_count"
+      ],
+      "properties": {
+        "total_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Sum of succeeded_count + failed_count + cancelled_count + pending_count"
+        },
+        "succeeded_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cancelled_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pending_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "DurableJobReceipt": {
+      "type": "object",
+      "required": [
+        "job_id",
+        "job_type",
+        "tenant_id",
+        "status",
+        "delivery_state",
+        "summary",
+        "items",
+        "created_at",
+        "completed_at"
+      ],
+      "properties": {
+        "job_id": {
+          "type": "string",
+          "description": "Global unique identifier of the durable job"
+        },
+        "job_type": {
+          "type": "string",
+          "description": "Registered job type in JobRegistry"
+        },
+        "tenant_id": {
+          "type": "string",
+          "description": "Authenticated tenant scope"
+        },
+        "correlation_id": {
+          "type": "string",
+          "description": "Distributed tracing correlation ID"
+        },
+        "idempotency_key": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Job-level idempotency key"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "QUEUED",
+            "RUNNING",
+            "SUCCEEDED",
+            "FAILED",
+            "CANCELLED",
+            "PARTIAL"
+          ]
+        },
+        "delivery_state": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "RETRYING",
+            "DEAD_LETTER",
+            null
+          ]
+        },
+        "summary": {
+          "$ref": "#/definitions/JobSummary"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ItemReceipt"
+          }
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "started_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "completed_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "sample_payloads": {
+    "partial_job_receipt": {
+      "job_id": "job-batch-8849a2f1-001",
+      "job_type": "batch-listing-intake",
+      "tenant_id": "tenant-tw-01",
+      "correlation_id": "corr-482a9b-11",
+      "idempotency_key": "idemp-batch-20260908-01",
+      "status": "PARTIAL",
+      "delivery_state": null,
+      "summary": {
+        "total_count": 4,
+        "succeeded_count": 2,
+        "failed_count": 2,
+        "cancelled_count": 0,
+        "pending_count": 0
+      },
+      "items": [
+        {
+          "item_id": "row-001",
+          "item_status": "SUCCEEDED",
+          "attempt": 1,
+          "result_ref": "intake-991821",
+          "error": null,
+          "idempotency_key": "row-idemp-01",
+          "last_attempt_at": "2026-09-08T16:12:01Z"
+        },
+        {
+          "item_id": "row-002",
+          "item_status": "FAILED",
+          "attempt": 1,
+          "result_ref": null,
+          "error": {
+            "code": "MISSING_MANDATORY_ADDRESS",
+            "message": "Street address is missing or unparseable",
+            "retryable": false,
+            "details": {
+              "column": "address_raw",
+              "value": null
+            }
+          },
+          "idempotency_key": "row-idemp-02",
+          "last_attempt_at": "2026-09-08T16:12:02Z"
+        },
+        {
+          "item_id": "row-003",
+          "item_status": "SUCCEEDED",
+          "attempt": 1,
+          "result_ref": "intake-991823",
+          "error": null,
+          "idempotency_key": "row-idemp-03",
+          "last_attempt_at": "2026-09-08T16:12:03Z"
+        },
+        {
+          "item_id": "row-004",
+          "item_status": "FAILED",
+          "attempt": 1,
+          "result_ref": null,
+          "error": {
+            "code": "GEOCODING_UPSTREAM_TIMEOUT",
+            "message": "Geocoding service timed out after 3500ms",
+            "retryable": true,
+            "details": {
+              "endpoint": "geocode.tgos.gov.tw",
+              "timeout_ms": 3500
+            }
+          },
+          "idempotency_key": "row-idemp-04",
+          "last_attempt_at": "2026-09-08T16:12:04Z"
+        }
+      ],
+      "created_at": "2026-09-08T16:12:00Z",
+      "started_at": "2026-09-08T16:12:00Z",
+      "completed_at": "2026-09-08T16:12:05Z"
+    },
+    "post_retry_converged_receipt": {
+      "job_id": "job-batch-8849a2f1-001",
+      "job_type": "batch-listing-intake",
+      "tenant_id": "tenant-tw-01",
+      "correlation_id": "corr-482a9b-12-retry",
+      "idempotency_key": "idemp-batch-20260908-01",
+      "status": "PARTIAL",
+      "delivery_state": null,
+      "summary": {
+        "total_count": 4,
+        "succeeded_count": 3,
+        "failed_count": 1,
+        "cancelled_count": 0,
+        "pending_count": 0
+      },
+      "items": [
+        {
+          "item_id": "row-001",
+          "item_status": "SUCCEEDED",
+          "attempt": 1,
+          "result_ref": "intake-991821",
+          "error": null,
+          "idempotency_key": "row-idemp-01",
+          "last_attempt_at": "2026-09-08T16:12:01Z"
+        },
+        {
+          "item_id": "row-002",
+          "item_status": "FAILED",
+          "attempt": 1,
+          "result_ref": null,
+          "error": {
+            "code": "MISSING_MANDATORY_ADDRESS",
+            "message": "Street address is missing or unparseable",
+            "retryable": false,
+            "details": {
+              "column": "address_raw",
+              "value": null
+            }
+          },
+          "idempotency_key": "row-idemp-02",
+          "last_attempt_at": "2026-09-08T16:12:02Z"
+        },
+        {
+          "item_id": "row-003",
+          "item_status": "SUCCEEDED",
+          "attempt": 1,
+          "result_ref": "intake-991823",
+          "error": null,
+          "idempotency_key": "row-idemp-03",
+          "last_attempt_at": "2026-09-08T16:12:03Z"
+        },
+        {
+          "item_id": "row-004",
+          "item_status": "SUCCEEDED",
+          "attempt": 2,
+          "result_ref": "intake-991824",
+          "error": null,
+          "idempotency_key": "row-idemp-04",
+          "last_attempt_at": "2026-09-08T16:15:02Z"
+        }
+      ],
+      "created_at": "2026-09-08T16:12:00Z",
+      "started_at": "2026-09-08T16:12:00Z",
+      "completed_at": "2026-09-08T16:15:05Z"
+    },
+    "cancelled_batch_receipt_sample": {
+      "job_id": "job-batch-8849a2f1-002",
+      "job_type": "batch-listing-intake",
+      "tenant_id": "tenant-tw-01",
+      "correlation_id": "corr-482a9b-20-cancel",
+      "idempotency_key": "idemp-batch-20260908-02",
+      "status": "CANCELLED",
+      "delivery_state": null,
+      "summary": {
+        "total_count": 3,
+        "succeeded_count": 1,
+        "failed_count": 0,
+        "cancelled_count": 2,
+        "pending_count": 0
+      },
+      "items": [
+        {
+          "item_id": "row-001",
+          "item_status": "SUCCEEDED",
+          "attempt": 1,
+          "result_ref": "intake-991830",
+          "error": null,
+          "idempotency_key": "row-idemp-21",
+          "last_attempt_at": "2026-09-08T16:20:01Z"
+        },
+        {
+          "item_id": "row-002",
+          "item_status": "CANCELLED",
+          "attempt": 1,
+          "result_ref": null,
+          "error": {
+            "code": "CANCELLED_MID_EXECUTION",
+            "message": "Job cancelled by operator during item execution",
+            "retryable": true,
+            "details": {
+              "cancellation_reason": "OPERATOR_ABORT"
+            }
+          },
+          "idempotency_key": "row-idemp-22",
+          "last_attempt_at": "2026-09-08T16:20:02Z"
+        },
+        {
+          "item_id": "row-003",
+          "item_status": "CANCELLED",
+          "attempt": 0,
+          "result_ref": null,
+          "error": {
+            "code": "CANCELLED_BEFORE_EXECUTION",
+            "message": "Job cancelled before item execution started",
+            "retryable": true,
+            "details": {
+              "cancellation_reason": "OPERATOR_ABORT"
+            }
+          },
+          "idempotency_key": "row-idemp-23",
+          "last_attempt_at": null
+        }
+      ],
+      "created_at": "2026-09-08T16:20:00Z",
+      "started_at": "2026-09-08T16:20:00Z",
+      "completed_at": "2026-09-08T16:20:05Z"
+    }
+  },
+  "api_contract_specifications": {
+    "query_job_endpoint": {
+      "method": "GET",
+      "path": "/platform/jobs/{job_id}",
+      "response_status": 200,
+      "response_body": {
+        "job_id": "string",
+        "job_type": "string",
+        "status": "JobStatus",
+        "delivery_state": "JobDeliveryState | null",
+        "summary": "JobSummary"
+      }
+    },
+    "receipt_job_endpoint": {
+      "method": "GET",
+      "path": "/api/v1/jobs/{job_id}/receipt",
+      "response_status": 200,
+      "response_body": "DurableJobReceipt"
+    },
+    "retry_job_endpoint": {
+      "method": "POST",
+      "path": "/platform/jobs/{job_id}/retry",
+      "request_body": {
+        "retry_scope": {
+          "type": "string",
+          "enum": [
+            "FAILED_ONLY",
+            "FAILED_RETRYABLE_ONLY"
+          ],
+          "default": "FAILED_ONLY"
+        }
+      },
+      "response_status": 202,
+      "response_body": {
+        "job_id": "string",
+        "status": "QUEUED",
+        "retry_scope": "string",
+        "retried_items_count": "integer"
+      }
+    }
+  }
+}

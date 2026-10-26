@@ -8,6 +8,8 @@
       "development_platform/",
       "delivery_toolchain/",
       "docs/audits/",
+      "docs/evidence/execution-control/",
+      "docs/evidence/runtime/",
       "infra/terraform/",
       "support/sidecars/",
       "tests/e2e/",

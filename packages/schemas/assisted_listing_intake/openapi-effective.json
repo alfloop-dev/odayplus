@@ -234,6 +234,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "summary": "Submit a URL intake"
@@ -302,6 +305,9 @@
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "summary": "Submit a manual CSV or approved-feed batch"
@@ -398,6 +404,9 @@
           },
           "428": {
             "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "summary": "Propose an intake correction"
@@ -669,6 +678,9 @@
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "summary": "Assign an intake"
@@ -731,6 +743,9 @@
           },
           "428": {
             "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/ScoreDeliveryUnavailable"
           }
         },
         "summary": "Retry a job from a durable checkpoint"
@@ -769,6 +784,12 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/JobAuthorityConflict"
+          },
+          "503": {
+            "$ref": "#/components/responses/ScoreDeliveryUnavailable"
           }
         }
       }
@@ -991,6 +1012,9 @@
           },
           "428": {
             "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/ScoreDeliveryUnavailable"
           }
         },
         "summary": "Review a promotion decision"
@@ -1031,6 +1055,9 @@
           },
           "428": {
             "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "summary": "Cancel an intake"
@@ -1151,6 +1178,9 @@
           },
           "428": {
             "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "summary": "Claim an assignment"
@@ -1198,6 +1228,9 @@
           },
           "428": {
             "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "summary": "Transfer an assignment"
@@ -1238,6 +1271,9 @@
           },
           "428": {
             "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "summary": "Complete an assignment"
@@ -1285,6 +1321,9 @@
           },
           "428": {
             "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "summary": "Pause an SLA instance"
@@ -1325,6 +1364,9 @@
           },
           "428": {
             "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "summary": "Resume an SLA instance"
@@ -1400,6 +1442,9 @@
           },
           "428": {
             "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "summary": "Review an identity decision"
@@ -1824,6 +1869,36 @@
           "application/json": {
             "schema": {
               "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "AuditUnavailable": {
+        "description": "Required audit policy/storage is unavailable; no command is committed.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "ScoreDeliveryUnavailable": {
+        "description": "The canonical job repository or required score-delivery dependency is unavailable; no approval execution or retry is committed.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "JobAuthorityConflict": {
+        "description": "A legacy score mirror or inconsistent parent binding cannot supply an authoritative job receipt.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ConflictError"
             }
           }
         }
@@ -2877,6 +2952,24 @@
           }
         }
       },
+      "JobStatus": {
+        "type": "string",
+        "enum": [
+          "QUEUED",
+          "RUNNING",
+          "SUCCEEDED",
+          "FAILED",
+          "CANCELLED",
+          "PARTIAL"
+        ]
+      },
+      "JobDeliveryState": {
+        "type": "string",
+        "enum": [
+          "RETRYING",
+          "DEAD_LETTER"
+        ]
+      },
       "JobReceipt": {
         "type": "object",
         "required": [
@@ -2893,15 +2986,16 @@
             "format": "uuid"
           },
           "status": {
-            "type": "string",
-            "enum": [
-              "QUEUED",
-              "RUNNING",
-              "RETRYING",
-              "SUCCEEDED",
-              "FAILED",
-              "CANCELLED",
-              "DEAD_LETTER"
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "delivery_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobDeliveryState"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "checkpoint": {
@@ -3360,6 +3454,13 @@
           "correlation_id"
         ],
         "properties": {
+          "target_format_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Target code persisted with this decision, verbatim; null for historical receipts without one."
+          },
           "promotion_decision_id": {
             "type": "string",
             "format": "uuid"

@@ -1,0 +1,1868 @@
+{
+  "matrix_id": "ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001",
+  "title": "Password-first / OIDC-off Auth Mode Evidence Matrix",
+  "decision_ref": "D15",
+  "decision_summary": "Google OIDC disabled; password-first is default. Google/OIDC login must not be presented or callable when OIDC is off; password login must not depend on a Google OAuth client secret.",
+  "stage": "A (engineering evidence preparation; B-stage OAuth provider data not awaited)",
+  "inspected_head": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+  "inspected_head_note": "All source observations below were taken at origin/dev 95646a5c2bd598b7e219ee51efa7e410cb9fe0f4, which this task branch composed via a base-advance merge. The previous revision of this matrix inspected cf04c0467f2f03017301838268d5f3f055f29ed3; receipt R35 (git diff --quiet over the seven D15 control files, exit 0) shows those files are identical at the two heads, so the previous revision's source observations remain applicable where they were correct.",
+  "inspected_at": "2026-09-08T17:24:34Z",
+  "collection_policy": "Every observation carrying status=pass below is bound to receipts in collection_receipts that actually contain its evidence: each receipt records its own argv, source SHA, UTC timestamp, ORIGINAL exit code and the output it collected. The receipt-to-control bindings were re-audited in this revision, so a receipt is cited only for the observation whose source it read; probes that merely establish that a regression file exists are kept in regression_reference_existence_receipts and are never presented as source evidence. The three status=unknown controls carry no receipt asserting a measurement, because none was taken. Non-zero exits are reported as-is and classified; none is silenced. Nothing here claims a scan, runtime, provider or security gate pass that was not measured.",
+  "contract_ref": {
+    "doc_id": "ODP-WEB-PASSWORD-FIRST-AUTH-CONTRACT-001",
+    "pinned_sha": "04e1572f802a54c2646ba678fe2975226dfbd7c4",
+    "title": "帳密預設、OIDC 可選的單一身份契約"
+  },
+  "corrections_applied": [
+    {
+      "finding": "F1",
+      "issue": "Prior revision recorded composition SHAs d0c81635df8e48dc803272e5ee6fc1fca3fa32cb and f3095a0eb3f03aa788a10747cf3721ae54a1be70, reconstructed from the abbreviated values in the immutable receipt. Neither is a real object.",
+      "correction": "Full SHAs resolved from the object database: d0c81635df8e842f7910d40873b3886d4237cee8 and f3095a0ee3ca3dde63d98f35ae8cfedf090fd529. The same defect was present in the E2E-001 remediation merge SHA 3f8eb309 (invalid); PR #1085 actually merged as 595e7501e73ff4cbb5894c27e199e02a06c2a509.",
+      "receipt_refs": [
+        "R01",
+        "R02",
+        "R03",
+        "R04",
+        "R08",
+        "R09",
+        "R30"
+      ]
+    },
+    {
+      "finding": "F2",
+      "issue": "Prior revision labelled PR merge commit 2377168c as the historical 'verified run HEAD'. The immutable receipt records a date, a composition base/merge and per-layer outcomes -- not a run HEAD and not original exit codes.",
+      "correction": "Run HEAD and original exit codes for the 2026-09-01 execution are recorded as unknown (control historical_run_head_and_exit_codes). The pass text was committed in d3e6d64a at 2026-09-01T08:13:31Z, 38 minutes before merge commit 2377168c was created (2026-09-01T08:51:28Z is that commit's creation timestamp, R07; GitHub records PR #1096 mergedAt as 2026-09-01T09:10:24Z, R31), so 2377168c cannot be the head that ran. The genuine merge lineage (PR head 69422d71, merge 2377168c) is preserved separately from the execution record.",
+      "receipt_refs": [
+        "R05",
+        "R06",
+        "R07",
+        "R31"
+      ]
+    },
+    {
+      "finding": "F3",
+      "issue": "Prior revision cited apps/web/src/lib/auth/__tests__/securityE2E.test.ts and apps/web/src/app/auth/callback/route.test.ts as regression references. Neither path exists in the tree.",
+      "correction": "Replaced with control-specific tests that do exist at 95646a5c: apps/web/src/lib/auth/__tests__/callback.test.ts, login.test.ts, session.test.ts, loginThrottleRoute.test.ts, runtime.test.ts, and the original receipt's apps/web/tests/login-route.test.ts. Every JSON source ref in this file was probed against the pinned tree.",
+      "receipt_refs": [
+        "R14",
+        "R15",
+        "R16",
+        "R17",
+        "R18",
+        "R19",
+        "R20"
+      ]
+    },
+    {
+      "finding": "F4",
+      "issue": "Prior revision listed ODP_OIDC_ISSUER and ODP_GCP_OIDC_ISSUER as resolver inputs, described both resolvers as raising errors, and described the local provider rejection as '404 / 503'.",
+      "correction": "Per-consumer issuer inputs corrected (deployment: ODP_WEB_OIDC_ISSUER only; API: ODP_AUTH_OIDC_ISSUER plus ODP_WEB_OIDC_ISSUER; web runtime: ODP_WEB_OIDC_ISSUER only). ODP_OIDC_ISSUER and ODP_GCP_OIDC_ISSUER do not appear anywhere in the tree. Python returns a (mode, error) tuple and never raises; TypeScript throws. Local provider rejection is a fixed HTTP 503.",
+      "receipt_refs": [
+        "R21",
+        "R22",
+        "R23",
+        "R24",
+        "R25",
+        "R26"
+      ]
+    },
+    {
+      "finding": "F5",
+      "issue": "Prior revision recorded prose/SHA/UTC per observation but no original per-command exit code, and asserted exact-head CI evidence with no run or job URL, measured head, or command scope.",
+      "correction": "35 read-only collection receipts are attached below with argv, source SHA, UTC and original exit code. The exact-head CI claim is replaced by a named run/job at the measured head (control exact_head_ci_product_regression); its scope is quoted from the workflow source rather than inferred.",
+      "receipt_refs": [
+        "R33",
+        "R34"
+      ]
+    },
+    {
+      "finding": "F6 (second review, blocking)",
+      "issue": "Per-observation collection provenance was incomplete. terraform_conditional_oidc_checks and password_login_no_google_secret_dependency carried status=pass with empty receipt_refs. deployment_validation_conditional_oidc cited R21, which greps OIDC_ISSUER_VARS in shared/auth/mode.py and modules/opsboard/auth/config.py and never reads product_ops/deployment/validate_cloud_run_live_deployment.py. session_csrf_throttle_integrity_in_local_mode cited R16/R17/R19, which only probe whether test files exist. The login and callback controls cited R26, which greps only the WEB_AUTH_PROVIDER_DISABLED constant and supplies no HTTP status, guard ordering or provider-unreachability observation. ops_test_conditional_oidc_deployment_exists cited R33, a CI job query that carries no file size, marker or parametrisation observation.",
+      "correction": "27 narrowly scoped pinned-source collection receipts (R36-R62) were collected against 95646a5c2bd598b7e219ee51efa7e410cb9fe0f4 and each control is now bound to the receipts that contain its own source evidence. Collecting the source also corrected one observation: session.ts is not free of OIDC environment reads. session.ts:249 passes ODP_WEB_OIDC_ISSUER to store.resolveOidcAccount inside the legacy sealed-OIDC-cookie migration branch (if (!value.sid), session.ts:219) of readWebSession; it is an account-lookup key on a migration path the password-first session format never enters, not an auth-mode decision (R45, R57, R58).",
+      "receipt_refs": [
+        "R36",
+        "R37",
+        "R38",
+        "R39",
+        "R40",
+        "R41",
+        "R42",
+        "R43",
+        "R44",
+        "R45",
+        "R46",
+        "R47",
+        "R48",
+        "R49",
+        "R50",
+        "R51",
+        "R52",
+        "R53",
+        "R54",
+        "R55",
+        "R56",
+        "R57",
+        "R58",
+        "R59",
+        "R60",
+        "R61",
+        "R62"
+      ]
+    },
+    {
+      "finding": "F7 (second review, consistency)",
+      "issue": "PR #1096 merged_at was recorded as 2026-09-01T08:51:28Z. That is the merge commit's creation timestamp from R07, not the GitHub merge timestamp.",
+      "correction": "merged_at is now 2026-09-01T09:10:24Z, the mergedAt recorded by this package's own GitHub receipt R31. The earlier value is retained under merge_commit_created_at. The same correction is applied to human-task-handoff.json.",
+      "receipt_refs": [
+        "R07",
+        "R31"
+      ]
+    },
+    {
+      "finding": "F8 (second review, consistency)",
+      "issue": "The Terraform observation claimed that every other assertion in infra/terraform/checks.tf uses the unconditional !local.is_prod || (...) form.",
+      "correction": "Narrowed to the production-gated assertions. checks.tf also contains environment-independent assertions: the unconditional instance-bound checks var.api_max_instances >= var.api_min_instances (line 213) and var.web_max_instances >= var.web_min_instances (line 218), and the setintersection checks at lines 9, 17, 25, 150, 169 and 177.",
+      "receipt_refs": [
+        "R36",
+        "R61"
+      ]
+    }
+  ],
+  "prior_tasks": [
+    {
+      "task_id": "ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001",
+      "pr_number": 1074,
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1074",
+      "merge_commit": "840081001084ad9586421de908530a41f3a17333",
+      "merged_into_dev": true,
+      "is_ancestor_of_inspected_head": true,
+      "scope": "Terraform / deploy conditional OIDC; shared auth-mode resolver (shared/auth/mode.py, apps/web/src/lib/auth/runtime.ts); deployment validation requires OIDC secrets only when auth_mode=oidc.",
+      "canonical_lookup": "ai-status.sh show ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001 returned exit 1 (stderr: 'Unknown task').",
+      "canonical_history_gap": "Task record is absent from active ai-status.json and ai-task-archive. Completion is evidenced by the merged PR and by commit ancestry, not by a canonical task record. Absence of the record is a history gap, not evidence that the work was not done.",
+      "receipt_refs": [
+        "R10",
+        "R28",
+        "R32"
+      ]
+    },
+    {
+      "task_id": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-001",
+      "branch": "task/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-001",
+      "commit_shas": [
+        "ea64f02e0366a48df2bcfda8f23f418d7f7e34b2",
+        "46077fe886417473189b11331e119daa66f1c50a"
+      ],
+      "status": "superseded",
+      "scope": "Initial password-first security E2E verification. Discovered two architecture blockers: B1 LoginThrottleService had no production caller in POST /login; B2 the throttle layer had no identity.login_attempts SQL persistence repository.",
+      "relationship_to_e2e_002": "The blockers triggered remediation task ODP-WEB-LOGIN-THROTTLE-REMEDIATION-001 (PR #1085, head 94e93af9e7611d5c70dc38247db6942f0bccfad6, merge 595e7501e73ff4cbb5894c27e199e02a06c2a509, merged 2026-09-01T06:37:24Z), which implemented PostgresLoginThrottleStore and the TypeScript throttle wiring. E2E-001 was then superseded by E2E-002.",
+      "corrected_from_prior_revision": "The prior revision recorded this merge as '3f8eb309', which is not a valid object (git cat-file -e exit 128).",
+      "canonical_lookup": "Not present in active ai-status.json; branch commits are preserved in the git object database.",
+      "canonical_history_gap": "Pre-remediation trial task; never merged as a standalone PR, superseded by E2E-002.",
+      "receipt_refs": [
+        "R08",
+        "R09",
+        "R30"
+      ]
+    },
+    {
+      "task_id": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+      "pr_number": 1096,
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1096",
+      "pr_head_sha": "69422d71e8d5ac572ade58562c0aeca28d123648",
+      "merge_commit": "2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
+      "merged_at": "2026-09-01T09:10:24Z",
+      "merged_into_dev": true,
+      "is_ancestor_of_inspected_head": true,
+      "scope": "Security E2E receipt covering password login, throttle, OIDC-off boundary, RBAC tenant isolation and secret redaction.",
+      "receipt_ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md",
+      "canonical_lookup": "ai-status.sh show ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 returned exit 1 (stderr: 'Unknown task').",
+      "canonical_history_gap": "Task record absent from active ai-status.json and ai-task-archive; the immutable receipt and the merge commit remain in the repository.",
+      "receipt_refs": [
+        "R07",
+        "R11",
+        "R27",
+        "R31"
+      ],
+      "merged_at_source": "R31 (gh pr view 1096 --json ... mergedAt)",
+      "merge_commit_created_at": "2026-09-01T08:51:28Z",
+      "merge_commit_created_at_source": "R07 (git log -1 --format=%H %P %cI %s 2377168c)"
+    }
+  ],
+  "historical_receipt_provenance": {
+    "receipt_path": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md",
+    "receipt_pinned_sha": "04e1572f802a54c2646ba678fe2975226dfbd7c4",
+    "what_the_receipt_records": [
+      "verdict: pass",
+      "verification date: 2026-09-01 UTC",
+      "composition base, abbreviated in the receipt as 'd0c81635df8e...', resolved to d0c81635df8e842f7910d40873b3886d4237cee8",
+      "composition merge, abbreviated in the receipt as 'f3095a0e', resolved to f3095a0ee3ca3dde63d98f35ae8cfedf090fd529 (a merge of origin/dev into task/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002, authored 2026-09-01T08:01:50Z)",
+      "seven per-layer commands with their recorded outcomes (section 4)"
+    ],
+    "what_the_receipt_does_not_record": [
+      "the exact commit HEAD the commands were executed against",
+      "the original exit code of any command",
+      "wall-clock duration or a machine-readable run receipt"
+    ],
+    "why_2377168c_is_not_the_run_head": "The receipt text carrying the pass outcomes was committed in d3e6d64a6fab35662811fab2551f40e4b02c3fbe at 2026-09-01T08:13:31Z. Merge commit 2377168c2cc07cd2470dd8f43de0486fe8d8fc08 was created at 2026-09-01T08:51:28Z and did not exist when the outcomes were written. 2377168c is the PR #1096 merge commit (second parent 69422d71, the PR head); it proves the merge lineage, not the execution.",
+    "run_head_status": "unknown",
+    "original_exit_codes_status": "unknown",
+    "follow_up_responsibility": "If an original execution receipt for the 2026-09-01 run is ever located, it should be attached to this matrix. Until then the run HEAD and exit codes stay unknown; they are not to be reconstructed from merge lineage, and the 2026-09-01 suite is not to be re-executed for the sole purpose of backfilling historical provenance.",
+    "receipt_refs": [
+      "R05",
+      "R06",
+      "R07",
+      "R31"
+    ]
+  },
+  "auth_surface_drift": {
+    "drift_base_sha": "2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
+    "drift_head_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+    "command": "git diff --stat 2377168c2cc07cd2470dd8f43de0486fe8d8fc08 95646a5c2bd598b7e219ee51efa7e410cb9fe0f4 -- modules/opsboard/auth shared/auth",
+    "exit_code": 0,
+    "summary": "5 files changed, 379 insertions(+), 25 deletions(-)",
+    "files": [
+      {
+        "file": "modules/opsboard/auth/claims.py",
+        "diff": "22 ++-"
+      },
+      {
+        "file": "shared/auth/__init__.py",
+        "diff": "24 +++"
+      },
+      {
+        "file": "shared/auth/abac.py",
+        "diff": "17 ---"
+      },
+      {
+        "file": "shared/auth/rbac.py",
+        "diff": "13 +-"
+      },
+      {
+        "file": "shared/auth/tenant.py",
+        "diff": "328 +++"
+      }
+    ],
+    "d15_control_files_unchanged": {
+      "command": "git diff --quiet 2377168c 95646a5c -- shared/auth/mode.py apps/web/src/lib/auth/runtime.ts apps/web/src/app/login/route.ts apps/web/src/app/auth/callback/route.ts apps/web/src/lib/auth/localAuth.ts apps/web/src/lib/auth/session.ts apps/web/src/lib/auth/loginThrottle.ts",
+      "exit_code": 0,
+      "meaning": "exit 0 from --quiet means zero differences across all seven files"
+    },
+    "impact_assessment": "The drift is multi-tenant context, claims parsing and RBAC/ABAC consolidation merged after E2E-002. None of the seven files that implement the D15 controls changed. This is a static-inspection conclusion about the control surface; it is not itself a regression run.",
+    "receipt_refs": [
+      "R12",
+      "R13",
+      "R35"
+    ]
+  },
+  "exact_head_regression": {
+    "measured_head": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+    "workflow_run": "https://github.com/alfloop-dev/odayplus/actions/runs/34252508138",
+    "run_id": 34252508138,
+    "run_name": "CI",
+    "run_event": "merge_group",
+    "run_conclusion": "success",
+    "job": "https://github.com/alfloop-dev/odayplus/actions/runs/34252508138/job/102150167268",
+    "job_id": 102150167268,
+    "job_name": "product",
+    "job_conclusion": "success",
+    "job_completed_at": "2026-09-08T17:05:24Z",
+    "relevant_steps": [
+      {
+        "step": "Lint product code",
+        "conclusion": "success"
+      },
+      {
+        "step": "Test product code",
+        "conclusion": "success",
+        "command_from_workflow_source": "uv run pytest -m \"not requires_live_env and not performance\" tests modules apps shared models -n auto",
+        "workflow_source": ".github/workflows/ci.yml:216-217"
+      },
+      {
+        "step": "Run security checks",
+        "conclusion": "success"
+      },
+      {
+        "step": "Run Node workspace checks",
+        "conclusion": "success",
+        "command_from_workflow_source": "make node-check",
+        "expansion": "Makefile:90-97 -- npm ci, then npm run lint/typecheck/build/bundle:budget/test --workspaces --if-present; the test step runs the apps/web vitest suite."
+      }
+    ],
+    "why_the_password_first_suites_are_in_scope": "tests/e2e/test_password_first_security_e2e.py, tests/security/test_login_throttle_wiring.py and tests/ops/test_conditional_oidc_deployment.py all live under tests/ and carry neither a requires_live_env nor a performance marker -- the grep across all three exits 1 with empty output (R54) -- so the workflow's marker expression, quoted from .github/workflows/ci.yml:217 (R55), does not exclude them. The apps/web unit tests and apps/web/tests/login-route.test.ts run under 'Run Node workspace checks', whose expansion is quoted from Makefile:90-97 (R56).",
+    "honest_limits": [
+      "This is a CI status observation at job granularity. Per-test outcomes inside the job were not retrieved, so no per-test count is claimed here.",
+      "The scope is quoted from workflow source at the inspected head; it was not re-derived from the job's runtime log.",
+      "This documentation task did not itself execute any product suite. Document validation receipts (git diff --check, artifact/JSON/link validation) prove the evidence package, not product regression."
+    ],
+    "receipt_refs": [
+      "R33",
+      "R34",
+      "R54",
+      "R55",
+      "R56"
+    ]
+  },
+  "evidence_items": [
+    {
+      "control": "auth_mode_resolver_precedence_python",
+      "description": "Authoritative auth-mode resolution in shared/auth/mode.py",
+      "source_file": "shared/auth/mode.py",
+      "lines": "51-59 (issuer var constants), 68-110 (resolve_auth_mode), 113-127 (oidc_provider_enabled)",
+      "inspected_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "inspected_at": "2026-09-08T17:24:34Z",
+      "observation_method": "static_code_inspection",
+      "precedence_rules": [
+        "1. ODP_AUTH_MODE -- authoritative, 'local' or 'oidc' (mode.py:92, 97-105).",
+        "2. ODP_AUTH_OIDC_ENABLED -- legacy boolean alias, 'true' -> oidc, 'false' -> local (mode.py:93, 106-107).",
+        "3. A configured, non-placeholder issuer in the caller's oidc_issuer_vars -> 'oidc' (mode.py:108-109). The default is DEPLOYMENT_OIDC_ISSUER_VARS = ('ODP_WEB_OIDC_ISSUER',) (mode.py:51). modules/opsboard/auth/config.py:302 passes API_OIDC_ISSUER_VARS = ('ODP_AUTH_OIDC_ISSUER', 'ODP_WEB_OIDC_ISSUER') (mode.py:56-59).",
+        "4. Nothing set -> 'local' (mode.py:110)."
+      ],
+      "error_semantics": "resolve_auth_mode returns a (mode, error) tuple and never raises. An invalid ODP_AUTH_OIDC_ENABLED returns ('local', reason) at mode.py:95-96; an invalid ODP_AUTH_MODE returns ('local', reason) at mode.py:97-98; a mode/flag conflict returns (mode, reason) at mode.py:101-104. oidc_provider_enabled is the fail-closed consumer: it is True only when mode == 'oidc' AND error is None (mode.py:126-127), so a self-contradicting environment disables OIDC rather than guessing. The precedence chain (mode.py:92-110) and the fail-closed consumer (mode.py:113-127) were collected as source, not summarised from memory: R47 and R59.",
+      "inputs_that_are_not_resolver_inputs": [
+        "ODP_OIDC_ISSUER -- does not appear anywhere in the tree (git grep exit 1).",
+        "ODP_GCP_OIDC_ISSUER -- does not appear anywhere in the tree (git grep exit 1)."
+      ],
+      "explicit_vs_unset_notes": "Explicit ODP_AUTH_MODE=local (or ODP_AUTH_OIDC_ENABLED=false) forces local even when an issuer variable is populated. Unset mode flags with a configured ODP_WEB_OIDC_ISSUER resolve to 'oidc'. Live D15 compliance therefore cannot be inferred from unset mode flags alone -- see control live_deployment_auth_mode_readback.",
+      "regression_references": [
+        "tests/ops/test_conditional_oidc_deployment.py",
+        "tests/e2e/test_password_first_security_e2e.py"
+      ],
+      "receipt_refs": [
+        "R21",
+        "R22",
+        "R23",
+        "R24",
+        "R47",
+        "R59"
+      ],
+      "status": "pass"
+    },
+    {
+      "control": "web_runtime_oidc_gate_precedence_typescript",
+      "description": "Web runtime resolver and OIDC enablement gate",
+      "source_file": "apps/web/src/lib/auth/runtime.ts",
+      "lines": "83-119 (resolveAuthMode), 121-129 (isOidcConfigured), 131-146 (isOidcEnabled)",
+      "inspected_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "inspected_at": "2026-09-08T17:24:34Z",
+      "observation_method": "static_code_inspection",
+      "precedence_rules": [
+        "1. ODP_AUTH_MODE -- 'local' or 'oidc' (runtime.ts:86, 95-108).",
+        "2. ODP_AUTH_OIDC_ENABLED -- 'true' -> oidc, 'false' -> local (runtime.ts:87, 110-112).",
+        "3. ODP_WEB_OIDC_ISSUER, and only that variable, when configured and non-placeholder -> 'oidc' (runtime.ts:114-116).",
+        "4. Default -> 'local' (runtime.ts:118)."
+      ],
+      "error_semantics": "Unlike the Python resolver, the TypeScript resolver throws. An invalid ODP_AUTH_OIDC_ENABLED throws at runtime.ts:89-93, an invalid ODP_AUTH_MODE at runtime.ts:96-98, and a mode/flag conflict at runtime.ts:101-105. Callers convert the throw into a fail-closed HTTP 503 rather than a default mode.",
+      "gate_behavior": "isOidcEnabled returns false whenever resolveAuthMode is 'local' (runtime.ts:134-137). In 'oidc' mode it requires ODP_WEB_OIDC_ISSUER, ODP_WEB_OIDC_CLIENT_ID and ODP_WEB_OIDC_CLIENT_SECRET together, otherwise it throws (runtime.ts:139-143). R46 collects every auth-mode identifier in runtime.ts with its line number (83-141), which is the source for the precedence and gate line references above.",
+      "regression_references": [
+        "apps/web/src/lib/auth/__tests__/runtime.test.ts"
+      ],
+      "receipt_refs": [
+        "R22",
+        "R23",
+        "R25",
+        "R46"
+      ],
+      "status": "pass"
+    },
+    {
+      "control": "login_route_no_google_ui_or_provider_call_when_oidc_off",
+      "description": "Login route omits the OIDC button and refuses provider=oidc when authMode is local",
+      "source_file": "apps/web/src/app/login/route.ts",
+      "lines": "68-75 (conditional button HTML), 268-281 (mode resolution), 302-312 (provider refusal), 342 (showOidc)",
+      "inspected_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "inspected_at": "2026-09-08T17:24:34Z",
+      "observation_method": "static_code_inspection",
+      "observation": "Line 342 computes const showOidc = authMode === \"oidc\" and passes it to renderLoginFormHtml at :344-347 (R60). The renderer builds oidcButtonHtml only when options.showOidc is true (:68, R48), so in local mode the \"使用 OIDC 登入\" anchor is not present in the HTML at all. A direct GET /login?provider=oidc in local mode is refused at :302-312: the guard if (provider === \"oidc\") at :302 immediately tests if (authMode !== \"oidc\") at :303 and returns code WEB_AUTH_PROVIDER_DISABLED with a fixed { status: 503, headers: { \"cache-control\": \"no-store\" } } at :311, before the provider branch at :315 is entered -- so there is no 404 path and no provider call (R49). An unresolvable mode is refused earlier at :268-281, also 503.",
+      "corrected_from_prior_revision": "The prior revision described this as returning '404 / 503' and cited R26, which greps only the WEB_AUTH_PROVIDER_DISABLED constant. The rejection status is a fixed 503 and the guard block itself is now collected (R48, R49, R60).",
+      "regression_references": [
+        "apps/web/src/lib/auth/__tests__/login.test.ts",
+        "apps/web/tests/login-route.test.ts",
+        "tests/e2e/test_password_first_security_e2e.py"
+      ],
+      "receipt_refs": [
+        "R26",
+        "R48",
+        "R49",
+        "R60"
+      ],
+      "status": "pass",
+      "regression_reference_existence_receipts": {
+        "note": "These probes establish only that the cited regression file exists at the inspected head. They are not source evidence for the observation above and no test outcome is claimed from them.",
+        "receipt_refs": [
+          "R15",
+          "R18"
+        ]
+      }
+    },
+    {
+      "control": "callback_fail_closed_when_oidc_off",
+      "description": "OIDC callback route rejects before any provider interaction in local mode",
+      "source_file": "apps/web/src/app/auth/callback/route.ts",
+      "lines": "47-88 (guard block), 64-74 (local rejection), 76-88 (incomplete-config rejection), 104 (code exchange)",
+      "inspected_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "inspected_at": "2026-09-08T17:24:34Z",
+      "observation_method": "static_code_inspection",
+      "observation": "GET resolves the mode at lines 49-62; a throw becomes HTTP 503 WEB_AUTH_NOT_CONFIGURED. When authMode === \"local\", lines 64-74 return { error: { code: \"WEB_AUTH_PROVIDER_DISABLED\", summary: \"OIDC authentication provider is disabled.\" } } with { status: 503, headers: { \"cache-control\": \"no-store\" } } at :72 (R50). That return precedes every input the OIDC flow would need: the first query-parameter read is at :90, the first request-cookie read at :100, and exchangeAuthorizationCode is called at :104 (R51), so the code exchange is unreachable in local mode. Lines 76-88 additionally reject an incomplete OIDC configuration with 503 WEB_AUTH_NOT_CONFIGURED.",
+      "corrected_from_prior_revision": "The prior revision gave the guard block as 47-87 and the local rejection as 64-73, cited a non-existent apps/web/src/app/auth/callback/route.test.ts, and backed the status/ordering claim with R26, a grep of the error constant alone. The block and the positions of the first query, cookie and provider-call sites are now collected directly (R50, R51).",
+      "regression_references": [
+        "apps/web/src/lib/auth/__tests__/callback.test.ts",
+        "tests/e2e/test_password_first_security_e2e.py"
+      ],
+      "receipt_refs": [
+        "R26",
+        "R50",
+        "R51"
+      ],
+      "status": "pass",
+      "regression_reference_existence_receipts": {
+        "note": "These probes establish only that the cited regression file exists at the inspected head. They are not source evidence for the observation above and no test outcome is claimed from them.",
+        "receipt_refs": [
+          "R14"
+        ]
+      },
+      "prior_reference_rejection_receipts": {
+        "note": "R20 (exit 128) proves the path the prior revision cited, apps/web/src/app/auth/callback/route.test.ts, does not exist at the inspected head.",
+        "receipt_refs": [
+          "R20"
+        ]
+      }
+    },
+    {
+      "control": "deployment_validation_conditional_oidc",
+      "description": "Cloud Run preflight requires OIDC inputs only when auth_mode is oidc",
+      "source_file": "product_ops/deployment/validate_cloud_run_live_deployment.py",
+      "lines": "44 (import), 102 and 115 (OIDC-only requirement lists), 1426-1447 (conditional check)",
+      "inspected_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "inspected_at": "2026-09-08T17:24:34Z",
+      "observation_method": "static_code_inspection",
+      "observation": "Line 44 imports resolve_auth_mode from the shared resolver. Line 1426 calls it and captures both the mode and the error; line 1429 records ok=auth_mode_error is None, so an invalid configuration fails the preflight instead of silently defaulting. Line 1434 gates the two OIDC requirement lists behind auth_mode == \"oidc\": OIDC_REQUIRED_PUBLIC_CONFIG (defined at :102) is iterated at :1435 and OIDC_REQUIRED_SECRET_REFERENCES (defined at :115) at :1447. A password-first deployment therefore passes the preflight with no OIDC secret present. All nine line observations come from a single grep over the validator source (R37).",
+      "regression_references": [
+        "tests/ops/test_conditional_oidc_deployment.py"
+      ],
+      "receipt_refs": [
+        "R37"
+      ],
+      "status": "pass",
+      "corrected_from_prior_revision": "The prior revision cited R21 for this control. R21 greps OIDC_ISSUER_VARS in shared/auth/mode.py and modules/opsboard/auth/config.py and never reads the validator; R37 reads the validator itself."
+    },
+    {
+      "control": "terraform_conditional_oidc_checks",
+      "description": "Terraform checks enforce OIDC variables only for prod with OIDC enabled",
+      "source_file": "infra/terraform/checks.tf",
+      "lines": "76, 238, 275 (OIDC-gated assertions); 213, 218 (unconditional instance-bound assertions)",
+      "inspected_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "inspected_at": "2026-09-08T17:24:34Z",
+      "observation_method": "static_code_inspection",
+      "observation": "The three OIDC-related assertions -- and only those three -- are gated on local.oidc_enabled: checks.tf:76, :238 and :275 each read condition = !(local.is_prod && local.oidc_enabled) || (...), and they are the file's only occurrences of oidc_enabled (R61). The file's other production-gated assertions use the !local.is_prod || (...) form (R36 lists every condition line in the file). checks.tf also carries assertions that are not production-gated at all: the unconditional var.api_max_instances >= var.api_min_instances (:213) and var.web_max_instances >= var.web_min_instances (:218), and the setintersection checks at :9, :17, :25, :150, :169 and :177. A default password-first deployment has local.oidc_enabled false, so the three OIDC assertions are satisfied vacuously.",
+      "receipt_refs": [
+        "R36",
+        "R61"
+      ],
+      "status": "pass",
+      "corrected_from_prior_revision": "The prior revision said every other assertion in the file uses the unconditional !local.is_prod form and carried no receipt at all. The claim is narrowed to the production-gated assertions and bound to R36 and R61."
+    },
+    {
+      "control": "password_login_no_google_secret_dependency",
+      "description": "The password path does not read any Google/OIDC client secret",
+      "source_file": "apps/web/src/lib/auth/localAuth.ts",
+      "lines": "1-3 (imports), 127-313 (authenticateLocalCredentials)",
+      "inspected_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "inspected_at": "2026-09-08T17:24:34Z",
+      "observation_method": "static_code_inspection",
+      "observation": "localAuth.ts imports exactly three modules -- ./crypto, ./identityStore and ./runtime (lines 1-3, R39) -- and contains no occurrence of OIDC, GOOGLE or CLIENT_SECRET: the grep over the file exits 1 with empty output (R38). Password verification is delegated to the identity store's verifyPassword (localAuth.ts:228), implemented as Argon2id with rehash-on-verify in apps/web/src/lib/auth/identityStore.ts:37 (interface), :165-181 (argon2.verify at :171, argon2.needsRehash at :173, re-hash with type argon2.argon2id at :179-180) -- R40. The comparison of fixture-style candidates uses constantTimeEqual (localAuth.ts:170, R62).",
+      "corrected_from_prior_revision": "The prior revision said localAuth.ts itself performs Argon2id verification; it delegates to identityStore.ts.",
+      "regression_references": [
+        "apps/web/src/lib/auth/__tests__/localAuth.test.ts",
+        "apps/web/src/lib/auth/__tests__/password.test.ts"
+      ],
+      "receipt_refs": [
+        "R38",
+        "R39",
+        "R40",
+        "R62"
+      ],
+      "status": "pass"
+    },
+    {
+      "control": "session_csrf_throttle_integrity_in_local_mode",
+      "description": "Session, CSRF and throttle controls do not depend on OIDC state",
+      "source_file": "apps/web/src/lib/auth/session.ts, apps/web/src/lib/auth/runtime.ts, apps/web/src/lib/auth/loginThrottle.ts, apps/web/src/app/login/route.ts",
+      "lines": "session.ts:396-407 (cookie options), runtime.ts:157 (verifyCsrfOrigin), login/route.ts:471-520 (throttle before credential check)",
+      "inspected_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "inspected_at": "2026-09-08T17:24:34Z",
+      "observation_method": "static_code_inspection",
+      "observation": "The web session cookie is __Host-oday_web_session (runtime.ts:3) and both session cookie option sets are issued with httpOnly, secure, sameSite \"lax\" and path \"/\" (session.ts:396-399 and :404-407) -- R41. CSRF is an origin/referer check, verifyCsrfOrigin, defined at runtime.ts:157 and invoked by apps/web/src/app/login/route.ts:361, apps/web/src/app/auth/password/route.ts:91 and apps/web/src/app/auth/logout/route.ts:27 -- R42. The login throttle runs before credential verification: the store is obtained at login/route.ts:471, beginAttempt is awaited at :489, and authenticateLocalCredentials is only reached at :520; an unreachable store fails closed with HTTP 503 (:482 and :499) rather than serving an unthrottled login -- R43. Throttle state persists in identity.login_attempts (loginThrottle.ts:445, :503, :511, :519) -- R44. Auth-mode independence, stated precisely: loginThrottle.ts contains no auth-mode or OIDC environment identifier at all, and session.ts contains exactly one -- session.ts:249 passes environment.ODP_WEB_OIDC_ISSUER to store.resolveOidcAccount (R45). That read sits inside the legacy sealed-OIDC-cookie migration branch if (!value.sid) at session.ts:219 and is an account-lookup key, not a mode resolution (R57); the password path seals sessions through sealWebSessionReference (login/route.ts:623, auth/password/route.ts:264), the sid-bearing reference format, so a password-first session never enters that branch (R58). In runtime.ts every auth-mode identifier occurs between lines 83 and 141 (R46), outside verifyCsrfOrigin at :157, so the CSRF check does not consult the auth mode either.",
+      "corrected_from_prior_revision": "The prior revision attributed the CSRF origin check to route.ts, cited a non-existent securityE2E.test.ts, and asserted that none of these paths reads an auth-mode variable while citing only test-file existence probes (R16/R17/R19). Collecting the source showed one such read does exist -- session.ts:249 on the legacy OIDC-session migration path -- so the claim is narrowed and bound to receipts that read the source.",
+      "regression_references": [
+        "apps/web/src/lib/auth/__tests__/session.test.ts",
+        "apps/web/src/lib/auth/__tests__/sessionStore.test.ts",
+        "apps/web/src/lib/auth/__tests__/loginThrottleRoute.test.ts",
+        "apps/web/src/lib/auth/__tests__/runtime.test.ts",
+        "tests/security/test_login_throttle_wiring.py"
+      ],
+      "receipt_refs": [
+        "R41",
+        "R42",
+        "R43",
+        "R44",
+        "R45",
+        "R46",
+        "R57",
+        "R58"
+      ],
+      "status": "pass",
+      "regression_reference_existence_receipts": {
+        "note": "These probes establish only that the cited regression files exist at the inspected head. They are not source evidence for the observation above and no test outcome is claimed from them.",
+        "receipt_refs": [
+          "R16",
+          "R17"
+        ]
+      },
+      "prior_reference_rejection_receipts": {
+        "note": "R19 (exit 128) proves the path the prior revision cited, apps/web/src/lib/auth/__tests__/securityE2E.test.ts, does not exist at the inspected head.",
+        "receipt_refs": [
+          "R19"
+        ]
+      }
+    },
+    {
+      "control": "api_boundary_fail_closed_on_oidc_tokens",
+      "description": "The API auth boundary refuses OIDC tokens unless OIDC is authoritatively on",
+      "source_file": "modules/opsboard/auth/config.py",
+      "lines": "23 (import), 302 (gate)",
+      "inspected_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "inspected_at": "2026-09-08T17:24:34Z",
+      "observation_method": "static_code_inspection",
+      "observation": "config.py:23 imports API_OIDC_ISSUER_VARS and oidc_provider_enabled from the shared resolver; config.py:302 calls oidc_provider_enabled(source, oidc_issuer_vars=API_OIDC_ISSUER_VARS). oidc_provider_enabled (mode.py:113-127, R59) returns mode == \"oidc\" and error is None, so ODP_AUTH_MODE=local plus leftover OIDC inputs disables OIDC at the API boundary as well as in the release path -- the divergence that ODP-WEB-LOCAL-AUTH-API-TRUST-001 closed (mode.py:13-18).",
+      "note": "The API accepts ODP_AUTH_OIDC_ISSUER in addition to ODP_WEB_OIDC_ISSUER (mode.py:56-59) because the API process never receives the Web variable. This is a per-consumer difference, not a third global issuer variable.",
+      "receipt_refs": [
+        "R21",
+        "R59"
+      ],
+      "status": "pass"
+    },
+    {
+      "control": "ops_test_conditional_oidc_deployment_exists",
+      "description": "The cross-runtime ops test that pins the shell and Python resolvers together",
+      "source_file": "tests/ops/test_conditional_oidc_deployment.py",
+      "inspected_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "inspected_at": "2026-09-08T17:24:34Z",
+      "observation_method": "static_code_inspection",
+      "observation": "The blob measures 35344 bytes at the inspected head (git cat-file -s, R52). It defines RESOLUTION_CASES at :60 and parametrises both resolver halves over it at :205 and :238; those two @pytest.mark.parametrize decorators are the file's only pytest.mark occurrences (R53). A grep for requires_live_env or performance across this file, tests/e2e/test_password_first_security_e2e.py and tests/security/test_login_throttle_wiring.py exits 1 with empty output (R54), so the CI marker expression recorded in exact_head_regression does not exclude any of them.",
+      "receipt_refs": [
+        "R52",
+        "R53",
+        "R54"
+      ],
+      "status": "pass",
+      "corrected_from_prior_revision": "The prior revision cited R33, a GitHub Actions job query, which carries no file size, marker or parametrisation observation."
+    },
+    {
+      "control": "historical_e2e_receipt_evidence",
+      "description": "Immutable historical verification receipt from ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+      "source_file": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md",
+      "receipt_source_sha": "04e1572f802a54c2646ba678fe2975226dfbd7c4",
+      "receipt_date": "2026-09-01 UTC",
+      "composition_base_sha": "d0c81635df8e842f7910d40873b3886d4237cee8",
+      "composition_merge_sha": "f3095a0ee3ca3dde63d98f35ae8cfedf090fd529",
+      "pr_head_sha": "69422d71e8d5ac572ade58562c0aeca28d123648",
+      "pr_merge_sha": "2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
+      "run_head_sha": "unknown",
+      "observation_method": "historical_receipt_reference",
+      "applies_to_version": "The receipt applies to the E2E-002 task tree as composed on d0c81635df8e842f7910d40873b3886d4237cee8 via merge f3095a0ee3ca3dde63d98f35ae8cfedf090fd529 on 2026-09-01. It is reused here as dated historical evidence, not as evidence about the current head.",
+      "recorded_commands": [
+        {
+          "layer": "Web tests",
+          "argv": "npm --prefix apps/web run test",
+          "recorded_outcome": "53 files, 474 tests passed",
+          "original_exit_code": "unknown"
+        },
+        {
+          "layer": "Web typecheck",
+          "argv": "npm --prefix apps/web run typecheck",
+          "recorded_outcome": "pass",
+          "original_exit_code": "unknown"
+        },
+        {
+          "layer": "Web lint",
+          "argv": "npm --prefix apps/web run lint",
+          "recorded_outcome": "pass; no warnings/errors",
+          "original_exit_code": "unknown"
+        },
+        {
+          "layer": "Python auth/security/identity/ops",
+          "argv": "uv run --python 3.12 pytest tests/e2e/test_password_first_security_e2e.py tests/security/test_login_throttle_wiring.py tests/ops/test_conditional_oidc_deployment.py tests/identity",
+          "recorded_outcome": "151 passed, 22 skipped",
+          "original_exit_code": "unknown"
+        },
+        {
+          "layer": "Python lint",
+          "argv": "uv run --python 3.12 ruff check shared tests/identity tests/security/test_login_throttle_wiring.py tests/ops/test_conditional_oidc_deployment.py tests/e2e/test_password_first_security_e2e.py",
+          "recorded_outcome": "pass",
+          "original_exit_code": "unknown"
+        },
+        {
+          "layer": "Terraform contract",
+          "argv": "python3 infra/terraform/validate_contract.py",
+          "recorded_outcome": "pass; 14 files checked",
+          "original_exit_code": "unknown"
+        },
+        {
+          "layer": "Terraform unit tests",
+          "argv": "python3 -m unittest discover -s infra/terraform/tests -p 'test_*.py'",
+          "recorded_outcome": "32 tests OK",
+          "original_exit_code": "unknown"
+        }
+      ],
+      "receipt_verdict": "pass",
+      "note": "The historical pass is real and is not withdrawn. What is corrected is its binding: the receipt records the composition base and merge, not the head the commands ran against, and records outcomes in prose rather than exit codes. See historical_receipt_provenance and the separate historical_run_head_and_exit_codes control.",
+      "receipt_refs": [
+        "R05",
+        "R06",
+        "R07",
+        "R31"
+      ],
+      "status": "pass"
+    },
+    {
+      "control": "historical_run_head_and_exit_codes",
+      "description": "The exact commit HEAD and original exit codes of the 2026-09-01 E2E-002 execution",
+      "observation_method": "provenance_reconstruction_attempt",
+      "observation": "No original execution receipt was found. The immutable receipt records a date, a composition base/merge and prose outcomes only. Merge commit 2377168c cannot be the run head because the outcomes were already committed in d3e6d64a 38 minutes before 2377168c was created. PR #1096's head 69422d71 is a candidate but nothing in the receipt binds the commands to it.",
+      "status": "unknown",
+      "responsible_party": "Whoever locates an original E2E-002 execution receipt; ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 owner (Codex) if it was retained outside the repository.",
+      "entry_conditions": "Attach an original execution receipt that binds argv to a head SHA and an exit code. Do not reconstruct the head from merge lineage and do not re-run the 2026-09-01 suite to manufacture historical provenance.",
+      "receipt_refs": [
+        "R05",
+        "R06",
+        "R07"
+      ]
+    },
+    {
+      "control": "exact_head_ci_product_regression",
+      "description": "Product CI at the inspected head 95646a5c, covering the password-first and conditional-OIDC suites",
+      "observation_method": "ci_status_observation",
+      "observation": "GitHub Actions run 34252508138 (workflow 'CI', event merge_group, head_sha 95646a5c2bd598b7e219ee51efa7e410cb9fe0f4, conclusion success) contains job 102150167268 named 'product' with conclusion success, completed 2026-09-08T17:05:24Z. Its steps 'Lint product code', 'Test product code', 'Run security checks' and 'Run Node workspace checks' all report success. The test step's command is quoted from .github/workflows/ci.yml:216-217 and its marker expression does not exclude the three password-first Python suites; the web unit tests run via make node-check.",
+      "status": "pass",
+      "scope_of_claim": "Job-level CI status at a named head with a workflow-sourced command scope. This is not a per-test receipt and does not restate the 2026-09-01 counts.",
+      "receipt_refs": [
+        "R33",
+        "R34"
+      ]
+    },
+    {
+      "control": "live_deployment_auth_mode_readback",
+      "description": "Whether the deployed dev/staging/prod services actually resolve to local mode",
+      "observation_method": "live_environment_readback",
+      "observation": "Not attempted. This documentation task performs no live environment readback and holds no deployment credentials. Because an unset ODP_AUTH_MODE with a configured ODP_WEB_OIDC_ISSUER resolves to 'oidc', live D15 compliance cannot be inferred from the source alone.",
+      "status": "unknown",
+      "responsible_party": "Release / Ops Engineer, during deployment readback",
+      "entry_conditions": "Read back the effective ODP_AUTH_MODE, ODP_AUTH_OIDC_ENABLED and ODP_WEB_OIDC_ISSUER of each deployed revision and record the values (names only for secrets) against the revision id.",
+      "receipt_refs": [],
+      "receipt_refs_note": "Empty by design: no collection was performed against any deployed environment, so there is no receipt to cite. The absence of a receipt is the evidence for status=unknown."
+    },
+    {
+      "control": "oauth_provider_verification",
+      "description": "Live Google OAuth provider availability and credential verification (B-stage)",
+      "observation_method": "live_provider_probe",
+      "observation": "Not attempted. No live GCP project or external OIDC provider was contacted. HUMAN-GCP-WEB-OAUTH-CLIENTS-001 is status 'todo' under owner Human/Ops in the canonical board (ai-status.sh show exit 0). Provider readiness is not required for password-first operation and is not claimed here.",
+      "status": "unknown",
+      "responsible_party": "Human/Ops",
+      "entry_conditions": "Explicit business decision to enable Google OIDC -> Human/Ops executes HUMAN-GCP-WEB-OAUTH-CLIENTS-001 -> Release/Ops performs the live provider handshake and an OIDC-enabled deployment validation.",
+      "receipt_refs": [
+        "R29"
+      ]
+    }
+  ],
+  "collection_receipts": [
+    {
+      "receipt_id": "R01",
+      "purpose": "resolve_receipt_base_sha",
+      "argv": [
+        "git",
+        "rev-parse",
+        "--verify",
+        "d0c81635df8e^{commit}"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:24Z",
+      "exit_code": 0,
+      "stdout": "d0c81635df8e842f7910d40873b3886d4237cee8",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R02",
+      "purpose": "reject_prior_fabricated_base_sha",
+      "argv": [
+        "git",
+        "cat-file",
+        "-e",
+        "d0c81635df8e48dc803272e5ee6fc1fca3fa32cb^{commit}"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:24Z",
+      "exit_code": 128,
+      "stdout": "",
+      "stderr": "fatal: Not a valid object name d0c81635df8e48dc803272e5ee6fc1fca3fa32cb^{commit}"
+    },
+    {
+      "receipt_id": "R03",
+      "purpose": "resolve_receipt_merge_sha",
+      "argv": [
+        "git",
+        "rev-parse",
+        "--verify",
+        "f3095a0e^{commit}"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:24Z",
+      "exit_code": 0,
+      "stdout": "f3095a0ee3ca3dde63d98f35ae8cfedf090fd529",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R04",
+      "purpose": "reject_prior_fabricated_merge_sha",
+      "argv": [
+        "git",
+        "cat-file",
+        "-e",
+        "f3095a0eb3f03aa788a10747cf3721ae54a1be70^{commit}"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:24Z",
+      "exit_code": 128,
+      "stdout": "",
+      "stderr": "fatal: Not a valid object name f3095a0eb3f03aa788a10747cf3721ae54a1be70^{commit}"
+    },
+    {
+      "receipt_id": "R05",
+      "purpose": "receipt_merge_commit_parents",
+      "argv": [
+        "git",
+        "log",
+        "-1",
+        "--format=%H %P %cI %s",
+        "f3095a0ee3ca3dde63d98f35ae8cfedf090fd529"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:24Z",
+      "exit_code": 0,
+      "stdout": "f3095a0ee3ca3dde63d98f35ae8cfedf090fd529 5b0e2bac4eb2aca8967dc0e8637dd23e6c5bf73b d0c81635df8e842f7910d40873b3886d4237cee8 2026-09-01T08:01:50+00:00 Merge remote-tracking branch 'origin/dev' into task/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R06",
+      "purpose": "receipt_pass_text_commit_predates_pr_merge",
+      "argv": [
+        "git",
+        "log",
+        "-1",
+        "--format=%H %cI %s",
+        "d3e6d64a6fab35662811fab2551f40e4b02c3fbe"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:24Z",
+      "exit_code": 0,
+      "stdout": "d3e6d64a6fab35662811fab2551f40e4b02c3fbe 2026-09-01T08:13:31+00:00 ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002: complete security E2E",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R07",
+      "purpose": "pr1096_merge_commit_parents",
+      "argv": [
+        "git",
+        "log",
+        "-1",
+        "--format=%H %P %cI %s",
+        "2377168c2cc07cd2470dd8f43de0486fe8d8fc08"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:24Z",
+      "exit_code": 0,
+      "stdout": "2377168c2cc07cd2470dd8f43de0486fe8d8fc08 35a28741e627055369920b09984ca8c004b229c6 69422d71e8d5ac572ade58562c0aeca28d123648 2026-09-01T08:51:28+00:00 Merge pull request #1096 from alfloop-dev/task/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R08",
+      "purpose": "reject_prior_fabricated_remediation_merge_sha",
+      "argv": [
+        "git",
+        "cat-file",
+        "-e",
+        "3f8eb309^{commit}"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:24Z",
+      "exit_code": 128,
+      "stdout": "",
+      "stderr": "fatal: Not a valid object name 3f8eb309^{commit}"
+    },
+    {
+      "receipt_id": "R09",
+      "purpose": "pr1085_remediation_merge_ancestor_of_base",
+      "argv": [
+        "git",
+        "merge-base",
+        "--is-ancestor",
+        "595e7501e73ff4cbb5894c27e199e02a06c2a509",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:24Z",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R10",
+      "purpose": "pr1074_merge_ancestor_of_base",
+      "argv": [
+        "git",
+        "merge-base",
+        "--is-ancestor",
+        "840081001084ad9586421de908530a41f3a17333",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:24Z",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R11",
+      "purpose": "pr1096_merge_ancestor_of_base",
+      "argv": [
+        "git",
+        "merge-base",
+        "--is-ancestor",
+        "2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:24Z",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R12",
+      "purpose": "auth_surface_drift_stat",
+      "argv": [
+        "git",
+        "diff",
+        "--stat",
+        "2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "modules/opsboard/auth",
+        "shared/auth"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:24Z",
+      "exit_code": 0,
+      "stdout": " modules/opsboard/auth/claims.py |  22 ++-\n shared/auth/__init__.py         |  24 +++\n shared/auth/abac.py             |  17 ---\n shared/auth/rbac.py             |  13 +-\n shared/auth/tenant.py           | 328 ++++++++++++++++++++++++++++++++++++++++\n 5 files changed, 379 insertions(+), 25 deletions(-)",
+      "stderr": "",
+      "stdout_fidelity_note": "The previous revision recorded this output with the leading space of the first line stripped. The value above is the byte-exact stdout; exit code and content are unchanged."
+    },
+    {
+      "receipt_id": "R13",
+      "purpose": "d15_control_files_unchanged_since_e2e_002",
+      "argv": [
+        "git",
+        "diff",
+        "--quiet",
+        "2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "shared/auth/mode.py",
+        "apps/web/src/lib/auth/runtime.ts",
+        "apps/web/src/app/login/route.ts",
+        "apps/web/src/app/auth/callback/route.ts",
+        "apps/web/src/lib/auth/localAuth.ts",
+        "apps/web/src/lib/auth/session.ts",
+        "apps/web/src/lib/auth/loginThrottle.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:24Z",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R14",
+      "purpose": "callback_unit_test_exists",
+      "argv": [
+        "git",
+        "cat-file",
+        "-e",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/__tests__/callback.test.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:24Z",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R15",
+      "purpose": "login_unit_test_exists",
+      "argv": [
+        "git",
+        "cat-file",
+        "-e",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/__tests__/login.test.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:24Z",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R16",
+      "purpose": "session_unit_test_exists",
+      "argv": [
+        "git",
+        "cat-file",
+        "-e",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/__tests__/session.test.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:24Z",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R17",
+      "purpose": "throttle_route_unit_test_exists",
+      "argv": [
+        "git",
+        "cat-file",
+        "-e",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/__tests__/loginThrottleRoute.test.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:24Z",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R18",
+      "purpose": "browser_journey_test_exists",
+      "argv": [
+        "git",
+        "cat-file",
+        "-e",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/tests/login-route.test.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:24Z",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R19",
+      "purpose": "reject_prior_nonexistent_securityE2E_test",
+      "argv": [
+        "git",
+        "cat-file",
+        "-e",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/__tests__/securityE2E.test.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:24Z",
+      "exit_code": 128,
+      "stdout": "",
+      "stderr": "fatal: path 'apps/web/src/lib/auth/__tests__/securityE2E.test.ts' does not exist in '95646a5c2bd598b7e219ee51efa7e410cb9fe0f4'"
+    },
+    {
+      "receipt_id": "R20",
+      "purpose": "reject_prior_nonexistent_callback_route_test",
+      "argv": [
+        "git",
+        "cat-file",
+        "-e",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/callback/route.test.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:24Z",
+      "exit_code": 128,
+      "stdout": "",
+      "stderr": "fatal: path 'apps/web/src/app/auth/callback/route.test.ts' does not exist in '95646a5c2bd598b7e219ee51efa7e410cb9fe0f4'"
+    },
+    {
+      "receipt_id": "R21",
+      "purpose": "deployment_issuer_vars_definition",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "OIDC_ISSUER_VARS",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "shared/auth/mode.py",
+        "modules/opsboard/auth/config.py"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:24Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:modules/opsboard/auth/config.py:23:from shared.auth.mode import API_OIDC_ISSUER_VARS, oidc_provider_enabled\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:modules/opsboard/auth/config.py:302:    oidc_enabled = oidc_provider_enabled(source, oidc_issuer_vars=API_OIDC_ISSUER_VARS)\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py:51:DEPLOYMENT_OIDC_ISSUER_VARS: tuple[str, ...] = (\"ODP_WEB_OIDC_ISSUER\",)\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py:56:API_OIDC_ISSUER_VARS: tuple[str, ...] = (\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py:71:    oidc_issuer_vars: Sequence[str] = DEPLOYMENT_OIDC_ISSUER_VARS,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py:116:    oidc_issuer_vars: Sequence[str] = DEPLOYMENT_OIDC_ISSUER_VARS,",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R22",
+      "purpose": "no_odp_gcp_oidc_issuer_input_in_tree",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "ODP_GCP_OIDC_ISSUER",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:24Z",
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R23",
+      "purpose": "no_odp_oidc_issuer_input_in_tree",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "ODP_OIDC_ISSUER",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:25Z",
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R24",
+      "purpose": "python_resolver_returns_error_tuple",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "return \"local\", (",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "shared/auth/mode.py"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:25Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py:96:        return \"local\", (f\"ODP_AUTH_OIDC_ENABLED must be 'true' or 'false', got {legacy_flag!r}\")",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R25",
+      "purpose": "typescript_resolver_throws",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "throw new Error",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "apps/web/src/lib/auth/runtime.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:25Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/runtime.ts:58:    throw new Error(\"ODP_WEB_BASE_URL is required in production\");\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/runtime.ts:68:    throw new Error(\"ODP_WEB_BASE_URL must use https in production\");\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/runtime.ts:90:    throw new Error(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/runtime.ts:97:      throw new Error(`ODP_AUTH_MODE must be 'local' or 'oidc', got '${mode}'`);\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/runtime.ts:102:        throw new Error(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/runtime.ts:140:    throw new Error(",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R26",
+      "purpose": "login_route_local_provider_rejection_status",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "WEB_AUTH_PROVIDER_DISABLED",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "apps/web/src/app/login/route.ts",
+        "apps/web/src/app/auth/callback/route.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:25Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/callback/route.ts:68:          code: \"WEB_AUTH_PROVIDER_DISABLED\",\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:307:            code: \"WEB_AUTH_PROVIDER_DISABLED\",",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R27",
+      "purpose": "canonical_lookup_e2e_002",
+      "argv": [
+        "/home/lupin/odayplus/scripts/ai-status.sh",
+        "show",
+        "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:25Z",
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Unknown task: ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002"
+    },
+    {
+      "receipt_id": "R28",
+      "purpose": "canonical_lookup_oidc_optional_deployment",
+      "argv": [
+        "/home/lupin/odayplus/scripts/ai-status.sh",
+        "show",
+        "ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:26Z",
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Unknown task: ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001"
+    },
+    {
+      "receipt_id": "R29",
+      "purpose": "canonical_lookup_human_oauth_task",
+      "argv": [
+        "/home/lupin/odayplus/scripts/ai-status.sh",
+        "show",
+        "HUMAN-GCP-WEB-OAUTH-CLIENTS-001"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:26Z",
+      "exit_code": 0,
+      "stdout": "{\n  \"source\": \"active\",\n  \"task\": {\n    \"id\": \"HUMAN-GCP-WEB-OAUTH-CLIENTS-001\",\n    \"title\": \"建立三環境 Google Web OAuth clients 並注入 Secret Manager\",\n    \"summary_zh\": \"建立 dev、staging、production 三個 Google Web OAuth client，註冊正確 callback，將 client secret 只寫入既有 Secret Manager，並提供可公開的 client ID；不得把秘密寫入 task、PR 或 log。\",\n    \"phase\": \"Wave 3 - Human OAuth Gate\",\n    \"owner\": \"Human/Ops\",\n    \"reviewer\": \"Codex\",\n    \"status\": \"todo\",\n    \"depends_on\": [],\n    \"artifacts\": [\n      \"Human/Ops Google Auth Platform 與 Secret Manager 操作收據\"\n    ],\n    \"acceptance\": [\n      \"dev client 含 https://oday-web-767864276141.asia-east1.run.app/auth/callback\",\n      \"staging client 含 https://oday-staging-web-767864276141.asia-east1.run.app/auth/callback 及 https://console-staging.oday-plus.com.tw/auth/callback\",\n      \"production client 含 https://oday-web-365886461656.asia-east1.run.app/auth/callback 及 https://console.oday-plus.com.tw/auth/callback\",\n      \"三個既有 OAuth secret 各有 ENABLED version 且不讀回 secret 值\",\n      \"三環境非秘密 client ID 已提供或寫入受保護 GitHub environment vars\",\n      \"第三方資料來源開關與 egress 維持 disabled/default-deny\"\n    ],\n    \"next\": \"2026-08-30 產品決策已改為「帳密為預設、OIDC 可選」。此 human OAuth task 暫不再是 dev/staging/pr... [truncated, 2109 chars total]",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R30",
+      "purpose": "pr1085_github_state",
+      "argv": [
+        "gh",
+        "pr",
+        "view",
+        "1085",
+        "--repo",
+        "alfloop-dev/odayplus",
+        "--json",
+        "number,url,state,headRefOid,mergeCommit,mergedAt"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:27Z",
+      "exit_code": 0,
+      "stdout": "{\"headRefOid\":\"94e93af9e7611d5c70dc38247db6942f0bccfad6\",\"mergeCommit\":{\"oid\":\"595e7501e73ff4cbb5894c27e199e02a06c2a509\"},\"mergedAt\":\"2026-09-01T06:37:24Z\",\"number\":1085,\"state\":\"MERGED\",\"url\":\"https://github.com/alfloop-dev/odayplus/pull/1085\"}",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R31",
+      "purpose": "pr1096_github_state",
+      "argv": [
+        "gh",
+        "pr",
+        "view",
+        "1096",
+        "--repo",
+        "alfloop-dev/odayplus",
+        "--json",
+        "number,url,state,headRefOid,mergeCommit,mergedAt"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:27Z",
+      "exit_code": 0,
+      "stdout": "{\"headRefOid\":\"69422d71e8d5ac572ade58562c0aeca28d123648\",\"mergeCommit\":{\"oid\":\"2377168c2cc07cd2470dd8f43de0486fe8d8fc08\"},\"mergedAt\":\"2026-09-01T09:10:24Z\",\"number\":1096,\"state\":\"MERGED\",\"url\":\"https://github.com/alfloop-dev/odayplus/pull/1096\"}",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R32",
+      "purpose": "pr1074_github_state",
+      "argv": [
+        "gh",
+        "pr",
+        "view",
+        "1074",
+        "--repo",
+        "alfloop-dev/odayplus",
+        "--json",
+        "number,url,state,headRefOid,mergeCommit,mergedAt"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:28Z",
+      "exit_code": 0,
+      "stdout": "{\"headRefOid\":\"6e810a9f366ea6994062f6c61820cea2f7b51b4f\",\"mergeCommit\":{\"oid\":\"840081001084ad9586421de908530a41f3a17333\"},\"mergedAt\":\"2026-08-30T11:52:38Z\",\"number\":1074,\"state\":\"MERGED\",\"url\":\"https://github.com/alfloop-dev/odayplus/pull/1074\"}",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R33",
+      "purpose": "exact_head_ci_product_job_steps",
+      "argv": [
+        "gh",
+        "api",
+        "repos/alfloop-dev/odayplus/actions/jobs/102150167268",
+        "--jq",
+        ".name+\" status=\"+.status+\" conclusion=\"+.conclusion+\" head_sha=\"+.head_sha+\" steps=\"+([.steps[]|.name+\"=\"+(.conclusion//\"null\")]|join(\"; \"))"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:28Z",
+      "exit_code": 0,
+      "stdout": "product status=completed conclusion=success head_sha=95646a5c2bd598b7e219ee51efa7e410cb9fe0f4 steps=Set up job=success; Initialize containers=success; Run actions/checkout@v4=success; Install uv=success; Set up Python=success; Set up Node=success; Install dependencies=success; Prepare local config=success; Lint product code=success; Test product code=success; Test official real-estate outcomes on PostgreSQL 16=success; Test database contracts, migrations and schema gates=success; Check API contract drift=success; Run security checks=success; Run Node workspace checks=success; Post Set up Node=success; Post Install uv=success; Post Run actions/checkout@v4=success; Stop containers=success; Complete job=success",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R34",
+      "purpose": "exact_head_ci_run_metadata",
+      "argv": [
+        "gh",
+        "api",
+        "repos/alfloop-dev/odayplus/actions/runs/34252508138",
+        "--jq",
+        ".name+\" event=\"+.event+\" head_sha=\"+.head_sha+\" conclusion=\"+.conclusion"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:14:29Z",
+      "exit_code": 0,
+      "stdout": "CI event=merge_group head_sha=95646a5c2bd598b7e219ee51efa7e410cb9fe0f4 conclusion=success",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R35",
+      "purpose": "d15_control_files_unchanged_since_previous_inspected_head",
+      "argv": [
+        "git",
+        "diff",
+        "--quiet",
+        "cf04c0467f2f03017301838268d5f3f055f29ed3",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "shared/auth/mode.py",
+        "apps/web/src/lib/auth/runtime.ts",
+        "apps/web/src/app/login/route.ts",
+        "apps/web/src/app/auth/callback/route.ts",
+        "apps/web/src/lib/auth/localAuth.ts",
+        "apps/web/src/lib/auth/session.ts",
+        "apps/web/src/lib/auth/loginThrottle.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T17:24:13Z",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R36",
+      "purpose": "terraform_checks_condition_forms",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "condition",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "infra/terraform/checks.tf"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:01:53Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:8:    precondition {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:9:      condition = length(setintersection(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:16:    precondition {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:17:      condition = length(setintersection(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:24:    precondition {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:25:      condition = length(setintersection(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:32:    precondition {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:33:      condition = !local.is_prod || (\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:42:    precondition {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:43:      condition = !local.is_prod || (\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:55:    precondition {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:56:      condition = !local.is_prod || (\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:65:    precondition {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:66:      condition = !local.is_prod || (\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:75:    precondition {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:76:      condition = !(local.is_prod && local.oidc_enabled) || (\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:88:    precondition {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:89:      condition = !local.is_prod || (\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:97:    precondition {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:98:      condition = !local.is_prod || alltrue([\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:108:    precondition {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:109:      condition = !local.is_prod || (\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:128:    precondition {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:129:      condition = !local.is_prod || alltrue([\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:137:    precondition {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:138:      condition = !local.is_prod || (\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:150:    condition = length(setintersection(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:158:    condition = !local.is_prod || (\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:169:    condition = length(setintersection(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:177:    condition = length(setintersection(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:187:    condition = !local.is_prod || can(regex(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:195:    condition = !local.is_prod || startswith(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:203:    condition     = !local.is_prod || var.api_min_instances >= 2\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:208:    condition     = !local.is_prod || var.web_min_instances >= 2\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:213:    condition     = var.api_max_instances >= var.api_min_instances\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:218:    condition     = var.web_max_instances >= var.web_min_instances\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:223:    condition     = !local.is_prod || var.cloud_sql_disk_gb >= 100\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:228:    condition     = !local.is_prod || length(var.web_invoker_members) > 0\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:233:    condition     = !local.is_prod || startswith(var.web_base_url, \"https://\")\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:238:    condition = !(local.is_prod && local.oidc_enabled) || (\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:247:    condition     = !local.is_prod || var.cloud_sql_retained_backups >= 30\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:252:    condition = !local.is_prod || can(regex(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:266:    condition = !local.is_prod || (\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:275:    condition = !(local.is_prod && local.oidc_enabled) || (\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:284:    condition = !local.is_prod || (\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:293:    condition = !local.is_prod || (\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:304:    condition = !local.is_prod || (\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:312:    condition = !local.is_prod || length(setsubtract(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:320:    condition = !local.is_prod || can(regex(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:328:    condition = !local.is_prod || can(regex(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:338:    condition = !local.is_prod || alltrue([",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R37",
+      "purpose": "deployment_validator_conditional_oidc_source",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "-E",
+        "resolve_auth_mode|auth_mode|OIDC_REQUIRED",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "product_ops/deployment/validate_cloud_run_live_deployment.py"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:01:53Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:product_ops/deployment/validate_cloud_run_live_deployment.py:44:    resolve_auth_mode,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:product_ops/deployment/validate_cloud_run_live_deployment.py:102:OIDC_REQUIRED_PUBLIC_CONFIG = (\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:product_ops/deployment/validate_cloud_run_live_deployment.py:115:OIDC_REQUIRED_SECRET_REFERENCES = (\"ODP_WEB_OIDC_CLIENT_SECRET_SECRET\",)\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:product_ops/deployment/validate_cloud_run_live_deployment.py:1426:    auth_mode, auth_mode_error = resolve_auth_mode(env)\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:product_ops/deployment/validate_cloud_run_live_deployment.py:1429:            ok=auth_mode_error is None,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:product_ops/deployment/validate_cloud_run_live_deployment.py:1431:            detail=auth_mode_error or auth_mode,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:product_ops/deployment/validate_cloud_run_live_deployment.py:1434:    if auth_mode == \"oidc\":\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:product_ops/deployment/validate_cloud_run_live_deployment.py:1435:        for name in OIDC_REQUIRED_PUBLIC_CONFIG:\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:product_ops/deployment/validate_cloud_run_live_deployment.py:1447:        for name in OIDC_REQUIRED_SECRET_REFERENCES:",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R38",
+      "purpose": "local_auth_has_no_google_or_oidc_secret_reference",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "-E",
+        "OIDC|GOOGLE|CLIENT_SECRET",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "apps/web/src/lib/auth/localAuth.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:01:53Z",
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R39",
+      "purpose": "local_auth_import_surface",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "^import",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "apps/web/src/lib/auth/localAuth.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:01:53Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/localAuth.ts:1:import { constantTimeEqual } from \"./crypto\";\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/localAuth.ts:2:import { getDefaultIdentityStore, type IdentityStore } from \"./identityStore\";\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/localAuth.ts:3:import { isProductionWebRuntime } from \"./runtime\";",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R40",
+      "purpose": "password_verification_delegated_to_argon2id_identity_store",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "-E",
+        "verifyPassword|argon2|rehash",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "apps/web/src/lib/auth/identityStore.ts",
+        "apps/web/src/lib/auth/localAuth.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:01:53Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/identityStore.ts:6: * - Argon2id verification with rehash-on-verify\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/identityStore.ts:37:  verifyPassword(phcHash: string, password: string): Promise<{ valid: boolean; newHash: string | null }>;\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/identityStore.ts:38:  /** Update the stored password hash (for rehash-on-verify). */\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/identityStore.ts:54:  private _argon2: any = null;\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/identityStore.ts:78:  private async argon2(): Promise<any> {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/identityStore.ts:79:    if (this._argon2) return this._argon2;\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/identityStore.ts:80:    this._argon2 = await import(\"argon2\");\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/identityStore.ts:81:    return this._argon2;\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/identityStore.ts:165:  async verifyPassword(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/identityStore.ts:169:    const argon2 = await this.argon2();\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/identityStore.ts:171:      const valid = await argon2.verify(phcHash, password);\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/identityStore.ts:173:      const needsRehash = argon2.needsRehash(phcHash, {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/identityStore.ts:179:        const newHash = await argon2.hash(password, {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/identityStore.ts:180:          type: argon2.argon2id,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/identityStore.ts:206:    const argon2 = await this.argon2();\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/identityStore.ts:207:    return argon2.hash(password.normalize(\"NFKC\"), {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/identityStore.ts:208:      type: argon2.argon2id,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/identityStore.ts:228:    const argon2 = await this.argon2();\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/identityStore.ts:230:    const dummyHash = await argon2.hash(\"dummy-password-for-timing-safety\", {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/identityStore.ts:231:      type: argon2.argon2id,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/identityStore.ts:237:      await argon2.verify(dummyHash, \"wrong-password-for-dummy\");\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/identityStore.ts:323:  async verifyPassword(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/localAuth.ts:228:      const { valid, newHash } = await store.verifyPassword(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/localAuth.ts:261:          // Non-fatal: login succeeds even if rehash write fails.",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R41",
+      "purpose": "session_cookie_names_and_options_source",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "-E",
+        "httpOnly|sameSite|secure:|path:|__Host-",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "apps/web/src/lib/auth/session.ts",
+        "apps/web/src/lib/auth/runtime.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:01:53Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/runtime.ts:3:export const WEB_SESSION_COOKIE = \"__Host-oday_web_session\";\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/runtime.ts:4:export const OIDC_TRANSACTION_COOKIE = \"__Host-oday_oidc_transaction\";\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/session.ts:396:  httpOnly: true,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/session.ts:397:  secure: true,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/session.ts:398:  sameSite: \"lax\" as const,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/session.ts:399:  path: \"/\",\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/session.ts:404:  httpOnly: true,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/session.ts:405:  secure: true,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/session.ts:406:  sameSite: \"lax\" as const,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/session.ts:407:  path: \"/\",",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R42",
+      "purpose": "csrf_origin_check_definition_and_callers",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "verifyCsrfOrigin",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "apps/web/src/lib/auth/runtime.ts",
+        "apps/web/src/app/login/route.ts",
+        "apps/web/src/app/auth/password/route.ts",
+        "apps/web/src/app/auth/logout/route.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:01:53Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/logout/route.ts:13:  verifyCsrfOrigin,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/logout/route.ts:27:  if (hasSessionCookie && !verifyCsrfOrigin(request)) {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/password/route.ts:12:  verifyCsrfOrigin,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/password/route.ts:91:  if (!verifyCsrfOrigin(request)) {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:8:  verifyCsrfOrigin,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:361:  if (!verifyCsrfOrigin(request)) {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/runtime.ts:157:export function verifyCsrfOrigin(",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R43",
+      "purpose": "login_route_throttle_precedes_credential_verification",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "-E",
+        "getDefaultLoginThrottle|beginAttempt|authenticateLocalCredentials|status: 503",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "apps/web/src/app/login/route.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:01:53Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:22:  authenticateLocalCredentials,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:31:  getDefaultLoginThrottle,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:279:      { status: 503, headers: { \"cache-control\": \"no-store\" } },\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:296:        { status: 503, headers: { \"cache-control\": \"no-store\" } },\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:311:        { status: 503, headers: { \"cache-control\": \"no-store\" } },\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:336:        { status: 503, headers: { \"cache-control\": \"no-store\" } },\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:385:      { status: 503, headers: { \"cache-control\": \"no-store\" } },\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:401:        { status: 503, headers: { \"cache-control\": \"no-store\" } },\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:471:  const throttle = getDefaultLoginThrottle(process.env);\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:482:      { status: 503, headers: { \"cache-control\": \"no-store\" } },\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:489:    gate = await throttle.beginAttempt(username, clientIp);\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:499:      { status: 503, headers: { \"cache-control\": \"no-store\" } },\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:520:  const authResult = await authenticateLocalCredentials(username, password);\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:593:      { status: 503, headers: { \"cache-control\": \"no-store\" } },\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:617:      { status: 503, headers: { \"cache-control\": \"no-store\" } },",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R44",
+      "purpose": "login_throttle_state_persists_in_identity_login_attempts",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "identity.login_attempts",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "apps/web/src/lib/auth/loginThrottle.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:01:53Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/loginThrottle.ts:9: * - State lives in `identity.login_attempts` so every Cloud Run instance shares\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/loginThrottle.ts:45:   * implementation default that keeps `identity.login_attempts` from growing\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/loginThrottle.ts:61:/** One row of `identity.login_attempts`. */\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/loginThrottle.ts:235: * mistyped into the username field) out of `identity.login_attempts`.\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/loginThrottle.ts:445:/** `identity.login_attempts` — the shared state for every Cloud Run instance. */\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/loginThrottle.ts:503:        `INSERT INTO identity.login_attempts\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/loginThrottle.ts:511:           FROM identity.login_attempts\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/loginThrottle.ts:519:          `UPDATE identity.login_attempts\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/loginThrottle.ts:594:      `DELETE FROM identity.login_attempts WHERE attempt_key = $1`,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/loginThrottle.ts:602:      `UPDATE identity.login_attempts\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/loginThrottle.ts:611:      `DELETE FROM identity.login_attempts\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/loginThrottle.ts:621:         FROM identity.login_attempts",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R45",
+      "purpose": "session_and_throttle_modules_read_no_auth_mode_input",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "-E",
+        "resolveAuthMode|isOidcEnabled|isOidcConfigured|ODP_AUTH_MODE|ODP_AUTH_OIDC_ENABLED|ODP_WEB_OIDC",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "apps/web/src/lib/auth/session.ts",
+        "apps/web/src/lib/auth/loginThrottle.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:01:53Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/session.ts:249:        environment.ODP_WEB_OIDC_ISSUER,",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R46",
+      "purpose": "runtime_ts_auth_mode_identifier_line_extent",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "-E",
+        "resolveAuthMode|isOidcEnabled|isOidcConfigured|ODP_AUTH_MODE|ODP_AUTH_OIDC_ENABLED|ODP_WEB_OIDC_ISSUER",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "apps/web/src/lib/auth/runtime.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:01:53Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/runtime.ts:83:export function resolveAuthMode(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/runtime.ts:86:  const mode = normalizeAuthModeValue(environment.ODP_AUTH_MODE);\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/runtime.ts:87:  const legacyFlag = normalizeAuthModeValue(environment.ODP_AUTH_OIDC_ENABLED);\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/runtime.ts:91:      `ODP_AUTH_OIDC_ENABLED must be 'true' or 'false', got '${legacyFlag}'`,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/runtime.ts:97:      throw new Error(`ODP_AUTH_MODE must be 'local' or 'oidc', got '${mode}'`);\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/runtime.ts:103:          `ODP_AUTH_MODE=${mode} conflicts with ODP_AUTH_OIDC_ENABLED=${legacyFlag}`,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/runtime.ts:114:  if (isConfiguredAuthValue(environment.ODP_WEB_OIDC_ISSUER)) {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/runtime.ts:121:export function isOidcConfigured(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/runtime.ts:125:    isConfiguredAuthValue(environment.ODP_WEB_OIDC_ISSUER) &&\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/runtime.ts:131:export function isOidcEnabled(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/runtime.ts:134:  const mode = resolveAuthMode(environment);\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/runtime.ts:139:  if (!isOidcConfigured(environment)) {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/runtime.ts:141:      \"OIDC mode requires complete configuration (ODP_WEB_OIDC_ISSUER, ODP_WEB_OIDC_CLIENT_ID, ODP_WEB_OIDC_CLIENT_SECRET)\",",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R47",
+      "purpose": "python_resolver_precedence_and_error_semantics_body",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "-A",
+        "45",
+        "^def resolve_auth_mode",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "shared/auth/mode.py"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:01:53Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py:68:def resolve_auth_mode(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-69-    env: Mapping[str, str],\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-70-    *,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-71-    oidc_issuer_vars: Sequence[str] = DEPLOYMENT_OIDC_ISSUER_VARS,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-72-) -> tuple[str, str | None]:\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-73-    \"\"\"Resolve the authentication mode from ``env``.\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-74-\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-75-    Resolution order, first match wins:\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-76-\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-77-    1. ``ODP_AUTH_MODE`` -- authoritative; ``local`` or ``oidc``.\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-78-    2. ``ODP_AUTH_OIDC_ENABLED`` -- its legacy boolean alias.\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-79-    3. a configured issuer in ``oidc_issuer_vars`` -- pre-contract deployments\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-80-       only ever set the OIDC inputs, so they stay on OIDC until they opt into\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-81-       an explicit mode.\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-82-\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-83-    Returns the mode and, when the configuration is invalid or\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-84-    self-contradicting, the reason it must not be trusted. Callers decide what\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-85-    to do with that reason: the release path aborts, the auth boundary treats\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-86-    it as \"OIDC is not authoritatively enabled\" and refuses OIDC tokens.\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-87-\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-88-    Inputs are normalised (``strip().lower()``) and placeholder issuers are not\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-89-    configurations, matching ``auth_mode.sh`` exactly.\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-90-    \"\"\"\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-91-\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-92-    mode = env.get(\"ODP_AUTH_MODE\", \"\").strip().lower()\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-93-    legacy_flag = env.get(\"ODP_AUTH_OIDC_ENABLED\", \"\").strip().lower()\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-94-\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-95-    if legacy_flag not in (\"\", \"true\", \"false\"):\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-96-        return \"local\", (f\"ODP_AUTH_OIDC_ENABLED must be 'true' or 'false', got {legacy_flag!r}\")\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-97-    if mode and mode not in AUTH_MODES:\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-98-        return \"local\", f\"ODP_AUTH_MODE must be 'local' or 'oidc', got {mode!r}\"\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-99-    if mode:\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-100-        expected_flag = \"true\" if mode == \"oidc\" else \"false\"\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-101-        if legacy_flag and legacy_flag != expected_flag:\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-102-            return mode, (\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-103-                f\"ODP_AUTH_MODE={mode} conflicts with ODP_AUTH_OIDC_ENABLED={legacy_flag}\"\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-104-            )\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-105-        return mode, None\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-106-    if legacy_flag:\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-107-        return (\"oidc\" if legacy_flag == \"true\" else \"local\"), None\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-108-    if any(is_configured_value(env.get(name, \"\")) for name in oidc_issuer_vars):\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-109-        return \"oidc\", None\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-110-    return \"local\", None\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-111-\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-112-\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-113-def oidc_provider_enabled(",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R48",
+      "purpose": "login_page_oidc_button_is_conditional",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "-A",
+        "8",
+        "const oidcButtonHtml",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "apps/web/src/app/login/route.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:01:53Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:68:  const oidcButtonHtml = options.showOidc\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts-69-    ? `<div class=\"divider\"><span>或</span></div>\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts-70-       <a href=\"/login?provider=oidc&returnTo=${encodeURIComponent(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts-71-         options.returnTo,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts-72-       )}\" class=\"btn btn-secondary oidc-btn\">\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts-73-         使用 OIDC 登入\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts-74-       </a>`\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts-75-    : \"\";\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts-76-",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R49",
+      "purpose": "login_route_provider_oidc_refusal_block",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "-E",
+        "-A",
+        "13",
+        "if \\(provider === \"oidc\"\\)",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "apps/web/src/app/login/route.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:02:40Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:302:  if (provider === \"oidc\") {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts-303-    if (authMode !== \"oidc\") {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts-304-      return NextResponse.json(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts-305-        {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts-306-          error: {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts-307-            code: \"WEB_AUTH_PROVIDER_DISABLED\",\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts-308-            summary: \"OIDC authentication provider is disabled.\",\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts-309-          },\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts-310-        },\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts-311-        { status: 503, headers: { \"cache-control\": \"no-store\" } },\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts-312-      );\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts-313-    }\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts-314-\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts-315-    try {",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R50",
+      "purpose": "callback_local_mode_rejection_block",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "-A",
+        "12",
+        "authMode === \"local\"",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "apps/web/src/app/auth/callback/route.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:01:53Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/callback/route.ts:64:  if (authMode === \"local\") {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/callback/route.ts-65-    return NextResponse.json(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/callback/route.ts-66-      {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/callback/route.ts-67-        error: {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/callback/route.ts-68-          code: \"WEB_AUTH_PROVIDER_DISABLED\",\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/callback/route.ts-69-          summary: \"OIDC authentication provider is disabled.\",\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/callback/route.ts-70-        },\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/callback/route.ts-71-      },\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/callback/route.ts-72-      { status: 503, headers: { \"cache-control\": \"no-store\" } },\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/callback/route.ts-73-    );\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/callback/route.ts-74-  }\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/callback/route.ts-75-\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/callback/route.ts-76-  try {",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R51",
+      "purpose": "callback_query_cookie_and_code_exchange_line_positions",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "-E",
+        "searchParams|request.cookies|exchangeAuthorizationCode",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "apps/web/src/app/auth/callback/route.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:01:53Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/callback/route.ts:3:import { exchangeAuthorizationCode } from \"../../../lib/auth/oidc\";\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/callback/route.ts:90:  if (request.nextUrl.searchParams.has(\"error\")) {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/callback/route.ts:94:  const code = request.nextUrl.searchParams.get(\"code\");\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/callback/route.ts:95:  const state = request.nextUrl.searchParams.get(\"state\");\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/callback/route.ts:100:      request.cookies.get(oidcTransactionCookieName)?.value,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/callback/route.ts:104:    const session = await exchangeAuthorizationCode({",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R52",
+      "purpose": "ops_conditional_oidc_test_blob_size",
+      "argv": [
+        "git",
+        "cat-file",
+        "-s",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:tests/ops/test_conditional_oidc_deployment.py"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:01:53Z",
+      "exit_code": 0,
+      "stdout": "35344",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R53",
+      "purpose": "ops_conditional_oidc_test_markers_and_parametrization",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "-E",
+        "RESOLUTION_CASES|pytest\\.mark|parametrize",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "tests/ops/test_conditional_oidc_deployment.py"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:01:53Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:tests/ops/test_conditional_oidc_deployment.py:60:RESOLUTION_CASES: tuple[tuple[str, dict[str, str]], ...] = (\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:tests/ops/test_conditional_oidc_deployment.py:205:@pytest.mark.parametrize(\"case_id, env\", RESOLUTION_CASES, ids=[case[0] for case in RESOLUTION_CASES])\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:tests/ops/test_conditional_oidc_deployment.py:238:@pytest.mark.parametrize(\"case_id, env\", RESOLUTION_CASES, ids=[case[0] for case in RESOLUTION_CASES])",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R54",
+      "purpose": "password_first_suites_carry_no_ci_excluding_marker",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "-E",
+        "requires_live_env|performance",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "tests/e2e/test_password_first_security_e2e.py",
+        "tests/security/test_login_throttle_wiring.py",
+        "tests/ops/test_conditional_oidc_deployment.py"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:01:53Z",
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R55",
+      "purpose": "ci_workflow_pytest_marker_scope_source",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "not requires_live_env",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        ".github/workflows/ci.yml"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:01:53Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:.github/workflows/ci.yml:141:        run: uv run pytest -m \"not requires_live_env\" .orchestrator delivery_toolchain scripts tests/tooling\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:.github/workflows/ci.yml:217:        run: uv run pytest -m \"not requires_live_env and not performance\" tests modules apps shared models -n auto",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R56",
+      "purpose": "makefile_node_check_expansion_source",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "-A",
+        "8",
+        "^node-check",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "Makefile"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:01:53Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:Makefile:90:node-check:\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:Makefile-91-\t@if [[ -f package-lock.json ]]; then \\\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:Makefile-92-\t\tnpm ci && \\\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:Makefile-93-\t\tnpm run lint --workspaces --if-present && \\\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:Makefile-94-\t\tnpm run typecheck --workspaces --if-present && \\\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:Makefile-95-\t\tnpm run build --workspaces --if-present && \\\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:Makefile-96-\t\tnpm run bundle:budget --workspaces --if-present && \\\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:Makefile-97-\t\tnpm run test --workspaces --if-present; \\\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:Makefile-98-\telse \\",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R57",
+      "purpose": "session_ts_sole_oidc_env_read_is_legacy_migration_lookup",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "-E",
+        "if \\(!value\\.sid\\)|resolveOidcAccount|environment\\.ODP_WEB_OIDC_ISSUER",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "apps/web/src/lib/auth/session.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:02:40Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/session.ts:219:  if (!value.sid) {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/session.ts:246:    if (store.resolveOidcAccount) {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/session.ts:247:      account = await store.resolveOidcAccount(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/session.ts:249:        environment.ODP_WEB_OIDC_ISSUER,",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R58",
+      "purpose": "password_path_seals_sid_bearing_session_reference",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "-E",
+        "sealWebSessionReference|sealLegacyWebSession",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "apps/web/src/app/login/route.ts",
+        "apps/web/src/app/auth/password/route.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:02:40Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/password/route.ts:6:  sealWebSessionReference,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/auth/password/route.ts:264:    await sealWebSessionReference(finalSession),\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:15:  sealWebSessionReference,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:254:        await sealWebSessionReference(existingSession),\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:623:  const sealedCookie = await sealWebSessionReference(session);",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R59",
+      "purpose": "oidc_provider_enabled_fail_closed_body",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "-A",
+        "15",
+        "^def oidc_provider_enabled",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "shared/auth/mode.py"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:03:15Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py:113:def oidc_provider_enabled(\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-114-    env: Mapping[str, str],\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-115-    *,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-116-    oidc_issuer_vars: Sequence[str] = DEPLOYMENT_OIDC_ISSUER_VARS,\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-117-) -> bool:\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-118-    \"\"\"True only when the environment *authoritatively* enables OIDC.\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-119-\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-120-    Fail-closed: an invalid or self-contradicting configuration resolves to\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-121-    \"not enabled\" rather than to a guess. The release path refuses to deploy\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-122-    such an environment; a service that boots into it anyway must not accept\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-123-    OIDC tokens on the strength of leftover issuer inputs.\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-124-    \"\"\"\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-125-\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-126-    mode, error = resolve_auth_mode(env, oidc_issuer_vars=oidc_issuer_vars)\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:shared/auth/mode.py-127-    return mode == \"oidc\" and error is None",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R60",
+      "purpose": "login_route_show_oidc_flag_and_renderer",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "-E",
+        "showOidc|renderLoginFormHtml",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "apps/web/src/app/login/route.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:03:15Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:48:function renderLoginFormHtml(options: {\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:51:  showOidc: boolean;\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:68:  const oidcButtonHtml = options.showOidc\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:342:  const showOidc = authMode === \"oidc\";\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:344:  const html = renderLoginFormHtml({\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/app/login/route.ts:347:    showOidc,",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R61",
+      "purpose": "terraform_oidc_enabled_assertion_sites",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "oidc_enabled",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "infra/terraform/checks.tf"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:03:53Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:76:      condition = !(local.is_prod && local.oidc_enabled) || (\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:238:    condition = !(local.is_prod && local.oidc_enabled) || (\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:infra/terraform/checks.tf:275:    condition = !(local.is_prod && local.oidc_enabled) || (",
+      "stderr": ""
+    },
+    {
+      "receipt_id": "R62",
+      "purpose": "local_auth_constant_time_comparison_site",
+      "argv": [
+        "git",
+        "grep",
+        "-n",
+        "constantTimeEqual",
+        "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "--",
+        "apps/web/src/lib/auth/localAuth.ts"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "collected_at_utc": "2026-09-08T18:05:38Z",
+      "exit_code": 0,
+      "stdout": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/localAuth.ts:1:import { constantTimeEqual } from \"./crypto\";\n95646a5c2bd598b7e219ee51efa7e410cb9fe0f4:apps/web/src/lib/auth/localAuth.ts:170:    if (!constantTimeEqual(candidate.password, password)) {",
+      "stderr": ""
+    }
+  ],
+  "summary": {
+    "total_controls": 15,
+    "pass": 12,
+    "unknown": 3,
+    "fail": 0,
+    "verdict": "A-stage evidence is complete for the password-first / OIDC-off source surface at 95646a5c: the D15 controls are present and fail closed, and the product CI job at that exact head is green. Live deployment readback, live OAuth provider verification and the historical 2026-09-01 run head remain unknown and are recorded as unknown. No D15 product defect was identified in the inspected login, callback, session, CSRF, resolver, API-boundary or conditional-deployment paths.",
+    "gaps": [
+      "Canonical archive gap: ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001 and ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 return 'Unknown task' (exit 1) from the canonical writer and are absent from ai-task-archive. Their merged PRs and merge commits remain verifiable ancestors of dev.",
+      "Historical provenance gap: the 2026-09-01 E2E-002 run head and original exit codes are unknown; the receipt binds only a date, a composition base/merge and prose outcomes.",
+      "Live gap: deployed auth-mode readback is not performed, so live D15 compliance is unknown.",
+      "Provider gap: Google OAuth provider readiness is unverified and is a B-stage concern under HUMAN-GCP-WEB-OAUTH-CLIENTS-001.",
+      "Auth-surface drift of 5 files (379 insertions, 25 deletions) exists between the E2E-002 merge and the inspected head, but none of the seven D15 control files changed (git diff --quiet exit 0)."
+    ],
+    "not_claimed": [
+      "No security scan, dependency audit or supply-chain gate result is asserted here.",
+      "No runtime, deployment or provider capability is asserted here.",
+      "No per-test outcome at the inspected head is asserted; only job-level CI status.",
+      "HUMAN-GCP-WEB-OAUTH-CLIENTS-001 is not marked done, waived or unblocked."
+    ],
+    "handoff_and_entry_conditions": {
+      "wp90_canonical_writer_handoff": "On A-stage approval, WP-90 / the canonical writer updates the HUMAN-GCP-WEB-OAUTH-CLIENTS-001 next field to the standby wording in human-task-handoff.json, without unblocking, closing or waiving that task.",
+      "oauth_enablement_entry_conditions": [
+        "1. Product Authority issues an explicit business decision to enable Google OIDC login.",
+        "2. Human/Ops executes HUMAN-GCP-WEB-OAUTH-CLIENTS-001, creating the three GCP OAuth 2.0 Web clients and storing the secrets in Secret Manager (names only, never values, in any task, PR or log).",
+        "3. Release / Ops Engineer deploys with explicit ODP_AUTH_MODE=oidc, performs the live environment readback that closes live_deployment_auth_mode_readback, and runs the live provider handshake that closes oauth_provider_verification."
+      ]
+    }
+  }
+}

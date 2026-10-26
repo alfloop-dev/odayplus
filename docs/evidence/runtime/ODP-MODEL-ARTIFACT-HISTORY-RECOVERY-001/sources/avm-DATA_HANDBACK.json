@@ -1,0 +1,63 @@
+{
+  "kind": "avm-outcome-backfill-intake-packet",
+  "task_id": "ODP-PLAN-AVM-OUTCOME-BACKFILL-001",
+  "gap_id": "GAP-P1-003-DATA",
+  "phase": "P1 Human Data Gate",
+  "class": "human_gate",
+  "generated_at": "2026-08-03T00:50:00.000000+00:00",
+  "target_artifacts": [
+    "docs/evidence/models/avm/human-data-gate/intake_packet.md",
+    "docs/evidence/models/avm/human-data-gate/DATA_HANDBACK.json",
+    "docs/evidence/models/avm/human-data-gate/AUTHORITATIVE_READBACK_SPEC.json"
+  ],
+  "current_status": {
+    "verdict": "FAIL_CLOSED",
+    "is_governed_disabled": true,
+    "reason_code": "DATA_CONTRACT_NOT_MATURE",
+    "observed_labeled_count": 0,
+    "eligible_mature_count": 0,
+    "activation_threshold": 120,
+    "shortfall": 120,
+    "authentic_evidence_available": false,
+    "dataset_snapshot_id": "empty-snapshot-unpopulated",
+    "dataset_snapshot_hash": "86d4b28ff48929469cc683ca9b2ce209c0831c266a6124b68c6ee701fe56ed96"
+  },
+  "acceptance_criteria": {
+    "min_mature_transactions": 120,
+    "requires_join_keys": true,
+    "requires_dataset_hash": true,
+    "requires_rbac_audit": true,
+    "requires_named_owner": true,
+    "requires_freshness_cutoff": true,
+    "forbidden_data_types": [
+      "synthetic",
+      "fixture",
+      "auto_seeded",
+      "duplicate",
+      "immature",
+      "ai_authored"
+    ]
+  },
+  "actionable_requirements": [
+    {
+      "requirement_id": "REQ-AVM-BF-001",
+      "description": "Ingest and backfill at least 120 authentic mature transaction outcomes with stable prediction join keys into model_ready.valuation_view.",
+      "owner": "Human/Ops & Finance Legal Team"
+    },
+    {
+      "requirement_id": "REQ-AVM-BF-002",
+      "description": "Ensure zero synthetic rows, auto-seeded entries, or copied prediction substitutions are present.",
+      "owner": "Data Engineering"
+    },
+    {
+      "requirement_id": "REQ-AVM-BF-003",
+      "description": "Provide dataset snapshot hash, lineage, owner attestation, freshness/cutoff date, confidential classification, and access policy readback.",
+      "owner": "Human/Ops Data Owner"
+    },
+    {
+      "requirement_id": "REQ-AVM-BF-004",
+      "description": "Record RBAC/ABAC confidential access audit receipts without exposing confidential raw values.",
+      "owner": "Security & Compliance"
+    }
+  ]
+}

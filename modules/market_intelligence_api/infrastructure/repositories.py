@@ -348,6 +348,8 @@ class DataPlatformMarketIntelligenceRepository:
             )
             return context
         except MarketDataAuthorizationError as err:
+            if err.code == "missing_tenant":
+                raise MarketIntelligenceNotFoundError(str(err), details=err.details) from err
             raise MarketIntelligenceAuthorizationError(
                 str(err), code=err.code, details=err.details
             ) from err
@@ -394,6 +396,8 @@ class DataPlatformMarketIntelligenceRepository:
             )
             return document
         except MarketDataAuthorizationError as err:
+            if err.code == "missing_tenant":
+                raise MarketIntelligenceNotFoundError(str(err), details=err.details) from err
             raise MarketIntelligenceAuthorizationError(
                 str(err), code=err.code, details=err.details
             ) from err
@@ -437,6 +441,8 @@ class DataPlatformMarketIntelligenceRepository:
             )
             return profile
         except MarketDataAuthorizationError as err:
+            if err.code == "missing_tenant":
+                raise MarketIntelligenceNotFoundError(str(err), details=err.details) from err
             raise MarketIntelligenceAuthorizationError(
                 str(err), code=err.code, details=err.details
             ) from err
@@ -483,6 +489,8 @@ class DataPlatformMarketIntelligenceRepository:
             )
             return document
         except MarketDataAuthorizationError as err:
+            if err.code == "missing_tenant":
+                raise MarketIntelligenceNotFoundError(str(err), details=err.details) from err
             raise MarketIntelligenceAuthorizationError(
                 str(err), code=err.code, details=err.details
             ) from err
@@ -523,8 +531,8 @@ class DataPlatformMarketIntelligenceRepository:
             surface = CoverageSurface.from_dict(raw)
         except Exception as err:
             raise MarketIntelligenceValidationError(
-                f"Failed to parse CoverageSurface: {err}",
-                details={"contract_id": "emgi.coverage-surface.v1", "raw": raw},
+                "Failed to parse CoverageSurface",
+                details={"contract_id": "emgi.coverage-surface.v1"},
             ) from err
         return _project_coverage_surface(
             surface,
@@ -552,8 +560,8 @@ class DataPlatformMarketIntelligenceRepository:
                 gaps = list(doc.gaps)
             except Exception as err:
                 raise MarketIntelligenceValidationError(
-                    f"Failed to parse DataGapDocument: {err}",
-                    details={"contract_id": "emgi.data-gap.v1", "raw": raw},
+                    "Failed to parse DataGapDocument",
+                    details={"contract_id": "emgi.data-gap.v1"},
                 ) from err
         else:
             # Fallback: check query_records
@@ -690,8 +698,8 @@ class DataPlatformMarketIntelligenceRepository:
             return DataAcquisitionPlan.from_dict(raw)
         except Exception as err:
             raise MarketIntelligenceValidationError(
-                f"Failed to parse DataAcquisitionPlan: {err}",
-                details={"contract_id": "emgi.data-acquisition-plan.v1", "raw": raw},
+                "Failed to parse DataAcquisitionPlan",
+                details={"contract_id": "emgi.data-acquisition-plan.v1"},
             ) from err
 
     def save_acquisition_plan(

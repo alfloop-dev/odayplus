@@ -25,6 +25,10 @@ describe("NetPlan structured diagnostic & stale state UX component rendering", (
       payback: "N/A",
       risk: "High",
       time: "6 個月",
+      modelledConstraintClasses: ["CAPITAL"],
+      unmodelledConstraintClasses: ["LEASE", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION", "SEQUENCING"],
+      modelled_constraint_classes: ["CAPITAL"],
+      unmodelled_constraint_classes: ["LEASE", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION", "SEQUENCING"],
       isStale: true,
       isInfeasible: true,
       score: 45,
@@ -43,6 +47,7 @@ describe("NetPlan structured diagnostic & stale state UX component rendering", (
       tone: "watch",
       selectedScenarioId: "SCENARIO-INFEASIBLE",
       netPlanScenarios: [scenario],
+      netPlanJob: { id: "SCENARIO-INFEASIBLE", completedAt: "2026-10-08T10:00:00+00:00" },
     };
 
     render(
@@ -56,6 +61,10 @@ describe("NetPlan structured diagnostic & stale state UX component rendering", (
         onSubmitReview={vi.fn()}
         rows={[row]}
       />,
+    );
+
+    expect(screen.getByTestId("rebalance-netplan-REB-101")).toHaveAttribute(
+      "data-solve-completed-at", row.netPlanJob?.completedAt,
     );
 
     // 1. Verify scenario card rendering in DOM

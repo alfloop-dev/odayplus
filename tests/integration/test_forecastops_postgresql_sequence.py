@@ -8,7 +8,13 @@ from uuid import uuid4
 
 import pytest
 
-from modules.forecastops import ForecastInput, ForecastOpsService, StoreDayObservation
+from modules.forecastops import (
+    ForecastInput,
+    ForecastOpsService,
+    StoreDayObservation,
+    default_forecast_alert_policy,
+)
+from shared.governance import InMemoryDecisionPolicyRepository
 from shared.infrastructure.persistence import DurableForecastOpsRepository
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.postgresql import PostgresEngine
@@ -60,6 +66,9 @@ def test_postgresql_multi_instance_forecast_sequence_is_atomic() -> None:
             [forecast_input],
             prediction_run_id=run_id,
             scored_at=origin,
+            policy_repository=InMemoryDecisionPolicyRepository(
+                [default_forecast_alert_policy(tenant_id)]
+            ),
         )
         return result.forecasts[0].forecast_version
 

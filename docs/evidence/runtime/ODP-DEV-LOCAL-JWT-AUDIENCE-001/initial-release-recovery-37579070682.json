@@ -1,0 +1,62 @@
+{
+  "absence_readback": {
+    "kind": "runtime-release-target-absence-readback",
+    "probe_command": "gcloud run services list --format=value(metadata.name); gcloud run jobs list --format=value(metadata.name)",
+    "project": "odayplus-runtime-20260825",
+    "region": "asia-east1",
+    "target_environment": "dev",
+    "targets": [
+      {
+        "component": "api",
+        "exists": false,
+        "resource_kind": "cloud-run-service",
+        "resource_name": "oday-api",
+        "serving_traffic": false
+      },
+      {
+        "component": "migration",
+        "exists": false,
+        "resource_kind": "cloud-run-job",
+        "resource_name": "oday-migration-r-5c0033977579",
+        "serving_traffic": false
+      },
+      {
+        "component": "scheduler",
+        "exists": false,
+        "resource_kind": "cloud-run-job",
+        "resource_name": "oday-scheduler-r-5c0033977579",
+        "serving_traffic": false
+      },
+      {
+        "component": "web",
+        "exists": false,
+        "resource_kind": "cloud-run-service",
+        "resource_name": "oday-web",
+        "serving_traffic": false
+      },
+      {
+        "component": "worker",
+        "exists": false,
+        "resource_kind": "cloud-run-job",
+        "resource_name": "oday-worker-r-5c0033977579",
+        "serving_traffic": false
+      }
+    ]
+  },
+  "binding_digest": "sha256:589a9dd4d848fe7f4c3066109afaef1617fc6d3aedc013950d3a28179e51b33b",
+  "candidate_sha": "5c0033977579382e43449eb22187145e9f5ec459",
+  "kind": "initial-release-recovery-verification",
+  "manifest_digest": "sha256:7c8b0a20b9ec130918ab388a47100e56067f6cf9100dcd289f05ffc848eaf7c3",
+  "recovery_actions": [
+    "delete-candidate-cloud-run-services",
+    "delete-candidate-cloud-run-jobs",
+    "delete-candidate-scheduler-triggers",
+    "hold-zero-traffic"
+  ],
+  "recovery_method": "delete-candidate-zero-traffic",
+  "release_id": "odp-5c0033977579",
+  "rollback_target_available": false,
+  "schema_version": 1,
+  "target_environment": "dev",
+  "verified_absent": true
+}

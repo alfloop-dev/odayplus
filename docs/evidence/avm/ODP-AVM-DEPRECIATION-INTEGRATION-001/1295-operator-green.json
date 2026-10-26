@@ -1,0 +1,20 @@
+{
+  "cwd": "/tmp/codex-1295-operator-fix",
+  "head_sha": "423776af0f8ca5c43353219b89f54062f3bee22b",
+  "tracked_diff_sha256": "0e18ecb25f42706f9b5965bf2c9fd393d3dafccf73d4040be403b08dd346dea7",
+  "argv": [
+    "/tmp/pantheon-worker-worktrees/pantheon/odp-avm-depreciation-integration-001/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-o",
+    "addopts=",
+    "-q",
+    "modules/avm/tests/test_avm_production_execution.py",
+    "-k",
+    "reloads_and_executes_real_oss_artifacts"
+  ],
+  "started_at": "2026-09-12T15:53:10.238238+00:00",
+  "duration_seconds": 76.31802348099882,
+  "exit_code": 0,
+  "output": "1295-operator-green.log"
+}

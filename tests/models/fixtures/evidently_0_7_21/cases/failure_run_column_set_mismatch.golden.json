@@ -1,0 +1,12 @@
+{
+  "case_id": "failure_run_column_set_mismatch",
+  "description": "Reference and current carry different column sets.",
+  "failure": {
+    "exception_message": "reference and current drift datasets must have identical columns",
+    "exception_module": "builtins",
+    "exception_type": "ValueError"
+  },
+  "kind": "data_drift",
+  "outcome": "raised",
+  "routing_expectation": "first-party guard in EvidentlyDriftMonitor.run"
+}

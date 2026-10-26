@@ -66,9 +66,7 @@ class SigningKey:
 _ASYMMETRIC_VERIFIERS: dict[str, Callable[[SigningKey, bytes, bytes], bool]] = {}
 
 
-def register_verifier(
-    algorithm: str, verifier: Callable[[SigningKey, bytes, bytes], bool]
-) -> None:
+def register_verifier(algorithm: str, verifier: Callable[[SigningKey, bytes, bytes], bool]) -> None:
     """Register an asymmetric verifier for ``algorithm`` (e.g. ``RS256``)."""
 
     _ASYMMETRIC_VERIFIERS[algorithm] = verifier
@@ -138,6 +136,18 @@ def decode_header(token: str) -> dict[str, Any]:
     if not isinstance(header, dict):
         raise MalformedTokenError("JOSE header must be an object")
     return header
+
+
+def decode_unverified_claims(token: str) -> dict[str, Any]:
+    """Decode the JWT claims set without verifying (to read ``iss``/``aud``)."""
+
+    parts = token.split(".")
+    if len(parts) != 3:
+        raise MalformedTokenError("compact JWS must have three segments")
+    claims = _decode_json(parts[1])
+    if not isinstance(claims, dict):
+        raise MalformedTokenError("JWT claims set must be an object")
+    return claims
 
 
 def _decode_json(segment: str) -> Any:

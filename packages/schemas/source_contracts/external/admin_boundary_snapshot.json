@@ -11,6 +11,10 @@
   "envelope": "batch",
   "acquisition_method": "public_dataset",
   "schema_version": "admin-boundary-v1",
+  "data_owner": "unconfirmed",
+  "target_latency_sla": "unconfirmed",
+  "contact_channel": "unconfirmed",
+  "runtime_capability": "unverified",
   "fields": [
     {"name": "source_boundary_id", "type": "string", "required": true, "description": "Source administrative boundary id."},
     {"name": "admin_level", "type": "string", "required": true, "enum": ["city", "district", "village"], "description": "Administrative level."},

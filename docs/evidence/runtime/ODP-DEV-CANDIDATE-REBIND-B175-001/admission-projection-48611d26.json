@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "record_kind": "premerge-dev-admission-projection",
+  "recorded_at": "2026-10-01T15:07:30Z",
+  "task_id": "ODP-DEV-APPROVAL-48611D26",
+  "candidate_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
+  "current_origin_dev_sha": "405fc892151860c19cf261c520792ea25baba5a7",
+  "manifest_digest": "sha256:eb97c149496cfda57fc353e121be0a01a1c75282c9e23a9f32052913745a99c7",
+  "manifest_raw_sha256": "sha256:1075e139de973fe55e9d8c74b93cf2c920168803eace03ab4d067119637f0b0c",
+  "registry_sha256": "sha256:c240db639342cb3d971e9d647fcb066707c193928435014ccf60527c2e7b24e1",
+  "registry_check": {
+    "command": "python3 delivery_toolchain/e2e/check_release_gate_registry.py --registry docs/evidence/gates/RELEASE_GATE_REGISTRY.json --root . --expected-sha 405fc892151860c19cf261c520792ea25baba5a7 --require-go --json",
+    "exit_code": 0,
+    "report": {
+      "registry_id": "ODP-RELEASE-GATE-REGISTRY",
+      "candidate_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
+      "manifest_digest": "sha256:eb97c149496cfda57fc353e121be0a01a1c75282c9e23a9f32052913745a99c7",
+      "stage": "candidate-built",
+      "environment": "dev",
+      "admission_target": "dev",
+      "decision": "go",
+      "gate_count": 7,
+      "cleared_gates": [
+        "gate-0",
+        "gate-1",
+        "gate-4"
+      ],
+      "blocking_gates": [],
+      "integrity_errors": [],
+      "release_state": "GO"
+    }
+  },
+  "runtime_admission": {
+    "function": "delivery_toolchain.release.check_runtime_admission.registry_admission_errors",
+    "environment": "dev",
+    "release_sha": "405fc892151860c19cf261c520792ea25baba5a7",
+    "expected_manifest_digest": "sha256:eb97c149496cfda57fc353e121be0a01a1c75282c9e23a9f32052913745a99c7",
+    "admitted": true,
+    "errors": []
+  },
+  "important_limit": "This is a branch-local projection using the current origin/dev ancestry; the approval and registry updates in this branch are not merged. It is not the required post-merge actual-origin/dev admission receipt. Rerun against then-current origin/dev after merge before any fresh release request or lease.",
+  "lease_or_deployment_attempted": false
+}

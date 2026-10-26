@@ -1,0 +1,28 @@
+{
+  "contract_id": "store_opening_authority_snapshot",
+  "title": "Store Opening Authority Snapshot",
+  "kind": "external",
+  "doc_ref": "ODP-DATA-03 §6, §9; ODP-DATA-05 §8; ODP-STORE-OPENING-001",
+  "source_system": "SRC-EXT-STORE-OPENING-AUTHORITY",
+  "source_dataset": "store_opening_authority_snapshot",
+  "canonical_target": "store",
+  "mapping_id": "MAP-EXT-STORE-OPENING-AUTHORITY-v1",
+  "integration_mode": "backfill",
+  "envelope": "batch",
+  "acquisition_method": "manual",
+  "data_owner": "unconfirmed",
+  "target_latency_sla": "unconfirmed",
+  "contact_channel": "unconfirmed",
+  "runtime_capability": "manual_attestation",
+  "fields": [
+    {"name": "source_id", "type": "string", "required": true, "enum": ["APPROVED_GOVERNMENT_REGISTRY", "AUDITED_MERCHANT_RECORD", "SRC-AUTH-STORE-OPENING", "SRC-GOVT-STORE-REGISTRY", "SRC-MERCHANT-OPENING-AUDIT", "store_opening.official_registry", "store_opening_authority"], "description": "Approved authority identity; mirrors APPROVED_STORE_OPENING_SOURCES in apps/data_platform/store_opening.py. An identity outside the allowlist is quarantined, never accepted as authority."},
+    {"name": "snapshot_id", "type": "string", "required": true, "description": "Immutable source snapshot id (intake.source_snapshots.source_snapshot_id). Replay identity: corrections arrive as a new snapshot, never as an in-place edit."},
+    {"name": "tenant_id", "type": "string", "required": true, "description": "Owning tenant id (core.tenants.tenant_id). The backfill engine rejects any record whose tenant differs from the run tenant."},
+    {"name": "store_id", "type": "string", "required": true, "description": "Canonical store id (core.stores.store_id) the opening date is asserted for."},
+    {"name": "opened_on", "type": "date", "required": true, "description": "First day of real commercial operation, ISO 8601 date. Never derived from created_at, ingestion time, or any record-keeping timestamp."},
+    {"name": "authority_type", "type": "string", "required": false, "description": "Kind of authority behind opened_on, e.g. AUDITED_MERCHANT_RECORD / APPROVED_GOVERNMENT_REGISTRY / REGULATORY_FILING / POS_FIRST_TRADING_DAY. Open vocabulary: the engine defaults it and intake.store_opening_authority_lineage.authority_type persists it NOT NULL."},
+    {"name": "provenance_note", "type": "string", "required": false, "description": "System of record plus record locator behind the claim."},
+    {"name": "inferred_from_created_at", "type": "boolean", "required": false, "enum": [false], "description": "Self-declared inference flag. Only false is admissible: a record that admits opened_on was inferred from created_at is quarantined."},
+    {"name": "created_at", "type": "timestamp", "required": false, "description": "Upstream record-creation timestamp, carried for provenance only. It is never an opening-date source; the engine rejects records whose opened_on merely restates it."}
+  ]
+}

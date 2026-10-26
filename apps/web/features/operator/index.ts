@@ -8,3 +8,5 @@ export * from "./DesignAlignedWorkspaces";
 export * from "./GovernanceWorkspace";
 export * from "./NetworkFindAreasWorkspace";
 
+export * from "./OperatorAdminConsole";
+export * from "./OperatorPasswordChange";

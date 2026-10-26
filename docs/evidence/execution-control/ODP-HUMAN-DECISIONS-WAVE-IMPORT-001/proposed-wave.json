@@ -1,0 +1,1106 @@
+{
+  "schema_version": 1,
+  "kind": "review-only proposed canonical assign wave; never executable",
+  "created_at": "2026-09-08T13:05:23.000480+00:00",
+  "publication_task_id": "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001",
+  "plan_path": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+  "source_pin_instruction": "Root 在計畫已 merge 後，以真實 merge SHA 將每 task source_docs[0] 與 source_refs[0].reference 替换為 github://alfloop-dev/odayplus@<40hex>/<plan_path>；不要把本 placeholder 字串餵給 assign。其餘歷史 pinned refs 是已在 git object 查到的真實文件。",
+  "canonical_writer_contract": {
+    "command": "python /home/lupin/oday-plus-supervisor-runtime-current/scripts/ai_status.py assign <id> <owner> <reviewer> <title>",
+    "actor": "Root 實際經允許的 AI_NAME；不冒 Human/Ops",
+    "metadata_env": "TASK_METADATA_JSON = JSON serialization of metadata; arrays kept in JSON; TASK_PHASE/TASK_SUMMARY_ZH optional",
+    "source": "/home/lupin/oday-plus-supervisor-runtime-current/scripts/ai_status.py:3630 task_metadata_from_env; :6117 command_assign; runtime symlink target /home/lupin/oday-plus-supervisor-runtime-367fa6aa7e86",
+    "notes": [
+      "TASK_METADATA_JSON 可帶 repository/base_branch/owned_paths/forbidden_paths/acceptance/verification/source_docs/source_refs；正式 initial dependency 必須使用 TASK_DEPENDS_ON，metadata depends_on 僅是 proposal 供review資料，不取代 graph validation/audit。",
+      "runtime-current command_assign :6133 解析 TASK_DEPENDS_ON；new task 跑 validate_dependency_update，並寫 dependency_update event。既有 task 有 TASK_DEPENDS_ON 會拒絕；既有邊改動須 set_dependencies 留稽核事件。",
+      "runtime-current command_assign 驗 source_docs、owner/reviewer independence 與 role/provider policy 後才寫入。不要用 canonical checkout 舊 scripts 或手改 ai-status.json。",
+      "source_refs 是 provenance 補充；正式 dispatcher 驗 source_docs。",
+      "所有首波 task 的 mutates_canonical=true，允許 owned worktree 文件交付及正式 lifecycle；false 會被 worker brief 視為 non-mutating recovery 並禁止 commit，不得用來表示不手改 dashboard。"
+    ],
+    "dependency_env": "TASK_DEPENDS_ON = comma-joined initial dependencies is REQUIRED for graph validation and initial dependency_update audit event. Read tasks[].assign_env. Do not rely on metadata.depends_on alone; root can remove duplicated metadata.depends_on when building env."
+  },
+  "dedup": {
+    "checked_active": "/home/lupin/odayplus/ai-status.json",
+    "checked_archive": "/home/lupin/odayplus/ai-task-archive/tasks/*.json and index.json",
+    "archive_count_observed": 24,
+    "exact_or_equivalent_active_first_wave_found": [],
+    "exact_or_equivalent_archive_first_wave_found": [],
+    "historical_audits": "SITE001/NET002/PARTIAL/CDC/OIDC 的原稽核／驗證存在 pinned commit 04e1572f802a… 文件，但多数不在 live archive；不因此重做原稽核或恢复历史，本 8 個 tasks 是依新決策的獨立後續。",
+    "reuse_existing": [
+      "HUMAN-OSS-LEGAL-APPROVAL-001",
+      "HUMAN-GCP-WEB-OAUTH-CLIENTS-001",
+      "HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001",
+      "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+      "XR-SOURCE-APPROVAL-ACTIVATION-001"
+    ],
+    "related_done_reference": "ODP-DRIFT-SECURITY-VERIFY-003 已 archive done；WP-10 只比較当下版本與原收據，不另建 security remediation unless new finding verified."
+  },
+  "parallelism": {
+    "first_wave_count": 8,
+    "pool_distribution": {
+      "claude_main": 5,
+      "antigravity_main": 3
+    },
+    "owner_selection": "使用目前未被歷史 assignment_note 标 dispatch-paused 的 Claude/Claude2/Antigravity/Antigravity2/Antigravity3；root apply 前再讀 live enabled/helper-slot 派工規則。Metadata 不修改 pool、quota 或 dispatch config。",
+    "paths": "每個 A task 只寫自己 docs/evidence/human-decisions/<task-id>/；共享程式與 governance 先只讀，無跨 A task 寫入 overlap。",
+    "dependence": "全部只依賴 publication task；H01 不阻擋這些 A 工程。B 階段各自等 H03-H07，不塞進同一永遠 in_progress task。",
+    "review": "Codex/Codex2 分攤獨立 exact-head 審查，review slot 不計 execution slot。",
+    "effective_capacity_caveat": "最新 root 回讀：account_pool_runtime Claude effective 5、Antigravity effective 1、Codex 1+2；實際 execution 上限 6，review 上限 3。配置 14 slots 不等於當下有效 14。3 個 Antigravity task 可等待 existing helper/failover/恢復，不改 quota/config。"
+  },
+  "tasks": [
+    {
+      "id": "ODP-OSS-DECISION-PACK-001",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "title": "依已確認政策更新 OSS／逐資料來源審查包與未簽署 receipt 草案",
+      "metadata": {
+        "task_class": "remediation",
+        "priority": "P0",
+        "repository": "alfloop-dev/odayplus",
+        "base_branch": "dev",
+        "phase": "human decision engineering preparation",
+        "summary_zh": "依已確認政策更新 OSS／逐資料來源審查包與未簽署 receipt 草案；在獨立證據目錄交付可審查的 A 階段，不等待尚未提供的 B 階段資料。",
+        "depends_on": [
+          "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+        ],
+        "artifacts": [
+          "docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/README.md",
+          "docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/case-matrix.json",
+          "docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/source-decision-cards.json",
+          "docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/unsigned-receipt-template.json",
+          "docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/missing-human-inputs.json",
+          "docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/command-receipts/"
+        ],
+        "owned_paths": [
+          "docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/"
+        ],
+        "forbidden_paths": [
+          "ai-status.json",
+          "ai-activity-log.jsonl",
+          "ai-task-archive/",
+          ".orchestrator/",
+          ".github/",
+          "infra/",
+          "docs/security/",
+          "docs/evidence/gates/",
+          "delivery_toolchain/governance/",
+          "docs/governance/",
+          "docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md",
+          "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+          "modules/",
+          "apps/",
+          "packages/",
+          "pipelines/",
+          "models/",
+          "solver/",
+          "shared/",
+          "scripts/",
+          "delivery_toolchain/security/",
+          "tests/",
+          "pyproject.toml",
+          "uv.lock",
+          "package.json",
+          "package-lock.json",
+          "Makefile",
+          "NOTICE-THIRD-PARTY.md"
+        ],
+        "acceptance": [
+          "核對最新 lockfile 與安裝樹、SBOM／NOTICE／license gate，將 D01-D05 五個 case 的真實版本／PURL／第一方 ownership 與 2026-08-08 盤點逐一比對；D06 使用當下未抑制 audit 結果，不沿用舊 13 high。",
+          "交逐精確 dataset／endpoint 決策卡；對 §4.1 16 個來源群組保留拆分索引。卡片含授權版本／用途／地域／保存再散布／attribution／費用／quota／官方頻率／建議更新週期／owner／expiry／source refs；未知欄位明示 unknown，不群組批准。",
+          "交 D01-D14 對照、未簽署 receipt 模板與 H01/H02 欄位缺口；source hash 不能證明人類批准。將掃描 finding、工具錯誤、已修復三類分開；finding 未修復也可完成本 evidence task，但不可說安全 gate 通過。",
+          "復用既有 security/audit/SBOM 工具；先讀實際 CLI 與 side effects，若 generator 預設改其他目錄只用其 output 參數寫 owned evidence 目錄；保持 NOTICE／policy／lockfiles 不變。",
+          "使用 task_start／既有 Worker Manager 在獨立 worktree 交付；允許修改 owned_paths 文件、commit、push、建立 task PR，並使用指定 runtime-current canonical writer 執行該 task 的 lifecycle、progress、submit_review／task_finalize。mutates_canonical=true 表示這是可交付變更的工程 task，並非授權手改 dashboard。ai-status／archive 禁止路徑只禁止直接檔案寫入，不禁止經指定 canonical writer 的必要 lifecycle 更新。",
+          "每項觀測標 inspected source SHA、UTC、精確檔案或命令與原始 exit code；沿用舊證據必須標日期及適用版本。unknown、未取得權限或不存在不可互換；既有稽核完成不等於原需求已完成。",
+          "本 task 可在資料／正式 receipt 未齊時完成工程準備交付；文件須明列下一階段的具體入場條件，禁止把待資料 B 階段、正式核准、provider 驗證或 production 能力標 done。",
+          "不建立 waiver、--ignore-vuln 或環境變數 bypass；不偽造 Human/Ops 身分、法務簽章或回讀；不改 gate、hold、provider、模型、配額或 production 資源。",
+          "所有新增 Markdown 連結與 source refs 可解析；JSON 可解析；git diff --check 通過。文檔工作不新增鏡像 implementation 的 tests，不為湊證據重跑無關 suite。",
+          "交付結構驗收：所有 artifacts 指定的檔案存在且非空，指定目錄含至少一個非空檔案，指定 JSON 為非空 object／array；README 必須索引本 task 其餘指定產物。新增 Markdown 的本地相對連結可解析；必須先完成真實文件再執行 verification，不為過驗證填 placeholder／捏造收據。",
+          "證據採集與調查指引（不是 finalize 必須全綠的 verification commands）：make dependency-audit  # 在隔離完整依賴環境執行；分別保存實際底層命令及 exit code，不抑制 finding\nuv run python delivery_toolchain/security/generate_sbom.py --help  # 確認當前 --output 支援後將 SBOM 寫本 task 目錄\nuv run python delivery_toolchain/security/generate_oss_notice.py --check  # 若支援且安裝樹完整；保存實際結果，勿使用預設寫入模式",
+          "採集命令逐條保存實際 argv／source SHA／UTC／原始 exit_code／sanitized output 或原收據 reference；audit finding、檔案未存在、無權限、網路／工具錯誤與超時各自如實分類。相關 audit／只讀 probe 非零不自動阻止本 A 階段證據包交付，但不可冒稱 scan／runtime／provider／security gate pass；必要證據仍未知時明列後续補採集責任與入場條件，不消音、不吞 exit code、不建立例外。",
+          "驗證收據執行提示：使用既有 task_verification run/check 在交付 exact HEAD 取得每條 verification 的真正 command receipt；runner 以 head＋selection fingerprint 去重，若不同命令被誤判 duplicate/refused 而缺少其中一條的收據，使用 run --retry-reason 並具體寫出「missing distinct command receipt: <實際缺少的命令>；same selection fingerprint collision」後執行，再以 check 確認逐命令已證明。skip/refused 不是該命令 pass；只補缺少的輕量文件驗證收據，不因此重跑實際大型 audit／product suite、不擴大測試範圍。"
+        ],
+        "verification": [
+          "git diff --check",
+          "python3 -c 'import json,re,sys\nfrom pathlib import Path\nfrom urllib.parse import unquote,urlsplit\nnames=['\"'\"'docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/README.md'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/case-matrix.json'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/source-decision-cards.json'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/unsigned-receipt-template.json'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/missing-human-inputs.json'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/command-receipts/'\"'\"']\nerrors=[]\nfiles=[]\nfor name in names:\n    path=Path(name)\n    if name.endswith(\"/\"):\n        if not path.is_dir() or not any(f.is_file() and f.stat().st_size for f in path.rglob(\"*\")): errors.append(\"missing or empty directory: \"+name)\n    elif not path.is_file() or not path.stat().st_size: errors.append(\"missing or empty file: \"+name)\n    else: files.append(path)\nfor path in files:\n    if path.suffix==\".json\":\n        try:\n            value=json.loads(path.read_text(encoding=\"utf-8\"))\n            if not isinstance(value,(dict,list)) or not value: errors.append(\"expected nonempty JSON object or array: \"+str(path))\n        except (ValueError,UnicodeError) as exc: errors.append(str(path)+\": \"+str(exc))\nreadme=Path(names[0])\nif readme.is_file():\n    body=readme.read_text(encoding=\"utf-8\")\n    for name in names[1:]:\n        if Path(name).name not in body: errors.append(\"README does not index artifact: \"+name)\nfor path in files:\n    if path.suffix==\".md\":\n        for target in re.findall(r\"!?\\[[^\\]]*\\]\\(([^\\s)]+)(?:\\s+[^)]*)?\\)\",path.read_text(encoding=\"utf-8\")):\n            target=target.strip(\"<>\")\n            parsed=urlsplit(target)\n            if not parsed.scheme and not parsed.netloc and parsed.path and not parsed.path.startswith(\"/\"):\n                if not (path.parent/unquote(parsed.path)).exists(): errors.append(\"broken local link: \"+str(path)+\" -> \"+target)\nif errors:\n    print(\"\\n\".join(errors),file=sys.stderr)\n    raise SystemExit(1)\nprint(\"Validated \"+str(len(names))+\" required artifacts, JSON contents, README index, and local Markdown links\")'"
+        ],
+        "source_docs": [
+          "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/OSS_LEGAL_POLICY_HUMAN_HANDOFF_2026-07-31.md",
+          "github://alfloop-dev/oday-data-platform@cf5c48d60f3d33b9863b0458f44b4fd49d842b12/docs/runbooks/external-source-update-policy.md"
+        ],
+        "source_refs": [
+          {
+            "reference": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+            "work_package": "WP-10",
+            "use": "authoritative user decision transcription; pin published merge SHA before assign"
+          },
+          {
+            "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/OSS_LEGAL_POLICY_HUMAN_HANDOFF_2026-07-31.md",
+            "use": "historical baseline to revalidate; not evidence of current runtime"
+          },
+          {
+            "reference": "github://alfloop-dev/oday-data-platform@cf5c48d60f3d33b9863b0458f44b4fd49d842b12/docs/runbooks/external-source-update-policy.md",
+            "use": "historical baseline to revalidate; not evidence of current runtime"
+          }
+        ],
+        "evidence_path": "docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/",
+        "catalog_managed": false,
+        "stage": "A",
+        "work_package": "WP-10",
+        "next_stage_entry": "WP-11 工程提案只依賴本包；政策生效／任何例外另需 H01 權威 receipt 及 H02 精確個案。",
+        "related_task_ids": [
+          "XR-EXT-OSS-FINAL-AUDIT-001",
+          "HUMAN-OSS-LEGAL-APPROVAL-001",
+          "ODP-PLAN-OSS-LEGAL-POLICY-001",
+          "ODP-DRIFT-SECURITY-VERIFY-003"
+        ],
+        "assignment_note": "新後續工程 task；復用已完成稽核背景，不恢復或覆寫歷史 task。只依賴已發布本計画的 task；H01/H03-H08 僅阻擋各自後續階段。",
+        "mutates_canonical": true
+      },
+      "assign_env": {
+        "TASK_DEPENDS_ON": "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+      }
+    },
+    {
+      "id": "ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001",
+      "owner": "Claude2",
+      "reviewer": "Codex2",
+      "title": "核對 password-first／OIDC-off 證據並交 OAuth human task 待命說明",
+      "metadata": {
+        "task_class": "remediation",
+        "priority": "P1",
+        "repository": "alfloop-dev/odayplus",
+        "base_branch": "dev",
+        "phase": "human decision engineering preparation",
+        "summary_zh": "核對 password-first／OIDC-off 證據並交 OAuth human task 待命說明；在獨立證據目錄交付可審查的 A 階段，不等待尚未提供的 B 階段資料。",
+        "depends_on": [
+          "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+        ],
+        "artifacts": [
+          "docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/README.md",
+          "docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/auth-mode-evidence-matrix.json",
+          "docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/human-task-handoff.json"
+        ],
+        "owned_paths": [
+          "docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/"
+        ],
+        "forbidden_paths": [
+          "ai-status.json",
+          "ai-activity-log.jsonl",
+          "ai-task-archive/",
+          ".orchestrator/",
+          ".github/",
+          "infra/",
+          "docs/security/",
+          "docs/evidence/gates/",
+          "delivery_toolchain/governance/",
+          "docs/governance/",
+          "docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md",
+          "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+          "modules/",
+          "apps/",
+          "packages/",
+          "pipelines/",
+          "models/",
+          "solver/",
+          "shared/",
+          "scripts/",
+          "delivery_toolchain/security/",
+          "tests/",
+          "pyproject.toml",
+          "uv.lock",
+          "package.json",
+          "package-lock.json",
+          "Makefile",
+          "NOTICE-THIRD-PARTY.md"
+        ],
+        "acceptance": [
+          "查 ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001 與 ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-001 歷史 task／PR／精確 SHA；active/archive 缺失時引用可驗證舊收據並標 canonical 歷史缺口，不重建同名 task 或把缺失當未做。",
+          "建立最新 auth-mode resolver、web UI、session／CSRF／callback 實作與 regression evidence 矩陣；D15=password-first/OIDC off。Google 登入不可呈可用或呼叫 provider；密碼登入不依賴 Google secret。",
+          "只交 HUMAN-GCP-WEB-OAUTH-CLIENTS-001 next／條件依賴更新建議；辨識可引用的已通過 regression 與真正缺口；尚無 live evidence 必須標 unknown。若發現 code defect 列最小修復交接，不在 evidence task 偷改程式或部署。",
+          "使用 task_start／既有 Worker Manager 在獨立 worktree 交付；允許修改 owned_paths 文件、commit、push、建立 task PR，並使用指定 runtime-current canonical writer 執行該 task 的 lifecycle、progress、submit_review／task_finalize。mutates_canonical=true 表示這是可交付變更的工程 task，並非授權手改 dashboard。ai-status／archive 禁止路徑只禁止直接檔案寫入，不禁止經指定 canonical writer 的必要 lifecycle 更新。",
+          "每項觀測標 inspected source SHA、UTC、精確檔案或命令與原始 exit code；沿用舊證據必須標日期及適用版本。unknown、未取得權限或不存在不可互換；既有稽核完成不等於原需求已完成。",
+          "本 task 可在資料／正式 receipt 未齊時完成工程準備交付；文件須明列下一階段的具體入場條件，禁止把待資料 B 階段、正式核准、provider 驗證或 production 能力標 done。",
+          "不建立 waiver、--ignore-vuln 或環境變數 bypass；不偽造 Human/Ops 身分、法務簽章或回讀；不改 gate、hold、provider、模型、配額或 production 資源。",
+          "所有新增 Markdown 連結與 source refs 可解析；JSON 可解析；git diff --check 通過。文檔工作不新增鏡像 implementation 的 tests，不為湊證據重跑無關 suite。",
+          "交付結構驗收：所有 artifacts 指定的檔案存在且非空，指定目錄含至少一個非空檔案，指定 JSON 為非空 object／array；README 必須索引本 task 其餘指定產物。新增 Markdown 的本地相對連結可解析；必須先完成真實文件再執行 verification，不為過驗證填 placeholder／捏造收據。",
+          "證據採集與調查指引（不是 finalize 必須全綠的 verification commands）：git show 04e1572f802a54c2646ba678fe2975226dfbd7c4:docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md\nuv run --python 3.12 pytest tests/e2e/test_password_first_security_e2e.py tests/security/test_login_throttle_wiring.py tests/ops/test_conditional_oidc_deployment.py tests/identity  # 舊正式收據所列 command；先核對最新檔案是否存在及已有 exact-head regression，只有需驗證新狀態才執行。",
+          "採集命令逐條保存實際 argv／source SHA／UTC／原始 exit_code／sanitized output 或原收據 reference；audit finding、檔案未存在、無權限、網路／工具錯誤與超時各自如實分類。相關 audit／只讀 probe 非零不自動阻止本 A 階段證據包交付，但不可冒稱 scan／runtime／provider／security gate pass；必要證據仍未知時明列後续補採集責任與入場條件，不消音、不吞 exit code、不建立例外。",
+          "驗證收據執行提示：使用既有 task_verification run/check 在交付 exact HEAD 取得每條 verification 的真正 command receipt；runner 以 head＋selection fingerprint 去重，若不同命令被誤判 duplicate/refused 而缺少其中一條的收據，使用 run --retry-reason 並具體寫出「missing distinct command receipt: <實際缺少的命令>；same selection fingerprint collision」後執行，再以 check 確認逐命令已證明。skip/refused 不是該命令 pass；只補缺少的輕量文件驗證收據，不因此重跑實際大型 audit／product suite、不擴大測試範圍。"
+        ],
+        "verification": [
+          "git diff --check",
+          "python3 -c 'import json,re,sys\nfrom pathlib import Path\nfrom urllib.parse import unquote,urlsplit\nnames=['\"'\"'docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/README.md'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/auth-mode-evidence-matrix.json'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/human-task-handoff.json'\"'\"']\nerrors=[]\nfiles=[]\nfor name in names:\n    path=Path(name)\n    if name.endswith(\"/\"):\n        if not path.is_dir() or not any(f.is_file() and f.stat().st_size for f in path.rglob(\"*\")): errors.append(\"missing or empty directory: \"+name)\n    elif not path.is_file() or not path.stat().st_size: errors.append(\"missing or empty file: \"+name)\n    else: files.append(path)\nfor path in files:\n    if path.suffix==\".json\":\n        try:\n            value=json.loads(path.read_text(encoding=\"utf-8\"))\n            if not isinstance(value,(dict,list)) or not value: errors.append(\"expected nonempty JSON object or array: \"+str(path))\n        except (ValueError,UnicodeError) as exc: errors.append(str(path)+\": \"+str(exc))\nreadme=Path(names[0])\nif readme.is_file():\n    body=readme.read_text(encoding=\"utf-8\")\n    for name in names[1:]:\n        if Path(name).name not in body: errors.append(\"README does not index artifact: \"+name)\nfor path in files:\n    if path.suffix==\".md\":\n        for target in re.findall(r\"!?\\[[^\\]]*\\]\\(([^\\s)]+)(?:\\s+[^)]*)?\\)\",path.read_text(encoding=\"utf-8\")):\n            target=target.strip(\"<>\")\n            parsed=urlsplit(target)\n            if not parsed.scheme and not parsed.netloc and parsed.path and not parsed.path.startswith(\"/\"):\n                if not (path.parent/unquote(parsed.path)).exists(): errors.append(\"broken local link: \"+str(path)+\" -> \"+target)\nif errors:\n    print(\"\\n\".join(errors),file=sys.stderr)\n    raise SystemExit(1)\nprint(\"Validated \"+str(len(names))+\" required artifacts, JSON contents, README index, and local Markdown links\")'"
+        ],
+        "source_docs": [
+          "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/design/ODP_WEB_PASSWORD_FIRST_AUTH_CONTRACT.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md"
+        ],
+        "source_refs": [
+          {
+            "reference": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+            "work_package": "WP-20",
+            "use": "authoritative user decision transcription; pin published merge SHA before assign"
+          },
+          {
+            "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/design/ODP_WEB_PASSWORD_FIRST_AUTH_CONTRACT.md",
+            "use": "historical baseline to revalidate; not evidence of current runtime"
+          },
+          {
+            "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md",
+            "use": "historical baseline to revalidate; not evidence of current runtime"
+          }
+        ],
+        "evidence_path": "docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/",
+        "catalog_managed": false,
+        "stage": "A",
+        "work_package": "WP-20",
+        "next_stage_entry": "驗證足夠後由 WP-90／canonical writer 對齊 OAuth 待命說明；不宣稱 OAuth provider 已驗證。",
+        "related_task_ids": [
+          "ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001",
+          "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-001",
+          "HUMAN-GCP-WEB-OAUTH-CLIENTS-001"
+        ],
+        "assignment_note": "新後續工程 task；復用已完成稽核背景，不恢復或覆寫歷史 task。只依賴已發布本計画的 task；H01/H03-H08 僅阻擋各自後續階段。",
+        "mutates_canonical": true
+      },
+      "assign_env": {
+        "TASK_DEPENDS_ON": "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+      }
+    },
+    {
+      "id": "ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "title": "交品牌轉移資料契約草案、producer／consumer 差距及 H03 請求",
+      "metadata": {
+        "task_class": "remediation",
+        "priority": "P1",
+        "repository": "alfloop-dev/odayplus",
+        "base_branch": "dev",
+        "phase": "human decision engineering preparation",
+        "summary_zh": "交品牌轉移資料契約草案、producer／consumer 差距及 H03 請求；在獨立證據目錄交付可審查的 A 階段，不等待尚未提供的 B 階段資料。",
+        "depends_on": [
+          "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+        ],
+        "artifacts": [
+          "docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/README.md",
+          "docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/contract-draft.json",
+          "docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/field-dictionary.md",
+          "docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/source-consumer-map.json",
+          "docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/human-input-request-H03.md",
+          "docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/implementation-handoff.md"
+        ],
+        "owned_paths": [
+          "docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/"
+        ],
+        "forbidden_paths": [
+          "ai-status.json",
+          "ai-activity-log.jsonl",
+          "ai-task-archive/",
+          ".orchestrator/",
+          ".github/",
+          "infra/",
+          "docs/security/",
+          "docs/evidence/gates/",
+          "delivery_toolchain/governance/",
+          "docs/governance/",
+          "docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md",
+          "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+          "modules/",
+          "apps/",
+          "packages/",
+          "pipelines/",
+          "models/",
+          "solver/",
+          "shared/",
+          "scripts/",
+          "delivery_toolchain/security/",
+          "tests/",
+          "pyproject.toml",
+          "uv.lock",
+          "package.json",
+          "package-lock.json",
+          "Makefile",
+          "NOTICE-THIRD-PARTY.md"
+        ],
+        "acceptance": [
+          "只處理 BRAND_TRANSFER；從最新 brands／model-ready view／SiteScore consumer 建 source-to-consumer 路徑圖並列真實讀寫點；FORMAT_CONVERSION 留 WP-31A。",
+          "交 schema 草案及欄位字典：來源／目標品牌、時間窗、地域、樣本、轉移量／比例、方法、confidence、source reference、freshness、tenant；統計定義待資料 owner 確認。",
+          "交 H03 最小資料請求、來源取得方案與 30B 驗收矩陣；missing／stale／insufficient sample 與 observed zero 分開。合成資料只能明示 fixture，固定 0.15／1.0 不能充真實 producer。",
+          "使用 task_start／既有 Worker Manager 在獨立 worktree 交付；允許修改 owned_paths 文件、commit、push、建立 task PR，並使用指定 runtime-current canonical writer 執行該 task 的 lifecycle、progress、submit_review／task_finalize。mutates_canonical=true 表示這是可交付變更的工程 task，並非授權手改 dashboard。ai-status／archive 禁止路徑只禁止直接檔案寫入，不禁止經指定 canonical writer 的必要 lifecycle 更新。",
+          "每項觀測標 inspected source SHA、UTC、精確檔案或命令與原始 exit code；沿用舊證據必須標日期及適用版本。unknown、未取得權限或不存在不可互換；既有稽核完成不等於原需求已完成。",
+          "本 task 可在資料／正式 receipt 未齊時完成工程準備交付；文件須明列下一階段的具體入場條件，禁止把待資料 B 階段、正式核准、provider 驗證或 production 能力標 done。",
+          "不建立 waiver、--ignore-vuln 或環境變數 bypass；不偽造 Human/Ops 身分、法務簽章或回讀；不改 gate、hold、provider、模型、配額或 production 資源。",
+          "所有新增 Markdown 連結與 source refs 可解析；JSON 可解析；git diff --check 通過。文檔工作不新增鏡像 implementation 的 tests，不為湊證據重跑無關 suite。",
+          "交付結構驗收：所有 artifacts 指定的檔案存在且非空，指定目錄含至少一個非空檔案，指定 JSON 為非空 object／array；README 必須索引本 task 其餘指定產物。新增 Markdown 的本地相對連結可解析；必須先完成真實文件再執行 verification，不為過驗證填 placeholder／捏造收據。",
+          "證據採集與調查指引（不是 finalize 必須全綠的 verification commands）：rg -n \"BRAND_TRANSFER|brand_transfer\" modules pipelines packages models  # source inventory only\n以標示 synthetic 的離線例子逐欄對照 draft schema；如用已安裝 JSON Schema validator 則保存命令結果",
+          "採集命令逐條保存實際 argv／source SHA／UTC／原始 exit_code／sanitized output 或原收據 reference；audit finding、檔案未存在、無權限、網路／工具錯誤與超時各自如實分類。相關 audit／只讀 probe 非零不自動阻止本 A 階段證據包交付，但不可冒稱 scan／runtime／provider／security gate pass；必要證據仍未知時明列後续補採集責任與入場條件，不消音、不吞 exit code、不建立例外。",
+          "驗證收據執行提示：使用既有 task_verification run/check 在交付 exact HEAD 取得每條 verification 的真正 command receipt；runner 以 head＋selection fingerprint 去重，若不同命令被誤判 duplicate/refused 而缺少其中一條的收據，使用 run --retry-reason 並具體寫出「missing distinct command receipt: <實際缺少的命令>；same selection fingerprint collision」後執行，再以 check 確認逐命令已證明。skip/refused 不是該命令 pass；只補缺少的輕量文件驗證收據，不因此重跑實際大型 audit／product suite、不擴大測試範圍。"
+        ],
+        "verification": [
+          "git diff --check",
+          "python3 -c 'import json,re,sys\nfrom pathlib import Path\nfrom urllib.parse import unquote,urlsplit\nnames=['\"'\"'docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/README.md'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/contract-draft.json'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/field-dictionary.md'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/source-consumer-map.json'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/human-input-request-H03.md'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/implementation-handoff.md'\"'\"']\nerrors=[]\nfiles=[]\nfor name in names:\n    path=Path(name)\n    if name.endswith(\"/\"):\n        if not path.is_dir() or not any(f.is_file() and f.stat().st_size for f in path.rglob(\"*\")): errors.append(\"missing or empty directory: \"+name)\n    elif not path.is_file() or not path.stat().st_size: errors.append(\"missing or empty file: \"+name)\n    else: files.append(path)\nfor path in files:\n    if path.suffix==\".json\":\n        try:\n            value=json.loads(path.read_text(encoding=\"utf-8\"))\n            if not isinstance(value,(dict,list)) or not value: errors.append(\"expected nonempty JSON object or array: \"+str(path))\n        except (ValueError,UnicodeError) as exc: errors.append(str(path)+\": \"+str(exc))\nreadme=Path(names[0])\nif readme.is_file():\n    body=readme.read_text(encoding=\"utf-8\")\n    for name in names[1:]:\n        if Path(name).name not in body: errors.append(\"README does not index artifact: \"+name)\nfor path in files:\n    if path.suffix==\".md\":\n        for target in re.findall(r\"!?\\[[^\\]]*\\]\\(([^\\s)]+)(?:\\s+[^)]*)?\\)\",path.read_text(encoding=\"utf-8\")):\n            target=target.strip(\"<>\")\n            parsed=urlsplit(target)\n            if not parsed.scheme and not parsed.netloc and parsed.path and not parsed.path.startswith(\"/\"):\n                if not (path.parent/unquote(parsed.path)).exists(): errors.append(\"broken local link: \"+str(path)+\" -> \"+target)\nif errors:\n    print(\"\\n\".join(errors),file=sys.stderr)\n    raise SystemExit(1)\nprint(\"Validated \"+str(len(names))+\" required artifacts, JSON contents, README index, and local Markdown links\")'"
+        ],
+        "source_docs": [
+          "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_SITE001_DATA_READINESS_2026-09-03.md"
+        ],
+        "source_refs": [
+          {
+            "reference": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+            "work_package": "WP-30A",
+            "use": "authoritative user decision transcription; pin published merge SHA before assign"
+          },
+          {
+            "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md",
+            "use": "historical baseline to revalidate; not evidence of current runtime"
+          },
+          {
+            "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_SITE001_DATA_READINESS_2026-09-03.md",
+            "use": "historical baseline to revalidate; not evidence of current runtime"
+          }
+        ],
+        "evidence_path": "docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/",
+        "catalog_managed": false,
+        "stage": "A",
+        "work_package": "WP-30A",
+        "next_stage_entry": "30B 要 H03 合法真實來源、owner 確認的穩定契約與對應 ingestion 權限；未到資料時只完成 A。",
+        "related_task_ids": [
+          "ODP-SITE001-DATA-READINESS-001",
+          "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+          "HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001"
+        ],
+        "assignment_note": "新後續工程 task；復用已完成稽核背景，不恢復或覆寫歷史 task。只依賴已發布本計画的 task；H01/H03-H08 僅阻擋各自後續階段。",
+        "mutates_canonical": true
+      },
+      "assign_env": {
+        "TASK_DEPENDS_ON": "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+      }
+    },
+    {
+      "id": "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "title": "交店型轉換事件／財務契約草案與 H04 請求",
+      "metadata": {
+        "task_class": "remediation",
+        "priority": "P1",
+        "repository": "alfloop-dev/odayplus",
+        "base_branch": "dev",
+        "phase": "human decision engineering preparation",
+        "summary_zh": "交店型轉換事件／財務契約草案與 H04 請求；在獨立證據目錄交付可審查的 A 階段，不等待尚未提供的 B 階段資料。",
+        "depends_on": [
+          "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+        ],
+        "artifacts": [
+          "docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/README.md",
+          "docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/event-contract-draft.json",
+          "docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/field-dictionary.md",
+          "docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/source-consumer-map.json",
+          "docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/human-input-request-H04.md",
+          "docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/implementation-handoff.md"
+        ],
+        "owned_paths": [
+          "docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/"
+        ],
+        "forbidden_paths": [
+          "ai-status.json",
+          "ai-activity-log.jsonl",
+          "ai-task-archive/",
+          ".orchestrator/",
+          ".github/",
+          "infra/",
+          "docs/security/",
+          "docs/evidence/gates/",
+          "delivery_toolchain/governance/",
+          "docs/governance/",
+          "docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md",
+          "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+          "modules/",
+          "apps/",
+          "packages/",
+          "pipelines/",
+          "models/",
+          "solver/",
+          "shared/",
+          "scripts/",
+          "delivery_toolchain/security/",
+          "tests/",
+          "pyproject.toml",
+          "uv.lock",
+          "package.json",
+          "package-lock.json",
+          "Makefile",
+          "NOTICE-THIRD-PARTY.md"
+        ],
+        "acceptance": [
+          "只處理 FORMAT_CONVERSION；盤點真實事件與既有 simulator/Brownfield 路徑，記錄新店選型與既有店型轉換差別；BRAND_TRANSFER 留 WP-30A。",
+          "交事件 schema／欄位字典：store、原／新店型、生效／停業區間、改裝 Capex、殘值／處分費、ramp、資料來源／版本、event identity；必要與可選欄位分列。",
+          "交 H04 事件／財務定義清單及 31B 驗收案例：停業／成本／殘值／ramp 影響、missing 明示、事件回放不重複計費。草案不能聲稱 producer 已可用。",
+          "使用 task_start／既有 Worker Manager 在獨立 worktree 交付；允許修改 owned_paths 文件、commit、push、建立 task PR，並使用指定 runtime-current canonical writer 執行該 task 的 lifecycle、progress、submit_review／task_finalize。mutates_canonical=true 表示這是可交付變更的工程 task，並非授權手改 dashboard。ai-status／archive 禁止路徑只禁止直接檔案寫入，不禁止經指定 canonical writer 的必要 lifecycle 更新。",
+          "每項觀測標 inspected source SHA、UTC、精確檔案或命令與原始 exit code；沿用舊證據必須標日期及適用版本。unknown、未取得權限或不存在不可互換；既有稽核完成不等於原需求已完成。",
+          "本 task 可在資料／正式 receipt 未齊時完成工程準備交付；文件須明列下一階段的具體入場條件，禁止把待資料 B 階段、正式核准、provider 驗證或 production 能力標 done。",
+          "不建立 waiver、--ignore-vuln 或環境變數 bypass；不偽造 Human/Ops 身分、法務簽章或回讀；不改 gate、hold、provider、模型、配額或 production 資源。",
+          "所有新增 Markdown 連結與 source refs 可解析；JSON 可解析；git diff --check 通過。文檔工作不新增鏡像 implementation 的 tests，不為湊證據重跑無關 suite。",
+          "交付結構驗收：所有 artifacts 指定的檔案存在且非空，指定目錄含至少一個非空檔案，指定 JSON 為非空 object／array；README 必須索引本 task 其餘指定產物。新增 Markdown 的本地相對連結可解析；必須先完成真實文件再執行 verification，不為過驗證填 placeholder／捏造收據。",
+          "證據採集與調查指引（不是 finalize 必須全綠的 verification commands）：rg -n \"FORMAT_CONVERSION|format_conversion|Brownfield|brownfield\" modules models solver pipelines  # source inventory only\n對 draft schema／字典與 H04 缺欄逐項核對；JSON parse 與文件連結驗證",
+          "採集命令逐條保存實際 argv／source SHA／UTC／原始 exit_code／sanitized output 或原收據 reference；audit finding、檔案未存在、無權限、網路／工具錯誤與超時各自如實分類。相關 audit／只讀 probe 非零不自動阻止本 A 階段證據包交付，但不可冒稱 scan／runtime／provider／security gate pass；必要證據仍未知時明列後续補採集責任與入場條件，不消音、不吞 exit code、不建立例外。",
+          "驗證收據執行提示：使用既有 task_verification run/check 在交付 exact HEAD 取得每條 verification 的真正 command receipt；runner 以 head＋selection fingerprint 去重，若不同命令被誤判 duplicate/refused 而缺少其中一條的收據，使用 run --retry-reason 並具體寫出「missing distinct command receipt: <實際缺少的命令>；same selection fingerprint collision」後執行，再以 check 確認逐命令已證明。skip/refused 不是該命令 pass；只補缺少的輕量文件驗證收據，不因此重跑實際大型 audit／product suite、不擴大測試範圍。"
+        ],
+        "verification": [
+          "git diff --check",
+          "python3 -c 'import json,re,sys\nfrom pathlib import Path\nfrom urllib.parse import unquote,urlsplit\nnames=['\"'\"'docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/README.md'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/event-contract-draft.json'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/field-dictionary.md'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/source-consumer-map.json'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/human-input-request-H04.md'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/implementation-handoff.md'\"'\"']\nerrors=[]\nfiles=[]\nfor name in names:\n    path=Path(name)\n    if name.endswith(\"/\"):\n        if not path.is_dir() or not any(f.is_file() and f.stat().st_size for f in path.rglob(\"*\")): errors.append(\"missing or empty directory: \"+name)\n    elif not path.is_file() or not path.stat().st_size: errors.append(\"missing or empty file: \"+name)\n    else: files.append(path)\nfor path in files:\n    if path.suffix==\".json\":\n        try:\n            value=json.loads(path.read_text(encoding=\"utf-8\"))\n            if not isinstance(value,(dict,list)) or not value: errors.append(\"expected nonempty JSON object or array: \"+str(path))\n        except (ValueError,UnicodeError) as exc: errors.append(str(path)+\": \"+str(exc))\nreadme=Path(names[0])\nif readme.is_file():\n    body=readme.read_text(encoding=\"utf-8\")\n    for name in names[1:]:\n        if Path(name).name not in body: errors.append(\"README does not index artifact: \"+name)\nfor path in files:\n    if path.suffix==\".md\":\n        for target in re.findall(r\"!?\\[[^\\]]*\\]\\(([^\\s)]+)(?:\\s+[^)]*)?\\)\",path.read_text(encoding=\"utf-8\")):\n            target=target.strip(\"<>\")\n            parsed=urlsplit(target)\n            if not parsed.scheme and not parsed.netloc and parsed.path and not parsed.path.startswith(\"/\"):\n                if not (path.parent/unquote(parsed.path)).exists(): errors.append(\"broken local link: \"+str(path)+\" -> \"+target)\nif errors:\n    print(\"\\n\".join(errors),file=sys.stderr)\n    raise SystemExit(1)\nprint(\"Validated \"+str(len(names))+\" required artifacts, JSON contents, README index, and local Markdown links\")'"
+        ],
+        "source_docs": [
+          "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_SITE001_DATA_READINESS_2026-09-03.md"
+        ],
+        "source_refs": [
+          {
+            "reference": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+            "work_package": "WP-31A",
+            "use": "authoritative user decision transcription; pin published merge SHA before assign"
+          },
+          {
+            "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md",
+            "use": "historical baseline to revalidate; not evidence of current runtime"
+          },
+          {
+            "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_SITE001_DATA_READINESS_2026-09-03.md",
+            "use": "historical baseline to revalidate; not evidence of current runtime"
+          }
+        ],
+        "evidence_path": "docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/",
+        "catalog_managed": false,
+        "stage": "A",
+        "work_package": "WP-31A",
+        "next_stage_entry": "31B 等 H04 真實事件／財務定義與 source-consumer 契約確認；與 30B 共享 scoring／migration 改動需排序。",
+        "related_task_ids": [
+          "ODP-SITE001-DATA-READINESS-001",
+          "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001"
+        ],
+        "assignment_note": "新後續工程 task；復用已完成稽核背景，不恢復或覆寫歷史 task。只依賴已發布本計画的 task；H01/H03-H08 僅阻擋各自後續階段。",
+        "mutates_canonical": true
+      },
+      "assign_env": {
+        "TASK_DEPENDS_ON": "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+      }
+    },
+    {
+      "id": "ODP-NET002-LEASE-CONTRACT-PREP-001",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "title": "交 NetPlan 租約最小契約、solver 一致驗收方案與 H05 請求",
+      "metadata": {
+        "task_class": "remediation",
+        "priority": "P1",
+        "repository": "alfloop-dev/odayplus",
+        "base_branch": "dev",
+        "phase": "human decision engineering preparation",
+        "summary_zh": "交 NetPlan 租約最小契約、solver 一致驗收方案與 H05 請求；在獨立證據目錄交付可審查的 A 階段，不等待尚未提供的 B 階段資料。",
+        "depends_on": [
+          "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+        ],
+        "artifacts": [
+          "docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/README.md",
+          "docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/lease-contract-draft.json",
+          "docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/field-dictionary.md",
+          "docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/solver-acceptance-matrix.md",
+          "docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/human-input-request-H05.md",
+          "docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/implementation-handoff.md"
+        ],
+        "owned_paths": [
+          "docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/"
+        ],
+        "forbidden_paths": [
+          "ai-status.json",
+          "ai-activity-log.jsonl",
+          "ai-task-archive/",
+          ".orchestrator/",
+          ".github/",
+          "infra/",
+          "docs/security/",
+          "docs/evidence/gates/",
+          "delivery_toolchain/governance/",
+          "docs/governance/",
+          "docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md",
+          "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+          "modules/",
+          "apps/",
+          "packages/",
+          "pipelines/",
+          "models/",
+          "solver/",
+          "shared/",
+          "scripts/",
+          "delivery_toolchain/security/",
+          "tests/",
+          "pyproject.toml",
+          "uv.lock",
+          "package.json",
+          "package-lock.json",
+          "Makefile",
+          "NOTICE-THIRD-PARTY.md"
+        ],
+        "acceptance": [
+          "盤點 modules/netplan 與 solver/netplan 現況，指出 store／candidate 檔期、租約費用欄位、admissibility、MIP／CP-SAT 真實接點；复用舊契約，不以新 task 重做已存在 NetPlan 實作。",
+          "交契約：租約起迄、續約、提前終止／押金／復原費、裝修許可、新址可得／簽約期限、來源／權限／lineage；敏感真實合約不得提交 repo。",
+          "交 H05 最小授權匯出請求及 OPEN／KEEP／IMPROVE／MOVE／EXIT 驗收矩陣；MOVE 同驗旧約新址。missing 不等於零；實測零合法；兩 solver 約束要一致。",
+          "使用 task_start／既有 Worker Manager 在獨立 worktree 交付；允許修改 owned_paths 文件、commit、push、建立 task PR，並使用指定 runtime-current canonical writer 執行該 task 的 lifecycle、progress、submit_review／task_finalize。mutates_canonical=true 表示這是可交付變更的工程 task，並非授權手改 dashboard。ai-status／archive 禁止路徑只禁止直接檔案寫入，不禁止經指定 canonical writer 的必要 lifecycle 更新。",
+          "每項觀測標 inspected source SHA、UTC、精確檔案或命令與原始 exit code；沿用舊證據必須標日期及適用版本。unknown、未取得權限或不存在不可互換；既有稽核完成不等於原需求已完成。",
+          "本 task 可在資料／正式 receipt 未齊時完成工程準備交付；文件須明列下一階段的具體入場條件，禁止把待資料 B 階段、正式核准、provider 驗證或 production 能力標 done。",
+          "不建立 waiver、--ignore-vuln 或環境變數 bypass；不偽造 Human/Ops 身分、法務簽章或回讀；不改 gate、hold、provider、模型、配額或 production 資源。",
+          "所有新增 Markdown 連結與 source refs 可解析；JSON 可解析；git diff --check 通過。文檔工作不新增鏡像 implementation 的 tests，不為湊證據重跑無關 suite。",
+          "交付結構驗收：所有 artifacts 指定的檔案存在且非空，指定目錄含至少一個非空檔案，指定 JSON 為非空 object／array；README 必須索引本 task 其餘指定產物。新增 Markdown 的本地相對連結可解析；必須先完成真實文件再執行 verification，不為過驗證填 placeholder／捏造收據。",
+          "證據採集與調查指引（不是 finalize 必須全綠的 verification commands）：rg -n \"lease|termination|availability\" modules/netplan solver/netplan  # source inventory only\n核對欄位字典、H05 與五種 action 驗收矩陣；草案 JSON parse 與來源連結驗證",
+          "採集命令逐條保存實際 argv／source SHA／UTC／原始 exit_code／sanitized output 或原收據 reference；audit finding、檔案未存在、無權限、網路／工具錯誤與超時各自如實分類。相關 audit／只讀 probe 非零不自動阻止本 A 階段證據包交付，但不可冒稱 scan／runtime／provider／security gate pass；必要證據仍未知時明列後续補採集責任與入場條件，不消音、不吞 exit code、不建立例外。",
+          "驗證收據執行提示：使用既有 task_verification run/check 在交付 exact HEAD 取得每條 verification 的真正 command receipt；runner 以 head＋selection fingerprint 去重，若不同命令被誤判 duplicate/refused 而缺少其中一條的收據，使用 run --retry-reason 並具體寫出「missing distinct command receipt: <實際缺少的命令>；same selection fingerprint collision」後執行，再以 check 確認逐命令已證明。skip/refused 不是該命令 pass；只補缺少的輕量文件驗證收據，不因此重跑實際大型 audit／product suite、不擴大測試範圍。"
+        ],
+        "verification": [
+          "git diff --check",
+          "python3 -c 'import json,re,sys\nfrom pathlib import Path\nfrom urllib.parse import unquote,urlsplit\nnames=['\"'\"'docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/README.md'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/lease-contract-draft.json'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/field-dictionary.md'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/solver-acceptance-matrix.md'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/human-input-request-H05.md'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/implementation-handoff.md'\"'\"']\nerrors=[]\nfiles=[]\nfor name in names:\n    path=Path(name)\n    if name.endswith(\"/\"):\n        if not path.is_dir() or not any(f.is_file() and f.stat().st_size for f in path.rglob(\"*\")): errors.append(\"missing or empty directory: \"+name)\n    elif not path.is_file() or not path.stat().st_size: errors.append(\"missing or empty file: \"+name)\n    else: files.append(path)\nfor path in files:\n    if path.suffix==\".json\":\n        try:\n            value=json.loads(path.read_text(encoding=\"utf-8\"))\n            if not isinstance(value,(dict,list)) or not value: errors.append(\"expected nonempty JSON object or array: \"+str(path))\n        except (ValueError,UnicodeError) as exc: errors.append(str(path)+\": \"+str(exc))\nreadme=Path(names[0])\nif readme.is_file():\n    body=readme.read_text(encoding=\"utf-8\")\n    for name in names[1:]:\n        if Path(name).name not in body: errors.append(\"README does not index artifact: \"+name)\nfor path in files:\n    if path.suffix==\".md\":\n        for target in re.findall(r\"!?\\[[^\\]]*\\]\\(([^\\s)]+)(?:\\s+[^)]*)?\\)\",path.read_text(encoding=\"utf-8\")):\n            target=target.strip(\"<>\")\n            parsed=urlsplit(target)\n            if not parsed.scheme and not parsed.netloc and parsed.path and not parsed.path.startswith(\"/\"):\n                if not (path.parent/unquote(parsed.path)).exists(): errors.append(\"broken local link: \"+str(path)+\" -> \"+target)\nif errors:\n    print(\"\\n\".join(errors),file=sys.stderr)\n    raise SystemExit(1)\nprint(\"Validated \"+str(len(names))+\" required artifacts, JSON contents, README index, and local Markdown links\")'"
+        ],
+        "source_docs": [
+          "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_NET002_LEASE_DISPOSITION_2026-09-03.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_NET002_LEASE_DATA_READINESS_2026-09-03.md"
+        ],
+        "source_refs": [
+          {
+            "reference": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+            "work_package": "WP-32A",
+            "use": "authoritative user decision transcription; pin published merge SHA before assign"
+          },
+          {
+            "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_NET002_LEASE_DISPOSITION_2026-09-03.md",
+            "use": "historical baseline to revalidate; not evidence of current runtime"
+          },
+          {
+            "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_NET002_LEASE_DATA_READINESS_2026-09-03.md",
+            "use": "historical baseline to revalidate; not evidence of current runtime"
+          }
+        ],
+        "evidence_path": "docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/",
+        "catalog_managed": false,
+        "stage": "A",
+        "work_package": "WP-32A",
+        "next_stage_entry": "32B 等 H05 真實租約來源／必要欄位／檔期驗證；不以 UI acknowledgement 或 None 代資料。",
+        "related_task_ids": [
+          "ODP-NET002-LEASE-DATA-READINESS-001",
+          "ODP-NET002-LEASE-DISPOSITION-001"
+        ],
+        "assignment_note": "新後續工程 task；復用已完成稽核背景，不恢復或覆寫歷史 task。只依賴已發布本計画的 task；H01/H03-H08 僅阻擋各自後續階段。",
+        "mutates_canonical": true
+      },
+      "assign_env": {
+        "TASK_DEPENDS_ON": "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+      }
+    },
+    {
+      "id": "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001",
+      "owner": "Antigravity2",
+      "reviewer": "Codex2",
+      "title": "交真實 durable job 候選與 PARTIAL／receipt／retry 契約及 H06 請求",
+      "metadata": {
+        "task_class": "remediation",
+        "priority": "P1",
+        "repository": "alfloop-dev/odayplus",
+        "base_branch": "dev",
+        "phase": "human decision engineering preparation",
+        "summary_zh": "交真實 durable job 候選與 PARTIAL／receipt／retry 契約及 H06 請求；在獨立證據目錄交付可審查的 A 階段，不等待尚未提供的 B 階段資料。",
+        "depends_on": [
+          "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+        ],
+        "artifacts": [
+          "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/README.md",
+          "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/producer-inventory.json",
+          "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/partial-retry-contract-draft.json",
+          "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/human-input-request-H06.md",
+          "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/implementation-handoff.md"
+        ],
+        "owned_paths": [
+          "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/"
+        ],
+        "forbidden_paths": [
+          "ai-status.json",
+          "ai-activity-log.jsonl",
+          "ai-task-archive/",
+          ".orchestrator/",
+          ".github/",
+          "infra/",
+          "docs/security/",
+          "docs/evidence/gates/",
+          "delivery_toolchain/governance/",
+          "docs/governance/",
+          "docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md",
+          "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+          "modules/",
+          "apps/",
+          "packages/",
+          "pipelines/",
+          "models/",
+          "solver/",
+          "shared/",
+          "scripts/",
+          "delivery_toolchain/security/",
+          "tests/",
+          "pyproject.toml",
+          "uv.lock",
+          "package.json",
+          "package-lock.json",
+          "Makefile",
+          "NOTICE-THIRD-PARTY.md"
+        ],
+        "acceptance": [
+          "從 handler／queue／durable 狀態寫入點逐 job 建 static inventory；有可用可信 runtime 唯讀收據才附 live 欄位，無存取明示 static-only；同步 207／XLSX 部分結果不能列 durable producer。",
+          "交候選 business jobs 的效益／失敗案例與 H06 決策表；草擬 job/item ID、outcome/error/attempt/result ref、aggregate、失敗項 retry、取消／空批次／final aggregate。",
+          "交 33B 驗收：PARTIAL 真實写入、成功項不重做、重啟可回讀、重複／乱序冪等；JobStatus 與 RETRYING／DEAD_LETTER delivery state 區分；不另建 job manager。",
+          "使用 task_start／既有 Worker Manager 在獨立 worktree 交付；允許修改 owned_paths 文件、commit、push、建立 task PR，並使用指定 runtime-current canonical writer 執行該 task 的 lifecycle、progress、submit_review／task_finalize。mutates_canonical=true 表示這是可交付變更的工程 task，並非授權手改 dashboard。ai-status／archive 禁止路徑只禁止直接檔案寫入，不禁止經指定 canonical writer 的必要 lifecycle 更新。",
+          "每項觀測標 inspected source SHA、UTC、精確檔案或命令與原始 exit code；沿用舊證據必須標日期及適用版本。unknown、未取得權限或不存在不可互換；既有稽核完成不等於原需求已完成。",
+          "本 task 可在資料／正式 receipt 未齊時完成工程準備交付；文件須明列下一階段的具體入場條件，禁止把待資料 B 階段、正式核准、provider 驗證或 production 能力標 done。",
+          "不建立 waiver、--ignore-vuln 或環境變數 bypass；不偽造 Human/Ops 身分、法務簽章或回讀；不改 gate、hold、provider、模型、配額或 production 資源。",
+          "所有新增 Markdown 連結與 source refs 可解析；JSON 可解析；git diff --check 通過。文檔工作不新增鏡像 implementation 的 tests，不為湊證據重跑無關 suite。",
+          "交付結構驗收：所有 artifacts 指定的檔案存在且非空，指定目錄含至少一個非空檔案，指定 JSON 為非空 object／array；README 必須索引本 task 其餘指定產物。新增 Markdown 的本地相對連結可解析；必須先完成真實文件再執行 verification，不為過驗證填 placeholder／捏造收據。",
+          "證據採集與調查指引（不是 finalize 必須全綠的 verification commands）：rg -n \"PARTIAL|JobStatus|DEAD_LETTER|RETRYING\" shared modules apps  # source inventory only\n逐 inventory row 回查 producer／state-writer；離線契約與 H06 對照，不將 source inventory 稱 live inventory",
+          "採集命令逐條保存實際 argv／source SHA／UTC／原始 exit_code／sanitized output 或原收據 reference；audit finding、檔案未存在、無權限、網路／工具錯誤與超時各自如實分類。相關 audit／只讀 probe 非零不自動阻止本 A 階段證據包交付，但不可冒稱 scan／runtime／provider／security gate pass；必要證據仍未知時明列後续補採集責任與入場條件，不消音、不吞 exit code、不建立例外。",
+          "驗證收據執行提示：使用既有 task_verification run/check 在交付 exact HEAD 取得每條 verification 的真正 command receipt；runner 以 head＋selection fingerprint 去重，若不同命令被誤判 duplicate/refused 而缺少其中一條的收據，使用 run --retry-reason 並具體寫出「missing distinct command receipt: <實際缺少的命令>；same selection fingerprint collision」後執行，再以 check 確認逐命令已證明。skip/refused 不是該命令 pass；只補缺少的輕量文件驗證收據，不因此重跑實際大型 audit／product suite、不擴大測試範圍。"
+        ],
+        "verification": [
+          "git diff --check",
+          "python3 -c 'import json,re,sys\nfrom pathlib import Path\nfrom urllib.parse import unquote,urlsplit\nnames=['\"'\"'docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/README.md'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/producer-inventory.json'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/partial-retry-contract-draft.json'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/human-input-request-H06.md'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/implementation-handoff.md'\"'\"']\nerrors=[]\nfiles=[]\nfor name in names:\n    path=Path(name)\n    if name.endswith(\"/\"):\n        if not path.is_dir() or not any(f.is_file() and f.stat().st_size for f in path.rglob(\"*\")): errors.append(\"missing or empty directory: \"+name)\n    elif not path.is_file() or not path.stat().st_size: errors.append(\"missing or empty file: \"+name)\n    else: files.append(path)\nfor path in files:\n    if path.suffix==\".json\":\n        try:\n            value=json.loads(path.read_text(encoding=\"utf-8\"))\n            if not isinstance(value,(dict,list)) or not value: errors.append(\"expected nonempty JSON object or array: \"+str(path))\n        except (ValueError,UnicodeError) as exc: errors.append(str(path)+\": \"+str(exc))\nreadme=Path(names[0])\nif readme.is_file():\n    body=readme.read_text(encoding=\"utf-8\")\n    for name in names[1:]:\n        if Path(name).name not in body: errors.append(\"README does not index artifact: \"+name)\nfor path in files:\n    if path.suffix==\".md\":\n        for target in re.findall(r\"!?\\[[^\\]]*\\]\\(([^\\s)]+)(?:\\s+[^)]*)?\\)\",path.read_text(encoding=\"utf-8\")):\n            target=target.strip(\"<>\")\n            parsed=urlsplit(target)\n            if not parsed.scheme and not parsed.netloc and parsed.path and not parsed.path.startswith(\"/\"):\n                if not (path.parent/unquote(parsed.path)).exists(): errors.append(\"broken local link: \"+str(path)+\" -> \"+target)\nif errors:\n    print(\"\\n\".join(errors),file=sys.stderr)\n    raise SystemExit(1)\nprint(\"Validated \"+str(len(names))+\" required artifacts, JSON contents, README index, and local Markdown links\")'"
+        ],
+        "source_docs": [
+          "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md"
+        ],
+        "source_refs": [
+          {
+            "reference": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+            "work_package": "WP-33A",
+            "use": "authoritative user decision transcription; pin published merge SHA before assign"
+          },
+          {
+            "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md",
+            "use": "historical baseline to revalidate; not evidence of current runtime"
+          },
+          {
+            "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md",
+            "use": "historical baseline to revalidate; not evidence of current runtime"
+          }
+        ],
+        "evidence_path": "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/",
+        "catalog_managed": false,
+        "stage": "A",
+        "work_package": "WP-33A",
+        "next_stage_entry": "33B 至少需 H06 指定一個真實 business durable job 及結果／重試契約；production live 收據獨立完成。",
+        "related_task_ids": [
+          "ODP-JOB-PARTIAL-PRODUCER-EVIDENCE-001",
+          "ODP-JOB-PARTIAL-DISPOSITION-001"
+        ],
+        "assignment_note": "新後續工程 task；復用已完成稽核背景，不恢復或覆寫歷史 task。只依賴已發布本計画的 task；H01/H03-H08 僅阻擋各自後續階段。",
+        "mutates_canonical": true
+      },
+      "assign_env": {
+        "TASK_DEPENDS_ON": "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+      }
+    },
+    {
+      "id": "ODP-CDC-SOURCE-CONTRACT-PREP-001",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "title": "交 CDC 逐來源適用性／刪除傳播矩陣與 H07 請求",
+      "metadata": {
+        "task_class": "remediation",
+        "priority": "P1",
+        "repository": "alfloop-dev/odayplus",
+        "base_branch": "dev",
+        "phase": "human decision engineering preparation",
+        "summary_zh": "交 CDC 逐來源適用性／刪除傳播矩陣與 H07 請求；在獨立證據目錄交付可審查的 A 階段，不等待尚未提供的 B 階段資料。",
+        "depends_on": [
+          "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+        ],
+        "artifacts": [
+          "docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/README.md",
+          "docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/source-applicability-matrix.json",
+          "docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/event-contract-draft.json",
+          "docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/human-input-request-H07.md",
+          "docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/implementation-handoff.md"
+        ],
+        "owned_paths": [
+          "docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/"
+        ],
+        "forbidden_paths": [
+          "ai-status.json",
+          "ai-activity-log.jsonl",
+          "ai-task-archive/",
+          ".orchestrator/",
+          ".github/",
+          "infra/",
+          "docs/security/",
+          "docs/evidence/gates/",
+          "delivery_toolchain/governance/",
+          "docs/governance/",
+          "docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md",
+          "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+          "modules/",
+          "apps/",
+          "packages/",
+          "pipelines/",
+          "models/",
+          "solver/",
+          "shared/",
+          "scripts/",
+          "delivery_toolchain/security/",
+          "tests/",
+          "pyproject.toml",
+          "uv.lock",
+          "package.json",
+          "package-lock.json",
+          "Makefile",
+          "NOTICE-THIRD-PARTY.md"
+        ],
+        "acceptance": [
+          "依最新實際 ingestion 來源逐列模式／owner／延遲／排序／刪除撤回／冪等／最小權限與批次能力差距；舊 source audit 與現況差異明确標示。",
+          "交 H07 來源／SLA／刪除順序決策矩陣及 scoped envelope/checkpoint/resume/tombstone 草案；現況未知保持 unknown，不把 user 選實作改成不做。",
+          "交 34B 驗收：insert/update/delete/withdraw、duplicate/out-of-order、斷線恢復/checkpoint replay、tenant 隔離及真實延遲。可獨立修的既有刪除傳播缺陷列 scoped follow-up，不實作空 connector。",
+          "使用 task_start／既有 Worker Manager 在獨立 worktree 交付；允許修改 owned_paths 文件、commit、push、建立 task PR，並使用指定 runtime-current canonical writer 執行該 task 的 lifecycle、progress、submit_review／task_finalize。mutates_canonical=true 表示這是可交付變更的工程 task，並非授權手改 dashboard。ai-status／archive 禁止路徑只禁止直接檔案寫入，不禁止經指定 canonical writer 的必要 lifecycle 更新。",
+          "每項觀測標 inspected source SHA、UTC、精確檔案或命令與原始 exit code；沿用舊證據必須標日期及適用版本。unknown、未取得權限或不存在不可互換；既有稽核完成不等於原需求已完成。",
+          "本 task 可在資料／正式 receipt 未齊時完成工程準備交付；文件須明列下一階段的具體入場條件，禁止把待資料 B 階段、正式核准、provider 驗證或 production 能力標 done。",
+          "不建立 waiver、--ignore-vuln 或環境變數 bypass；不偽造 Human/Ops 身分、法務簽章或回讀；不改 gate、hold、provider、模型、配額或 production 資源。",
+          "所有新增 Markdown 連結與 source refs 可解析；JSON 可解析；git diff --check 通過。文檔工作不新增鏡像 implementation 的 tests，不為湊證據重跑無關 suite。",
+          "交付結構驗收：所有 artifacts 指定的檔案存在且非空，指定目錄含至少一個非空檔案，指定 JSON 為非空 object／array；README 必須索引本 task 其餘指定產物。新增 Markdown 的本地相對連結可解析；必須先完成真實文件再執行 verification，不為過驗證填 placeholder／捏造收據。",
+          "證據採集與調查指引（不是 finalize 必須全綠的 verification commands）：rg -n \"cdc|CDC|tombstone|checkpoint|withdraw\" pipelines modules shared packages/schemas/source_contracts  # source inventory only\n逐來源核對 existing contract／read-write path 與未決 H07 欄位；草案 JSON parse 與 references 驗證",
+          "採集命令逐條保存實際 argv／source SHA／UTC／原始 exit_code／sanitized output 或原收據 reference；audit finding、檔案未存在、無權限、網路／工具錯誤與超時各自如實分類。相關 audit／只讀 probe 非零不自動阻止本 A 階段證據包交付，但不可冒稱 scan／runtime／provider／security gate pass；必要證據仍未知時明列後续補採集責任與入場條件，不消音、不吞 exit code、不建立例外。",
+          "驗證收據執行提示：使用既有 task_verification run/check 在交付 exact HEAD 取得每條 verification 的真正 command receipt；runner 以 head＋selection fingerprint 去重，若不同命令被誤判 duplicate/refused 而缺少其中一條的收據，使用 run --retry-reason 並具體寫出「missing distinct command receipt: <實際缺少的命令>；same selection fingerprint collision」後執行，再以 check 確認逐命令已證明。skip/refused 不是該命令 pass；只補缺少的輕量文件驗證收據，不因此重跑實際大型 audit／product suite、不擴大測試範圍。"
+        ],
+        "verification": [
+          "git diff --check",
+          "python3 -c 'import json,re,sys\nfrom pathlib import Path\nfrom urllib.parse import unquote,urlsplit\nnames=['\"'\"'docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/README.md'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/source-applicability-matrix.json'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/event-contract-draft.json'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/human-input-request-H07.md'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/implementation-handoff.md'\"'\"']\nerrors=[]\nfiles=[]\nfor name in names:\n    path=Path(name)\n    if name.endswith(\"/\"):\n        if not path.is_dir() or not any(f.is_file() and f.stat().st_size for f in path.rglob(\"*\")): errors.append(\"missing or empty directory: \"+name)\n    elif not path.is_file() or not path.stat().st_size: errors.append(\"missing or empty file: \"+name)\n    else: files.append(path)\nfor path in files:\n    if path.suffix==\".json\":\n        try:\n            value=json.loads(path.read_text(encoding=\"utf-8\"))\n            if not isinstance(value,(dict,list)) or not value: errors.append(\"expected nonempty JSON object or array: \"+str(path))\n        except (ValueError,UnicodeError) as exc: errors.append(str(path)+\": \"+str(exc))\nreadme=Path(names[0])\nif readme.is_file():\n    body=readme.read_text(encoding=\"utf-8\")\n    for name in names[1:]:\n        if Path(name).name not in body: errors.append(\"README does not index artifact: \"+name)\nfor path in files:\n    if path.suffix==\".md\":\n        for target in re.findall(r\"!?\\[[^\\]]*\\]\\(([^\\s)]+)(?:\\s+[^)]*)?\\)\",path.read_text(encoding=\"utf-8\")):\n            target=target.strip(\"<>\")\n            parsed=urlsplit(target)\n            if not parsed.scheme and not parsed.netloc and parsed.path and not parsed.path.startswith(\"/\"):\n                if not (path.parent/unquote(parsed.path)).exists(): errors.append(\"broken local link: \"+str(path)+\" -> \"+target)\nif errors:\n    print(\"\\n\".join(errors),file=sys.stderr)\n    raise SystemExit(1)\nprint(\"Validated \"+str(len(names))+\" required artifacts, JSON contents, README index, and local Markdown links\")'"
+        ],
+        "source_docs": [
+          "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_INT001_CDC_SOURCE_EVIDENCE_2026-09-03.md"
+        ],
+        "source_refs": [
+          {
+            "reference": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+            "work_package": "WP-34A",
+            "use": "authoritative user decision transcription; pin published merge SHA before assign"
+          },
+          {
+            "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md",
+            "use": "historical baseline to revalidate; not evidence of current runtime"
+          },
+          {
+            "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_INT001_CDC_SOURCE_EVIDENCE_2026-09-03.md",
+            "use": "historical baseline to revalidate; not evidence of current runtime"
+          }
+        ],
+        "evidence_path": "docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/",
+        "catalog_managed": false,
+        "stage": "A",
+        "work_package": "WP-34A",
+        "next_stage_entry": "34B 等 H07 指定實際來源/SLA、穩定契約與必要權限；任何新增 production credential／broker 另交具體差異。",
+        "related_task_ids": [
+          "ODP-INT001-CDC-SOURCE-EVIDENCE-001",
+          "ODP-INT001-CDC-DISPOSITION-001"
+        ],
+        "assignment_note": "新後續工程 task；復用已完成稽核背景，不恢復或覆寫歷史 task。只依賴已發布本計画的 task；H01/H03-H08 僅阻擋各自後續階段。",
+        "mutates_canonical": true
+      },
+      "assign_env": {
+        "TASK_DEPENDS_ON": "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+      }
+    },
+    {
+      "id": "ODP-MERGE-QUEUE-BATCH-DESIGN-001",
+      "owner": "Antigravity3",
+      "reviewer": "Codex2",
+      "title": "將批次 queue 視為正式需求並交只讀量測與可審查設計",
+      "metadata": {
+        "task_class": "remediation",
+        "priority": "P1",
+        "repository": "alfloop-dev/odayplus",
+        "base_branch": "dev",
+        "phase": "human decision engineering preparation",
+        "summary_zh": "將批次 queue 視為正式需求並交只讀量測與可審查設計；在獨立證據目錄交付可審查的 A 階段，不等待尚未提供的 B 階段資料。",
+        "depends_on": [
+          "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+        ],
+        "artifacts": [
+          "docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/README.md",
+          "docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/queue-observations.json",
+          "docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/batch-requirement.md",
+          "docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/configuration-options.md",
+          "docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/governance-handoff.md",
+          "docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/implementation-handoff.md"
+        ],
+        "owned_paths": [
+          "docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/"
+        ],
+        "forbidden_paths": [
+          "ai-status.json",
+          "ai-activity-log.jsonl",
+          "ai-task-archive/",
+          ".orchestrator/",
+          ".github/",
+          "infra/",
+          "docs/security/",
+          "docs/evidence/gates/",
+          "delivery_toolchain/governance/",
+          "docs/governance/",
+          "docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md",
+          "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+          "modules/",
+          "apps/",
+          "packages/",
+          "pipelines/",
+          "models/",
+          "solver/",
+          "shared/",
+          "scripts/",
+          "delivery_toolchain/security/",
+          "tests/",
+          "pyproject.toml",
+          "uv.lock",
+          "package.json",
+          "package-lock.json",
+          "Makefile",
+          "NOTICE-THIRD-PARTY.md"
+        ],
+        "acceptance": [
+          "依 D21 建 task-owned 批次需求規格，明記先前已裁決不做沒有權威來源且 user 現選實作；向 WP-90 交治理更新片段，不與其他工作爭寫 shared manifest/open-decisions。",
+          "唯讀量測 alfloop-dev/odayplus dev queue 深度、等待、CI duration/failure，記 timeframe/sample-size/selection/UTC/argv/exit code；API 權限錯誤或 zero samples 不變成零失敗率。",
+          "查平台官方現行支援與 pinned local policy；交 min/max batch、bounded wait、failure isolation、rollback 的可比較方案和 H08 取捨；數值由量測提出但不寫 live policy 或啟用。",
+          "交 35B/C 驗收：多 PR 成 batch、避免無限等待、未核准／required-check 失敗不能混入、head 變更重驗、batch 失敗隔離與重排、merge_group CI 真實執行；不降低任何 required check/review gate。",
+          "使用 task_start／既有 Worker Manager 在獨立 worktree 交付；允許修改 owned_paths 文件、commit、push、建立 task PR，並使用指定 runtime-current canonical writer 執行該 task 的 lifecycle、progress、submit_review／task_finalize。mutates_canonical=true 表示這是可交付變更的工程 task，並非授權手改 dashboard。ai-status／archive 禁止路徑只禁止直接檔案寫入，不禁止經指定 canonical writer 的必要 lifecycle 更新。",
+          "每項觀測標 inspected source SHA、UTC、精確檔案或命令與原始 exit code；沿用舊證據必須標日期及適用版本。unknown、未取得權限或不存在不可互換；既有稽核完成不等於原需求已完成。",
+          "本 task 可在資料／正式 receipt 未齊時完成工程準備交付；文件須明列下一階段的具體入場條件，禁止把待資料 B 階段、正式核准、provider 驗證或 production 能力標 done。",
+          "不建立 waiver、--ignore-vuln 或環境變數 bypass；不偽造 Human/Ops 身分、法務簽章或回讀；不改 gate、hold、provider、模型、配額或 production 資源。",
+          "所有新增 Markdown 連結與 source refs 可解析；JSON 可解析；git diff --check 通過。文檔工作不新增鏡像 implementation 的 tests，不為湊證據重跑無關 suite。",
+          "交付結構驗收：所有 artifacts 指定的檔案存在且非空，指定目錄含至少一個非空檔案，指定 JSON 為非空 object／array；README 必須索引本 task 其餘指定產物。新增 Markdown 的本地相對連結可解析；必須先完成真實文件再執行 verification，不為過驗證填 placeholder／捏造收據。",
+          "證據採集與調查指引（不是 finalize 必須全綠的 verification commands）：gh pr list --repo alfloop-dev/odayplus --base dev --state open --json number,headRefOid,statusCheckRollup,createdAt,updatedAt  # read-only; source receipts sanitize\ngh run list --repo alfloop-dev/odayplus --event merge_group --limit 100 --json databaseId,headSha,status,conclusion,createdAt,updatedAt,url  # read-only; mark sampling limits\n查 GitHub 官方 merge queue 文件並保存日期／support refs；對照當前 policy 與回讀，提出 diff 不 apply",
+          "採集命令逐條保存實際 argv／source SHA／UTC／原始 exit_code／sanitized output 或原收據 reference；audit finding、檔案未存在、無權限、網路／工具錯誤與超時各自如實分類。相關 audit／只讀 probe 非零不自動阻止本 A 階段證據包交付，但不可冒稱 scan／runtime／provider／security gate pass；必要證據仍未知時明列後续補採集責任與入場條件，不消音、不吞 exit code、不建立例外。",
+          "驗證收據執行提示：使用既有 task_verification run/check 在交付 exact HEAD 取得每條 verification 的真正 command receipt；runner 以 head＋selection fingerprint 去重，若不同命令被誤判 duplicate/refused 而缺少其中一條的收據，使用 run --retry-reason 並具體寫出「missing distinct command receipt: <實際缺少的命令>；same selection fingerprint collision」後執行，再以 check 確認逐命令已證明。skip/refused 不是該命令 pass；只補缺少的輕量文件驗證收據，不因此重跑實際大型 audit／product suite、不擴大測試範圍。"
+        ],
+        "verification": [
+          "git diff --check",
+          "python3 -c 'import json,re,sys\nfrom pathlib import Path\nfrom urllib.parse import unquote,urlsplit\nnames=['\"'\"'docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/README.md'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/queue-observations.json'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/batch-requirement.md'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/configuration-options.md'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/governance-handoff.md'\"'\"', '\"'\"'docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/implementation-handoff.md'\"'\"']\nerrors=[]\nfiles=[]\nfor name in names:\n    path=Path(name)\n    if name.endswith(\"/\"):\n        if not path.is_dir() or not any(f.is_file() and f.stat().st_size for f in path.rglob(\"*\")): errors.append(\"missing or empty directory: \"+name)\n    elif not path.is_file() or not path.stat().st_size: errors.append(\"missing or empty file: \"+name)\n    else: files.append(path)\nfor path in files:\n    if path.suffix==\".json\":\n        try:\n            value=json.loads(path.read_text(encoding=\"utf-8\"))\n            if not isinstance(value,(dict,list)) or not value: errors.append(\"expected nonempty JSON object or array: \"+str(path))\n        except (ValueError,UnicodeError) as exc: errors.append(str(path)+\": \"+str(exc))\nreadme=Path(names[0])\nif readme.is_file():\n    body=readme.read_text(encoding=\"utf-8\")\n    for name in names[1:]:\n        if Path(name).name not in body: errors.append(\"README does not index artifact: \"+name)\nfor path in files:\n    if path.suffix==\".md\":\n        for target in re.findall(r\"!?\\[[^\\]]*\\]\\(([^\\s)]+)(?:\\s+[^)]*)?\\)\",path.read_text(encoding=\"utf-8\")):\n            target=target.strip(\"<>\")\n            parsed=urlsplit(target)\n            if not parsed.scheme and not parsed.netloc and parsed.path and not parsed.path.startswith(\"/\"):\n                if not (path.parent/unquote(parsed.path)).exists(): errors.append(\"broken local link: \"+str(path)+\" -> \"+target)\nif errors:\n    print(\"\\n\".join(errors),file=sys.stderr)\n    raise SystemExit(1)\nprint(\"Validated \"+str(len(names))+\" required artifacts, JSON contents, README index, and local Markdown links\")'"
+        ],
+        "source_docs": [
+          "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_MERGE_QUEUE_DISPOSITION_2026-09-03.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/runbooks/dev-merge-queue.md"
+        ],
+        "source_refs": [
+          {
+            "reference": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+            "work_package": "WP-35A",
+            "use": "authoritative user decision transcription; pin published merge SHA before assign"
+          },
+          {
+            "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_MERGE_QUEUE_DISPOSITION_2026-09-03.md",
+            "use": "historical baseline to revalidate; not evidence of current runtime"
+          },
+          {
+            "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/runbooks/dev-merge-queue.md",
+            "use": "historical baseline to revalidate; not evidence of current runtime"
+          }
+        ],
+        "evidence_path": "docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/",
+        "catalog_managed": false,
+        "stage": "A",
+        "work_package": "WP-35A",
+        "next_stage_entry": "35B 依 measured design 做 scoped config/tests PR；35C live 啟用需具體 reviewed diff/target/rollback/readback 及既有授權流程。",
+        "related_task_ids": [
+          "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+          "ODP-ORCH-MERGE-QUEUE-ACTIVATION-001"
+        ],
+        "assignment_note": "新後續工程 task；復用已完成稽核背景，不恢復或覆寫歷史 task。只依賴已發布本計画的 task；H01/H03-H08 僅阻擋各自後續階段。",
+        "mutates_canonical": true
+      },
+      "assign_env": {
+        "TASK_DEPENDS_ON": "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+      }
+    }
+  ],
+  "subsequent_drafts_not_for_first_wave_assign": [
+    {
+      "work_package": "WP-11A",
+      "proposed_id": "ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001",
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "task_class": "remediation",
+      "repository": "alfloop-dev/odayplus",
+      "base_branch": "dev",
+      "depends_on": [
+        "ODP-OSS-DECISION-PACK-001"
+      ],
+      "ready_now": false,
+      "reason": "WP-10 未完成；盤點後才能固定實際存在 manifests、generator 缺口、精確 paths/test selectors。",
+      "scope": "實作第一方 UNLICENSED 標示、OSS 政策提案與既有 NOTICE 工具缺口；能獨立合入的標示／聲明工程不等 H01。政策生效及 dev 風險例外不包含本 task。",
+      "owned_paths_draft": [
+        "經 WP-10 證明第一方身分的八個 package.json",
+        "docs/security/license_policy.json 中 proposal/inactive 範圍",
+        "delivery_toolchain/security/generate_oss_notice.py",
+        "tests/security/test_oss_notice.py",
+        "tests/security/test_oss_license_gate.py",
+        "NOTICE-THIRD-PARTY.md"
+      ],
+      "forbidden_paths": [
+        "docs/security/license_exemptions.json",
+        ".orchestrator/",
+        ".github/",
+        "docs/evidence/gates/"
+      ],
+      "acceptance": [
+        "UNKNOWN 第三方不因第一方標示放行",
+        "NOTICE 與該版 SBOM/installed deps 對應",
+        "D13 政策草案與 enforcement activation 明確區分",
+        "缺 receipt／expired／tampered／scope mismatch 的既有 gate 仍 fail closed"
+      ],
+      "verification": [
+        "uv run pytest tests/security/test_oss_notice.py tests/security/test_oss_license_gate.py -q",
+        "uv run python delivery_toolchain/security/generate_oss_notice.py --check",
+        "required CI on submitted exact head"
+      ],
+      "next_stage": "WP-11B 政策生效須 H01，任何 D06 個案另需 H02；無 finding 不建立空白例外。"
+    },
+    {
+      "work_package": "WP-90A",
+      "proposed_id": "ODP-HUMAN-DECISIONS-HANDBACK-INTEGRATION-001",
+      "owner": "Claude2",
+      "reviewer": "Codex2",
+      "task_class": "remediation",
+      "repository": "alfloop-dev/odayplus",
+      "base_branch": "dev",
+      "depends_on": [
+        "ODP-OSS-DECISION-PACK-001",
+        "ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001",
+        "ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
+        "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001",
+        "ODP-NET002-LEASE-CONTRACT-PREP-001",
+        "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001",
+        "ODP-CDC-SOURCE-CONTRACT-PREP-001",
+        "ODP-MERGE-QUEUE-BATCH-DESIGN-001"
+      ],
+      "ready_now": false,
+      "reason": "A 階段成果尚未 merge；可由 root 在已驗證成果到位後拆增量集中整合，避免一個 waiting task 反覆 dispatch。",
+      "scope": "集中將 D01-D21、task/PR/SHA 與 H01-H08 真正缺欄對齊既有 Human tasks/open-decisions/requirement manifest，更新原 structural closeout 引用。",
+      "owned_paths_draft": [
+        "docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md",
+        "docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md",
+        "delivery_toolchain/governance/set_valued_requirements.json",
+        "docs/evidence/ODP_STRUCTURAL_REMEDIATION_CLOSEOUT_2026-09-03.md"
+      ],
+      "acceptance": [
+        "D16-D20 保持實作方向，未取得 B/live 證據不得 VERIFIED",
+        "D21 登錄交付治理需求，不冒造 ODP-FR id 或 DECIDED waiver",
+        "OAuth 僅在 verified password-first evidence 足夠後對齊待命說明",
+        "Human task 的 next 不再泛稱等待是否實作，但正式 source approval/H01 仍缺時不得 done",
+        "沿 canonical writer 對原 ID note/metadata，無人類冒名/簽署/假 done"
+      ],
+      "verification": [
+        "復用當前 check_requirement_members.py 的精確 CLI 與對應 governance regression；實作前核對 source tree 路徑",
+        "required CI on submitted exact head"
+      ],
+      "next_stage": "全案 WP-90 closeout 待 B 階段真實 producer/consumer/live 與正式 Human acceptance。不得把 A 階段整合當全部 tasks complete。"
+    }
+  ],
+  "proposal_validation": {
+    "source_refs_checked": 15,
+    "all_references_resolve": true,
+    "unique_task_ids": true,
+    "no_exact_id_collision_live_or_archive": true,
+    "live_state_modified": false,
+    "pairwise_owned_paths_disjoint": true,
+    "actual_pool_distribution": {
+      "claude_main": 5,
+      "antigravity_main": 3
+    },
+    "runtime_current_writer_schema_verified": true,
+    "explicit_initial_dependency_env": true,
+    "mutates_canonical_true_count": 8,
+    "executable_verification_commands": 16,
+    "all_commands_pass_runtime_audit_command": true,
+    "all_python_verification_payloads_parse": true,
+    "no_artifact_seed_in_source_docs": true,
+    "same_task_ids_owners_dependencies_owned_forbidden_paths": true,
+    "advisory_probes_not_mandatory_passing_gates": true,
+    "distinct_command_receipt_hint_added_to_all_8": true,
+    "dedupe_behavior_inspected": "runtime-current .orchestrator/verification_evidence.py extract_selection/selection_fingerprint/authorize_baseline and delivery_toolchain/git/task_verification.py cmd_run/build_parser",
+    "selection_fingerprint_observations": [
+      {
+        "task_id": "ODP-OSS-DECISION-PACK-001",
+        "fingerprints": [
+          "846541716505fa057a717f7f527859d2",
+          "b8c061e20e373242afdf3855923b4378"
+        ],
+        "declared_commands_collide": false
+      },
+      {
+        "task_id": "ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001",
+        "fingerprints": [
+          "846541716505fa057a717f7f527859d2",
+          "13f5a025126d1eb7e3b6bfb303748dd1"
+        ],
+        "declared_commands_collide": false
+      },
+      {
+        "task_id": "ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
+        "fingerprints": [
+          "846541716505fa057a717f7f527859d2",
+          "9265674c6c125c033873b51b2c8587c4"
+        ],
+        "declared_commands_collide": false
+      },
+      {
+        "task_id": "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001",
+        "fingerprints": [
+          "846541716505fa057a717f7f527859d2",
+          "5627af87ba23902bcf6b2e05db390bff"
+        ],
+        "declared_commands_collide": false
+      },
+      {
+        "task_id": "ODP-NET002-LEASE-CONTRACT-PREP-001",
+        "fingerprints": [
+          "846541716505fa057a717f7f527859d2",
+          "72dcc05708cc504459c66f74f67e266e"
+        ],
+        "declared_commands_collide": false
+      },
+      {
+        "task_id": "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001",
+        "fingerprints": [
+          "846541716505fa057a717f7f527859d2",
+          "3cc5af5c1b574d2e21d1f9f14a726532"
+        ],
+        "declared_commands_collide": false
+      },
+      {
+        "task_id": "ODP-CDC-SOURCE-CONTRACT-PREP-001",
+        "fingerprints": [
+          "846541716505fa057a717f7f527859d2",
+          "3d7b7f3479d54a82a682085e4ccdcfbe"
+        ],
+        "declared_commands_collide": false
+      },
+      {
+        "task_id": "ODP-MERGE-QUEUE-BATCH-DESIGN-001",
+        "fingerprints": [
+          "846541716505fa057a717f7f527859d2",
+          "8690434d93c2ead9e38cc0be132c395c"
+        ],
+        "declared_commands_collide": false
+      }
+    ],
+    "retry_hint_edit_preserves_all_other_task_fields": true
+  }
+}

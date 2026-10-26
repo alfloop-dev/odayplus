@@ -10,6 +10,7 @@ Acceptance Criteria:
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 import pytest
@@ -27,10 +28,12 @@ from modules.external_data.infrastructure.data_platform_client import (
     DataPlatformClient,
     DataPlatformClientError,
     DataPlatformDocumentNotFoundError,
+    DataPlatformValidationError,
     InMemoryDataPlatformTransport,
 )
 from packages.oday_data_contracts_client.models import (
     EMGIPlatformFoundationConfig,
+    OperationalStartObservation,
     StoreDailyPerformance,
     StoreDayCoverage,
     StoreReference,
@@ -61,6 +64,8 @@ from shared.auth import (
     Principal,
     Role,
     Scope,
+    TenantAccessWaiver,
+    TenantAccessWaiverRegistry,
 )
 from shared.auth.engine import AuthorizationEngine
 
@@ -68,7 +73,9 @@ from shared.auth.engine import AuthorizationEngine
 @pytest.fixture
 def sample_site_context_payload() -> dict[str, Any]:
     return {
+        "contract_version": "emgi.site-market-context.v1",
         "document_id": "smc-doc-test-001",
+        "product_version": "0.4.1",
         "generated_at": "2026-08-14T00:00:00Z",
         "period_grain": "MONTHLY",
         "period_key": "2026-08",
@@ -95,6 +102,7 @@ def sample_site_context_payload() -> dict[str, Any]:
                     "routing_engine": "valhalla",
                     "graph_version": "v1.0",
                     "status": "available",
+                    "h3_cells": ["8928308280fffff"],
                     "h3_resolution": 9,
                     "total_cells_count": 1,
                     "geom": {
@@ -156,7 +164,7 @@ def sample_site_context_payload() -> dict[str, Any]:
                     "status": "available",
                     "activity_population": 15000,
                     "resident_population": 10000,
-                    "work_population": 8000,
+                    "worker_population": 8000,
                 },
                 "traffic": {
                     "status": "available",
@@ -165,7 +173,6 @@ def sample_site_context_payload() -> dict[str, Any]:
                     "motorcycle_hourly_volume": 600,
                     "motorcycle_ratio": 0.5,
                     "level_of_service": "C",
-                    "is_congestion_hotspot": False,
                 },
                 "event": {
                     "status": "available",
@@ -217,7 +224,6 @@ def sample_cell_profile_payload() -> dict[str, Any]:
                 "h3_resolution": 9,
                 "period_grain": "MONTHLY",
                 "period_key": "2026-08",
-                "as_of_date": "2026-08-14",
                 "county": "Taipei City",
                 "district": "Xinyi",
                 "demographics": {
@@ -225,7 +231,6 @@ def sample_cell_profile_payload() -> dict[str, Any]:
                     "male_population": 2400.0,
                     "female_population": 2600.0,
                     "household_count": 1800.0,
-                    "density_per_sq_km": 1000.0,
                     "daytime_population_ratio": 1.2,
                 },
                 "competitors": {
@@ -246,8 +251,9 @@ def sample_cell_profile_payload() -> dict[str, Any]:
                 },
                 "mobility": {
                     "activity_population": 3000,
+                    "is_calibrated": False,
                     "resident_population": 2000,
-                    "work_population": 1500,
+                    "worker_population": 1500,
                 },
                 "coverage": {
                     "overall_readiness": "ready",
@@ -328,7 +334,6 @@ def sample_catchment_profile_payload() -> dict[str, Any]:
                 "mobility": {"status": "available"},
                 "traffic": {"status": "available"},
                 "coverage": {
-                    "status": "available",
                     "overall_readiness": "ready",
                     "domain_coverage": {"MOBILITY": "complete"},
                     "has_gaps": False,
@@ -383,6 +388,7 @@ def sample_property_observation_payload() -> dict[str, Any]:
             }
         ],
         "status_histories": [],
+        "metadata": {"tenant_id": "tenant-alpha"},
     }
 
 
@@ -436,6 +442,23 @@ def sample_store_performance_payload() -> dict[str, Any]:
 
 
 @pytest.fixture
+def sample_operational_start_payload() -> dict[str, Any]:
+    return {
+        "contract_id": "oday.operational-start-observation.v1",
+        "contract_version": "1.0.0",
+        "store_id": "store-101",
+        "method": "FIRST_OBSERVED_TRANSACTION",
+        "confidence": "HIGH",
+        "observed_start_business_date": "2026-01-01",
+        "observation_window_start": "2026-01-01T00:00:00+08:00",
+        "observation_window_end": "2026-08-14T23:59:59+08:00",
+        "is_left_censored": False,
+        "is_operator_truth": False,
+        "time_contract": {"knowledge_as_of": "2026-08-14T23:59:59+08:00"},
+    }
+
+
+@pytest.fixture
 def sample_foundation_config_payload() -> dict[str, Any]:
     return {
         "contract_id": "emgi.platform-foundation.v1",
@@ -455,6 +478,7 @@ def seeded_transport(
     sample_store_reference_payload,
     sample_store_coverage_payload,
     sample_store_performance_payload,
+    sample_operational_start_payload,
     sample_foundation_config_payload,
 ) -> InMemoryDataPlatformTransport:
     transport = InMemoryDataPlatformTransport()
@@ -467,6 +491,7 @@ def seeded_transport(
     transport.store_document("oday.store-reference.v1", "store-101", sample_store_reference_payload)
     transport.store_document("oday.store-coverage.v1", "store-101:2026-08-14", sample_store_coverage_payload)
     transport.store_document("oday.store-daily-performance.v1", "store-101:2026-08-14", sample_store_performance_payload)
+    transport.store_document("oday.operational-start-observation.v1", "store-101", sample_operational_start_payload)
     return transport
 
 
@@ -623,6 +648,11 @@ def test_client_foundation_reads(client):
     perf = client.get_store_daily_performance("store-101", "2026-08-14")
     assert isinstance(perf, StoreDailyPerformance)
     assert perf.transaction_count == 350
+
+    op_start = client.get_operational_start_observation("store-101")
+    assert isinstance(op_start, OperationalStartObservation)
+    assert op_start.store_id == "store-101"
+    assert op_start.observed_start_business_date == "2026-01-01"
 
 
 # ===========================================================================
@@ -782,6 +812,10 @@ def test_facade_authorized_foundation_datasets(facade, data_owner_principal):
     assert isinstance(perf, StoreDailyPerformance)
     assert perf.transaction_count == 350
 
+    op_start = facade.get_operational_start_observation("store-101", principal=data_owner_principal)
+    assert isinstance(op_start, OperationalStartObservation)
+    assert op_start.store_id == "store-101"
+
     cfg = facade.get_platform_foundation_config(principal=data_owner_principal)
     assert isinstance(cfg, EMGIPlatformFoundationConfig)
 
@@ -838,14 +872,50 @@ def test_facade_cross_tenant_isolation_denied(facade, foreign_tenant_principal):
     assert exc_info.value.code == "cross_tenant_access_denied"
 
 
-def test_facade_platform_admin_can_bypass_tenant_isolation(facade, platform_admin_principal):
-    ctx = facade.get_site_market_context(
+def test_facade_platform_admin_denied_cross_tenant_without_waiver(
+    facade, platform_admin_principal
+):
+    """PLATFORM_ADMIN must fail closed on cross-tenant access without an approved waiver."""
+    with pytest.raises(MarketDataAuthorizationError) as exc_info:
+        facade.get_site_market_context(
+            "site-taipei-001",
+            tenant_id="tenant-alpha",
+            principal=platform_admin_principal,
+        )
+    assert exc_info.value.code in {"cross_tenant_access_denied", "missing_tenant"}
+
+
+def test_facade_platform_admin_allowed_cross_tenant_with_waiver(
+    facade, platform_admin_principal
+):
+    """PLATFORM_ADMIN with a formal, time-bounded waiver is permitted and audited."""
+    from datetime import UTC, datetime, timedelta
+
+    waiver = TenantAccessWaiver(
+        waiver_id="WAIVER-ADMIN-TEST",
+        principal_id="admin-platform-1",
+        target_tenant_id="tenant-alpha",
+        approved_by="ciso",
+        reason="Security audit",
+        expires_at=datetime.now(UTC) + timedelta(days=1),
+    )
+    registry = TenantAccessWaiverRegistry()
+    registry.register(waiver)
+    authorized_facade = MarketDataFacade(
+        client=facade.client,
+        auth_engine=facade.auth_engine,
+        enforce_auth=True,
+        waiver_registry=registry,
+    )
+    ctx = authorized_facade.get_site_market_context(
         "site-taipei-001",
         tenant_id="tenant-alpha",
         principal=platform_admin_principal,
+        waiver=waiver,
     )
     assert isinstance(ctx, SiteMarketContext)
     assert ctx.identity.site_id == "site-taipei-001"
+
 
 
 def test_facade_insufficient_clearance_denied(facade):
@@ -1022,6 +1092,7 @@ def test_t1_t2_two_tenant_isolation_and_default_scoping(
     prop_beta_payload = {
         "created_at": "2026-08-14T00:00:00Z",
         "contract_id": "emgi.property-observation.v1",
+        "metadata": {"tenant_id": "tenant-beta"},
         "tenant_id": "tenant-beta",
         "properties": [
             {
@@ -1052,6 +1123,7 @@ def test_t1_t2_two_tenant_isolation_and_default_scoping(
 
     prop_alpha_payload = {
         **sample_property_observation_payload,
+        "metadata": {"tenant_id": "tenant-alpha"},
         "tenant_id": "tenant-alpha",
     }
 
@@ -1084,11 +1156,22 @@ def test_t1_t2_two_tenant_isolation_and_default_scoping(
         authenticated=True,
     )
 
-    # T2: Omitting tenant_id defaults to principal.tenant_id
+    # T2: Missing tenant_id fails closed with missing_tenant
+    with pytest.raises(MarketDataAuthorizationError) as exc_info:
+        facade.get_site_market_context(
+            "site-taipei-001",
+            period_grain=PeriodGrain.MONTHLY,
+            period_key="2026-08",
+            principal=principal_alpha,
+        )
+    assert exc_info.value.code == "missing_tenant"
+
+    # T2: Explicit matching tenant_id succeeds
     ctx_alpha = facade.get_site_market_context(
         "site-taipei-001",
         period_grain=PeriodGrain.MONTHLY,
         period_key="2026-08",
+        tenant_id="tenant-alpha",
         principal=principal_alpha,
     )
     assert ctx_alpha.identity.site_id == "site-taipei-001"
@@ -1097,6 +1180,7 @@ def test_t1_t2_two_tenant_isolation_and_default_scoping(
         "site-beta-001",
         period_grain=PeriodGrain.MONTHLY,
         period_key="2026-08",
+        tenant_id="tenant-beta",
         principal=principal_beta,
     )
     assert ctx_beta.identity.site_id == "site-beta-001"
@@ -1112,36 +1196,31 @@ def test_t1_t2_two_tenant_isolation_and_default_scoping(
         )
     assert exc_info.value.code == "cross_tenant_access_denied"
 
-    # T2: Attempting to read foreign site without tenant_id raises NotFound in own tenant (no cross-tenant leak)
-    with pytest.raises(MarketDataNotFoundError):
-        facade.get_site_market_context(
-            "site-beta-001",
-            period_grain=PeriodGrain.MONTHLY,
-            period_key="2026-08",
-            principal=principal_alpha,
-        )
-
     # T1: Property Entity and Listing Observation isolation
-    prop_a = facade.get_property_entity("prop-tw-001", principal=principal_alpha)
+    prop_a = facade.get_property_entity("prop-tw-001", tenant_id="tenant-alpha", principal=principal_alpha)
     assert prop_a.property_id == "prop-tw-001"
 
-    prop_b = facade.get_property_entity("prop-beta-001", principal=principal_beta)
+    prop_b = facade.get_property_entity("prop-beta-001", tenant_id="tenant-beta", principal=principal_beta)
     assert prop_b.property_id == "prop-beta-001"
 
-    # Principal Alpha querying Principal Beta's property entity raises NotFound (does not leak)
-    with pytest.raises(MarketDataNotFoundError):
-        facade.get_property_entity("prop-beta-001", principal=principal_alpha)
+    # Principal Alpha querying Principal Beta's property entity with foreign tenant is denied
+    with pytest.raises(MarketDataAuthorizationError) as exc_info:
+        facade.get_property_entity("prop-beta-001", tenant_id="tenant-beta", principal=principal_alpha)
+    assert exc_info.value.code == "cross_tenant_access_denied"
 
-    # Principal Beta querying Principal Alpha's property entity raises NotFound (does not leak)
-    with pytest.raises(MarketDataNotFoundError):
-        facade.get_property_entity("prop-tw-001", principal=principal_beta)
+    # Principal Beta querying Principal Alpha's property entity with foreign tenant is denied
+    with pytest.raises(MarketDataAuthorizationError) as exc_info:
+        facade.get_property_entity("prop-tw-001", tenant_id="tenant-alpha", principal=principal_beta)
+    assert exc_info.value.code == "cross_tenant_access_denied"
 
     # Listing observation isolation
-    listing_a = facade.get_listing_observation("list-obs-001", principal=principal_alpha)
+    listing_a = facade.get_listing_observation("list-obs-001", tenant_id="tenant-alpha", principal=principal_alpha)
     assert listing_a.listing_obs_id == "list-obs-001"
 
-    with pytest.raises(MarketDataNotFoundError):
-        facade.get_listing_observation("list-beta-001", principal=principal_alpha)
+    with pytest.raises(MarketDataAuthorizationError) as exc_info:
+        facade.get_listing_observation("list-beta-001", tenant_id="tenant-beta", principal=principal_alpha)
+    assert exc_info.value.code == "cross_tenant_access_denied"
+
 
 
 def test_m1_m2_authorization_engine_security_audit_events(facade, foreign_tenant_principal):
@@ -1207,3 +1286,244 @@ def test_t3_transport_explicit_requirement_and_rejection_of_silent_defaults(seed
     assert ctx.identity.site_id == "site-taipei-001"
 
 
+
+# ===========================================================================
+# 11. Version Envelope Trust Boundary (ODP-EMGI-PAYLOAD-CONTRACT-VERSION-261024)
+# ===========================================================================
+#
+# Generated ``from_dict`` fills a missing ``contract_version`` from its default
+# and keeps any other string, so the version envelope is checked on the raw
+# fetched payload. Negatives are stored raw: normalizing them through the codec
+# first would hide exactly the defect under test.
+
+_PRODUCT_READERS = {
+    # contract_id: (payload fixture, document_id, client/facade reader, principal fixture)
+    "emgi.site-market-context.v1": (
+        "sample_site_context_payload",
+        "smc-doc-test-001",
+        "get_site_market_context_document",
+        "expansion_principal",
+    ),
+    "emgi.market-cell-profile.v1": (
+        "sample_cell_profile_payload",
+        "mcp-doc-001",
+        "get_market_cell_profile_document",
+        "site_reviewer_principal",
+    ),
+    "emgi.catchment-profile.v1": (
+        "sample_catchment_profile_payload",
+        "cp-doc-001",
+        "get_catchment_profile_document",
+        "expansion_principal",
+    ),
+    "emgi.property-observation.v1": (
+        "sample_property_observation_payload",
+        "prop-doc-001",
+        "get_property_observation_document",
+        "site_reviewer_principal",
+    ),
+}
+
+_MISMATCHED_VERSION_IDENTITY = {
+    "emgi.site-market-context.v1": ("contract_version", "emgi.site-market-context.v2"),
+    "emgi.market-cell-profile.v1": ("contract_version", "emgi.market-cell-profile.v2"),
+    "emgi.catchment-profile.v1": ("contract_version", "emgi.catchment-profile.v2"),
+    "emgi.property-observation.v1": ("contract_id", "emgi.property-observation.v2"),
+}
+
+
+def _pinned_root_schema(contract_id: str) -> dict[str, Any]:
+    from packages.oday_data_product_contracts_client import load_release
+
+    release = load_release()
+    pinned = release.pin.contract(contract_id)
+    schema = dict(release.schema_for(pinned))
+    defs = schema.get("$defs", {})
+    if pinned.root_model in defs:
+        return {**defs[pinned.root_model], "$defs": defs}
+    return schema
+
+
+def _raw_schema_errors(contract_id: str, payload: dict[str, Any]) -> list[str]:
+    from jsonschema import Draft202012Validator
+
+    validator = Draft202012Validator(_pinned_root_schema(contract_id))
+    return [
+        f"{list(err.absolute_path)}:{err.validator}" for err in validator.iter_errors(payload)
+    ]
+
+
+def _read_raw(
+    request: pytest.FixtureRequest,
+    contract_id: str,
+    payload: dict[str, Any],
+    *,
+    auth_engine: AuthorizationEngine | None = None,
+) -> tuple[Any, Any]:
+    """Read ``payload`` through the real client and the auth-enabled facade."""
+    _, document_id, reader, principal_fixture = _PRODUCT_READERS[contract_id]
+    transport = InMemoryDataPlatformTransport()
+    transport.store_document(contract_id, document_id, payload)
+    client = DataPlatformClient(transport=transport)
+    facade = MarketDataFacade(client=client, auth_engine=auth_engine, enforce_auth=True)
+    principal = request.getfixturevalue(principal_fixture)
+
+    def client_read() -> Any:
+        return getattr(client, reader)(document_id=document_id, tenant_id="tenant-alpha")
+
+    def facade_read() -> Any:
+        return getattr(facade, reader)(
+            document_id=document_id, tenant_id="tenant-alpha", principal=principal
+        )
+
+    return client_read, facade_read
+
+
+@pytest.mark.parametrize("contract_id", sorted(_PRODUCT_READERS))
+def test_version_envelope_positive_fixtures_are_raw_schema_valid(request, contract_id):
+    payload = request.getfixturevalue(_PRODUCT_READERS[contract_id][0])
+    assert _raw_schema_errors(contract_id, payload) == []
+
+    client_read, facade_read = _read_raw(request, contract_id, copy.deepcopy(payload))
+    for read in (client_read, facade_read):
+        doc = read()
+        for field_name in ("contract_id", "contract_version", "product_version"):
+            if field_name in payload:
+                assert getattr(doc, field_name) == payload[field_name]
+
+
+@pytest.mark.parametrize("contract_id", sorted(_PRODUCT_READERS))
+def test_version_envelope_mismatched_identity_rejected_before_decode(request, contract_id):
+    field_name, foreign_value = _MISMATCHED_VERSION_IDENTITY[contract_id]
+    payload = copy.deepcopy(request.getfixturevalue(_PRODUCT_READERS[contract_id][0]))
+    payload[field_name] = foreign_value
+    assert _raw_schema_errors(contract_id, payload), "negative must be raw-schema invalid"
+
+    engine = AuthorizationEngine()
+    client_read, facade_read = _read_raw(request, contract_id, payload, auth_engine=engine)
+
+    with pytest.raises(DataPlatformValidationError) as client_exc:
+        client_read()
+    assert client_exc.value.code == "contract_validation_error"
+    expected_keyword = "const" if field_name == "contract_id" else "enum"
+    assert client_exc.value.details == {
+        "contract_id": contract_id,
+        "version_envelope_violations": [f"{field_name}:{expected_keyword}"],
+    }
+    # Safe error context: the untrusted value never reaches public details.
+    assert foreign_value not in str(client_exc.value)
+    assert foreign_value not in repr(client_exc.value.details)
+
+    with pytest.raises(MarketDataValidationError) as facade_exc:
+        facade_read()
+    assert facade_exc.value.code == "market_data_validation_error"
+    assert foreign_value not in str(facade_exc.value)
+    # A rejected document is never recorded as an authorized read.
+    assert not [ev for ev in engine.audit_log.list_events() if ev.outcome == "allow"]
+
+
+@pytest.mark.parametrize(
+    ("contract_id", "field_name"),
+    [
+        ("emgi.site-market-context.v1", "contract_version"),
+        ("emgi.site-market-context.v1", "product_version"),
+        ("emgi.market-cell-profile.v1", "contract_version"),
+        ("emgi.market-cell-profile.v1", "product_version"),
+        ("emgi.catchment-profile.v1", "contract_version"),
+        ("emgi.catchment-profile.v1", "product_version"),
+        ("emgi.property-observation.v1", "contract_id"),
+    ],
+)
+def test_version_envelope_missing_required_field_not_manufactured(
+    request, contract_id, field_name
+):
+    payload = copy.deepcopy(request.getfixturevalue(_PRODUCT_READERS[contract_id][0]))
+    del payload[field_name]
+    assert _raw_schema_errors(contract_id, payload), "negative must be raw-schema invalid"
+
+    client_read, facade_read = _read_raw(request, contract_id, payload)
+    with pytest.raises(DataPlatformValidationError) as client_exc:
+        client_read()
+    assert client_exc.value.details["version_envelope_violations"] == [f"{field_name}:required"]
+    with pytest.raises(MarketDataValidationError):
+        facade_read()
+
+
+@pytest.mark.parametrize(
+    ("bad_value", "violations"),
+    [
+        ("", ["product_version:minLength"]),
+        ("x" * 51, ["product_version:maxLength"]),
+        (41, ["product_version:type"]),
+        (None, ["product_version:type"]),
+    ],
+    ids=["empty", "too-long", "integer", "null"],
+)
+def test_version_envelope_invalid_product_version_rejected(
+    request, sample_site_context_payload, bad_value, violations
+):
+    payload = copy.deepcopy(sample_site_context_payload)
+    payload["product_version"] = bad_value
+    contract_id = "emgi.site-market-context.v1"
+    assert _raw_schema_errors(contract_id, payload), "negative must be raw-schema invalid"
+
+    client_read, facade_read = _read_raw(request, contract_id, payload)
+    with pytest.raises(DataPlatformValidationError) as client_exc:
+        client_read()
+    assert client_exc.value.details["version_envelope_violations"] == violations
+    with pytest.raises(MarketDataValidationError):
+        facade_read()
+
+
+@pytest.mark.parametrize(
+    "contract_id",
+    ["emgi.site-market-context.v1", "emgi.market-cell-profile.v1", "emgi.catchment-profile.v1"],
+)
+def test_version_envelope_other_product_version_string_is_schema_allowed(request, contract_id):
+    """``product_version`` is any 1..50 char string; it is not pinned to the release semver."""
+    payload = copy.deepcopy(request.getfixturevalue(_PRODUCT_READERS[contract_id][0]))
+    payload["product_version"] = "9.9.9"
+    assert _raw_schema_errors(contract_id, payload) == []
+
+    engine = AuthorizationEngine()
+    client_read, facade_read = _read_raw(request, contract_id, payload, auth_engine=engine)
+    assert client_read().product_version == "9.9.9"
+    assert facade_read().product_version == "9.9.9"
+    assert [ev.outcome for ev in engine.audit_log.list_events()] == ["allow"]
+
+
+def test_version_envelope_property_observation_declares_no_version_fields(
+    request, sample_property_observation_payload
+):
+    """The property schema only pins ``contract_id``; no version fields are invented for it."""
+    root = _pinned_root_schema("emgi.property-observation.v1")
+    assert "contract_version" not in root["properties"]
+    assert "product_version" not in root["properties"]
+    assert "contract_version" not in sample_property_observation_payload
+    assert "product_version" not in sample_property_observation_payload
+
+    client_read, facade_read = _read_raw(
+        request, "emgi.property-observation.v1", copy.deepcopy(sample_property_observation_payload)
+    )
+    assert client_read().contract_id == "emgi.property-observation.v1"
+    assert facade_read().contract_id == "emgi.property-observation.v1"
+
+
+def test_version_envelope_check_precedes_tenant_preservation(request, sample_site_context_payload):
+    """A version mismatch is reported as such even when the tenant envelope is also absent."""
+    payload = copy.deepcopy(sample_site_context_payload)
+    payload["contract_version"] = "emgi.site-market-context.v2"
+    del payload["tenant_id"]
+
+    client_read, _ = _read_raw(request, "emgi.site-market-context.v1", payload)
+    with pytest.raises(DataPlatformValidationError) as client_exc:
+        client_read()
+    assert client_exc.value.details["version_envelope_violations"] == ["contract_version:enum"]
+
+    # The missing-tenant decision itself is unchanged for a version-valid payload.
+    payload["contract_version"] = "emgi.site-market-context.v1"
+    client_read, facade_read = _read_raw(request, "emgi.site-market-context.v1", payload)
+    assert client_read().tenant_id is None
+    with pytest.raises(MarketDataAuthorizationError) as facade_exc:
+        facade_read()
+    assert facade_exc.value.code == "missing_tenant"

@@ -21,7 +21,12 @@ Everything fails closed:
   violation of Control Pack section 3.4.1;
 * an archive snapshot whose ``terminal_status`` is not ``done`` does not
   satisfy a dependency;
-* a task may not depend on itself, and dependency cycles are reported.
+* a task may not depend on itself, and dependency cycles are reported;
+* task ids are compared **case-sensitively**, because the Supervisor's own
+  ``normalize_task_id`` only strips whitespace. An id that differs from a real
+  task by case alone resolves nowhere at dispatch time, so reporting it as
+  resolvable here would make this checker certify a permanently undispatchable
+  graph as sound.
 
 Exit codes: ``0`` when every dependency resolves, ``1`` when any rule fails.
 
@@ -53,7 +58,15 @@ class DependencyGraphError(Exception):
 
 
 def load_board(status_path: Path) -> dict[str, dict[str, Any]]:
-    """Return live-board tasks keyed by upper-cased task id."""
+    """Return live-board tasks keyed by the exact (whitespace-stripped) task id.
+
+    The key has to be the id the Supervisor itself resolves. ``TaskResolver``
+    and ``task_index_from_status`` both key on ``normalize_task_id``, which only
+    strips whitespace, so ``odp-a`` and ``ODP-A`` are different tasks at
+    dispatch time. Folding case here would let this checker certify a graph as
+    resolvable that the dispatcher can never resolve -- the one outcome a
+    fail-closed validator must never produce.
+    """
 
     if not status_path.exists():
         raise DependencyGraphError(f"status file not found: {status_path}")
@@ -68,12 +81,16 @@ def load_board(status_path: Path) -> dict[str, dict[str, Any]]:
             continue
         task_id = str(entry.get("id") or "").strip()
         if task_id:
-            tasks[task_id.upper()] = entry
+            tasks[task_id] = entry
     return tasks
 
 
 def load_archive(archive_dir: Path) -> dict[str, dict[str, Any]]:
-    """Return archive snapshots keyed by upper-cased task id."""
+    """Return archive snapshots keyed by the exact (whitespace-stripped) task id.
+
+    ``archive_task_path`` writes the snapshot under the task id verbatim, so
+    archive resolution is case-sensitive too and this index must match it.
+    """
 
     if not archive_dir.exists():
         raise DependencyGraphError(f"archive directory not found: {archive_dir}")
@@ -87,7 +104,7 @@ def load_archive(archive_dir: Path) -> dict[str, dict[str, Any]]:
             continue
         task_id = str(payload.get("task_id") or path.stem).strip()
         if task_id:
-            snapshots[task_id.upper()] = payload
+            snapshots[task_id] = payload
     return snapshots
 
 
@@ -98,6 +115,26 @@ def dependencies_of(task: dict[str, Any]) -> list[str]:
     return [str(item).strip() for item in raw if str(item).strip()]
 
 
+def _fold(task_id: str) -> str:
+    return task_id.strip().casefold()
+
+
+def canonical_root(board: dict[str, dict[str, Any]], requested: str) -> str:
+    """Resolve an operator-supplied ``--task`` value to the board's own spelling.
+
+    Scope selection is a report filter, not a dispatch grant, so a mistyped case
+    should narrow the report to the task the operator meant rather than silently
+    scan nothing. Dependency *edges* are still matched exactly by ``check``.
+    """
+
+    requested = requested.strip()
+    if requested in board:
+        return requested
+    folded = _fold(requested)
+    matches = [task_id for task_id in board if _fold(task_id) == folded]
+    return matches[0] if len(matches) == 1 else requested
+
+
 def _closure(
     roots: list[str],
     board: dict[str, dict[str, Any]],
@@ -105,7 +142,7 @@ def _closure(
     """Return ``roots`` plus every task id reachable through ``depends_on``."""
 
     seen: set[str] = set()
-    stack = [task_id.upper() for task_id in roots]
+    stack = [canonical_root(board, task_id) for task_id in roots]
     while stack:
         current = stack.pop()
         if current in seen:
@@ -114,7 +151,7 @@ def _closure(
         task = board.get(current)
         if task is None:
             continue
-        stack.extend(dep.upper() for dep in dependencies_of(task))
+        stack.extend(dependencies_of(task))
     return seen
 
 
@@ -140,7 +177,7 @@ def find_cycles(board: dict[str, dict[str, Any]]) -> list[list[str]]:
         visiting.add(node)
         path.append(node)
         for dep in dependencies_of(task):
-            walk(dep.upper())
+            walk(dep)
         path.pop()
         visiting.discard(node)
         visited.add(node)
@@ -160,12 +197,19 @@ def check(
     failures: list[str] = []
     task_ids = sorted(board) if scope is None else sorted(scope & set(board))
 
+    # Diagnostic index only: membership below is decided on the exact id. This
+    # exists so an id that differs from a real one by case alone is reported as
+    # the fixable mistake it is instead of a bare "DANGLING".
+    known_by_fold: dict[str, list[str]] = {}
+    for known_id in list(board) + list(archive):
+        known_by_fold.setdefault(_fold(known_id), []).append(known_id)
+
     for task_id in task_ids:
         task = board[task_id]
         for dep in dependencies_of(task):
-            key = dep.upper()
+            key = dep
 
-            if key == task_id:
+            if _fold(key) == _fold(task_id):
                 failures.append(f"{task['id']}: depends on itself ({dep})")
                 continue
 
@@ -183,11 +227,25 @@ def check(
                 continue
 
             if snapshot is None:
-                failures.append(
-                    f"{task['id']}: dependency {dep} is DANGLING - it resolves in "
-                    "neither the live board nor the official archive, so this task "
-                    "can never be dispatched"
+                near_misses = sorted(
+                    {
+                        known_id
+                        for known_id in known_by_fold.get(_fold(key), [])
+                        if known_id != key
+                    }
                 )
+                if near_misses:
+                    failures.append(
+                        f"{task['id']}: dependency {dep} differs only by case from "
+                        f"{', '.join(near_misses)}; task ids are case-sensitive, so "
+                        "this edge resolves nowhere and can never be dispatched"
+                    )
+                else:
+                    failures.append(
+                        f"{task['id']}: dependency {dep} is DANGLING - it resolves in "
+                        "neither the live board nor the official archive, so this task "
+                        "can never be dispatched"
+                    )
                 continue
 
             terminal_status = str(snapshot.get("terminal_status") or "").strip().lower()

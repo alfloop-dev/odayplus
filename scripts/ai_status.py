@@ -3,15 +3,18 @@ from __future__ import annotations
 
 import fcntl
 import gzip
+import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
 import uuid
+from collections.abc import Iterable
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -60,9 +63,18 @@ DELIVERY_GIT_DIR = ROOT / "delivery_toolchain" / "git"
 if str(DELIVERY_GIT_DIR) not in sys.path:
     sys.path.insert(0, str(DELIVERY_GIT_DIR))
 
+DELIVERY_GOVERNANCE_DIR = ROOT / "delivery_toolchain" / "governance"
+if str(DELIVERY_GOVERNANCE_DIR) not in sys.path:
+    sys.path.insert(0, str(DELIVERY_GOVERNANCE_DIR))
+
 import common as orchestrator_common
 from check_task_delivery_identity import validate_delivery_identity
+from classify_change_review_scope import classify_paths
+from common import (
+    classify_reopen_reason,
+)
 from multi_repo_registry import (
+    canonical_repository_id_for_root,
     cross_repo_delivery_requirements,
     repository_local_path,
     repository_slug,
@@ -75,14 +87,19 @@ from runtime_state import enqueue_event, load_runtime_state
 from task_archive import (
     ARCHIVE_TASKS_DIR,
     TaskResolver,
+    archive_correction_path,
     archive_display_path,
     archive_task_path,
     archive_task_snapshot,
     is_terminal_task,
+    load_archive_correction,
     load_archive_index,
     load_archived_snapshot,
+    load_archived_task,
     rebuild_archive_index,
     recent_terminal_summaries,
+    save_archive_correction,
+    validate_archive_correction_record,
 )
 from task_archive import (
     DEFAULT_RECENT_LIMIT as DEFAULT_ARCHIVE_RECENT_LIMIT,
@@ -94,7 +111,7 @@ LOG_ROTATE_MAX_BYTES = int(os.environ.get("AI_STATUS_LOG_ROTATE_MAX_BYTES", str(
 LOG_ROTATE_KEEP_LINES = int(os.environ.get("AI_STATUS_LOG_ROTATE_KEEP_LINES", "1000"))
 CURRENT_WORK_FILE = STATUS_ROOT / "current-work.md"
 DOCS_SITE_DIR = STATUS_ROOT / "docs-site"
-CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
+CONFIG_FILE = STATUS_ROOT / ".orchestrator" / "config.json"
 # Worker processes inherit PANTHEON_CONFIG_PATH from Supervisor. An explicitly
 # selected runtime config is self-contained and must never inherit a checkout
 # or status-root overlay. Interactive commands without that environment value
@@ -492,6 +509,364 @@ def parse_timestamp(value: Any) -> datetime | None:
     return parsed
 
 
+CONTINUATION_APPROVAL_MAX_REASON_LENGTH = 2000
+CONTINUATION_APPROVAL_MAX_NONCE_LENGTH = 128
+
+
+def _continuation_approval_nonce_is_valid(nonce: Any) -> bool:
+    value = str(nonce or "").strip()
+    return bool(value) and len(value) <= CONTINUATION_APPROVAL_MAX_NONCE_LENGTH and not any(
+        character.isspace() or ord(character) < 32 for character in value
+    )
+
+
+def _continuation_nonnegative_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+BLOCKER_PROSE_FIELDS = (
+    "next", "waiting_for", "blocker", "blocked_by", "failure_reason",
+    "last_failure_reason", "push_status",
+)
+
+
+def blocker_authority_digest(task: dict[str, Any]) -> str:
+    """Bind adjudication and approval to exact text, roles, source and churn epoch."""
+    fields = (*BLOCKER_PROSE_FIELDS, "id", "status", "owner", "reviewer",
+              "review_reopen_count", "review_churn_escalated_at_count",
+              "review_churn_escalated_at", "review_submission", "review_reopen_history",
+              "task_class", "non_dispatchable", "requires_human_approval", "human_required_roles",
+              "credentials_gate", "credential_gate", "deployment_gate", "production_gate",
+              "external_data_gate", "human_gate", "gate_status")
+    payload = {key: task.get(key) for key in fields}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def blocker_provenance_error(task: dict[str, Any]) -> str | None:
+    """Unknown, stale or incomplete classifications never suppress legacy blockers."""
+    record = task.get("blocker_provenance")
+    if not isinstance(record, dict):
+        return "blocker provenance is not an object"
+    if record.get("issued_by") != "Human/Ops" or not record.get("record_id"):
+        return "blocker provenance lacks Human/Ops authority"
+    issued_at = parse_timestamp(record.get("issued_at"))
+    expires_at = parse_timestamp(record.get("expires_at"))
+    now = datetime.now(UTC)
+    if issued_at is None or expires_at is None or not issued_at <= now < expires_at:
+        return "blocker provenance is expired or has invalid timestamps"
+    if record.get("context_sha256") != blocker_authority_digest(task):
+        return "blocker provenance does not match current text, roles, source or epoch"
+    classifications = record.get("fields")
+    if not isinstance(classifications, dict) or not classifications:
+        return "blocker provenance has no field classifications"
+    for field, segments in classifications.items():
+        if field not in BLOCKER_PROSE_FIELDS or not isinstance(segments, list) or not segments:
+            return "blocker provenance has an unknown or empty field"
+        texts = []
+        for segment in segments:
+            if not isinstance(segment, dict) or not isinstance(segment.get("text"), str):
+                return "blocker provenance segment is malformed"
+            kind = segment.get("kind")
+            if kind not in {"current", "resolved", "historical", "other_task"}:
+                return "blocker provenance segment kind is ambiguous"
+            if not str(segment.get("reason") or "").strip() or not str(segment.get("evidence_ref") or "").strip():
+                return "blocker provenance segment lacks rationale or evidence"
+            if kind == "other_task" and (
+                not segment.get("task_id") or segment.get("task_id") == task.get("id")
+            ):
+                return "blocker provenance other-task scope is invalid"
+            texts.append(segment["text"])
+        if "".join(texts) != str(task.get(field) or ""):
+            return "blocker provenance does not cover exact field text"
+    return None
+
+
+def blocked_task_prose_context(task: dict[str, Any]) -> str:
+    """Return blocker prose without task/dependency identifiers, code identifiers, and paths.
+
+    Titles and summaries describe the work, not why a blocked task is waiting.
+    Continuation eligibility must therefore inspect only the same blocker-facing
+    fields used by Supervisor. Only a valid Human/Ops adjudication can classify
+    exact spans as resolved, historical or other-task; unclassified fields and
+    current spans retain the legacy keyword guard. This is not authorization.
+    We remove identifiers whose tokens can look
+    like hard-gate markers (for example ``...-DATASET-...``), code identifiers,
+    file paths, backtick snippets, key=value pairs, and CI job references.
+    """
+    identifiers = [str(task.get("id") or "")]
+    identifiers.extend(str(dep) for dep in (task.get("depends_on") or []))
+    classifications = {}
+    if "blocker_provenance" in task and blocker_provenance_error(task) is None:
+        classifications = task["blocker_provenance"]["fields"]
+    raw_context = " ".join(
+        "".join(segment["text"] for segment in classifications[key] if segment["kind"] == "current")
+        if key in classifications else str(task.get(key) or "")
+        for key in BLOCKER_PROSE_FIELDS
+    )
+
+    # 1. Strip code blocks and inline backticks
+    context = re.sub(r"```[\s\S]*?```", " ", raw_context)
+    context = re.sub(r"`[^`]*`", " ", context)
+
+    # 2. Strip <key>=<value> pairs
+    context = re.sub(r"[A-Za-z0-9_.\-/]+\s*=\s*[A-Za-z0-9_.\-/]+", " ", context)
+
+    # 3. Strip paths with slashes or files with specified extensions (.py .sh .tf .yml .yaml .json)
+    context = re.sub(r"[A-Za-z0-9_.\-]*/[A-Za-z0-9_.\-/]+", " ", context)
+    context = re.sub(
+        r"\b[A-Za-z0-9_.\-]+\.(?:py|sh|tf|yml|yaml|json)\b",
+        " ",
+        context,
+        flags=re.IGNORECASE,
+    )
+
+    # 4. Strip snake_case identifiers containing underscore
+    context = re.sub(r"\b[A-Za-z0-9_]*_[A-Za-z0-9_]*\b", " ", context)
+
+    # 5. Strip job references (e.g. 'deploy 相關 job', 'build job', 'deploy job')
+    context = re.sub(
+        r"\b[A-Za-z0-9_.\-]+\s*(?:相關\s*)?job\b", " ", context, flags=re.IGNORECASE
+    )
+
+    context = context.casefold()
+    for identifier in identifiers:
+        token = identifier.strip().casefold()
+        if token:
+            context = context.replace(token, " ")
+    return context
+
+
+def continuation_approval_gate_error(task: dict[str, Any]) -> str | None:
+    """Return why a task is not eligible for Human/Ops continuation.
+
+    Continuation approval is deliberately narrower than a generic human gate:
+    it is the release valve for review-churn escalation only.  Credentials,
+    deployment, production, external-data, and other human gates remain
+    independently fail-closed even when an operator is able to issue an
+    approval for some other task.
+    """
+    if not isinstance(task, dict):
+        return "task record is not an object"
+    if str(task.get("status") or "").strip().lower() != "blocked":
+        return "task is not blocked"
+    waiting_for = str(task.get("waiting_for") or "").strip().casefold()
+    if waiting_for not in {"human/ops", "human", "ops"}:
+        return "task is not waiting for Human/Ops"
+    if task.get("task_class") == "human_gate" or bool(task.get("non_dispatchable")):
+        return "task is a separate human or non-dispatchable gate"
+    if task.get("requires_human_approval") is True or task.get("human_required_roles"):
+        return "task carries an independent human approval gate"
+    for gate_field in (
+        "credentials_gate",
+        "credential_gate",
+        "deployment_gate",
+        "production_gate",
+        "external_data_gate",
+        "human_gate",
+    ):
+        if task.get(gate_field):
+            return f"task carries an independent {gate_field}"
+    gate_status = str(task.get("gate_status") or "").strip().casefold()
+    if gate_status.startswith("pending_human"):
+        return "task carries an independent human gate status"
+
+    if "blocker_provenance" in task:
+        provenance_error = blocker_provenance_error(task)
+        if provenance_error:
+            return provenance_error
+    blocker_context = blocked_task_prose_context(task)
+    try:
+        churn_reassigned_count = max(0, int(task.get("review_churn_reassigned_at_count", 0) or 0))
+    except (TypeError, ValueError):
+        churn_reassigned_count = 0
+    try:
+        churn_escalated_count = max(
+            0, int(task.get("review_churn_escalated_at_count", 0) or 0)
+        )
+    except (TypeError, ValueError):
+        churn_escalated_count = 0
+    if not (
+        task.get("review_churn_escalated_at")
+        or churn_escalated_count
+        or churn_reassigned_count
+        or "review churn" in blocker_context
+    ):
+        return "task was not escalated by review churn"
+
+    hard_gate_markers = (
+        "credential",
+        "secret",
+        "password",
+        "token",
+        "deploy",
+        "deployment",
+        "production",
+        "prod ",
+        "live-e2e",
+        "live rollout",
+        "dataset",
+        "attestation",
+        "external-data",
+        "external data",
+        "external authorization",
+        "approval required",
+        "approval gate",
+        "authorization",
+        "manual approval",
+        "human gate",
+        "operator intervention",
+        "merge queue",
+        "sign-off",
+        "signoff",
+    )
+    if any(marker in blocker_context for marker in hard_gate_markers):
+        return "task carries an independent credentials/deployment/production or human gate"
+    return None
+
+
+def continuation_approval_is_expired(
+    approval: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> bool:
+    if not isinstance(approval, dict) or str(approval.get("status") or "").lower() != "issued":
+        return False
+    expires_at = parse_timestamp(approval.get("expires_at"))
+    if expires_at is None:
+        return False
+    current = now or datetime.now(UTC)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=UTC)
+    return expires_at.astimezone(UTC) <= current.astimezone(UTC)
+
+
+def continuation_approval_validation_error(
+    task: dict[str, Any],
+    approval: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> str | None:
+    """Validate the immutable facts Supervisor needs before consuming approval."""
+    gate_error = continuation_approval_gate_error(task)
+    if gate_error:
+        return gate_error
+    if not isinstance(approval, dict):
+        return "approval record is not an object"
+    if "blocker_provenance" in task or "blocker_authority_digest" in approval:
+        if approval.get("blocker_authority_digest") != blocker_authority_digest(task):
+            return "approval blocker authority does not match the task"
+        record_id = (task.get("blocker_provenance") or {}).get("record_id")
+        if approval.get("blocker_provenance_id") != record_id:
+            return "approval blocker provenance does not match the task"
+    if str(approval.get("status") or "").strip().lower() != "issued":
+        return "approval is not in issued state"
+
+    task_id = str(task.get("id") or "").strip()
+    if not task_id:
+        return "task has no id"
+    if str(approval.get("task_id") or "").strip() != task_id:
+        return "approval task scope does not match the task"
+    if str(approval.get("task_scope") or "").strip() != task_id:
+        return "approval task_scope does not match the task"
+    scope = approval.get("scope")
+    scoped_task_id = scope.get("task_id") if isinstance(scope, dict) else scope
+    if str(scoped_task_id or "").strip() != task_id:
+        return "approval scope does not match the task"
+    for epoch_field in ("review_reopen_count", "review_churn_escalated_at_count"):
+        if epoch_field not in approval:
+            continue
+        try:
+            approval_epoch = max(0, int(approval.get(epoch_field) or 0))
+            task_epoch = max(0, int(task.get(epoch_field) or 0))
+        except (TypeError, ValueError):
+            return f"approval {epoch_field} is malformed"
+        if approval_epoch != task_epoch:
+            return f"approval {epoch_field} does not match the task"
+    if "review_churn_escalated_at" in approval and approval.get("review_churn_escalated_at") != task.get(
+        "review_churn_escalated_at"
+    ):
+        return "approval review-churn escalation epoch does not match the task"
+    if canonical_agent_name(approval.get("issued_by")) != "Human/Ops":
+        return "approval issuer is not Human/Ops"
+    if not str(approval.get("approval_id") or "").strip():
+        return "approval id is missing"
+    if not _continuation_approval_nonce_is_valid(approval.get("nonce")):
+        return "approval nonce is missing or malformed"
+    reason = str(approval.get("reason") or "").strip()
+    if not reason or len(reason) > CONTINUATION_APPROVAL_MAX_REASON_LENGTH:
+        return "approval reason is missing or too long"
+
+    issued_at = parse_timestamp(approval.get("issued_at"))
+    expires_at = parse_timestamp(approval.get("expires_at"))
+    if issued_at is None or expires_at is None:
+        return "approval issued_at and expires_at must be timezone-aware timestamps"
+    current = now or datetime.now(UTC)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=UTC)
+    current = current.astimezone(UTC)
+    if issued_at.astimezone(UTC) > current:
+        return "approval was issued in the future"
+    if expires_at.astimezone(UTC) <= issued_at.astimezone(UTC):
+        return "approval expires before or at issue time"
+    if expires_at.astimezone(UTC) <= current:
+        return "approval has expired"
+    return None
+
+
+def task_unresolved_human_or_independent_gate_reason(task: dict[str, Any]) -> str | None:
+    """Return why a task carries an unresolved human or independent gate blocking submission."""
+    if not isinstance(task, dict):
+        return None
+    task_class = str(task.get("task_class") or "").strip().lower()
+    if task_class == "human_gate" or bool(task.get("non_dispatchable")):
+        return "task carries an unresolved human gate (human or non-dispatchable gate)"
+    if task.get("requires_human_approval") is True or task.get("human_required_roles"):
+        return "task carries an unresolved human approval gate"
+    for gate_field in (
+        "credentials_gate",
+        "credential_gate",
+        "deployment_gate",
+        "production_gate",
+        "external_data_gate",
+        "human_gate",
+    ):
+        if task.get(gate_field):
+            return f"task carries an unresolved independent {gate_field}"
+    gate_status = str(task.get("gate_status") or "").strip().casefold()
+    if gate_status.startswith("pending_human"):
+        return f"task carries an unresolved human gate status ({gate_status})"
+    return None
+
+
+def resolve_immutable_merged_task_sha(task: dict[str, Any]) -> str | None:
+    """Resolve and verify the immutable source SHA for a merged review submission."""
+    submission = task.get("review_submission")
+    if not isinstance(submission, dict) or not submission.get("merged_at") or not submission.get("merge_commit"):
+        return None
+    submitted_sha = str(submission.get("remote_sha") or "").strip()
+    merge_commit = str(submission.get("merge_commit") or "").strip()
+    if not submitted_sha or not merge_commit:
+        return None
+    config = status_runtime_config()
+    repository_id = task_repository_id(config, task) or "pantheon"
+    repo_root = repository_local_path(config, repository_id) or ROOT
+    target_branch = delivery_merge_target_branch(config, repository_id)
+    target_ref = f"origin/{target_branch}"
+    if not git_command_succeeds(["rev-parse", "--verify", target_ref], cwd=repo_root):
+        target_ref = target_branch
+    if (
+        git_command_succeeds(["cat-file", "-e", f"{submitted_sha}^{{commit}}"], cwd=repo_root)
+        and git_command_succeeds(["cat-file", "-e", f"{merge_commit}^{{commit}}"], cwd=repo_root)
+        and git_command_succeeds(["merge-base", "--is-ancestor", submitted_sha, merge_commit], cwd=repo_root)
+        and git_command_succeeds(["merge-base", "--is-ancestor", merge_commit, target_ref], cwd=repo_root)
+    ):
+        return submitted_sha
+    return None
+
+
 def format_display_timestamp(value: Any) -> str:
     parsed = parse_timestamp(value)
     if parsed is None:
@@ -625,7 +1000,7 @@ def active_config_file() -> Path:
     """Resolve Supervisor's config after startup has published its CLI choice."""
     configured = configured_config_path_env()
     path = Path(os.path.expanduser(configured)) if configured else CONFIG_FILE
-    return path if path.is_absolute() else ROOT / path
+    return path if path.is_absolute() else STATUS_ROOT / path
 
 
 def _config_fingerprint() -> tuple[Any, ...]:
@@ -663,6 +1038,7 @@ def merged_orchestrator_config() -> dict[str, Any]:
         active_config_file(),
         overlay_paths=tuple(local_config_overlay_paths()),
     )
+    payload = orchestrator_common.anchor_config_paths(payload, STATUS_ROOT)
 
     _MERGED_CONFIG_CACHE["fingerprint"] = fingerprint
     _MERGED_CONFIG_CACHE["payload"] = payload
@@ -678,6 +1054,46 @@ def extra_actor_names() -> set[str]:
     }
 
 
+def is_dispatch_slot_config(agent: dict[str, Any] | None) -> bool:
+    """Return whether an agent entry represents a physical dispatch slot."""
+    return bool(
+        isinstance(agent, dict)
+        and (
+            str(agent.get("dispatch_slot_for") or "").strip()
+            or str(agent.get("dispatch_slot_for_pool") or "").strip()
+        )
+    )
+
+
+def resolve_dispatch_slot_info(name: str | None) -> tuple[bool, str | None, str | None]:
+    """Return (is_slot, dispatch_slot_for, dispatch_slot_for_pool) if name matches a dispatch slot."""
+    if not name:
+        return False, None, None
+    raw = str(name).strip()
+    agents = merged_orchestrator_config().get("agents")
+    if not isinstance(agents, dict):
+        return False, None, None
+    raw_casefold = raw.casefold()
+    raw_normalized = orchestrator_common.normalize_agent_id(raw) if hasattr(orchestrator_common, "normalize_agent_id") else re.sub(r"[^a-z0-9]+", "_", raw.lower()).strip("_")
+    for agent_id, agent in agents.items():
+        if not isinstance(agent, dict) or not is_dispatch_slot_config(agent):
+            continue
+        slot_id = str(agent.get("slot_id") or agent_id or "").strip()
+        norm_agent_id = orchestrator_common.normalize_agent_id(agent_id) if hasattr(orchestrator_common, "normalize_agent_id") else re.sub(r"[^a-z0-9]+", "_", str(agent_id).lower()).strip("_")
+        norm_slot_id = orchestrator_common.normalize_agent_id(slot_id) if hasattr(orchestrator_common, "normalize_agent_id") else re.sub(r"[^a-z0-9]+", "_", slot_id.lower()).strip("_")
+        candidate_names = {
+            str(agent_id).casefold(),
+            norm_agent_id,
+            slot_id.casefold(),
+            norm_slot_id,
+        } - {""}
+        if raw_casefold in candidate_names or (raw_normalized and raw_normalized in candidate_names):
+            target_agent = str(agent.get("dispatch_slot_for") or "").strip() or None
+            target_pool = str(agent.get("dispatch_slot_for_pool") or agent.get("account_pool") or "").strip() or None
+            return True, target_agent, target_pool
+    return False, None, None
+
+
 def configured_agent_names() -> set[str]:
     """Worker names the live Supervisor can dispatch.
 
@@ -686,13 +1102,16 @@ def configured_agent_names() -> set[str]:
     Codex9 on this fleet — count as declared exactly as they do for dispatch.
     Names are taken as declared and are deliberately not passed through
     `canonical_agent_name`: this function is what teaches that function how the
-    fleet spells itself.
+    fleet spells itself. Physical dispatch slots are capacity resources, not
+    assignable actors, and are excluded here.
     """
     names: set[str] = set()
     agents = merged_orchestrator_config().get("agents")
     if isinstance(agents, dict):
         for agent_id, agent in agents.items():
             entry = agent if isinstance(agent, dict) else {}
+            if is_dispatch_slot_config(entry):
+                continue
             declared = str(entry.get("display_name") or agent_id or "").strip()
             if declared and actor_reference_problem(declared) is None:
                 names.add(declared)
@@ -737,6 +1156,19 @@ def resolve_actor_reference(
             f"Invalid {field}: {problem}\n"
             f"  received: {preview!r}\n"
             "  Pass an agent name here and put the explanation in the message argument."
+        )
+
+    is_slot, target_agent, target_pool = resolve_dispatch_slot_info(canonical)
+    if is_slot:
+        hint = ""
+        if target_agent:
+            hint = f" Specify logical worker {target_agent!r} instead."
+        elif target_pool:
+            hint = f" Specify a logical worker from account pool {target_pool!r} instead."
+        else:
+            hint = " Specify a logical worker (such as 'Antigravity') instead."
+        raise SystemExit(
+            f"Invalid {field}: {canonical!r} is a dispatch slot capacity resource, not an assignable actor.{hint}"
         )
 
     registered = registered_agent_names()
@@ -895,21 +1327,41 @@ def load_state() -> dict[str, Any]:
     return state
 
 
-def load_logs() -> list[dict[str, Any]]:
+def load_logs(*, strict: bool = False) -> list[dict[str, Any]]:
     if not LOG_FILE.exists():
+        if strict:
+            raise ValueError(
+                "canonical activity log is missing; original assigning actor cannot be proven."
+            )
         return []
+    try:
+        raw_lines = LOG_FILE.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as exc:
+        if strict:
+            raise ValueError(f"canonical activity log is unreadable: {exc}") from exc
+        raise
     logs: list[dict[str, Any]] = []
-    for line_no, line in enumerate(LOG_FILE.read_text(encoding="utf-8").splitlines(), start=1):
+    for line_no, line in enumerate(raw_lines, start=1):
         line = line.strip()
         if not line:
             continue
         try:
-            logs.append(json.loads(line))
+            parsed = json.loads(line)
         except json.JSONDecodeError as exc:
+            if strict:
+                raise ValueError(
+                    f"malformed JSON in canonical activity log line {line_no}: {exc}"
+                ) from exc
             print(
                 f"Warning: skipping malformed ai-activity-log.jsonl line {line_no}: {exc}",
                 file=sys.stderr,
             )
+            continue
+        if strict and not isinstance(parsed, dict):
+            raise ValueError(
+                f"non-object entry in canonical activity log line {line_no}."
+            )
+        logs.append(parsed)
     return logs
 
 
@@ -1033,6 +1485,51 @@ def save_state(state: dict[str, Any]) -> None:
         os.fsync(handle.fileno())
         temp_path = Path(handle.name)
     os.replace(temp_path, STATUS_FILE)
+
+
+# Verifications that can only run *after* `sync_all()` has written the board,
+# while the canonical lock is still held. A command that wrote outside the board
+# document (archive snapshots are separate files) cannot otherwise tell whether
+# the rows it staged actually reached disk, and "staged" is not a receipt.
+_POST_COMMIT_VERIFIERS: list[Any] = []
+
+
+def register_post_commit_verifier(verifier) -> None:
+    _POST_COMMIT_VERIFIERS.append(verifier)
+
+
+def run_post_commit_verifiers(
+    *,
+    transaction_succeeded: bool = True,
+    transaction_error: BaseException | None = None,
+) -> list[str]:
+    """Run and drain every registered verifier, collecting what they refuse.
+
+    A verifier failing is itself a finding, not a reason to lose the others, so
+    an exception here becomes a problem string rather than propagating: the
+    caller reports every problem after the transaction closes.
+    """
+
+    import inspect
+
+    problems: list[str] = []
+    while _POST_COMMIT_VERIFIERS:
+        verifier = _POST_COMMIT_VERIFIERS.pop(0)
+        try:
+            sig = inspect.signature(verifier)
+            if "transaction_succeeded" in sig.parameters:
+                problems.extend(
+                    verifier(
+                        transaction_succeeded=transaction_succeeded,
+                        transaction_error=transaction_error,
+                    )
+                    or []
+                )
+            else:
+                problems.extend(verifier() or [])
+        except Exception as exc:  # noqa: BLE001 - reported, never swallowed
+            problems.append(f"post-commit verification failed: {exc}")
+    return problems
 
 
 @contextmanager
@@ -1181,9 +1678,7 @@ def _cross_repo_child_task(state: dict[str, Any], task_id: str) -> dict[str, Any
     active = get_task(state, task_id)
     if active is not None:
         return active
-    snapshot = load_archived_snapshot(task_id)
-    archived = snapshot.get("task") if isinstance(snapshot, dict) else None
-    return archived if isinstance(archived, dict) else None
+    return load_archived_task(task_id)
 
 
 def _cross_repo_requirement_with_child(
@@ -2052,6 +2547,23 @@ def clear_ai_status_caches() -> None:
 _UNUSABLE_BRANCH_CHARS = re.compile(r"[\s~^:?*\[\\]")
 
 
+def task_explicit_branch(
+    task: dict[str, Any] | None = None,
+    branch: str | None = None,
+) -> str | None:
+    """The branch explicitly recorded on the task, or None if absent/invalid.
+
+    Reuses the validity rules from ``task_branch_name`` (rejecting whitespace,
+    git ref metacharacters, and empty strings) without falling back to the
+    derived ``task/<id>`` default name.
+    """
+    candidate = branch if branch is not None else (task or {}).get("branch")
+    recorded = str(candidate or "").strip()
+    if recorded and not _UNUSABLE_BRANCH_CHARS.search(recorded) and ".." not in recorded:
+        return recorded
+    return None
+
+
 def task_branch_name(task: dict[str, Any] | None, task_id: str | None = None) -> str:
     """The task's branch as recorded, falling back to the derived name.
 
@@ -2060,9 +2572,9 @@ def task_branch_name(task: dict[str, Any] | None, task_id: str | None = None) ->
     convention. Looking a task up by an invented ref finds nothing, and the
     caller reads that as missing work rather than as a wrong question.
     """
-    recorded = str((task or {}).get("branch") or "").strip()
-    if recorded and not _UNUSABLE_BRANCH_CHARS.search(recorded) and ".." not in recorded:
-        return recorded
+    explicit = task_explicit_branch(task)
+    if explicit:
+        return explicit
     resolved_id = str(task_id or (task or {}).get("id") or "").strip()
     return f"task/{resolved_id}"
 
@@ -2128,21 +2640,59 @@ def task_pr_ci_status(
         )
         if res and isinstance(res, dict):
             pr_state = res.get("state")
-            rollup = res.get("statusCheckRollup") or []
-            if not rollup:
+            raw_rollup = res.get("statusCheckRollup")
+            if not isinstance(raw_rollup, list) or not raw_rollup:
                 val = (pr_state, "none")
                 _CI_STATUS_CACHE[cache_key] = (now, val)
                 return val
 
+            raw_checks, _superseded_checks = latest_status_check_runs(raw_rollup)
+
             has_pending = False
             has_failure = False
             has_success = False
-            for check in rollup:
-                if isinstance(check, dict):
-                    conclusion = str(check.get("conclusion") or "").upper()
-                    state_val = str(check.get("state") or "").upper()
-                    status_val = str(check.get("status") or "").upper()
+            valid_checks_count = 0
 
+            for check in raw_checks:
+                if not isinstance(check, dict):
+                    has_failure = True
+                    valid_checks_count += 1
+                    continue
+
+                check_name = str(check.get("name") or "").strip()
+                check_context = str(check.get("context") or "").strip()
+
+                # Exclude the pre-approval reviewer gate: task-review-gate is a commit status
+                # emitted upon review approval and is always pending prior to approval.
+                if check_context == "task-review-gate" or check_name == "task-review-gate":
+                    continue
+
+                valid_checks_count += 1
+
+                check_type = str(check.get("__typename") or "").strip()
+                conclusion = str(check.get("conclusion") or "").upper()
+                state_val = str(check.get("state") or "").upper()
+                status_val = str(check.get("status") or "").upper()
+
+                if check_type == "CheckRun":
+                    if status_val != "COMPLETED" or not conclusion:
+                        has_pending = True
+                    elif conclusion in {"SUCCESS", "NEUTRAL", "SKIPPED"}:
+                        has_success = True
+                    elif conclusion in {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}:
+                        has_failure = True
+                    else:
+                        has_failure = True
+                elif check_type == "StatusContext":
+                    if state_val in {"PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAITING"} or not state_val:
+                        has_pending = True
+                    elif state_val == "SUCCESS":
+                        has_success = True
+                    elif state_val in {"FAILURE", "ERROR"}:
+                        has_failure = True
+                    else:
+                        has_failure = True
+                else:
                     if conclusion:
                         if conclusion in {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}:
                             has_failure = True
@@ -2150,13 +2700,17 @@ def task_pr_ci_status(
                             has_pending = True
                         elif conclusion in {"SUCCESS", "NEUTRAL", "SKIPPED"}:
                             has_success = True
+                        else:
+                            has_failure = True
                     elif state_val:
                         if state_val in {"FAILURE", "ERROR"}:
                             has_failure = True
                         elif state_val in {"PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "EXPECTED"}:
                             has_pending = True
-                        elif state_val in {"SUCCESS"}:
+                        elif state_val == "SUCCESS":
                             has_success = True
+                        else:
+                            has_failure = True
                     elif status_val:
                         if status_val in {"PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "EXPECTED", "REQUESTED"}:
                             has_pending = True
@@ -2164,8 +2718,14 @@ def task_pr_ci_status(
                             has_failure = True
                         elif status_val in {"COMPLETED", "SUCCESS"}:
                             has_success = True
+                        else:
+                            has_failure = True
+                    else:
+                        has_failure = True
 
-            if has_failure:
+            if valid_checks_count == 0:
+                ci_status = "none"
+            elif has_failure:
                 ci_status = "failure"
             elif has_pending:
                 ci_status = "pending"
@@ -2287,7 +2847,11 @@ def latest_status_check_runs(
     return latest, superseded
 
 
-def normalized_green_pr_checks(pr_status: dict[str, Any]) -> list[dict[str, Any]]:
+def normalized_green_pr_checks(
+    pr_status: dict[str, Any],
+    *,
+    exclude_review_gate: bool = False,
+) -> list[dict[str, Any]]:
     """Return auditable successful PR checks, failing closed on every other shape."""
 
     raw_rollup = pr_status.get("statusCheckRollup")
@@ -2304,8 +2868,11 @@ def normalized_green_pr_checks(pr_status: dict[str, Any]) -> list[dict[str, Any]
         if not isinstance(raw_check, dict):
             failed.append(f"check-{index} (malformed)")
             continue
-        check_type = str(raw_check.get("__typename") or "").strip()
         name = str(raw_check.get("name") or raw_check.get("context") or f"check-{index}").strip()
+        context = str(raw_check.get("context") or "").strip()
+        if exclude_review_gate and (name == "task-review-gate" or context == "task-review-gate"):
+            continue
+        check_type = str(raw_check.get("__typename") or "").strip()
         conclusion = str(raw_check.get("conclusion") or "").upper()
         status = str(raw_check.get("status") or "").upper()
         state = str(raw_check.get("state") or "").upper()
@@ -2333,6 +2900,11 @@ def normalized_green_pr_checks(pr_status: dict[str, Any]) -> list[dict[str, Any]
             }
         )
 
+    if not checks:
+        raise SystemExit(
+            "Cannot finalize task: merged PR has no verifiable CI status checks."
+        )
+
     if failed or pending:
         issues: list[str] = []
         if failed:
@@ -2347,12 +2919,14 @@ def normalized_green_pr_checks(pr_status: dict[str, Any]) -> list[dict[str, Any]
     for index, raw_check in enumerate(superseded_checks, start=1):
         if not isinstance(raw_check, dict):
             continue
+        name = str(raw_check.get("name") or raw_check.get("context") or f"superseded-{index}").strip()
+        context = str(raw_check.get("context") or "").strip()
+        if exclude_review_gate and (name == "task-review-gate" or context == "task-review-gate"):
+            continue
         checks.append(
             {
                 "type": str(raw_check.get("__typename") or "").strip() or None,
-                "name": str(
-                    raw_check.get("name") or raw_check.get("context") or f"superseded-{index}"
-                ).strip(),
+                "name": name,
                 "status": str(raw_check.get("status") or raw_check.get("state") or "").upper() or None,
                 "conclusion": str(
                     raw_check.get("conclusion") or raw_check.get("state") or ""
@@ -2400,6 +2974,7 @@ def resolve_task_delivery_checkout(
     repository_root: Path,
     task_id: str,
     approved_head: str | None = None,
+    recorded_branch: str | None = None,
 ) -> dict[str, Any]:
     """Resolve the checkout owned by ``task_id``, or report that none survives.
 
@@ -2427,7 +3002,12 @@ def resolve_task_delivery_checkout(
     so it stays ambiguous and still fails closed.
     """
 
-    branch_names = [f"task/{task_id}", f"task-{task_id}"]
+    explicit_branch = task_explicit_branch(branch=recorded_branch)
+    branch_names = (
+        [explicit_branch]
+        if explicit_branch
+        else [f"task/{task_id}", f"task-{task_id}"]
+    )
     approved_head = str(approved_head or "").strip()
     current_branch = run_git_command(
         ["rev-parse", "--abbrev-ref", "HEAD"],
@@ -2526,12 +3106,25 @@ def is_stale_task_checkout(
     )
 
 
-def task_delivery_checkout(repository_root: Path, task_id: str) -> tuple[Path, str]:
+def task_delivery_checkout(
+    repository_root: Path,
+    task_id: str,
+    recorded_branch: str | None = None,
+) -> tuple[Path, str]:
     """Resolve the one checkout owned by ``task_id`` instead of central writer HEAD."""
 
-    resolved = resolve_task_delivery_checkout(repository_root, task_id)
+    resolved = resolve_task_delivery_checkout(
+        repository_root,
+        task_id,
+        recorded_branch=recorded_branch,
+    )
     if not resolved["present"]:
-        branch_names = [f"task/{task_id}", f"task-{task_id}"]
+        explicit_branch = task_explicit_branch(branch=recorded_branch)
+        branch_names = (
+            [explicit_branch]
+            if explicit_branch
+            else [f"task/{task_id}", f"task-{task_id}"]
+        )
         raise SystemExit(
             f"Cannot finalize task {task_id}: expected exactly one task-owned delivery "
             f"checkout for {', '.join(branch_names)}, found 0."
@@ -2559,6 +3152,7 @@ def enforce_delivery_merged_gate(
     remote_names: list[str],
     approved_head: str,
     repository_slug_value: str | None,
+    task: dict[str, Any] | None = None,
 ) -> None:
     target_branch = delivery_merge_target_branch(config, repository_id)
     delivery["merge_target_branch"] = target_branch
@@ -2647,8 +3241,17 @@ def enforce_delivery_merged_gate(
         checkout_head = str(delivery.get("verified_head") or "").strip()
         if checkout_head and checkout_head != approved_head:
             task_id = branch.replace("task/", "") if branch.startswith("task/") else branch
+            task_dict: dict[str, Any] = dict(task) if task else {}
+            if "id" not in task_dict or not task_dict["id"]:
+                task_dict["id"] = task_id
+            if "branch" not in task_dict or not task_dict["branch"]:
+                task_dict["branch"] = branch
+            if "approved_head" not in task_dict or not task_dict["approved_head"]:
+                task_dict["approved_head"] = approved_head
+            if "repository" not in task_dict or not task_dict["repository"]:
+                task_dict["repository"] = repository_slug_value
             if is_approved_head_satisfied(
-                {"id": task_id, "approved_head": approved_head},
+                task_dict,
                 checkout_head,
                 approved_head,
                 repository_root=repository_root,
@@ -2953,8 +3556,12 @@ def collect_done_delivery_metadata(
             repository_id = "pantheon"
             repository_root = pantheon_root
     configured_repository_root = repository_root.resolve(strict=False)
+    recorded_branch = task_explicit_branch(task)
     resolved_checkout = resolve_task_delivery_checkout(
-        configured_repository_root, task_id, approved_head=approved_head
+        configured_repository_root,
+        task_id,
+        approved_head=approved_head,
+        recorded_branch=recorded_branch,
     )
     repository_root = resolved_checkout["checkout"]
     branch = resolved_checkout["branch"]
@@ -3125,6 +3732,8 @@ def collect_done_delivery_metadata(
                 continue
             expected_value = expected_fields.get(field_name)
             if expected_value and actual_value != expected_value:
+                if field_name == "Task-ID" and actual_value.casefold() == expected_value.casefold():
+                    continue
                 if field_name == "Reviewer" and actual_value and canonical_agent_name(actual_value):
                     continue
                 if field_name == "LLM-Agent" and actual_value and canonical_agent_name(actual_value):
@@ -3251,6 +3860,7 @@ def collect_done_delivery_metadata(
             remote_names=remote_names,
             approved_head=approved_head,
             repository_slug_value=repository_slug_value,
+            task=task,
         )
 
     return delivery
@@ -3281,6 +3891,81 @@ def task_metadata_from_env() -> dict[str, Any]:
         metadata["source_docs"] = parse_csv_env("TASK_SOURCE_DOCS")
 
     return metadata
+
+
+def role_provider_assignment_block_reason(
+    agent_name: str | None,
+    *,
+    role: str,
+    task_class: str | None = None,
+    task: dict[str, Any] | None = None,
+    grants_new_authority: bool = False,
+) -> str | None:
+    """Ask the dispatcher's own role/provider policy about a canonical assignment.
+
+    The board and the dispatcher have to agree on who may hold a role. If the
+    CLI could record an assignment the dispatcher will never act on, the task
+    just sits there looking owned, and the supervisor's reconcile pass spends
+    every tick trying to repair a record the operator keeps re-creating.
+
+    `dispatch_policy` is the leaf module the supervisor reads this from, so it
+    is imported directly rather than through `worker_failure_policy` -- the CLI
+    must not drag the supervisor into its process to answer a config question.
+
+    Human-gate actors and tasks that no automatic lane may take are outside the
+    policy: it governs which provider gets automated work, and those records
+    exist precisely because the work is not automated. Judging them here would
+    reject an operator writing `Human/Ops` onto a gate, because a human has no
+    provider identity at all and therefore fails closed.
+    """
+    from dispatch_policy import role_provider_block_reason
+
+    if canonical_agent_name(agent_name) in NON_WORKER_ACTORS:
+        return None
+    if isinstance(task, dict) and (
+        str(task.get("task_class") or "").strip().lower() == "human_gate"
+        or bool(task.get("human_required_roles"))
+        or str(task.get("gate_status") or "").strip().lower().startswith("pending_human")
+        or bool(task.get("non_dispatchable"))
+    ):
+        return None
+    return role_provider_block_reason(
+        merged_orchestrator_config(),
+        agent_name,
+        role=role,
+        task_class=task_class,
+        task=task,
+        grants_new_authority=grants_new_authority,
+    )
+
+
+def review_independence_block_reason(owner: str | None, reviewer: str | None) -> str | None:
+    """Why these two names are not two independent accounts, or None.
+
+    Logical names are not accounts. `Claude`/`Claude2` and `Antigravity2..7` are
+    aliases over one credential, one quota budget and one worker-slot set, so
+    comparing the strings -- which is all `owner == reviewer` does -- lets the
+    same account be recorded on both sides of its own review. The dispatcher has
+    always resolved this through the account-pool resolver; the CLI reads the
+    same leaf so a hand-written assignment cannot record what dispatch would
+    refuse to produce.
+    """
+    from dispatch_policy import agent_account_pool_id, review_is_independent
+
+    owner_name = canonical_agent_name(owner)
+    reviewer_name = canonical_agent_name(reviewer)
+    if not owner_name or not reviewer_name:
+        return None
+    if owner_name in NON_WORKER_ACTORS or reviewer_name in NON_WORKER_ACTORS:
+        return None
+    config = merged_orchestrator_config()
+    if review_is_independent(config, owner_name, reviewer_name):
+        return None
+    pool = agent_account_pool_id(config, owner_name) or "(unresolved)"
+    return (
+        f"owner {owner_name} 與 reviewer {reviewer_name} 屬於同一個 account pool {pool}"
+        "，不是獨立審查身分"
+    )
 
 
 def validate_assignment_source_docs(
@@ -3325,6 +4010,217 @@ def validate_assignment_source_docs(
 
 def dependency_is_satisfied(resolver: TaskResolver, dep_id: str) -> bool:
     return resolver.dependency_satisfied(dep_id)
+
+
+def _dependency_task_id(task_id: Any) -> str:
+    """Canonical dependency identity, matching what actually resolves at runtime.
+
+    ``task_archive.normalize_task_id`` only strips whitespace, so both the live
+    board index and the archive file lookup are case-sensitive.  The validator
+    has to fold ids the same way or it can certify a graph as clean that
+    ``TaskResolver`` is structurally unable to resolve, leaving the task blocked
+    forever with no reported violation.
+    """
+    return str(task_id or "").strip()
+
+
+def _dependency_task_id_key(task_id: Any) -> str:
+    """Case-insensitive fold, used only to diagnose near-miss ids.
+
+    This must never decide membership: it exists so a dependency that differs
+    from a real task id by case alone is reported as a fixable mismatch instead
+    of falling through to the generic dangling message.
+    """
+    return _dependency_task_id(task_id).casefold()
+
+
+def dependency_graph_errors_for_task(
+    task: dict[str, Any],
+    active_tasks: Iterable[dict[str, Any]] | dict[str, dict[str, Any]],
+) -> list[str]:
+    """Return graph violations reachable from one task candidate.
+
+    Dependency edits are deliberately validated against both sources of task
+    truth.  ``TaskResolver`` is enough to answer whether a dependency is done,
+    but it prefers the live board when an id is duplicated and therefore cannot
+    enforce the Control Pack's exactly-one-source rule.  This validator keeps
+    that distinction explicit and is shared by the canonical CLI and the
+    Supervisor's dispatch gate.
+
+    Identity here is exactly the resolver's identity (whitespace-stripped,
+    case-sensitive).  Reporting on a looser identity than the one that resolves
+    at dispatch time is the worst failure available to this function: the edit
+    is accepted, the graph is certified clean, and the task waits on an edge
+    nothing can ever satisfy.
+    """
+    if isinstance(active_tasks, dict):
+        source_tasks = active_tasks.values()
+    else:
+        source_tasks = active_tasks
+
+    active_by_id: dict[str, dict[str, Any]] = {}
+    for candidate in source_tasks:
+        if not isinstance(candidate, dict):
+            continue
+        candidate_id = _dependency_task_id(candidate.get("id"))
+        if not candidate_id and isinstance(active_tasks, dict):
+            for source_key, source_task in active_tasks.items():
+                if source_task is candidate:
+                    candidate_id = _dependency_task_id(source_key)
+                    break
+        if candidate_id:
+            active_by_id[candidate_id] = candidate
+
+    task_id = _dependency_task_id(task.get("id"))
+    if not task_id and isinstance(active_tasks, dict):
+        for source_key, source_task in active_tasks.items():
+            if source_task is task or source_task == task:
+                task_id = _dependency_task_id(source_key)
+                task = {**task, "id": task_id}
+                break
+    if task_id:
+        active_by_id[task_id] = task
+
+    # Diagnostic index only. Membership is decided on the exact id above; this
+    # maps a folded id back to the canonical board ids sharing it so a
+    # case-mismatched edge names the id the operator actually meant.
+    board_ids_by_key: dict[str, list[str]] = {}
+    for board_id in active_by_id:
+        board_ids_by_key.setdefault(_dependency_task_id_key(board_id), []).append(board_id)
+
+    errors: list[str] = []
+    seen_errors: set[str] = set()
+
+    def add_error(message: str) -> None:
+        if message not in seen_errors:
+            seen_errors.add(message)
+            errors.append(message)
+
+    def archive_snapshot(dep_id: str) -> dict[str, Any] | None:
+        try:
+            snapshot = load_archived_snapshot(dep_id)
+        except (OSError, ValueError, TypeError):
+            # A broken archive lookup must never turn into a dispatch grant.
+            return None
+        return snapshot if isinstance(snapshot, dict) else None
+
+    visiting: list[str] = []
+    visited: set[str] = set()
+
+    def walk(current_id: str) -> None:
+        if current_id in visiting:
+            start = visiting.index(current_id)
+            cycle = visiting[start:] + [current_id]
+            add_error("dependency cycle: " + " -> ".join(cycle))
+            return
+        if current_id in visited:
+            return
+        current = active_by_id.get(current_id)
+        if not isinstance(current, dict):
+            return
+
+        visiting.append(current_id)
+        raw_dependencies = current.get("depends_on")
+        if raw_dependencies is None:
+            dependencies: list[Any] = []
+        elif isinstance(raw_dependencies, list):
+            dependencies = raw_dependencies
+        else:
+            add_error(f"{current.get('id')}: depends_on must be a list")
+            dependencies = []
+
+        # Deduplicate on the exact id: two entries differing only by case are
+        # not a redundant edge, they are one resolvable edge plus one that never
+        # resolves, and each has to be reported on its own terms.
+        seen_dependencies: set[str] = set()
+        for raw_dependency in dependencies:
+            dep_id = _dependency_task_id(raw_dependency)
+            if not dep_id:
+                add_error(f"{current.get('id')}: dependency id must not be empty")
+                continue
+            if dep_id in seen_dependencies:
+                add_error(f"{current.get('id')}: duplicate dependency {dep_id}")
+                continue
+            seen_dependencies.add(dep_id)
+
+            # A self-edge stays case-insensitive: whichever spelling was used,
+            # the operator pointed the task at itself and that is the useful
+            # thing to say.
+            if _dependency_task_id_key(dep_id) == _dependency_task_id_key(current_id):
+                add_error(f"{current.get('id')}: depends on itself ({dep_id})")
+                continue
+
+            on_board = dep_id in active_by_id
+            snapshot = archive_snapshot(dep_id)
+            if on_board and snapshot is not None:
+                add_error(
+                    f"{current.get('id')}: dependency {dep_id} exists on BOTH the live board "
+                    "and the official archive"
+                )
+                continue
+            if not on_board and snapshot is None:
+                near_misses = [
+                    board_id
+                    for board_id in board_ids_by_key.get(_dependency_task_id_key(dep_id), [])
+                    if board_id != dep_id
+                ]
+                if near_misses:
+                    add_error(
+                        f"{current.get('id')}: dependency {dep_id} differs only by case from "
+                        f"{', '.join(sorted(near_misses))}; task ids are case-sensitive and this "
+                        "edge can never resolve"
+                    )
+                else:
+                    add_error(
+                        f"{current.get('id')}: dependency {dep_id} is dangling in neither "
+                        "the live board nor the official archive"
+                    )
+                continue
+            if not on_board:
+                terminal_status = str(snapshot.get("terminal_status") or "").strip().lower()
+                if terminal_status != "done":
+                    add_error(
+                        f"{current.get('id')}: archived dependency {dep_id} has "
+                        f"terminal_status={terminal_status or 'missing'!r} and is not complete"
+                    )
+                continue
+            walk(dep_id)
+
+        visiting.pop()
+        visited.add(current_id)
+
+    if not task_id:
+        return ["dependency update requires a task id"]
+    walk(task_id)
+    return errors
+
+
+def validate_dependency_update(
+    state: dict[str, Any],
+    task_id: str,
+    dependencies: list[str],
+) -> None:
+    """Fail closed before a CLI dependency mutation touches canonical state."""
+    candidate = get_task(state, task_id)
+    if candidate is None:
+        candidate = {"id": task_id}
+    else:
+        candidate = deepcopy(candidate)
+    candidate["depends_on"] = list(dependencies)
+    errors = dependency_graph_errors_for_task(candidate, state.get("tasks", []))
+    if errors:
+        detail = "\n".join(f"  - {error}" for error in errors)
+        raise SystemExit(
+            f"Dependency update rejected for {task_id}; canonical graph remains unchanged:\n{detail}"
+        )
+
+
+def parse_dependency_argument(raw: str | None) -> list[str]:
+    """Parse the CLI dependency field; ``-``/``none`` explicitly clears it."""
+    value = str(raw or "").strip()
+    if value.casefold() in {"", "-", "none", "null", "[]"}:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 def ensure_review_finalize_handoff(
@@ -5302,6 +6198,32 @@ def dashboard_orchestrator_state(state: dict[str, Any], orchestrator_state: dict
     return dashboard_state
 
 
+def docs_site_mirror_pairs() -> list[tuple[Path, Path]]:
+    """Every `(source, published mirror)` pair `sync_docs_site` writes.
+
+    One list, read at call time so relocated roots are honoured, because two
+    callers need exactly the same answer: the mirror writer below, and the
+    checkpoint-destination gate that has to refuse those same destinations.
+    Keeping them apart is how a mirror added to one list quietly becomes a
+    destination the other no longer protects.
+    """
+
+    rename_map = {"state.json": "orchestrator-state.json"}
+    sources = [
+        STATUS_FILE,
+        CURRENT_WORK_FILE,
+        DASHBOARD_BUNDLE_FILE,
+        ORCHESTRATOR_STATE_FILE,
+        APPROVAL_QUEUE_FILE,
+        PLANNING_STATE_FILE,
+        LOG_FILE,
+    ]
+    return [
+        (source, DOCS_SITE_DIR / rename_map.get(source.name, source.name))
+        for source in sources
+    ]
+
+
 def sync_docs_site(state: dict[str, Any]) -> None:
     DOCS_SITE_DIR.mkdir(parents=True, exist_ok=True)
     config = status_runtime_config()
@@ -5309,30 +6231,20 @@ def sync_docs_site(state: dict[str, Any]) -> None:
         runtime_state = load_runtime_state(config)
     except KeyError:
         runtime_state = {}
-    mirror_files = [
-        STATUS_FILE,
-        CURRENT_WORK_FILE,
-        DASHBOARD_BUNDLE_FILE,
-        ORCHESTRATOR_STATE_FILE,
-        APPROVAL_QUEUE_FILE,
-        PLANNING_STATE_FILE,
-    ]
-    rename_map = {
-        "state.json": "orchestrator-state.json",
-        "approval-queue.json": "approval-queue.json",
-    }
-    for path in mirror_files:
-        if path.exists():
-            target_name = rename_map.get(path.name, path.name)
-            if path.name == "state.json":
-                dashboard_state = dashboard_orchestrator_state(state, runtime_state)
-                (DOCS_SITE_DIR / target_name).write_text(
-                    json.dumps(dashboard_state, indent=2, ensure_ascii=False) + "\n",
-                    encoding="utf-8",
-                )
-            else:
-                shutil.copy2(path, DOCS_SITE_DIR / target_name)
-    _mirror_log_tail(LOG_FILE, DOCS_SITE_DIR / LOG_FILE.name, DASHBOARD_LOG_TAIL_LINES)
+    for source, target in docs_site_mirror_pairs():
+        if source == LOG_FILE:
+            # The log is mirrored as a bounded tail, not a whole-file copy.
+            _mirror_log_tail(source, target, DASHBOARD_LOG_TAIL_LINES)
+        elif not source.exists():
+            continue
+        elif source == ORCHESTRATOR_STATE_FILE:
+            dashboard_state = dashboard_orchestrator_state(state, runtime_state)
+            target.write_text(
+                json.dumps(dashboard_state, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+        else:
+            shutil.copy2(source, target)
 
 
 def sync_all(state: dict[str, Any]) -> None:
@@ -5441,6 +6353,928 @@ def normalize_handoffs(state: dict[str, Any]) -> None:
             )
 
 
+_ALLOWED_OPTIONAL_PIN_CORRECTION_LOG_TYPES = frozenset(
+    {
+        "assign",
+        "wake_queued",
+        "dispatch_blocked_worktree_base",
+        "dispatch_blocked_worktree_lease",
+        "dispatch_preflight_blocked",
+    }
+)
+
+_FORBIDDEN_OPTIONAL_PIN_CORRECTION_TASK_KEYS = (
+    "branch",
+    "head",
+    "head_sha",
+    "commit",
+    "commits",
+    "verified_head",
+    "workspace_path",
+    "worktree_path",
+    "execution_evidence",
+    "verification_evidence",
+    "verification_runs",
+    "verification_results",
+    "verification_receipts",
+    "verification_receipt",
+    "verification_status",
+    "verification_passed",
+    "last_verification",
+    "test_results",
+    "evidence",
+    "pr_number",
+    "pr_url",
+    "pull_request",
+    "review_submission",
+    "approved_head",
+    "last_approved_head",
+    "review_gate_sha",
+    "review_gate_target",
+    "review_gate_revocations",
+    "status_check_outbox",
+    "status_check_delivery_history",
+    "review_notes_zh",
+    "review_file",
+    "merge_route",
+    "delivery",
+    "delivery_blockers",
+    "handoff_seal",
+    "human_continuation_approval",
+    "human_continuation_approval_history",
+    "blocker_provenance",
+    "blocker_provenance_history",
+    "review_reopen_history",
+    "last_reopened_at",
+    "last_reopened_by",
+    "last_reopened_reason",
+    "last_reopen_category",
+    "last_review_reopen_at",
+    "review_churn_escalated_at",
+    "waiting_for",
+    "blocker",
+    "failure_reason",
+    "superseded_by",
+    "terminal_outcome",
+    "history_recovery",
+    "completed_at",
+    "archived_at",
+)
+
+
+def _is_preflight_blocked_queue_record(record: Any) -> bool:
+    if not isinstance(record, dict):
+        return False
+    if record.get("run_id") or record.get("lease_owner"):
+        return False
+    status = str(record.get("status") or "").strip().lower()
+    error = str(record.get("error") or "").strip()
+    return status == "failed" and error.startswith("Worker workspace preflight blocked:")
+
+
+def _validate_assign_optional_pin_removal(
+    state: dict[str, Any],
+    *,
+    task_id: str,
+    task: dict[str, Any] | None,
+    actor: str,
+    owner: str,
+    reviewer: str,
+    title: str | None,
+    summary_zh: str | None,
+    metadata: dict[str, Any],
+) -> str:
+    if task is None:
+        if archived_task_snapshot(task_id):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: task is archived."
+            )
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "task does not exist on the active board (new-task clear attempts are forbidden)."
+        )
+    if archived_task_snapshot(task_id):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: task is archived."
+        )
+
+    prior_pin = task.get("frozen_evidence_base_sha")
+    if (
+        "frozen_evidence_base_sha" not in task
+        or not isinstance(prior_pin, str)
+        or not prior_pin.strip()
+    ):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "task has no prior frozen_evidence_base_sha pin to clear."
+        )
+    prior_pin = prior_pin.strip()
+
+    if task.get("status") != "todo":
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"task status must be 'todo' (found {task.get('status')!r})."
+        )
+    task_class = str(task.get("task_class") or "product").strip().lower()
+    if task_class != "product":
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"only 'product' tasks are eligible (found {task.get('task_class')!r})."
+        )
+    for marker in (
+        "non_dispatchable",
+        "requires_human_approval",
+        "human_required_roles",
+        "helper_parent",
+        "helper_kind",
+        "auto_generated",
+        "auto_created_by",
+        "gate_status",
+    ):
+        if task.get(marker):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"task carries non-standard or human-gate marker {marker!r}."
+            )
+    if str(task.get("next") or "").strip() != "Assignment created":
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"task next state ({task.get('next')!r}) indicates post-creation assignment or activity; "
+            "only a pristine initial assignment ('Assignment created') can be corrected."
+        )
+    for candidate in state.get("tasks", []) or []:
+        if (
+            isinstance(candidate, dict)
+            and str(candidate.get("helper_parent") or "").strip() == task_id
+        ):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"child helper/sidecar task {candidate.get('id')!r} already exists."
+            )
+
+    recorded_owner = canonical_agent_name(task.get("owner"))
+    recorded_reviewer = canonical_agent_name(task.get("reviewer"))
+    if (
+        not recorded_owner
+        or not recorded_reviewer
+        or canonical_agent_name(owner) != recorded_owner
+        or canonical_agent_name(reviewer) != recorded_reviewer
+    ):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"owner ({owner}) and reviewer ({reviewer}) must remain unchanged "
+            f"({recorded_owner} / {recorded_reviewer})."
+        )
+
+    for key, value in metadata.items():
+        if key == "frozen_evidence_base_sha":
+            continue
+        if value is None:
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"null metadata value for {key!r} is forbidden (no other null metadata changes allowed)."
+            )
+        if key == "priority":
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                "cannot mutate priority during optional-pin correction."
+            )
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"cannot mutate metadata field {key!r} during optional-pin correction."
+        )
+    if title is not None and title != task.get("title"):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "cannot mutate title during optional-pin correction."
+        )
+    if summary_zh is not None and summary_zh != task.get("summary_zh"):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "cannot mutate summary_zh during optional-pin correction."
+        )
+    if "TASK_PHASE" in os.environ and os.environ["TASK_PHASE"] != task.get("phase"):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "cannot mutate phase during optional-pin correction."
+        )
+    if "TASK_ARTIFACTS" in os.environ and parse_csv_env("TASK_ARTIFACTS") != (task.get("artifacts") or []):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "cannot mutate artifacts during optional-pin correction."
+        )
+    if "TASK_ACCEPTANCE" in os.environ and parse_csv_env("TASK_ACCEPTANCE") != (task.get("acceptance") or []):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "cannot mutate acceptance during optional-pin correction."
+        )
+    if os.environ.get("TASK_BRANCH", "").strip():
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "cannot set TASK_BRANCH during optional-pin correction."
+        )
+
+    if "verification" in task and task["verification"] is not None:
+        verifications = task["verification"]
+        if not isinstance(verifications, list) or any(
+            not isinstance(cmd, str) or not cmd.strip() for cmd in verifications
+        ):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                "verification field must contain only declared command strings, not execution results or receipts."
+            )
+    for counter_key in (
+        "review_reopen_count",
+        "review_churn_escalated_at_count",
+        "review_churn_reassigned_at_count",
+    ):
+        if counter_key in task:
+            raw_count = task.get(counter_key)
+            if isinstance(raw_count, bool) or raw_count not in (None, 0):
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    f"task has reopen/churn counter {counter_key}={raw_count!r}."
+                )
+    for forbidden_key in _FORBIDDEN_OPTIONAL_PIN_CORRECTION_TASK_KEYS:
+        if forbidden_key in task and (
+            task[forbidden_key] is not None
+            or forbidden_key
+            in {
+                "branch",
+                "pr_number",
+                "pr_url",
+                "review_submission",
+                "approved_head",
+                "last_approved_head",
+                "delivery",
+                "handoff_seal",
+                "human_continuation_approval",
+                "human_continuation_approval_history",
+                "blocker_provenance",
+                "blocker_provenance_history",
+                "review_reopen_history",
+                "verification_runs",
+                "verification_results",
+                "verification_receipts",
+                "verification_receipt",
+                "verification_evidence",
+                "execution_evidence",
+            }
+        ):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"task carries prior execution, review, reopen, or approval state ({forbidden_key})."
+            )
+    for handoff in state.get("handoffs", []) or []:
+        if isinstance(handoff, dict) and str(handoff.get("task_id") or "").strip() == task_id:
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                "task has handoff history."
+            )
+    for blocker in state.get("blockers", []) or []:
+        if isinstance(blocker, dict) and str(blocker.get("task_id") or "").strip() == task_id:
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                "task has blocker history."
+            )
+    nonce_registry = state.get("human_continuation_approval_nonce_registry")
+    if isinstance(nonce_registry, dict):
+        for nonce_entry in nonce_registry.values():
+            if isinstance(nonce_entry, dict) and str(nonce_entry.get("task_id") or "").strip() == task_id:
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    "task has continuation approval nonce history."
+                )
+
+    try:
+        log_entries = load_logs(strict=True)
+    except ValueError as exc:
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: {exc}"
+        ) from exc
+    task_log_entries = [
+        entry
+        for entry in log_entries
+        if str(entry.get("task_id") or "").strip() == task_id
+        or str(entry.get("workspace_task_id") or "").strip() == task_id
+        or str(entry.get("task_scope") or "").strip() == task_id
+        or (
+            isinstance(entry.get("task_ids"), list)
+            and task_id in {str(item).strip() for item in entry["task_ids"]}
+        )
+    ]
+    assign_entries = [
+        entry for entry in task_log_entries if str(entry.get("type") or "").strip() == "assign"
+    ]
+    if not assign_entries:
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "no original assign audit entry found in canonical activity log."
+        )
+    if len(assign_entries) != 1:
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"task has {len(assign_entries)} assign audit entries; only a pristine initial assignment can be corrected."
+        )
+    if task_log_entries[0] is not assign_entries[0]:
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "initial creation assign audit entry is missing or rotated from the start of task history."
+        )
+    assign_entry = assign_entries[0]
+    canonical_actor = canonical_agent_name(actor)
+    entry_actor = canonical_agent_name(assign_entry.get("agent"))
+    if not entry_actor or entry_actor != canonical_actor:
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"actor {actor} is not the proven original assigning actor ({entry_actor or 'unknown'})."
+        )
+    if assign_entry.get("cleared_optional_pin") or "previous_frozen_evidence_base_sha" in assign_entry:
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "task already has an optional-pin correction in audit history."
+        )
+    assign_pattern = re.compile(rf"^Assigned {re.escape(task_id)} to (\S+) with reviewer (\S+)$")
+    match = assign_pattern.fullmatch(str(assign_entry.get("message") or "").strip())
+    if not match:
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"assign audit entry message ({assign_entry.get('message')!r}) is not an original creation assignment."
+        )
+    logged_owner, logged_reviewer = match.group(1), match.group(2)
+    if (
+        canonical_agent_name(logged_owner) != recorded_owner
+        or canonical_agent_name(logged_reviewer) != recorded_reviewer
+    ):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"historical assign audit ({logged_owner} / {logged_reviewer}) does not match "
+            f"current owner/reviewer ({recorded_owner} / {recorded_reviewer})."
+        )
+    assign_ts = str(assign_entry.get("ts") or "").strip()
+    task_last_update = str(task.get("last_update") or "").strip()
+    if not assign_ts or not task_last_update or assign_ts != task_last_update:
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"assign audit timestamp ({assign_ts!r}) does not match pristine task creation timestamp ({task_last_update!r})."
+        )
+    config = status_runtime_config()
+    # A capacity reservation is not a worker/process lease. Check the native
+    # unbound shape without repairing or expiring it; the ordinary runtime,
+    # queue, Git and evidence refusals below still apply in full.
+    claim = task.get("helper_execution_lease")
+    if "helper_execution_lease" in task:
+        import capacity_controller
+
+        claim_keys = {
+            "claimed_by", "original_owner", "generation", "claimed_at",
+            "lease_expires_at", "reason",
+        }
+        if not isinstance(claim, dict) or set(claim) != claim_keys:
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                "helper_execution_lease is malformed, unknown, or run-bound."
+            )
+        claimant = resolve_actor_reference(claim.get("claimed_by"), field="helper_execution_lease claimant")
+        claimed_at = parse_timestamp(claim.get("claimed_at"))
+        created_at = parse_timestamp(assign_ts)
+        if (
+            claimant not in configured_agent_names()
+            or claimant in {recorded_owner, recorded_reviewer}
+            or canonical_agent_name(claim.get("original_owner")) != recorded_owner
+            or type(claim.get("generation")) is not int
+            # Native cleanup removes the whole claim. A fresh unused claim
+            # starts at 1; replacement/renewal history is not this narrow case.
+            or claim["generation"] != 1
+            or claim.get("reason") != "owner_capacity_saturated_or_dispatch_sla_exceeded"
+            or claimed_at is None
+            or created_at is None
+            or claimed_at < created_at
+            or capacity_controller.helper_claim_task_ids_to_release(
+                config, [task], {"workers": {}}, now=claimed_at
+            )
+        ):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                "helper_execution_lease is not an original unbound capacity reservation."
+            )
+
+    task_queue_event_ids: set[str] = set()
+    # Validate retained native routing audit, not just its type labels. An
+    # unmatched lease must be exactly the canonical reservation; a release is
+    # usable only after expiry (the original cleanup rule for an unbound claim).
+    # No claim transition is performed by assign.
+    reserved_entry: dict[str, Any] | None = None
+    previous_routing_ts = parse_timestamp(assign_ts)
+    last_release_ts = previous_routing_ts
+    for entry in task_log_entries[1:]:
+        entry_type = str(entry.get("type") or "").strip()
+        entry_ts = str(entry.get("ts") or "").strip()
+        if not entry_ts or entry_ts < assign_ts:
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"task audit entry ({entry_type!r} at {entry_ts!r}) predates or lacks timestamp relative to initial assignment ({assign_ts!r})."
+            )
+        if (
+            entry_type == "dependency_update"
+            and entry.get("old_dependencies") == []
+            and str(entry.get("message") or "").strip()
+            == "Initial dependency declaration during canonical task assignment."
+            and canonical_agent_name(entry.get("agent")) == canonical_actor
+            and entry_ts == assign_ts
+        ):
+            continue
+        if entry_type in {"helper_claim_leased", "helper_claim_released"}:
+            routing_ts = parse_timestamp(entry_ts)
+            expected_keys = {"ts", "agent", "type", "task_id", "message"}
+            valid_routing = (
+                entry.get("agent") == "Orchestrator"
+                and entry.get("task_id") == task_id
+                and routing_ts is not None
+                and previous_routing_ts is not None
+                and routing_ts >= previous_routing_ts
+            )
+            if entry_type == "helper_claim_leased":
+                expected_keys.update({"claimed_by", "owner", "lease_expires_at"})
+                leased_to = resolve_actor_reference(
+                    entry.get("claimed_by"), field="helper_execution_lease audit claimant"
+                )
+                expires_at = parse_timestamp(entry.get("lease_expires_at"))
+                valid_routing = (
+                    valid_routing
+                    and reserved_entry is None
+                    and leased_to in configured_agent_names()
+                    and leased_to not in {recorded_owner, recorded_reviewer}
+                    and canonical_agent_name(entry.get("owner")) == recorded_owner
+                    and expires_at is not None
+                    and routing_ts < expires_at
+                    and entry.get("message")
+                    == "Idle capacity leased existing canonical work without changing owner."
+                )
+                reserved_entry = entry
+            else:
+                expires_at = parse_timestamp((reserved_entry or {}).get("lease_expires_at"))
+                valid_routing = (
+                    valid_routing
+                    and reserved_entry is not None
+                    and expires_at is not None
+                    # Native cleanup checks the full expiry before writing
+                    # audit ts via common.utc_now(), which truncates micros.
+                    # Retained lease/release order supplies the same-second
+                    # ordering; never round the stored claim itself.
+                    and routing_ts >= expires_at.replace(microsecond=0)
+                    and entry.get("message")
+                    == "Helper execution lease released because its launched run is no longer live."
+                )
+                reserved_entry = None
+                last_release_ts = routing_ts
+            if not valid_routing or set(entry) != expected_keys:
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    "incomplete or non-native helper reservation audit."
+                )
+            previous_routing_ts = routing_ts
+            continue
+        if entry_type not in _ALLOWED_OPTIONAL_PIN_CORRECTION_LOG_TYPES:
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"canonical activity log records post-assignment activity ({entry_type!r})."
+            )
+        if entry.get("refresh_status"):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"preflight log records pre-existing worktree/branch refresh ({entry.get('refresh_status')!r})."
+            )
+        q_event_id = str(entry.get("queue_event_id") or "").strip()
+        if q_event_id:
+            task_queue_event_ids.add(q_event_id)
+
+    if claim is not None or reserved_entry is not None:
+        reserved_at = parse_timestamp((reserved_entry or {}).get("ts"))
+        if (
+            not isinstance(claim, dict)
+            or reserved_entry is None
+            or canonical_agent_name(reserved_entry.get("claimed_by")) != claimant
+            or reserved_entry.get("lease_expires_at") != claim["lease_expires_at"]
+            or reserved_at is None
+            # The grant is committed before its second-precision audit.
+            # Compare at that writer's precision, retaining full claim data
+            # and the ordered release/lease pairing above as proof.
+            or claimed_at.replace(microsecond=0) > reserved_at
+            or claimed_at < last_release_ts
+        ):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                "helper_execution_lease does not match complete canonical reservation audit."
+            )
+
+    if orchestrator_common.load_verification_receipts(config, task_id=task_id):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "recorded verification receipts exist for task."
+        )
+    ev_dir = orchestrator_common.evidence_dir(config)
+    if ev_dir.is_dir():
+        receipt_slug = orchestrator_common.verification_evidence.receipt_slug(task_id)
+        if list(ev_dir.glob(f"verification-receipt-{receipt_slug}-*.json")):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                "verification receipt file exists in evidence directory."
+            )
+
+    if not ORCHESTRATOR_STATE_FILE.exists() or not ORCHESTRATOR_STATE_FILE.is_file():
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "orchestrator runtime state is missing; dispatch and lease absence cannot be proven."
+        )
+    try:
+        orch_text = ORCHESTRATOR_STATE_FILE.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"orchestrator runtime state is unreadable: {exc}"
+        ) from exc
+    if not orch_text:
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "orchestrator runtime state is empty or truncated."
+        )
+    try:
+        orchestrator_state = json.loads(orch_text)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"orchestrator runtime state is malformed: {exc}"
+        ) from exc
+    if not isinstance(orchestrator_state, dict) or not orchestrator_state:
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "orchestrator runtime state must be a non-empty JSON object."
+        )
+
+    workers = orchestrator_state.get("workers")
+    if not isinstance(workers, dict):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "orchestrator workers table is missing or malformed."
+        )
+    for run_id, worker in workers.items():
+        if not isinstance(worker, dict):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"orchestrator worker entry {run_id!r} is malformed."
+            )
+        worker_task_id = str(
+            worker.get("task_id")
+            or ((worker.get("request_snapshot") or {}).get("task_id"))
+            or ""
+        ).strip()
+        if worker_task_id.casefold() == task_id.casefold():
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"orchestrator worker record exists ({run_id})."
+            )
+
+    worker_worktrees = orchestrator_state.get("worker_worktrees")
+    if not isinstance(worker_worktrees, dict):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "orchestrator worker_worktrees state is missing or malformed."
+        )
+    leases = worker_worktrees.get("leases")
+    if not isinstance(leases, dict):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "orchestrator worktree leases table is missing or malformed."
+        )
+    for lease_key, lease in leases.items():
+        if str(lease_key).strip().casefold() == task_id.casefold() or (
+            isinstance(lease, dict)
+            and (
+                str(lease.get("task_id") or "").strip().casefold() == task_id.casefold()
+                or str(lease.get("workspace_task_id") or "").strip().casefold() == task_id.casefold()
+            )
+        ):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"worker worktree lease exists ({lease_key})."
+            )
+    handoff_blocks = worker_worktrees.get("handoff_blocks")
+    if not isinstance(handoff_blocks, dict):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "orchestrator worktree handoff_blocks table is missing or malformed."
+        )
+    for hb_key, hb in handoff_blocks.items():
+        if str(hb_key).strip().casefold() == task_id.casefold() or (
+            isinstance(hb, dict)
+            and str(hb.get("task_id") or "").strip().casefold() == task_id.casefold()
+        ):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"worktree handoff block exists ({hb_key})."
+            )
+
+    lease_blocks = orchestrator_state.get("worker_worktree_lease_blocks")
+    if not isinstance(lease_blocks, dict):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "orchestrator worker_worktree_lease_blocks table is missing or malformed."
+        )
+    for lb_key, lb in lease_blocks.items():
+        if str(lb_key).strip().casefold() == task_id.casefold() or (
+            isinstance(lb, dict)
+            and str(lb.get("task_id") or "").strip().casefold() == task_id.casefold()
+        ):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"worktree lease block exists ({lb_key})."
+            )
+
+    queue = orchestrator_state.get("queue")
+    if not isinstance(queue, dict):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "orchestrator queue state is missing or malformed."
+        )
+    raw_events = queue.get("events")
+    queue_events: dict[str, Any] = {}
+    if isinstance(raw_events, dict):
+        queue_events = raw_events
+        for event_id, record in raw_events.items():
+            if not isinstance(record, dict):
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    f"orchestrator queue event {event_id!r} is malformed."
+                )
+            rec_task_id = str(record.get("task_id") or "").strip()
+            if (
+                rec_task_id.casefold() == task_id.casefold()
+                or str(event_id).strip() in task_queue_event_ids
+            ) and not _is_preflight_blocked_queue_record(record):
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    f"pending or active queue event {event_id!r} exists in orchestrator state."
+                )
+    elif isinstance(raw_events, list):
+        for record in raw_events:
+            if not isinstance(record, dict):
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    "orchestrator queue event entry is malformed."
+                )
+            rec_task_id = str(record.get("task_id") or "").strip()
+            rec_event_id = str(record.get("event_id") or "").strip()
+            if (
+                rec_task_id.casefold() == task_id.casefold()
+                or (rec_event_id and rec_event_id in task_queue_event_ids)
+            ) and not _is_preflight_blocked_queue_record(record):
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    "pending or active queue event exists in orchestrator state."
+                )
+    else:
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "orchestrator queue events table is missing or malformed."
+        )
+
+    orch_approvals = orchestrator_state.get("approvals")
+    if orch_approvals is not None:
+        if not isinstance(orch_approvals, dict):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                "orchestrator approvals state is malformed."
+            )
+        for bucket in ("pending", "history"):
+            items = orch_approvals.get(bucket) or []
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, dict) and str(item.get("task_id") or "").strip().casefold() == task_id.casefold():
+                        raise SystemExit(
+                            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                            "orchestrator approval record exists for task."
+                        )
+
+    event_queue_path = Path(
+        str((config.get("paths") or {}).get("event_queue") or (STATUS_ROOT / ".orchestrator" / "event-queue.jsonl"))
+    )
+    if not event_queue_path.exists() or not event_queue_path.is_file():
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            "event queue file is missing; pending dispatch absence cannot be proven."
+        )
+    try:
+        eq_lines = event_queue_path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"event queue is unreadable: {exc}"
+        ) from exc
+    for line_no, raw_line in enumerate(eq_lines, start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"malformed JSON in event-queue.jsonl line {line_no}: {exc}"
+            ) from exc
+        if not isinstance(event, dict):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"non-object event in event-queue.jsonl line {line_no}."
+            )
+        ev_task_id = str(
+            event.get("task_id")
+            or (((event.get("metadata") or {}).get("task") or {}).get("id"))
+            or ""
+        ).strip()
+        if ev_task_id.casefold() == task_id.casefold():
+            event_id = str(event.get("event_id") or "").strip()
+            record = queue_events.get(event_id) if event_id and isinstance(queue_events, dict) else None
+            if not _is_preflight_blocked_queue_record(record):
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    f"pending or active dispatch event ({event_id or 'queued'}) exists in event queue."
+                )
+
+    if APPROVAL_QUEUE_FILE.exists():
+        try:
+            ap_text = APPROVAL_QUEUE_FILE.read_text(encoding="utf-8").strip()
+            approval_state = json.loads(ap_text) if ap_text else {}
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"approval queue is unreadable or malformed: {exc}"
+            ) from exc
+        if not isinstance(approval_state, dict):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                "approval queue must be a JSON object."
+            )
+        for bucket in ("pending", "history"):
+            items = approval_state.get(bucket) or []
+            if not isinstance(items, list):
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    f"approval queue {bucket} is malformed."
+                )
+            for item in items:
+                if isinstance(item, dict) and str(item.get("task_id") or "").strip().casefold() == task_id.casefold():
+                    raise SystemExit(
+                        f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                        "approval queue record exists for task."
+                    )
+
+    binding = resolve_task_repository(config, task)
+    if not binding.resolved or binding.root is None:
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"task repository checkout is unavailable ({binding.error or 'unresolved'})."
+        )
+    repo_root = binding.root.resolve(strict=False)
+    if not repo_root.exists() or not git_command_succeeds(["rev-parse", "--git-dir"], cwd=repo_root):
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"repository root {repo_root} is not a valid git checkout."
+        )
+    import worker_workspace
+
+    repository_id = canonical_repository_id_for_root(
+        config,
+        repo_root,
+        fallback=binding.repo_id or "pantheon",
+    )
+    configured_branch = worker_workspace.worker_task_branch(config, task_id, task)
+    branch_names = list(dict.fromkeys([configured_branch, f"task/{task_id}", f"task-{task_id}"]))
+    branch_names_lower = {name.casefold() for name in branch_names if name}
+    wt_settings = worker_workspace.worker_worktree_settings(config)
+    expected_wt_path = worker_workspace.worker_task_worktree_path(
+        config,
+        task_id,
+        wt_settings,
+        repo_root,
+        repository_id=repository_id,
+    ).resolve(strict=False)
+    task_slug = worker_workspace._task_id_slug(task_id)
+    worktree_name_candidates = {
+        task_slug.casefold(),
+        task_id.casefold(),
+        f"task-{task_id}".casefold(),
+    }
+
+    current_branch = run_git_command(
+        ["rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=repo_root,
+        required=True,
+        failure_message=(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"unable to inspect HEAD in {repo_root}."
+        ),
+    )
+    if current_branch.casefold() in branch_names_lower:
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"task branch {current_branch} is checked out in {repo_root}."
+        )
+    refs_output = run_git_command(
+        ["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"],
+        cwd=repo_root,
+        required=True,
+        failure_message=(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"unable to inspect git refs in {repo_root}."
+        ),
+    )
+    for raw_ref in refs_output.splitlines():
+        ref = raw_ref.strip()
+        if not ref:
+            continue
+        if ref.startswith("refs/heads/"):
+            branch_ref = ref[len("refs/heads/") :].casefold()
+            if branch_ref in branch_names_lower:
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    f"task branch ref already exists in git ({ref})."
+                )
+        elif ref.startswith("refs/remotes/"):
+            remote_branch = ref[len("refs/remotes/") :].partition("/")[2].casefold()
+            if remote_branch in branch_names_lower:
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    f"task remote-tracking branch ref already exists in git ({ref})."
+                )
+    worktree_payload = run_git_command(
+        ["worktree", "list", "--porcelain"],
+        cwd=repo_root,
+        required=True,
+        failure_message=(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"git worktree inventory is unavailable in {repo_root}."
+        ),
+    )
+    for entry in parse_git_worktree_porcelain(worktree_payload):
+        wt_branch = str(entry.get("branch") or "").strip().removeprefix("refs/heads/")
+        wt_path_str = str(entry.get("worktree") or "").strip()
+        if wt_branch.casefold() in branch_names_lower:
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"git worktree exists for branch {wt_branch} ({wt_path_str})."
+            )
+        if wt_path_str:
+            wt_path = Path(wt_path_str).resolve(strict=False)
+            if wt_path != repo_root:
+                wt_base_name = wt_path.name.split(".lease_", 1)[0].strip()
+                if wt_path == expected_wt_path or wt_base_name.casefold() in worktree_name_candidates:
+                    raise SystemExit(
+                        f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                        f"git worktree exists for task ({wt_path})."
+                    )
+    if expected_wt_path.exists():
+        raise SystemExit(
+            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+            f"managed worktree directory exists on disk ({expected_wt_path})."
+        )
+    if wt_settings.get("root_configured"):
+        wt_root = worker_workspace._worker_worktree_base_root(config, wt_settings)
+        if wt_root.is_dir():
+            for repo_dir in wt_root.iterdir():
+                if not repo_dir.is_dir():
+                    continue
+                for candidate in repo_dir.iterdir():
+                    base_name = candidate.name.split(".lease_", 1)[0].strip()
+                    if base_name.casefold() in worktree_name_candidates:
+                        raise SystemExit(
+                            f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                            f"managed worktree directory exists on disk ({candidate})."
+                        )
+    slug = orchestrator_common.verification_evidence.receipt_slug(task_id)
+    for ev_dir in {
+        (STATUS_ROOT / ".orchestrator" / "evidence").resolve(strict=False),
+        (repo_root / ".orchestrator" / "evidence").resolve(strict=False),
+    }:
+        if not ev_dir.is_dir():
+            continue
+        if orchestrator_common.verification_evidence.load_receipts(ev_dir, task_id=task_id):
+            raise SystemExit(
+                f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                f"verification receipt exists in {ev_dir}."
+            )
+        for ev_file in sorted(ev_dir.iterdir()):
+            if not ev_file.is_file():
+                continue
+            name_lower = ev_file.name.casefold()
+            if slug.casefold() in name_lower or task_id.casefold() in name_lower:
+                raise SystemExit(
+                    f"Cannot clear frozen_evidence_base_sha on {task_id}: "
+                    f"verification receipt or evidence file exists ({ev_file})."
+                )
+    return prior_pin
+
+
 def command_assign(state: dict[str, Any], args: list[str]) -> None:
     from wave_guards import WaveGuardError, check_wave_assign
 
@@ -5457,26 +7291,99 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
     title = args[3] if len(args) > 3 else os.environ.get("TASK_TITLE")
     summary_zh = os.environ.get("TASK_SUMMARY_ZH")
     metadata = task_metadata_from_env()
+    requested_dependencies = parse_csv_env("TASK_DEPENDS_ON")
     task = get_task(state, task_id)
+    if task is not None and "TASK_DEPENDS_ON" in os.environ:
+        raise SystemExit(
+            "既有 task 的 depends_on 不可由 assign 靜默修改；請使用 "
+            "set_dependencies <task-id> <dep1,dep2|-> <message>，以留下 dependency audit event。"
+        )
+    clearing_optional_pin = (
+        "frozen_evidence_base_sha" in metadata
+        and metadata["frozen_evidence_base_sha"] is None
+    )
+    previous_optional_pin: str | None = None
+    if clearing_optional_pin:
+        previous_optional_pin = _validate_assign_optional_pin_removal(
+            state,
+            task_id=task_id,
+            task=task,
+            actor=actor,
+            owner=owner,
+            reviewer=reviewer,
+            title=title,
+            summary_zh=summary_zh,
+            metadata=metadata,
+        )
+    effective_metadata = {} if clearing_optional_pin else metadata
     # Do this before priority checks, timestamping, or any task/agent mutation.
     # An invalid source document must fail at assignment time rather than leave
     # a board record that the dispatcher can only reject repeatedly later.
-    validate_assignment_source_docs(task_id, task, metadata)
+    validate_assignment_source_docs(task_id, task, effective_metadata)
     if task is None:
-        priority = str(metadata.get("priority") or "P2").strip().upper()
+        priority = str(effective_metadata.get("priority") or "P2").strip().upper()
         if priority not in {"P0", "P1", "P2", "P3"}:
             raise SystemExit("TASK_PRIORITY must be one of P0, P1, P2, or P3")
-        metadata["priority"] = priority
-    elif "priority" in metadata:
-        priority = str(metadata.get("priority") or "").strip().upper()
+        effective_metadata["priority"] = priority
+    elif "priority" in effective_metadata:
+        priority = str(effective_metadata.get("priority") or "").strip().upper()
         if priority not in {"P0", "P1", "P2", "P3"}:
             raise SystemExit("TASK_PRIORITY must be one of P0, P1, P2, or P3")
-        metadata["priority"] = priority
+        effective_metadata["priority"] = priority
     if owner == reviewer:
         raise SystemExit("Reviewer cannot equal owner")
+    independence_reason = review_independence_block_reason(owner, reviewer)
+    if independence_reason:
+        raise SystemExit(
+            f"Cannot assign {task_id}: {independence_reason}。未寫入任何 assignment。"
+        )
+
+    # Judge the record this assignment is about to create, not the one it
+    # replaces. The task_class an explicit value in this invocation sets wins
+    # over the stored one, and the actors are the incoming pair -- reading the
+    # old task alone would measure the assignment against a class and a shape it
+    # will not have once written.
+    effective_task_class = str(
+        effective_metadata.get("task_class")
+        if "task_class" in effective_metadata
+        else ((task or {}).get("task_class") or "")
+    ).strip()
+    # `metadata` is folded in because it is where this invocation declares the
+    # things that decide whether the policy applies at all -- `task_class`,
+    # `non_dispatchable`, `human_required_roles`. Creating a human gate would
+    # otherwise be judged against a task that does not exist yet, and re-classing
+    # an existing one against the class it is being moved off.
+    effective_task = {**(task or {}), **effective_metadata, "owner": owner, "reviewer": reviewer}
+    if clearing_optional_pin:
+        effective_task.pop("frozen_evidence_base_sha", None)
+    if effective_task_class:
+        effective_task["task_class"] = effective_task_class
+    for actor_name, actor_role, field in (
+        (owner, "owner", "owner"),
+        (reviewer, "reviewer", "reviewer"),
+    ):
+        # Re-recording the actor a task already has preserves history; writing a
+        # different name grants execution or review that does not exist yet. Only
+        # the second is a new grant, and only the second loses the pinned-head
+        # exemption -- otherwise an approved task would be a place where any lane
+        # could be installed precisely because its head was already frozen.
+        recorded = canonical_agent_name((task or {}).get(field))
+        block_reason = role_provider_assignment_block_reason(
+            actor_name,
+            role=actor_role,
+            task_class=effective_task_class,
+            task=effective_task,
+            grants_new_authority=canonical_agent_name(actor_name) != recorded,
+        )
+        if block_reason:
+            raise SystemExit(
+                f"Cannot assign {task_id}: {field} {actor_name} 不符合 role/provider 派工政策"
+                f"（{block_reason}）。未寫入任何 assignment。"
+            )
 
     timestamp = iso_now()
     if task is None:
+        validate_dependency_update(state, task_id, requested_dependencies)
         if archived_task_snapshot(task_id):
             raise SystemExit(
                 f"Task {task_id} is archived. Create a new follow-up task instead of reusing the archived task id."
@@ -5489,37 +7396,125 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
             "owner": owner,
             "reviewer": reviewer,
             "status": "todo",
-            "depends_on": parse_csv_env("TASK_DEPENDS_ON"),
+            "depends_on": requested_dependencies,
             "artifacts": parse_csv_env("TASK_ARTIFACTS"),
             "acceptance": parse_csv_env("TASK_ACCEPTANCE"),
             "next": "Assignment created",
             "last_update": timestamp,
         }
-        task.update(metadata)
+        task.update(effective_metadata)
         state["tasks"].append(task)
     else:
-        task["owner"] = owner
-        task["reviewer"] = reviewer
-        if title:
-            task["title"] = title
-        if summary_zh:
-            task["summary_zh"] = summary_zh
-        if metadata:
-            task.update(metadata)
-        task["last_update"] = timestamp
-        task["next"] = "Ownership updated"
+        if clearing_optional_pin:
+            task.pop("frozen_evidence_base_sha", None)
+            task["last_update"] = timestamp
+            task["next"] = task.get("next") or "Assignment created"
+        else:
+            task["owner"] = owner
+            task["reviewer"] = reviewer
+            if title:
+                task["title"] = title
+            if summary_zh:
+                task["summary_zh"] = summary_zh
+            if effective_metadata:
+                task.update(effective_metadata)
+            task["last_update"] = timestamp
+            task["next"] = "Ownership updated"
 
     agent = get_agent(state, owner)
     if os.environ.get("TASK_BRANCH"):
         agent["branch"] = os.environ["TASK_BRANCH"]
 
+    log_entry: dict[str, Any] = {
+        "ts": timestamp,
+        "agent": actor,
+        "type": "assign",
+        "task_id": task_id,
+        "message": f"Assigned {task_id} to {owner} with reviewer {reviewer}",
+    }
+    if clearing_optional_pin and previous_optional_pin is not None:
+        log_entry.update(
+            {
+                "previous_frozen_evidence_base_sha": previous_optional_pin,
+                "frozen_evidence_base_sha": None,
+                "cleared_optional_pin": "frozen_evidence_base_sha",
+                "message": (
+                    f"Assigned {task_id} to {owner} with reviewer {reviewer} "
+                    f"(cleared erroneous optional pin frozen_evidence_base_sha={previous_optional_pin})"
+                ),
+            }
+        )
+    append_log(log_entry)
+    if requested_dependencies:
+        append_log(
+            {
+                "ts": timestamp,
+                "agent": actor,
+                "type": "dependency_update",
+                "task_id": task_id,
+                "old_dependencies": [],
+                "new_dependencies": requested_dependencies,
+                "message": "Initial dependency declaration during canonical task assignment.",
+                "source": "canonical_cli",
+            }
+        )
+
+
+def command_set_dependencies(state: dict[str, Any], args: list[str]) -> None:
+    """Set one task's dependency edges through the audited canonical CLI.
+
+    Usage: ``set_dependencies <task-id> <dep1,dep2|-> <message>``.  The
+    dependency field is parsed before any task field is changed, and the
+    candidate graph must resolve through the live board/archive without a
+    self-edge or reachable cycle.
+    """
+    if len(args) < 2:
+        raise SystemExit(
+            "Usage: set_dependencies <task-id> <dep1,dep2|-> <message>"
+        )
+    task_id = args[0]
+    if len(args) >= 3:
+        raw_dependencies, message = args[1], args[2]
+    elif "TASK_DEPENDS_ON" in os.environ:
+        # Keep the existing task metadata convention usable for operators who
+        # need a long/quoted dependency list while making the mutation itself
+        # explicit and auditable through this command.
+        raw_dependencies = os.environ.get("TASK_DEPENDS_ON", "")
+        message = args[1]
+    else:
+        raw_dependencies = args[1]
+        message = "Dependency list updated via canonical CLI."
+    actor = current_actor_validated()
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    owner = canonical_agent_name(task.get("owner"))
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    if actor not in {owner, reviewer}:
+        raise SystemExit(
+            f"Only the owner ({owner}) or reviewer ({reviewer}) can update dependencies for {task_id}"
+        )
+
+    dependencies = parse_dependency_argument(raw_dependencies)
+    validate_dependency_update(state, task_id, dependencies)
+    previous = [str(item).strip() for item in (task.get("depends_on") or []) if str(item).strip()]
+    if previous == dependencies:
+        raise SystemExit(f"Dependency list for {task_id} is unchanged")
+
+    timestamp = iso_now()
+    task["depends_on"] = dependencies
+    task["last_update"] = timestamp
+    task["next"] = message
     append_log(
         {
             "ts": timestamp,
             "agent": actor,
-            "type": "assign",
+            "type": "dependency_update",
             "task_id": task_id,
-            "message": f"Assigned {task_id} to {owner} with reviewer {reviewer}",
+            "old_dependencies": previous,
+            "new_dependencies": dependencies,
+            "message": message,
+            "source": "canonical_cli",
         }
     )
 
@@ -5574,10 +7569,143 @@ def command_progress(state: dict[str, Any], args: list[str]) -> None:
     timestamp = iso_now()
     if task["status"] in {"todo", "review_approved"}:
         task["status"] = "in_progress"
+        task.pop("approved_head", None)
+        task.pop("merge_route", None)
     task["last_update"] = timestamp
     task["next"] = message
     mark_handoffs_done_for_actor(state, task_id, actor)
     append_log({"ts": timestamp, "agent": actor, "type": "progress", "task_id": task_id, "message": message})
+
+
+def _continuation_approval_nonce_in_use(state: dict[str, Any], nonce: str) -> bool:
+    registry = state.get("human_continuation_approval_nonce_registry")
+    if isinstance(registry, dict) and nonce in registry:
+        return True
+    for candidate_task in state.get("tasks", []) or []:
+        if not isinstance(candidate_task, dict):
+            continue
+        records = []
+        current = candidate_task.get("human_continuation_approval")
+        if isinstance(current, dict):
+            records.append(current)
+        history = candidate_task.get("human_continuation_approval_history")
+        if isinstance(history, list):
+            records.extend(item for item in history if isinstance(item, dict))
+        if any(str(item.get("nonce") or "").strip() == nonce for item in records):
+            return True
+    return False
+
+
+def command_approve_continuation(state: dict[str, Any], args: list[str]) -> None:
+    """Issue the only approval that can release a review-churn task.
+
+    Usage: approve_continuation <task-id> <reason> <expires-at> [nonce]
+
+    The caller must be the declared Human/Ops actor.  A nonce is generated when
+    omitted, but it is always persisted and consumed exactly once by the
+    Supervisor; it is never a capability inferred from task prose or status.
+    """
+    if len(args) < 3 or len(args) > 4:
+        raise SystemExit(
+            "Usage: approve_continuation <task-id> <reason> <expires-at> [nonce]"
+        )
+    actor = current_actor_validated()
+    if actor != "Human/Ops":
+        raise SystemExit("Only Human/Ops can issue a continuation approval")
+
+    task_id, reason, expires_value = args[:3]
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    gate_error = continuation_approval_gate_error(task)
+    if gate_error:
+        raise SystemExit(
+            f"Cannot issue continuation approval for {task_id}: {gate_error}. No approval was recorded."
+        )
+
+    reason = str(reason or "").strip()
+    if not reason or len(reason) > CONTINUATION_APPROVAL_MAX_REASON_LENGTH:
+        raise SystemExit(
+            f"Continuation approval reason must be 1-{CONTINUATION_APPROVAL_MAX_REASON_LENGTH} characters"
+        )
+    expires_at = parse_timestamp(expires_value)
+    now = datetime.now(UTC)
+    if expires_at is None or expires_at.astimezone(UTC) <= now:
+        raise SystemExit(
+            "Continuation approval expires-at must be a future timezone-aware timestamp"
+        )
+
+    existing = task.get("human_continuation_approval")
+    if isinstance(existing, dict) and str(existing.get("status") or "").lower() not in {
+        "consumed",
+        "expired",
+        "rejected",
+    }:
+        raise SystemExit(
+            f"Task {task_id} already has an active continuation approval; consume or expire it before issuing another"
+        )
+
+    nonce = str(args[3]).strip() if len(args) == 4 else ""
+    if nonce and not _continuation_approval_nonce_is_valid(nonce):
+        raise SystemExit("Continuation approval nonce is missing or malformed")
+    if not nonce:
+        for _ in range(5):
+            candidate = secrets.token_urlsafe(24)
+            if not _continuation_approval_nonce_in_use(state, candidate):
+                nonce = candidate
+                break
+        if not nonce:
+            raise SystemExit("Unable to allocate a unique continuation approval nonce")
+    elif _continuation_approval_nonce_in_use(state, nonce):
+        raise SystemExit("Continuation approval nonce has already been used; choose a new nonce")
+
+    timestamp = iso_now()
+    approval = {
+        "approval_id": uuid.uuid4().hex,
+        "approval_type": "human_ops_continuation",
+        "blocker_authority_digest": blocker_authority_digest(task),
+        "blocker_provenance_id": (task.get("blocker_provenance") or {}).get("record_id"),
+        "status": "issued",
+        "task_id": task_id,
+        "task_scope": task_id,
+        "scope": {"task_id": task_id},
+        "reason": reason,
+        "issued_by": actor,
+        "issued_at": timestamp,
+        "expires_at": expires_at.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "nonce": nonce,
+        "review_reopen_count": _continuation_nonnegative_int(task.get("review_reopen_count")),
+        "review_churn_escalated_at_count": _continuation_nonnegative_int(
+            task.get("review_churn_escalated_at_count")
+        ),
+        "consumed_at": None,
+        "consumed_by": None,
+        "consumption_reason": None,
+    }
+    state.setdefault("human_continuation_approval_nonce_registry", {})[nonce] = {
+        "task_id": task_id,
+        "approval_id": approval["approval_id"],
+        "issued_at": timestamp,
+    }
+    task["human_continuation_approval"] = approval
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "human_continuation_approval_issued",
+            "blocker_authority_digest": approval["blocker_authority_digest"],
+            "blocker_provenance_id": approval["blocker_provenance_id"],
+            "task_id": task_id,
+            "approval_id": approval["approval_id"],
+            "task_scope": task_id,
+            "reason": reason,
+            "issued_by": actor,
+            "issued_at": timestamp,
+            "expires_at": approval["expires_at"],
+            "nonce": nonce,
+        }
+    )
+    print(json.dumps(approval, ensure_ascii=False))
 
 
 def command_note(state: dict[str, Any], args: list[str]) -> None:
@@ -5589,6 +7717,38 @@ def command_note(state: dict[str, Any], args: list[str]) -> None:
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
     timestamp = iso_now()
+    if len(args) > 2:
+        if len(args) != 3 or not args[2].startswith("--blocker-provenance="):
+            raise SystemExit("Usage: note <task-id> <message> [--blocker-provenance=<JSON>]")
+        if actor != "Human/Ops":
+            raise SystemExit("Only Human/Ops can adjudicate blocker provenance")
+        if (task.get("status") != "blocked"
+                or str(task.get("waiting_for") or "").casefold() not in {"human/ops", "human", "ops"}
+                or not (task.get("review_churn_escalated_at")
+                        or _continuation_nonnegative_int(task.get("review_churn_escalated_at_count")))):
+            raise SystemExit("Blocker provenance requires explicit review-churn Human/Ops escalation")
+        if not message.strip():
+            raise SystemExit("Blocker provenance requires an audit message")
+        try:
+            payload = json.loads(args[2].split("=", 1)[1])
+        except (ValueError, TypeError) as exc:
+            raise SystemExit(f"Invalid blocker provenance JSON: {exc}") from exc
+        if not isinstance(payload, dict) or set(payload) != {"context_sha256", "expires_at", "fields"}:
+            raise SystemExit("Blocker provenance requires context_sha256, expires_at and fields")
+        record = dict(payload, issued_by=actor, issued_at=timestamp,
+                      record_id=uuid.uuid4().hex, message=message)
+        candidate = dict(task, blocker_provenance=record)
+        error = blocker_provenance_error(candidate)
+        if error:
+            raise SystemExit(error)
+        if "blocker_provenance" in task:
+            task.setdefault("blocker_provenance_history", []).append(task["blocker_provenance"])
+        task["blocker_provenance"] = record
+        task["last_update"] = timestamp
+        # Do not rewrite blocker prose, status, roles, counters or approvals.
+        append_log({"ts": timestamp, "agent": actor, "type": "blocker_provenance_recorded",
+                    "task_id": task_id, "message": message, "provenance": record})
+        return
     task["last_update"] = timestamp
     task["next"] = message
     append_log({"ts": timestamp, "agent": actor, "type": "note", "task_id": task_id, "message": message})
@@ -5596,8 +7756,29 @@ def command_note(state: dict[str, Any], args: list[str]) -> None:
 
 def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
-        raise SystemExit("Usage: reopen <task-id> <message>")
+        raise SystemExit(
+            "Usage: reopen <task-id> <message> [--reason=<reason>]\n"
+            "  --reason=review_finding          reviewer found a real defect (counts towards review churn)\n"
+            "  --reason=stale_review_sha        review pinned to a superseded head (control-plane recovery)\n"
+            "  --reason=worktree_lease_mismatch worktree/lease conflict (control-plane recovery)\n"
+            "  --reason=control_plane_recovery  other orchestrator-side repair (control-plane recovery)\n"
+            "Without --reason the reopen is classified from the actor's role and a reviewer\n"
+            "reopen counts as churn; the message text is never used to infer the reason."
+        )
     task_id, message = args[0], args[1]
+    raw_reason: str | None = None
+    i = 2
+    while i < len(args):
+        arg = args[i]
+        if arg.startswith("--reason="):
+            raw_reason = arg.split("=", 1)[1].strip()
+        elif arg == "--reason" and i + 1 < len(args):
+            raw_reason = args[i + 1].strip()
+            i += 1
+        elif not arg.startswith("--") and raw_reason is None:
+            raw_reason = arg.strip()
+        i += 1
+
     actor = current_actor_validated()
     task = get_task(state, task_id)
     if task is None:
@@ -5610,22 +7791,43 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     reviewer = canonical_agent_name(task.get("reviewer"))
     if actor not in {owner, reviewer}:
         raise SystemExit(f"Only the owner ({owner}) or reviewer ({reviewer}) can reopen {task_id}")
+
+    reason, category, is_churn = classify_reopen_reason(
+        raw_reason=raw_reason,
+        actor=actor,
+        owner=owner,
+        reviewer=reviewer,
+        message=message,
+    )
+
     timestamp = iso_now()
     task["status"] = "in_progress"
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("waiting_for", None)
     task.pop("approved_head", None)
+    task.pop("merge_route", None)
     task["last_reopened_by"] = actor
+    task["last_reopened_reason"] = reason
+    task["last_reopen_category"] = category
+    task["last_reopened_at"] = timestamp
     mark_blockers_resolved(state, task_id)
     mark_handoffs_done(state, task_id)
+
     if actor == reviewer and owner and owner != reviewer:
         try:
-            review_reopen_count = max(0, int(task.get("review_reopen_count", 0) or 0)) + 1
+            current_reopen_count = max(0, int(task.get("review_reopen_count", 0) or 0))
         except (TypeError, ValueError):
-            review_reopen_count = 1
-        task["review_reopen_count"] = review_reopen_count
-        task["last_review_reopen_at"] = timestamp
+            current_reopen_count = 0
+
+        if is_churn:
+            review_reopen_count = current_reopen_count + 1
+            task["review_reopen_count"] = review_reopen_count
+            task["last_review_reopen_at"] = timestamp
+        else:
+            review_reopen_count = current_reopen_count
+            task["review_reopen_count"] = current_reopen_count
+
         raw_history = task.get("review_reopen_history")
         review_reopen_history = list(raw_history) if isinstance(raw_history, list) else []
         review_reopen_history.append(
@@ -5635,6 +7837,9 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
                 "by": reviewer,
                 "owner": owner,
                 "message": message,
+                "reason": reason,
+                "category": category,
+                "is_churn": is_churn,
             }
         )
         task["review_reopen_history"] = review_reopen_history[-20:]
@@ -5655,43 +7860,81 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
             "type": "reopen",
             "task_id": task_id,
             "message": message,
+            "reason": reason,
+            "category": category,
             "review_reopen_count": task.get("review_reopen_count", 0),
-            "review_churn": actor == reviewer and owner != reviewer,
+            "review_churn": is_churn,
         }
     )
 
 
-def review_submission_for_task(task: dict[str, Any], pr_number: str) -> dict[str, Any]:
-    """Return immutable evidence that an *open* task PR exists on GitHub.
+def review_submission_for_task(
+    task: dict[str, Any],
+    pr_number: str,
+    *,
+    actor: str | None = None,
+) -> dict[str, Any]:
+    """Inspect and validate a GitHub PR as atomic evidence for review submission.
 
-    A local branch, a task handoff note, and a GitHub check are all insufficient
-    evidence on their own.  The reviewer must be looking at a remotely published
-    task branch and at the PR which carries its exact current SHA into the
-    configured integration branch.  Keeping this check here makes the status
+    Reviewers run with an immutable checked-out commit, and never gather PR
+    evidence on their own. The reviewer must be looking at a remotely published
+    task branch or a verified merged PR which carries its exact immutable SHA into the
+    configured integration branch. Keeping this check here makes the status
     transition atomic: a worker cannot first label work ``review`` and only
     later discover that its branch was never pushed.
+
+    Supports:
+    1. Active OPEN task PRs (standard flow): validates remote branch exists on origin,
+       matches exact branch and base, non-draft, and delivery identity passes.
+    2. Merged task PRs (exact-head recovery flow): validates PR was MERGED into the
+       configured base branch, immutable source SHA and merge commit are valid git
+       objects with verifiable ancestry in target history, and all required CI checks
+       concluded with terminal SUCCESS.
     """
 
     task_id = str(task.get("id") or "").strip()
     if not task_id or not pr_number.isdigit():
         raise SystemExit("Review submission requires a task id and numeric PR number")
 
+    task_status_lower = str(task.get("status") or "").strip().lower()
+    # R2: Only block submission when the task is explicitly in blocked status.
+    # The blocker→start workflow resolves blockers and sets status=in_progress
+    # but intentionally retains waiting_for as historical context.  Checking
+    # waiting_for alone would incorrectly reject a valid OPEN submission after
+    # all blockers are resolved.  Actual unresolved human/blocked gates are
+    # caught by the explicit status check and the human_gate checks below.
+    if task_status_lower == "blocked":
+        waiting_for = task.get("waiting_for") or "unspecified"
+        raise SystemExit(
+            f"Cannot submit {task_id} for review: task is currently blocked (waiting for {waiting_for}). "
+            "Resolve the blocker or human gate before submitting for review."
+        )
+    gate_reason = task_unresolved_human_or_independent_gate_reason(task)
+    if gate_reason:
+        raise SystemExit(
+            f"Cannot submit {task_id} for review: {gate_reason}."
+        )
+
     config = status_runtime_config()
     repository_id = task_repository_id(config, task) or "pantheon"
     repository_root = repository_local_path(config, repository_id) or ROOT
+    repository_slug_val = (
+        repository_slug(config, repository_id)
+        or git_remote_repository_slug(repository_root, "origin")
+        or get_repository_slug_safe()
+    )
     branch = task_branch_name(task, task_id)
     base_branch = delivery_merge_target_branch(config, repository_id)
-    remote_sha = resolve_task_sha(task_id, force_refresh=True)
-    if not remote_sha:
-        raise SystemExit(
-            f"Cannot submit {task_id} for review: origin/{branch} is missing. "
-            "Push the task branch with delivery_toolchain/git/task_finalize.sh first."
-        )
 
+    repo_args = ["--repo", repository_slug_val] if repository_slug_val else []
     pr = run_gh_json_command(
         [
-            "pr", "view", pr_number,
-            "--json", "number,state,url,headRefName,headRefOid,baseRefName,isDraft",
+            "pr",
+            "view",
+            pr_number,
+            "--json",
+            "number,state,url,headRefName,headRefOid,baseRefName,isDraft,mergedAt,mergeCommit,statusCheckRollup",
+            *repo_args,
         ],
         cwd=repository_root,
     )
@@ -5699,38 +7942,161 @@ def review_submission_for_task(task: dict[str, Any], pr_number: str) -> dict[str
         raise SystemExit(
             f"Cannot submit {task_id} for review: GitHub PR #{pr_number} cannot be verified."
         )
-    if (
-        str(pr.get("state") or "").upper() != "OPEN"
-        or bool(pr.get("isDraft"))
-        or str(pr.get("headRefName") or "") != branch
-        or str(pr.get("headRefOid") or "") != remote_sha
-        or str(pr.get("baseRefName") or "") != base_branch
+
+    pr_state = str(pr.get("state") or "").upper()
+    is_draft = bool(pr.get("isDraft"))
+    head_branch = str(pr.get("headRefName") or "").strip()
+    base_name = str(pr.get("baseRefName") or "").strip()
+    head_oid = str(pr.get("headRefOid") or "").strip()
+    pr_url = str(pr.get("url") or "")
+
+    if is_draft:
+        raise SystemExit(
+            f"Cannot submit {task_id} for review: PR #{pr_number} is a draft; mark it ready for review first."
+        )
+    if head_branch != branch:
+        raise SystemExit(
+            f"Cannot submit {task_id} for review: PR #{pr_number} head branch '{head_branch}' "
+            f"does not match task branch '{branch}'."
+        )
+    if base_name != base_branch:
+        raise SystemExit(
+            f"Cannot submit {task_id} for review: PR #{pr_number} base branch '{base_name}' "
+            f"does not match expected target branch '{base_branch}'."
+        )
+    if not head_oid or not (
+        re.fullmatch(r"[0-9a-fA-F]{40}", head_oid) or re.fullmatch(r"[0-9a-fA-F]{64}", head_oid)
     ):
         raise SystemExit(
-            f"Cannot submit {task_id} for review: PR #{pr_number} must be an open, non-draft "
-            f"{branch} -> {base_branch} PR at remote SHA {remote_sha[:8]}."
+            f"Cannot submit {task_id} for review: PR #{pr_number} has invalid head commit SHA '{head_oid}'."
         )
-    identity_errors = validate_delivery_identity(
-        repository_root,
-        task_id=task_id,
-        base=base_branch,
-        head=remote_sha,
-        expected_branch=branch,
-        actual_branch=str(pr.get("headRefName") or ""),
+
+    if pr_state == "OPEN":
+        try:
+            remote_sha = resolve_task_sha(task_id, force_refresh=True)
+        except RuntimeError as exc:
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: remote branch lookup failed ({exc}). "
+                "Verify network connectivity and retry."
+            ) from exc
+        if not remote_sha:
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: origin/{branch} is missing. "
+                "Push the task branch with delivery_toolchain/git/task_finalize.sh first."
+            )
+        if head_oid != remote_sha:
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: PR #{pr_number} remote head {head_oid[:8]} "
+                f"does not match origin/{branch} ({remote_sha[:8]})."
+            )
+        identity_errors = validate_delivery_identity(
+            repository_root,
+            task_id=task_id,
+            base=base_branch,
+            head=remote_sha,
+            expected_branch=branch,
+            actual_branch=head_branch,
+        )
+        if identity_errors:
+            details = "; ".join(identity_errors)
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: delivery identity preflight failed: {details}"
+            )
+        return {
+            "pr_number": int(pr_number),
+            "pr_url": pr_url,
+            "branch": branch,
+            "remote_sha": remote_sha,
+            "base_branch": base_branch,
+            "verified_at": iso_now(),
+        }
+
+    if pr_state == "MERGED":
+        if actor is not None:
+            norm_owner = canonical_agent_name(task.get("owner"))
+            norm_actor = canonical_agent_name(actor)
+            if norm_actor != norm_owner:
+                raise SystemExit(
+                    f"Cannot submit {task_id} for review: merged PR recovery is owner-only ({task.get('owner')}); "
+                    f"helper {actor} cannot submit merged PR recovery."
+                )
+
+        merged_at = str(pr.get("mergedAt") or "").strip()
+        if not merged_at:
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: PR #{pr_number} is marked MERGED but missing mergedAt timestamp."
+            )
+        merge_commit_raw = pr.get("mergeCommit")
+        merge_commit = (
+            str(merge_commit_raw.get("oid") or "").strip()
+            if isinstance(merge_commit_raw, dict)
+            else str(merge_commit_raw or "").strip()
+        )
+        if not merge_commit or not (
+            re.fullmatch(r"[0-9a-fA-F]{40}", merge_commit) or re.fullmatch(r"[0-9a-fA-F]{64}", merge_commit)
+        ):
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: PR #{pr_number} is missing a valid merge commit SHA."
+            )
+
+        # Verify git object existence and merge ancestry in target branch history
+        if not git_command_succeeds(["cat-file", "-e", f"{head_oid}^{{commit}}"], cwd=repository_root):
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: immutable source commit {head_oid[:8]} is missing in repository."
+            )
+        if not git_command_succeeds(["cat-file", "-e", f"{merge_commit}^{{commit}}"], cwd=repository_root):
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: merge commit {merge_commit[:8]} is missing in repository."
+            )
+        if not git_command_succeeds(["merge-base", "--is-ancestor", head_oid, merge_commit], cwd=repository_root):
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: source commit {head_oid[:8]} is not an ancestor of merge commit {merge_commit[:8]}."
+            )
+        target_ref = f"origin/{base_branch}"
+        if not git_command_succeeds(["rev-parse", "--verify", target_ref], cwd=repository_root):
+            target_ref = base_branch
+        if not git_command_succeeds(["merge-base", "--is-ancestor", merge_commit, target_ref], cwd=repository_root):
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: merge commit {merge_commit[:8]} is not reachable in {target_ref} history."
+            )
+
+        # Verify all required CI checks concluded with terminal SUCCESS (excluding task-review-gate)
+        checks = normalized_green_pr_checks(pr, exclude_review_gate=True)
+
+        pre_merge_base = f"{merge_commit}^1"
+        if not git_command_succeeds(["rev-parse", "--verify", f"{pre_merge_base}^{{commit}}"], cwd=repository_root):
+            pre_merge_base = base_branch
+
+        identity_errors = validate_delivery_identity(
+            repository_root,
+            task_id=task_id,
+            base=pre_merge_base,
+            head=head_oid,
+            expected_branch=branch,
+            actual_branch=head_branch,
+        )
+        if identity_errors:
+            details = "; ".join(identity_errors)
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: delivery identity preflight failed: {details}"
+            )
+        return {
+            "pr_number": int(pr_number),
+            "pr_url": pr_url,
+            "branch": branch,
+            "remote_sha": head_oid,
+            "base_branch": base_branch,
+            "verified_at": iso_now(),
+            "merged_at": merged_at,
+            "merge_commit": merge_commit,
+            "ci_status": "success",
+            "ci_checks": checks,
+        }
+
+    raise SystemExit(
+        f"Cannot submit {task_id} for review: PR #{pr_number} state is '{pr_state}' (must be OPEN or MERGED). "
+        "Closed unmerged pull requests are rejected."
     )
-    if identity_errors:
-        details = "; ".join(identity_errors)
-        raise SystemExit(
-            f"Cannot submit {task_id} for review: delivery identity preflight failed: {details}"
-        )
-    return {
-        "pr_number": int(pr_number),
-        "pr_url": str(pr.get("url") or ""),
-        "branch": branch,
-        "remote_sha": remote_sha,
-        "base_branch": base_branch,
-        "verified_at": iso_now(),
-    }
 
 
 def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
@@ -5751,7 +8117,73 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
     if not reviewer:
         raise SystemExit(f"{task_id} has no assigned reviewer")
 
-    submission = review_submission_for_task(task, pr_number)
+    submission = review_submission_for_task(task, pr_number, actor=actor)
+    # Who authored what is now under review. The owner field can legitimately be
+    # rewritten later -- by an operator, or by a reconcile pass -- and once it is,
+    # nothing else on the record still names the account whose commits the
+    # reviewer is supposed to be independent of. Recorded here, at the one moment
+    # it is certain, so the independence check keeps working afterwards.
+    submission["submitted_by"] = actor
+
+    existing_sub = task.get("review_submission")
+    is_same_submission = (
+        isinstance(existing_sub, dict)
+        and existing_sub.get("pr_number") == submission["pr_number"]
+        and str(existing_sub.get("remote_sha") or "").strip() == str(submission.get("remote_sha") or "").strip()
+        and str(existing_sub.get("branch") or "").strip() == str(submission.get("branch") or "").strip()
+    )
+
+    if is_same_submission:
+        # Stable submission provenance: preserve earlier verified_at, submitted_by, recovery_at, recovery_by
+        if "verified_at" in existing_sub:
+            submission["verified_at"] = existing_sub["verified_at"]
+        if "submitted_by" in existing_sub:
+            submission["submitted_by"] = existing_sub["submitted_by"]
+        if "recovery_at" in existing_sub:
+            submission["recovery_at"] = existing_sub["recovery_at"]
+        if "recovery_by" in existing_sub:
+            submission["recovery_by"] = existing_sub["recovery_by"]
+
+        # R4: Detect first OPEN-to-MERGED transition.  When the existing
+        # submission lacks merged_at but the new one carries it, this is the
+        # first post-merge recovery -- not a repeated submission.  Record
+        # recovery_at / recovery_by with the actual recovery time/actor and
+        # append a merged_recovery audit event.
+        is_first_merged_recovery = (
+            submission.get("merged_at")
+            and not existing_sub.get("merged_at")
+            and not existing_sub.get("recovery_at")
+        )
+
+        if is_first_merged_recovery:
+            recovery_ts = iso_now()
+            submission["recovery_at"] = recovery_ts
+            submission["recovery_by"] = actor
+            append_log(
+                {
+                    "ts": recovery_ts,
+                    "agent": actor,
+                    "type": "merged_recovery",
+                    "task_id": task_id,
+                    "message": f"First OPEN-to-MERGED recovery for PR #{submission['pr_number']}: {message}",
+                    "submission": submission,
+                }
+            )
+
+        current_status = str(task.get("status") or "").lower()
+        if current_status == "review_approved" and task.get("approved_head") == submission["remote_sha"]:
+            # Complete idempotent no-op: preserve review_approved state, approved_head, and handoffs
+            task["review_submission"] = submission
+            return
+
+        if current_status == "review":
+            # Already in review for the same head: update submission metadata without duplicate handoffs or wiping approval
+            task["review_submission"] = submission
+            if message and task.get("next") != message:
+                task["next"] = message
+                task["last_update"] = iso_now()
+            return
+
     timestamp = iso_now()
     task["status"] = "review"
     task["last_update"] = timestamp
@@ -5761,6 +8193,7 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
     task["pr_number"] = submission["pr_number"]
     task["pr_url"] = submission["pr_url"]
     task.pop("approved_head", None)
+    task.pop("merge_route", None)
     task.pop("handoff_seal", None)
     task.pop("helper_execution_lease", None)
     mark_handoffs_done_for_actor(state, task_id, actor)
@@ -5839,6 +8272,8 @@ def command_retarget_branch(state: dict[str, Any], args: list[str]) -> None:
             "Push it first; retargeting onto an unpublished name only moves the problem."
         )
 
+    # Capture legacy SHA-only grants before clearing approval during retarget.
+    retain_review_gate_targets(task)
     timestamp = iso_now()
     task["branch"] = branch
     task["last_update"] = timestamp
@@ -5924,6 +8359,7 @@ def command_re_review(state: dict[str, Any], args: list[str]) -> None:
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("approved_head", None)
+    task.pop("merge_route", None)
     task.pop("waiting_for", None)
     mark_blockers_resolved(state, task_id)
     mark_handoffs_done(state, task_id)
@@ -6355,6 +8791,103 @@ def command_restore_approved_head(state: dict[str, Any], args: list[str]) -> Non
     )
 
 
+def command_done_tooling(state: dict[str, Any], args: list[str]) -> None:
+    """Close an owner's merged pure-tooling delivery using CI and scope evidence.
+
+    This records delivery, not reviewer approval. Product/mixed changes retain
+    command_done's independent review requirements. Use the manifest from the
+    merge's first parent so a PR cannot expand its own no-product-review scope.
+    """
+    if len(args) != 4:
+        raise SystemExit("Usage: done_tooling <task-id> <pr-number> <source-sha> <message>")
+    task_id, pr_number, expected_head, message = args
+    actor = current_actor_validated()
+    task = get_task(state, task_id)
+    if task is None:
+        snapshot = archived_task_snapshot(task_id) or {}
+        archived = snapshot.get("task") or {}
+        delivery = archived.get("delivery") or {}
+        if (
+            archived.get("owner") == actor
+            and archived.get("status") == "done"
+            and delivery.get("verification_mode") == "merged_tooling_scope_and_ci"
+            and str((delivery.get("pull_request") or {}).get("number")) == pr_number
+            and delivery.get("verified_head") == expected_head
+        ):
+            return
+        raise SystemExit(f"Unknown active tooling task: {task_id}")
+    if task.get("owner") != actor:
+        raise SystemExit(f"Only the owner ({task.get('owner')}) can finalize {task_id} to done")
+    if task.get("status") not in {"in_progress", "review", "review_approved"}:
+        raise SystemExit(f"Cannot finalize tooling task {task_id} from {task.get('status')}")
+    if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", expected_head):
+        raise SystemExit("Tooling closeout requires the exact immutable source SHA")
+
+    # This validator is shared with merged recovery, but performs no review
+    # transition: owner, branch/base, source/merge ancestry, identity and CI.
+    submission = review_submission_for_task(task, pr_number, actor=actor)
+    if not submission.get("merged_at") or not submission.get("merge_commit"):
+        raise SystemExit("Tooling closeout requires a MERGED pull request")
+    if submission["remote_sha"] != expected_head:
+        raise SystemExit("Tooling closeout source SHA differs from the merged PR head")
+    config = status_runtime_config()
+    repository_id = task_repository_id(config, task) or "pantheon"
+    repo_root = repository_local_path(config, repository_id) or ROOT
+    merge_commit = submission["merge_commit"]
+    manifest_commit = run_git_command(["rev-parse", f"{merge_commit}^1"], cwd=repo_root)
+    manifest_text = run_git_command(
+        ["show", f"{manifest_commit}:config/change-review-scopes.json"], cwd=repo_root,
+        failure_message="Cannot finalize tooling task: trusted base scope manifest is unavailable",
+    )
+    try:
+        manifest = json.loads(manifest_text)
+        if not isinstance(manifest, dict) or not isinstance(manifest.get("development_tooling"), dict):
+            raise ValueError("invalid development_tooling manifest")
+        paths_raw = run_git_command(
+            ["diff", "--name-only", "--no-renames", "-z", f"{manifest_commit}...{expected_head}", "--"],
+            cwd=repo_root,
+        )
+        paths = [path for path in paths_raw.split("\0") if path]
+        if any(path != path.strip() for path in paths):
+            raise ValueError("ambiguous whitespace in delivery path")
+        scope = classify_paths(paths, manifest)
+    except (ValueError, TypeError, KeyError) as exc:
+        raise SystemExit(f"Cannot verify tooling scope: {exc}") from exc
+    if scope["scope"] != "development_tooling":
+        raise SystemExit("Product or mixed delivery requires the assigned product reviewer and normal done flow")
+    guard_cross_repo_delivery_gate(state, task)
+
+    timestamp = iso_now()
+    delivery = {
+        "verification_mode": "merged_tooling_scope_and_ci",
+        "scope": "development_tooling",
+        "repository_id": repository_id,
+        "branch": submission["branch"],
+        "base_branch": submission["base_branch"],
+        "verified_head": expected_head,
+        "pr_head_ref_oid": expected_head,
+        "pr_merge_commit": merge_commit,
+        "recorded_at": timestamp,
+        "recorded_by": actor,
+        "scope_manifest_commit": manifest_commit,
+        "scope_manifest_sha256": hashlib.sha256(manifest_text.encode()).hexdigest(),
+        "changed_paths": scope["paths"],
+        "pull_request": {
+            "number": submission["pr_number"], "url": submission["pr_url"],
+            "state": "MERGED", "head_sha": expected_head,
+            "merge_commit": merge_commit, "merged_at": submission["merged_at"],
+            "base_branch": submission["base_branch"], "ci_checks": submission["ci_checks"],
+        },
+    }
+    task.update(status="done", terminal_outcome="completed", last_update=timestamp, next=message, delivery=delivery)
+    task.pop("waiting_for", None)
+    mark_blockers_resolved(state, task_id)
+    mark_handoffs_done(state, task_id)
+    archive_terminal_task_from_state(state, task, archived_at=timestamp)
+    append_log({"ts": timestamp, "agent": actor, "type": "done_tooling", "task_id": task_id,
+                "message": message, "delivery": delivery})
+
+
 def command_done(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: done <task-id> <message>")
@@ -6492,8 +9025,31 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
     reviewer = canonical_agent_name(task.get("reviewer"))
     if owner and reviewer and owner == reviewer:
         raise SystemExit(f"Owner ({owner}) and reviewer ({reviewer}) must be separate identities for task {task_id}")
+    independence_reason = review_independence_block_reason(owner, reviewer)
+    if independence_reason:
+        raise SystemExit(
+            f"Cannot approve task {task_id}: {independence_reason}。未記錄任何 approval。"
+        )
     if task.get("reviewer") != actor:
         raise SystemExit(f"Only the reviewer ({task.get('reviewer')}) can approve {task_id}")
+    # Same policy the dispatcher applies when it decides who may be woken for a
+    # review. Without it, a reviewer the policy excludes could still land the
+    # approval by hand, and the approval -- not the dispatch -- is the thing the
+    # merge gate trusts.
+    #
+    # An approval is always a new signature, never the preservation of one, so
+    # the pinned-head exemption does not apply. A task that already carries an
+    # `approved_head` and was reopened is exactly where it would otherwise: the
+    # freeze would let an excluded reviewer sign the *next* approval on the
+    # strength of the previous one.
+    reviewer_block_reason = role_provider_assignment_block_reason(
+        task.get("reviewer"), role="reviewer", task=task, grants_new_authority=True
+    )
+    if reviewer_block_reason:
+        raise SystemExit(
+            f"Cannot approve task {task_id}: reviewer {task.get('reviewer')} 不符合 role/provider "
+            f"審查政策（{reviewer_block_reason}）。未記錄任何 approval。"
+        )
     if task.get("status") != "review":
         raise SystemExit(f"{task_id} must be in review before it can move to review_approved")
 
@@ -6510,12 +9066,6 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
             f"Cannot approve task {task_id}: unable to resolve the branch HEAD to freeze ({exc}). "
             "Integrity gate failed closed; no approval was recorded."
         ) from exc
-    if not approved_sha:
-        raise SystemExit(
-            f"Cannot approve task {task_id}: branch HEAD could not be resolved, so the "
-            "reviewer-approved commit cannot be frozen. Push the task branch (or open its PR) "
-            "and approve again. No approval was recorded."
-        )
 
     submission = task.get("review_submission")
     submitted_sha = (
@@ -6523,6 +9073,17 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
         if isinstance(submission, dict)
         else ""
     )
+
+    if not approved_sha:
+        approved_sha = resolve_immutable_merged_task_sha(task)
+
+    if not approved_sha:
+        raise SystemExit(
+            f"Cannot approve task {task_id}: branch HEAD could not be resolved, so the "
+            "reviewer-approved commit cannot be frozen. Push the task branch (or open its PR) "
+            "and approve again. No approval was recorded."
+        )
+
     if not submitted_sha or submitted_sha != approved_sha:
         display_submitted = submitted_sha[:8] if submitted_sha else "missing"
         raise SystemExit(
@@ -6543,6 +9104,21 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
             f"Cannot approve task {task_id}: it still carries an uncleared approved head "
             f"({existing_head[:8]}) while the branch is now at {approved_sha[:8]}. "
             f"Run `re_review {task_id} <reason>` to clear the stale freeze first. "
+            "No approval was recorded."
+        )
+
+    # Required CI terminal success check on exact head
+    try:
+        pr_status, ci_status = task_pr_ci_status(task_id)
+    except Exception as exc:
+        raise SystemExit(
+            f"Cannot approve task {task_id}: unable to check PR CI status ({exc}). "
+            "Integrity gate failed closed; no approval was recorded."
+        ) from exc
+    if ci_status != "success":
+        raise SystemExit(
+            f"Cannot approve task {task_id}: required CI status is '{ci_status}' "
+            f"(exact head {approved_sha[:8]} must have all required CI terminal success before approval). "
             "No approval was recorded."
         )
 
@@ -6609,6 +9185,1422 @@ def command_archive_migrate(state: dict[str, Any], _args: list[str]) -> None:
     )
 
 
+class ArchiveRecoveryPreview(SystemExit):
+    """`archive_recovery_apply` without `--confirm`: plan printed, nothing written.
+
+    Raised rather than returned so `main()` unwinds before `sync_all()`. A
+    preview that still advanced `_status_write_revision` would invalidate the
+    baseline of the very batch it just previewed, and the operator's next run
+    with `--confirm` would fail closed on drift the preview itself caused.
+    """
+
+
+class ArchiveRecoveryInvalidationPreview(SystemExit):
+    """`archive_recovery_invalidate` without `--confirm`: preview printed, nothing written.
+
+    Raised rather than returned so `main()` unwinds before `sync_all()`.
+    """
+
+
+ARCHIVE_RECOVERY_USAGE = (
+    "Usage: archive_recovery_apply --batch <file> --maintenance-hold <hold-file> "
+    "[--checkpoint <file>] [--confirm]"
+)
+
+# The maintenance hold is a document, not a reference string: it has to bind a
+# declared dispatch pause and the reviewer's approval to this batch's hash.
+RECOVERY_MAINTENANCE_HOLD_TYPE = "task_history_recovery_maintenance_hold"
+
+
+def _recovery_planner_module():
+    """Import the planner that produced the batch, lazily and path-scoped.
+
+    The planner is a tool under `scripts/orchestrator`, not part of this
+    writer's import surface, and only this command needs it. Reading its
+    constants instead of restating them here is the point: a second copy of
+    the batch schema is exactly how an apply path drifts away from the planner
+    that feeds it.
+    """
+
+    planner_dir = Path(__file__).resolve().parent / "orchestrator"
+    if str(planner_dir) not in sys.path:
+        sys.path.append(str(planner_dir))
+    import backfill_task_archive_snapshots
+
+    return backfill_task_archive_snapshots
+
+
+def _parse_archive_recovery_args(args: list[str]) -> dict[str, Any]:
+    parsed: dict[str, Any] = {
+        "batch": "",
+        "maintenance_hold": "",
+        "checkpoint": "",
+        "confirm": False,
+    }
+    flags = {
+        "--batch": "batch",
+        "--maintenance-hold": "maintenance_hold",
+        "--checkpoint": "checkpoint",
+    }
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--confirm":
+            parsed["confirm"] = True
+            index += 1
+            continue
+        key = flags.get(token)
+        if key is None or index + 1 >= len(args):
+            raise SystemExit(ARCHIVE_RECOVERY_USAGE)
+        parsed[key] = args[index + 1]
+        index += 2
+    return parsed
+
+
+def _archive_recovery_git(repo: Path, *args: str) -> tuple[int, str]:
+    """Run one read-only git command, returning (returncode, stdout).
+
+    Returns a non-zero code rather than raising for every failure mode --
+    missing repo, missing git, timeout -- because every one of them means the
+    same thing to the caller: the pinned evidence could not be re-verified, so
+    the batch is refused.
+    """
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return 1, ""
+    return result.returncode, result.stdout.strip()
+
+
+def _archive_recovery_hold(
+    hold_value: str, *, batch_sha256: str, recovery_reviewer: str, actor: str
+) -> tuple[Path, str, dict[str, Any]]:
+    """Load the maintenance hold, or refuse before anything is written.
+
+    A free-text hold reference proves nothing: it is a string the applying
+    worker types. This wants a document that is bound to *this* batch by hash,
+    that declares dispatch actually paused, that has not expired, and that
+    carries the reviewer's approval of the same hash -- from someone other than
+    the actor about to write. Without that binding a hold approved for an
+    earlier, more conservative batch would authorise this one.
+    """
+
+    hold_path = Path(hold_value).expanduser()
+    try:
+        payload = json.loads(hold_path.read_text(encoding="utf-8"))
+        raw = hold_path.read_bytes()
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(
+            f"Maintenance hold unreadable ({hold_path}): {exc}. --maintenance-hold "
+            "takes the path to a hold document, not a free-text reference. "
+            "Nothing was written."
+        ) from exc
+    hold_sha256 = hashlib.sha256(raw).hexdigest()
+
+    problems: list[str] = []
+    if not isinstance(payload, dict):
+        raise SystemExit("Maintenance hold must be a JSON object; nothing was written.")
+    if str(payload.get("type") or "") != RECOVERY_MAINTENANCE_HOLD_TYPE:
+        problems.append(f"type must be {RECOVERY_MAINTENANCE_HOLD_TYPE!r}")
+    for field in ("hold_id", "declared_by", "declared_at", "expires_at", "scope"):
+        if not str(payload.get(field) or "").strip():
+            problems.append(f"missing {field}")
+    if payload.get("dispatch_paused") is not True:
+        problems.append(
+            "dispatch_paused must be true: a hold that does not assert dispatch is "
+            "paused is not a hold"
+        )
+    if str(payload.get("batch_sha256") or "") != batch_sha256:
+        problems.append(
+            f"batch_sha256 {payload.get('batch_sha256')!r} is not this batch "
+            f"({batch_sha256})"
+        )
+
+    expires_at = _archive_recovery_parse_utc(payload.get("expires_at"))
+    declared_at = _archive_recovery_parse_utc(payload.get("declared_at"))
+    now = datetime.now(UTC)
+    if str(payload.get("expires_at") or "").strip() and expires_at is None:
+        problems.append(f"expires_at {payload.get('expires_at')!r} is not a UTC timestamp")
+    elif expires_at is not None and expires_at <= now:
+        problems.append(f"the hold expired at {payload.get('expires_at')}; it is no longer held")
+    if str(payload.get("declared_at") or "").strip() and declared_at is None:
+        problems.append(f"declared_at {payload.get('declared_at')!r} is not a UTC timestamp")
+    elif declared_at is not None and declared_at > now:
+        problems.append(f"declared_at {payload.get('declared_at')} is in the future")
+
+    approval = payload.get("batch_approval")
+    approval = approval if isinstance(approval, dict) else {}
+    if not approval:
+        problems.append("carries no batch_approval")
+    else:
+        approver = str(approval.get("reviewer") or "").strip()
+        if approver != recovery_reviewer:
+            problems.append(
+                f"batch_approval.reviewer {approver!r} is not the batch reviewer "
+                f"{recovery_reviewer!r}"
+            )
+        if approver and approver == actor:
+            problems.append(
+                f"{actor} cannot both approve and apply this batch"
+            )
+        if str(approval.get("approved_batch_sha256") or "") != batch_sha256:
+            problems.append(
+                "batch_approval.approved_batch_sha256 approves a different batch "
+                f"({approval.get('approved_batch_sha256')!r})"
+            )
+        for field in ("approved_at", "source"):
+            if not str(approval.get(field) or "").strip():
+                problems.append(f"batch_approval is missing {field}")
+
+    if problems:
+        raise SystemExit(
+            f"Maintenance hold refused ({hold_path}); nothing was written: "
+            + "; ".join(problems)
+        )
+    return hold_path, hold_sha256, payload
+
+
+def _archive_recovery_parse_utc(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(UTC)
+
+
+def _archive_snapshot_digests() -> dict[str, str]:
+    if not ARCHIVE_TASKS_DIR.exists():
+        return {}
+    return {
+        path.stem: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(ARCHIVE_TASKS_DIR.glob("*.json"))
+    }
+
+
+def _archive_recovery_baseline_drift(
+    state: dict[str, Any], baseline: dict[str, Any]
+) -> list[str]:
+    """Return every way the live baseline no longer matches the planned one.
+
+    This is the compare half of the compare-and-swap. It runs inside the
+    canonical status lock against state that was loaded inside that lock, so a
+    concurrent writer either finished before the load (and is seen here) or
+    cannot start until this transaction commits.
+
+    Every input the plan was derived from is re-checked, not just the ones that
+    are cheap to compare. The board revision can stay put while the board bytes
+    move; the evidence ref can move under a batch that still names its old
+    commit; and the inventory and authorization documents that decided which
+    ids are in scope can be edited after the plan was reviewed.
+    """
+
+    problems: list[str] = []
+
+    expected_revision = str(baseline.get("board_revision") or "").strip()
+    actual_revision = str(state.get("_status_write_revision") or "").strip()
+    if not expected_revision:
+        problems.append("batch carries no baseline board_revision")
+    elif expected_revision != actual_revision:
+        problems.append(
+            f"board revision moved ({expected_revision} -> {actual_revision or 'unset'})"
+        )
+
+    expected_board = str(baseline.get("board_sha256") or "").strip()
+    actual_board = (
+        hashlib.sha256(STATUS_FILE.read_bytes()).hexdigest()
+        if STATUS_FILE.exists()
+        else None
+    )
+    if not expected_board:
+        problems.append("batch carries no baseline board_sha256")
+    elif expected_board != actual_board:
+        problems.append(f"board bytes moved ({expected_board} -> {actual_board})")
+
+    # Derived from ARCHIVE_TASKS_DIR rather than bound as its own module global:
+    # the tests that relocate this module's archive root rebind that one name,
+    # and a second root would silently keep pointing at the live archive.
+    index_file = ARCHIVE_TASKS_DIR.parent / "index.json"
+    expected_index = baseline.get("archive_index_sha256")
+    actual_index = (
+        hashlib.sha256(index_file.read_bytes()).hexdigest()
+        if index_file.exists()
+        else None
+    )
+    if expected_index != actual_index:
+        problems.append(f"archive index digest moved ({expected_index} -> {actual_index})")
+
+    expected_digests = baseline.get("archive_snapshot_digests") or {}
+    actual_digests = _archive_snapshot_digests()
+    if expected_digests != actual_digests:
+        missing = sorted(set(expected_digests) - set(actual_digests))
+        added = sorted(set(actual_digests) - set(expected_digests))
+        changed = sorted(
+            task_id
+            for task_id in set(expected_digests) & set(actual_digests)
+            if expected_digests[task_id] != actual_digests[task_id]
+        )
+        problems.append(
+            f"archive snapshots moved (missing={missing}, added={added}, changed={changed})"
+        )
+
+    repo_raw = str(baseline.get("repo") or "").strip()
+    ref = str(baseline.get("ref") or "").strip()
+    expected_commit = str(baseline.get("ref_commit") or "").strip()
+    if not repo_raw or not ref or not expected_commit:
+        problems.append("batch carries no pinned repo/ref/ref_commit for its evidence")
+    else:
+        code, actual_commit = _archive_recovery_git(Path(repo_raw), "rev-parse", ref)
+        if code != 0 or not actual_commit:
+            problems.append(
+                f"cannot resolve {ref!r} in {repo_raw}; the pinned evidence ref is "
+                "no longer verifiable"
+            )
+        elif actual_commit != expected_commit:
+            problems.append(f"evidence ref moved ({ref}: {expected_commit} -> {actual_commit})")
+
+    for label, path_key, digest_key in (
+        ("inventory", "inventory_path", "inventory_sha256"),
+        ("authorization", "authorization_path", "authorization_sha256"),
+    ):
+        source_raw = str(baseline.get(path_key) or "").strip()
+        expected_digest = str(baseline.get(digest_key) or "").strip()
+        if not source_raw or not expected_digest:
+            problems.append(f"batch carries no {label} provenance ({path_key}/{digest_key})")
+            continue
+        source = Path(source_raw)
+        if not source.is_file():
+            problems.append(
+                f"{label} source is gone ({source_raw}); its hash can no longer be checked"
+            )
+            continue
+        actual_digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        if actual_digest != expected_digest:
+            problems.append(
+                f"{label} source drifted ({source_raw}: {expected_digest} -> {actual_digest})"
+            )
+    return problems
+
+
+def _archive_recovery_evidence_drift(
+    archive_entries: list[dict[str, Any]], baseline: dict[str, Any]
+) -> list[str]:
+    """Re-verify each reconstructed-done merge against the pinned ref, in the lock.
+
+    The planner proved these merges when it graded the batch. Between then and
+    now the batch file travelled through a review, so the writer re-derives the
+    one claim that turns a placeholder into terminal history: that local git,
+    on the commit the baseline pins, really contains the merge this record is
+    reconstructed from, that the merge commit actually delivered this task, and
+    that candidate/local_merge metadata has not been tampered with.
+    """
+
+    if not archive_entries:
+        return []
+    repo_raw = str(baseline.get("repo") or "").strip()
+    ref_commit = str(baseline.get("ref_commit") or "").strip()
+    if not repo_raw or not ref_commit:
+        return ["batch carries no pinned repo/ref_commit to re-verify merges against"]
+
+    repo = Path(repo_raw)
+    planner = _recovery_planner_module()
+    problems: list[str] = []
+    for entry in archive_entries:
+        task_id = str(entry.get("task_id") or "").strip()
+        evidence = (
+            ((entry.get("record") or {}).get("history_recovery") or {}).get("evidence")
+            or {}
+        )
+        local_merge = evidence.get("local_merge")
+        if not isinstance(local_merge, dict):
+            problems.append(f"{task_id}: record carries no local_merge evidence dict")
+            continue
+        merge_commit = str(local_merge.get("merge_commit") or "").strip()
+        if not merge_commit:
+            problems.append(f"{task_id}: no local merge commit to re-verify")
+            continue
+
+        code, _ = _archive_recovery_git(
+            repo, "merge-base", "--is-ancestor", merge_commit, ref_commit
+        )
+        if code != 0:
+            problems.append(
+                f"{task_id}: merge commit {merge_commit[:12]} is not contained in the "
+                f"pinned ref {ref_commit[:12]}"
+            )
+            continue
+
+        code, subject = _archive_recovery_git(
+            repo, "log", "-1", "--format=%s", merge_commit
+        )
+        code_date, commit_date = _archive_recovery_git(
+            repo, "log", "-1", "--format=%cI", merge_commit
+        )
+        if code != 0 or not subject:
+            problems.append(
+                f"{task_id}: cannot read commit subject for {merge_commit[:12]}"
+            )
+            continue
+
+        form = planner.subject_delivers(subject, task_id)
+        if form is None:
+            problems.append(
+                f"{task_id}: merge commit {merge_commit[:12]} subject {subject!r} does not "
+                f"deliver this task"
+            )
+            continue
+
+        if local_merge.get("subject") != subject:
+            problems.append(
+                f"{task_id}: local_merge subject {local_merge.get('subject')!r} does not "
+                f"match git commit subject {subject!r}"
+            )
+        if local_merge.get("delivery_form") != form:
+            problems.append(
+                f"{task_id}: local_merge delivery_form {local_merge.get('delivery_form')!r} "
+                f"does not match git {form!r}"
+            )
+        if commit_date and local_merge.get("merged_at") != commit_date:
+            problems.append(
+                f"{task_id}: local_merge merged_at {local_merge.get('merged_at')!r} "
+                f"does not match git {commit_date!r}"
+            )
+
+        candidates = evidence.get("candidates") or []
+        declared = {
+            c["merge_commit"]
+            for c in candidates
+            if isinstance(c, dict) and c.get("merge_commit")
+        }
+        if declared and merge_commit not in declared:
+            problems.append(
+                f"{task_id}: candidate merge commit mismatch ({merge_commit[:12]} not in "
+                f"declared candidates)"
+            )
+
+        actual_merge = planner.find_merge_evidence(repo, task_id, ref_commit)
+        if actual_merge is None:
+            problems.append(
+                f"{task_id}: no merge evidence found in git on {ref_commit[:12]}"
+            )
+        elif actual_merge.get("merge_commit") != merge_commit:
+            problems.append(
+                f"{task_id}: record merge commit {merge_commit[:12]} disagrees with git "
+                f"merge evidence {str(actual_merge.get('merge_commit'))[:12]}"
+            )
+
+    return problems
+
+
+def _is_same_or_alias(path1: Path, path2: Path) -> bool:
+    try:
+        if path1.exists() and path2.exists():
+            if os.path.samefile(path1, path2):
+                return True
+        if path1.resolve() == path2.resolve():
+            return True
+    except (OSError, ValueError):
+        pass
+    return False
+
+
+def _validate_checkpoint_destination(
+    checkpoint_path: Path,
+    *,
+    batch_path: Path | None = None,
+    hold_path: Path | None = None,
+    baseline: dict[str, Any] | None = None,
+) -> list[str]:
+    problems: list[str] = []
+    archive_root = ARCHIVE_TASKS_DIR.parent
+    # Every directory `sync_all` owns.  A checkpoint landing anywhere in here
+    # is either destroyed by the next sync or destroys a managed output; both
+    # lose the receipt, so neither is allowed to reach the write stage.
+    protected_dirs: list[tuple[str, Path]] = [
+        ("archive directory", ARCHIVE_TASKS_DIR),
+        ("docs-site mirror directory", DOCS_SITE_DIR),
+    ]
+    try:
+        chk_res = checkpoint_path.resolve()
+        archive_root_res = archive_root.resolve()
+        matched_dir = False
+        for label, protected_dir in protected_dirs:
+            dir_res = protected_dir.resolve()
+            if chk_res == dir_res or chk_res.is_relative_to(dir_res):
+                problems.append(
+                    f"checkpoint path {checkpoint_path} is inside {label} {protected_dir}"
+                )
+                matched_dir = True
+        if not matched_dir and chk_res == (archive_root_res / "index.json").resolve():
+            problems.append(
+                f"checkpoint path {checkpoint_path} targets archive index ({archive_root / 'index.json'})"
+            )
+    except (OSError, ValueError) as exc:
+        problems.append(f"cannot resolve checkpoint path {checkpoint_path}: {exc}")
+        return problems
+
+    protected_named: list[tuple[str, Path]] = [
+        ("canonical board", STATUS_FILE),
+        ("canonical lock", STATUS_FILE.with_name(f"{STATUS_FILE.name}.lock")),
+        ("canonical log", LOG_FILE),
+        ("canonical current-work", CURRENT_WORK_FILE),
+        # `sync_all` rewrites these on every canonical transaction, including
+        # this one.  Accepting either as a checkpoint means the command
+        # returns having replaced a managed output and lost its own receipt.
+        ("dashboard bundle", DASHBOARD_BUNDLE_FILE),
+        ("orchestrator state", ORCHESTRATOR_STATE_FILE),
+        ("approval queue", APPROVAL_QUEUE_FILE),
+        ("planning state", PLANNING_STATE_FILE),
+        ("archive index", archive_root / "index.json"),
+    ]
+    # The published mirrors, by name and therefore by inode. The directory
+    # check above only sees paths that *spell* their way into `docs-site/`;
+    # `Path.resolve()` follows symlinks but cannot follow a hard link, because
+    # a hard link is not a reference to a path, it is a second directory entry
+    # for the same file. A checkpoint hard-linked to a mirror from anywhere on
+    # the same filesystem therefore resolves outside the directory while still
+    # being the mirror, and the final receipt write truncates it.
+    for source, mirror in docs_site_mirror_pairs():
+        protected_named.append((f"docs-site mirror of {source.name}", mirror))
+    if batch_path is not None:
+        protected_named.append(("recovery batch", batch_path))
+    if hold_path is not None:
+        protected_named.append(("maintenance hold", hold_path))
+
+    if baseline:
+        provenance = baseline.get("provenance_sources") or {}
+        if isinstance(provenance, dict):
+            for label, item in provenance.items():
+                if isinstance(item, dict) and item.get("path"):
+                    protected_named.append(
+                        (f"provenance source ({label})", Path(str(item["path"])))
+                    )
+        for key in ("inventory_path", "authorization_path"):
+            if baseline.get(key):
+                protected_named.append((f"baseline {key}", Path(str(baseline[key]))))
+
+    for label, protected_path in protected_named:
+        if _is_same_or_alias(checkpoint_path, protected_path):
+            problems.append(
+                f"checkpoint path {checkpoint_path} aliases protected {label} ({protected_path})"
+            )
+
+    if ARCHIVE_TASKS_DIR.is_dir():
+        try:
+            for snap in ARCHIVE_TASKS_DIR.glob("*.json"):
+                if _is_same_or_alias(checkpoint_path, snap):
+                    problems.append(
+                        f"checkpoint path {checkpoint_path} aliases existing archive snapshot {snap}"
+                    )
+        except OSError:
+            pass
+
+    # Everything else already published under `docs-site/`, so that a mirror
+    # added to the dashboard later is covered by inode from its first sync
+    # rather than from whenever someone remembers this gate exists.
+    already_named = {mirror for _, mirror in docs_site_mirror_pairs()}
+    if DOCS_SITE_DIR.is_dir():
+        try:
+            for published in DOCS_SITE_DIR.rglob("*"):
+                if published in already_named or not published.is_file():
+                    continue
+                if _is_same_or_alias(checkpoint_path, published):
+                    problems.append(
+                        f"checkpoint path {checkpoint_path} aliases published "
+                        f"docs-site file {published}"
+                    )
+        except OSError:
+            pass
+
+    return problems
+
+
+def command_archive_recovery_apply(state: dict[str, Any], args: list[str]) -> None:
+    """Apply a reviewed task-history recovery batch inside the canonical lock.
+
+    The batch is planned offline by
+    `scripts/orchestrator/backfill_task_archive_snapshots.py`; this is its only
+    writer, and it deliberately reuses the existing archive writer and the
+    enclosing `status_write_transaction()` rather than opening its own. That
+    also means it must never re-enter the lock: `main()` already holds it.
+
+    Four honesty properties matter more than convenience here:
+
+    * **Admission is re-derived, never assumed.** Between planning and applying,
+      the batch is a JSON file anyone can edit, so the planner's own validator
+      is re-run here on the whole document: evidence tier, gaps, attestations,
+      provenance, record shape and record identity all have to hold again.
+    * **All or nothing.** A batch is one reviewed unit. Any planning refusal,
+      any drift, any conflicting id refuses the entire document before a single
+      byte is written -- never just the entry that failed.
+    * **Fail closed on drift.** The batch is valid only against the board
+      revision and bytes, archive index, per-snapshot digests, evidence ref and
+      source documents it was planned from, and only under a maintenance hold
+      bound to this batch's hash.
+    * **No rollback theatre.** Archive snapshots are separate files; the board
+      is one document written by the enclosing transaction. That is not one
+      atomic unit, so every checkpoint reports what was read back from disk --
+      not what this function believes it staged -- and says plainly that
+      nothing was rolled back.
+    """
+
+    actor = current_actor_validated()
+    parsed = _parse_archive_recovery_args(args)
+    if not parsed["batch"] or not str(parsed["maintenance_hold"]).strip():
+        raise SystemExit(ARCHIVE_RECOVERY_USAGE)
+
+    planner = _recovery_planner_module()
+    batch_path = Path(parsed["batch"]).expanduser()
+    try:
+        batch_bytes = batch_path.read_bytes()
+        batch = json.loads(batch_bytes.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"Recovery batch unreadable: {exc}") from exc
+    batch_sha256 = hashlib.sha256(batch_bytes).hexdigest()
+
+    baseline = batch.get("baseline") if isinstance(batch.get("baseline"), dict) else {}
+
+    checkpoint_raw = str(parsed["checkpoint"]).strip()
+    if checkpoint_raw:
+        chk_dest_problems = _validate_checkpoint_destination(
+            Path(checkpoint_raw).expanduser(),
+            batch_path=batch_path,
+            hold_path=Path(parsed["maintenance_hold"]).expanduser(),
+            baseline=baseline,
+        )
+        if chk_dest_problems:
+            raise SystemExit(
+                "Recovery checkpoint refused; protected path cannot be overwritten: "
+                + "; ".join(chk_dest_problems)
+            )
+
+    # The planner's validator is the admission gate, re-run here on the whole
+    # document. Anything it refuses refuses the batch: there is no partial
+    # admission, and no entry is examined on its own merits.
+    admission = planner.validate_recovery_batch(batch, for_apply=True)
+    if admission:
+        raise SystemExit(
+            "Recovery batch refused; nothing was written: " + "; ".join(admission)
+        )
+
+    # The recovery pair is validated the loud way, before anything is staged.
+    # `ensure_agent()` further down the write path is deliberately tolerant so
+    # that loading a corrupt board still works, which means an unknown name in
+    # a hand-edited batch would otherwise be registered rather than refused.
+    actors = batch.get("recovery_actors") if isinstance(batch.get("recovery_actors"), dict) else {}
+    declared_owner = str(actors.get("owner") or "").strip()
+    declared_reviewer = str(actors.get("reviewer") or "").strip()
+    recovery_owner = resolve_actor_reference(declared_owner, field="recovery owner")
+    recovery_reviewer = resolve_actor_reference(declared_reviewer, field="recovery reviewer")
+    if (recovery_owner, recovery_reviewer) != (declared_owner, declared_reviewer):
+        raise SystemExit(
+            "Recovery batch must name canonical actors "
+            f"({declared_owner!r}, {declared_reviewer!r} resolve to "
+            f"{recovery_owner!r}, {recovery_reviewer!r}); nothing was written."
+        )
+
+    entries = [item for item in (batch.get("entries") or []) if isinstance(item, dict)]
+    for entry in entries:
+        t_id = str(entry.get("task_id") or "").strip()
+        rec_ev = (
+            ((entry.get("record") or {}).get("history_recovery") or {}).get("evidence")
+            or {}
+        )
+        rec_atts = rec_ev.get("attestations")
+        if isinstance(rec_atts, dict):
+            for att_k, att_v in rec_atts.items():
+                if isinstance(att_v, dict) and "verifier" in att_v:
+                    v_raw = str(att_v.get("verifier") or "").strip()
+                    if v_raw == planner.UNKNOWN_ACTOR:
+                        raise SystemExit(
+                            f"{t_id}: attestation {att_k} verifier cannot be {planner.UNKNOWN_ACTOR}; nothing was written."
+                        )
+                    if v_raw:
+                        v_res = resolve_actor_reference(
+                            v_raw, field=f"{t_id} {att_k} attestation verifier"
+                        )
+                        if v_res != v_raw:
+                            raise SystemExit(
+                                f"{t_id}: attestation {att_k} verifier {v_raw!r} resolves to {v_res!r}; nothing was written."
+                            )
+
+    hold_path, hold_sha256, hold = _archive_recovery_hold(
+        parsed["maintenance_hold"],
+        batch_sha256=batch_sha256,
+        recovery_reviewer=recovery_reviewer,
+        actor=actor,
+    )
+
+    baseline = batch.get("baseline") if isinstance(batch.get("baseline"), dict) else {}
+    drift = _archive_recovery_baseline_drift(state, baseline)
+    if drift:
+        raise SystemExit(
+            "Recovery batch baseline drifted; nothing was written. Re-plan the "
+            "batch against the current baseline: " + "; ".join(drift)
+        )
+
+    entries = [item for item in (batch.get("entries") or []) if isinstance(item, dict)]
+    conflicts: list[str] = []
+    for entry in entries:
+        task_id = str(entry.get("task_id") or "").strip()
+        if get_task(state, task_id) is not None:
+            conflicts.append(f"{task_id}: already on the active board")
+        if archived_task_snapshot(task_id) is not None:
+            conflicts.append(f"{task_id}: already has an archive snapshot")
+    if conflicts:
+        raise SystemExit(
+            "Recovery batch refused; nothing was written: " + "; ".join(conflicts)
+        )
+
+    archive_entries = [
+        entry for entry in entries if entry.get("action") == planner.ACTION_ARCHIVE_DONE
+    ]
+    board_entries = [
+        entry
+        for entry in entries
+        if entry.get("action") == planner.ACTION_BLOCKED_PLACEHOLDER
+    ]
+
+    evidence_problems = _archive_recovery_evidence_drift(archive_entries, baseline)
+    if evidence_problems:
+        raise SystemExit(
+            "Recovery batch evidence no longer verifies; nothing was written: "
+            + "; ".join(evidence_problems)
+        )
+
+    if not parsed["confirm"]:
+        print(
+            f"PLAN ONLY ({batch_path}): {len(archive_entries)} reconstructed done "
+            f"snapshot(s), {len(board_entries)} blocked placeholder(s). Baseline, "
+            f"evidence and maintenance hold {hold.get('hold_id')} all match. "
+            "Nothing was written; re-run with --confirm."
+        )
+        raise ArchiveRecoveryPreview(0)
+
+    if not str(parsed["checkpoint"]).strip():
+        raise SystemExit(
+            "--confirm requires --checkpoint <file>: a multi-file apply must "
+            "leave a receipt of exactly what landed. Nothing was written."
+        )
+
+    checkpoint_path = Path(parsed["checkpoint"]).expanduser()
+    started_at = iso_now()
+    archive_ids = [str(entry["task_id"]).strip() for entry in archive_entries]
+    board_ids = [str(entry["task_id"]).strip() for entry in board_entries]
+    baseline_digests = dict(baseline.get("archive_snapshot_digests") or {})
+    # Flipped only by the post-commit read-back below. Until then no checkpoint
+    # may claim board persistence, not even a batch with no board rows at all:
+    # "nothing to persist" and "persisted" are different receipts.
+    board_commit_verified = {"value": False}
+
+    def read_archive_index() -> dict[str, Any]:
+        index_path = ARCHIVE_TASKS_DIR.parent / "index.json"
+        document: dict[str, Any] = {}
+        raw: bytes | None = None
+        if index_path.is_file():
+            try:
+                raw = index_path.read_bytes()
+                document = json.loads(raw.decode("utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                document = {}
+        return {
+            "path": str(index_path),
+            "exists": index_path.is_file(),
+            "sha256": hashlib.sha256(raw).hexdigest() if raw is not None else None,
+            "counts": document.get("counts") if isinstance(document, dict) else None,
+            "recent_terminal_ids": (
+                list(document.get("recent_terminal_ids") or [])
+                if isinstance(document, dict)
+                else []
+            ),
+        }
+
+    def read_archive() -> tuple[list[dict[str, Any]], list[str]]:
+        """What the archive holds *right now*, read back file by file."""
+
+        index = read_archive_index()
+        listed = {str(item) for item in index["recent_terminal_ids"]}
+        rows: list[dict[str, Any]] = []
+        landed: list[str] = []
+        for task_id in archive_ids:
+            snapshot_path = ARCHIVE_TASKS_DIR / f"{task_id}.json"
+            on_disk = snapshot_path.is_file()
+            snapshot = load_archived_snapshot(task_id) if on_disk else None
+            rows.append(
+                {
+                    "task_id": task_id,
+                    "snapshot_on_disk": on_disk,
+                    "snapshot_sha256": (
+                        hashlib.sha256(snapshot_path.read_bytes()).hexdigest()
+                        if on_disk
+                        else None
+                    ),
+                    "terminal_status": str((snapshot or {}).get("terminal_status") or "") or None,
+                    "listed_in_archive_index": task_id in listed,
+                }
+            )
+            if on_disk:
+                landed.append(task_id)
+        return rows, landed
+
+    def read_board() -> tuple[list[dict[str, Any]], list[str], dict[str, Any]]:
+        """What the canonical board file holds right now, read back from disk."""
+
+        document: dict[str, Any] = {}
+        on_disk: dict[str, dict[str, Any]] = {}
+        if STATUS_FILE.exists():
+            try:
+                document = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                document = {}
+            if isinstance(document, dict):
+                on_disk = {
+                    str((task or {}).get("id") or "").strip(): task
+                    for task in (document.get("tasks") or [])
+                    if isinstance(task, dict)
+                }
+        rows: list[dict[str, Any]] = []
+        persisted: list[str] = []
+        for task_id in board_ids:
+            row = on_disk.get(task_id)
+            rows.append(
+                {
+                    "task_id": task_id,
+                    "on_disk": row is not None,
+                    "status": str((row or {}).get("status") or "") or None,
+                    "non_dispatchable": bool((row or {}).get("non_dispatchable")) if row else None,
+                    "history_recovery_present": isinstance(
+                        (row or {}).get("history_recovery"), dict
+                    ),
+                }
+            )
+            if row is not None:
+                persisted.append(task_id)
+        return rows, persisted, document
+
+    def write_checkpoint(status: str, detail: str) -> dict[str, Any]:
+        """Write the receipt from what is on disk, never from bookkeeping.
+
+        Every field here is a read-back. The difference matters at exactly the
+        moment it is hardest to see: `archive_task_snapshot()` writes the
+        snapshot file first and the index second, so a failure between them
+        leaves a snapshot on disk that this function never got to record. A
+        checkpoint built from an in-memory "applied" list would omit it and the
+        operator would go looking for a file the receipt says is not there.
+        """
+
+        archive_rows, landed = read_archive()
+        board_rows, persisted, board_doc = read_board()
+        on_disk_revision = (
+            str(board_doc.get("_status_write_revision") or "").strip()
+            if isinstance(board_doc, dict)
+            else None
+        )
+        expected_revision = str(state.get("_status_write_revision") or "").strip() or None
+        payload = {
+            "type": "task_history_recovery_checkpoint",
+            "status": status,
+            "actor": actor,
+            "batch_path": str(batch_path),
+            "batch_sha256": batch_sha256,
+            "batch_generated_at": batch.get("generated_at"),
+            "maintenance_hold": {
+                "path": str(hold_path),
+                "sha256": hold_sha256,
+                "hold_id": hold.get("hold_id"),
+                "declared_by": hold.get("declared_by"),
+                "expires_at": hold.get("expires_at"),
+                "approved_by": (hold.get("batch_approval") or {}).get("reviewer"),
+                "approval_source": (hold.get("batch_approval") or {}).get("source"),
+            },
+            "started_at": started_at,
+            "finished_at": iso_now(),
+            "archive_snapshots_intended": list(archive_ids),
+            "archive_readback": archive_rows,
+            "applied_archive_snapshots": landed,
+            "archive_index": read_archive_index(),
+            "board_placeholders_intended": list(board_ids),
+            "board_readback": board_rows,
+            "board_placeholders_on_disk": persisted,
+            "board_revision_expected": expected_revision,
+            "board_revision_on_disk": on_disk_revision,
+            "board_persistence_verified": (
+                board_commit_verified["value"]
+                and bool(expected_revision)
+                and on_disk_revision == expected_revision
+                and (
+                    sorted(persisted) == sorted(board_ids)
+                    if board_ids
+                    else STATUS_FILE.is_file()
+                )
+            ),
+            "board_persisted_by": "enclosing canonical status transaction",
+            "rollback_performed": False,
+            "detail": detail,
+        }
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        checkpoint_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        return payload
+
+    def survivors_tampered() -> list[str]:
+        surviving = _archive_snapshot_digests()
+        return sorted(
+            task_id
+            for task_id, digest in baseline_digests.items()
+            if surviving.get(task_id) != digest
+        )
+
+    for task_id, entry in zip(archive_ids, archive_entries, strict=True):
+        try:
+            archive_task_snapshot(
+                deepcopy(entry["record"]),
+                archived_at=str(entry.get("archived_at") or "").strip() or None,
+                recent_limit=task_archive_recent_limit(),
+            )
+        except Exception as exc:
+            receipt = write_checkpoint("partial", f"archive write failed at {task_id}: {exc}")
+            raise SystemExit(
+                f"Recovery apply stopped at {task_id}: {exc}. "
+                f"{len(receipt['applied_archive_snapshots'])} archive snapshot(s) are on "
+                "disk and have NOT been rolled back; no board row was committed. "
+                f"Checkpoint: {checkpoint_path}"
+            ) from exc
+
+    # Read the archive back as a whole rather than trusting the writer's return
+    # value: a snapshot can exist on disk while the index save that follows it
+    # failed, and only the files can say which of those happened.
+    archive_rows, landed = read_archive()
+    incomplete = [
+        row["task_id"]
+        for row in archive_rows
+        if not row["snapshot_on_disk"] or row["terminal_status"] != "done"
+    ]
+    if incomplete:
+        write_checkpoint(
+            "partial", f"archive read-back found no terminal snapshot for {incomplete}"
+        )
+        raise SystemExit(
+            f"Recovery apply could not read back terminal snapshots for {incomplete}; "
+            f"{len(landed)} snapshot(s) are on disk and nothing was rolled back. "
+            f"No board row was committed. Checkpoint: {checkpoint_path}"
+        )
+
+    if landed:
+        try:
+            rebuild_archive_index(recent_limit=task_archive_recent_limit())
+        except Exception as exc:
+            write_checkpoint("partial", f"archive index rebuild failed: {exc}")
+            raise SystemExit(
+                f"Recovery apply wrote {len(landed)} archive snapshot(s) but could not "
+                f"rebuild the archive index: {exc}. Nothing was rolled back and no board "
+                f"row was committed. Checkpoint: {checkpoint_path}"
+            ) from exc
+
+    tampered = survivors_tampered()
+    if tampered:
+        write_checkpoint("partial", f"pre-existing snapshots changed: {tampered}")
+        raise SystemExit(
+            f"Recovery apply changed pre-existing archive snapshots {tampered}, which it "
+            "must never do. No board row was committed and nothing was rolled back. "
+            f"Checkpoint: {checkpoint_path}"
+        )
+
+    for entry in board_entries:
+        state["tasks"].append(deepcopy(entry["record"]))
+
+    def verify_board_persistence(
+        *,
+        transaction_succeeded: bool = True,
+        transaction_error: BaseException | None = None,
+    ) -> list[str]:
+        """Read the board back after the enclosing transaction wrote it.
+
+        Until this runs, the placeholders exist only in the state dict this
+        command mutated. Calling that "applied" would be the same substitution
+        the archive half avoids: a receipt has to describe the file, and the
+        file does not exist yet when this command returns.
+        """
+
+        still_tampered = survivors_tampered()
+        _, persisted_now, board_doc = read_board()
+        missing = [task_id for task_id in board_ids if task_id not in persisted_now]
+        on_disk_revision = (
+            str(board_doc.get("_status_write_revision") or "").strip()
+            if isinstance(board_doc, dict)
+            else None
+        )
+        expected_revision = str(state.get("_status_write_revision") or "").strip() or None
+
+        if not transaction_succeeded:
+            board_commit_verified["value"] = False
+            write_checkpoint(
+                "partial",
+                f"canonical status transaction failed: {transaction_error}",
+            )
+            return [
+                f"Recovery apply failed during canonical transaction: {transaction_error}; "
+                f"checkpoint: {checkpoint_path}"
+            ]
+
+        if still_tampered:
+            board_commit_verified["value"] = False
+            write_checkpoint(
+                "partial", f"pre-existing snapshots changed after commit: {still_tampered}"
+            )
+            return [
+                f"Recovery apply left pre-existing archive snapshots {still_tampered} "
+                f"changed; nothing was rolled back. Checkpoint: {checkpoint_path}"
+            ]
+
+        if missing:
+            board_commit_verified["value"] = False
+            write_checkpoint(
+                "partial",
+                f"board placeholders missing after the canonical transaction: {missing}",
+            )
+            return [
+                f"Recovery apply wrote {len(landed)} archive snapshot(s) but the canonical "
+                f"board is missing {len(missing)} placeholder row(s) {missing}; nothing "
+                f"was rolled back. Checkpoint: {checkpoint_path}"
+            ]
+
+        if not STATUS_FILE.is_file():
+            board_commit_verified["value"] = False
+            write_checkpoint(
+                "partial",
+                "canonical board file ai-status.json not found on disk after transaction",
+            )
+            return [
+                f"Recovery apply could not verify ai-status.json persistence on disk. "
+                f"Checkpoint: {checkpoint_path}"
+            ]
+
+        if not expected_revision or on_disk_revision != expected_revision:
+            board_commit_verified["value"] = False
+            write_checkpoint(
+                "partial",
+                f"canonical board on-disk revision {on_disk_revision!r} does not match "
+                f"expected revision {expected_revision!r}",
+            )
+            return [
+                f"Recovery apply could not verify ai-status.json persistence on disk "
+                f"(revision mismatch: expected {expected_revision!r}, got {on_disk_revision!r}). "
+                f"Checkpoint: {checkpoint_path}"
+            ]
+
+        board_commit_verified["value"] = True
+        write_checkpoint(
+            "applied",
+            "batch applied; archive snapshots and board rows both read back from disk"
+            if board_ids
+            else "batch applied; archive snapshots read back from disk and board persistence verified",
+        )
+        return []
+
+    register_post_commit_verifier(verify_board_persistence)
+    write_checkpoint(
+        "applied_pending_board_persistence",
+        "archive snapshots read back from disk; board rows staged for this transaction",
+    )
+    append_log(
+        {
+            "ts": iso_now(),
+            "agent": actor,
+            "type": "archive_history_recovery_apply",
+            "message": (
+                f"Applied recovery batch {batch_path.name}: "
+                f"{len(landed)} reconstructed archive snapshot(s), "
+                f"{len(board_ids)} blocked recovery placeholder(s). "
+                "Reconstructed records are labelled and are not original archive bytes."
+            ),
+            "task_ids": [*landed, *board_ids],
+            "batch_sha256": batch_sha256,
+            "maintenance_hold": {"path": str(hold_path), "sha256": hold_sha256},
+            "checkpoint": str(checkpoint_path),
+        }
+    )
+    print(
+        f"Applied {len(landed)} archive snapshot(s) and staged {len(board_ids)} blocked "
+        "recovery placeholder(s). The board rows are committed by this canonical "
+        "transaction and read back into the checkpoint once it commits. Reconstructed "
+        f"records are labelled history_recovery.reconstructed=true. Checkpoint: "
+        f"{checkpoint_path}"
+    )
+
+
+ARCHIVE_RECOVERY_INVALIDATE_USAGE = (
+    "Usage: archive_recovery_invalidate <task-id> "
+    "--coordination-task <id> --reason <reason> --evidence-ref <ref> "
+    "[--expected-sha256 <sha256>] [--confirm]"
+)
+
+
+def _parse_archive_recovery_invalidate_args(args: list[str]) -> dict[str, Any]:
+    task_id = ""
+    coord_task_id = ""
+    reason = ""
+    evidence_ref = ""
+    expected_sha256 = ""
+    confirm = False
+
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--confirm":
+            confirm = True
+            i += 1
+        elif arg in {"--task-id", "--task"} and i + 1 < len(args):
+            task_id = args[i + 1]
+            i += 2
+        elif arg.startswith("--task-id="):
+            task_id = arg.split("=", 1)[1]
+            i += 1
+        elif arg.startswith("--task="):
+            task_id = arg.split("=", 1)[1]
+            i += 1
+        elif arg in {
+            "--coordination-task",
+            "--coordination-task-id",
+            "--coordination_task",
+            "--coordination_task_id",
+        } and i + 1 < len(args):
+            coord_task_id = args[i + 1]
+            i += 2
+        elif any(
+            arg.startswith(prefix + "=")
+            for prefix in (
+                "--coordination-task",
+                "--coordination-task-id",
+                "--coordination_task",
+                "--coordination_task_id",
+            )
+        ):
+            coord_task_id = arg.split("=", 1)[1]
+            i += 1
+        elif arg in {"--reason"} and i + 1 < len(args):
+            reason = args[i + 1]
+            i += 2
+        elif arg.startswith("--reason="):
+            reason = arg.split("=", 1)[1]
+            i += 1
+        elif arg in {
+            "--evidence-ref",
+            "--evidence-reference",
+            "--evidence",
+            "--evidence_ref",
+        } and i + 1 < len(args):
+            evidence_ref = args[i + 1]
+            i += 2
+        elif any(
+            arg.startswith(prefix + "=")
+            for prefix in (
+                "--evidence-ref",
+                "--evidence-reference",
+                "--evidence",
+                "--evidence_ref",
+            )
+        ):
+            evidence_ref = arg.split("=", 1)[1]
+            i += 1
+        elif arg in {
+            "--expected-sha256",
+            "--expected-snapshot-sha256",
+            "--expected_sha256",
+        } and i + 1 < len(args):
+            expected_sha256 = args[i + 1]
+            i += 2
+        elif any(
+            arg.startswith(prefix + "=")
+            for prefix in (
+                "--expected-sha256",
+                "--expected-snapshot-sha256",
+                "--expected_sha256",
+            )
+        ):
+            expected_sha256 = arg.split("=", 1)[1]
+            i += 1
+        elif not arg.startswith("-") and not task_id:
+            task_id = arg
+            i += 1
+        else:
+            raise SystemExit(
+                f"Unknown argument {arg!r}. {ARCHIVE_RECOVERY_INVALIDATE_USAGE}"
+            )
+
+    return {
+        "task_id": str(task_id).strip(),
+        "coordination_task_id": str(coord_task_id).strip(),
+        "reason": str(reason).strip(),
+        "evidence_ref": str(evidence_ref).strip(),
+        "expected_sha256": str(expected_sha256).strip(),
+        "confirm": confirm,
+    }
+
+
+def command_archive_recovery_invalidate(state: dict[str, Any], args: list[str]) -> None:
+    """Invalidate a reconstructed archive recovery completion judgment.
+
+    This command records an atomic, append-only per-task correction record
+    within archive storage without rewriting the original historical snapshot,
+    index, hold or checkpoint bytes.
+
+    Safety constraints enforced:
+    * Actor must be the verified reviewer of the specified coordination task.
+    * Coordination task owner and reviewer must be independent (owner != reviewer).
+    * Target task must exist in the archive and must have history_recovery.reconstructed=true.
+    * Target task must not be on the active board.
+    * Stale expected snapshot hash causes immediate refusal.
+    * Dry-run by default; --confirm required to write.
+    * Idempotent re-runs succeed safely; conflicting corrections are refused.
+    """
+    actor = current_actor_validated()
+    parsed = _parse_archive_recovery_invalidate_args(args)
+
+    target_id = parsed["task_id"]
+    coord_task_id = parsed["coordination_task_id"]
+    reason = parsed["reason"]
+    evidence_ref = parsed["evidence_ref"]
+    expected_sha256 = parsed["expected_sha256"]
+    confirm = parsed["confirm"]
+
+    if not target_id:
+        raise SystemExit(f"Target task-id is required. {ARCHIVE_RECOVERY_INVALIDATE_USAGE}")
+    if not coord_task_id:
+        raise SystemExit(
+            f"--coordination-task is required. {ARCHIVE_RECOVERY_INVALIDATE_USAGE}"
+        )
+    if not reason:
+        raise SystemExit(f"--reason is required. {ARCHIVE_RECOVERY_INVALIDATE_USAGE}")
+    if not evidence_ref:
+        raise SystemExit(
+            f"--evidence-ref is required. {ARCHIVE_RECOVERY_INVALIDATE_USAGE}"
+        )
+
+    # 1. Authorize actor via coordination task reviewer
+    coord_task = get_task(state, coord_task_id)
+    if coord_task is None:
+        coord_task = load_archived_task(coord_task_id)
+    if coord_task is None:
+        raise SystemExit(
+            f"Coordination task {coord_task_id!r} not found on board or archive."
+        )
+
+    raw_coord_owner = str(coord_task.get("owner") or "").strip()
+    raw_coord_reviewer = str(coord_task.get("reviewer") or "").strip()
+    if not raw_coord_reviewer:
+        raise SystemExit(f"Coordination task {coord_task_id!r} has no assigned reviewer.")
+    if not raw_coord_owner:
+        raise SystemExit(f"Coordination task {coord_task_id!r} has no assigned owner.")
+
+    resolved_owner = resolve_actor_reference(
+        raw_coord_owner, field="coordination task owner"
+    )
+    resolved_reviewer = resolve_actor_reference(
+        raw_coord_reviewer, field="coordination task reviewer"
+    )
+    if resolved_owner == resolved_reviewer:
+        raise SystemExit(
+            f"Coordination task {coord_task_id!r} owner and reviewer must be independent "
+            f"({resolved_owner!r} == {resolved_reviewer!r})."
+        )
+    independence_reason = review_independence_block_reason(resolved_owner, resolved_reviewer)
+    if independence_reason:
+        raise SystemExit(
+            f"Coordination task {coord_task_id!r} owner ({resolved_owner}) and reviewer ({resolved_reviewer}) "
+            f"must be independent: {independence_reason}。"
+        )
+
+    resolved_actor = resolve_actor_reference(actor, field="current actor")
+    if resolved_actor != resolved_reviewer:
+        raise SystemExit(
+            f"Unauthorized: current actor {actor!r} is not the reviewer of coordination "
+            f"task {coord_task_id!r} (expected reviewer {raw_coord_reviewer!r})."
+        )
+
+    # 2. Check target task in active board and archive
+    if get_task(state, target_id) is not None:
+        raise SystemExit(
+            f"Task {target_id!r} is currently active on the board; only archived tasks can be invalidated."
+        )
+
+    snapshot_path = archive_task_path(target_id)
+    if not snapshot_path.exists():
+        raise SystemExit(
+            f"Archived snapshot for task {target_id!r} not found at {snapshot_path}."
+        )
+
+    try:
+        snapshot_bytes = snapshot_path.read_bytes()
+        snapshot = json.loads(snapshot_bytes.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"Archived snapshot for task {target_id!r} is unreadable: {exc}") from exc
+
+    actual_sha256 = hashlib.sha256(snapshot_bytes).hexdigest()
+    if expected_sha256 and expected_sha256.lower() != actual_sha256.lower():
+        raise SystemExit(
+            f"Stale snapshot hash for task {target_id!r}: expected {expected_sha256!r} "
+            f"but found {actual_sha256!r} on disk."
+        )
+
+    # 3. Check target is reconstructed history recovery
+    target_task = (
+        snapshot.get("task") if isinstance(snapshot.get("task"), dict) else {}
+    )
+    history_rec = (
+        target_task.get("history_recovery")
+        if isinstance(target_task.get("history_recovery"), dict)
+        else {}
+    )
+    if history_rec.get("reconstructed") is not True:
+        raise SystemExit(
+            f"Task {target_id!r} is not a reconstructed history recovery snapshot "
+            "(history_recovery.reconstructed is not true); cannot invalidate."
+        )
+
+    # 4. Check existing correction / idempotency
+    correction_path = archive_correction_path(target_id)
+    if correction_path.exists():
+        try:
+            raw_corr_bytes = correction_path.read_bytes()
+            existing_correction = json.loads(raw_corr_bytes.decode("utf-8"))
+        except Exception as exc:
+            raise SystemExit(
+                f"Task {target_id!r} already has an unreadable correction record at {correction_path} ({exc}); "
+                "refusing to overwrite."
+            ) from exc
+        if not isinstance(existing_correction, dict):
+            raise SystemExit(
+                f"Task {target_id!r} already has a non-object correction record at {correction_path}; "
+                "refusing to overwrite."
+            )
+
+        existing_problems = validate_archive_correction_record(
+            existing_correction, target_id, snapshot_bytes
+        )
+        if existing_problems:
+            err_summary = "; ".join(existing_problems)
+            raise SystemExit(
+                f"Task {target_id!r} already has an invalid/corrupt correction record at {correction_path} "
+                f"({err_summary}); refusing to overwrite."
+            )
+
+        is_same_op = (
+            existing_correction.get("task_id") == target_id
+            and str(existing_correction.get("snapshot_sha256") or "").strip().lower() == actual_sha256.lower()
+            and existing_correction.get("coordination_task_id") == coord_task_id
+            and existing_correction.get("reason") == reason
+            and existing_correction.get("evidence_ref") == evidence_ref
+        )
+        if is_same_op:
+            if not confirm:
+                print(
+                    json.dumps(
+                        {
+                            "status": "dry_run_already_invalidated",
+                            "task_id": target_id,
+                            "coordination_task_id": coord_task_id,
+                            "existing_correction": existing_correction,
+                            "message": "Task already invalidated with identical correction parameters.",
+                        },
+                        indent=2,
+                        ensure_ascii=False,
+                    )
+                )
+                raise ArchiveRecoveryInvalidationPreview(0)
+            print(
+                json.dumps(
+                    {
+                        "status": "already_invalidated",
+                        "task_id": target_id,
+                        "coordination_task_id": coord_task_id,
+                        "correction": existing_correction,
+                        "message": "Task already invalidated with identical correction parameters (idempotent retry).",
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
+            return
+        else:
+            raise SystemExit(
+                f"Task {target_id!r} already has a different correction record at {correction_path}; "
+                "cannot overwrite with conflicting invalidation."
+            )
+
+    # 5. Dry run
+    if not confirm:
+        dry_run_receipt = {
+            "status": "dry_run",
+            "action": "archive_recovery_invalidation",
+            "task_id": target_id,
+            "snapshot_path": archive_display_path(snapshot_path),
+            "snapshot_sha256": actual_sha256,
+            "actor": actor,
+            "coordination_task_id": coord_task_id,
+            "reason": reason,
+            "evidence_ref": evidence_ref,
+            "effective_status": "blocked",
+            "dependency_satisfied": False,
+            "message": "Dry run succeeded with zero mutations. Re-run with --confirm to write correction record.",
+        }
+        print(json.dumps(dry_run_receipt, indent=2, ensure_ascii=False))
+        raise ArchiveRecoveryInvalidationPreview(0)
+
+    # 6. Apply invalidation
+    now_ts = iso_now()
+    correction_record = {
+        "schema_version": 1,
+        "type": "archive_recovery_invalidation",
+        "task_id": target_id,
+        "snapshot_sha256": actual_sha256,
+        "invalidated_at": now_ts,
+        "actor": actor,
+        "coordination_task_id": coord_task_id,
+        "reason": reason,
+        "evidence_ref": evidence_ref,
+        "effective_status": "blocked",
+        "dependency_satisfied": False,
+    }
+    save_archive_correction(correction_record)
+
+    append_log(
+        {
+            "ts": now_ts,
+            "agent": actor,
+            "type": "archive_recovery_invalidate",
+            "task_id": target_id,
+            "coordination_task_id": coord_task_id,
+            "snapshot_sha256": actual_sha256,
+            "reason": reason,
+            "evidence_ref": evidence_ref,
+        }
+    )
+
+    receipt = {
+        "status": "applied",
+        "action": "archive_recovery_invalidation",
+        "task_id": target_id,
+        "correction_path": archive_display_path(correction_path),
+        "correction": correction_record,
+        "effective_status": "blocked",
+        "dependency_satisfied": False,
+    }
+    print(json.dumps(receipt, indent=2, ensure_ascii=False))
+
+
 def command_prompt(state: dict[str, Any], _args: list[str]) -> None:
     print(build_onboarding_prompt(state))
 
@@ -6634,6 +10626,26 @@ def command_show(state: dict[str, Any], args: list[str]) -> None:
     snapshot = archived_task_snapshot(task_id)
     if snapshot is None:
         raise SystemExit(f"Unknown task: {task_id}")
+
+    correction = load_archive_correction(task_id)
+    if correction is not None:
+        effective_task = load_archived_task(task_id)
+        print(
+            json.dumps(
+                {
+                    "source": "archive",
+                    "effective_status": "blocked",
+                    "effective_task": effective_task,
+                    "correction": correction,
+                    "snapshot_path": archive_display_path(archive_task_path(task_id)),
+                    "snapshot": snapshot,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return
+
     print(
         json.dumps(
             {
@@ -6728,55 +10740,101 @@ def resolve_task_sha(
                 return cached_sha
 
     repo_root = ROOT
-    recorded_branch = ""
+    recorded_branch: str | None = None
     try:
         config = status_runtime_config()
         state = load_state()
         task = get_task(state, task_id)
         if task:
-            recorded_branch = task_branch_name(task, task_id)
+            recorded_branch = task_explicit_branch(task)
             binding = resolve_task_repository(config, task)
             if binding.resolved and binding.root:
                 repo_root = binding.root
     except Exception:
         repo_root = ROOT
-        recorded_branch = ""
+        recorded_branch = None
 
     # The record's own branch leads: a task reimported from an existing PR does
     # not follow either naming convention, and asking origin only about the
     # conventional names finds nothing and reads as "the branch is gone".
-    branch_names = [f"task/{task_id}", f"task-{task_id}"]
-    if recorded_branch and recorded_branch not in branch_names:
-        branch_names.insert(0, recorded_branch)
+    # Once a task record names a branch, that ref is authoritative. Do not
+    # also probe legacy fallbacks: an old PR branch may remain published for
+    # audit while a root-created clean replacement is active. Requiring
+    # exactly one match across both refs would reject the active branch even
+    # though its own remote SHA is unambiguous.
+    branch_names = (
+        [recorded_branch]
+        if recorded_branch
+        else [f"task/{task_id}", f"task-{task_id}"]
+    )
 
     remote_refs = [f"refs/heads/{branch_name}" for branch_name in branch_names]
-    result = subprocess.run(
-        ["git", "ls-remote", "--heads", "origin", *remote_refs],
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=repo_root,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", "--heads", "origin", *remote_refs],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=repo_root,
+            timeout=COMMAND_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        # R5: An incomplete origin response is a transport failure, not a
+        # confirmed branch deletion. Invalidate the warm cache so the next
+        # ordinary lookup cannot reuse either an old SHA or false absence.
+        _TASK_SHA_CACHE.pop(task_id, None)
+        raise RuntimeError(
+            f"git ls-remote timed out after {COMMAND_TIMEOUT_SECONDS}s for {task_id}; "
+            "remote branch state is unverifiable"
+        ) from None
+    except OSError:
+        _TASK_SHA_CACHE.pop(task_id, None)
+        raise RuntimeError(
+            f"git ls-remote could not run for {task_id}; "
+            "remote branch state is unverifiable"
+        ) from None
     matches: list[str] = []
-    if result.returncode == 0:
-        for line in result.stdout.splitlines():
-            fields = line.split()
-            if (
-                len(fields) == 2
-                and fields[1] in remote_refs
-                and (
-                    re.fullmatch(r"[0-9a-fA-F]{40}", fields[0])
-                    or re.fullmatch(r"[0-9a-fA-F]{64}", fields[0])
-                )
-            ):
-                matches.append(fields[0])
+    if result.returncode != 0:
+        # R5: A nonzero exit from git ls-remote (network failure, auth error,
+        # etc.) is a transport failure, not a confirmed branch absence.
+        _TASK_SHA_CACHE.pop(task_id, None)
+        raise RuntimeError(
+            f"git ls-remote failed with exit code {result.returncode} for {task_id}; "
+            "remote branch state is unverifiable"
+        )
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
+        fields = line.split()
+        if not (
+            len(fields) == 2
+            and fields[1] in remote_refs
+            and (
+                re.fullmatch(r"[0-9a-fA-F]{40}", fields[0])
+                or re.fullmatch(r"[0-9a-fA-F]{64}", fields[0])
+            )
+        ):
+            _TASK_SHA_CACHE.pop(task_id, None)
+            raise RuntimeError(
+                f"git ls-remote returned an invalid or unexpected ref for {task_id}; "
+                "remote branch state is unverifiable"
+            )
+        matches.append(fields[0])
     # Fail closed unless origin returns exactly one valid canonical task ref.
     # Local HEAD, local task refs, cached origin refs, and old PR heads are not
     # authoritative active-task review/freeze evidence.
-    if result.returncode == 0 and len(matches) == 1:
+    if len(matches) == 1:
         _TASK_SHA_CACHE[task_id] = (now, matches[0])
         return matches[0]
+    if len(matches) > 1:
+        # R5: Ambiguous refs are not a confirmed absence either.
+        _TASK_SHA_CACHE.pop(task_id, None)
+        raise RuntimeError(
+            f"git ls-remote returned {len(matches)} matching refs for {task_id}; "
+            "remote branch state is ambiguous"
+        )
 
+    # Confirmed absent: git ls-remote succeeded (rc=0) with no ref output.
     _TASK_SHA_CACHE[task_id] = (now, None)
     return None
 
@@ -6806,7 +10864,10 @@ def resolve_task_checkout_sha(
     if not task_id:
         return None
 
-    remote_sha = resolve_task_sha(task_id, force_refresh=force_refresh)
+    try:
+        remote_sha = resolve_task_sha(task_id, force_refresh=force_refresh)
+    except RuntimeError:
+        remote_sha = None
     if remote_sha:
         return remote_sha
 
@@ -6944,7 +11005,12 @@ def task_repository_slug_safe(task: dict[str, Any]) -> str:
 
 def task_review_status_payload(task: dict[str, Any], state_status: str) -> dict[str, str] | None:
     task_id = str(task.get("id") or "")
-    sha = resolve_task_sha(task_id)
+    try:
+        sha = resolve_task_sha(task_id)
+    except RuntimeError:
+        return None
+    if not sha:
+        sha = resolve_immutable_merged_task_sha(task)
     if not sha:
         return None
 
@@ -7042,8 +11108,80 @@ def enqueue_status_check_outbox(
     )
 
 
-def reconcile_status_check_outbox(state: dict[str, Any]) -> tuple[int, int]:
-    """Retry exact failed status payloads and remove only confirmed deliveries."""
+
+def status_check_target(payload: dict[str, Any]) -> tuple[str, str, str]:
+    return tuple(str(payload.get(key) or "") for key in ("repo_slug", "sha", "context"))
+
+
+
+def confirmed_review_gate_targets(task: dict[str, Any]) -> list[dict[str, Any]]:
+    confirmed = task.get("review_gate_target")
+    targets = []
+    if (isinstance(confirmed, dict) and confirmed.get("repo_slug")
+            and confirmed.get("context") == "task-review-gate"
+            and re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", str(confirmed.get("sha") or ""))):
+        targets.append(confirmed)
+    last = str(task.get("review_gate_sha") or "").strip()
+    if re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", last) and (
+        not targets or last != targets[0]["sha"]
+    ):
+        targets.append({"repo_slug": task_repository_slug_safe(task), "sha": last,
+                        "context": "task-review-gate"})
+    return targets
+
+
+def retain_review_gate_targets(task: dict[str, Any], replacement: dict[str, Any] | None = None) -> None:
+    # A confirmed grant must survive changing branches, repositories or the
+    # acknowledged target. Keep it until revoked or transferred to the outbox.
+    targets = {status_check_target(p): p for p in task.get("review_gate_revocations", [])}
+    for target in confirmed_review_gate_targets(task):
+        if replacement is None or status_check_target(target) != status_check_target(replacement):
+            targets[status_check_target(target)] = target
+    if targets:
+        task["review_gate_revocations"] = list(targets.values())
+
+
+def remember_confirmed_review_gate(task: dict[str, Any], payload: dict[str, Any]) -> None:
+    retain_review_gate_targets(task, payload)
+    task["review_gate_sha"] = str(payload["sha"])
+    task["review_gate_target"] = dict(zip(
+        ("repo_slug", "sha", "context"), status_check_target(payload), strict=True,
+    ))
+
+
+def retire_review_gate_targets(task: dict[str, Any], handled: set[tuple[str, str, str]]) -> None:
+    # Each handled target has either an ACK or its exact payload in the outbox.
+    remaining = [p for p in task.get("review_gate_revocations", [])
+                 if status_check_target(p) not in handled]
+    if remaining:
+        task["review_gate_revocations"] = remaining
+    else:
+        task.pop("review_gate_revocations", None)
+
+
+def discard_superseded_status_payloads(task: dict[str, Any], payload: dict[str, Any]) -> None:
+    pending = task.get("status_check_outbox")
+    if not isinstance(pending, list):
+        return
+    remaining = [item for item in pending if not isinstance(item, dict)
+                 or status_check_target(item) != status_check_target(payload)]
+    if remaining:
+        task["status_check_outbox"] = remaining
+    else:
+        task.pop("status_check_outbox", None)
+
+
+def review_gate_revocation_payload(target: dict[str, Any], state_status: str) -> dict[str, str]:
+    return {
+        **dict(zip(("repo_slug", "sha", "context"), status_check_target(target), strict=True)),
+        "state": "pending" if state_status in {"review", "review_approved", "done"} else "failure",
+        "description": "Review gate revoked pending current HEAD verification",
+    }
+
+def reconcile_status_check_outbox(
+    state: dict[str, Any], *, refresh_review_gates: bool = True,
+) -> tuple[int, int]:
+    """Retry failed payloads; a positive review gate needs fresh authority."""
     delivered = 0
     retained = 0
     for task in state.get("tasks", []):
@@ -7063,8 +11201,34 @@ def reconcile_status_check_outbox(state: dict[str, Any]) -> tuple[int, int]:
                 remaining.append(item)
                 retained += 1
                 continue
+            if payload["context"] == "task-review-gate" and payload["state"] == "success":
+                # A formerly valid success is not authority after a reopen or
+                # branch change. Only sync may perform these queued HEAD reads;
+                # unrelated notes/assignments must stay free of remote probes.
+                if not refresh_review_gates:
+                    remaining.append(item)
+                    retained += 1
+                    continue
+                task["review_gate_refresh_pending"] = True
+                current = task_review_status_payload(task, str(task.get("status") or ""))
+                # A lost response may mean this exact target already has a
+                # success at GitHub. Unknown HEAD or a different current target
+                # must revoke the original target, not silently replace it.
+                if current is None or status_check_target(current) != status_check_target(payload):
+                    payload = review_gate_revocation_payload(payload, str(task.get("status") or ""))
+                else:
+                    payload = current
+                # A failed revocation remains a revocation in the durable queue;
+                # never leave the superseded success available for replay.
+                item.update(payload)
             ok, error = post_task_review_status_payload(payload)
             if ok:
+                if payload["context"] == "task-review-gate":
+                    if payload["state"] == "success":
+                        remember_confirmed_review_gate(task, payload)
+                    # The canonical state may have changed since this exact
+                    # payload was queued. Sync must refresh even the same SHA.
+                    task["review_gate_refresh_pending"] = True
                 delivered += 1
                 task.setdefault("status_check_delivery_history", []).append(
                     {
@@ -7110,6 +11274,11 @@ def review_gate_head_drifted(task: dict[str, Any]) -> bool:
     if not task_id:
         return False
 
+    if task.get("review_gate_refresh_pending"):
+        # A failed HEAD lookup is a durable delivery intent, even when origin
+        # recovers without moving the branch (or no gate was recorded yet).
+        return True
+
     last = str(task.get("review_gate_sha") or "").strip()
     if not last:
         # Never emitted, or emitted before this field existed. A status transition
@@ -7117,21 +11286,54 @@ def review_gate_head_drifted(task: dict[str, Any]) -> bool:
         # sync for the second, so stay quiet and let the transition drive it.
         return False
 
-    current = resolve_task_sha(task_id)
+    try:
+        current = resolve_task_sha(task_id)
+    except RuntimeError:
+        return False
     return bool(current) and current != last
 
 
 def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> None:
     payload = task_review_status_payload(task, state_status)
+    # Failed acknowledgements do not prove failed delivery. Preserve the exact
+    # repo/SHA/context of every queued success, even before any gate SHA was
+    # recorded or after the task moved to a different branch/repository.
+    pending = task.get("status_check_outbox")
+    targets = {
+        status_check_target(item): item
+        for item in (pending if isinstance(pending, list) else [])
+        if isinstance(item, dict) and item.get("state") == "success"
+        and item.get("context") == "task-review-gate" and item.get("repo_slug")
+        and re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", str(item.get("sha") or ""))
+    }
+    for target in [*task.get("review_gate_revocations", []), *confirmed_review_gate_targets(task)]:
+        targets[status_check_target(target)] = target
+    if payload is None and not (
+        targets or task.get("review_submission") or state_status in {"review", "review_approved", "done"}
+    ):
+        # Unpublished assignments have no grant to revoke.
+        return
+    task["review_gate_refresh_pending"] = True
+    for key, target in targets.items():
+        if payload is not None and key == status_check_target(payload):
+            # The fresh payload below supersedes this exact target, including
+            # when its state is failure/pending or its delivery fails.
+            continue
+        revoked = review_gate_revocation_payload(target, state_status)
+        ok, error = post_task_review_status_payload(revoked)
+        discard_superseded_status_payloads(task, revoked)
+        if not ok:
+            enqueue_status_check_outbox(task, revoked, error)
     if payload is None:
+        retire_review_gate_targets(task, set(targets))
         return
     ok, error = post_task_review_status_payload(payload)
+    discard_superseded_status_payloads(task, payload)
     if ok:
-        # Remember which commit carries the gate. A GitHub status belongs to one
-        # SHA, so once the branch advances the new head has no gate at all and the
-        # required check reads as absent rather than failing. Recording the SHA is
-        # what lets the next sync notice the drift and re-post.
-        task["review_gate_sha"] = payload.get("sha") or task.get("review_gate_sha")
+        # Only a freshly resolved target may acquire a positive gate.
+        remember_confirmed_review_gate(task, payload)
+        retire_review_gate_targets(task, set(targets) | {status_check_target(payload)})
+        task.pop("review_gate_refresh_pending", None)
         print(
             f"Successfully emitted status check '{payload['context']}'="
             f"{payload['state']} to GitHub API.",
@@ -7140,6 +11342,7 @@ def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> No
         return
     print(error, file=sys.stderr)
     enqueue_status_check_outbox(task, payload, error)
+    retire_review_gate_targets(task, set(targets) | {status_check_target(payload)})
     print(
         "Warning: Status check emission failed; exact payload recorded for reconciliation.",
         file=sys.stderr,
@@ -7166,6 +11369,9 @@ def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_aft
                 "re-review",
                 "restore_approved",
                 "restore_approved_head",
+                "approve_continuation",
+                "set_dependencies",
+                "retarget_branch",
             }
         )
         else None
@@ -7177,7 +11383,17 @@ def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_aft
         after_status = after_task.get("status")
 
         is_target = target_task_id and (str(task_id).upper() == str(target_task_id).upper())
-        if after_status != before_status or is_target or review_gate_head_drifted(after_task):
+        reviewer_changed = before_task is not None and before_task.get("reviewer") != after_task.get("reviewer")
+        # Ordinary task writes hold the canonical status lock. Do not make a
+        # note or assignment wait for remote HEAD probes across the whole board;
+        # the explicit sync command owns reconciliation of unchanged tasks.
+        # Actual status changes and review-command targets still emit immediately.
+        if (
+            after_status != before_status
+            or is_target
+            or reviewer_changed
+            or (command == "sync" and review_gate_head_drifted(after_task))
+        ):
             emit_task_review_status_check(after_task, after_status)
 
 
@@ -7188,6 +11404,7 @@ READ_ONLY_COMMANDS = {
 
 MUTATING_COMMANDS = {
     "assign": command_assign,
+    "set_dependencies": command_set_dependencies,
     "start": command_start,
     "progress": command_progress,
     "note": command_note,
@@ -7200,12 +11417,16 @@ MUTATING_COMMANDS = {
     "retarget_blocker": command_retarget_blocker,
     "prune_agents": command_prune_agents,
     "done": command_done,
+    "done_tooling": command_done_tooling,
     "restore_approved": command_restore_approved,
     "restore_approved_head": command_restore_approved_head,
     "retarget_branch": command_retarget_branch,
     "supersede": command_supersede,
     "approve": command_approve,
+    "approve_continuation": command_approve_continuation,
     "archive_migrate": command_archive_migrate,
+    "archive_recovery_apply": command_archive_recovery_apply,
+    "archive_recovery_invalidate": command_archive_recovery_invalidate,
     "sync": command_sync,
     "wave": command_wave,
 }
@@ -7233,27 +11454,53 @@ def main(argv: list[str]) -> int:
     if command not in commands:
         raise SystemExit(f"Unknown command: {command}")
 
+    post_commit_problems: list[str] = []
     with status_write_transaction():
         # Load only after acquiring the lock. Otherwise two well-formed CLI
         # commands could serialize their writes while the second still acted
         # on a pre-lock snapshot.
         state = load_state()
         state_before = deepcopy(state)
+        tx_succeeded = False
+        tx_error: BaseException | None = None
         try:
-            commands[command](state, args)
-        except CrossRepoDeliveryBlocked:
-            # A rejected terminal transition still has to persist the active
-            # child-delivery blocker and the supervisor wake metadata.  Other
-            # command failures retain the historical all-or-nothing behavior.
+            try:
+                commands[command](state, args)
+            except CrossRepoDeliveryBlocked:
+                # A rejected terminal transition still has to persist the active
+                # child-delivery blocker and the supervisor wake metadata.  Other
+                # command failures retain the historical all-or-nothing behavior.
+                sync_all(state)
+                raise
             sync_all(state)
+            # Reaching GitHub is best-effort — an unreachable API has never
+            # failed a canonical transition — but persisting what the outbox
+            # pass changed is not optional: this second sync is the last write
+            # the command makes, so it is the state the receipt below has to
+            # describe.  Only the emission is allowed to degrade to a warning.
+            try:
+                reconcile_status_check_outbox(state, refresh_review_gates=command == "sync")
+                emit_status_checks_for_changed_tasks(state_before, state, command, args)
+            except Exception as exc:
+                print(f"Warning: Failed to emit status checks: {exc}", file=sys.stderr)
+            sync_all(state)
+            tx_succeeded = True
+        except BaseException as exc:
+            tx_error = exc
             raise
-        sync_all(state)
-        try:
-            reconcile_status_check_outbox(state)
-            emit_status_checks_for_changed_tasks(state_before, state, command, args)
-            sync_all(state)
-        except Exception as exc:
-            print(f"Warning: Failed to emit status checks: {exc}", file=sys.stderr)
+        finally:
+            # Still inside the lock, and on the failure path too: a command that
+            # wrote outside the board document has to be able to read back what
+            # actually landed before another writer can touch it.  Running after
+            # every required persistence step is what makes this a receipt for
+            # the whole command instead of for an intermediate revision that a
+            # later sync in the same lock then replaced.
+            post_commit_problems = run_post_commit_verifiers(
+                transaction_succeeded=tx_succeeded,
+                transaction_error=tx_error,
+            )
+    if post_commit_problems:
+        raise SystemExit("; ".join(post_commit_problems))
     return 0
 
 

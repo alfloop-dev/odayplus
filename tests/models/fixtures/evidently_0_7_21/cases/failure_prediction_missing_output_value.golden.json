@@ -1,0 +1,12 @@
+{
+  "case_id": "failure_prediction_missing_output_value",
+  "description": "A current row has no value for the requested output column.",
+  "failure": {
+    "exception_message": "current row 9 is missing prediction output 'prediction'",
+    "exception_module": "builtins",
+    "exception_type": "ValueError"
+  },
+  "kind": "prediction_drift",
+  "outcome": "raised",
+  "routing_expectation": "_validate_prediction_rows guard"
+}

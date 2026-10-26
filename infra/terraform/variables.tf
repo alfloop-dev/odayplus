@@ -29,6 +29,17 @@ variable "environment" {
   }
 }
 
+variable "auth_mode" {
+  type        = string
+  description = "Authentication mode. 'local' uses password-only authentication with no OIDC dependency. 'oidc' enables full OIDC provider integration and enforces all OIDC configuration."
+  default     = "local"
+
+  validation {
+    condition     = contains(["local", "oidc"], var.auth_mode)
+    error_message = "auth_mode must be 'local' or 'oidc'."
+  }
+}
+
 variable "labels" {
   type        = map(string)
   description = "Additional labels applied to managed resources."
@@ -95,6 +106,15 @@ variable "web_oidc_client_secret_ref" {
     version   = string
   })
   description = "Pinned Secret Manager reference for ODP_WEB_OIDC_CLIENT_SECRET."
+  default     = null
+}
+
+variable "identity_token_signing_key_ref" {
+  type = object({
+    secret_id = string
+    version   = string
+  })
+  description = "Pinned Secret Manager reference for the local Web-to-API access-token signing key. The same version is mounted into API and Web."
   default     = null
 }
 
@@ -199,6 +219,17 @@ variable "cloud_sql_tier" {
   validation {
     condition     = can(regex("^db-(custom-[0-9]+-[0-9]+|[a-z0-9-]+)$", var.cloud_sql_tier))
     error_message = "cloud_sql_tier must be a valid Cloud SQL tier."
+  }
+}
+
+variable "cloud_sql_instance_name" {
+  type        = string
+  description = "Optional explicit Cloud SQL instance name for a staging foundation migration. Empty preserves the existing environment-derived name."
+  default     = ""
+
+  validation {
+    condition     = var.cloud_sql_instance_name == "" || can(regex("^[a-z][a-z0-9-]{0,95}[a-z0-9]$", var.cloud_sql_instance_name))
+    error_message = "cloud_sql_instance_name must be empty or a valid Cloud SQL instance name."
   }
 }
 
@@ -307,21 +338,39 @@ variable "audit_retention_period_seconds" {
   }
 }
 
+variable "service_auth_issuer" {
+  type        = string
+  description = "Issuer that mints Cloud Run service-identity and deployment smoke tokens. Required in every auth mode; ODP_AUTH_ISSUER is its migration alias."
+  default     = "https://accounts.google.com"
+}
+
+variable "service_auth_jwks_uri" {
+  type        = string
+  description = "JWKS endpoint for the service-identity issuer. Required in every auth mode; ODP_AUTH_JWKS_URI is its migration alias."
+  default     = "https://www.googleapis.com/oauth2/v3/certs"
+}
+
+variable "service_auth_audiences" {
+  type        = set(string)
+  description = "Audiences the API accepts for service-identity and deployment smoke tokens. Falls back to oidc_audiences when empty so pre-contract deployments keep their existing audience list."
+  default     = []
+}
+
 variable "oidc_issuer" {
   type        = string
-  description = "Trusted OIDC issuer URL."
+  description = "Trusted OIDC issuer URL. Only consumed when auth_mode is \"oidc\"."
   default     = ""
 }
 
 variable "oidc_audiences" {
   type        = set(string)
-  description = "Accepted OIDC API audiences."
+  description = "Accepted OIDC API audiences. Only added to the accepted audience set when auth_mode is \"oidc\"."
   default     = []
 }
 
 variable "oidc_jwks_uri" {
   type        = string
-  description = "Trusted OIDC JWKS endpoint."
+  description = "Trusted OIDC JWKS endpoint. Only consumed when auth_mode is \"oidc\"."
   default     = ""
 }
 
@@ -454,5 +503,55 @@ variable "pubsub_max_delivery_attempts" {
   validation {
     condition     = var.pubsub_max_delivery_attempts >= 5 && var.pubsub_max_delivery_attempts <= 100
     error_message = "pubsub_max_delivery_attempts must be between 5 and 100."
+  }
+}
+
+variable "monitoring_notification_emails" {
+  type        = set(string)
+  description = "Email addresses that receive Cloud Monitoring alerts; one email notification channel is created per address. Never commit personal addresses; supply them through the environment's tfvars. Production requires this or monitoring_notification_channel_ids."
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for email in var.monitoring_notification_emails :
+      can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", email))
+    ])
+    error_message = "monitoring_notification_emails must contain only email addresses."
+  }
+}
+
+variable "monitoring_notification_channel_ids" {
+  type        = set(string)
+  description = "Existing Cloud Monitoring notification channel resource names (projects/<project>/notificationChannels/<id>), for example a paging integration owned outside Terraform."
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for channel in var.monitoring_notification_channel_ids :
+      can(regex("^projects/[^/]+/notificationChannels/[0-9]+$", channel))
+    ])
+    error_message = "monitoring_notification_channel_ids must be projects/<project>/notificationChannels/<numeric id> resource names."
+  }
+}
+
+variable "monitoring_api_uptime_host" {
+  type        = string
+  description = "Host that external uptime checkers can reach for the API /platform/health check, authenticated with the Monitoring service agent OIDC token. Empty skips the API uptime check; production requires it. The Terraform API ingress is internal-load-balancer only, so the run.app host is not reachable unless ingress or a load balancer provides a path."
+  default     = ""
+
+  validation {
+    condition     = var.monitoring_api_uptime_host == "" || can(regex("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$", var.monitoring_api_uptime_host))
+    error_message = "monitoring_api_uptime_host must be empty or a bare lowercase host name without scheme, port, or path."
+  }
+}
+
+variable "monitoring_cloud_sql_max_connections" {
+  type        = number
+  description = "Effective PostgreSQL max_connections of the Cloud SQL instance; the connection saturation alert fires above 80% of it. Null skips that condition; production requires it."
+  default     = null
+
+  validation {
+    condition     = var.monitoring_cloud_sql_max_connections == null || try(var.monitoring_cloud_sql_max_connections >= 10, false)
+    error_message = "monitoring_cloud_sql_max_connections must be null or at least 10."
   }
 }

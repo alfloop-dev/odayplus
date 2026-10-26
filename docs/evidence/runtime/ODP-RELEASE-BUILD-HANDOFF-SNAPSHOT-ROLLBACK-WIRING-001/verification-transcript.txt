@@ -1,0 +1,114 @@
+================================================================================
+ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001 VERIFICATION TRANSCRIPT
+================================================================================
+Timestamp: 2026-09-01T14:03:55Z
+Agent: Claude2
+Worktree: /tmp/pantheon-worker-worktrees/pantheon/odp-release-build-handoff-snapshot-rollback-wiring-001
+Branch: task/ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001
+Base: origin/dev @ ae034904
+
+--- Command 1: Pytest focused unit & contract tests ---
+$ uv run --python 3.12 pytest tests/ops/test_deploy_workflow_contract.py tests/release/
+........................................................................ [ 25%]
+........................................................................ [ 50%]
+........................................................................ [ 75%]
+........................................................................ [100%]
+288 passed in 10.16s
+EXIT=0
+
+--- Command 2: Re-runnable wiring verifier (12 checks) ---
+$ uv run --python 3.12 python3 docs/evidence/runtime/ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001/verify_build_handoff_wiring.py
+[1/12] Testing positive flow with snapshot file & rollback manifest...
+build-once artifact handoff 已產生：release_id=odp-aaaaaaaaaaaa candidate_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa manifest_digest=sha256:2c0cf82620a86c4d278ec23af1440afccff3415daf0468dc4ad0a187a734b93f
+  -> PASSED: Schema v2 manifest produced with exact snapshot and rollback bindings.
+[2/12] Testing fail-closed when data snapshot is missing...
+build-once artifact handoff 無法產生：
+- 缺少 masked data snapshot 參照；build 階段必須綁定本次核准的 masked snapshot。
+  -> PASSED: Missing snapshot rejected.
+[3/12] Testing fail-closed when CLI specifies --data-snapshot-unmasked (with valid rollback manifest)...
+build-once artifact handoff 無法產生：
+- build 階段產出的 manifest 自我驗證失敗：manifest.data_snapshot.masked must be True
+  -> PASSED: Unmasked snapshot CLI rejected.
+[4/12] Testing fail-closed when snapshot file is missing masked field (no automatic backfill)...
+build-once artifact handoff 無法產生：
+- build 階段產出的 manifest 自我驗證失敗：manifest.data_snapshot missing required field: masked
+  -> PASSED: Snapshot file missing masked rejected.
+[5/12] Testing fail-closed when snapshot file is missing data_contract_digest (no automatic backfill)...
+build-once artifact handoff 無法產生：
+- build 階段產出的 manifest 自我驗證失敗：manifest.data_snapshot missing required field: data_contract_digest
+  -> PASSED: Snapshot file missing data_contract_digest rejected.
+[6/12] Testing fail-closed when snapshot file specifies masked: false...
+build-once artifact handoff 無法產生：
+- build 階段產出的 manifest 自我驗證失敗：manifest.data_snapshot.masked must be True
+  -> PASSED: Snapshot file with masked: false rejected.
+[7/12] Testing fail-closed when rollback manifest digest is tampered...
+build-once artifact handoff 無法產生：
+- 無法載入 rollback manifest：manifest missing required field: rollback_release
+- 無法載入 rollback manifest：manifest.manifest_digest does not match its canonical immutable payload
+- rollback manifest 無效：manifest missing required field: rollback_release
+- rollback manifest 無效：manifest.manifest_digest does not match its canonical immutable payload
+- rollback manifest 無效：release admission requires manifest.rollback_release with verified candidate sha and components
+- 缺少 rollback release 參照；build 階段必須綁定上一核准 release 與 snapshot pointer。
+  -> PASSED: Tampered rollback manifest rejected.
+[8/12] Testing deploy-dev.yml workflow contracts...
+  -> PASSED: Workflow contract verified; no phantom example path.
+[9/12] Testing fail-closed when the snapshot file and the inline snapshot fields are both supplied...
+approved masked data snapshot 有兩條互斥的來源，這裡不會替你選一條：
+- --data-snapshot-file /tmp/tmp9z395toi/vars_channel_snapshot.json 與 --data-snapshot-content-sha256、--data-snapshot-id、--data-snapshot-uri 同時指定。
+- 只留下實際核准的那一條；workflow 端請清掉未使用的 dispatch input 或 repository vars fallback。
+  -> PASSED: The file channel cannot silently replace the dispatched snapshot.
+[10/12] Testing fail-closed when both rollback flags are supplied...
+build-once artifact handoff 無法產生：
+- rollback_manifest 與 rollback_release（CLI: --rollback-manifest 與 --rollback-release-file）不可同時指定；兩者都必須指向同一份完整 previous release manifest，這裡不會替你選一條
+  -> PASSED: Neither rollback flag is discarded in favour of the other.
+[11/12] Testing fail-closed when the rollback manifest is a remote URI...
+build-once artifact handoff 無法產生：
+- 無法載入 rollback manifest：gs://odayplus-releases/manifests/PREV_RELEASE_MANIFEST.json 是遠端 URI，不是本機路徑；rollback manifest 只接受 build workspace 內的檔案路徑或 inline JSON。請先把上一核准 release manifest 取回工作區再傳入。
+- 缺少 rollback release 參照；build 階段必須綁定上一核准 release 與 snapshot pointer。
+  -> PASSED: Rejected by its own name, not by a mangled path.
+[12/12] Testing that exclusivity refuses ambiguity, not the channels themselves...
+build-once artifact handoff 已產生：release_id=odp-aaaaaaaaaaaa candidate_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa manifest_digest=sha256:2c0cf82620a86c4d278ec23af1440afccff3415daf0468dc4ad0a187a734b93f
+build-once artifact handoff 已產生：release_id=odp-aaaaaaaaaaaa candidate_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa manifest_digest=sha256:2c0cf82620a86c4d278ec23af1440afccff3415daf0468dc4ad0a187a734b93f
+  -> PASSED: Both channels still admit, and agree on the same manifest digest.
+
+ALL VERIFICATIONS PASSED SUCCESSFULLY (EXIT=0).
+EXIT=0
+
+--- Command 3: Lint on task-owned paths ---
+$ uv run --python 3.12 ruff check .github/workflows delivery_toolchain/release/ tests/release/ tests/ops/ docs/evidence/runtime/ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001/
+All checks passed!
+EXIT=0
+
+--- Command 4: The 12 new tests run against the pre-fix source (496f3fc0^) ---
+Purpose: prove the new tests fail on the defective behaviour rather than passing vacuously.
+$ git show 496f3fc0^:delivery_toolchain/release/build_release_handoff.py > delivery_toolchain/release/build_release_handoff.py
+$ git show 496f3fc0^:.github/workflows/deploy-dev.yml > .github/workflows/deploy-dev.yml
+$ uv run --python 3.12 pytest tests/release/test_build_release_handoff.py tests/ops/test_deploy_workflow_contract.py -k 'silently_replaces or alongside or both_rollback_flags or remote_rollback_uri or either_snapshot_channel or do_not_name_files'
+        missing = [
+            (name, candidate)
+            for name, spec in inputs.items()
+            for candidate in repo_path.findall(spec.get("description") or "")
+            if not (ROOT / candidate).exists()
+        ]
+>       assert not missing, f"deploy-dev.yml inputs cite files that do not exist: {missing}"
+E       AssertionError: deploy-dev.yml inputs cite files that do not exist: [('rollback_manifest', 'docs/evidence/gates/PREV_RELEASE_MANIFEST.json')]
+E       assert not [('rollback_manifest', 'docs/evidence/gates/PREV_RELEASE_MANIFEST.json')]
+
+tests/ops/test_deploy_workflow_contract.py:1111: AssertionError
+=========================== short test summary info ============================
+FAILED tests/release/test_build_release_handoff.py::test_snapshot_file_alongside_an_inline_field_fails_closed[--data-snapshot-id-snap-dispatch-approved]
+FAILED tests/release/test_build_release_handoff.py::test_snapshot_file_alongside_an_inline_field_fails_closed[--data-snapshot-uri-gs://odayplus-snapshots/masked/snap-dispatch.tar.gz]
+FAILED tests/release/test_build_release_handoff.py::test_snapshot_file_alongside_an_inline_field_fails_closed[--data-snapshot-sha256-sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd]
+FAILED tests/release/test_build_release_handoff.py::test_snapshot_file_alongside_an_inline_field_fails_closed[--data-snapshot-content-sha256-sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd]
+FAILED tests/release/test_build_release_handoff.py::test_snapshot_file_alongside_an_inline_field_fails_closed[--data-snapshot-contract-digest-sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee]
+FAILED tests/release/test_build_release_handoff.py::test_snapshot_file_alongside_unmasked_flag_fails_closed
+FAILED tests/release/test_build_release_handoff.py::test_the_snapshot_file_never_silently_replaces_the_dispatched_snapshot
+FAILED tests/release/test_build_release_handoff.py::test_both_rollback_flags_fail_closed_instead_of_one_winning
+FAILED tests/release/test_build_release_handoff.py::test_a_remote_rollback_uri_is_rejected_by_its_own_name[gs://odayplus-releases/manifests/PREV_RELEASE_MANIFEST.json]
+FAILED tests/release/test_build_release_handoff.py::test_a_remote_rollback_uri_is_rejected_by_its_own_name[https://example.invalid/PREV_RELEASE_MANIFEST.json]
+FAILED tests/release/test_build_release_handoff.py::test_a_remote_rollback_uri_is_rejected_by_its_own_name[github://alfloop-dev/odayplus/docs/PREV_RELEASE_MANIFEST.json]
+FAILED tests/ops/test_deploy_workflow_contract.py::test_dispatch_input_descriptions_do_not_name_files_that_do_not_exist
+12 failed, 1 passed, 102 deselected in 1.00s
+(restoring the fixed sources)
+$ git checkout -- delivery_toolchain/release/build_release_handoff.py .github/workflows/deploy-dev.yml
+================================================================================

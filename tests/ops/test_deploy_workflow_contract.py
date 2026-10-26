@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,6 +22,60 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_DIR = ROOT / ".github/workflows"
+RELEASE_WORKFLOW = WORKFLOW_DIR / "deploy-dev.yml"
+
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from delivery_toolchain.release.check_release_environment import (  # noqa: E402
+    REQUIRED_VARIABLES,
+    VPC_BINDING_MODES,
+    VPC_BINDING_VARIABLES,
+    declared_variables,
+)
+
+# Which GitHub environment each job binds to, and why it is that one.
+#
+# `staging` and `production` both carry `required_reviewers`. Binding the build
+# phase to them would demand a human deploy approval before the build that
+# produces the manifest that approval is granted against -- which is the
+# circular dependency this workflow exists to remove, re-entered through the
+# approval gate instead of the lease. The build therefore binds to a
+# build-scoped twin: same variables, no deployment approval.
+BUILD_ENVIRONMENT = "${{ inputs.environment }}-build"
+DEPLOY_ENVIRONMENT = "${{ inputs.environment }}"
+
+JOB_ENVIRONMENT_BINDINGS = {
+    "build": (BUILD_ENVIRONMENT, "build"),
+    "admission": (DEPLOY_ENVIRONMENT, "admission"),
+    "deploy": (DEPLOY_ENVIRONMENT, "deploy"),
+    "staging_closeout": ("staging", "staging"),
+}
+
+# The one job that must stay unbound: binding it would put a deploy approval in
+# front of plain input validation, and a run that is going to be refused for a
+# malformed SHA should not spend a reviewer's attention first.
+UNBOUND_JOB = "release_phase"
+
+BINDING_GATE_SCRIPT = "delivery_toolchain/release/check_release_environment.py"
+
+
+def _release_jobs() -> dict:
+    return yaml.safe_load(RELEASE_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+
+
+def _job_steps(job: dict) -> list[dict]:
+    return [step for step in job.get("steps", []) if isinstance(step, dict)]
+
+
+def _binding_gate_index(job: dict) -> int:
+    """Index of the step that proves this job's environment variables resolved."""
+
+    return next(
+        index
+        for index, step in enumerate(_job_steps(job))
+        if BINDING_GATE_SCRIPT in str(step.get("run", ""))
+    )
 DEPLOY_SCRIPT = ROOT / "product_ops/deployment/deploy_cloud_run_waji.sh"
 VALIDATOR_PATH = ROOT / "product_ops/deployment/validate_cloud_run_live_deployment.py"
 
@@ -76,7 +132,10 @@ DEPLOY_WORKFLOWS = (
         workflow_name="Runtime Release",
         job_id="deploy",
         artifact_name="runtime-release-${{ inputs.environment }}-validation",
-        extra_report_roots=(".odp_data/remote-staging-proof/",),
+        extra_report_roots=(
+            ".odp_data/remote-staging-proof/",
+            ".odp_data/staging-lifecycle/",
+        ),
     ),
 )
 
@@ -143,6 +202,19 @@ def _parsed(workflow: DeployWorkflow) -> dict:
     return yaml.safe_load(workflow.path.read_text(encoding="utf-8"))
 
 
+def _needs(job: dict) -> list[str]:
+    needs = job.get("needs", [])
+    return [needs] if isinstance(needs, str) else list(needs)
+
+
+def _named_step(job: dict, name: str) -> dict:
+    return next(
+        step
+        for step in job["steps"]
+        if isinstance(step, dict) and step.get("name") == name
+    )
+
+
 @pytest.mark.parametrize("workflow", DEPLOY_WORKFLOWS, ids=str)
 def test_tenant_variables_pass_through_without_placeholder_defaults(
     workflow: DeployWorkflow,
@@ -205,10 +277,14 @@ def _workflow_written_reports(workflow: DeployWorkflow) -> list[str]:
         run = step.get("run")
         if not isinstance(run, str):
             continue
-        for match in re.findall(r'--output[= ]+"?(\.odp_data/[^"\s\\]+)"?', run):
+        for match in re.findall(r'(?:--output|--receipt)[= ]+"?(\.odp_data/[^"\s\\]+)"?', run):
             normalized = _normalize_run_id(match)
             if normalized not in written:
                 written.append(normalized)
+        if "watch_receipt=" in run:
+            production_receipt = ".odp_data/release/production-watch-window-receipt.json"
+            if production_receipt not in written:
+                written.append(production_receipt)
     return written
 
 
@@ -478,24 +554,44 @@ def test_the_excluded_dumps_are_the_files_the_deploy_script_actually_writes(
     )
 
 
-def test_all_checkout_steps_bind_to_release_sha_input() -> None:
-    """Every checkout step in Runtime Release must explicitly specify ref: inputs.release_sha."""
+# ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001: admission is the documented
+# exception to "everything checks out inputs.release_sha".
+#
+# The registry that records the release decision is written as evidence after the
+# candidate (C) is built, on an evidence-only descendant (E). A job that checks
+# out C therefore cannot see the decision at all -- it reads the registry as it
+# stood before the decision existed. Admission alone checks out the dispatch
+# event SHA and re-derives `check_candidate_ancestry(C, E)` on the runner, which
+# is what stops E from carrying anything but evidence.
+ADMISSION_EVENT_SHA_EXPRESSION = "${{ github.sha }}"
+CANDIDATE_SHA_EXPRESSION = "${{ inputs.release_sha }}"
+POLICY_SHA_EXPRESSION = "${{ inputs.phase == 'auto' && github.sha || inputs.release_sha }}"
+
+
+def test_all_checkout_steps_bind_to_an_exact_commit_expression() -> None:
+    """Bind exact commits; automatic policy runs from the trusted workflow event SHA."""
     parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
     checkout_count = 0
     for job_id, job in parsed.get("jobs", {}).items():
         for step in job.get("steps", []):
             if not isinstance(step, dict):
                 continue
-            if str(step.get("uses", "")).startswith("actions/checkout@"):
-                checkout_count += 1
-                assert step.get("with", {}).get("ref") == "${{ inputs.release_sha }}", (
-                    f"Job {job_id} checkout step does not bind ref to inputs.release_sha"
-                )
+            if not str(step.get("uses", "")).startswith("actions/checkout@"):
+                continue
+            checkout_count += 1
+            ref = step.get("with", {}).get("ref")
+            expected = {
+                "admission": ADMISSION_EVENT_SHA_EXPRESSION,
+                "release_phase": POLICY_SHA_EXPRESSION,
+            }.get(job_id, CANDIDATE_SHA_EXPRESSION)
+            assert ref == expected, (
+                f"Job {job_id} checkout binds ref to {ref!r}, expected {expected!r}"
+            )
     assert checkout_count >= 3, f"Expected at least 3 checkout steps, found {checkout_count}"
 
 
-def test_jobs_assert_checked_out_head_matches_release_sha() -> None:
-    """Every job must assert git rev-parse HEAD equals inputs.release_sha."""
+def test_jobs_assert_checked_out_head_matches_the_sha_they_bound() -> None:
+    """Every job must assert git rev-parse HEAD equals the SHA its checkout named."""
     parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
     for job_id, job in parsed.get("jobs", {}).items():
         steps = job.get("steps", [])
@@ -507,6 +603,222 @@ def test_jobs_assert_checked_out_head_matches_release_sha() -> None:
         assert any("git rev-parse HEAD" in run for run in runs), (
             f"Job {job_id} does not assert that git rev-parse HEAD equals the expected release SHA"
         )
+
+
+def test_admission_checks_out_the_dispatch_event_sha_and_proves_it() -> None:
+    """Admission reads the registry at E, and says so out loud before trusting it."""
+    jobs = _release_jobs()
+    steps = _job_steps(jobs["admission"])
+
+    checkout = steps[0]
+    assert str(checkout.get("uses", "")).startswith("actions/checkout@")
+    assert checkout["with"]["ref"] == ADMISSION_EVENT_SHA_EXPRESSION
+    assert checkout["with"]["fetch-depth"] == 0, (
+        "the ancestry check needs history reaching back to the candidate SHA"
+    )
+
+    assert_step = _named_step(jobs["admission"], "Assert the dispatch event SHA is checked out")
+    assert assert_step["env"]["EVENT_SHA"] == ADMISSION_EVENT_SHA_EXPRESSION
+    run = assert_step["run"]
+    assert "git rev-parse HEAD" in run
+    assert "${EVENT_SHA}" in run
+    assert "^[0-9a-f]{40}$" in run, (
+        "an event SHA that is not an exact commit must be refused, not interpolated"
+    )
+
+
+def test_admission_re_derives_candidate_ancestry_on_the_runner() -> None:
+    """`check_candidate_ancestry(C, E)` runs here, with the arguments it actually takes."""
+    jobs = _release_jobs()
+    names = [step.get("name") for step in _job_steps(jobs["admission"])]
+    ancestry_name = "Validate candidate ancestry against the dispatch event SHA"
+    step = _named_step(jobs["admission"], ancestry_name)
+
+    assert step["env"]["EVENT_SHA"] == ADMISSION_EVENT_SHA_EXPRESSION
+    assert step["env"]["RELEASE_SHA"] == CANDIDATE_SHA_EXPRESSION
+
+    run = step["run"]
+    assert "check_candidate_ancestry" in run
+    # The SHAs arrive as argv, not spliced into the Python source, and `root` is
+    # supplied: calling it with two arguments raises TypeError and would have
+    # failed the step on every run rather than checking anything.
+    assert 'check_candidate_ancestry(candidate_sha, event_sha, Path.cwd())' in run
+    assert '"${RELEASE_SHA}" "${EVENT_SHA}"' in run
+    assert "sys.exit(1)" in run
+
+    # It must gate the lease, not trail it.
+    assert names.index(ancestry_name) < names.index("Validate supervisor release admission")
+
+
+# The string assertions above say the step is wired up. These run it.
+#
+# The previous form of this step called `check_candidate_ancestry(C, E)` with two
+# arguments against a three-argument function, so it raised TypeError under
+# `set -euo pipefail` and failed admission on every dispatch -- while every
+# structural assertion about it still passed. Executing the step is the only
+# thing that would have caught that.
+
+
+def _admission_ancestry_script() -> str:
+    return _named_step(
+        _release_jobs()["admission"],
+        "Validate candidate ancestry against the dispatch event SHA",
+    )["run"]
+
+
+def _run_admission_ancestry(
+    repo: Path, candidate_sha: str, event_sha: str
+) -> subprocess.CompletedProcess[str]:
+    """Run the workflow's own shell, with the env GitHub Actions would give it."""
+
+    env = dict(os.environ)
+    env["RELEASE_SHA"] = candidate_sha
+    env["EVENT_SHA"] = event_sha
+    # In the hosted run the checkout root *is* the working directory, so the
+    # first-party import resolves from it. Here the working directory is the
+    # repository whose ancestry is under test, so the import needs saying.
+    env["PYTHONPATH"] = str(ROOT)
+    return subprocess.run(
+        ["bash", "-c", _admission_ancestry_script()],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+
+@pytest.fixture
+def ancestry_repo(tmp_path: Path) -> dict[str, object]:
+    repo = tmp_path / "candidate-repo"
+    repo.mkdir()
+
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    git("init")
+    git("config", "user.email", "test@example.com")
+    git("config", "user.name", "Test")
+
+    (repo / "src").mkdir()
+    (repo / "src/app.py").write_text("print('candidate')\n", encoding="utf-8")
+    git("add", ".")
+    git("commit", "-m", "candidate code")
+    candidate = git("rev-parse", "HEAD")
+
+    (repo / "docs/evidence/gates").mkdir(parents=True)
+    (repo / "docs/evidence/gates/RELEASE_GATE_REGISTRY.json").write_text("{}\n", encoding="utf-8")
+    git("add", ".")
+    git("commit", "-m", "record the release decision as evidence")
+    evidence_descendant = git("rev-parse", "HEAD")
+
+    (repo / "src/app.py").write_text("print('smuggled')\n", encoding="utf-8")
+    git("add", ".")
+    git("commit", "-m", "code that no approval covers")
+    code_descendant = git("rev-parse", "HEAD")
+
+    return {
+        "repo": repo,
+        "candidate": candidate,
+        "evidence_descendant": evidence_descendant,
+        "code_descendant": code_descendant,
+    }
+
+
+def test_admission_ancestry_step_admits_an_evidence_only_descendant(
+    ancestry_repo: dict[str, object],
+) -> None:
+    result = _run_admission_ancestry(
+        ancestry_repo["repo"],
+        ancestry_repo["candidate"],
+        ancestry_repo["evidence_descendant"],
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_admission_ancestry_step_refuses_code_smuggled_in_behind_the_approval(
+    ancestry_repo: dict[str, object],
+) -> None:
+    result = _run_admission_ancestry(
+        ancestry_repo["repo"],
+        ancestry_repo["candidate"],
+        ancestry_repo["code_descendant"],
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "non-evidence paths" in result.stderr
+    assert "src/app.py" in result.stderr
+
+
+def test_admission_ancestry_step_accepts_an_event_sha_equal_to_the_candidate(
+    ancestry_repo: dict[str, object],
+) -> None:
+    """A dispatch ref already sitting on the candidate is the ordinary case."""
+
+    result = _run_admission_ancestry(
+        ancestry_repo["repo"], ancestry_repo["candidate"], ancestry_repo["candidate"]
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_admission_ancestry_step_refuses_an_event_sha_behind_the_candidate(
+    ancestry_repo: dict[str, object],
+) -> None:
+    """The registry cannot live on a commit the candidate is not built from."""
+
+    result = _run_admission_ancestry(
+        ancestry_repo["repo"],
+        ancestry_repo["evidence_descendant"],
+        ancestry_repo["candidate"],
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "is not an ancestor of" in result.stderr
+
+
+def test_admission_ancestry_step_refuses_a_malformed_event_sha(
+    ancestry_repo: dict[str, object],
+) -> None:
+    result = _run_admission_ancestry(
+        ancestry_repo["repo"], ancestry_repo["candidate"], "not-a-sha"
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+
+
+def test_admission_reads_the_registry_at_e_but_binds_everything_else_to_c() -> None:
+    """Widening the checkout to E must not widen what the deploy is bound to."""
+    jobs = _release_jobs()
+
+    admit = _named_step(jobs["admission"], "Validate supervisor release admission")
+    assert admit["env"]["EVENT_SHA"] == ADMISSION_EVENT_SHA_EXPRESSION
+    assert '--sha "${EVENT_SHA}"' in admit["run"]
+    assert "RELEASE_SHA" not in admit.get("env", {}), (
+        "the candidate SHA is not admission's registry lookup key; the registry names it"
+    )
+
+    # Identity that must stay on the candidate.
+    manifest_download = _named_step(
+        jobs["admission"], "Download the candidate release manifest from its build run"
+    )
+    assert CANDIDATE_SHA_EXPRESSION in str(manifest_download["with"]["name"])
+
+    bind = _named_step(jobs["admission"], "Bind the transported manifest to the digest the lease names")
+    assert bind["env"]["RELEASE_SHA"] == CANDIDATE_SHA_EXPRESSION
+    assert '--expected-sha "${RELEASE_SHA}"' in bind["run"]
+
+    probe = _named_step(jobs["admission"], "重讀部署 target 以重驗 initial-release recovery")
+    assert f'--candidate-sha "{CANDIDATE_SHA_EXPRESSION}"' in probe["run"]
+
+    for job_id in ("release_phase", "build", "deploy"):
+        job = jobs.get(job_id)
+        if not job:
+            continue
+        for step in _job_steps(job):
+            if str(step.get("uses", "")).startswith("actions/checkout@"):
+                expected = POLICY_SHA_EXPRESSION if job_id == "release_phase" else CANDIDATE_SHA_EXPRESSION
+                assert step["with"]["ref"] == expected, (
+                    f"{job_id} must deploy the candidate, not whatever the ref points at"
+                )
 
 
 def test_runtime_release_is_single_entrypoint() -> None:
@@ -527,9 +839,256 @@ def test_staging_proof_checker_gated_on_staging_environment() -> None:
     assert len(staging_steps) == 1
     step = staging_steps[0]
     assert step.get("if") == "${{ inputs.environment == 'staging' }}"
-    assert "ODP_STAGING_DEPLOY_URL" in step.get("env", {})
-    assert "ODP_STAGING_API_URL" in step.get("env", {})
-    assert "ODP_STAGING_SECRET_OWNER" in step.get("env", {})
+    run = str(step.get("run", ""))
+    assert "STAGING_OUTPUTS_FILE" in run
+    assert 'staging_web_uri' in run
+    assert 'staging_api_uri' in run
+    assert 'staging_runtime_service_account' in run
+    assert "vars.ODP_STAGING_DEPLOY_URL" not in run
+    assert "vars.ODP_STAGING_API_URL" not in run
+    assert "vars.ODP_STAGING_SECRET_OWNER" not in run
+
+
+def test_staging_lifecycle_invocations_gated_on_staging_environment() -> None:
+    """Runtime Release directly invokes staging lifecycle create and verify in the staging deploy branch."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_steps = parsed["jobs"]["deploy"]["steps"]
+
+    # Static deploy script MUST NOT run when environment is staging
+    static_deploy_steps = [
+        step
+        for step in deploy_steps
+        if isinstance(step, dict) and "deploy_cloud_run_waji.sh" in str(step.get("run", ""))
+    ]
+    assert len(static_deploy_steps) == 1
+    assert static_deploy_steps[0].get("if") == "${{ inputs.environment != 'staging' }}"
+
+    create_steps = [
+        step
+        for step in deploy_steps
+        if isinstance(step, dict) and "staging_lifecycle.py create" in str(step.get("run", ""))
+    ]
+    assert len(create_steps) == 1, "deploy job must contain exactly one staging_lifecycle.py create step"
+    create_step = create_steps[0]
+    assert create_step.get("if") == "${{ inputs.environment == 'staging' }}"
+    create_run = str(create_step.get("run", ""))
+    assert "--release-id" in create_run
+    assert "--candidate-sha" in create_run
+    assert "--manifest-digest" in create_run
+    assert "--api-image" in create_run
+    assert "--web-image" in create_run
+    assert "--worker-image" in create_run
+    assert "--scheduler-image" in create_run
+    assert "--owner-task-id" in create_run
+    assert "--state-dir" in create_run
+    assert "--outputs-out" in create_run
+    assert "--kms-key-id" in create_run
+    assert "--deployer-service-account-email" in create_run
+    assert "--network-name" in create_run
+    assert "--subnetwork-name" in create_run
+    assert "--receipt" in create_run
+    assert "${RELEASE_RECEIPT_DIR}/staging-lifecycle-create.json" in create_run
+    assert "--dry-run" not in create_run, "Staging create must execute live without --dry-run"
+
+    verify_steps = [
+        step
+        for step in deploy_steps
+        if isinstance(step, dict) and "staging_lifecycle.py verify" in str(step.get("run", ""))
+    ]
+    assert len(verify_steps) == 1, "deploy job must contain exactly one staging_lifecycle.py verify step"
+    verify_step = verify_steps[0]
+    assert verify_step.get("if") == "${{ inputs.environment == 'staging' }}"
+    verify_run = str(verify_step.get("run", ""))
+    assert "--release-id" in verify_run
+    assert "--candidate-sha" in verify_run
+    assert "--manifest-digest" in verify_run
+    assert "--worker-image" in verify_run
+    assert "--scheduler-image" in verify_run
+    assert "--operator-identity" in verify_run
+    assert "--cloud-sql-instance" in verify_run
+    assert "--state-dir" in verify_run
+    assert "--outputs-file" in verify_run
+    assert "--receipt" in verify_run
+    assert "${RELEASE_RECEIPT_DIR}/staging-rehearsal-receipt.json" in verify_run
+    assert "--dry-run" not in verify_run, "Staging verify must execute live without --dry-run"
+
+    # ODP-CORE-OPS-RELEASE-PROFILE-001: staging runs and verifies the admitted
+    # manifest's profile, never a dispatch input and never an implicit full.
+    assert '--release-profile "${ODP_RELEASE_PROFILE}"' in create_run
+    assert '--release-profile "${ODP_RELEASE_PROFILE}"' in verify_run
+    deploy_profile = parsed["jobs"]["deploy"]["env"]["ODP_RELEASE_PROFILE"]
+    assert "needs.admission.outputs.release_profile" in deploy_profile
+    assert "inputs.release_profile" not in deploy_profile
+
+
+def test_staging_hold_on_failure_invoked_on_error() -> None:
+    """Staging deploy failure triggers staging_lifecycle.py hold to retain resources for debugging."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_steps = parsed["jobs"]["deploy"]["steps"]
+
+    hold_steps = [
+        step
+        for step in deploy_steps
+        if isinstance(step, dict) and "staging_lifecycle.py hold" in str(step.get("run", ""))
+    ]
+    assert len(hold_steps) == 1, "deploy job must contain exactly one staging_lifecycle.py hold step"
+    hold_step = hold_steps[0]
+    assert hold_step.get("if") == "${{ failure() && inputs.environment == 'staging' }}"
+    hold_run = str(hold_step.get("run", ""))
+    assert "--release-id" in hold_run
+    assert "--project-id" in hold_run
+    assert "--owner-task-id" in hold_run
+    assert "--reason" in hold_run
+    assert "--receipt" in hold_run
+    assert "${RELEASE_RECEIPT_DIR}/staging-lifecycle-hold.json" in hold_run
+
+
+def test_staging_failure_hold_requires_live_state_and_closeout_uses_staging_authority() -> None:
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_steps = parsed["jobs"]["deploy"]["steps"]
+    cleanup_steps = [
+        step for step in deploy_steps
+        if isinstance(step, dict) and "staging_lifecycle.py cleanup" in str(step.get("run", ""))
+    ]
+    assert cleanup_steps == []
+
+    closeout = parsed["jobs"]["staging_closeout"]
+    assert closeout["needs"] == ["deploy"]
+    assert closeout["if"] == "${{ always() && inputs.environment == 'production' && needs.deploy.result == 'success' }}"
+    assert closeout["environment"] == {"name": "staging"}
+    assert closeout["env"]["MANIFEST_DIGEST"] == "${{ needs.deploy.outputs.manifest_digest }}"
+    closeout_steps = closeout["steps"]
+    cleanup_steps = [
+        step for step in closeout_steps
+        if isinstance(step, dict) and "staging_lifecycle.py cleanup" in str(step.get("run", ""))
+    ]
+    assert len(cleanup_steps) == 1
+    cleanup_run = str(cleanup_steps[0]["run"])
+    assert "--state-dir" in cleanup_run
+    assert "--terraform-backend-bucket" in cleanup_run
+    assert "--terraform-backend-prefix" in cleanup_run
+    assert "--allow-empty" not in cleanup_run
+
+    hold_steps = [
+        step for step in deploy_steps
+        if isinstance(step, dict) and "staging_lifecycle.py hold" in str(step.get("run", ""))
+    ]
+    assert "--state-dir" in str(hold_steps[0]["run"])
+    assert "--terraform-backend-bucket" in str(hold_steps[0]["run"])
+    assert "--terraform-backend-prefix" in str(hold_steps[0]["run"])
+    assert "--allow-empty" not in str(hold_steps[0]["run"])
+    assert "inputs.environment == 'staging'" in str(hold_steps[0].get("if"))
+
+    assert "verify_watch_window_receipt" in "\n".join(str(step.get("run", "")) for step in closeout_steps)
+    assert "ODP_PRODUCTION_WATCH_CLOSEOUT_URI" in closeout["env"]
+
+
+def test_staging_skips_static_preflight_and_uses_foundation_binding_scope() -> None:
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_steps = parsed["jobs"]["deploy"]["steps"]
+    preflight = next(step for step in deploy_steps if step.get("name") == "Run the live runtime preflight")
+    assert preflight.get("if") == "${{ inputs.environment != 'staging' }}"
+    staging_gate = next(
+        step for step in deploy_steps if step.get("name") == "確認 staging foundation 已綁定 environment 且變數齊備"
+    )
+    assert staging_gate.get("if") == "${{ inputs.environment == 'staging' }}"
+    assert "--scope staging" in str(staging_gate["run"])
+    assert "ODP_STAGING_KMS_KEY_ID" in staging_gate["env"]
+    assert "ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT" in staging_gate["env"]
+    assert "ODP_STAGING_TERRAFORM_STATE_BUCKET" in staging_gate["env"]
+    assert "ODP_STAGING_RECOVERY_BUNDLE_BUCKET" in staging_gate["env"]
+
+
+def test_staging_uses_release_scoped_remote_backend_and_persists_recovery_sidecars() -> None:
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_steps = parsed["jobs"]["deploy"]["steps"]
+    create = next(step for step in deploy_steps if "staging_lifecycle.py create" in str(step.get("run", "")))
+    create_run = str(create["run"])
+    assert "--terraform-backend-bucket" in create_run
+    assert "--terraform-backend-prefix" in create_run
+    assert "${STAGING_BACKEND_PREFIX}" in create_run
+    assert "${RUNNER_TEMP}" not in create_run
+    persist = next(step for step in deploy_steps if step.get("name") == "Persist staging recovery bundle to protected recovery storage")
+    assert "gcloud storage cp" in str(persist["run"])
+    assert "STAGING_BUNDLE_URI" in str(persist["run"])
+
+    closeout = parsed["jobs"]["staging_closeout"]
+    assert closeout["environment"] == {"name": "staging"}
+    assert closeout["needs"] == ["deploy"]
+    closeout_run = "\n".join(str(step.get("run", "")) for step in closeout["steps"])
+    assert "verify_watch_window_receipt" in closeout_run
+    assert "ODP_PRODUCTION_WATCH_CLOSEOUT_URI" in closeout_run
+    assert "MANIFEST_DIGEST" in closeout_run
+
+
+def test_staging_recovery_bundle_storage_boundary_contract() -> None:
+    """Staging recovery bundle storage must be strictly separated from Terraform state bucket across deploy and closeout."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+
+    # 1. deploy job environment exports and path preparation checks
+    deploy_job = parsed["jobs"]["deploy"]
+    assert deploy_job["env"]["ODP_STAGING_TERRAFORM_STATE_BUCKET"] == "${{ vars.ODP_STAGING_TERRAFORM_STATE_BUCKET }}"
+    assert deploy_job["env"]["ODP_STAGING_RECOVERY_BUNDLE_BUCKET"] == "${{ vars.ODP_STAGING_RECOVERY_BUNDLE_BUCKET }}"
+
+    deploy_steps = deploy_job["steps"]
+    prep_handoff = next(
+        step for step in deploy_steps if step.get("name") == "Prepare release-scoped staging handoff paths"
+    )
+    prep_handoff_run = str(prep_handoff["run"])
+    assert "ODP_STAGING_TERRAFORM_STATE_BUCKET is required" in prep_handoff_run
+    assert "ODP_STAGING_RECOVERY_BUNDLE_BUCKET is required" in prep_handoff_run
+    assert '"${ODP_STAGING_RECOVERY_BUNDLE_BUCKET}" = "${ODP_STAGING_TERRAFORM_STATE_BUCKET}"' in prep_handoff_run
+    assert 'staging_bundle_uri="gs://${ODP_STAGING_RECOVERY_BUNDLE_BUCKET}/${staging_backend_prefix}/bundle"' in prep_handoff_run
+
+    # 2. Producer persistence steps use protected recovery storage
+    persist_create = next(
+        step for step in deploy_steps if step.get("name") == "Persist staging recovery bundle to protected recovery storage"
+    )
+    assert persist_create.get("if") == "${{ success() && inputs.environment == 'staging' }}"
+    assert 'gcloud storage cp "${STAGING_OUTPUTS_FILE}" "${STAGING_BUNDLE_URI}/staging-terraform-outputs.json"' in str(persist_create["run"])
+
+    persist_hold = next(
+        step for step in deploy_steps if step.get("name") == "Persist staging hold state to protected recovery storage"
+    )
+    assert persist_hold.get("if") == "${{ always() && inputs.environment == 'staging' }}"
+    assert 'gcloud storage cp "${sidecar}" "${STAGING_BUNDLE_URI}/$(basename "${sidecar}")"' in str(persist_hold["run"])
+
+    # 3. closeout job environment exports and path preparation checks
+    closeout_job = parsed["jobs"]["staging_closeout"]
+    assert closeout_job["env"]["ODP_STAGING_TERRAFORM_STATE_BUCKET"] == "${{ vars.ODP_STAGING_TERRAFORM_STATE_BUCKET }}"
+    assert closeout_job["env"]["ODP_STAGING_RECOVERY_BUNDLE_BUCKET"] == "${{ vars.ODP_STAGING_RECOVERY_BUNDLE_BUCKET }}"
+
+    closeout_steps = closeout_job["steps"]
+    prep_closeout = next(
+        step for step in closeout_steps if step.get("name") == "Prepare release-scoped staging closeout paths"
+    )
+    prep_closeout_run = str(prep_closeout["run"])
+    assert "ODP_STAGING_TERRAFORM_STATE_BUCKET is required for staging closeout" in prep_closeout_run
+    assert "ODP_STAGING_RECOVERY_BUNDLE_BUCKET is required for staging closeout" in prep_closeout_run
+    assert '"${ODP_STAGING_RECOVERY_BUNDLE_BUCKET}" = "${ODP_STAGING_TERRAFORM_STATE_BUCKET}"' in prep_closeout_run
+    assert 'staging_bundle_uri="gs://${ODP_STAGING_RECOVERY_BUNDLE_BUCKET}/${staging_backend_prefix}/bundle"' in prep_closeout_run
+
+    # 4. Consumer reads recovery bundle from STAGING_BUNDLE_URI
+    read_bundle = next(
+        step for step in closeout_steps if step.get("name") == "Read staging recovery bundle with staging identity"
+    )
+    assert 'gcloud storage cp "${STAGING_BUNDLE_URI}/*" "${STAGING_STATE_DIR}/"' in str(read_bundle["run"])
+
+
+def test_staging_identity_rejects_dev_operator_impersonation() -> None:
+    """Staging verification must enforce release-scoped identity and reject dev operator impersonation."""
+    from product_ops.deployment.staging_lifecycle import verify_ephemeral_staging
+
+    receipt = verify_ephemeral_staging(
+        release_id="odp-test-001",
+        candidate_sha="a" * 40,
+        manifest_digest="sha256:" + "b" * 64,
+        project_id="oday-staging-proj",
+        operator_identity="dev-smoke-operator@oday-dev-proj.iam.gserviceaccount.com",
+    )
+    assert not receipt.success
+    assert any("dev smoke operator identity impersonation" in err for err in receipt.errors)
+
 
 
 def test_admission_job_checkout_has_unshallow_fetch_depth() -> None:
@@ -543,6 +1102,45 @@ def test_admission_job_checkout_has_unshallow_fetch_depth() -> None:
     ]
     assert len(checkout_steps) == 1
     assert checkout_steps[0].get("with", {}).get("fetch-depth") == 0
+
+
+def test_admission_uses_protected_wif_and_shared_gcs_lease_state() -> None:
+    """Hosted admission must not fall back to runner-local credentials/state."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    admission = parsed["jobs"]["admission"]
+    assert admission["environment"] == {"name": "${{ inputs.environment }}"}
+
+    steps = admission["steps"]
+    binding_index = _binding_gate_index(admission)
+    validate_index = next(
+        index
+        for index, step in enumerate(steps)
+        if isinstance(step, dict)
+        and step.get("name") == "Validate shared lease store configuration"
+    )
+    auth_index = next(
+        index
+        for index, step in enumerate(steps)
+        if isinstance(step, dict)
+        and step.get("uses") == "google-github-actions/auth@v2"
+        and "durable lease admission" in step.get("name", "")
+    )
+    admission_index = next(
+        index
+        for index, step in enumerate(steps)
+        if isinstance(step, dict) and step.get("name") == "Validate supervisor release admission"
+    )
+    assert binding_index < validate_index < auth_index < admission_index
+
+    validation = steps[validate_index]
+    assert validation["env"]["RELEASE_LEASE_STATE_URI"] == "${{ vars.ODP_RELEASE_LEASE_STATE_URI }}"
+    assert "requires a shared gs://bucket/prefix state URI" in validation["run"]
+
+    admission_run = steps[admission_index]["run"]
+    assert "RELEASE_LEASE_STATE_URI" in admission_run
+    assert "ODP_RELEASE_LEASE_STATE_DIR" not in "\n".join(
+        str(step) for step in steps if isinstance(step, dict)
+    )
 
 
 def test_environment_inputs_support_dev_staging_production() -> None:
@@ -560,10 +1158,7 @@ def test_build_once_job_exists_and_precedes_deploy() -> None:
     jobs = parsed["jobs"]
     assert "build" in jobs
     assert "deploy" in jobs
-    deploy_needs = jobs["deploy"].get("needs", [])
-    if isinstance(deploy_needs, str):
-        deploy_needs = [deploy_needs]
-    assert "build" in deploy_needs
+    assert "build" in _needs(jobs["deploy"])
 
     # Build job must perform secret scan, SAST scan, SBOM, and E2E operational proof
     build_steps = jobs["build"]["steps"]
@@ -589,6 +1184,10 @@ def test_build_once_job_exists_and_precedes_deploy() -> None:
         "web_image",
         "worker_image",
         "scheduler_image",
+        # The manifest the Supervisor issues a lease against is a build output,
+        # because nothing before the build can know it.
+        "manifest_digest",
+        "release_id",
     }
 
     deploy_if = jobs["deploy"].get("if", "")
@@ -645,15 +1244,1420 @@ def test_deploy_script_uses_digest_refs_for_every_cloud_run_target() -> None:
     assert "deploy-by-digest requires immutable image reference" in script
 
 
-def test_production_bluegreen_verification_gated_on_production_environment() -> None:
-    """Production blue-green verification runs in deploy job when environment is production."""
+OWN_REGISTRY_ERROR = (
+    "production deploys only images in its own registry "
+    "asia-east1-docker.pkg.dev/project-under-test/runtime;"
+)
+
+
+@pytest.mark.parametrize("deploy_environment", ["prod", "production", "dev"])
+@pytest.mark.parametrize(
+    ("deploy_by_digest", "skip_build", "image_override", "image_error"),
+    [
+        pytest.param(None, False, None, None, id="unset-mode"),
+        pytest.param("false", False, None, None, id="false-mode"),
+        pytest.param(None, True, None, None, id="skip-build-with-tags"),
+        pytest.param("true", False, None, None, id="four-digests"),
+        pytest.param(
+            "true", False, ("API_IMAGE", None),
+            "API_IMAGE is required for deploy-by-digest", id="missing-image",
+        ),
+        pytest.param(
+            "true", True, ("SCHEDULER_IMAGE", "registry.invalid/scheduler:mutable"),
+            "deploy-by-digest requires immutable image reference", id="mutable-image",
+        ),
+        # ODP-PROD-IMAGE-PROMOTION-001: production deploys only from its own
+        # registry; dev keeps accepting whatever digest reference it is handed.
+        pytest.param(
+            "true", False,
+            ("WEB_IMAGE", "asia-east1-docker.pkg.dev/staging-project/oday-plus-dev/web@sha256:" + "b" * 64),
+            OWN_REGISTRY_ERROR, id="staging-registry-image",
+        ),
+        pytest.param(
+            "true", False,
+            ("WORKER_IMAGE", "asia-east1-docker.pkg.dev/project-under-test/runtime-other/worker@sha256:" + "b" * 64),
+            OWN_REGISTRY_ERROR, id="lookalike-repository-image",
+        ),
+    ],
+)
+def test_deploy_script_production_refuses_the_tag_build_path(
+    tmp_path: Path,
+    deploy_environment: str,
+    deploy_by_digest: str | None,
+    skip_build: bool,
+    image_override: tuple[str, str | None] | None,
+    image_error: str | None,
+) -> None:
+    # Run the complete existing shell, as the deployment config-gate tests do.
+    # Only its preflight stub succeeds. Stop at the first subsequent mktemp,
+    # after the real mode/image branch but before any build or cloud command.
+    trace = tmp_path / "deployment-tool-calls.txt"
+    for command in ("python3", "uv", "gcloud", "docker", "mktemp"):
+        stub = tmp_path / command
+        stub.write_text(
+            '#!/bin/sh\n'
+            f'printf "%s\\n" "{command}" >> "$DEPLOY_GUARD_TOOL_TRACE"\n'
+            f'exit {0 if command == "uv" else 97}\n',
+            encoding="utf-8",
+        )
+        stub.chmod(0o755)
+
+    # Do not inherit credentials, mode flags or shell startup hooks from the
+    # test runner; every executable reachable through PATH is a recording stub.
+    env = {
+        "PATH": str(tmp_path),
+        "DEPLOY_GUARD_TOOL_TRACE": str(trace),
+        "ODP_DEPLOY_ENV": deploy_environment,
+        "ODAY_RELEASE_SHA": "a" * 40,
+        "ODP_RELEASE_PROFILE": "full",
+        "API_SERVICE": "oday-api",
+        "WEB_SERVICE": "oday-web",
+        "MIGRATION_JOB": "oday-migrate",
+        "WORKER_JOB": "oday-worker",
+        "SCHEDULER_JOB": "oday-scheduler",
+        "WORKER_SCHEDULE_NAME": "oday-worker-trigger",
+        "SCHEDULER_SCHEDULE_NAME": "oday-scheduler-trigger",
+        "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT": "scheduler@example.test",
+        "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT": "smoke@example.test",
+        "ODP_WORKER_CRON": "*/5 * * * *",
+        "ODP_SCHEDULER_CRON": "0 * * * *",
+        "ODP_SCHEDULER_TIME_ZONE": "Asia/Taipei",
+        "ODP_FORECAST_ENGINE": "statsforecast",
+        "ODP_FORECAST_MODEL": "seasonal_naive",
+        "ODP_TENANT_ID": "tenant-test",
+        "ODP_AUTH_MODE": "local",
+        "ODP_PROD_DEPLOY_URL": "https://web.example.test",
+        "ODP_PROD_API_URL": "https://api.example.test",
+        "GCP_PROJECT": "project-under-test",
+        "GCP_REGION": "asia-east1",
+        "GCP_AR_REPO": "runtime",
+    }
+    for name in ("API_IMAGE", "WEB_IMAGE", "WORKER_IMAGE", "SCHEDULER_IMAGE"):
+        # The environment's own registry: production refuses any other one.
+        image = f"asia-east1-docker.pkg.dev/project-under-test/runtime/{name.lower()}"
+        suffix = "@sha256:" + "b" * 64 if deploy_by_digest == "true" else ":mutable"
+        env[name] = image + suffix
+    if deploy_by_digest is not None:
+        env["ODP_DEPLOY_BY_DIGEST"] = deploy_by_digest
+    if skip_build:
+        env["ODP_SKIP_BUILD"] = "true"
+    if image_override is not None:
+        name, value = image_override
+        if value is None:
+            env.pop(name)
+        else:
+            env[name] = value
+
+    result = subprocess.run(
+        ["/bin/bash", str(DEPLOY_SCRIPT)],
+        cwd=ROOT, env=env, capture_output=True, text=True, check=False, timeout=10,
+    )
+    expected_error = image_error
+    if image_error == OWN_REGISTRY_ERROR and deploy_environment not in {"prod", "production"}:
+        expected_error = None
+    if deploy_environment in {"prod", "production"} and deploy_by_digest != "true":
+        expected_error = "production deployment requires ODP_DEPLOY_BY_DIGEST=true"
+    calls = trace.read_text(encoding="utf-8").splitlines()
+    if expected_error is not None:
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert expected_error in result.stderr
+        assert calls == ["uv"]
+    else:
+        assert result.returncode == 97, result.stdout + result.stderr
+        assert "Deployment details:" in result.stdout
+        assert calls == ["uv", "mktemp"]
+
+
+def test_deploy_script_applies_optional_vpc_network_args_to_every_cloud_run_target() -> None:
+    """Every service/job must share the release entrypoint's VPC binding."""
+    script = _deploy_script_text()
+    network_args = '"${CLOUD_RUN_NETWORK_ARGS[@]}"'
+    targets = (
+        'gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}"',
+        'gcloud run deploy "${API_SERVICE}"',
+        'gcloud run jobs deploy "${SCHEDULER_CANDIDATE_JOB}"',
+        'gcloud run jobs deploy "${WORKER_CANDIDATE_JOB}"',
+        'gcloud run deploy "${WEB_SERVICE}"',
+    )
+
+    assert script.count(network_args) == len(targets)
+    for target in targets:
+        start = script.index(target)
+        end = script.index("\n\n", start)
+        assert network_args in script[start:end], target
+
+
+def test_deploy_script_rejects_partial_or_invalid_vpc_config_before_cloud_run() -> None:
+    """Binding mistakes must fail before any Cloud Run mutation is possible.
+
+    Two mutually exclusive modes share the entrypoint: a Serverless VPC Access
+    connector, or Direct VPC egress through `ODP_PROD_VPC_NETWORK` +
+    `ODP_PROD_VPC_SUBNETWORK` (the shape `infra/terraform/cloud_run.tf`
+    declares for production, which creates no connector). A half of either, both
+    at once, an egress mode with no binding, or a binding with no egress mode all
+    have to be refused up front, where the message names the variable.
+    """
+    script = _deploy_script_text()
+    first_cloud_run_call = script.index("gcloud run ")
+    guard_end = script.index("CLOUD_RUN_NETWORK_ARGS=()")
+    assembly_end = script.index("esac", guard_end)
+
+    assert "ODP_PROD_VPC_SUBNETWORK is required with ODP_PROD_VPC_NETWORK" in script
+    assert "ODP_PROD_VPC_NETWORK is required with ODP_PROD_VPC_SUBNETWORK" in script
+    assert (
+        "ODP_CLOUD_RUN_VPC_CONNECTOR and ODP_PROD_VPC_NETWORK/ODP_PROD_VPC_SUBNETWORK "
+        "are mutually exclusive" in script
+    )
+    assert "ODP_CLOUD_RUN_VPC_EGRESS is required with the ${CLOUD_RUN_VPC_MODE} VPC binding" in script
+    assert (
+        "ODP_CLOUD_RUN_VPC_CONNECTOR or ODP_PROD_VPC_NETWORK+ODP_PROD_VPC_SUBNETWORK "
+        "is required with ODP_CLOUD_RUN_VPC_EGRESS" in script
+    )
+    assert "all|all-traffic|private-ranges-only" in script
+    assert (
+        "sources-off deploy requires a VPC binding: ODP_CLOUD_RUN_VPC_CONNECTOR or "
+        "ODP_PROD_VPC_NETWORK+ODP_PROD_VPC_SUBNETWORK" in script
+    )
+    assert "sources-off deploy requires ALL_TRAFFIC VPC egress" in script
+    # The hard `:?` demand for a connector is gone; a Direct VPC deploy has none.
+    assert "sources-off deploy requires ODP_CLOUD_RUN_VPC_CONNECTOR" not in script
+    assert guard_end < assembly_end < first_cloud_run_call
+
+
+def test_deploy_script_assembles_direct_vpc_egress_args_without_a_connector() -> None:
+    """Production reaches the VPC by `--network/--subnet`, never by a connector name.
+
+    Filling the network name into `ODP_CLOUD_RUN_VPC_CONNECTOR` would make gcloud
+    send `--vpc-connector=<network>` and be rejected by the Cloud Run API, so the
+    two modes must assemble disjoint flag sets from disjoint variables.
+    """
+    script = _deploy_script_text()
+    case_start = script.index('case "${CLOUD_RUN_VPC_MODE}" in')
+    case_end = script.index("esac", case_start)
+    assembly = script[case_start:case_end]
+    connector_branch = assembly[assembly.index("connector)") : assembly.index("direct-vpc)")]
+    direct_branch = assembly[assembly.index("direct-vpc)") :]
+
+    assert '"--vpc-connector=${ODP_CLOUD_RUN_VPC_CONNECTOR}"' in connector_branch
+    assert '"--vpc-egress=${ODP_CLOUD_RUN_VPC_EGRESS}"' in connector_branch
+    assert "--network=" not in connector_branch
+    assert "--subnet=" not in connector_branch
+
+    assert '"--network=${ODP_PROD_VPC_NETWORK}"' in direct_branch
+    assert '"--subnet=${ODP_PROD_VPC_SUBNETWORK}"' in direct_branch
+    assert '"--vpc-egress=${ODP_CLOUD_RUN_VPC_EGRESS}"' in direct_branch
+    assert "--vpc-connector" not in direct_branch
+
+    # The mode is decided from the same variable names the binding gate checks,
+    # so gate, script and GitHub environment agree on one vocabulary.
+    for name in VPC_BINDING_VARIABLES:
+        assert f"${{{name}:-}}" in script, name
+    assert set(VPC_BINDING_MODES["direct_vpc"]) == {"ODP_PROD_VPC_NETWORK", "ODP_PROD_VPC_SUBNETWORK"}
+    # No network name is hard-coded; it always comes from the bound environment.
+    assert "oday-prod-runtime" not in script
+
+
+def test_deploy_job_passes_optional_vpc_config_through_environment() -> None:
+    """The single Runtime Release entrypoint receives environment-scoped vars.
+
+    Both binding modes are wired from `vars.*` so the bound environment, not the
+    workflow, decides which one resolves. The build phase never opens a network
+    and wires no binding at all; it keeps only the egress mode, which the
+    sources-off handoff records.
+    """
     parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
-    deploy_steps = parsed["jobs"]["deploy"]["steps"]
-    prod_steps = [
-        step
-        for step in deploy_steps
-        if isinstance(step, dict) and "bluegreen_release.py" in str(step.get("run", ""))
+    deploy_env = parsed["jobs"]["deploy"]["env"]
+    build_env = parsed["jobs"]["build"]["env"]
+
+    for name in (*VPC_BINDING_VARIABLES, "ODP_CLOUD_RUN_VPC_EGRESS"):
+        assert deploy_env[name] == "${{ vars." + name + " }}", name
+    for name in VPC_BINDING_VARIABLES:
+        assert name not in build_env, f"the build phase has no use for {name}"
+    assert build_env["ODP_CLOUD_RUN_VPC_EGRESS"] == "${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}"
+
+
+def test_deploy_job_passes_the_production_live_e2e_origins_from_the_bound_environment() -> None:
+    """`ODP_PROD_DEPLOY_URL` reaches the deploy script only via the `production` binding.
+
+    The script selects the production live E2E origins on `ODP_DEPLOY_ENV`, and
+    that value is the workflow input itself, so there is no expression here that
+    could resolve `production` to another environment's URL.
+    """
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_job = parsed["jobs"]["deploy"]
+    deploy_env = deploy_job["env"]
+
+    assert deploy_job["environment"]["name"] == "${{ inputs.environment }}"
+    assert deploy_env["ODP_DEPLOY_ENV"] == "${{ inputs.environment }}"
+    assert deploy_env["ODP_PROD_DEPLOY_URL"] == "${{ vars.ODP_PROD_DEPLOY_URL }}"
+    assert deploy_env["ODP_PROD_API_URL"] == "${{ vars.ODP_PROD_API_URL }}"
+    for name in ("ODP_DEV_DEPLOY_URL", "ODP_STAGING_DEPLOY_URL", "ODP_STAGING_API_URL"):
+        assert name not in deploy_env, f"{name} must not be a fallback origin for the deploy script"
+
+
+def test_sources_off_probe_persists_and_validates_the_runtime_receipt() -> None:
+    """A successful probe must be the observed container receipt, not a local claim."""
+    script = _deploy_script_text()
+
+    assert "capture_public_egress_probe_receipt" in script
+    assert "gcloud logging read" in script
+    assert "validate_sources_off_probe_receipt" in script
+    assert script.index("capture_public_egress_probe_receipt") < script.index(
+        "upsert_scheduler_trigger"
+    )
+
+
+# --------------------------------------------------------------------------
+# ODP-PROD-DEPLOY-SAFETY-001: production pre-switch state, pre-migration
+# backup, and a staging closeout that defers instead of failing the release.
+#
+# The step scripts are executed against a fake `gcloud` on PATH, so the tests
+# exercise the shell the hosted runner would run, not a restatement of it.
+# --------------------------------------------------------------------------
+
+PROD_RELEASE_SHA = "a" * 40
+PROD_STATE_STEP = "Capture pre-switch production blue-green state"
+PROD_STATE_UPLOAD = "Publish pre-switch production blue-green state"
+PROD_BACKUP_STEP = "Take pre-migration production Cloud SQL backup"
+PROD_BACKUP_UPLOAD = "Publish production pre-migration Cloud SQL backup record"
+DEPLOY_SCRIPT_STEP = "Deploy Cloud Run by immutable digest"
+WATCH_STEP = "Read and verify production watch receipt with staging identity"
+CLOSEOUT_CLEANUP_STEP = "Cleanup staging after verified production watch closeout"
+
+FAKE_GCLOUD = r"""#!/usr/bin/env bash
+# Records every call; behaviour comes from FAKE_* variables set by the test.
+printf '%s\n' "$*" >> "${FAKE_GCLOUD_LOG}"
+case "$1 $2 $3" in
+  "run services list")
+    for arg in "$@"; do
+      case "${arg}" in
+        --filter=metadata.name=*)
+          name="${arg#--filter=metadata.name=}"
+          [ -n "${FAKE_LIST_FAIL:-}" ] && { echo "permission denied" >&2; exit 1; }
+          case " ${FAKE_PRESENT_SERVICES:-} " in *" ${name} "*) echo "${name}" ;; esac
+          ;;
+      esac
+    done
+    exit 0 ;;
+  "run services describe")
+    cat "${FAKE_DESCRIBE_DIR}/$4.json"; exit 0 ;;
+  "sql backups create")
+    [ -n "${FAKE_BACKUP_CREATE_FAIL:-}" ] && { echo "operation failed" >&2; exit 1; }
+    for arg in "$@"; do
+      case "${arg}" in --description=*) printf '%s' "${arg#--description=}" > "${FAKE_DESCRIPTION_FILE}" ;; esac
+    done
+    exit 0 ;;
+  "sql backups list")
+    python3 - <<'PY'
+import json, os
+description = open(os.environ["FAKE_DESCRIPTION_FILE"]).read() if os.path.exists(os.environ["FAKE_DESCRIPTION_FILE"]) else ""
+rows = [{"id": "1700000000000", "status": "SUCCESSFUL", "type": "AUTOMATED", "description": ""}]
+if description:
+    rows.append({
+        "id": "1729760000000",
+        "status": os.environ.get("FAKE_BACKUP_STATUS", "SUCCESSFUL"),
+        "type": "ON_DEMAND",
+        "description": description,
+        "windowStartTime": "2026-10-24T00:00:00Z",
+        "endTime": "2026-10-24T00:01:00Z",
+    })
+print(json.dumps(rows))
+PY
+    exit 0 ;;
+  "storage objects describe")
+    case "${FAKE_WATCH_RECEIPT:-absent}" in
+      absent) echo "ERROR: (gcloud.storage.objects.describe) gs://watch/receipt.json not found: 404." >&2; exit 1 ;;
+      forbidden) echo "ERROR: HTTPError 403: caller does not have storage.objects.get access" >&2; exit 1 ;;
+      *) echo "receipt.json"; exit 0 ;;
+    esac ;;
+esac
+if [ "$1 $2" = "storage cp" ]; then
+  cp "${FAKE_WATCH_RECEIPT}" "$4"; exit 0
+fi
+echo "unexpected gcloud call: $*" >&2
+exit 2
+"""
+
+FAKE_UV = """#!/usr/bin/env bash
+# `uv run --frozen python ...` -> the test interpreter, from the repository root.
+[ "$1" = run ] && shift
+[ "$1" = --frozen ] && shift
+[ "$1" = python ] && shift
+exec "${FAKE_PYTHON}" "$@"
+"""
+
+
+def _deploy_job() -> dict:
+    return _release_jobs()["deploy"]
+
+
+def _step_index(job: dict, name: str) -> int:
+    return next(index for index, step in enumerate(_job_steps(job)) if step.get("name") == name)
+
+
+@pytest.fixture
+def fake_cloud(tmp_path: Path) -> dict[str, object]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "gcloud").write_text(FAKE_GCLOUD, encoding="utf-8")
+    (bin_dir / "gcloud").chmod(0o755)
+    (bin_dir / "uv").write_text(FAKE_UV, encoding="utf-8")
+    (bin_dir / "uv").chmod(0o755)
+    runner_temp = tmp_path / "runner-temp"
+    runner_temp.mkdir()
+    receipts = tmp_path / "receipts"
+    describe_dir = tmp_path / "describe"
+    describe_dir.mkdir()
+    env = {
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "HOME": str(tmp_path),
+        "PYTHONPATH": str(ROOT),
+        "FAKE_PYTHON": sys.executable,
+        "FAKE_GCLOUD_LOG": str(tmp_path / "gcloud.log"),
+        "FAKE_DESCRIBE_DIR": str(describe_dir),
+        "FAKE_DESCRIPTION_FILE": str(tmp_path / "backup-description"),
+        "RUNNER_TEMP": str(runner_temp),
+        "RELEASE_RECEIPT_DIR": str(receipts),
+        "GITHUB_OUTPUT": str(tmp_path / "github-output"),
+        "GITHUB_STEP_SUMMARY": str(tmp_path / "step-summary"),
+        "GITHUB_RUN_ID": "4242",
+        "GITHUB_RUN_ATTEMPT": "1",
+        "ODAY_RELEASE_SHA": PROD_RELEASE_SHA,
+        "MANIFEST_DIGEST": "sha256:" + "b" * 64,
+        "GCP_PROJECT": "oday-prod",
+        "GCP_REGION": "asia-east1",
+        "GCP_CLOUD_SQL_INSTANCE": "oday-prod:asia-east1:oday-prod-sql",
+        "API_SERVICE": "odp-api",
+        "WEB_SERVICE": "odp-web",
+    }
+    return {"env": env, "tmp": tmp_path, "receipts": receipts, "describe_dir": describe_dir}
+
+
+def _run_step(job: dict, name: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", "-c", str(_named_step(job, name)["run"])],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _outputs(fake: dict[str, object]) -> dict[str, str]:
+    path = Path(fake["env"]["GITHUB_OUTPUT"])  # type: ignore[index]
+    if not path.exists():
+        return {}
+    return dict(line.split("=", 1) for line in path.read_text(encoding="utf-8").splitlines() if "=" in line)
+
+
+def _gcloud_calls(fake: dict[str, object]) -> list[str]:
+    log = Path(fake["env"]["FAKE_GCLOUD_LOG"])  # type: ignore[index]
+    return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+
+
+def _describe(fake: dict[str, object], service: str, traffic: list[dict[str, object]]) -> None:
+    description = {
+        "metadata": {"name": service},
+        "spec": {"template": {"spec": {"containers": [{"env": [{"name": "ODP_TENANT_ID", "value": "tenant-secret-value"}]}]}}},
+        "status": {"url": f"https://{service}.run.app", "traffic": traffic},
+    }
+    (fake["describe_dir"] / f"{service}.json").write_text(json.dumps(description), encoding="utf-8")  # type: ignore[operator]
+
+
+def test_production_pre_switch_state_is_captured_and_published_before_the_cutover() -> None:
+    job = _deploy_job()
+    steps = _job_steps(job)
+    capture = _named_step(job, PROD_STATE_STEP)
+    upload = _named_step(job, PROD_STATE_UPLOAD)
+    deploy_index = _step_index(job, DEPLOY_SCRIPT_STEP)
+
+    assert capture.get("if") == "${{ inputs.environment == 'production' }}"
+    assert upload.get("if") == "${{ inputs.environment == 'production' }}"
+    assert _step_index(job, PROD_STATE_STEP) < _step_index(job, PROD_STATE_UPLOAD) < deploy_index
+    # Nothing re-captures "blue" after the switch: that recorded green.
+    after_deploy = [step for step in steps[deploy_index + 1 :] if "bluegreen_release.py" in str(step.get("run", ""))]
+    assert after_deploy == []
+    assert sum("bluegreen_release.py" in str(step.get("run", "")) for step in steps) == 1
+    # A capture failure must stop the deploy: no continue-on-error, no always().
+    assert "continue-on-error" not in capture
+    assert "always()" not in str(capture.get("if"))
+
+    run = str(capture["run"])
+    assert '--output-dir "${state_dir}"' in run
+    assert 'state_dir="${RELEASE_RECEIPT_DIR}/production-bluegreen-state"' in run
+    assert "RUNNER_TEMP" not in run
+    # Top-level options precede the subcommand, or argparse refuses the call.
+    assert run.index('--project "${GCP_PROJECT}"') < run.index("capture-state")
+
+    assert upload["uses"] == "actions/upload-artifact@v4"
+    assert upload["with"]["name"] == (
+        "production-bluegreen-prerelease-state-${{ inputs.release_sha }}-${{ github.run_attempt }}"
+    )
+    assert upload["with"]["path"] == ".odp_data/release/production-bluegreen-state/"
+    assert upload["with"]["if-no-files-found"] == "error"
+    assert upload["with"]["retention-days"] == 90
+
+
+def test_pre_switch_capture_step_writes_a_redacted_relocatable_rollback_input(
+    fake_cloud: dict[str, object],
+) -> None:
+    env = dict(fake_cloud["env"])  # type: ignore[arg-type]
+    env["FAKE_PRESENT_SERVICES"] = "odp-api odp-web"
+    _describe(fake_cloud, "odp-api", [{"revisionName": "odp-api-00007", "percent": 100}])
+    _describe(fake_cloud, "odp-web", [{"revisionName": "odp-web-00007", "percent": 100}])
+
+    result = _run_step(_deploy_job(), PROD_STATE_STEP, env)
+
+    assert result.returncode == 0, result.stderr
+    state_dir = fake_cloud["receipts"] / "production-bluegreen-state"  # type: ignore[operator]
+    state = json.loads((state_dir / "release-state.json").read_text(encoding="utf-8"))
+    assert state["release_id"] == "odp-" + PROD_RELEASE_SHA[:12]
+    assert state["api_traffic_snapshot_path"] == "api-traffic.json"
+    for name in ("api-traffic.json", "web-traffic.json", "release-state.json"):
+        assert "tenant-secret-value" not in (state_dir / name).read_text(encoding="utf-8")
+    assert _outputs(fake_cloud)["previous_release_present"] == "true"
+    # Read-only: the capture never mutates production.
+    assert all(" list " in f" {call} " or " describe " in f" {call} " for call in _gcloud_calls(fake_cloud))
+
+
+def test_pre_switch_capture_step_admits_a_first_release_with_no_blue(
+    fake_cloud: dict[str, object],
+) -> None:
+    env = dict(fake_cloud["env"])  # type: ignore[arg-type]
+    env["FAKE_PRESENT_SERVICES"] = ""
+
+    result = _run_step(_deploy_job(), PROD_STATE_STEP, env)
+
+    assert result.returncode == 0, result.stderr
+    state_dir = fake_cloud["receipts"] / "production-bluegreen-state"  # type: ignore[operator]
+    api = json.loads((state_dir / "api-traffic.json").read_text(encoding="utf-8"))
+    assert api["exists"] is False
+    assert _outputs(fake_cloud)["previous_release_present"] == "false"
+
+
+@pytest.mark.parametrize(
+    ("present", "api_traffic", "list_fail"),
+    [
+        pytest.param("odp-api", [{"revisionName": "odp-api-1", "percent": 100}], "", id="half-present-target"),
+        pytest.param(
+            "odp-api odp-web",
+            [{"revisionName": "odp-api-1", "percent": 60}],
+            "",
+            id="unrestorable-traffic-split",
+        ),
+        pytest.param("odp-api odp-web", [{"revisionName": "odp-api-1", "percent": 100}], "1", id="lookup-error"),
+    ],
+)
+def test_pre_switch_capture_step_fails_closed(
+    fake_cloud: dict[str, object], present: str, api_traffic: list[dict[str, object]], list_fail: str
+) -> None:
+    env = dict(fake_cloud["env"])  # type: ignore[arg-type]
+    env["FAKE_PRESENT_SERVICES"] = present
+    env["FAKE_LIST_FAIL"] = list_fail
+    _describe(fake_cloud, "odp-api", api_traffic)
+    _describe(fake_cloud, "odp-web", [{"revisionName": "odp-web-1", "percent": 100}])
+
+    result = _run_step(_deploy_job(), PROD_STATE_STEP, env)
+
+    assert result.returncode != 0
+    assert "previous_release_present" not in _outputs(fake_cloud)
+
+
+def test_production_backup_precedes_migrations_and_is_published() -> None:
+    job = _deploy_job()
+    backup = _named_step(job, PROD_BACKUP_STEP)
+    upload = _named_step(job, PROD_BACKUP_UPLOAD)
+
+    assert backup.get("id") == "prod-sql-backup"
+    assert backup.get("if") == "${{ inputs.environment == 'production' }}"
+    assert "continue-on-error" not in backup
+    # The deploy script runs the migration job; the backup must exist first.
+    assert _step_index(job, PROD_STATE_UPLOAD) < _step_index(job, PROD_BACKUP_STEP)
+    assert _step_index(job, PROD_BACKUP_STEP) < _step_index(job, DEPLOY_SCRIPT_STEP)
+    run = str(backup["run"])
+    assert "gcloud sql backups create" in run
+    assert '--instance="${sql_instance}"' in run
+    assert "gcloud sql backups list" in run
+    assert '"SUCCESSFUL"' in run
+
+    assert upload["with"]["name"] == (
+        "production-predeploy-cloud-sql-backup-${{ inputs.release_sha }}-${{ github.run_attempt }}"
+    )
+    assert upload["with"]["path"] == ".odp_data/release/production-predeploy-cloud-sql-backup.json"
+    assert upload["with"]["if-no-files-found"] == "error"
+    assert "steps.prod-sql-backup.outcome == 'success'" in upload["if"]
+    assert job["outputs"]["production_backup_id"] == "${{ steps.prod-sql-backup.outputs.backup_id }}"
+
+
+def test_backup_is_production_only_and_dev_auto_deploy_is_unchanged() -> None:
+    job = _deploy_job()
+    for name in (PROD_STATE_STEP, PROD_STATE_UPLOAD, PROD_BACKUP_STEP, PROD_BACKUP_UPLOAD):
+        assert "inputs.environment == 'production'" in str(_named_step(job, name).get("if"))
+    backups = [step for step in _job_steps(job) if "gcloud sql backups create" in str(step.get("run", ""))]
+    assert len(backups) == 1
+
+
+def test_backup_step_records_the_confirmed_backup_id(fake_cloud: dict[str, object]) -> None:
+    env = dict(fake_cloud["env"])  # type: ignore[arg-type]
+
+    result = _run_step(_deploy_job(), PROD_BACKUP_STEP, env)
+
+    assert result.returncode == 0, result.stderr
+    assert _outputs(fake_cloud)["backup_id"] == "1729760000000"
+    receipt = json.loads(
+        (fake_cloud["receipts"] / "production-predeploy-cloud-sql-backup.json").read_text(encoding="utf-8")  # type: ignore[operator]
+    )
+    assert receipt["backup_id"] == "1729760000000"
+    assert receipt["status"] == "SUCCESSFUL"
+    assert receipt["type"] == "ON_DEMAND"
+    assert receipt["release_sha"] == PROD_RELEASE_SHA
+    assert receipt["instance"] == "oday-prod-sql"
+    assert receipt["description"] == f"odp-predeploy-{PROD_RELEASE_SHA[:12]}-run-4242-1"
+    create = next(call for call in _gcloud_calls(fake_cloud) if call.startswith("sql backups create"))
+    assert "--instance=oday-prod-sql" in create
+    assert "--project=oday-prod" in create
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        pytest.param({"FAKE_BACKUP_CREATE_FAIL": "1"}, id="create-fails"),
+        pytest.param({"FAKE_BACKUP_STATUS": "FAILED"}, id="backup-not-successful"),
+        pytest.param({"FAKE_BACKUP_STATUS": "RUNNING"}, id="backup-not-finished"),
+        pytest.param({"GCP_CLOUD_SQL_INSTANCE": "other-project:asia-east1:oday-prod-sql"}, id="foreign-instance"),
+        pytest.param({"GCP_CLOUD_SQL_INSTANCE": "oday-prod-sql"}, id="bare-instance-name"),
+        pytest.param({"GCP_CLOUD_SQL_INSTANCE": ""}, id="unbound-instance"),
+    ],
+)
+def test_backup_step_fails_closed_without_a_confirmed_backup(
+    fake_cloud: dict[str, object], override: dict[str, str]
+) -> None:
+    env = dict(fake_cloud["env"])  # type: ignore[arg-type]
+    env.update(override)
+
+    result = _run_step(_deploy_job(), PROD_BACKUP_STEP, env)
+
+    assert result.returncode != 0
+    assert "backup_id" not in _outputs(fake_cloud)
+    assert not (fake_cloud["receipts"] / "production-predeploy-cloud-sql-backup.json").exists()  # type: ignore[operator]
+    if "GCP_CLOUD_SQL_INSTANCE" in override:
+        assert _gcloud_calls(fake_cloud) == []
+
+
+def test_staging_closeout_defers_cleanup_until_a_watch_receipt_exists() -> None:
+    closeout = _release_jobs()["staging_closeout"]
+    watch = _named_step(closeout, WATCH_STEP)
+    cleanup = _named_step(closeout, CLOSEOUT_CLEANUP_STEP)
+
+    assert watch.get("id") == "watch-receipt"
+    assert "continue-on-error" not in watch
+    assert cleanup.get("if") == "${{ steps.watch-receipt.outputs.verified == 'true' }}"
+    assert closeout["outputs"]["watch_verified"] == "${{ steps.watch-receipt.outputs.verified }}"
+    # The staging-digest == production-digest binding runs on every attempt,
+    # including one that defers, and before anything is deleted.
+    bundle_index = _step_index(closeout, "Read staging recovery bundle with staging identity")
+    assert bundle_index < _step_index(closeout, WATCH_STEP) < _step_index(closeout, CLOSEOUT_CLEANUP_STEP)
+    bundle = _named_step(closeout, "Read staging recovery bundle with staging identity")
+    assert 'tf["manifest_digest"] == os.environ["MANIFEST_DIGEST"]' in str(bundle["run"])
+    assert "if" not in bundle
+    upload = _named_step(closeout, "Upload staging closeout receipts")
+    assert upload["with"]["name"].endswith("-${{ github.run_attempt }}")
+
+
+def test_staging_closeout_absent_watch_receipt_defers_without_deleting(
+    fake_cloud: dict[str, object],
+) -> None:
+    env = dict(fake_cloud["env"])  # type: ignore[arg-type]
+    env.update(
+        ODP_PRODUCTION_WATCH_CLOSEOUT_URI="gs://watch/receipt.json",
+        STAGING_WATCH_RECEIPT=str(fake_cloud["tmp"] / "watch.json"),  # type: ignore[operator]
+        STAGING_RELEASE_ID="odp-" + PROD_RELEASE_SHA[:12],
+        FAKE_WATCH_RECEIPT="absent",
+    )
+
+    result = _run_step(_release_jobs()["staging_closeout"], WATCH_STEP, env)
+
+    assert result.returncode == 0, result.stderr
+    assert _outputs(fake_cloud)["verified"] == "false"
+    assert "Staging closeout deferred" in result.stdout
+    assert not any(call.startswith("storage cp") for call in _gcloud_calls(fake_cloud))
+
+
+def test_staging_closeout_storage_errors_still_fail_closed(fake_cloud: dict[str, object]) -> None:
+    env = dict(fake_cloud["env"])  # type: ignore[arg-type]
+    env.update(
+        ODP_PRODUCTION_WATCH_CLOSEOUT_URI="gs://watch/receipt.json",
+        STAGING_WATCH_RECEIPT=str(fake_cloud["tmp"] / "watch.json"),  # type: ignore[operator]
+        STAGING_RELEASE_ID="odp-" + PROD_RELEASE_SHA[:12],
+        FAKE_WATCH_RECEIPT="forbidden",
+    )
+
+    result = _run_step(_release_jobs()["staging_closeout"], WATCH_STEP, env)
+
+    assert result.returncode != 0
+    assert "verified" not in _outputs(fake_cloud)
+
+
+def test_staging_closeout_present_but_invalid_watch_receipt_fails(fake_cloud: dict[str, object]) -> None:
+    receipt = fake_cloud["tmp"] / "stored-receipt.json"  # type: ignore[operator]
+    receipt.write_text(
+        json.dumps({"release_sha": "c" * 40, "status": "WATCH_PASSED", "status_code": 1}),
+        encoding="utf-8",
+    )
+    env = dict(fake_cloud["env"])  # type: ignore[arg-type]
+    env.update(
+        ODP_PRODUCTION_WATCH_CLOSEOUT_URI="gs://watch/receipt.json",
+        STAGING_WATCH_RECEIPT=str(fake_cloud["tmp"] / "watch.json"),  # type: ignore[operator]
+        STAGING_RELEASE_ID="odp-" + PROD_RELEASE_SHA[:12],
+        FAKE_WATCH_RECEIPT=str(receipt),
+    )
+
+    result = _run_step(_release_jobs()["staging_closeout"], WATCH_STEP, env)
+
+    assert result.returncode != 0
+    assert "Release SHA mismatch" in result.stderr
+    assert "verified" not in _outputs(fake_cloud)
+
+
+# --------------------------------------------------------------------------
+# ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001: build-once and admission ordering
+#
+# `admission` used to be `build`'s parent. Because the lease is bound to a
+# `manifest_digest`, and the manifest names image digests, SBOM refs, and Cosign
+# signature refs that only a build produces, that ordering made the release
+# unable to build without a lease and unable to earn a lease without building.
+# These tests hold the ordering that removes the cycle, and the bindings that
+# keep the split from turning "build once" into "deploy anything".
+# --------------------------------------------------------------------------
+
+
+def test_the_lease_is_verified_after_the_build_not_before() -> None:
+    """Admission must never be a precondition of producing its own evidence."""
+
+    jobs = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))["jobs"]
+
+    assert "admission" not in _needs(jobs["build"]), (
+        "the build phase must not depend on lease admission; requiring a lease to "
+        "produce the manifest the lease is bound to is the circular dependency"
+    )
+    assert "build" in _needs(jobs["admission"]), (
+        "admission must be ordered after the build phase that publishes the "
+        "manifest it verifies"
+    )
+    assert "admission" in _needs(jobs["deploy"])
+
+    # Admission is deploy authority, so it runs in the deploy phase only.
+    admission_if = jobs["admission"].get("if", "")
+    assert "inputs.phase == 'deploy'" in admission_if
+    assert "needs.build.result == 'skipped'" in admission_if
+
+    # And the build phase runs only when asked to build.
+    assert "inputs.phase == 'build'" in jobs["build"].get("if", "")
+
+
+def test_every_job_is_gated_on_the_fail_closed_phase_check() -> None:
+    """One precheck, ahead of every build, credential, and deployment step."""
+
+    jobs = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))["jobs"]
+
+    assert "release_phase" in jobs
+    assert _needs(jobs["release_phase"]) == [], "the phase check must run first"
+    for job_id in ("build", "admission", "deploy"):
+        assert "release_phase" in _needs(jobs[job_id]), f"{job_id} bypasses the phase check"
+
+    check = _named_step(jobs["release_phase"], "Validate phase and artifact handoff preconditions")
+    run = check["run"]
+    assert "delivery_toolchain/release/check_release_phase.py" in run
+    # Lease presence is an input to the refusal, not an assumption. OIDC is
+    # not: this job is unbound, so it cannot observe `vars.*` and anything it
+    # concluded from them would describe the binding, not the configuration.
+    # `test_the_binding_gate_runs_before_the_job_touches_google_cloud` holds
+    # that half, inside the jobs that are bound.
+    assert "--oidc-configured" not in run
+    assert "--lease-supplied" in run
+    assert "--receipt" in run
+    # The lease reaches the precheck as a presence bit. Everything after the
+    # script name is argv, and a signed lease in argv is readable from the
+    # process table, so the document itself must not appear there.
+    invocation = run.split("check_release_phase.py", 1)[1]
+    assert "RELEASE_LEASE" not in invocation
+    assert "--lease-file" not in invocation
+
+
+def test_the_lease_input_is_optional_so_the_build_phase_can_run_without_one() -> None:
+    """A required lease input would re-impose the cycle at the form level."""
+
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    inputs = parsed.get("on", parsed.get(True))["workflow_dispatch"]["inputs"]
+
+    assert inputs["release_lease"]["required"] is False
+    assert inputs["release_lease"]["default"] == ""
+
+    phase = inputs["phase"]
+    assert phase["type"] == "choice"
+    assert set(phase["options"]) == {"build", "deploy", "auto"}
+
+
+def test_workflow_dispatch_declares_masked_snapshot_and_rollback_inputs() -> None:
+    """The build phase accepts approved masked snapshot and rollback manifest inputs."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    inputs = parsed.get("on", parsed.get(True))["workflow_dispatch"]["inputs"]
+
+    expected_inputs = {
+        "data_snapshot_id",
+        "data_snapshot_uri",
+        "data_snapshot_object_generation",
+        "data_snapshot_content_sha",
+        "data_snapshot_file",
+        "rollback_manifest",
+    }
+    for name in expected_inputs:
+        assert name in inputs, f"deploy-dev.yml missing {name} input"
+        assert inputs[name]["required"] is False
+        assert inputs[name]["default"] == ""
+
+
+def test_the_build_phase_declares_expected_enabled_sources_but_never_the_posture() -> None:
+    """Sources-off is derived from what is deployed, not supplied by the dispatcher.
+
+    ODP-SOURCES-OFF-RELEASE-ADMISSION-REMEDIATION-001: an operator may declare
+    which sources this release expects to be *enabled* -- that is what makes the
+    approved masked snapshot mandatory. The sources-off posture itself, and the
+    digest binding it to this candidate, must have no dispatch channel at all;
+    otherwise the evidence would be whatever the dispatcher typed.
+    """
+
+    workflow_text = (WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8")
+    parsed = yaml.safe_load(workflow_text)
+    inputs = parsed.get("on", parsed.get(True))["workflow_dispatch"]["inputs"]
+
+    assert "external_sources_enabled" in inputs
+    assert inputs["external_sources_enabled"]["required"] is False
+    assert inputs["external_sources_enabled"]["default"] == ""
+
+    assert "--external-source" in workflow_text
+    for forbidden in (
+        "--sources-off-binding-digest",
+        "--sources-off-attestation",
+        "--sources-off-file",
+        "sources_off_binding_digest",
+        "ODP_SOURCES_OFF_ATTESTATION",
+    ):
+        assert forbidden not in workflow_text, (
+            f"deploy-dev.yml must not offer {forbidden}: a sources-off posture that "
+            "can be handed in is not evidence"
+        )
+
+
+def test_dispatch_input_descriptions_do_not_name_files_that_do_not_exist() -> None:
+    """An example path is an instruction, and a wrong one sends operators nowhere.
+
+    `rollback_manifest` once pointed at `docs/evidence/gates/PREV_RELEASE_MANIFEST.json`,
+    which has never existed in this repository.
+    """
+
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    inputs = parsed.get("on", parsed.get(True))["workflow_dispatch"]["inputs"]
+    repo_path = re.compile(r"\b[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+\.(?:json|ya?ml|py|md|sh)\b")
+
+    missing = [
+        (name, candidate)
+        for name, spec in inputs.items()
+        for candidate in repo_path.findall(spec.get("description") or "")
+        if not (ROOT / candidate).exists()
     ]
-    assert len(prod_steps) == 1
-    step = prod_steps[0]
-    assert step.get("if") == "${{ inputs.environment == 'production' }}"
+    assert not missing, f"deploy-dev.yml inputs cite files that do not exist: {missing}"
+
+
+def test_admission_binds_the_handoff_images_to_the_manifest() -> None:
+    """A lease admits this release's artifacts, not any digest presented."""
+
+    jobs = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))["jobs"]
+    step = _named_step(jobs["admission"], "Validate supervisor release admission")
+    run = step["run"]
+
+    assert "--action deploy" in run, "the lease must authorise the deploy action explicitly"
+    for component in ("api", "web", "worker", "scheduler"):
+        assert f'--component-image "{component}=${{{component.upper()}_IMAGE_INPUT}}"' in run, (
+            f"{component}'s handoff image is not bound back to manifest.components"
+        )
+
+
+def test_the_build_phase_publishes_the_artifact_handoff_it_hands_forward() -> None:
+    """The handoff is an artifact of the build, not a promise about it."""
+
+    jobs = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))["jobs"]
+    steps = jobs["build"]["steps"]
+
+    handoff = _named_step(jobs["build"], "Write the build-once artifact handoff")
+    run = handoff["run"]
+    env = handoff.get("env", {})
+    assert "delivery_toolchain/release/build_release_handoff.py" in run
+    for component in ("api", "web", "worker", "scheduler"):
+        assert f'--component "{component}=' in run
+    assert "--sbom-ref" in run
+    assert "--signature-ref" in run
+    assert "--manifest-output" in run
+    assert "--images-output" in run
+
+    assert "DATA_SNAPSHOT_FILE" in env
+    assert "DATA_SNAPSHOT_ID" in env
+    assert "DATA_SNAPSHOT_URI" in env
+    assert "DATA_SNAPSHOT_CONTENT_SHA" in env
+    assert "ROLLBACK_MANIFEST" in env
+    assert "--data-snapshot-file" in run
+    assert "--data-snapshot-id" in run
+    assert "--data-snapshot-uri" in run
+    assert "--data-snapshot-content-sha256" in run
+    assert "--rollback-manifest" in run
+
+    # Both halves of the handoff leave the run, or a later deploy phase has
+    # nothing to be dispatched with.
+    uploaded = [
+        str(step.get("with", {}).get("path", ""))
+        for step in steps
+        if isinstance(step, dict) and str(step.get("uses", "")).startswith("actions/upload-artifact@")
+    ]
+    assert any("runtime-release-images.json" in path for path in uploaded)
+    assert any("RELEASE_MANIFEST.json" in path for path in uploaded)
+
+
+def test_the_build_phase_signs_and_attests_every_published_image() -> None:
+    """`sbom_refs` / `signature_refs` must name artifacts that were published.
+
+    ODP-RELEASE-MANIFEST-COSIGN-001 and ODP-RELEASE-MANIFEST-SBOM-001 were
+    raised because the manifest claimed supply-chain evidence that had never
+    been pushed anywhere. The build resolves both back through the registry, so
+    an unresolvable reference fails the build instead of reaching the manifest.
+    """
+
+    jobs = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))["jobs"]
+    run = _named_step(
+        jobs["build"], "Build, publish, sign, and attest immutable container images"
+    )["run"]
+
+    assert 'sign_images.sh sign "${tagged}"' in run
+    assert 'sign_images.sh attest "${digest_ref}" "${SBOM_PATH}"' in run
+    helper = (ROOT / "delivery_toolchain/security/sign_images.sh").read_text(encoding="utf-8")
+    assert 'cosign_with_oidc_retry sign --yes "${IMAGE}"' in helper
+    assert 'cosign_with_oidc_retry attest --yes --type cyclonedx --predicate "$3" "$2"' in helper
+    assert "resolve_supply_chain_ref" in run
+    assert 'resolve_supply_chain_ref "${digest_ref}" sig' in run
+    assert 'resolve_supply_chain_ref "${digest_ref}" att' in run
+    assert "no Cosign signature artifact resolves" in run
+    assert "no SBOM attestation artifact resolves" in run
+
+
+# --------------------------------------------------------------------------
+# GitHub environment binding
+#
+# This repository has zero repository-level Actions variables: `GCP_PROJECT_ID`,
+# `GCP_AR_REPO` and the WIF pair exist only under the `dev` / `staging` /
+# `production` environments. GitHub injects those into `vars.*` only for a job
+# that carries an `environment:` binding, and an unbound job does not fail --
+# `vars.X` expands to the empty string. So a missing binding is invisible in the
+# YAML and produces a job that authenticates with nothing and publishes to
+# `-docker.pkg.dev//`.
+# --------------------------------------------------------------------------
+
+
+def test_every_job_that_reads_environment_variables_binds_an_environment() -> None:
+    unbound = []
+    for job_id, job in _release_jobs().items():
+        if "vars." not in yaml.safe_dump(job, allow_unicode=True):
+            continue
+        if not job.get("environment"):
+            unbound.append(job_id)
+    assert unbound == [], (
+        f"{unbound} read `vars.*` with no `environment:` binding; those expand to "
+        "the empty string rather than failing"
+    )
+
+
+def test_the_input_shape_gate_stays_unbound_and_reads_no_variables() -> None:
+    """Input validation must be reachable without spending a deploy approval."""
+
+    job = _release_jobs()[UNBOUND_JOB]
+    assert "environment" not in job
+    assert "vars." not in yaml.safe_dump(job, allow_unicode=True)
+
+
+@pytest.mark.parametrize(
+    ("job_id", "expected_environment"),
+    [(job_id, binding) for job_id, (binding, _) in JOB_ENVIRONMENT_BINDINGS.items()],
+)
+def test_each_phase_binds_to_its_own_authority_environment(
+    job_id: str, expected_environment: str
+) -> None:
+    job = _release_jobs()[job_id]
+    assert job["environment"]["name"] == expected_environment
+
+
+def test_the_build_phase_does_not_bind_to_the_deploy_environment() -> None:
+    """Otherwise a staging/production build waits on a `required_reviewers` gate."""
+
+    jobs = _release_jobs()
+    assert jobs["build"]["environment"]["name"] != jobs["deploy"]["environment"]["name"]
+    assert jobs["build"]["environment"]["name"].endswith("-build")
+
+
+@pytest.mark.parametrize(
+    ("job_id", "scope"),
+    [(job_id, scope) for job_id, (_, scope) in JOB_ENVIRONMENT_BINDINGS.items()],
+)
+def test_the_binding_gate_exposes_exactly_the_variables_its_scope_requires(
+    job_id: str, scope: str
+) -> None:
+    """The gate reads `os.environ`, so a variable the step forgets reads as missing.
+
+    Tying the step's `env:` block to the module's own required set is what keeps
+    a newly required variable from silently passing the gate it was added to.
+    """
+
+    job = _release_jobs()[job_id]
+    step = _job_steps(job)[_binding_gate_index(job)]
+    # `declared_variables` is the unconditional set plus the either/or VPC
+    # binding names a deploying scope reads; a mode whose variable the step
+    # forgot to expose could never resolve, however the environment is set.
+    assert set(step["env"]) == set(declared_variables(scope))
+    for name in REQUIRED_VARIABLES[scope]:
+        assert name in step["env"]
+    for name in declared_variables(scope):
+        assert step["env"][name] == "${{ vars." + name + " }}"
+
+
+@pytest.mark.parametrize(
+    ("job_id", "scope"),
+    [(job_id, scope) for job_id, (_, scope) in JOB_ENVIRONMENT_BINDINGS.items()],
+)
+def test_the_binding_gate_declares_the_environment_the_job_binds_to(
+    job_id: str, scope: str
+) -> None:
+    job = _release_jobs()[job_id]
+    step = _job_steps(job)[_binding_gate_index(job)]
+    run = step["run"]
+    assert f"--scope {scope}" in run
+    binding = JOB_ENVIRONMENT_BINDINGS[job_id][0]
+    assert f'--github-environment "{binding}"' in run
+    assert "--receipt" in run, "a refusal with no receipt is not evidence"
+
+
+@pytest.mark.parametrize("job_id", sorted(JOB_ENVIRONMENT_BINDINGS))
+def test_the_binding_gate_runs_before_the_job_touches_google_cloud(
+    job_id: str,
+) -> None:
+    job = _release_jobs()[job_id]
+    steps = _job_steps(job)
+    gate_index = _binding_gate_index(job)
+    cloud_indexes = [
+        index
+        for index, step in enumerate(steps)
+        if str(step.get("uses", "")).startswith("google-github-actions/")
+    ]
+    assert cloud_indexes, f"{job_id} was expected to authenticate to Google Cloud"
+    assert gate_index < min(cloud_indexes)
+
+
+def test_no_step_is_skipped_on_a_variable_derived_condition() -> None:
+    """A `vars.`-derived `if:` turns a missing binding into a silent success.
+
+    The old shape guarded the auth and gcloud steps on `env.HAS_WIF == 'true'`,
+    which was itself derived from `vars.*`. In an unbound job that condition is
+    always false, so the build would skip authentication and carry on rather
+    than refuse.
+    """
+
+    offenders = []
+    for job_id, job in _release_jobs().items():
+        for step in _job_steps(job):
+            condition = str(step.get("if", ""))
+            if "HAS_WIF" in condition or "vars." in condition:
+                offenders.append(f"{job_id}:{step.get('name', step.get('uses'))}")
+    assert offenders == []
+
+
+def test_the_build_phase_publishes_its_binding_receipt() -> None:
+    """The refusal has to leave the runner, or it is not auditable evidence."""
+
+    job = _release_jobs()["build"]
+    upload = next(
+        step
+        for step in _job_steps(job)
+        if str(step.get("uses", "")).startswith("actions/upload-artifact")
+        and "environment" in str(step.get("with", {}).get("name", ""))
+    )
+    assert upload["if"] == "always()", "a receipt only kept on success proves nothing"
+    assert "release-environment-receipt" in upload["with"]["name"]
+
+
+# --------------------------------------------------------------------------
+# ODP-SOURCES-OFF-RELEASE-ADMISSION-REMEDIATION-001: the build/deploy manifest
+# handoff has to be a transport, not a shared checkout.
+#
+# `build` and `deploy` are separate `workflow_dispatch` runs -- `admission` only
+# runs when `needs.build.result == 'skipped'`. So the deploy checkout carries
+# exactly one manifest: the one committed at the release SHA. Admission's
+# `--manifest` default resolves to that committed file, which meant the
+# sources-off attestation and `manifest_digest` a build had just produced were
+# never the thing verified; the only way to change admission's input was to
+# commit a different manifest onto an immutable release SHA.
+#
+# These hold the transport that replaces it: the build run's manifest artifact
+# is downloaded by run id, admitted only against the digest the Supervisor lease
+# names, and handed to admission explicitly.
+# --------------------------------------------------------------------------
+
+_ADMITTED_MANIFEST_PATH = ".odp_data/release/admitted-manifest/RELEASE_MANIFEST.json"
+
+
+def _release_workflow() -> dict:
+    return yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+
+
+def _dispatch_inputs() -> dict:
+    # YAML resolves a bare `on:` key to the boolean True, so both spellings have
+    # to be tried -- the same accessor the older dispatch tests here use.
+    parsed = _release_workflow()
+    return parsed.get("on", parsed.get(True))["workflow_dispatch"]["inputs"]
+
+
+def test_the_deploy_phase_downloads_the_manifest_from_the_build_run_that_made_it() -> None:
+    jobs = _release_workflow()["jobs"]
+    download = _named_step(
+        jobs["admission"], "Download the candidate release manifest from its build run"
+    )
+
+    assert str(download["uses"]).startswith("actions/download-artifact@")
+    with_ = download["with"]
+    # The artifact name has to be the one the build phase publishes, keyed by the
+    # same release SHA, or the transport silently resolves to nothing.
+    published = _named_step(jobs["build"], "Publish candidate release manifest")
+    assert with_["name"] == published["with"]["name"]
+    assert "${{ inputs.release_sha }}" in str(with_["name"])
+    # Cross-run download needs the run id and a token; without `run-id` the
+    # action looks only inside the current run, where no build ever happened.
+    assert with_["run-id"] == "${{ inputs.manifest_run_id }}"
+    assert "github-token" in with_
+
+
+def test_the_workflow_may_read_other_runs_artifacts_but_not_write_them() -> None:
+    """`actions: read` is the whole permission the transport needs."""
+
+    permissions = _release_workflow()["permissions"]
+    assert permissions["actions"] == "read"
+
+
+def test_admission_verifies_the_transported_manifest_not_the_committed_one() -> None:
+    jobs = _release_workflow()["jobs"]
+    step = _named_step(jobs["admission"], "Validate supervisor release admission")
+    run = step["run"]
+
+    assert '--manifest "${RELEASE_RECEIPT_DIR}/admitted-manifest/RELEASE_MANIFEST.json"' in run, (
+        "admission must be handed the downloaded artifact; its default resolves "
+        "to the manifest committed at the release SHA, which no build produced"
+    )
+    assert '--manifest-digest "${MANIFEST_DIGEST_INPUT}"' in run
+    assert "--require-manifest-digest" in run, (
+        "without this, omitting the digest would silently re-enable the fallback"
+    )
+    assert step["env"]["MANIFEST_DIGEST_INPUT"] == "${{ inputs.manifest_digest }}"
+    assert "docs/evidence/gates/RELEASE_MANIFEST.json" not in run
+
+
+def test_the_transported_manifest_is_bound_before_the_lease_is_read() -> None:
+    """A mismatched artifact must fail before anything touches lease state."""
+
+    jobs = _release_workflow()["jobs"]
+    steps = _job_steps(jobs["admission"])
+    names = [str(step.get("name", "")) for step in steps]
+    bind_index = names.index("Bind the transported manifest to the digest the lease names")
+    admit_index = names.index("Validate supervisor release admission")
+    download_index = names.index(
+        "Download the candidate release manifest from its build run"
+    )
+    assert download_index < bind_index < admit_index
+
+    run = steps[bind_index]["run"]
+    assert "delivery_toolchain/release/release_manifest.py" in run
+    assert '--expected-digest "${MANIFEST_DIGEST_INPUT}"' in run
+    assert '--expected-sha "${RELEASE_SHA}"' in run
+    # This step proves transport, not deployability; the release verdict is
+    # admission's to make, and duplicating it here would let the two disagree.
+    assert "--structure-only" in run
+    # An artifact that never arrived must refuse rather than skip the binding.
+    assert "published no candidate release manifest" in run
+
+
+def test_the_manifest_transport_inputs_are_declared_and_never_defaulted() -> None:
+    inputs = _dispatch_inputs()
+    for name in ("manifest_run_id", "manifest_digest"):
+        assert name in inputs, f"the deploy phase cannot transport a manifest without {name}"
+        assert inputs[name]["type"] == "string"
+        # Empty is the build phase's value; a non-empty default would let a
+        # deploy inherit a manifest coordinate nobody dispatched.
+        assert inputs[name].get("default", "") == ""
+
+
+def test_the_phase_gate_refuses_a_deploy_that_names_no_manifest() -> None:
+    """The shape gate is where a missing coordinate is caught, before approval."""
+
+    jobs = _release_workflow()["jobs"]
+    step = _named_step(jobs["release_phase"], "Validate phase and artifact handoff preconditions")
+    run = step["run"]
+    env = step["env"]
+
+    assert env["MANIFEST_RUN_ID_INPUT"] == "${{ inputs.manifest_run_id }}"
+    assert env["MANIFEST_DIGEST_INPUT"] == "${{ inputs.manifest_digest }}"
+    assert '--manifest-run-id "${MANIFEST_RUN_ID_INPUT}"' in run
+    assert '--manifest-digest "${MANIFEST_DIGEST_INPUT}"' in run
+
+
+def test_no_manifest_coordinate_is_sourced_from_a_repository_variable() -> None:
+    """`vars.*` are mutable between the build and the deploy that consumes it.
+
+    Every other input the deploy phase binds to is an exact, dispatch-supplied
+    value. Falling back to a variable would make the manifest a release deploys
+    depend on configuration edited after the lease was issued.
+    """
+
+    jobs = _release_workflow()["jobs"]
+    for job_id in ("release_phase", "admission"):
+        for step in _job_steps(jobs[job_id]):
+            for key, value in (step.get("env") or {}).items():
+                if "MANIFEST" in key:
+                    assert "vars." not in str(value), f"{job_id}:{key}"
+            for key, value in (step.get("with") or {}).items():
+                if key in ("run-id",):
+                    assert "vars." not in str(value), f"{job_id}:{key}"
+
+
+# --------------------------------------------------------------------------
+# ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001: the first release into a target.
+#
+# Schema v2 requires every release to bind the previous approved release, which
+# the first release into a target cannot do. The branch that resolves it is
+# admissible only because the workflow *reads the target back* rather than
+# offering the claim as a dispatch input, and because it reads it again before
+# the lease is spent. These hold that wiring: what produces the claim, what is
+# not allowed to produce it, and where it is re-checked.
+# --------------------------------------------------------------------------
+
+_FIRST_RELEASE_DEPLOY_TARGETS = ("api", "web", "migration", "worker", "scheduler")
+
+
+def _step_names(job: dict) -> list[str]:
+    return [str(step.get("name", step.get("uses", ""))) for step in _job_steps(job)]
+
+
+def _step_index(job: dict, needle: str) -> int:
+    for index, name in enumerate(_step_names(job)):
+        if needle in name:
+            return index
+    raise AssertionError(f"no step matching {needle!r} in {_step_names(job)}")
+
+
+def test_the_first_release_claim_is_a_flag_and_never_its_own_evidence() -> None:
+    """An operator may say "this is the first deploy"; they may not say it is empty.
+
+    The dispatch input selects the branch. The evidence for it -- what is in the
+    target -- has no dispatch channel and no repository-variable fallback at
+    all, because a readback that can be handed in is a declaration.
+    """
+
+    workflow_text = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+    inputs = _dispatch_inputs()
+
+    assert inputs["initial_release_recovery"]["type"] == "boolean"
+    assert inputs["initial_release_recovery"]["required"] is False
+    assert inputs["initial_release_recovery"]["default"] is False
+
+    for forbidden in (
+        "--initial-release-binding-digest",
+        "--prior-release-absent",
+        "--rollback-target-available",
+        "vars.ODP_INITIAL_RELEASE",
+        "initial_release_readback:",
+        "absence_readback:",
+    ):
+        assert forbidden not in workflow_text, (
+            f"deploy-dev.yml must not offer {forbidden}: a first-release claim that "
+            "can be handed in is not a readback"
+        )
+
+
+def test_the_build_phase_reads_the_target_back_before_the_handoff_binds_it() -> None:
+    """The receipt has to exist, and be produced by this build, before it is bound."""
+
+    job = _release_jobs()["build"]
+    probe = _step_index(job, "讀回部署 target")
+    handoff = _step_index(job, "Write the build-once artifact handoff")
+    cloud_sdk = _step_index(job, "Set up Cloud SDK")
+
+    assert cloud_sdk < probe < handoff
+
+    probe_step = _job_steps(job)[probe]
+    assert "probe_release_target_absence.py" in probe_step["run"]
+    assert '--candidate-sha "${ODAY_RELEASE_SHA}"' in probe_step["run"]
+    for component in _FIRST_RELEASE_DEPLOY_TARGETS:
+        assert f'--target "{component}=' in probe_step["run"], (
+            f"the readback must cover the {component} deploy target; a partial "
+            "readback does not prove an empty environment"
+        )
+
+    handoff_step = _job_steps(job)[handoff]
+    assert "--initial-release-readback" in handoff_step["run"]
+    assert "--target-environment" in handoff_step["run"]
+
+
+def test_admission_re_reads_the_target_before_the_lease_is_consumed() -> None:
+    """Build-time truth is not deploy-time truth, and a spent lease is spent.
+
+    The re-read is unconditional on purpose: gating it on the dispatch input
+    would let a forged first-release manifest skip the only check it cannot
+    satisfy by simply not setting the input.
+    """
+
+    job = _release_jobs()["admission"]
+    reprobe = _step_index(job, "重讀部署 target")
+    lease = _step_index(job, "Validate supervisor release admission")
+    transport = _step_index(job, "Bind the transported manifest")
+
+    assert transport < reprobe < lease
+
+    step = _job_steps(job)[reprobe]
+    assert "if" not in step, (
+        "a conditional re-read is one a forged manifest can dispatch around"
+    )
+    assert "probe_release_target_absence.py" in step["run"]
+    assert "--manifest" in step["run"]
+    assert '--candidate-sha "${{ inputs.release_sha }}"' in step["run"]
+    for component in _FIRST_RELEASE_DEPLOY_TARGETS:
+        assert f'--target "{component}=' in step["run"]
+
+
+def test_the_first_release_evidence_leaves_the_runner() -> None:
+    """A refusal or an admission nobody can fetch afterwards is not auditable."""
+
+    build_uploads = [
+        step
+        for step in _job_steps(_release_jobs()["build"])
+        if "initial-release-absence-readback" in str(step.get("with", {}).get("name", ""))
+    ]
+    admission_uploads = [
+        step
+        for step in _job_steps(_release_jobs()["admission"])
+        if "initial-release-recovery-receipt" in str(step.get("with", {}).get("name", ""))
+    ]
+
+    assert len(build_uploads) == 1
+    assert len(admission_uploads) == 1
+    assert admission_uploads[0]["if"] == "always()"
+
+
+def test_first_release_and_dev_policy_keep_one_deploy_and_manual_lease_check() -> None:
+    """Dev standing authority never becomes a staging/production bypass."""
+
+    jobs = _release_jobs()
+    assert sorted(jobs) == [
+        "admission",
+        "automatic_admission",
+        "build",
+        "deploy",
+        "release_phase",
+        "staging_closeout",
+    ]
+    assert len(list(WORKFLOW_DIR.glob("*deploy*.yml"))) == 1
+
+    lease_checks = [
+        step
+        for job in jobs.values()
+        for step in _job_steps(job)
+        if "check_runtime_admission.py" in str(step.get("run", ""))
+    ]
+    assert len(lease_checks) == 1
+    assert "inputs.phase == 'deploy'" in jobs["admission"]["if"]
+    assert "inputs.environment == 'dev'" in jobs["automatic_admission"]["if"]
+    assert jobs["automatic_admission"]["environment"]["name"] == "dev"
+    assert "needs.admission.result == 'success'" in jobs["deploy"]["if"]
+
+
+def test_a_failed_first_deploy_does_not_claim_a_rollback_it_cannot_do() -> None:
+    """The failure path is where an operator learns whether the old version is back.
+
+    For a first release there is no old version, so the recovery is deleting the
+    candidate and holding zero traffic -- and the log has to say that, because
+    "restoring the recorded traffic split" would describe a rollback to a
+    version that has never existed.
+    """
+
+    deploy_script = (ROOT / "product_ops/deployment/deploy_cloud_run_waji.sh").read_text(
+        encoding="utf-8"
+    )
+    traffic_helpers = (
+        ROOT / "product_ops/deployment/cloud_run_release_traffic.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "release_recovery_mode()" in traffic_helpers
+    assert "initial-release-cleanup" in traffic_helpers
+    assert "release_recovery_mode " in deploy_script
+    assert "There is no previous release to roll back to" in deploy_script
+    assert "cleanup_initial_release_candidates" in deploy_script
+    for candidate in (
+        '"${MIGRATION_CANDIDATE_JOB}"',
+        '"${WORKER_CANDIDATE_JOB}"',
+        '"${SCHEDULER_CANDIDATE_JOB}"',
+    ):
+        assert candidate in deploy_script
+    assert "delete_candidate_job" in traffic_helpers
+    assert "Error: one or more Cloud Run recovery actions failed." in deploy_script
+    # The pre-existing honest branch stays: an absent snapshot deletes the
+    # bootstrap candidate rather than restoring traffic that was never there.
+    assert "Deleting bootstrap candidate service" in traffic_helpers
+
+
+# ODP-RELEASE-ADMISSION-JOB-DEPS-001: the admission job used to call the runner's
+# bare `python3`, which carries no project dependencies. `check_runtime_admission`
+# reads the durable lease state through google-cloud-storage whenever the state
+# URI is a gs:// bucket, so every hosted admission failed with
+# "google-cloud-storage is required for gs:// lease state" before it could verify
+# a signature. Run 36027737089 (2026-09-24) is the first dispatch that reached
+# this step and therefore the first to show it. The build and deploy jobs already
+# provision the locked environment; admission has to do the same.
+
+
+def test_admission_provisions_the_locked_environment_before_admitting() -> None:
+    job = _release_jobs()["admission"]
+    names = [step.get("name") for step in _job_steps(job)]
+    admit = names.index("Validate supervisor release admission")
+
+    for required in ("Install uv", "Set up Python", "Install locked project dependencies"):
+        assert required in names, f"admission job is missing the {required!r} step"
+        assert names.index(required) < admit, (
+            f"{required!r} must run before the admission check that needs it"
+        )
+
+
+def test_admission_runs_the_check_inside_the_locked_environment() -> None:
+    """`uv sync` is pointless if the check then runs outside the venv it created."""
+
+    step = _named_step(_release_jobs()["admission"], "Validate supervisor release admission")
+    run = step["run"]
+    assert "uv run python delivery_toolchain/release/check_runtime_admission.py" in run
+    assert "\n          python3 delivery_toolchain/release/check_runtime_admission.py" not in run
+
+
+def test_deploy_job_already_binds_the_private_api_transport_identities() -> None:
+    """ODP-DEV-PRIVATE-API-TRANSPORT-AUTH-001: the API invoker bindings and the
+    transport token reuse identities the deploy job already receives. The token
+    itself is minted at deploy time and is never a stored workflow credential."""
+
+    parsed = yaml.safe_load(RELEASE_WORKFLOW.read_text(encoding="utf-8"))
+    env = parsed["jobs"]["deploy"]["env"]
+    assert env["ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT"] == (
+        "${{ vars.ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT }}"
+    )
+    assert env["ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT"] == (
+        "${{ vars.ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT }}"
+    )
+    assert "ODP_API_INVOKER_TOKEN" not in RELEASE_WORKFLOW.read_text(encoding="utf-8")

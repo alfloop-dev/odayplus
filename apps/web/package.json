@@ -2,9 +2,12 @@
   "name": "@oday-plus/web",
   "version": "0.1.0",
   "private": true,
+  "license": "UNLICENSED",
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/sync-maplibre-worker.mjs && next dev",
+    "prebuild": "node scripts/sync-maplibre-worker.mjs --pre",
     "build": "next build",
+    "postbuild": "node scripts/sync-maplibre-worker.mjs --post",
     "bundle:budget": "node scripts/check-bundle-budget.mjs",
     "start": "next start",
     "lint": "next lint",
@@ -20,9 +23,12 @@
     "@oday-plus/domain-types": "0.1.0",
     "@oday-plus/openapi-client": "0.1.0",
     "@oday-plus/ui": "0.1.0",
+    "@types/pg": "^8.23.1",
+    "argon2": "^0.45.1",
     "h3-js": "^4.4.0",
-    "maplibre-gl": "^5.24.0",
-    "next": "15.5.21",
+    "maplibre-gl": "^6.4.1",
+    "next": "15.5.28",
+    "pg": "^8.23.0",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   },
@@ -34,9 +40,9 @@
     "@types/react": "18.3.12",
     "@types/react-dom": "18.3.1",
     "eslint": "8.57.1",
-    "eslint-config-next": "15.5.19",
-    "happy-dom": "^20.11.0",
+    "eslint-config-next": "15.5.28",
+    "happy-dom": "^21.0.4",
     "typescript": "5.6.3",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.12"
   }
 }

@@ -30,6 +30,60 @@ import type {
 import { operatorSecurityHeaders } from "../operatorSecurityHeaders";
 
 const GOVERNANCE_API_BASE = "/api/v1/operator/governance";
+const COMMENTS_API_BASE = "/api/v1/operator/comments";
+
+export type CommentTargetType = "task" | "decision" | "approval";
+
+export type DecisionCommentHistoryEntry = {
+  action: "created" | "edited" | string;
+  actorId: string;
+  occurredAt: string;
+  content?: string;
+  previousContent?: string;
+  idempotencyKey?: string;
+};
+
+export type DecisionComment = {
+  id: string;
+  tenantId: string;
+  targetType: CommentTargetType;
+  targetId: string;
+  content: string;
+  createdBy: string;
+  createdAt: string;
+  updatedBy?: string | null;
+  updatedAt?: string | null;
+  edited: boolean;
+  editCount: number;
+  correlationId?: string | null;
+  history: DecisionCommentHistoryEntry[];
+};
+
+async function commentsFetch<T>(
+  path: string,
+  options: RequestInit & { correlationId?: string; roleId?: string } = {},
+): Promise<{ ok: true; status: number; data: T } | { ok: false; status: number; data: null }> {
+  const { correlationId, roleId, ...fetchOptions } = options;
+  try {
+    const res = await fetch(`${COMMENTS_API_BASE}${path}`, {
+      ...fetchOptions,
+      headers: {
+        "Content-Type": "application/json",
+        "X-Correlation-Id": correlationId ?? newCorrelationId(),
+        ...operatorSecurityHeaders(roleId),
+        ...(fetchOptions.headers ?? {}),
+      },
+    });
+    if (!res.ok) return { ok: false, status: res.status, data: null };
+    return { ok: true, status: res.status, data: (await res.json()) as T };
+  } catch {
+    return { ok: false, status: 0, data: null };
+  }
+}
+
+function newCommentIdempotencyKey(): string {
+  return `ik-comment-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
 
 /** A single status-board row (Data Quality / Model / Connector / SLA / Users). */
 export type GovernanceStatusRow = {
@@ -41,7 +95,10 @@ export type GovernanceStatusRow = {
   note: string;
 };
 
-/** The five status-board panels every value builder must expose. */
+/** Canonical producer reports persisted record counts, not model readiness. */
+export type GovernanceRecordCount = { name: string; status: string; count: number };
+
+/** Grouped local/legacy status panels, plus canonical repository observations. */
 export type GovernanceStatusBoard = {
   dataQuality: GovernanceStatusRow[];
   models: GovernanceStatusRow[];
@@ -49,6 +106,7 @@ export type GovernanceStatusBoard = {
   sla: GovernanceStatusRow[];
   users: GovernanceStatusRow[];
   runbooks?: GovernanceStatusRow[];
+  recordCounts?: GovernanceRecordCount[];
 };
 
 /** An evidence-package history row. */
@@ -61,13 +119,43 @@ export type GovernanceEvidencePackage = {
   by: string;
 };
 
+/**
+ * What the authenticated principal may do in Govern, as verified by the API
+ * from its durable platform roles. The selected workspace persona is a view,
+ * not authority; only this record may enable or label business decisions.
+ */
+export type GovernanceActionAuthority = {
+  verified: boolean;
+  systemRoles: string[];
+  decide: boolean;
+  exportEvidence: boolean;
+};
+
+/** Parse `actionAuthority` defensively; anything malformed confirms nothing. */
+export function normalizeGovernanceActionAuthority(value: unknown): GovernanceActionAuthority | null {
+  if (typeof value !== "object" || value === null) return null;
+  const record = value as Record<string, unknown>;
+  if (record.verified !== true) {
+    return { verified: false, systemRoles: [], decide: false, exportEvidence: false };
+  }
+  return {
+    verified: true,
+    systemRoles: Array.isArray(record.systemRoles)
+      ? record.systemRoles.filter((role): role is string => typeof role === "string" && role.length > 0)
+      : [],
+    decide: record.decide === true,
+    exportEvidence: record.exportEvidence === true,
+  };
+}
+
 /** The full Govern workspace snapshot returned by the API. */
 export type GovernanceSnapshot = {
   approvals: GovernanceApproval[];
   decisions: GovernanceDecisionRow[];
   auditRows: GovernanceAuditRow[];
-  statusBoard: GovernanceStatusBoard;
+  statusBoard: GovernanceStatusBoard | GovernanceRecordCount[];
   evidencePackages: GovernanceEvidencePackage[];
+  actionAuthority?: GovernanceActionAuthority | null;
   correlationId?: string;
   source?: string;
 };
@@ -82,12 +170,15 @@ function newCorrelationId(): string {
 
 async function apiFetch<T>(
   path: string,
-  options: RequestInit & { correlationId?: string; roleId?: string } = {},
+  options: RequestInit & { correlationId?: string; roleId?: string; timeoutMs?: number } = {},
 ): Promise<{ ok: true; status: number; data: T } | { ok: false; status: number; data: null }> {
-  const { correlationId, roleId, ...fetchOptions } = options;
+  const { correlationId, roleId, timeoutMs, ...fetchOptions } = options;
+  const controller = timeoutMs ? new AbortController() : undefined;
+  const timeout = timeoutMs ? setTimeout(() => controller?.abort(), timeoutMs) : undefined;
   try {
     const res = await fetch(`${GOVERNANCE_API_BASE}${path}`, {
       ...fetchOptions,
+      signal: controller?.signal ?? fetchOptions.signal,
       headers: {
         "Content-Type": "application/json",
         "X-Correlation-Id": correlationId ?? newCorrelationId(),
@@ -101,6 +192,8 @@ async function apiFetch<T>(
     return { ok: true, status: res.status, data: (await res.json()) as T };
   } catch {
     return { ok: false, status: 0, data: null };
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
   }
 }
 
@@ -117,19 +210,21 @@ export async function fetchGovernanceSnapshot(
     approvals: GovernanceApproval[];
     decisions: GovernanceDecisionRow[];
     auditRows: GovernanceAuditRow[];
-    statusBoard: GovernanceStatusBoard;
+    statusBoard: GovernanceStatusBoard | GovernanceRecordCount[];
     evidencePackages: GovernanceEvidencePackage[];
+    actionAuthority?: unknown;
     correlation_id?: string;
     source?: string;
   }>("/snapshot", { method: "GET", headers, roleId });
   if (!result.ok || !result.data) return null;
   const data = result.data;
   return {
-    approvals: data.approvals ?? [],
-    decisions: data.decisions ?? [],
-    auditRows: data.auditRows ?? [],
+    approvals: data.approvals,
+    decisions: data.decisions,
+    auditRows: data.auditRows,
     statusBoard: data.statusBoard,
-    evidencePackages: data.evidencePackages ?? [],
+    evidencePackages: data.evidencePackages,
+    actionAuthority: normalizeGovernanceActionAuthority(data.actionAuthority),
     correlationId: data.correlation_id,
     source: data.source,
   };
@@ -152,15 +247,19 @@ export async function submitGovernanceDecision(params: {
   role?: string;
   actorName?: string;
   roleId?: string;
+  idempotencyKey?: string;
 }): Promise<GovernanceDecisionResult> {
-  const headers: Record<string, string> = { "Idempotency-Key": newIdempotencyKey() };
+  const headers: Record<string, string> = { "Idempotency-Key": params.idempotencyKey ?? newIdempotencyKey() };
   if (params.roleId) headers["X-Operator-Role"] = params.roleId;
   const result = await apiFetch<{
+    approvalId: string;
+    action: GovernanceDecisionAction;
     finalDecision: string;
     status: string;
     correlation_id?: string;
   }>("/decisions", {
     method: "POST",
+    timeoutMs: 20_000,
     headers,
     roleId: params.roleId,
     body: JSON.stringify({
@@ -171,7 +270,8 @@ export async function submitGovernanceDecision(params: {
       actorName: params.actorName,
     }),
   });
-  if (result.ok && result.data) {
+  const expected = { approve: ["approved", "Approved"], return: ["returned", "Returned"], reject: ["rejected", "Rejected"] }[params.action];
+  if (result.ok && result.data && result.data.approvalId === params.approvalId && result.data.action === params.action && result.data.status === expected[0] && result.data.finalDecision === expected[1]) {
     return {
       ok: true,
       finalDecision: result.data.finalDecision,
@@ -183,7 +283,7 @@ export async function submitGovernanceDecision(params: {
     ok: false,
     policyError: result.status === 422,
     status: result.status,
-    detail: result.status === 422 ? "退回或駁回理由需至少 10 個字" : "決策未送出（API 無法連線）",
+    detail: result.status === 422 ? "退回或駁回理由需至少 10 個字" : "尚未確認決策結果，請重試相同內容以核對。",
   };
 }
 
@@ -216,11 +316,13 @@ export async function exportEvidencePackage(params: {
   actorName?: string;
   retentionPolicy?: string;
   roleId?: string;
+  idempotencyKey?: string;
 }): Promise<EvidencePackageRecord | null> {
-  const headers: Record<string, string> = { "Idempotency-Key": newIdempotencyKey() };
+  const headers: Record<string, string> = { "Idempotency-Key": params.idempotencyKey ?? newIdempotencyKey() };
   if (params.roleId) headers["X-Operator-Role"] = params.roleId;
   const result = await apiFetch<{ package: EvidencePackageRecord }>("/evidence-package", {
     method: "POST",
+    timeoutMs: 20_000,
     headers,
     roleId: params.roleId,
     body: JSON.stringify({
@@ -235,5 +337,66 @@ export async function exportEvidencePackage(params: {
     }),
   });
   if (!result.ok || !result.data) return null;
-  return result.data.package;
+  const record = result.data.package;
+  const modules = params.modules.filter(Boolean);
+  const contents = params.contents.filter(Boolean);
+  if (!record?.id || record.scope?.dateFrom !== params.dateFrom || record.scope.dateTo !== params.dateTo || record.format !== (params.format ?? "PDF") ||
+      JSON.stringify(record.scope.modules) !== JSON.stringify(modules.length ? modules : ["全模組"]) ||
+      JSON.stringify(record.scope.contents) !== JSON.stringify(contents.length ? contents : ["Audit Trail", "Decision Log"])) return null;
+  return record;
+}
+
+/** Fetch comments attached to one canonical task, decision, or approval. */
+export async function fetchDecisionComments(params: {
+  targetType: CommentTargetType;
+  targetId: string;
+  roleId?: string;
+}): Promise<DecisionComment[] | null> {
+  const query = new URLSearchParams({
+    targetType: params.targetType,
+    targetId: params.targetId,
+  });
+  const result = await commentsFetch<{ items?: DecisionComment[] }>(`?${query.toString()}`, {
+    method: "GET",
+    roleId: params.roleId,
+  });
+  return result.ok && result.data ? result.data.items ?? [] : null;
+}
+
+/** Create an attached comment; the API derives tenant and actor from auth. */
+export async function createDecisionComment(params: {
+  targetType: CommentTargetType;
+  targetId: string;
+  content: string;
+  roleId?: string;
+}): Promise<DecisionComment | null> {
+  const result = await commentsFetch<{ comment?: DecisionComment }>("", {
+    method: "POST",
+    roleId: params.roleId,
+    headers: { "Idempotency-Key": newCommentIdempotencyKey() },
+    body: JSON.stringify({
+      targetType: params.targetType,
+      targetId: params.targetId,
+      content: params.content,
+    }),
+  });
+  return result.ok && result.data?.comment ? result.data.comment : null;
+}
+
+/** Edit a comment without exposing target or decision fields to the client. */
+export async function editDecisionComment(params: {
+  commentId: string;
+  content: string;
+  roleId?: string;
+}): Promise<DecisionComment | null> {
+  const result = await commentsFetch<{ comment?: DecisionComment }>(
+    `/${encodeURIComponent(params.commentId)}`,
+    {
+      method: "PATCH",
+      roleId: params.roleId,
+      headers: { "Idempotency-Key": newCommentIdempotencyKey() },
+      body: JSON.stringify({ content: params.content }),
+    },
+  );
+  return result.ok && result.data?.comment ? result.data.comment : null;
 }

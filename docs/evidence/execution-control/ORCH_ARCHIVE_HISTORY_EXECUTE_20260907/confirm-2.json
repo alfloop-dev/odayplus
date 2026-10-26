@@ -1,0 +1,21 @@
+{
+  "started_at": "2026-09-09T16:23:20.897738+00:00",
+  "finished_at": "2026-09-09T16:23:43.710719+00:00",
+  "argv": [
+    "/home/lupin/odayplus/scripts/ai-status.sh",
+    "archive_recovery_invalidate",
+    "ODP-MODELREADY-QUALITY-NULLABLE-001",
+    "--coordination-task",
+    "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
+    "--reason",
+    "撤回錯誤歷史完成判定：原 A4 所要求的缺值 production-entry 測試證據尚未成立；所引測試仍提供完整 quality/confidence。",
+    "--evidence-ref",
+    "https://github.com/alfloop-dev/odayplus/blob/af6b027439f2525cd03e78b5720f6cef855869ff/docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_disposition_corrections_20260909.json",
+    "--expected-sha256",
+    "d70d96a8acae775d9babb277d033760062c84a702210d68827455fdfa1be73ea",
+    "--confirm"
+  ],
+  "exit_code": 0,
+  "stdout": "{\n  \"status\": \"applied\",\n  \"action\": \"archive_recovery_invalidation\",\n  \"task_id\": \"ODP-MODELREADY-QUALITY-NULLABLE-001\",\n  \"correction_path\": \"ai-task-archive/corrections/ODP-MODELREADY-QUALITY-NULLABLE-001.json\",\n  \"correction\": {\n    \"schema_version\": 1,\n    \"type\": \"archive_recovery_invalidation\",\n    \"task_id\": \"ODP-MODELREADY-QUALITY-NULLABLE-001\",\n    \"snapshot_sha256\": \"d70d96a8acae775d9babb277d033760062c84a702210d68827455fdfa1be73ea\",\n    \"invalidated_at\": \"2026-09-09T16:23:21Z\",\n    \"actor\": \"Codex\",\n    \"coordination_task_id\": \"ORCH-ARCHIVE-HISTORY-EXECUTE-003\",\n    \"reason\": \"撤回錯誤歷史完成判定：原 A4 所要求的缺值 production-entry 測試證據尚未成立；所引測試仍提供完整 quality/confidence。\",\n    \"evidence_ref\": \"https://github.com/alfloop-dev/odayplus/blob/af6b027439f2525cd03e78b5720f6cef855869ff/docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_disposition_corrections_20260909.json\",\n    \"effective_status\": \"blocked\",\n    \"dependency_satisfied\": false\n  },\n  \"effective_status\": \"blocked\",\n  \"dependency_satisfied\": false\n}\n",
+  "stderr": ""
+}

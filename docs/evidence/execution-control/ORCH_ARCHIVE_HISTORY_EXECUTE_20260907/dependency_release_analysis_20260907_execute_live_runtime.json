@@ -1,0 +1,118 @@
+{
+  "measured_at": "2026-09-07T15:58:27Z",
+  "inputs": {
+    "board_path": "/home/lupin/odayplus/ai-status.json",
+    "board_sha256": "e37018f85faf4eba0703bdf73e883aee2da66b2f50c4b46cc6dc32bf8992ad05",
+    "board_revision": "c12ef86277934c1ba51ae1223aa9ac42",
+    "board_active_tasks": 26,
+    "config_path": "/home/lupin/odayplus/.orchestrator/config.json",
+    "archive_snapshots": 14,
+    "code_checkout": "/home/lupin/oday-plus-supervisor-runtime-0a8befbfc0a2",
+    "code_identical_to_live_runtime": true,
+    "dependency_done_statuses": [
+      "done"
+    ],
+    "ready_dispatcher_enabled": true
+  },
+  "scenarios": {
+    "BEFORE": {
+      "injected_records": 0,
+      "dispatchable_ids": [
+        "ODP-GCP-STAGING-EXECUTION-PREFLIGHT-002",
+        "ORCH-ARCHIVE-HISTORY-EXECUTE-003"
+      ],
+      "dispatchable_count": 2,
+      "dispatchable_pre_existing_only": [
+        "ODP-GCP-STAGING-EXECUTION-PREFLIGHT-002",
+        "ORCH-ARCHIVE-HISTORY-EXECUTE-003"
+      ],
+      "dependencies_satisfied_true": [
+        "ORCH-ARCHIVE-HISTORY-EXECUTE-003"
+      ],
+      "blocked_auto_recovery_eligible_true": []
+    },
+    "A_all_blocked_placeholders": {
+      "injected_records": 38,
+      "dispatchable_ids": [
+        "ODP-GCP-STAGING-EXECUTION-PREFLIGHT-002",
+        "ORCH-ARCHIVE-HISTORY-EXECUTE-003"
+      ],
+      "dispatchable_count": 2,
+      "dispatchable_pre_existing_only": [
+        "ODP-GCP-STAGING-EXECUTION-PREFLIGHT-002",
+        "ORCH-ARCHIVE-HISTORY-EXECUTE-003"
+      ],
+      "dependencies_satisfied_true": [
+        "ORCH-ARCHIVE-HISTORY-EXECUTE-003"
+      ],
+      "blocked_auto_recovery_eligible_true": [],
+      "newly_dispatchable_vs_before": [],
+      "newly_dependencies_satisfied_vs_before": [],
+      "newly_dispatchable_count": 0
+    },
+    "B_23_done_15_blocked": {
+      "injected_records": 38,
+      "dispatchable_ids": [
+        "ODP-DRIFT-SECURITY-VERIFY-003",
+        "ODP-GCP-STAGING-EXECUTION-PREFLIGHT-002",
+        "ORCH-ARCHIVE-HISTORY-EXECUTE-003"
+      ],
+      "dispatchable_count": 3,
+      "dispatchable_pre_existing_only": [
+        "ODP-DRIFT-SECURITY-VERIFY-003",
+        "ODP-GCP-STAGING-EXECUTION-PREFLIGHT-002",
+        "ORCH-ARCHIVE-HISTORY-EXECUTE-003"
+      ],
+      "dependencies_satisfied_true": [
+        "ODP-AVM-QUALITY-NULLABLE-001",
+        "ODP-DRIFT-SECURITY-VERIFY-003",
+        "ORCH-ARCHIVE-HISTORY-EXECUTE-003"
+      ],
+      "blocked_auto_recovery_eligible_true": [],
+      "newly_dispatchable_vs_before": [
+        "ODP-DRIFT-SECURITY-VERIFY-003"
+      ],
+      "newly_dependencies_satisfied_vs_before": [
+        "ODP-AVM-QUALITY-NULLABLE-001",
+        "ODP-DRIFT-SECURITY-VERIFY-003"
+      ],
+      "newly_dispatchable_count": 1
+    },
+    "C_upper_bound_all_38_done_NOT_ASSERTED": {
+      "injected_records": 38,
+      "dispatchable_ids": [
+        "ODP-DRIFT-SECURITY-VERIFY-003",
+        "ODP-GCP-STAGING-EXECUTION-PREFLIGHT-002",
+        "ORCH-ARCHIVE-HISTORY-EXECUTE-003"
+      ],
+      "dispatchable_count": 3,
+      "dispatchable_pre_existing_only": [
+        "ODP-DRIFT-SECURITY-VERIFY-003",
+        "ODP-GCP-STAGING-EXECUTION-PREFLIGHT-002",
+        "ORCH-ARCHIVE-HISTORY-EXECUTE-003"
+      ],
+      "dependencies_satisfied_true": [
+        "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+        "HUMAN-OSS-LEGAL-APPROVAL-001",
+        "ODP-AVM-QUALITY-NULLABLE-001",
+        "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+        "ODP-DRIFT-SECURITY-VERIFY-003",
+        "ODP-ROLE-PROVIDER-CODEX-LIVE-ROLLOUT-001",
+        "ORCH-ARCHIVE-HISTORY-EXECUTE-003"
+      ],
+      "blocked_auto_recovery_eligible_true": [],
+      "newly_dispatchable_vs_before": [
+        "ODP-DRIFT-SECURITY-VERIFY-003"
+      ],
+      "newly_dependencies_satisfied_vs_before": [
+        "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+        "HUMAN-OSS-LEGAL-APPROVAL-001",
+        "ODP-AVM-QUALITY-NULLABLE-001",
+        "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+        "ODP-DRIFT-SECURITY-VERIFY-003",
+        "ODP-ROLE-PROVIDER-CODEX-LIVE-ROLLOUT-001"
+      ],
+      "newly_dispatchable_count": 1
+    }
+  }
+}

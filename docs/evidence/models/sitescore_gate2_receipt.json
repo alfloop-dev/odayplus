@@ -1,17 +1,26 @@
 {
   "artifact_hashes": {
-    "handback_hash": "293ff10be98395684400ff9d810891d658eb450c7761f0955c89bec5bd96dd21",
-    "model_card_hash": "16b3927153f59441b76fc8f150a0d72fa8157761b6090b025a009ede9a585302"
+    "handback_hash": "e8e4c32406839fafdf0680ed71cd33792c5c02b1c046b146700168be9b6d3595",
+    "model_card_hash": "4863bb960abfed7249a64daccf22baa5afa6a85d58a12aa6816fb701abaa10c4",
+    "prediction_receipt_hash": "UNVERIFIED"
   },
   "benchmark_summary": {
     "activation_threshold": 200,
     "artifact_lineage_id": null,
     "calibration_summary": {
       "interval_bounds_coverage_ratio": 0.0,
+      "m12_matched_prediction_count": 0,
+      "m12_normalized_mae": 0.0,
+      "m12_prediction_coverage_ratio": 0.0,
+      "m6_matched_prediction_count": 0,
+      "m6_normalized_mae": 0.0,
+      "m6_prediction_coverage_ratio": 0.0,
       "matched_mean_realized_revenue": 0.0,
       "matched_prediction_count": 0,
       "mean_realized_revenue": 0.0,
       "measured_90d_mae": null,
+      "measured_m12_mae": null,
+      "measured_m6_mae": null,
       "p80_coverage_ratio": 0.0,
       "prediction_coverage_ratio": 0.0,
       "unmatched_mean_realized_revenue": 0.0
@@ -23,7 +32,7 @@
       "backfill_owner": "Human/Ops",
       "backfill_receipt_required": true,
       "backfill_task_id": "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001",
-      "discovery_inventory_query": "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS store_age_days FROM model_ready.candidate_site_view;",
+      "discovery_inventory_query": "SELECT c.entity_id, c.store_id, c.target_format_code, c.opened_on, c.is_training_eligible, c.realized_90d_net_revenue, c.realized_180d_net_revenue, c.realized_365d_net_revenue, (CURRENT_DATE - c.opened_on)::integer AS store_age_days, p.prediction_as_of, p.model_version, p.horizon_code, p.predicted_revenue, p.p10, p.p90, p.p50, p.dataset_snapshot_id, p.artifact_lineage_id FROM model_ready.candidate_site_view c LEFT JOIN model_ready.sitescore_predictions p ON (c.entity_id = p.entity_id OR c.store_id = p.store_id) AND c.opened_on = p.prediction_as_of AND p.model_version = 'candidate-site-view-v2';",
       "eligible_count": 0,
       "governed_disabled": true,
       "handback_action": "Provide authoritative outcome backfill receipt (ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001) and prediction-source receipt (ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001) with true M6/M12 realized net revenue, interval bounds, and lineage.",
@@ -45,7 +54,7 @@
       "observed_count": 0,
       "outcome_backfill_contract": {
         "dataset_snapshot_hash": "UNVERIFIED",
-        "discovery_inventory_query": "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS store_age_days FROM model_ready.candidate_site_view;",
+        "discovery_inventory_query": "SELECT c.entity_id, c.store_id, c.target_format_code, c.opened_on, c.is_training_eligible, c.realized_90d_net_revenue, c.realized_180d_net_revenue, c.realized_365d_net_revenue, (CURRENT_DATE - c.opened_on)::integer AS store_age_days, p.prediction_as_of, p.model_version, p.horizon_code, p.predicted_revenue, p.p10, p.p90, p.p50, p.dataset_snapshot_id, p.artifact_lineage_id FROM model_ready.candidate_site_view c LEFT JOIN model_ready.sitescore_predictions p ON (c.entity_id = p.entity_id OR c.store_id = p.store_id) AND c.opened_on = p.prediction_as_of AND p.model_version = 'candidate-site-view-v2';",
         "discovery_query_id": "sitescore_opening_outcome_discovery_query_v1",
         "discovery_source_identity": "model_ready.candidate_site_view",
         "eligibility_definition": "is_training_eligible IS True or eligible IS True",
@@ -140,11 +149,13 @@
     "min_coverage_threshold": 0.7,
     "model_version": null,
     "normalized_mae": 0.0,
-    "observed_at": "2026-08-01T14:59:51.147392Z",
+    "observed_at": "2026-08-31T16:06:05.300715Z",
     "observed_count": 0,
     "p80_coverage": 0.0,
     "population_aggregate_digest": "UNAVAILABLE",
     "prediction_coverage_ratio": 0.0,
+    "prediction_receipt_hash": "UNVERIFIED",
+    "prediction_source_verified": false,
     "provenance": "no_source",
     "realized_revenue_sum": 0,
     "reason_code": "NO_SOURCE_INVENTORY",
@@ -159,7 +170,7 @@
     "backfill_owner": "Human/Ops",
     "backfill_receipt_required": true,
     "backfill_task_id": "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001",
-    "discovery_inventory_query": "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS store_age_days FROM model_ready.candidate_site_view;",
+    "discovery_inventory_query": "SELECT c.entity_id, c.store_id, c.target_format_code, c.opened_on, c.is_training_eligible, c.realized_90d_net_revenue, c.realized_180d_net_revenue, c.realized_365d_net_revenue, (CURRENT_DATE - c.opened_on)::integer AS store_age_days, p.prediction_as_of, p.model_version, p.horizon_code, p.predicted_revenue, p.p10, p.p90, p.p50, p.dataset_snapshot_id, p.artifact_lineage_id FROM model_ready.candidate_site_view c LEFT JOIN model_ready.sitescore_predictions p ON (c.entity_id = p.entity_id OR c.store_id = p.store_id) AND c.opened_on = p.prediction_as_of AND p.model_version = 'candidate-site-view-v2';",
     "eligible_count": 0,
     "governed_disabled": true,
     "handback_action": "Provide authoritative outcome backfill receipt (ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001) and prediction-source receipt (ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001) with true M6/M12 realized net revenue, interval bounds, and lineage.",
@@ -181,7 +192,7 @@
     "observed_count": 0,
     "outcome_backfill_contract": {
       "dataset_snapshot_hash": "UNVERIFIED",
-      "discovery_inventory_query": "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS store_age_days FROM model_ready.candidate_site_view;",
+      "discovery_inventory_query": "SELECT c.entity_id, c.store_id, c.target_format_code, c.opened_on, c.is_training_eligible, c.realized_90d_net_revenue, c.realized_180d_net_revenue, c.realized_365d_net_revenue, (CURRENT_DATE - c.opened_on)::integer AS store_age_days, p.prediction_as_of, p.model_version, p.horizon_code, p.predicted_revenue, p.p10, p.p90, p.p50, p.dataset_snapshot_id, p.artifact_lineage_id FROM model_ready.candidate_site_view c LEFT JOIN model_ready.sitescore_predictions p ON (c.entity_id = p.entity_id OR c.store_id = p.store_id) AND c.opened_on = p.prediction_as_of AND p.model_version = 'candidate-site-view-v2';",
       "discovery_query_id": "sitescore_opening_outcome_discovery_query_v1",
       "discovery_source_identity": "model_ready.candidate_site_view",
       "eligibility_definition": "is_training_eligible IS True or eligible IS True",
@@ -260,15 +271,16 @@
     "unmatched_mean_y": 0.0
   },
   "integrity": {
-    "content_sha256": "fbd76b8b279971ea1d00cd4791768611808dc777667a16e6077127bcbb5e6b7b",
-    "handback_hash": "293ff10be98395684400ff9d810891d658eb450c7761f0955c89bec5bd96dd21",
-    "model_card_hash": "16b3927153f59441b76fc8f150a0d72fa8157761b6090b025a009ede9a585302"
+    "content_sha256": "f557abb7e6058d6716d6636c17d2b2c9011ddec7f4c5392c3e2babdae73fed43",
+    "handback_hash": "e8e4c32406839fafdf0680ed71cd33792c5c02b1c046b146700168be9b6d3595",
+    "model_card_hash": "4863bb960abfed7249a64daccf22baa5afa6a85d58a12aa6816fb701abaa10c4",
+    "prediction_receipt_hash": "UNVERIFIED"
   },
   "inventory_version": "candidate-site-view-v2",
   "is_governed_disabled": true,
   "kind": "sitescore-opening-outcome-gate2-receipt",
   "model_name": "sitescore_propensity",
-  "observed_at": "2026-08-01T14:59:51.147392Z",
+  "observed_at": "2026-08-31T16:06:05.300715Z",
   "provenance": "no_source",
   "schema_version": 1,
   "service": "sitescore",

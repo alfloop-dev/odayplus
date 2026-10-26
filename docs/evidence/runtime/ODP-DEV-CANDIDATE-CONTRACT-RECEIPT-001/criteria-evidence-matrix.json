@@ -1,0 +1,182 @@
+{
+  "schema_version": "2.0.0",
+  "task_id": "ODP-DEV-CANDIDATE-CONTRACT-RECEIPT-001",
+  "gate_id": "gate-1",
+  "gate_name": "Contract Gate",
+  "candidate_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+  "manifest_digest": "sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c",
+  "evidence_source_sha": "d084f51d4009b7b435416c8b83410a8b4fb4a267",
+  "matrix": [
+    {
+      "criterion_id": "G1-CRIT-01",
+      "category": "OpenAPI & API Contract",
+      "title": "OpenAPI Diff & Client Synchronization",
+      "description": "API contract is documented via OpenAPI 3.1.0, exported deterministically, and reflected synchronously in generated client types without unapproved breaking changes.",
+      "required_checks": [
+        "packages/openapi-client/openapi.json matches live FastAPI route definitions",
+        "packages/openapi-client/src/generated/types.ts matches openapi.json",
+        "Breaking changes are classified and validated against approved breaking changes register"
+      ],
+      "candidate_evidence": {
+        "openapi_spec_path": "packages/openapi-client/openapi.json",
+        "openapi_spec_sha256": "699c9ead25e68a8efbfde5084a394a09cb92885cfd48015cd70141b7d3c781d5",
+        "client_types_path": "packages/openapi-client/src/generated/types.ts",
+        "client_types_sha256": "9f8f3132833c0b39f562d3ad4b303ee254cca62c70c1db24268d2c809c4900f1",
+        "approved_breaking_changes_path": "delivery_toolchain/openapi/approved_breaking_changes.json",
+        "approved_breaking_changes_sha256": "d23d4802c92fd96fecf1166e45cd62abec12cf6c8544cf52652ac962aa31eafd",
+        "verifier_script": "delivery_toolchain/openapi/check_drift.py",
+        "executed_tests": [
+          "tests/contract/test_openapi_artifact_and_client.py (executed via batch EXEC-02, batch 94 passed; static inventory 22 cases)"
+        ],
+        "drift_check_result": "PASS (EXEC-01-OPENAPI-DRIFT)"
+      },
+      "breaking_change_plan": {
+        "policy": "Expand/contract without destructive drop",
+        "migration_path": "FastAPI route matching verified by check_drift.py; no breaking modifications against live schema",
+        "compatibility_window": "N/A for initial dev release; cross-release diff unverified due to baseline absence",
+        "rollback_plan": "delete-candidate-zero-traffic",
+        "enforcement_status": "freshness_verified_baseline_diff_unknown"
+      },
+      "evaluation_status": "partially_verified_freshness_passed_diff_baseline_unknown",
+      "gap_or_blocker_note": "Artifact and client are byte-exact synchronized. Diff against an approved prior release cannot be attested because candidate C is an initial dev release without prior approved contract baseline. Diffing against C itself or moving dev is prohibited.",
+      "remediation_owner": "ODP-PLAN-ENGINEERING-HARDENING-001 / Codex"
+    },
+    {
+      "criterion_id": "G1-CRIT-02",
+      "category": "Event & Schema Contracts",
+      "title": "Event Schema Compatibility",
+      "description": "Asynchronous events, domain ingestion states, and cross-boundary message contracts are schema-governed and validated against typed fixtures.",
+      "required_checks": [
+        "Domain intake events conform to JSON Schema definitions",
+        "State machine transitions conform to domain intake lifecycles",
+        "Canonical schemas in packages/schemas/ validate without drift"
+      ],
+      "candidate_evidence": {
+        "schema_directories": [
+          "packages/schemas/source_contracts/",
+          "packages/schemas/src/"
+        ],
+        "executed_test_modules": [
+          "tests/contract/test_canonical_schema.py (executed via batch EXEC-03, batch 45 passed; static inventory 12 cases)"
+        ],
+        "skipped_test_modules": [
+          "tests/contract/test_assisted_listing_intake_events.py (not_selected_in_offline_batch; in-memory tests, unverified)",
+          "tests/contract/test_assisted_listing_intake_schema.py (not_selected_in_offline_batch / unverified)",
+          "tests/contract/test_assisted_listing_intake_states.py (not_selected_in_offline_batch / unverified)",
+          "tests/contract/test_ingestion_contracts.py (not_selected_in_offline_batch / unverified)",
+          "tests/contract/test_signal_store_client.py (not_selected_in_offline_batch / unverified)"
+        ]
+      },
+      "breaking_change_plan": {
+        "policy": "Proposed policy in docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml (status: proposed) specifies consumer ignore-unknown and dual publication; however payload schemas specify additionalProperties: false and shared/domain/events.py:174-175 explicitly rejects extra fields.",
+        "migration_path": "Policy vs implementation gap exists; dual-read and additive migration capabilities are proposed/unverified on candidate C.",
+        "compatibility_window": "Multi-version event replay window requires staging observation; unverified on candidate C.",
+        "rollback_plan": "delete-candidate-zero-traffic for dev deployment.",
+        "enforcement_status": "proposed_policy_with_implementation_gap_unverified"
+      },
+      "evaluation_status": "partially_verified_canonical_schema_only_event_replay_unverified",
+      "gap_or_blocker_note": "Canonical entity schemas executed via EXEC-03 batch on candidate C (batch 45 passed; static inventory 12 cases). Domain intake events and ingestion contracts were not selected in minimal offline batch (not_selected_in_offline_batch). Event evolution policy is proposed and conflicts with strict additionalProperties:false implementation; dual-read/migration remain unverified.",
+      "remediation_owner": "Claude / Platform"
+    },
+    {
+      "criterion_id": "G1-CRIT-03",
+      "category": "Data Contracts & Pinning",
+      "title": "Data Platform Foundation & Product Contract Pinning",
+      "description": "ODay Plus consumes the data platform via immutable pinned contract release packages, verifying digests and avoiding raw producer database table dependencies.",
+      "required_checks": [
+        "Foundation client pinned to exact release oday-data-foundation-contracts.v0.4.1",
+        "Product client pinned to exact release oday-data-product-contracts.v0.4.1",
+        "Data contract digest matches release manifest"
+      ],
+      "candidate_evidence": {
+        "foundation_client": "packages/oday_data_contracts_client",
+        "foundation_pin_release": "oday-data-foundation-contracts.v0.4.1",
+        "product_client": "packages/oday_data_product_contracts_client",
+        "product_pin_release": "oday-data-product-contracts.v0.4.1",
+        "manifest_data_contract_digest": "sha256:05e2cb05619f1c524b0f9578e4ceba9ec863d143d5e64b0eeac97539ce8e7c73",
+        "manifest_source_policy_digest": "sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824",
+        "manifest_migration_digest": "sha256:17794de9afb84681aabff9ed0966dedde83d950aef132de519fdc193099e620b",
+        "executed_test_modules": [
+          "tests/contract/test_oday_data_contract_pin.py (executed via batch EXEC-02, batch 94 passed; static inventory 32 cases)",
+          "tests/contract/test_oday_data_product_contract_pin.py (executed via batch EXEC-02, batch 94 passed; static inventory 40 cases)"
+        ],
+        "skipped_test_modules": [
+          "tests/contract/test_manual_correction_contract.py (not_selected_in_offline_batch / unverified)"
+        ]
+      },
+      "breaking_change_plan": {
+        "policy": "Consumer-side package pinning (v0.4.1) without producer DDL dependency; pin changes require re-vendoring, checksum updates, and client regeneration",
+        "migration_path": "Initial consumer pin at v0.4.1 (no v0.4.0 consumer baseline evaluated on C); producer supported_release_versions [0.4.0, 0.4.1] is declared but consumer cross-version migration is unverified; schema migration digest tracked in RELEASE_MANIFEST.json",
+        "compatibility_window": "N/A for initial dev release; cross-version transition window unverified without prior baseline",
+        "rollback_plan": "delete-candidate-zero-traffic; consumer package pin rollback to v0.4.0 is unverified/not evaluated (requires re-vendoring and client regeneration)",
+        "enforcement_status": "package_pins_v041_verified_migration_window_rollback_unverified_gate2_deferred"
+      },
+      "evaluation_status": "partially_verified_contract_pins_passed_manual_correction_skipped",
+      "gap_or_blocker_note": "Data contract pin tests pass in EXEC-02 batch on candidate C (batch 94 passed; data pin static inventory 72 cases total) and digests match RELEASE_MANIFEST.json. Candidate C introduces consumer pins directly at v0.4.1 without evaluated v0.4.0 baseline or migration history; cross-version migration, transition window, and rollback to v0.4.0 remain unverified. Deployed data-plane reconciliation against live database requires Gate 2 (Data Gate) post-deployment verification.",
+      "remediation_owner": "Codex2 / Data Platform"
+    },
+    {
+      "criterion_id": "G1-CRIT-04",
+      "category": "Model & Decision Interfaces",
+      "title": "Model Input / Output Contract Compatibility",
+      "description": "Model parameter schemas, simulation writebacks, and scoring API contracts are typed and validate input/output envelopes.",
+      "required_checks": [
+        "Pricing simulation writeback contract enforces idempotency and parameter validation",
+        "Heatzone composition schemas validate geographic and score bounds",
+        "Operator scoring and governance API response envelopes conform"
+      ],
+      "candidate_evidence": {
+        "executed_test_modules": [
+          "tests/contract/test_pricing_simulation_contract.py (executed via batch EXEC-03, batch 45 passed; static inventory 2 cases)",
+          "tests/contract/test_heatzone_composition_schema.py (executed via batch EXEC-03, batch 45 passed; static inventory 8 cases)",
+          "tests/contract/test_decision_policy_registry_schema.py (executed via batch EXEC-03, batch 45 passed; static inventory 23 cases)"
+        ],
+        "skipped_test_modules": [
+          "tests/contract/test_operator_network_scoring_api.py (not_selected_in_offline_batch; TestClient in-memory test, unverified)"
+        ]
+      },
+      "breaking_change_plan": {
+        "policy": "Typed envelopes with required input validation and idempotent writeback",
+        "migration_path": "Additive schema parameter additions; policy registry versioned",
+        "compatibility_window": "Shadow evaluation and side-by-side run in staging (Gate 3)",
+        "rollback_plan": "Revert model alias routing; dev recovery: delete-candidate-zero-traffic",
+        "enforcement_status": "interface_schemas_verified_gate3_retains_model_approval"
+      },
+      "evaluation_status": "partially_verified_offline_interfaces_passed_scoring_skipped",
+      "gap_or_blocker_note": "Model interface schemas and pricing simulation writeback pass in EXEC-03 batch on candidate C (batch 45 passed; static inventory 33 cases for these 3 modules). Scoring API test was not selected in offline batch. Gate 3 (Model & Solver Gate) retains responsibility for dataset snapshot reproducibility, segment metrics, solver feasibility, and Human/Ops ML risk approval.",
+      "remediation_owner": "Codex2 / Antigravity2"
+    },
+    {
+      "criterion_id": "G1-CRIT-05",
+      "category": "Rollback & Migration Semantics",
+      "title": "Breaking Change Migration, Compatibility Window & Rollback Plan",
+      "description": "Schema and interface changes follow expand/contract patterns without destructive down migrations, and provide unambiguous rollback/recovery semantics.",
+      "required_checks": [
+        "Expand/contract migration policy documented and enforced",
+        "Initial release recovery semantics bound to candidate C",
+        "No unapproved breaking changes in approved breaking changes registry"
+      ],
+      "candidate_evidence": {
+        "rollout_plan_ref": "docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md (§8.4, §8.5)",
+        "manifest_recovery_section": {
+          "kind": "initial-release-recovery",
+          "prior_release_absent": true,
+          "rollback_target_available": false,
+          "target_environment": "dev",
+          "recovery_method": "delete-candidate-zero-traffic"
+        },
+        "gate_registry_status": "blocked (gate-1 status in RELEASE_GATE_REGISTRY.json)"
+      },
+      "breaking_change_plan": {
+        "policy": "Expand/contract architecture strictly avoids destructive down migrations; delete-candidate-zero-traffic cleans up failed releases",
+        "migration_path": "Initial release to dev environment; contract migrations deferred to post-observation",
+        "compatibility_window": "N/A for initial dev release; staging/prod cross-version windows untracked",
+        "rollback_plan": "delete-candidate-zero-traffic per RELEASE_MANIFEST.json",
+        "enforcement_status": "recovery_posture_bound_cross_version_enforcement_unknown"
+      },
+      "evaluation_status": "verified_initial_release_recovery_posture_plan_enforcement_unknown",
+      "gap_or_blocker_note": "Candidate C dev deployment uses initial release recovery (delete-candidate-zero-traffic). Retains blocked status per registry rules; release decision remains NO-GO.",
+      "remediation_owner": "Human/Ops / Platform"
+    }
+  ]
+}

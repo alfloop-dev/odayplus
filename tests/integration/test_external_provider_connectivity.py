@@ -193,6 +193,26 @@ def test_deterministic_http_server_exercises_probe_contract_without_claiming_liv
     assert by_path["/admin"]["authorization"] == "Bearer admin-probe-secret"
 
 
+def test_disabled_mode_has_empty_probe_evidence_and_never_contacts_a_provider() -> None:
+    env = {
+        "ODP_EXTERNAL_PROVIDER_MODE": "disabled",
+        "ODP_DEPLOY_ENV": "production",
+        "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS": "0.05",
+    }
+    validation = validate_external_providers(env=env, correlation_id="corr-disabled")
+    result = probe_external_provider_connectivity(
+        validation=validation,
+        env=env,
+        correlation_id="corr-disabled-probe",
+    )
+
+    assert validation.ok is True
+    assert result.configuration_valid is True
+    assert result.connectivity_healthy is False
+    assert result.required_provider_ids == ()
+    assert result.probes == ()
+
+
 def test_configuration_valid_does_not_mask_provider_auth_failure_or_secret() -> None:
     with _deterministic_provider_server(failures={"/poi": "unauthorized"}) as server:
         env = _production_env(server)

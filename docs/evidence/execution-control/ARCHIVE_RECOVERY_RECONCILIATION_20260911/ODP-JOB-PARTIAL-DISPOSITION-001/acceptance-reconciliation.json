@@ -1,0 +1,430 @@
+{
+  "task_id": "ODP-JOB-PARTIAL-DISPOSITION-001",
+  "task_title": "歷史驗收續辦：ODP-JOB-PARTIAL-DISPOSITION-001",
+  "original_task_title": "依 producer 證據補 PARTIAL 狀態轉移或正式處置 SHARED-001",
+  "task_class": "documentation",
+  "phase": "History Recovery — executable acceptance reconciliation",
+  "owner": "Antigravity7",
+  "reviewer": "Codex",
+  "recorded_at": "2026-09-12T09:49:35Z",
+  "reconciliation_target": {
+    "repository": "alfloop-dev/odayplus",
+    "continuation_branch": "task/ODP-JOB-PARTIAL-DISPOSITION-001-RECOVERY-20260911",
+    "target_dev_baseline": "cbbd686d632656bc4098cd8ef4491def1eecbd55"
+  },
+  "historical_delivery": {
+    "pr_number": 1172,
+    "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1172",
+    "pr_title": "[ReviewBus] ODP-JOB-PARTIAL-DISPOSITION-001 依 producer 證據補 PARTIAL 狀態轉移或正式處置 SHARED-001",
+    "head_sha": "f8caf62e11643f9cbe59ea6b958faeab746fcac2",
+    "merge_commit_sha": "9647d673ccf2c0f11ef565e78511099821d85c19",
+    "merged": true,
+    "merged_at": "2026-09-04T13:14:12Z",
+    "merged_by": "ajoe734",
+    "historical_owner": "Antigravity6",
+    "historical_reviewer": "Claude",
+    "delivered_artifacts": [
+      "delivery_toolchain/governance/set_valued_requirements.json",
+      "docs/audits/code-boundary-inventory.csv",
+      "docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md",
+      "docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md",
+      "tests/governance/test_job_partial_disposition.py"
+    ],
+    "ci_checks": [
+      {
+        "name": "change-scope",
+        "conclusion": "success",
+        "completed_at": "2026-09-04T12:30:15Z"
+      },
+      {
+        "name": "boundary",
+        "conclusion": "success",
+        "completed_at": "2026-09-04T12:30:19Z"
+      },
+      {
+        "name": "classify",
+        "conclusion": "success",
+        "completed_at": "2026-09-04T12:30:20Z"
+      },
+      {
+        "name": "orchestrator",
+        "conclusion": "success",
+        "completed_at": "2026-09-04T12:33:20Z"
+      },
+      {
+        "name": "product",
+        "conclusion": "success",
+        "completed_at": "2026-09-04T12:51:24Z"
+      },
+      {
+        "name": "performance-gate",
+        "conclusion": "success",
+        "completed_at": "2026-09-04T12:31:49Z"
+      },
+      {
+        "name": "product-e2e-gate",
+        "conclusion": "success",
+        "completed_at": "2026-09-04T12:36:41Z"
+      }
+    ],
+    "historical_approval": {
+      "approver": "Claude",
+      "state": "success",
+      "updated_at": "2026-09-04T12:50:50Z",
+      "description": "Approved by assigned reviewer Claude",
+      "context": "task-review-gate"
+    },
+    "commit_trailers_at_head": {
+      "LLM-Agent": null,
+      "Task-ID": null,
+      "Reviewer": null,
+      "Verified": null,
+      "head_is_merge_commit": true
+    },
+    "candidate_mapping_verdict": "consistent",
+    "historical_raw_execution_metadata": "unknown (historical process unknown retained, no guessing or re-running successful suites for statistics)",
+    "pinned_inventory_reference": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json @ b66d18130f3bac78cf5af32b1c7000933e5d931d lines 7854-8250"
+  },
+  "subsequent_evolution": {
+    "decision_d19": {
+      "source_doc": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+      "direction": "Option A: Implement durable partial, itemized receipt, retry for batch jobs"
+    },
+    "stage_33a": {
+      "task_id": "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001",
+      "pr_number": 1257,
+      "merge_commit": "1c7bb182",
+      "head_sha": "57019d8d",
+      "delivered_documents": [
+        "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/producer-inventory.json",
+        "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/partial-retry-contract-draft.json",
+        "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/human-input-request-H06.md"
+      ]
+    },
+    "stage_33b": {
+      "task_id": "ODP-DURABLE-PARTIAL-IMPL-001",
+      "pr_number": 1285,
+      "merge_commit": "91dd050ad1e357af141750a39f144afd54ff588e",
+      "head_sha": "b19513a1419497dce2ddd5054df5bbe0bd732a69",
+      "implemented_symbols": [
+        "apps/worker/oday_worker/handlers.py::handle_batch_listing_intake",
+        "apps/worker/oday_worker/handlers.py::build_default_registry",
+        "apps/worker/oday_worker/handlers.py::checkpoint_batch_item_result",
+        "shared/jobs/receipts.py::derive_batch_status_and_summary",
+        "shared/jobs/receipts.py::DurableJobReceipt"
+      ],
+      "verification_suite": "tests/reliability/test_durable_partial_batch.py"
+    },
+    "producer_reconciliation": {
+      "task_id": "ODP-JOB-PARTIAL-PRODUCER-RECONCILIATION-001",
+      "pr_number": 1302,
+      "merge_commit": "84a024c3448cc4ec418882b5a38e026ed407e6be",
+      "head_sha": "d6a0f327",
+      "reconciled_manifest": "delivery_toolchain/governance/set_valued_requirements.json",
+      "reconciled_tests": "tests/governance/test_job_partial_disposition.py",
+      "reconciled_doc": "docs/evidence/human-decisions/ODP-JOB-PARTIAL-PRODUCER-RECONCILIATION-001/README.md",
+      "retained_disposition": "BLOCKED_BY_EVIDENCE"
+    }
+  },
+  "acceptance_criteria_reconciliation": [
+    {
+      "index": 1,
+      "criterion": "只有證據列名的 job 能產生 PARTIAL",
+      "classes": [
+        "D",
+        "T"
+      ],
+      "classes_zh": [
+        "程式或文件交付",
+        "可由測試證明"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "歷史 PR #1172 經前置任務 ODP-JOB-PARTIAL-PRODUCER-EVIDENCE-001 查證確認無在樹生產者證據後，依條件處置將 PARTIAL 保持 absent 並於 set_valued_requirements.json 登錄 BLOCKED_BY_EVIDENCE。PR #1172 交付之 tests/governance/test_job_partial_disposition.py（merge 9647d673ccf2）斷言 status == absent 與 disposition.state == BLOCKED_BY_EVIDENCE，並測試列名 5 個 enum members；CI 於 exact head f8caf62e1164 7 項全綠 (conclusion=success)。查無 producer 之事實來自前置任務調查證據，測試驗證治理狀態一致。後續 PR #1285 交付具名 producer handle_batch_listing_intake 後，PR #1302 對齊治理測試，原條件處置契約與後續實作一致成立。",
+      "boundary": "原任務條件分支完整履行；producer absence 依前置調查證據判定；後續具體生產者交付由 PR #1285/1302 承接，不混淆歷史責任。"
+    },
+    {
+      "index": 2,
+      "criterion": "PARTIAL receipt 可區分 succeeded／failed items 且 retry 不重做成功項",
+      "classes": [
+        "D"
+      ],
+      "classes_zh": [
+        "程式或文件交付"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "依條件處置規則（無適用 producer 時保持 absent 並交付 formal handback），PR #1172 交付之 Handback 文件 docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md §4.2 確立明細收據架構契約（total/succeeded/failed 數量及 items 逐項 item_status），§4.3 確立差異化重試契約（retry_scope=FAILED_ONLY，不重做成功項）；tests/governance/test_job_partial_disposition.py 驗證 Handback 契約完整性。按條件分支，此項之 runtime 實作行為在當時無 producer 時不適用，形式為正式 Handback 設計契約（HB-SHARED001-PARTIAL-001）；該契約於後續 PR #1285 經 tests/reliability/test_durable_partial_batch.py 實體驗證。",
+      "boundary": "PR #1172 交付形式為正式 Handback 設計契約（HB-SHARED001-PARTIAL-001）；執行期程式碼實作已由後續 Stage 33B (PR #1285) 獨立完成交付。"
+    },
+    {
+      "index": 3,
+      "criterion": "business outcome 與 delivery state 型別分離",
+      "classes": [
+        "T"
+      ],
+      "classes_zh": [
+        "可由測試證明"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "業務結果 JobStatus（queued, running, succeeded, failed, cancelled, partial）與隊列傳遞機制 JobDeliveryState（retrying, dead_letter）於 shared/governance/vocabularies.py 定義分離；PR #1172 交付之 tests/governance/test_job_partial_disposition.py::test_job_status_and_delivery_state_type_separation 斷言兩者為互斥集合；PR #1172 exact head f8caf62e1164 CI check product 通過 (conclusion=success)。",
+      "boundary": "型別分離於靜態定義與測試層面均經嚴格驗證。"
+    },
+    {
+      "index": 4,
+      "criterion": "無適用 producer 時不造功能且 formal disposition 缺人類簽署仍保持未結案",
+      "classes": [
+        "D",
+        "H"
+      ],
+      "classes_zh": [
+        "程式或文件交付",
+        "人類授權"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "PR #1172 嚴守防偽與治理防線，在查無 producer 時不造假功能，將 PARTIAL 保持 absent 並登錄 BLOCKED_BY_EVIDENCE，交付移交單 HB-SHARED001-PARTIAL-001（載明法定風險負責人 Platform Infrastructure Lead、下次檢視日 2026-10-01、reopen_trigger）；tests/governance/test_job_partial_disposition.py 斷言缺少人類簽署時不得標記為 DECIDED/VERIFIED/IMPLEMENTATION_READY。PR #1302 亦嚴格保留 BLOCKED_BY_EVIDENCE 狀態與 Handback 參照。",
+      "boundary": "嚴格保留 BLOCKED_BY_EVIDENCE 治理狀態；未偽造人類簽名、未提前放行 live production 門禁。"
+    }
+  ],
+  "retained_gaps_and_downstream_responsibilities": {
+    "h06_human_confirmation": {
+      "status": "pending_human",
+      "reference": "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/human-input-request-H06.md",
+      "owner": "Platform Infrastructure Lead / Human/Ops",
+      "description": "Durable Job 業務候選範圍之具名確認"
+    },
+    "live_production_inventory": {
+      "status": "pending_live_audit",
+      "owner": "Platform Infrastructure Lead",
+      "description": "Live production 隊列/排程/工作者審計收據與線上政策生效"
+    },
+    "handback_package": {
+      "handback_id": "HB-SHARED001-PARTIAL-001",
+      "document": "docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md",
+      "disposition_state": "BLOCKED_BY_EVIDENCE"
+    }
+  },
+  "dependencies_and_dag_reconciliation": {
+    "historical_dependencies": [
+      {
+        "id": "ODP-JOB-PARTIAL-PRODUCER-EVIDENCE-001",
+        "status": "done",
+        "relationship": "predecessor — verified absence of in-tree production producers"
+      },
+      {
+        "id": "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+        "status": "done",
+        "relationship": "predecessor — established machine-readable disposition gate"
+      },
+      {
+        "id": "ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001",
+        "status": "done",
+        "relationship": "predecessor — lockfile consistency and clean CI baseline"
+      }
+    ],
+    "current_canonical_dependencies": {
+      "task_id": "ODP-JOB-PARTIAL-DISPOSITION-001",
+      "status": "in_progress",
+      "depends_on": [],
+      "dependency_mutation": false,
+      "note": "unchanged on live board; all 3 historical predecessors are archived as done"
+    },
+    "downstream_dependents": [
+      {
+        "task_id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+        "status": "todo",
+        "depends_on_this_task": true,
+        "total_dependencies_count": 17,
+        "canonical_depends_on": [
+          "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+          "ODP-SPEC-SOURCE-PROVENANCE-001",
+          "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+          "ODP-LH-PREDICTION-DRIFT-001",
+          "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
+          "ODP-JOB-PARTIAL-DISPOSITION-001",
+          "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+          "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+          "ODP-NET002-LEASE-DISPOSITION-001",
+          "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+          "ODP-PRICE006-BANDIT-GATED-001",
+          "ODP-INT001-CDC-DISPOSITION-001",
+          "ODP-INTV006-ADJUST-WORKFLOW-001",
+          "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+          "ODP-OPS002-DECISION-COMMENTS-001",
+          "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+          "ODP-NFR-RUNTIME-EVIDENCE-001"
+        ],
+        "relationship": "successor — tracking overall structural remediation closeout (requires 20 findings to be VERIFIED or formally disposed)"
+      }
+    ],
+    "subsequent_implementation_lane": [
+      {
+        "task_id": "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001",
+        "pr_number": 1257,
+        "status": "done",
+        "board_location": "archive"
+      },
+      {
+        "task_id": "ODP-DURABLE-PARTIAL-IMPL-001",
+        "pr_number": 1285,
+        "status": "done",
+        "board_location": "archive"
+      },
+      {
+        "task_id": "ODP-JOB-PARTIAL-PRODUCER-RECONCILIATION-001",
+        "pr_number": 1302,
+        "status": "done",
+        "board_location": "archive"
+      }
+    ],
+    "cycle_verification": {
+      "scope": "Full active board DAG cycle verification (30 nodes) and task-relevant dependency check",
+      "nodes_evaluated_count": 30,
+      "task_relevant_edges_before": [
+        [
+          "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "ODP-JOB-PARTIAL-DISPOSITION-001"
+        ]
+      ],
+      "task_relevant_edges_after": [
+        [
+          "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "ODP-JOB-PARTIAL-DISPOSITION-001"
+        ]
+      ],
+      "edges_mutation": "unchanged",
+      "cycles_detected": false,
+      "verified_at": "2026-09-12T09:49:35Z",
+      "receipt_ref": "command-receipts.json#dag_snapshot_and_cycle_verification",
+      "graph_snapshot_ref": "command-receipts.json#dag_snapshot_and_cycle_verification.graph_snapshot",
+      "cycle_verification_method": "offline DFS traversal on preserved 30-node graph snapshot",
+      "historical_run_receipt_status": "unknown_unretained_local_log",
+      "note": "前輪本地執行 handle 未在隔離 worktree 保存，舊退出收據標記為 unknown_unretained_local_log；無環結論由保存之 30-node graph_snapshot 經離線 DFS 遍歷驗證支持。"
+    }
+  },
+  "requirement_and_release_gate_tracking": {
+    "requirement_id": "ODP-FR-SHARED-001",
+    "member": "PARTIAL",
+    "historical_status_at_pr1172": "absent",
+    "historical_disposition_at_pr1172": "BLOCKED_BY_EVIDENCE",
+    "current_status_at_baseline": "satisfied",
+    "current_disposition_at_baseline": "BLOCKED_BY_EVIDENCE",
+    "assigned_to": "Platform Infrastructure Lead",
+    "handback_id": "HB-SHARED001-PARTIAL-001",
+    "handback_document": "docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md",
+    "h06_reference": "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/human-input-request-H06.md",
+    "release_gate_policy": "ODP-FR-SHARED-001::PARTIAL 在歷史 PR #1172 時為 absent/BLOCKED_BY_EVIDENCE，經條件處置交付 formal handback HB-SHARED001-PARTIAL-001。後續 PR #1285 交付具體批次生產者 handle_batch_listing_intake，並由 PR #1302 對齊為 satisfied/BLOCKED_BY_EVIDENCE。目前治理狀態持續嚴格維持 BLOCKED_BY_EVIDENCE，保留法定風險負責人 Platform Infrastructure Lead、H06 人類簽署門禁 (human-input-request-H06.md) 及 Live production queue 審計收據要求，不自簽人類決策，亦不提前放行 live production 門禁。"
+  },
+  "current_observations_and_verification_receipts": {
+    "observed_at": "2026-09-12T09:49:35Z",
+    "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
+    "target_dev_baseline": "cbbd686d632656bc4098cd8ef4491def1eecbd55",
+    "measured_head_sha": null,
+    "human_decision_d19_provenance": {
+      "source_file": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+      "pinned_baseline_sha": "4b35121031d0738ff7c529810cf1b2e267161083",
+      "decision_text": "D19 | SHARED-001 PARTIAL | A：實作 durable partial、itemized receipt、retry | 只針對批次型 jobs；禁止 queue delivery state 冒充",
+      "status": "confirmed_direction"
+    },
+    "live_board_provenance": {
+      "source_file": "/home/lupin/odayplus/ai-status.json",
+      "source_file_sha256": "b6df6e594144b663538c9a93c4cab101e43cefd0074faab1b5036a629c83b658",
+      "archive_tasks_dir": "/home/lupin/odayplus/ai-task-archive/tasks/",
+      "observed_timestamp": "2026-09-12T09:49:35Z",
+      "task_states_observed": {
+        "ODP-JOB-PARTIAL-DISPOSITION-001": "in_progress (depends_on: [])",
+        "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001": "todo (depends on ODP-JOB-PARTIAL-DISPOSITION-001, ODP-REQ-DISPOSITION-GOVERNANCE-001, and 15 other tasks; 17 total)",
+        "ODP-REQ-DISPOSITION-GOVERNANCE-001": "archived (terminal_status: done, terminal_outcome: completed)",
+        "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001": "archived (terminal_status: done, terminal_outcome: completed)",
+        "ODP-DURABLE-PARTIAL-IMPL-001": "archived (terminal_status: done, terminal_outcome: completed)",
+        "ODP-JOB-PARTIAL-PRODUCER-RECONCILIATION-001": "archived (terminal_status: done, terminal_outcome: completed)"
+      }
+    },
+    "provenance_degradation_and_verification_policy": {
+      "historical_process_metadata_status": "unknown_historical_process_non_blocking",
+      "prior_unmeasured_local_execution_status": "unknown_unretained_local_log",
+      "policy_note": "In accordance with Codex review findings and verification evidence policy: (1) Historical PR #1172 terminal logs are unknown and substantiated by exact-head 7/7 green CI check-runs. (2) Prior local verification runs whose raw terminal handles were not retained in the worktree are degraded to unknown_unretained_local_log with exit_code=null, started_at=null, duration=null, and snippets=null rather than asserting unverified execution receipts. (3) Verification policy prohibits re-running passing test suites just for statistics. (4) DAG cycle absence is verified via offline DFS traversal over the preserved 30-node graph snapshot."
+    },
+    "receipts": [
+      {
+        "label": "git_diff_check",
+        "argv": [
+          "git",
+          "diff",
+          "--check",
+          "cbbd686d632656bc4098cd8ef4491def1eecbd55",
+          "HEAD"
+        ],
+        "repository": "alfloop-dev/odayplus",
+        "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
+        "measured_head_sha": null,
+        "started_at": null,
+        "duration_seconds": null,
+        "exit_code": null,
+        "status": "unknown_unretained_local_log",
+        "stdout_snippet": null,
+        "stderr_snippet": null,
+        "purpose": "Verify clean git diff with no trailing whitespaces or formatting conflicts against origin/dev base (cbbd686d)",
+        "note": "原始執行收據未保存 (unknown_unretained_local_log)；依 Codex 審查意見與驗證證據政策降格，不自填未經審計之退出碼、耗時或 snippets。"
+      },
+      {
+        "label": "canonical_board_dag_snapshot_and_cycle_verification",
+        "argv": [
+          "python3",
+          "-c",
+          "import json; data = json.load(open(\"/home/lupin/odayplus/ai-status.json\")); tasks = {t[\"id\"]: t.get(\"depends_on\", []) for t in data.get(\"tasks\", []) if \"id\" in t}; visited = {};\ndef check_cycle(n, p):\n visited[n] = 1\n for m in tasks.get(n, []):\n  if m in tasks:\n   if visited.get(m) == 1: return True, p + [m]\n   if visited.get(m) != 2:\n    c, cp = check_cycle(m, p + [m])\n    if c: return True, cp\n visited[n] = 2\n return False, []\ncycles = [cp for n in tasks if n not in visited for c, cp in [check_cycle(n, [n])] if c]; assert len(cycles) == 0; assert tasks.get(\"ODP-JOB-PARTIAL-DISPOSITION-001\") == []; assert \"ODP-JOB-PARTIAL-DISPOSITION-001\" in tasks.get(\"ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001\", []); print(f\"DAG check passed: {len(tasks)} nodes, 0 cycles\")"
+        ],
+        "repository": "alfloop-dev/odayplus",
+        "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
+        "measured_head_sha": null,
+        "started_at": null,
+        "duration_seconds": null,
+        "exit_code": null,
+        "status": "unknown_unretained_local_log",
+        "stdout_snippet": null,
+        "stderr_snippet": null,
+        "purpose": "Verify canonical board task state, empty incoming dependencies for this task, downstream dependency link from ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001, and absence of cycles across all 30 board task dependencies",
+        "note": "原始執行收據未保存 (unknown_unretained_local_log)；無環結論改由 dag_snapshot_and_cycle_verification.graph_snapshot 之離線 DFS 遍歷驗證支持。"
+      },
+      {
+        "label": "governance_check_requirement_members",
+        "argv": [
+          "python3",
+          "delivery_toolchain/governance/check_requirement_members.py"
+        ],
+        "repository": "alfloop-dev/odayplus",
+        "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
+        "measured_head_sha": null,
+        "started_at": null,
+        "duration_seconds": null,
+        "exit_code": null,
+        "status": "unknown_unretained_local_log",
+        "stdout_snippet": null,
+        "stderr_snippet": null,
+        "purpose": "Assert governance set_valued_requirements.json member status and BLOCKED_BY_EVIDENCE disposition validity",
+        "note": "原始執行收據未保存 (unknown_unretained_local_log)；依 Codex 審查意見與驗證證據政策降格，不自填未經審計之退出碼、耗時或 snippets。"
+      },
+      {
+        "label": "offline_json_schema_and_evidence_consistency_check",
+        "argv": [
+          "python3",
+          "-c",
+          "import json, os\np = \"docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-JOB-PARTIAL-DISPOSITION-001\"\nassert os.path.isfile(os.path.join(p, \"README.md\"))\nar = json.load(open(os.path.join(p, \"acceptance-reconciliation.json\")))\ncr = json.load(open(os.path.join(p, \"command-receipts.json\")))\nassert ar[\"task_id\"] == \"ODP-JOB-PARTIAL-DISPOSITION-001\"\nassert cr[\"task_id\"] == \"ODP-JOB-PARTIAL-DISPOSITION-001\"\nassert len(ar[\"acceptance_criteria_reconciliation\"]) == 4\nassert all(c[\"status\"] == \"met\" for c in ar[\"acceptance_criteria_reconciliation\"])\nassert ar[\"dependencies_and_dag_reconciliation\"][\"current_canonical_dependencies\"][\"depends_on\"] == []\nassert ar[\"dependencies_and_dag_reconciliation\"][\"cycle_verification\"][\"cycles_detected\"] is False\nprint(\"Offline JSON schema and evidence consistency check passed.\")"
+        ],
+        "repository": "alfloop-dev/odayplus",
+        "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
+        "measured_head_sha": null,
+        "started_at": null,
+        "duration_seconds": null,
+        "exit_code": null,
+        "status": "unknown_unretained_local_log",
+        "stdout_snippet": null,
+        "stderr_snippet": null,
+        "purpose": "Assert internal consistency, schema validity, and criteria completeness across evidence artifacts",
+        "note": "原始執行收據未保存 (unknown_unretained_local_log)；依 Codex 審查意見與驗證證據政策降格，不自填未經審計之退出碼、耗時或 snippets。"
+      }
+    ]
+  }
+}

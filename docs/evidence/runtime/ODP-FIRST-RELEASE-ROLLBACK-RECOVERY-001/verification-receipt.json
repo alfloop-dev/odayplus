@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+  "title": "首次 dev release 的 fail-closed recovery admission 驗證收據",
+  "agent": "Antigravity4",
+  "reviewer": "Codex",
+  "branch": "task/ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+  "head_sha": "0253a5a682eb5f606d829c4462497dda3250126a",
+  "head_sha_note": "0253a5a682eb 是本 branch 最後一個 code/test commit；本 evidence commit 僅更新本目錄收據與說明。",
+  "base": {
+    "ref": "origin/dev",
+    "sha": "66412db403bcf5d500c7b614f61fa1b1c79025d2",
+    "behind_count": 0,
+    "note": "已完成 base advance merge (a96d5beb)，無未合併的 base commit。"
+  },
+  "secret_values_redacted": true,
+  "runs": [
+    {
+      "purpose": "first-release candidate cleanup failure path",
+      "command": "python3 -m pytest -p no:warnings -q tests/ops/test_first_release_recovery.py",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "0253a5a682eb5f606d829c4462497dda3250126a",
+      "test_count": 4,
+      "runner": "pytest"
+    },
+    {
+      "purpose": "candidate target absence probe",
+      "command": "python3 -m pytest -p no:warnings -q tests/release/test_probe_release_target_absence.py",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "0253a5a682eb5f606d829c4462497dda3250126a",
+      "test_count": 19,
+      "runner": "pytest"
+    },
+    {
+      "purpose": "first-release manifest admission cases",
+      "command": "python3 -m pytest -p no:warnings -q tests/release/test_release_manifest.py -k 'first_release or target_that_still_holds_a_release or partial_readback or declared_probe_command or field_the_binding_digest or enabled_source_keeps'",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "0253a5a682eb5f606d829c4462497dda3250126a",
+      "test_count": 17,
+      "runner": "pytest"
+    },
+    {
+      "purpose": "first-release build handoff cases",
+      "command": "python3 -m pytest -p no:warnings -q tests/release/test_build_release_handoff.py -k 'first_release or target or rollback_manifest_and_a_readback'",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "0253a5a682eb5f606d829c4462497dda3250126a",
+      "test_count": 10,
+      "runner": "pytest"
+    },
+    {
+      "purpose": "first-release workflow contract cases",
+      "command": "python3 -m pytest -p no:warnings -q tests/ops/test_deploy_workflow_contract.py -k 'first_release or admission_re_reads_the_target or failed_first_deploy or build_phase_reads_the_target_back'",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "0253a5a682eb5f606d829c4462497dda3250126a",
+      "test_count": 6,
+      "runner": "pytest"
+    }
+  ],
+  "evidence_policy_conformance": {
+    "own_exit_code_preserved": true,
+    "no_pipe_without_pipefail": true,
+    "no_or_true_suffix": true,
+    "no_backgrounding": "本次只執行前景 focused tests；廣泛 CI 套件交由 PR exact-head CI。",
+    "interrupted_runs_reported_as_interrupted": true
+  },
+  "not_run_locally": {
+    "command": "完整 product／orchestrator／E2E 套件、lint、boundary、secret scan",
+    "reason": "本次 continuation 只執行允許的 focused selection；廣泛驗證由 PR exact-head CI 執行。",
+    "outcome": "deferred_to_ci"
+  },
+  "live_target_not_exercised": {
+    "reason": "本機沒有 dev 環境 GCP 憑證；真實 Cloud Run readback 需由受治理 Runtime Release dispatch 提供。",
+    "outcome": "not_run"
+  },
+  "measured_at": "2026-09-02T13:33:00Z",
+  "code_head_sha": "0253a5a682eb5f606d829c4462497dda3250126a",
+  "code_head_note": "focused verification 在 0253a5a682eb 上執行；本 evidence commit 不含 code、workflow 或測試變更。"
+}

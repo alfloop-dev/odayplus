@@ -52,3 +52,28 @@ resource "google_storage_bucket_iam_member" "retention_manager_object_admin" {
   role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${google_service_account.retention_manager.email}"
 }
+
+# Recovery can fetch the deterministic object only; it cannot create, list,
+# update or delete evidence and does not impersonate the retention manager.
+resource "google_service_account" "recovery_reader" {
+  account_id   = "${local.name_prefix}-reader"
+  display_name = "ODay Plus ${var.environment} audit recovery reader"
+}
+
+resource "google_project_iam_custom_role" "recovery_get" {
+  role_id     = "${replace(local.name_prefix, "-", "_")}_evidence_get"
+  title       = "Audit evidence recovery object getter"
+  permissions = ["storage.objects.get"]
+}
+
+resource "google_storage_bucket_iam_member" "recovery_object_get" {
+  bucket = google_storage_bucket.worm.name
+  role   = google_project_iam_custom_role.recovery_get.name
+  member = "serviceAccount:${google_service_account.recovery_reader.email}"
+}
+
+resource "google_service_account_iam_member" "runtime_impersonates_recovery_reader" {
+  service_account_id = google_service_account.recovery_reader.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:${var.product_runtime_service_account_email}"
+}

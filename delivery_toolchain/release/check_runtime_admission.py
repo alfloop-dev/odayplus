@@ -27,6 +27,23 @@ for every environment made staging evidence a prerequisite for creating staging
 (EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN §6.1); admission is evaluated against
 the gates bound to the requested `admission_target` instead.
 
+A lease authorises the *deploy* phase only, and it is verified after the build
+phase has already published the artifact it names. Requiring a lease before the
+build made the manifest a precondition of producing the manifest, so the release
+could never leave `blocked`; the Runtime Release workflow now runs
+build -> admission -> deploy, and `--component-image` binds the image references
+the deploy phase was handed back to `manifest.components`. Without that binding a
+valid lease would admit any digest, and "build once, deploy that exact artifact"
+would be a convention rather than a control.
+
+Production deploys the staging-sealed manifest from its own Artifact Registry
+(ODP-PROD-IMAGE-PROMOTION-001), so a production admission may also be handed
+`--target-registry`: the production repository the deploy job promotes the
+images into. Each handoff image is then either the manifest's own reference or
+that reference with only the repository root replaced -- same image name, same
+digest. Any other environment is refused that argument before the lease is
+consumed.
+
 Two responsibilities deliberately stay outside this check. GitHub environment
 approval is the human production gate, and the workflow `concurrency` group is
 same-environment mutual exclusion. A lease is not a substitute for either, and
@@ -41,11 +58,18 @@ to keep secret, and one it does not have to share at all:
 
 * `ODP_RELEASE_LEASE_PUBLIC_KEY` (repository variable) - the Ed25519
   verification key. It cannot sign, so it is a variable rather than a secret.
-* `--lease-state-dir` / `ODP_RELEASE_LEASE_STATE_DIR` - the Supervisor's durable
-  lease state. It must already exist and must be the same store the Supervisor
-  wrote to at issuance. A hosted runner that cannot reach it cannot admit a
-  release, which is the intended failure: consuming a lease in a directory that
-  disappears with the runner does not stop a replay anywhere that matters.
+* `--lease-state-dir` / `ODP_RELEASE_LEASE_STATE_URI` - the Supervisor's durable
+  lease state. Hosted admission passes a `gs://bucket/prefix` URI, and the
+  workflow rejects local paths before authentication. It must already exist and
+  must be the same store the Supervisor wrote to at issuance. A hosted runner
+  that cannot reach it cannot admit, which is the intended failure: consuming a
+  lease in a directory that disappears with the runner does not stop a replay
+  anywhere that matters.
+* `--lineage-state-uri` / `ODP_PRODUCTION_RELEASE_LEASE_STATE_URI` - production's
+  lease store, read only by a staging admission of an initial-release manifest
+  (production's history is not in the staging store). Unset or unreadable, that
+  admission is refused before the lease is consumed. Like the lease store, the
+  workflow refuses it before authentication unless it is a `gs://bucket/prefix`.
 * the private key, which stays with the Supervisor and is never needed here.
 """
 
@@ -81,7 +105,19 @@ from delivery_toolchain.release.release_lease import (  # noqa: E402
     load_lease,
     load_public_key,
 )
-from delivery_toolchain.release.release_manifest import load_manifest  # noqa: E402
+from delivery_toolchain.release.release_manifest import (  # noqa: E402
+    IMAGE_PROMOTION_ENVIRONMENTS,
+    INITIAL_RELEASE_LINEAGE_ENVIRONMENTS,
+    INITIAL_RELEASE_LINEAGE_TARGET,
+    component_binding_errors,
+    initial_release_lineage_errors,
+    initial_release_verification_errors,
+    is_sha256_digest,
+    load_manifest,
+    manifest_release_profile,
+    release_profile_errors,
+    validate_release_admission,
+)
 
 DEFAULT_REGISTRY = ROOT / "docs/evidence/gates/RELEASE_GATE_REGISTRY.json"
 DEFAULT_MANIFEST = ROOT / "docs/evidence/gates/RELEASE_MANIFEST.json"
@@ -242,6 +278,95 @@ def _receipt_errors(
     ]
 
 
+def initial_release_admission_errors(
+    manifest: Any,
+    *,
+    environment: str,
+    receipt: Any,
+    state_store: LeaseStateStore,
+    now: datetime,
+    lineage_state_store: LeaseStateStore | None = None,
+    lineage_store_errors: list[str] | None = None,
+) -> list[str]:
+    """Return why a first-release manifest is not admissible *now*, *here*.
+
+    A manifest that binds ``rollback_release`` is not asked anything. One that
+    carries ``initial_release_recovery`` is admitted only with a fresh,
+    digest-bound readback of this environment's target taken during this
+    admission (ODP-CORE-OPS-FIRST-RELEASE-ROLLBACK-001), and -- for staging and
+    production -- only while production's durable lease history shows it has
+    never admitted another release. Every refusal here lands in the errors that
+    block consumption, so the single-use lease survives it.
+
+    Production's history lives in production's lease store. A production
+    admission reads it as its own ``state_store``. A staging admission's own
+    store holds only staging leases, so it must be handed production's store
+    as ``lineage_state_store``; without it, or when it cannot be read, the
+    staging admission is refused.
+    """
+
+    if not isinstance(manifest, dict) or manifest.get("initial_release_recovery") is None:
+        return []
+    errors = list(
+        initial_release_verification_errors(
+            receipt, manifest=manifest, environment=environment, now=now
+        )
+    )
+    if environment not in INITIAL_RELEASE_LINEAGE_ENVIRONMENTS:
+        return errors
+
+    lineage_errors: list[str] = list(lineage_store_errors or [])
+    records: Any = None
+    cross_environment = environment != INITIAL_RELEASE_LINEAGE_TARGET
+    if not cross_environment:
+        store: LeaseStateStore | None = state_store
+        if lineage_state_store is not None and str(lineage_state_store.directory) != str(
+            state_store.directory
+        ):
+            lineage_errors.append(
+                f"{INITIAL_RELEASE_LINEAGE_TARGET} admission reads its lineage from its "
+                "own lease store; a different --lineage-state-uri is refused"
+            )
+    else:
+        store = lineage_state_store
+        if store is None and not lineage_errors:
+            lineage_errors.append(
+                f"{environment} initial-release admission needs "
+                f"{INITIAL_RELEASE_LINEAGE_TARGET}'s lease store (--lineage-state-uri); "
+                f"the {environment} store never records a "
+                f"{INITIAL_RELEASE_LINEAGE_TARGET} admission, so it cannot prove "
+                f"{INITIAL_RELEASE_LINEAGE_TARGET} has never admitted a release"
+            )
+        elif store is not None and str(store.directory) == str(state_store.directory):
+            lineage_errors.append(
+                f"--lineage-state-uri names the {environment} lease store itself; "
+                f"{INITIAL_RELEASE_LINEAGE_TARGET}'s lineage has to be read from "
+                f"{INITIAL_RELEASE_LINEAGE_TARGET}'s store"
+            )
+            store = None
+    if store is not None and not lineage_errors:
+        try:
+            records = store.list_records()
+        except LeaseStateError as exc:
+            lineage_errors.append(
+                f"cannot read {INITIAL_RELEASE_LINEAGE_TARGET} lease history: {exc}"
+            )
+    if lineage_errors:
+        errors.extend(error for error in lineage_errors if error not in errors)
+        return errors
+    errors.extend(
+        error
+        for error in initial_release_lineage_errors(
+            records,
+            environment=environment,
+            manifest_digest=manifest.get("manifest_digest"),
+            lineage_target_store=cross_environment,
+        )
+        if error not in errors
+    )
+    return errors
+
+
 def admit_release(
     registry: Any,
     lease: Any,
@@ -251,16 +376,63 @@ def admit_release(
     task_id: str,
     public_key: Any,
     state_store: LeaseStateStore,
+    manifest: Any = None,
     manifest_digest: str | None = None,
     manifest_errors: list[str] | None = None,
+    component_images: dict[str, str] | None = None,
+    target_registry: str | None = None,
     allowed_action: str = DEFAULT_ACTION,
     consumed_by: str,
+    initial_release_receipt: Any = None,
+    lineage_state_store: LeaseStateStore | None = None,
+    lineage_store_errors: list[str] | None = None,
     root: Path = ROOT,
     now: datetime | None = None,
 ) -> tuple[bool, list[str], dict[str, Any]]:
     """Run the whole admission decision and consume the lease when it passes."""
 
     extra = list(manifest_errors or [])
+    extra.extend(
+        error
+        for error in initial_release_admission_errors(
+            manifest,
+            environment=environment,
+            receipt=initial_release_receipt,
+            state_store=state_store,
+            now=now or datetime.now(UTC),
+            lineage_state_store=lineage_state_store,
+            lineage_store_errors=lineage_store_errors,
+        )
+        if error not in extra
+    )
+    # The acceptance scope is sealed into the manifest digest; this is where it
+    # is bound to the target. A dev-admin manifest fails here, before the lease
+    # is consumed and before anything mutates the cloud, when it is pointed at
+    # staging or production.
+    extra.extend(
+        error
+        for error in release_profile_errors(manifest, environment=environment)
+        if error not in extra
+    )
+    # dev and staging deploy the manifest's references as recorded; only an
+    # environment that promotes the images first may name its own registry.
+    if target_registry is not None and environment not in IMAGE_PROMOTION_ENVIRONMENTS:
+        extra.append(
+            f"--target-registry is accepted only for {list(IMAGE_PROMOTION_ENVIRONMENTS)} "
+            f"admission, not {environment!r}; {environment} deploys the images the "
+            "manifest records"
+        )
+        target_registry = None
+    if component_images:
+        # A manifest that failed to load is `None` here, and binding against it
+        # reports an error rather than silently skipping the check.
+        extra.extend(
+            error
+            for error in component_binding_errors(
+                manifest, component_images, target_registry=target_registry
+            )
+            if error not in extra
+        )
     extra.extend(
         registry_admission_errors(
             registry,
@@ -335,8 +507,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--lease-state-dir",
         required=True,
-        type=Path,
-        help="Durable Supervisor lease state directory. Must already exist.",
+        type=str,
+        help="Durable Supervisor lease state directory or gs://bucket/prefix. Must already exist.",
     )
     parser.add_argument(
         "--public-key-file",
@@ -344,30 +516,125 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Ed25519 verification key; defaults to the ODP_RELEASE_LEASE_PUBLIC_KEY env var.",
     )
+    parser.add_argument(
+        "--component-image",
+        action="append",
+        default=[],
+        metavar="NAME=REF",
+        help=(
+            "Immutable image reference the deploy phase was handed for one manifest "
+            "component, e.g. api=repo/api@sha256:... . Repeat per component; each one "
+            "must equal the image recorded by manifest.components."
+        ),
+    )
+    parser.add_argument(
+        "--target-registry",
+        default=None,
+        metavar="REGION-docker.pkg.dev/PROJECT/REPOSITORY",
+        help=(
+            "Production only: the admission environment's own Artifact Registry "
+            "repository the deploy job promotes the manifest images into. A handoff "
+            "image may then also be the manifest image with only this repository "
+            "root replaced (same image name and digest)."
+        ),
+    )
     parser.add_argument("--action", default=DEFAULT_ACTION)
     parser.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
+    parser.add_argument(
+        "--manifest-digest",
+        default="",
+        metavar="sha256:<64 hex>",
+        help=(
+            "Exact manifest digest this deploy is authorised for. The deploy phase "
+            "transports the build phase's candidate manifest as an artifact, so the "
+            "file handed here is not trusted on its own: it is admitted only when its "
+            "canonical digest equals this value, which is the same digest the "
+            "Supervisor lease was issued against."
+        ),
+    )
+    parser.add_argument(
+        "--require-manifest-digest",
+        action="store_true",
+        help=(
+            "Refuse to admit without --manifest-digest. The hosted deploy phase always "
+            "sets this: without it a transported manifest would be believed on the "
+            "strength of being self-consistent, which any rebuilt manifest also is."
+        ),
+    )
+    parser.add_argument(
+        "--initial-release-receipt",
+        type=Path,
+        default=None,
+        help=(
+            "Admission-time target readback written by probe_release_target_absence.py "
+            "--manifest. Required, fresh and bound to the manifest digest whenever the "
+            "admitted manifest carries initial_release_recovery; ignored otherwise."
+        ),
+    )
+    parser.add_argument(
+        "--lineage-state-uri",
+        default="",
+        help=(
+            "Production's durable lease store (gs://bucket/prefix or directory), read "
+            "for a staging admission of an initial-release manifest so staging can "
+            "prove production never admitted another release. Required then; a "
+            "production admission reads its own --lease-state-dir and refuses a "
+            "different value here. Hosted admission accepts only gs://bucket/prefix, "
+            "as for --lease-state-dir."
+        ),
+    )
     parser.add_argument("--receipt", type=Path, default=None)
     args = parser.parse_args(argv)
+
+    expected_manifest_digest = str(args.manifest_digest or "").strip()
 
     now = datetime.now(UTC)
     lease, lease_load_errors = load_lease(args.lease_file)
 
+    def manifest_transport() -> dict[str, Any]:
+        # Which manifest file was actually read, and which digest it had to
+        # match. A receipt that omits this cannot distinguish an admission that
+        # verified the build phase's transported artifact from one that fell
+        # back to whatever manifest the deploy checkout carried.
+        return {
+            "manifest_path": str(args.manifest),
+            "expected_manifest_digest": expected_manifest_digest or None,
+            "digest_binding_required": bool(args.require_manifest_digest),
+        }
+
     def fail(errors: list[str]) -> int:
-        return _blocked(
-            errors,
-            build_receipt(
-                lease,
-                errors=errors,
-                admitted=False,
-                verified_at=now,
-                verifier=VERIFIER_NAME,
-            ),
-            args.receipt,
+        receipt = build_receipt(
+            lease,
+            errors=errors,
+            admitted=False,
+            verified_at=now,
+            verifier=VERIFIER_NAME,
         )
+        receipt["manifest_transport"] = manifest_transport()
+        return _blocked(errors, receipt, args.receipt)
 
     if lease_load_errors:
         return fail(lease_load_errors)
+
+    # The transported manifest is checked before anything reaches lease state.
+    # A deploy that cannot say which manifest it is authorised for has no way to
+    # distinguish the build phase's artifact from any other self-consistent one.
+    if expected_manifest_digest and not is_sha256_digest(expected_manifest_digest):
+        return fail(
+            [
+                "--manifest-digest must be a sha256:<64 lowercase hex> digest, got: "
+                f"{expected_manifest_digest!r}"
+            ]
+        )
+    if args.require_manifest_digest and not expected_manifest_digest:
+        return fail(
+            [
+                "--manifest-digest is required: the deploy phase must name the exact "
+                "manifest the Supervisor lease was issued against, not accept whichever "
+                "manifest the checkout happens to carry"
+            ]
+        )
 
     try:
         public_key = load_public_key(key_path=args.public_key_file)
@@ -390,9 +657,56 @@ def main(argv: list[str] | None = None) -> int:
         if isinstance(candidate, str) and SHA_PATTERN.fullmatch(candidate):
             expected_candidate_sha = candidate
     manifest, manifest_errors = load_manifest(
-        args.manifest, expected_candidate_sha=expected_candidate_sha
+        args.manifest,
+        expected_candidate_sha=expected_candidate_sha,
+        expected_digest=expected_manifest_digest or None,
     )
+    if manifest is not None:
+        # Bound to the requested environment: an initial-release record admits
+        # only the environments on its sealed target's admission path.
+        admission_errors = validate_release_admission(
+            manifest, environment=args.environment
+        )
+        manifest_errors.extend(
+            error for error in admission_errors if error not in manifest_errors
+        )
     manifest_digest = manifest.get("manifest_digest") if manifest and not manifest_errors else None
+
+    component_images: dict[str, str] = {}
+    for raw in args.component_image:
+        name, _, ref = str(raw).partition("=")
+        if not name.strip() or not ref.strip():
+            return fail([f"--component-image expects NAME=REF, got: {raw!r}"])
+        component_images[name.strip()] = ref.strip()
+
+    # Opened only when it can matter, so an ordinary release never needs access
+    # to another environment's store. Failure to open it is carried into the
+    # admission errors, which refuse before the lease is consumed.
+    lineage_state_store: LeaseStateStore | None = None
+    lineage_store_errors: list[str] = []
+    lineage_uri = str(args.lineage_state_uri or "").strip()
+    if (
+        lineage_uri
+        and isinstance(manifest, dict)
+        and manifest.get("initial_release_recovery") is not None
+    ):
+        try:
+            lineage_state_store = LeaseStateStore(lineage_uri, require_existing=True)
+        except LeaseStateError as exc:
+            lineage_store_errors.append(
+                f"cannot open {INITIAL_RELEASE_LINEAGE_TARGET} lease history: {exc}"
+            )
+
+    initial_release_receipt: Any = None
+    if args.initial_release_receipt is not None:
+        try:
+            initial_release_receipt = json.loads(
+                args.initial_release_receipt.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError) as exc:
+            # An unreadable receipt is reported as what it is; the manifest
+            # check below still refuses a first release that has none.
+            manifest_errors.append(f"cannot read initial-release receipt: {exc}")
 
     admitted, errors, receipt = admit_release(
         registry,
@@ -402,11 +716,27 @@ def main(argv: list[str] | None = None) -> int:
         task_id=args.task_id,
         public_key=public_key,
         state_store=state_store,
+        manifest=manifest,
         manifest_digest=manifest_digest,
         manifest_errors=manifest_errors,
+        component_images=component_images,
+        target_registry=args.target_registry,
         allowed_action=args.action,
         consumed_by=_consumer_label(args.environment, args.release_sha),
+        initial_release_receipt=initial_release_receipt,
+        lineage_state_store=lineage_state_store,
+        lineage_store_errors=lineage_store_errors,
         now=now,
+    )
+    # Digests are not secrets, and an admission receipt that does not say which
+    # artifact was admitted cannot be audited against what actually deployed.
+    receipt["component_images"] = dict(sorted(component_images.items()))
+    receipt["target_registry"] = args.target_registry
+    receipt["manifest_transport"] = manifest_transport()
+    # The deploy phase reads the acceptance scope from here and nowhere else, so
+    # it is only recorded for a manifest that verified against its digest.
+    receipt["release_profile"] = (
+        manifest_release_profile(manifest) if manifest_digest else None
     )
     if not admitted:
         return _blocked(errors, receipt, args.receipt)

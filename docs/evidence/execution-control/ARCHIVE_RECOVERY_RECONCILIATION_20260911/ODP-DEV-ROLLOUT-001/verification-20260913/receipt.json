@@ -1,0 +1,118 @@
+{
+  "task_id": "ODP-DEV-ROLLOUT-001",
+  "actor": "Codex contributor",
+  "repository": "alfloop-dev/odayplus",
+  "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-dev-rollout-001",
+  "measured_head_sha": "f73589ff3022e88aa934b68306b0c175db38cf1f",
+  "measured_head_tree": "6aee4a1e81ebff45c74f711f88f3828fdf8acaa8",
+  "revision_semantics": "The parent HEAD identifies repository ancestry. Changed evidence is bound by actual worktree input hashes, not claimed committed at HEAD.",
+  "input_files": {
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/README.md": {
+      "sha256": "5951b510647406441db59e7566c64da9efa6fb8cfab7e68305d9f922814ca8c0",
+      "bytes": 27374
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/acceptance-reconciliation.json": {
+      "sha256": "7bf3d7ecc7898156cd90a7fdd5322dff33c5c82092255c00f2c774b700464f4f",
+      "bytes": 44690
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/canonical-task-snapshots.json": {
+      "sha256": "89878cdcf1fff8ba8dd4ab1998366e30b58f7f5d59c4ec168a3dfc139e69d204",
+      "bytes": 12972
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/capture_verification.py": {
+      "sha256": "726027bc93236d902b4a14f684b4824023293aaf8b1f7a0ae4e798de32b42e1a",
+      "bytes": 8268
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/historical-receipts/focused-capture-attempt-1/command-1.stderr.txt": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/historical-receipts/focused-capture-attempt-1/command-1.stdout.txt": {
+      "sha256": "587801e13b05f1db4c1d3ec4e9ca0a418c55bfc6a7ba9d7f31a91ac04b76851f",
+      "bytes": 172
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/historical-receipts/focused-capture-attempt-1/command-2.stderr.txt": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/historical-receipts/focused-capture-attempt-1/command-2.stdout.txt": {
+      "sha256": "7f27287f8a089fbaf1c658c5c13d207fa6136bcdc903485309147b197ce15dfd",
+      "bytes": 1320
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/historical-receipts/focused-capture-attempt-1/receipt.json": {
+      "sha256": "e3fcdc18c4c650a8c18bc34b11138d4ea92910a40cb4f2aef78ce880196f4ea9",
+      "bytes": 4798
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/historical-receipts/review_canonical_sources.py": {
+      "sha256": "064966b5c93e84727f8fa779943b7f9c08e53cfd0f74684d40af70aa51fd50d0",
+      "bytes": 3376
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/historical-receipts/reviewer-103205Z-75b23b18.json": {
+      "sha256": "ffa5f683b288605cf7e63c5310c8129164f85748803baa77a5aa561caf3ab630",
+      "bytes": 4271
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/historical-receipts/reviewer-105005Z-5c7dc8bd.json.gz": {
+      "sha256": "57969d9437a4c0f7f963ebc49c2ea7565577bb85097ff2151a0dca5123218974",
+      "bytes": 5951
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/historical-receipts/unverified-owner-claims-f73589ff.json": {
+      "sha256": "b9c716199590ae575c35720259febcacc518539462b60e3540faa24885441f21",
+      "bytes": 5317
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/verify_reconciliation.sh": {
+      "sha256": "8ab0b4a50fbb6876300e8fb827fc023e708cf150ac174f77577a7c3423da383d",
+      "bytes": 7299
+    }
+  },
+  "retry_reason": "Required narrow capture after correcting unretained or mixed-revision raw receipts; no historical product suites rerun.",
+  "commands": [
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check",
+        "a04010cde22a0337fdda05a6fa5146f70cc699f4",
+        "--",
+        "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001"
+      ],
+      "started_at": "2026-09-13T04:16:21.029355+00:00",
+      "completed_at": "2026-09-13T04:16:21.045695+00:00",
+      "duration_seconds": 0.016302014,
+      "duration_source": "time.monotonic_ns around subprocess.run",
+      "exit_code": 0,
+      "stdout": {
+        "raw_result_ref": "verification-20260913/command-1.stdout.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stderr": {
+        "raw_result_ref": "verification-20260913/command-1.stderr.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    {
+      "argv": [
+        "bash",
+        "/tmp/pantheon-worker-worktrees/pantheon/odp-dev-rollout-001/docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/verify_reconciliation.sh"
+      ],
+      "started_at": "2026-09-13T04:16:21.046343+00:00",
+      "completed_at": "2026-09-13T04:16:21.161190+00:00",
+      "duration_seconds": 0.114831832,
+      "duration_source": "time.monotonic_ns around subprocess.run",
+      "exit_code": 0,
+      "stdout": {
+        "raw_result_ref": "verification-20260913/command-2.stdout.txt",
+        "sha256": "7f27287f8a089fbaf1c658c5c13d207fa6136bcdc903485309147b197ce15dfd",
+        "bytes": 1320
+      },
+      "stderr": {
+        "raw_result_ref": "verification-20260913/command-2.stderr.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    }
+  ],
+  "inputs_unchanged_after_execution": true,
+  "all_commands_succeeded": true
+}

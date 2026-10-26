@@ -39,11 +39,13 @@ from modules.forecastops import (
     ForecastOpsError,
     ForecastOpsService,
     StoreDayObservation,
+    default_forecast_alert_policy,
 )
 from modules.forecastops.infrastructure import InMemoryForecastOpsRepository
 from modules.forecastops.model_contract import FORECASTOPS_FEATURE_SCHEMA_ID
 from modules.forecastops.workers import ForecastOpsBatchResult
 from shared.auth import Principal, Role, Scope
+from shared.governance import InMemoryDecisionPolicyRepository
 from shared.infrastructure.persistence.factory import build_persistence
 from shared.jobs import (
     InMemoryJobQueue,
@@ -60,6 +62,10 @@ FORECAST_HEADERS = {
     "x-roles": "operations_manager",
     "x-tenant-id": TENANT_ID,
 }
+
+
+def _policy_repository(tenant_id: str = TENANT_ID) -> InMemoryDecisionPolicyRepository:
+    return InMemoryDecisionPolicyRepository([default_forecast_alert_policy(tenant_id)])
 
 
 def _forecast_input(*, tenant_id: str | None = None) -> dict[str, Any]:
@@ -217,6 +223,7 @@ def _focused_forecast_endpoint(
     )
     router = create_forecastops_router(
         repository=InMemoryForecastOpsRepository(),
+        policy_repository=_policy_repository(),
         job_store=ForecastOpsJobStore(),
         require_production_model=False,
         require_durable_jobs=False,
@@ -495,7 +502,13 @@ def test_worker_does_not_retry_forecast_job_without_tenant_scope() -> None:
 
 def test_repository_series_outputs_and_queries_are_tenant_scoped() -> None:
     repository = InMemoryForecastOpsRepository()
-    service = ForecastOpsService(repository=repository)
+    policies = InMemoryDecisionPolicyRepository(
+        [
+            default_forecast_alert_policy(TENANT_ID),
+            default_forecast_alert_policy(OTHER_TENANT_ID),
+        ]
+    )
+    service = ForecastOpsService(repository=repository, policy_repository=policies)
     tenant_a_input = _live_forecast_input(tenant_id=TENANT_ID)
     tenant_b_input = _live_forecast_input(tenant_id=OTHER_TENANT_ID)
 
@@ -638,6 +651,7 @@ def test_concurrent_api_idempotency_reserves_before_forecast_side_effects(
     router = create_forecastops_router(
         repository=repository,
         job_queue=bundle.job_queue,
+        policy_repository=_policy_repository(),
         require_production_model=False,
         require_durable_jobs=True,
         runtime_mode="local",
@@ -681,6 +695,7 @@ def test_worker_replay_after_prediction_write_does_not_duplicate_domain_records(
         mode="durable",
         db_path=tmp_path / "forecast-worker-crash.sqlite3",
     )
+    bundle = replace(bundle, forecastops_policy_repository=_policy_repository())
     repository = bundle.forecastops_repository
     item = _live_forecast_input()
     ForecastOpsService(repository=repository).ingest_timeseries(
@@ -721,11 +736,17 @@ def test_worker_replay_after_prediction_write_does_not_duplicate_domain_records(
         with pytest.raises(RuntimeError, match="simulated crash"):
             handle_forecast(
                 job,
-                SimpleNamespace(forecastops_repository=flaky),
+                SimpleNamespace(
+                    forecastops_repository=flaky,
+                    forecastops_policy_repository=_policy_repository(),
+                ),
             )
         handle_forecast(
             job,
-            SimpleNamespace(forecastops_repository=flaky),
+            SimpleNamespace(
+                forecastops_repository=flaky,
+                forecastops_policy_repository=_policy_repository(),
+            ),
         )
 
         run_id = f"pred-run-forecast-{job.job_id}"
@@ -775,7 +796,7 @@ def test_concurrent_durable_forecast_versions_are_unique_per_tenant(tmp_path) ->
         db_path=tmp_path / "forecast-concurrency.sqlite3",
     )
     repository = bundle.forecastops_repository
-    service = ForecastOpsService(repository=repository)
+    service = ForecastOpsService(repository=repository, policy_repository=_policy_repository())
     item = _live_forecast_input()
 
     try:
@@ -792,7 +813,10 @@ def test_concurrent_durable_forecast_versions_are_unique_per_tenant(tmp_path) ->
 def test_prediction_provenance_uses_selected_horizon_and_separate_origin() -> None:
     repository = InMemoryForecastOpsRepository()
     item = replace(_live_forecast_input(), horizon_days=168)
-    result = ForecastOpsService(repository=repository).forecast(
+    result = ForecastOpsService(
+        repository=repository,
+        policy_repository=_policy_repository(),
+    ).forecast(
         [item],
         prediction_run_id="pred-run-provenance",
         scored_at=item.prediction_origin_time,
@@ -825,6 +849,7 @@ def test_api_and_production_worker_use_registered_runtime_with_identical_horizon
     router = create_forecastops_router(
         repository=InMemoryForecastOpsRepository(),
         job_store=ForecastOpsJobStore(),
+        policy_repository=_policy_repository(),
         model_runtime=api_runtime,
         require_production_model=True,
         require_durable_jobs=False,
@@ -845,6 +870,7 @@ def test_api_and_production_worker_use_registered_runtime_with_identical_horizon
         mode="durable",
         db_path=tmp_path / "forecast-worker-parity.sqlite3",
     )
+    bundle = replace(bundle, forecastops_policy_repository=_policy_repository())
     worker_runtime = _DeterministicRegisteredRuntime()
     item = _live_forecast_input()
     ForecastOpsService(repository=bundle.forecastops_repository).ingest_timeseries(
@@ -894,9 +920,10 @@ def test_worker_replay_preserves_alert_acknowledgement_and_handoff_execution(
         mode="durable",
         db_path=tmp_path / "forecast-replay-lifecycle.sqlite3",
     )
+    bundle = replace(bundle, forecastops_policy_repository=_policy_repository())
     repository = bundle.forecastops_repository
     item = _declining_forecast_input()
-    service = ForecastOpsService(repository=repository)
+    service = ForecastOpsService(repository=repository, policy_repository=_policy_repository())
     service.ingest_timeseries(item.observations, tenant_id=TENANT_ID)
     job = JobRecord(
         job_id="forecast-replay-lifecycle",
@@ -912,7 +939,13 @@ def test_worker_replay_preserves_alert_acknowledgement_and_handoff_execution(
     monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "false")
 
     try:
-        handle_forecast(job, SimpleNamespace(forecastops_repository=repository))
+        handle_forecast(
+            job,
+            SimpleNamespace(
+                forecastops_repository=repository,
+                forecastops_policy_repository=_policy_repository(),
+            ),
+        )
         alert = repository.list_alerts(TENANT_ID)[0]
         handoff = repository.list_handoffs(TENANT_ID)[0]
         assert alert.status == "open"
@@ -926,7 +959,13 @@ def test_worker_replay_preserves_alert_acknowledgement_and_handoff_execution(
             intervention_id="intervention-replay-001",
         )
 
-        handle_forecast(job, SimpleNamespace(forecastops_repository=repository))
+        handle_forecast(
+            job,
+            SimpleNamespace(
+                forecastops_repository=repository,
+                forecastops_policy_repository=_policy_repository(),
+            ),
+        )
 
         replayed_alert = repository.get_alert(TENANT_ID, alert.alert_id)
         replayed_handoff = repository.get_handoff(TENANT_ID, handoff.handoff_id)
@@ -950,7 +989,10 @@ def test_batch_scores_every_requested_horizon_for_one_store() -> None:
 
     repository = InMemoryForecastOpsRepository()
     item = _live_forecast_input()
-    result = ForecastOpsService(repository=repository).forecast(
+    result = ForecastOpsService(
+        repository=repository,
+        policy_repository=_policy_repository(),
+    ).forecast(
         [replace(item, horizon_days=28), replace(item, horizon_days=168)],
         prediction_run_id="pred-run-multi-horizon",
         scored_at=item.prediction_origin_time,

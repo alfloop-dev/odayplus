@@ -1,0 +1,239 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "odp-brand-transfer-contract-v0.1.0-draft",
+  "title": "ODP Brand Transfer Data Contract — Draft v0.1.0",
+  "description": "Draft schema for brand-to-brand customer transfer observations. This is a Phase A engineering preparation artefact — statistical definitions, thresholds, and source bindings require data-owner confirmation before any production use. This schema replaces the current synthetic CROSS JOIN mock (brand_transfer_view.sql) which hardcodes transfer_ratio = 0.15 and is unsuitable for production scoring.",
+  "type": "object",
+  "required": [
+    "contract_version",
+    "observation_id",
+    "source_brand_id",
+    "target_brand_id",
+    "observation_period",
+    "geography",
+    "transfer_metrics",
+    "lineage"
+  ],
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "const": "0.1.0-draft",
+      "description": "Schema contract version. Increment on breaking changes."
+    },
+    "observation_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this transfer observation record."
+    },
+    "tenant_id": {
+      "type": "string",
+      "description": "Tenant discriminator for multi-tenant isolation. Required in production; may be omitted in single-tenant test fixtures.",
+      "default": ""
+    },
+    "source_brand_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Brand losing customer share. Must reference core.brands.brand_id."
+    },
+    "target_brand_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Brand gaining customer share. Must reference core.brands.brand_id. Must differ from source_brand_id."
+    },
+    "observation_period": {
+      "type": "object",
+      "description": "Time window over which the transfer was observed or aggregated.",
+      "required": ["start", "end"],
+      "properties": {
+        "start": {
+          "type": "string",
+          "format": "date",
+          "description": "Inclusive start date of observation window (ISO 8601)."
+        },
+        "end": {
+          "type": "string",
+          "format": "date",
+          "description": "Inclusive end date of observation window (ISO 8601)."
+        },
+        "granularity": {
+          "type": "string",
+          "enum": ["daily", "weekly", "monthly", "quarterly"],
+          "description": "Temporal granularity of the underlying aggregation.",
+          "default": "monthly"
+        }
+      },
+      "additionalProperties": false
+    },
+    "geography": {
+      "type": "object",
+      "description": "Spatial scope of the observation.",
+      "required": ["geo_cell_id"],
+      "properties": {
+        "geo_cell_id": {
+          "type": "string",
+          "description": "H3 cell index or trade-area polygon ID defining the observation boundary."
+        },
+        "location_type": {
+          "type": "string",
+          "enum": ["urban", "suburban", "rural", "mixed"],
+          "description": "Location classification for the trade area.",
+          "default": "urban"
+        },
+        "region_code": {
+          "type": "string",
+          "description": "Administrative region code (e.g. county/district). Optional."
+        }
+      },
+      "additionalProperties": false
+    },
+    "store_context": {
+      "type": "object",
+      "description": "Store-level context, if the observation is store-scoped rather than area-scoped.",
+      "properties": {
+        "store_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "References core.stores.store_id if applicable."
+        },
+        "store_format_code": {
+          "type": "string",
+          "description": "Target store format code (e.g. ODAY_G2, G3_COMPACT, FLAGSHIP)."
+        },
+        "store_age_bucket": {
+          "type": "string",
+          "enum": ["0_6m", "6_12m", "12m_plus"],
+          "description": "Cohort bucket by store operating age."
+        }
+      },
+      "additionalProperties": false
+    },
+    "transfer_metrics": {
+      "type": "object",
+      "description": "Measured or estimated transfer quantities.",
+      "required": ["transfer_ratio", "measurement_method"],
+      "properties": {
+        "transfer_ratio": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Fraction of source-brand customers observed transferring to the target brand within the observation period. MUST be derived from real data — hardcoded constants (e.g. 0.15) are forbidden in production."
+        },
+        "transfer_volume": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Absolute count of transferred customers/transactions. Null when only ratio is available."
+        },
+        "sample_size": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Number of observations underlying the ratio calculation. Null invalidates confidence."
+        },
+        "confidence": {
+          "type": ["number", "null"],
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Statistical confidence of the transfer_ratio estimate. Must be computed from sample_size and variance — never hardcoded to 1.0. Null when sample_size is null or insufficient."
+        },
+        "measurement_method": {
+          "type": "string",
+          "enum": [
+            "receipt_panel",
+            "loyalty_crossover",
+            "pos_transaction_matching",
+            "survey_panel",
+            "model_estimate",
+            "unknown"
+          ],
+          "description": "Method used to measure or estimate the transfer ratio."
+        }
+      },
+      "additionalProperties": false
+    },
+    "data_quality": {
+      "type": "object",
+      "description": "Quality and freshness metadata for the observation.",
+      "properties": {
+        "data_quality_score": {
+          "type": ["number", "null"],
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Composite quality score derived from sample coverage, recency, and method reliability. Must NOT be hardcoded to 1.0."
+        },
+        "freshness_days": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Days since the observation period end. Used for staleness gating."
+        },
+        "staleness_threshold_days": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 90,
+          "description": "Maximum acceptable freshness_days before the observation is considered stale."
+        },
+        "is_training_eligible": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this observation may be used for model training."
+        },
+        "is_scoring_eligible": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this observation may be used in live scoring."
+        }
+      },
+      "additionalProperties": false
+    },
+    "lineage": {
+      "type": "object",
+      "description": "Provenance and traceability metadata.",
+      "required": ["source_reference", "ingested_at"],
+      "properties": {
+        "source_reference": {
+          "type": "string",
+          "description": "Canonical identifier for the upstream data source (e.g. provider contract ID, dataset version, API endpoint)."
+        },
+        "source_sha": {
+          "type": ["string", "null"],
+          "description": "SHA-256 hash of the source data file or API response, if available."
+        },
+        "ingested_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "UTC timestamp when the data was ingested into the platform."
+        },
+        "pipeline_run_id": {
+          "type": ["string", "null"],
+          "description": "Identifier of the ETL/ingestion pipeline run."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "_meta": {
+    "status": "DRAFT — Phase A engineering preparation",
+    "inspected_source_sha": "9048161e058becff5a53593a773d3c42238213fb",
+    "inspected_at_utc": "2026-09-08T15:23Z",
+    "inspected_files": [
+      "pipelines/dbt/models/model_ready/brand_transfer_view.sql",
+      "pipelines/dbt/models/model_ready/schema.yml",
+      "infra/db/migrations/000001_baseline_canonical_schema.sql",
+      "modules/sitescore/domain/scoring.py",
+      "services/signal-store/client.py",
+      "docs/data/MODEL_READY_VIEWS_BASELINE.md"
+    ],
+    "next_phase_entry_conditions": [
+      "H03 data request fulfilled: real cross-brand transfer data source identified and contracted",
+      "Data owner confirms statistical definitions and measurement methodology",
+      "Schema contract promoted from draft to v1.0.0 with data-owner sign-off",
+      "brand_transfer_view.sql rewritten to query real upstream table (core.brand_transfer_observations or equivalent)",
+      "SiteScoreFeatureInput extended with brand_transfer_ratio field"
+    ],
+    "forbidden": [
+      "Hardcoded transfer_ratio constants in production paths",
+      "Hardcoded confidence = 1.0 without sample-based computation",
+      "CROSS JOIN synthetic generation used as production data",
+      "Synthetic fixtures presented as real producer output"
+    ]
+  }
+}

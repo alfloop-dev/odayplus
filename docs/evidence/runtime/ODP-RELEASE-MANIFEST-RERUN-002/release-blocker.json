@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-RELEASE-MANIFEST-RERUN-002",
+  "release_id": "odp-20260826-002",
+  "manifest_digest": "sha256:18582f5600585d6c492690fa1ed013f2d9b0fefd395a132f36325ecabe1eb1e2",
+  "candidate_sha": "a027fa1c3935360e6fc4b3bd073cd91cbee07548",
+  "observed_at": "2026-08-26T14:42:37Z",
+  "recorded_by": "Claude2",
+  "status": "blocked",
+  "deployment_success_receipt_emitted": false,
+  "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-RERUN-002/release-candidate-transcript.txt",
+  "transcript_sha256": "sha256:3265240b81bbe0c69ba3cf5399062a28156497922eaaba6bede114ae56420d2a",
+  "checks": {
+    "latest_dev": {
+      "command": "git fetch --no-tags origin dev; git rev-parse origin/dev",
+      "command_exit_code": 0,
+      "observed": "a027fa1c3935360e6fc4b3bd073cd91cbee07548",
+      "transcript_ref": "release-candidate-transcript.txt#L24",
+      "result": "PASS"
+    },
+    "superseded_candidate_is_not_evidence_only_ancestor": {
+      "command": "python3 delivery_toolchain/e2e/check_release_gate_registry.py --expected-sha a027fa1c3935360e6fc4b3bd073cd91cbee07548",
+      "command_exit_code": 1,
+      "observed": "Run against the pre-rebind registry: release.candidate_sha ace4265b... is an ancestor of a027fa1c... but the intervening commits touch nine non-evidence paths under delivery_toolchain/ and tests/. The superseded candidate therefore cannot stand in for the current dev tip and its image digests must not be rebound.",
+      "transcript_ref": "release-candidate-transcript.txt#L46",
+      "result": "RERUN-REQUIRED"
+    },
+    "candidate_image_digests": {
+      "command": "docker buildx imagetools inspect asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/<service>:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548  # 11 candidate repository names",
+      "command_exit_code": 1,
+      "queries_run": 11,
+      "queries_exit_zero": 0,
+      "observed": "Every probe returned 'not found' with EXIT=1. Both the dev service names (oday-api, oday-web, oday-worker, oday-scheduler, oday-migration) and the staging service names (oday-staging-*, oday-data-platform) were probed, so the absence is not a naming mistake. This candidate has no immutable image digest and manifest.components is therefore empty.",
+      "transcript_ref": "release-candidate-transcript.txt#L117",
+      "result": "BLOCKED"
+    },
+    "github_actions_release_run": {
+      "command": "gh run list --repo alfloop-dev/odayplus --workflow deploy-dev.yml --commit a027fa1c3935360e6fc4b3bd073cd91cbee07548 --json databaseId,headSha,status,conclusion,url",
+      "command_exit_code": 0,
+      "observed": "[]  (no Runtime Release run is bound to the candidate SHA)",
+      "transcript_ref": "release-candidate-transcript.txt#L199",
+      "result": "BLOCKED"
+    },
+    "candidate_ci_runs": {
+      "command": "gh run list --repo alfloop-dev/odayplus --commit a027fa1c3935360e6fc4b3bd073cd91cbee07548 --json databaseId,workflowName,headSha,status,conclusion",
+      "command_exit_code": 0,
+      "observed": "Three successful runs exist for the candidate: CI (32979386062), Merge queue review gate (32977482459), and CI (32977482468). These are merge-gate runs, not release builds; none of them builds, pushes, signs, or attests a container image.",
+      "transcript_ref": "release-candidate-transcript.txt#L206",
+      "result": "INFORMATIONAL"
+    },
+    "release_workflow_history": {
+      "command": "gh run list --repo alfloop-dev/odayplus --workflow deploy-dev.yml --limit 5 --json databaseId,headSha,event,status,conclusion,createdAt",
+      "command_exit_code": 0,
+      "observed": "The five most recent Runtime Release runs are all push-triggered runs from 2026-08-19/20 that ended in failure or cancellation. At the candidate SHA the workflow is workflow_dispatch-only, so no push to dev can produce a release build.",
+      "transcript_ref": "release-candidate-transcript.txt#L213",
+      "result": "BLOCKED"
+    },
+    "cosign_tool": {
+      "command": "command -v cosign",
+      "command_exit_code": 1,
+      "observed": "not-installed",
+      "transcript_ref": "release-candidate-transcript.txt#L225",
+      "result": "BLOCKED"
+    },
+    "sbom_tool": {
+      "command": "command -v syft",
+      "command_exit_code": 1,
+      "observed": "not-installed",
+      "transcript_ref": "release-candidate-transcript.txt#L231",
+      "result": "BLOCKED"
+    },
+    "signing_helper_fails_closed": {
+      "command": "env CI=true ./delivery_toolchain/security/sign_images.sh verify <candidate image>",
+      "command_exit_code": 1,
+      "observed": "Error: cosign is required for image signing/verification; refusing to simulate success.",
+      "transcript_ref": "release-candidate-transcript.txt#L237",
+      "result": "PASS",
+      "note": "PASS here means the helper failed closed as required. It is not a signature verification result."
+    },
+    "sbom_and_signature_artifacts": {
+      "command": "docker buildx imagetools inspect --raw <registry>/<repo>:release-<sha>  # shared sbom repo\ndocker buildx imagetools inspect --raw <registry>/<repo>:sha256-<image-digest>.sig\ndocker buildx imagetools inspect --raw <registry>/<repo>:sha256-<image-digest>.sbom",
+      "command_exit_code": 1,
+      "queries_run": 3,
+      "queries_exit_zero": 0,
+      "observed": "All three probes returned 'not found'. There is no candidate SBOM artifact, and the cosign .sig/.sbom tags for the superseded candidate's API image digest are still absent, so the signing pipeline has never published an artifact for either candidate.",
+      "transcript_ref": "release-candidate-transcript.txt#L249",
+      "result": "BLOCKED"
+    },
+    "hosted_release_admission_configuration": {
+      "command": "gh variable list --repo alfloop-dev/odayplus --env <dev|staging|production> --json name\ngh variable list --repo alfloop-dev/odayplus --json name",
+      "command_exit_code": 0,
+      "queries_run": 4,
+      "queries_exit_zero": 4,
+      "observed": "The dev environment defines 38 variables, and neither ODP_RELEASE_LEASE_STATE_URI nor ODP_RELEASE_LEASE_PUBLIC_KEY is among them. The staging and production environments define both. Repository scope returned [], so nothing supplies them as a fallback. The Runtime Release admission job requires RELEASE_LEASE_STATE_URI to match ^gs://[^/]+/.+ and exits 1 otherwise, so a dev release cannot be admitted even with a valid lease document.",
+      "transcript_ref": "release-candidate-transcript.txt#L275",
+      "result": "BLOCKED"
+    }
+  },
+  "blockers": [
+    {
+      "id": "ODP-RELEASE-MANIFEST-RERUN-IMAGES-002",
+      "severity": "P0",
+      "category": "immutable-images",
+      "message": "No container image is tagged for the candidate SHA in any of the eleven probed repositories; the candidate has no immutable digest to bind."
+    },
+    {
+      "id": "ODP-RELEASE-MANIFEST-RERUN-WORKFLOW-002",
+      "severity": "P0",
+      "category": "workflow-provenance",
+      "message": "No Runtime Release run is bound to the candidate SHA, and the workflow is workflow_dispatch-only at this SHA."
+    },
+    {
+      "id": "ODP-RELEASE-MANIFEST-RERUN-COSIGN-002",
+      "severity": "P0",
+      "category": "signature",
+      "message": "Cosign is unavailable in this environment and no candidate signature artifact exists in the configured registry."
+    },
+    {
+      "id": "ODP-RELEASE-MANIFEST-RERUN-SBOM-002",
+      "severity": "P0",
+      "category": "sbom",
+      "message": "No candidate-bound SBOM OCI artifact exists and syft is not installed."
+    },
+    {
+      "id": "ODP-RELEASE-MANIFEST-RERUN-LEASE-CONFIG-002",
+      "severity": "P0",
+      "category": "hosted-admission-config",
+      "message": "The GitHub dev environment has no release-lease state URI or verification public key, so the hosted Runtime Release admission job cannot pass for environment=dev."
+    }
+  ],
+  "next_action": "Configure ODP_RELEASE_LEASE_STATE_URI and ODP_RELEASE_LEASE_PUBLIC_KEY on the dev GitHub environment, then dispatch the single Runtime Release workflow from this exact candidate SHA with a Supervisor-signed lease. The hosted run installs cosign, publishes the candidate SBOM and signatures, and produces the workflow provenance. Only then may this audit be rerun and the manifest moved off release_status='blocked'.",
+  "prohibited": "No deployment success receipt may be written for this candidate. sbom_refs and signature_refs stay empty and release-receipts-index.json stays at zero receipts until a hosted run produces real artifacts."
+}

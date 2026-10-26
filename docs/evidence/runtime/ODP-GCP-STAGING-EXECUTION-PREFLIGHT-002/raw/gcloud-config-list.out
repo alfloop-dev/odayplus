@@ -1,0 +1,8 @@
+{
+  "core": {
+    "account": "deborah.lu@dev.cctech-support.com",
+    "disable_usage_reporting": "True",
+    "project": "odayplus-runtime-20260825",
+    "universe_domain": "googleapis.com"
+  }
+}

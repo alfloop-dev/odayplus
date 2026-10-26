@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+pi_bin="$HOME/.local/bin/pi"
+if [[ ! -x "${pi_bin}" ]]; then
+  # Fallback: search PATH in case pi is installed elsewhere.
+  alt="$(command -v pi 2>/dev/null || true)"
+  if [[ -n "${alt}" && "${alt}" != "$0" ]]; then
+    pi_bin="${alt}"
+  else
+    echo "pi CLI binary not found at ${pi_bin} or on PATH." >&2
+    exit 1
+  fi
+fi
+
+exec "${pi_bin}" "$@"

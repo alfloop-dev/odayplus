@@ -1,0 +1,12 @@
+{
+  "case_id": "failure_prediction_no_policy_and_no_threshold",
+  "description": "Neither a policy nor an explicit threshold is supplied.",
+  "failure": {
+    "exception_message": "prediction drift requires a DecisionPolicy with drift_share_threshold",
+    "exception_module": "builtins",
+    "exception_type": "ValueError"
+  },
+  "kind": "prediction_drift",
+  "outcome": "raised",
+  "routing_expectation": "_effective_drift_share_threshold guard"
+}

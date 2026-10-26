@@ -16,11 +16,13 @@ from solver.netplan import (
     GOVERNED_ENABLED,
     SOLVER_VERSION,
     ActionOption,
+    ConstraintClass,
     ManagementApprovalReceipt,
     ManagementApprovalVerification,
     NetPlanConstraints,
     NetworkAction,
     NetworkPlanSolveResult,
+    canonical_sha256,
     compute_solver_problem_hash,
 )
 
@@ -163,6 +165,11 @@ class NetPlanScenario:
     feature_version: str = NETPLAN_FEATURE_VERSION
     solver_version: str = NETPLAN_SOLVER_VERSION
     status_history: tuple[StatusTransition, ...] = ()
+    # The candidate whose actions are being advanced through approval. The
+    # primary solve and its alternatives share one ScenarioSolveRecord, so the
+    # selected candidate must be durable state rather than an Operator-only
+    # display flag.
+    selected_candidate_id: str | None = None
 
     @classmethod
     def create(
@@ -233,6 +240,7 @@ class NetPlanScenario:
             "model_version": self.model_version,
             "feature_version": self.feature_version,
             "solver_version": self.solver_version,
+            "selected_candidate_id": self.selected_candidate_id,
             "status_history": [transition.to_dict() for transition in self.status_history],
         }
 
@@ -274,6 +282,164 @@ class ScenarioSolveRecord:
 
 
 @dataclass(frozen=True)
+class ConstraintDisclosureAcknowledgement:
+    """A named person's signature against constraint classes this solve never tested.
+
+    The solver reports `unmodelled_constraint_classes`; the disclosure policy
+    decides which of those a human may accept rather than fix. This is the
+    record of that acceptance, and it is designed so that it can only ever be
+    read as an acceptance of *one* exposure, by *one* person, under *one*
+    policy version, against *one* solve.
+
+    Four bindings do that work, and each closes a specific way a signature
+    could be stretched to cover something it was not given for:
+
+    - `solver_problem_hash` -- the plan that was signed for. Change the
+      scenario and the hash moves, so yesterday's signature does not carry to
+      today's plan. This is the same hash `ScenarioSolveRecord.is_stale` uses,
+      deliberately: staleness and acknowledgement reuse are the same question.
+    - `policy_version_id` -- the rules that were in force. If the policy is
+      superseded to make a class blocking, signatures taken under the older,
+      more permissive version stop applying rather than grandfathering
+      themselves in.
+    - `acknowledged_classes` -- what was actually accepted. A signature for
+      SEQUENCING is not a signature for LEASE.
+    - `actor_id` with `actor_role` -- who accepted it, and under what
+      authority. The role is copied from the verified management approval
+      receipt, never from a caller-supplied string.
+
+    Immutability is enforced in two places for two different threats. `frozen`
+    stops accidental mutation in process; `receipt_hash` over the canonical
+    content detects a rewritten record, whether it was rewritten by
+    `dataclasses.replace` or by an UPDATE the database trigger somehow did not
+    see. A receipt whose hash does not recompute is not a weakened receipt --
+    `integrity_verified` is false and the approval path treats it as absent.
+    """
+
+    acknowledgement_id: str
+    scenario_id: str
+    tenant_id: str
+    acknowledged_classes: tuple[ConstraintClass, ...]
+    actor_id: str
+    actor_role: str
+    reason: str
+    policy_version_id: str
+    policy_label: str
+    policy_version: str
+    solver_problem_hash: str
+    model_version: str
+    approval_receipt_id: str
+    acknowledged_at: datetime
+    receipt_hash: str = ""
+    # Alternatives share the solver problem hash. Bind the signature to the
+    # exact candidate as well, otherwise a primary acknowledgement could be
+    # replayed for a different Operator row.
+    selected_candidate_id: str = ""
+    selected_action_signature: tuple[tuple[str, str], ...] = ()
+    selected_baseline_content_hash: str = ""
+
+    def compute_receipt_hash(self) -> str:
+        """Canonical digest of everything the acknowledgement asserts.
+
+        `acknowledgement_id` is inside the digest: without it, two signatures
+        with identical content would be interchangeable, and one could be
+        presented in place of the other.
+        """
+        return canonical_sha256(
+            {
+                "acknowledgement_id": self.acknowledgement_id,
+                "scenario_id": self.scenario_id,
+                "tenant_id": self.tenant_id,
+                "acknowledged_classes": sorted(
+                    constraint_class.value
+                    for constraint_class in self.acknowledged_classes
+                ),
+                "actor_id": self.actor_id,
+                "actor_role": self.actor_role,
+                "reason": self.reason,
+                "policy_version_id": self.policy_version_id,
+                "policy_label": self.policy_label,
+                "policy_version": self.policy_version,
+                "solver_problem_hash": self.solver_problem_hash,
+                "model_version": self.model_version,
+                "approval_receipt_id": self.approval_receipt_id,
+                "acknowledged_at": self.acknowledged_at.isoformat(),
+                "selected_candidate_id": self.selected_candidate_id,
+                "selected_action_signature": [
+                    list(item) for item in sorted(self.selected_action_signature)
+                ],
+                "selected_baseline_content_hash": self.selected_baseline_content_hash,
+            }
+        )
+
+    def sealed(self) -> ConstraintDisclosureAcknowledgement:
+        """Return this receipt with its content hash filled in."""
+        return replace(self, receipt_hash=self.compute_receipt_hash())
+
+    @property
+    def integrity_verified(self) -> bool:
+        """Whether the stored hash still matches the stored content."""
+        return bool(self.receipt_hash) and self.receipt_hash == self.compute_receipt_hash()
+
+    def covers(
+        self,
+        *,
+        classes: Sequence[ConstraintClass],
+        solver_problem_hash: str,
+        policy_version_id: str,
+        selected_action_signature: Sequence[tuple[str, str]] = (),
+    ) -> bool:
+        """Whether this signature answers for `classes` on this solve under this policy.
+
+        Every check is an equality or a superset test, never a "close enough".
+        The class test is a superset rather than an exact match so that a
+        signature covering LEASE and SEQUENCING still answers a solve that only
+        left SEQUENCING unmodelled -- signing for more exposure than the plan
+        carries is not a reason to refuse it.
+        """
+        if not self.integrity_verified:
+            return False
+        if not self.reason.strip():
+            return False
+        if self.solver_problem_hash != solver_problem_hash or not solver_problem_hash:
+            return False
+        if self.policy_version_id != policy_version_id or not policy_version_id:
+            return False
+        if tuple(sorted(self.selected_action_signature)) != tuple(
+            sorted(selected_action_signature)
+        ):
+            return False
+        return set(classes).issubset(set(self.acknowledged_classes))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "acknowledgement_id": self.acknowledgement_id,
+            "scenario_id": self.scenario_id,
+            "tenant_id": self.tenant_id,
+            "acknowledged_classes": [
+                constraint_class.value for constraint_class in self.acknowledged_classes
+            ],
+            "actor_id": self.actor_id,
+            "actor_role": self.actor_role,
+            "reason": self.reason,
+            "policy_version_id": self.policy_version_id,
+            "policy_label": self.policy_label,
+            "policy_version": self.policy_version,
+            "solver_problem_hash": self.solver_problem_hash,
+            "model_version": self.model_version,
+            "approval_receipt_id": self.approval_receipt_id,
+            "acknowledged_at": self.acknowledged_at.isoformat(),
+            "receipt_hash": self.receipt_hash,
+            "integrity_verified": self.integrity_verified,
+            "selected_candidate_id": self.selected_candidate_id,
+            "selected_action_signature": [
+                list(item) for item in sorted(self.selected_action_signature)
+            ],
+            "selected_baseline_content_hash": self.selected_baseline_content_hash,
+        }
+
+
+@dataclass(frozen=True)
 class ApprovalRecord:
     approval_id: str
     scenario_id: str
@@ -285,6 +451,26 @@ class ApprovalRecord:
     authority_receipt: ManagementApprovalReceipt | None = None
     authority_verification: ManagementApprovalVerification | None = None
     verification_violations: tuple[str, ...] = ()
+
+    # What the approved solve had, and had not, been tested against. Carried on
+    # the approval rather than looked up from the solve later: the solve record
+    # is mutable state that moves when the scenario is re-solved, and the
+    # question this answers -- "what did the approver know?" -- has to stay
+    # answerable afterwards.
+    modelled_constraint_classes: tuple[ConstraintClass, ...] = ()
+    unmodelled_constraint_classes: tuple[ConstraintClass, ...] = ()
+    acknowledged_constraint_classes: tuple[ConstraintClass, ...] = ()
+    disclosure_policy_version_id: str = ""
+    disclosure_policy_label: str = ""
+    disclosure_policy_version: str = ""
+    disclosure_acknowledgement_id: str = ""
+    solver_problem_hash: str = ""
+    # The selected candidate is part of the durable approval subject. The
+    # solve's problem hash alone is intentionally insufficient because all
+    # alternatives come from the same optimization problem.
+    selected_candidate_id: str = ""
+    selected_action_signature: tuple[tuple[str, str], ...] = ()
+    selected_baseline_content_hash: str = ""
 
     @property
     def is_approved(self) -> bool:
@@ -300,6 +486,21 @@ class ApprovalRecord:
             and self.scenario_id == self.authority_receipt.scenario_id
             and self.actor_id == self.authority_receipt.principal_id
             and self.policy_version == self.authority_receipt.policy_version
+            and (
+                not self.selected_action_signature
+                or tuple(
+                    sorted(
+                        (entity_id, action.value)
+                        for entity_id, action in self.authority_receipt.actions_by_entity.items()
+                    )
+                )
+                == tuple(sorted(self.selected_action_signature))
+            )
+            and (
+                not self.selected_baseline_content_hash
+                or self.selected_baseline_content_hash
+                == self.authority_receipt.baseline_content_hash
+            )
             and self.authority_verification.authority_attests_receipt(
                 self.authority_receipt
             )
@@ -351,6 +552,28 @@ class ApprovalRecord:
             ),
             "verification_violations": list(self.verification_violations),
             "authentic_approval_verified": self.authentic_approval_verified,
+            "modelled_constraint_classes": [
+                constraint_class.value
+                for constraint_class in self.modelled_constraint_classes
+            ],
+            "unmodelled_constraint_classes": [
+                constraint_class.value
+                for constraint_class in self.unmodelled_constraint_classes
+            ],
+            "acknowledged_constraint_classes": [
+                constraint_class.value
+                for constraint_class in self.acknowledged_constraint_classes
+            ],
+            "disclosure_policy_version_id": self.disclosure_policy_version_id,
+            "disclosure_policy_label": self.disclosure_policy_label,
+            "disclosure_policy_version": self.disclosure_policy_version,
+            "disclosure_acknowledgement_id": self.disclosure_acknowledgement_id,
+            "solver_problem_hash": self.solver_problem_hash,
+            "selected_candidate_id": self.selected_candidate_id,
+            "selected_action_signature": [
+                list(item) for item in sorted(self.selected_action_signature)
+            ],
+            "selected_baseline_content_hash": self.selected_baseline_content_hash,
             "business_uat_status": (
                 BUSINESS_UAT_VERIFIED
                 if self.authentic_approval_verified
@@ -525,6 +748,7 @@ __all__ = [
     "VALID_TRANSITIONS",
     "ApprovalRecord",
     "CandidateSiteInput",
+    "ConstraintDisclosureAcknowledgement",
     "ExecutionRecord",
     "ExistingStoreInput",
     "InvalidNetPlanTransitionError",

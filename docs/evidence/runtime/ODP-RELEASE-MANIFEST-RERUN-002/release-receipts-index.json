@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-RELEASE-MANIFEST-RERUN-002",
+  "release_id": "odp-20260826-002",
+  "candidate_sha": "a027fa1c3935360e6fc4b3bd073cd91cbee07548",
+  "manifest_digest": "sha256:18582f5600585d6c492690fa1ed013f2d9b0fefd395a132f36325ecabe1eb1e2",
+  "generated_at": "2026-08-26T14:42:37Z",
+  "generated_by": "Claude2",
+  "total_receipts": 0,
+  "receipts": [],
+  "deployment_success_receipt_emitted": false,
+  "reason": "The candidate is release_status='blocked' with five P0 blockers and has no immutable image, no bound release workflow run, no SBOM, and no signature. A receipt written under these conditions would assert a deployment that did not happen.",
+  "policy": "A release receipt may only be written by the hosted Runtime Release workflow for a candidate whose manifest is release_status='ready'. This file stays at zero receipts until that is true.",
+  "blocker_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-RERUN-002/release-blocker.json"
+}

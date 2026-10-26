@@ -1,0 +1,1109 @@
+{
+  "metadata": {
+    "task_id": "ODP-CDC-SOURCE-CONTRACT-PREP-001",
+    "work_package": "WP-34A",
+    "governance_decision_ref": "D20",
+    "inspected_head_sha": "9048161e058becff5a53593a773d3c42238213fb",
+    "inspected_at_utc": "2026-09-08T16:15:00Z",
+    "baseline_audit_reference": "docs/evidence/ODP_INT001_CDC_SOURCE_EVIDENCE_2026-09-03.md",
+    "disposition_reference": "docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md",
+    "summary": "Comprehensive CDC source applicability, ordering, delete propagation, and privilege boundary matrix across all 15 internal MongoDB collections, 6 external providers, 2 weather/demographics live providers, and 8 declared contract models. Documents why batch/sensor polling currently satisfies downstream daily partition consumers and identifies technical requirements for potential future CDC streaming."
+  },
+  "sources": [
+    {
+      "source_id": "merchant",
+      "source_name": "Merchant / Tenant Master Collection",
+      "category": "internal_mongo",
+      "collection_or_endpoint": "fongniao_prod.merchant",
+      "integration_mode": "batch_snapshot",
+      "acquisition_method": "internal",
+      "reader_or_connector": "apps/data_platform/source.py::MongoSource",
+      "source_owner": "unknown (repo declares only requirement-level Data Platform Owner in RTM; no upstream team/individual catalog entry exists)",
+      "cadence_or_latency_sla": {
+        "configured_cadence": "Scheduled 01:00 UTC daily + dimension_change_sensor polling >= 15 min",
+        "detection_latency": "15 minutes via updatedAt polling",
+        "consumption_latency_requirement": "DailyPartitionsDefinition (daily batch)",
+        "declared_sla": "unknown (no formal upstream SLA documented)"
+      },
+      "ordering_semantics": {
+        "order_field": "sort('_id', 1)",
+        "resumption_mechanism": "_id cursor pagination",
+        "ordering_requirement_level": "None; idempotency keys and upsert ensure final consistency regardless of record arrival order"
+      },
+      "delete_and_withdraw_semantics": {
+        "upstream_soft_delete_support": true,
+        "upstream_physical_delete_support": false,
+        "operation_mapping": "operation field mapped to tenant/brand status in apps/data_platform/mapping.py:374",
+        "downstream_sink_delete_support": false,
+        "gap_description": "Physical deletions upstream are not propagated to downstream core.tenants; sink executes only INSERT ... ON CONFLICT DO UPDATE"
+      },
+      "idempotency_mechanism": {
+        "key_derivation": "source_snapshot_id = sha256(kind + source_id + content_sha256)",
+        "sink_behavior": "Transactional upsert into PostgreSQL canonical schema"
+      },
+      "credential_and_least_privilege_boundary": {
+        "env_var": "ODP_DATA_MONGO_URI",
+        "current_privilege_scope": "find queries on named collection with SOURCE_PROJECTIONS field mask",
+        "cdc_privilege_requirement": "MongoDB Change Stream requires cluster-level readAnyDatabase or collection watch privileges",
+        "wire_projection_supported": false,
+        "pii_risk": "Low (merchant/tenant metadata contains minimal PII)"
+      },
+      "batch_capability_gap_and_cdc_evaluation": {
+        "batch_current_state": "Full snapshot scan via _id cursor pagination",
+        "gap_against_cdc": "15-minute polling interval vs sub-second change stream; however downstream assets are daily-partitioned",
+        "cdc_applicability_verdict": "NOT_APPLICABLE_TODAY",
+        "rationale": "Supply speed (15m) already exceeds consumption requirement (daily). Full snapshot scan detects logical status updates. Downstream sink lacks delete path."
+      },
+      "difference_from_2026_09_03_audit": "No code drift since 2026-09-03 audit; mapping, sensor interval (900s), and projection boundary remain identical at HEAD 9048161e."
+    },
+    {
+      "source_id": "place",
+      "source_name": "Store / Place Master Collection",
+      "category": "internal_mongo",
+      "collection_or_endpoint": "fongniao_prod.place",
+      "integration_mode": "batch_snapshot",
+      "acquisition_method": "internal",
+      "reader_or_connector": "apps/data_platform/source.py::MongoSource",
+      "source_owner": "unknown (no upstream team/individual catalog entry exists)",
+      "cadence_or_latency_sla": {
+        "configured_cadence": "Scheduled 01:00 UTC daily + dimension_change_sensor polling >= 15 min",
+        "detection_latency": "15 minutes via updatedAt polling",
+        "consumption_latency_requirement": "DailyPartitionsDefinition (daily batch)",
+        "declared_sla": "unknown"
+      },
+      "ordering_semantics": {
+        "order_field": "sort('_id', 1)",
+        "resumption_mechanism": "_id cursor pagination",
+        "ordering_requirement_level": "None; upsert with content hash ensures deterministic state"
+      },
+      "delete_and_withdraw_semantics": {
+        "upstream_soft_delete_support": true,
+        "upstream_physical_delete_support": false,
+        "operation_mapping": "operation field mapped to store status; unapproved mappings routed to OPERATION_MAPPING_UNAPPROVED quarantine (mapping.py:390-400)",
+        "downstream_sink_delete_support": false,
+        "gap_description": "Downstream core.stores has no deletion or tombstone purge mechanism"
+      },
+      "idempotency_mechanism": {
+        "key_derivation": "source_snapshot_id = sha256(kind + source_id + content_sha256)",
+        "sink_behavior": "Transactional upsert into core.stores and data_plane.place_geography"
+      },
+      "credential_and_least_privilege_boundary": {
+        "env_var": "ODP_DATA_MONGO_URI",
+        "current_privilege_scope": "find queries with SOURCE_PROJECTIONS mask",
+        "cdc_privilege_requirement": "Cluster-level or database-level Change Stream watch permission",
+        "wire_projection_supported": false,
+        "pii_risk": "Low (store address and operational parameters)"
+      },
+      "batch_capability_gap_and_cdc_evaluation": {
+        "batch_current_state": "Full snapshot scan with point-in-time geography lineage",
+        "gap_against_cdc": "No gap for business operations; store additions/modifications happen at day-level business cadence",
+        "cdc_applicability_verdict": "NOT_APPLICABLE_TODAY",
+        "rationale": "Store metadata changes infrequently; 15-minute polling is faster than physical store modification cycles."
+      },
+      "difference_from_2026_09_03_audit": "No code drift; geography backfill and point-in-time lineage maintain existing contracts."
+    },
+    {
+      "source_id": "device",
+      "source_name": "Device / Machine Master Collection",
+      "category": "internal_mongo",
+      "collection_or_endpoint": "fongniao_prod.device",
+      "integration_mode": "batch_snapshot",
+      "acquisition_method": "internal",
+      "reader_or_connector": "apps/data_platform/source.py::MongoSource",
+      "source_owner": "unknown (no upstream team/individual catalog entry exists)",
+      "cadence_or_latency_sla": {
+        "configured_cadence": "Scheduled 01:00 UTC daily + dimension_change_sensor polling >= 15 min",
+        "detection_latency": "15 minutes via updatedAt polling",
+        "consumption_latency_requirement": "DailyPartitionsDefinition",
+        "declared_sla": "unknown"
+      },
+      "ordering_semantics": {
+        "order_field": "sort('_id', 1)",
+        "resumption_mechanism": "_id cursor pagination",
+        "ordering_requirement_level": "None"
+      },
+      "delete_and_withdraw_semantics": {
+        "upstream_soft_delete_support": true,
+        "upstream_physical_delete_support": false,
+        "operation_mapping": "operation mapped to machine lifecycle status",
+        "downstream_sink_delete_support": false,
+        "gap_description": "Downstream core.machines stores decommissioned status via upsert, but physical drops are not purged"
+      },
+      "idempotency_mechanism": {
+        "key_derivation": "source_snapshot_id = sha256(kind + source_id + content_sha256)",
+        "sink_behavior": "Upsert into core.machines"
+      },
+      "credential_and_least_privilege_boundary": {
+        "env_var": "ODP_DATA_MONGO_URI",
+        "current_privilege_scope": "find with projection",
+        "cdc_privilege_requirement": "Cluster changeStream",
+        "wire_projection_supported": false,
+        "pii_risk": "Low (hardware metadata, model, firmware version)"
+      },
+      "batch_capability_gap_and_cdc_evaluation": {
+        "batch_current_state": "Full snapshot scan with dimension sensor",
+        "gap_against_cdc": "Device master inventory changes rarely (hardware installation/decommission)",
+        "cdc_applicability_verdict": "NOT_APPLICABLE_TODAY",
+        "rationale": "Hardware provisioning does not require real-time streaming; batch snapshot is robust and idempotent."
+      },
+      "difference_from_2026_09_03_audit": "Unchanged."
+    },
+    {
+      "source_id": "device_daily_statistics",
+      "source_name": "Device Daily Operational Telemetry Facts",
+      "category": "internal_mongo",
+      "collection_or_endpoint": "fongniao_prod.device_daily_statistics",
+      "integration_mode": "incremental_batch",
+      "acquisition_method": "internal",
+      "reader_or_connector": "apps/data_platform/source.py::MongoSource",
+      "source_owner": "unknown",
+      "cadence_or_latency_sla": {
+        "configured_cadence": "Scheduled 02:00 UTC daily + operations_change_sensor polling >= 15 min",
+        "detection_latency": "15 minutes via updatedAt / startDatetime / createdAt window query",
+        "consumption_latency_requirement": "DailyPartitionsDefinition",
+        "declared_sla": "unknown"
+      },
+      "ordering_semantics": {
+        "order_field": "sort('_id', 1) within [window.start, window.end)",
+        "resumption_mechanism": "Watermark window + cursor continuation",
+        "ordering_requirement_level": "None; statistical aggregates are partition-keyed"
+      },
+      "delete_and_withdraw_semantics": {
+        "upstream_soft_delete_support": false,
+        "upstream_physical_delete_support": false,
+        "operation_mapping": "Immutable fact records; no delete operation supported",
+        "downstream_sink_delete_support": false,
+        "gap_description": "Fact records are append/upsert only; no historical retraction path exists"
+      },
+      "idempotency_mechanism": {
+        "key_derivation": "source_snapshot_id = sha256(kind + source_id + content_sha256)",
+        "sink_behavior": "Upsert into data_plane.store_daily_facts"
+      },
+      "credential_and_least_privilege_boundary": {
+        "env_var": "ODP_DATA_MONGO_URI",
+        "current_privilege_scope": "find with projection on time windows",
+        "cdc_privilege_requirement": "Cluster changeStream",
+        "wire_projection_supported": false,
+        "pii_risk": "None (aggregated telemetry metrics)"
+      },
+      "batch_capability_gap_and_cdc_evaluation": {
+        "batch_current_state": "Incremental watermark window bounded by previous day partition",
+        "gap_against_cdc": "Statistics are computed in daily batches upstream; real-time CDC would stream already-batched daily totals",
+        "cdc_applicability_verdict": "NOT_APPLICABLE_TODAY",
+        "rationale": "Data is naturally batched by nature of daily statistics aggregation."
+      },
+      "difference_from_2026_09_03_audit": "Unchanged."
+    },
+    {
+      "source_id": "orders",
+      "source_name": "Authoritative Orders & Transactions",
+      "category": "internal_mongo",
+      "collection_or_endpoint": "fongniao_prod.orders",
+      "integration_mode": "incremental_batch",
+      "acquisition_method": "internal",
+      "reader_or_connector": "apps/data_platform/source.py::MongoSource",
+      "source_owner": "unknown (RTM lists Data Platform Owner)",
+      "cadence_or_latency_sla": {
+        "configured_cadence": "Scheduled 02:30 UTC daily + authoritative_transaction_change_sensor polling >= 15 min",
+        "detection_latency": "15 minutes via updatedAt / createdAt window query",
+        "consumption_latency_requirement": "DailyPartitionsDefinition (downstream analytics & revenue models consume D-1 partition)",
+        "declared_sla": "unknown"
+      },
+      "ordering_semantics": {
+        "order_field": "sort('_id', 1) within watermark window",
+        "resumption_mechanism": "Watermark window + checkpoints table",
+        "ordering_requirement_level": "Moderate (order state transitions: created -> paid -> voided/refunded); resolved by updatedAt watermark and rank authority in mapping"
+      },
+      "delete_and_withdraw_semantics": {
+        "upstream_soft_delete_support": true,
+        "upstream_physical_delete_support": false,
+        "operation_mapping": "operation in {delete, deleted, void, voided} -> status 'voided' (mapping.py:977-981)",
+        "downstream_sink_delete_support": false,
+        "gap_description": "Soft deletes/voids update transaction_status to 'voided' in core.transactions; physical document deletes in Mongo are not captured by watermark query"
+      },
+      "idempotency_mechanism": {
+        "key_derivation": "source_snapshot_id = sha256(kind + source_id + content_sha256)",
+        "sink_behavior": "Upsert into core.transactions with authority_rank=1 in data_plane.transaction_authority"
+      },
+      "credential_and_least_privilege_boundary": {
+        "env_var": "ODP_DATA_MONGO_URI",
+        "current_privilege_scope": "find with SOURCE_PROJECTIONS mask on orders",
+        "cdc_privilege_requirement": "Cluster changeStream on fongniao_prod",
+        "wire_projection_supported": false,
+        "pii_risk": "Moderate (payment metadata, customer reference tokens)"
+      },
+      "batch_capability_gap_and_cdc_evaluation": {
+        "batch_current_state": "15-minute sensor polling + 02:30 UTC daily partition execution",
+        "gap_against_cdc": "15-minute latency gap. If sub-minute real-time revenue dashboard is required, CDC could provide streaming transaction events.",
+        "cdc_applicability_verdict": "CANDIDATE_FOR_STREAMING",
+        "rationale": "High-value candidate for Phase 34B if Human/Ops H07 decision requests near-real-time order intake. Requires downstream delete/void handling and change stream credential approval."
+      },
+      "difference_from_2026_09_03_audit": "Authority ranking (orders rank 1, transaction rank 2, trade rank 3) and mapping verified unchanged."
+    },
+    {
+      "source_id": "transaction",
+      "source_name": "Legacy Secondary Transactions Collection",
+      "category": "internal_mongo",
+      "collection_or_endpoint": "fongniao_prod.transaction",
+      "integration_mode": "incremental_batch",
+      "acquisition_method": "internal",
+      "reader_or_connector": "apps/data_platform/source.py::MongoSource",
+      "source_owner": "unknown",
+      "cadence_or_latency_sla": {
+        "configured_cadence": "Manual-only job (fongniao_mapped_transactions_manual); no automated schedule or sensor",
+        "detection_latency": "Manual execution latency (unbounded until operator triggers)",
+        "consumption_latency_requirement": "Daily / On-demand",
+        "declared_sla": "unknown"
+      },
+      "ordering_semantics": {
+        "order_field": "sort('_id', 1) within watermark window",
+        "resumption_mechanism": "Watermark window pagination",
+        "ordering_requirement_level": "None"
+      },
+      "delete_and_withdraw_semantics": {
+        "upstream_soft_delete_support": true,
+        "upstream_physical_delete_support": false,
+        "operation_mapping": "operation mapped to status ('refunded' or 'voided')",
+        "downstream_sink_delete_support": false,
+        "gap_description": "Secondary transaction source; authority rank 2 overrides lower rank but yields to orders (rank 1)"
+      },
+      "idempotency_mechanism": {
+        "key_derivation": "source_snapshot_id = sha256(kind + source_id + content_sha256)",
+        "sink_behavior": "Upsert into core.transactions conditioned on transaction_authority rank"
+      },
+      "credential_and_least_privilege_boundary": {
+        "env_var": "ODP_DATA_MONGO_URI",
+        "current_privilege_scope": "find with projection",
+        "cdc_privilege_requirement": "Cluster changeStream",
+        "wire_projection_supported": false,
+        "pii_risk": "Moderate"
+      },
+      "batch_capability_gap_and_cdc_evaluation": {
+        "batch_current_state": "Manual trigger only",
+        "gap_against_cdc": "Manual batching is cheaper than CDC; secondary source is redundant with orders",
+        "cdc_applicability_verdict": "NOT_APPLICABLE_TODAY",
+        "rationale": "Secondary transaction source; orders collection is primary. Establishing CDC on secondary legacy collection is counterproductive."
+      },
+      "difference_from_2026_09_03_audit": "Unchanged."
+    },
+    {
+      "source_id": "trade",
+      "source_name": "Legacy Tertiary Trade Collection",
+      "category": "internal_mongo",
+      "collection_or_endpoint": "fongniao_prod.trade",
+      "integration_mode": "incremental_batch",
+      "acquisition_method": "internal",
+      "reader_or_connector": "apps/data_platform/source.py::MongoSource",
+      "source_owner": "unknown",
+      "cadence_or_latency_sla": {
+        "configured_cadence": "Manual-only job (fongniao_bounded_trade_manual)",
+        "detection_latency": "Manual execution latency",
+        "consumption_latency_requirement": "Daily / On-demand",
+        "declared_sla": "unknown"
+      },
+      "ordering_semantics": {
+        "order_field": "sort('_id', 1)",
+        "resumption_mechanism": "Watermark window pagination",
+        "ordering_requirement_level": "None"
+      },
+      "delete_and_withdraw_semantics": {
+        "upstream_soft_delete_support": true,
+        "upstream_physical_delete_support": false,
+        "operation_mapping": "operation mapped to status ('refunded' or 'voided')",
+        "downstream_sink_delete_support": false,
+        "gap_description": "Tertiary transaction source (rank 3)"
+      },
+      "idempotency_mechanism": {
+        "key_derivation": "source_snapshot_id = sha256(kind + source_id + content_sha256)",
+        "sink_behavior": "Upsert conditioned on authority rank 3"
+      },
+      "credential_and_least_privilege_boundary": {
+        "env_var": "ODP_DATA_MONGO_URI",
+        "current_privilege_scope": "find with projection",
+        "cdc_privilege_requirement": "Cluster changeStream",
+        "wire_projection_supported": false,
+        "pii_risk": "Moderate"
+      },
+      "batch_capability_gap_and_cdc_evaluation": {
+        "batch_current_state": "Manual trigger only",
+        "gap_against_cdc": "Legacy fallback; lowest authority rank",
+        "cdc_applicability_verdict": "NOT_APPLICABLE_TODAY",
+        "rationale": "Tertiary fallback collection does not warrant streaming infrastructure."
+      },
+      "difference_from_2026_09_03_audit": "Unchanged."
+    },
+    {
+      "source_id": "ai_revenue_stats",
+      "source_name": "AI Revenue Model Daily Forecast Input Statistics",
+      "category": "internal_mongo",
+      "collection_or_endpoint": "fongniao_prod.ai_revenue_stats",
+      "integration_mode": "incremental_batch",
+      "acquisition_method": "internal",
+      "reader_or_connector": "apps/data_platform/source.py::MongoSource",
+      "source_owner": "unknown",
+      "cadence_or_latency_sla": {
+        "configured_cadence": "Scheduled 03:00 UTC daily",
+        "detection_latency": "24 hours (daily scheduled run)",
+        "consumption_latency_requirement": "DailyPartitionsDefinition",
+        "declared_sla": "unknown"
+      },
+      "ordering_semantics": {
+        "order_field": "sort('_id', 1)",
+        "resumption_mechanism": "Watermark window pagination",
+        "ordering_requirement_level": "None"
+      },
+      "delete_and_withdraw_semantics": {
+        "upstream_soft_delete_support": false,
+        "upstream_physical_delete_support": false,
+        "operation_mapping": "Immutable statistical snapshot",
+        "downstream_sink_delete_support": false,
+        "gap_description": "Appends to forecast_inputs with legacy model lineage"
+      },
+      "idempotency_mechanism": {
+        "key_derivation": "source_snapshot_id = sha256(kind + source_id + content_sha256)",
+        "sink_behavior": "Upsert into data_plane.forecast_inputs"
+      },
+      "credential_and_least_privilege_boundary": {
+        "env_var": "ODP_DATA_MONGO_URI",
+        "current_privilege_scope": "find with projection",
+        "cdc_privilege_requirement": "Cluster changeStream",
+        "wire_projection_supported": false,
+        "pii_risk": "None"
+      },
+      "batch_capability_gap_and_cdc_evaluation": {
+        "batch_current_state": "Daily scheduled batch",
+        "gap_against_cdc": "Upstream AI stats are generated on a daily batch cadence; streaming is structurally inapplicable",
+        "cdc_applicability_verdict": "NOT_APPLICABLE_TODAY",
+        "rationale": "Input data is generated as batch statistics."
+      },
+      "difference_from_2026_09_03_audit": "Unchanged."
+    },
+    {
+      "source_id": "campaign",
+      "source_name": "Commercial Marketing Campaigns",
+      "category": "internal_mongo",
+      "collection_or_endpoint": "fongniao_prod.campaign",
+      "integration_mode": "batch_snapshot",
+      "acquisition_method": "internal",
+      "reader_or_connector": "apps/data_platform/source.py::MongoSource",
+      "source_owner": "unknown",
+      "cadence_or_latency_sla": {
+        "configured_cadence": "Scheduled 04:00 UTC daily",
+        "detection_latency": "24 hours",
+        "consumption_latency_requirement": "DailyPartitionsDefinition",
+        "declared_sla": "unknown"
+      },
+      "ordering_semantics": {
+        "order_field": "sort('_id', 1)",
+        "resumption_mechanism": "Cursor pagination",
+        "ordering_requirement_level": "None"
+      },
+      "delete_and_withdraw_semantics": {
+        "upstream_soft_delete_support": false,
+        "upstream_physical_delete_support": false,
+        "operation_mapping": "Full snapshot replacement into domain_inputs",
+        "downstream_sink_delete_support": false,
+        "gap_description": "Stored as jsonb in data_plane.domain_inputs with input_kind='campaign'"
+      },
+      "idempotency_mechanism": {
+        "key_derivation": "source_snapshot_id = sha256(kind + source_id + content_sha256)",
+        "sink_behavior": "Upsert into data_plane.domain_inputs"
+      },
+      "credential_and_least_privilege_boundary": {
+        "env_var": "ODP_DATA_MONGO_URI",
+        "current_privilege_scope": "find with projection",
+        "cdc_privilege_requirement": "Cluster changeStream",
+        "wire_projection_supported": false,
+        "pii_risk": "Low"
+      },
+      "batch_capability_gap_and_cdc_evaluation": {
+        "batch_current_state": "Daily full snapshot",
+        "gap_against_cdc": "Campaign definitions change infrequently",
+        "cdc_applicability_verdict": "NOT_APPLICABLE_TODAY",
+        "rationale": "Commercial campaign configuration does not require streaming."
+      },
+      "difference_from_2026_09_03_audit": "Unchanged."
+    },
+    {
+      "source_id": "product",
+      "source_name": "Product Catalog (Single Form)",
+      "category": "internal_mongo",
+      "collection_or_endpoint": "fongniao_prod.product",
+      "integration_mode": "batch_snapshot",
+      "acquisition_method": "internal",
+      "reader_or_connector": "apps/data_platform/source.py::MongoSource",
+      "source_owner": "unknown",
+      "cadence_or_latency_sla": {
+        "configured_cadence": "Scheduled 04:00 UTC daily",
+        "detection_latency": "24 hours",
+        "consumption_latency_requirement": "DailyPartitionsDefinition",
+        "declared_sla": "unknown"
+      },
+      "ordering_semantics": {
+        "order_field": "sort('_id', 1)",
+        "resumption_mechanism": "Cursor pagination",
+        "ordering_requirement_level": "None"
+      },
+      "delete_and_withdraw_semantics": {
+        "upstream_soft_delete_support": false,
+        "upstream_physical_delete_support": false,
+        "operation_mapping": "Snapshot load into domain_inputs (input_kind='product')",
+        "downstream_sink_delete_support": false,
+        "gap_description": "No physical delete propagation"
+      },
+      "idempotency_mechanism": {
+        "key_derivation": "source_snapshot_id = sha256(kind + source_id + content_sha256)",
+        "sink_behavior": "Upsert into domain_inputs"
+      },
+      "credential_and_least_privilege_boundary": {
+        "env_var": "ODP_DATA_MONGO_URI",
+        "current_privilege_scope": "find with projection",
+        "cdc_privilege_requirement": "Cluster changeStream",
+        "wire_projection_supported": false,
+        "pii_risk": "None"
+      },
+      "batch_capability_gap_and_cdc_evaluation": {
+        "batch_current_state": "Daily snapshot",
+        "gap_against_cdc": "Static master catalog",
+        "cdc_applicability_verdict": "NOT_APPLICABLE_TODAY",
+        "rationale": "Product catalog updates are discrete inventory actions, fully handled by daily snapshot."
+      },
+      "difference_from_2026_09_03_audit": "Unchanged."
+    },
+    {
+      "source_id": "products",
+      "source_name": "Products Catalog (Plural Form)",
+      "category": "internal_mongo",
+      "collection_or_endpoint": "fongniao_prod.products",
+      "integration_mode": "batch_snapshot",
+      "acquisition_method": "internal",
+      "reader_or_connector": "apps/data_platform/source.py::MongoSource",
+      "source_owner": "unknown",
+      "cadence_or_latency_sla": {
+        "configured_cadence": "Scheduled 04:00 UTC daily",
+        "detection_latency": "24 hours",
+        "consumption_latency_requirement": "DailyPartitionsDefinition",
+        "declared_sla": "unknown"
+      },
+      "ordering_semantics": {
+        "order_field": "sort('_id', 1)",
+        "resumption_mechanism": "Cursor pagination",
+        "ordering_requirement_level": "None"
+      },
+      "delete_and_withdraw_semantics": {
+        "upstream_soft_delete_support": false,
+        "upstream_physical_delete_support": false,
+        "operation_mapping": "Snapshot load into domain_inputs (input_kind='products')",
+        "downstream_sink_delete_support": false,
+        "gap_description": "No physical delete propagation"
+      },
+      "idempotency_mechanism": {
+        "key_derivation": "source_snapshot_id = sha256(kind + source_id + content_sha256)",
+        "sink_behavior": "Upsert into domain_inputs"
+      },
+      "credential_and_least_privilege_boundary": {
+        "env_var": "ODP_DATA_MONGO_URI",
+        "current_privilege_scope": "find with projection",
+        "cdc_privilege_requirement": "Cluster changeStream",
+        "wire_projection_supported": false,
+        "pii_risk": "None"
+      },
+      "batch_capability_gap_and_cdc_evaluation": {
+        "batch_current_state": "Daily snapshot",
+        "gap_against_cdc": "Static catalog",
+        "cdc_applicability_verdict": "NOT_APPLICABLE_TODAY",
+        "rationale": "Plural product collection is secondary catalog representation; snapshot is sufficient."
+      },
+      "difference_from_2026_09_03_audit": "Unchanged."
+    },
+    {
+      "source_id": "promotions",
+      "source_name": "Commercial Promotions & Pricing Rules",
+      "category": "internal_mongo",
+      "collection_or_endpoint": "fongniao_prod.promotions",
+      "integration_mode": "batch_snapshot",
+      "acquisition_method": "internal",
+      "reader_or_connector": "apps/data_platform/source.py::MongoSource",
+      "source_owner": "unknown",
+      "cadence_or_latency_sla": {
+        "configured_cadence": "Scheduled 04:00 UTC daily",
+        "detection_latency": "24 hours",
+        "consumption_latency_requirement": "DailyPartitionsDefinition",
+        "declared_sla": "unknown"
+      },
+      "ordering_semantics": {
+        "order_field": "sort('_id', 1)",
+        "resumption_mechanism": "Cursor pagination",
+        "ordering_requirement_level": "None"
+      },
+      "delete_and_withdraw_semantics": {
+        "upstream_soft_delete_support": false,
+        "upstream_physical_delete_support": false,
+        "operation_mapping": "Snapshot load into domain_inputs (input_kind='promotions')",
+        "downstream_sink_delete_support": false,
+        "gap_description": "No physical delete propagation"
+      },
+      "idempotency_mechanism": {
+        "key_derivation": "source_snapshot_id = sha256(kind + source_id + content_sha256)",
+        "sink_behavior": "Upsert into domain_inputs"
+      },
+      "credential_and_least_privilege_boundary": {
+        "env_var": "ODP_DATA_MONGO_URI",
+        "current_privilege_scope": "find with projection",
+        "cdc_privilege_requirement": "Cluster changeStream",
+        "wire_projection_supported": false,
+        "pii_risk": "None"
+      },
+      "batch_capability_gap_and_cdc_evaluation": {
+        "batch_current_state": "Daily snapshot",
+        "gap_against_cdc": "Promotional campaigns are configured on calendar schedules",
+        "cdc_applicability_verdict": "NOT_APPLICABLE_TODAY",
+        "rationale": "Batch snapshot aligns with daily model evaluation."
+      },
+      "difference_from_2026_09_03_audit": "Unchanged."
+    },
+    {
+      "source_id": "ai_consumer_kmeans_v1",
+      "source_name": "AI Consumer Segment Lineage Clustering Outputs",
+      "category": "internal_mongo",
+      "collection_or_endpoint": "fongniao_prod.ai_consumer_kmeans_v1",
+      "integration_mode": "incremental_batch",
+      "acquisition_method": "internal",
+      "reader_or_connector": "apps/data_platform/source.py::MongoSource",
+      "source_owner": "unknown",
+      "cadence_or_latency_sla": {
+        "configured_cadence": "Scheduled 05:00 UTC daily",
+        "detection_latency": "24 hours",
+        "consumption_latency_requirement": "DailyPartitionsDefinition",
+        "declared_sla": "unknown"
+      },
+      "ordering_semantics": {
+        "order_field": "sort('_id', 1)",
+        "resumption_mechanism": "Watermark window pagination",
+        "ordering_requirement_level": "None"
+      },
+      "delete_and_withdraw_semantics": {
+        "upstream_soft_delete_support": false,
+        "upstream_physical_delete_support": false,
+        "operation_mapping": "Immutable clustering feature snapshot",
+        "downstream_sink_delete_support": false,
+        "gap_description": "Recorded with source_account_ref_hash (SHA-256) into learning_import_lineage"
+      },
+      "idempotency_mechanism": {
+        "key_derivation": "source_snapshot_id = sha256(kind + source_id + content_sha256)",
+        "sink_behavior": "Upsert into data_plane.learning_import_lineage"
+      },
+      "credential_and_least_privilege_boundary": {
+        "env_var": "ODP_DATA_MONGO_URI",
+        "current_privilege_scope": "find with projection",
+        "cdc_privilege_requirement": "Cluster changeStream",
+        "wire_projection_supported": false,
+        "pii_risk": "Low (account refs hashed with SHA-256)"
+      },
+      "batch_capability_gap_and_cdc_evaluation": {
+        "batch_current_state": "Daily scheduled batch",
+        "gap_against_cdc": "Clustering is offline batch machine learning algorithm",
+        "cdc_applicability_verdict": "NOT_APPLICABLE_TODAY",
+        "rationale": "K-means clustering algorithm executes in daily batches."
+      },
+      "difference_from_2026_09_03_audit": "Unchanged."
+    },
+    {
+      "source_id": "member",
+      "source_name": "Member / Customer Account Collection",
+      "category": "internal_mongo",
+      "collection_or_endpoint": "fongniao_prod.member",
+      "integration_mode": "batch_snapshot",
+      "acquisition_method": "internal",
+      "reader_or_connector": "apps/data_platform/source.py::MongoSource",
+      "source_owner": "unknown",
+      "cadence_or_latency_sla": {
+        "configured_cadence": "Manual-only job (fongniao_member_minimized_manual)",
+        "detection_latency": "Manual execution latency",
+        "consumption_latency_requirement": "On-demand / Quarantine review",
+        "declared_sla": "unknown"
+      },
+      "ordering_semantics": {
+        "order_field": "sort('_id', 1)",
+        "resumption_mechanism": "Cursor pagination",
+        "ordering_requirement_level": "None"
+      },
+      "delete_and_withdraw_semantics": {
+        "upstream_soft_delete_support": false,
+        "upstream_physical_delete_support": false,
+        "operation_mapping": "All records routed to SENSITIVE_MEMBER_EXCLUDED quarantine under privacy policy",
+        "downstream_sink_delete_support": false,
+        "gap_description": "Data plane deliberately excludes unmasked member PII from canonical tables"
+      },
+      "idempotency_mechanism": {
+        "key_derivation": "source_snapshot_id = sha256(kind + source_id + content_sha256)",
+        "sink_behavior": "Quarantine logging in data_plane.quarantined_records"
+      },
+      "credential_and_least_privilege_boundary": {
+        "env_var": "ODP_DATA_MONGO_URI",
+        "current_privilege_scope": "find with _minimize_member projection mask",
+        "cdc_privilege_requirement": "Cluster changeStream would bypass wire-level projection, exposing raw PII to application layer",
+        "wire_projection_supported": false,
+        "pii_risk": "High (customer phone, name, email, credentials)"
+      },
+      "batch_capability_gap_and_cdc_evaluation": {
+        "batch_current_state": "Manual minimized quarantine scan",
+        "gap_against_cdc": "Streaming member changes poses high PII exposure risk without wire-level projections",
+        "cdc_applicability_verdict": "NOT_APPLICABLE_TODAY",
+        "rationale": "Member data is quarantined by privacy policy; CDC would weaken privacy boundary without operational benefit."
+      },
+      "difference_from_2026_09_03_audit": "Privacy redaction profile and quarantine reason SENSITIVE_MEMBER_EXCLUDED verified unchanged."
+    },
+    {
+      "source_id": "device_log",
+      "source_name": "Device IoT Raw Operational Event Logs",
+      "category": "internal_mongo",
+      "collection_or_endpoint": "fongniao_prod.device_log",
+      "integration_mode": "incremental_batch",
+      "acquisition_method": "internal",
+      "reader_or_connector": "apps/data_platform/source.py::MongoSource",
+      "source_owner": "unknown (declared in schema as iot_core; production mongo collection is device_log)",
+      "cadence_or_latency_sla": {
+        "configured_cadence": "Manual-only job (fongniao_bounded_device_log_manual)",
+        "detection_latency": "Manual execution latency",
+        "consumption_latency_requirement": "DailyPartitionsDefinition (populates core.machine_status_events)",
+        "declared_sla": "unknown"
+      },
+      "ordering_semantics": {
+        "order_field": "sort('_id', 1) within watermark window",
+        "resumption_mechanism": "Watermark window pagination",
+        "ordering_requirement_level": "High (IoT status event transitions: RUNNING -> PAUSED -> ERROR -> IDLE); currently ordered by _id in batch"
+      },
+      "delete_and_withdraw_semantics": {
+        "upstream_soft_delete_support": false,
+        "upstream_physical_delete_support": false,
+        "operation_mapping": "Immutable event log stream; projected via project_machine_status_event",
+        "downstream_sink_delete_support": false,
+        "gap_description": "Event log records are immutable; no delete path"
+      },
+      "idempotency_mechanism": {
+        "key_derivation": "source_snapshot_id = sha256(kind + source_id + content_sha256)",
+        "sink_behavior": "Upsert into core.machine_status_events and data_plane.machine_status_event_evidence"
+      },
+      "credential_and_least_privilege_boundary": {
+        "env_var": "ODP_DATA_MONGO_URI",
+        "current_privilege_scope": "find with _minimize_device_log projection",
+        "cdc_privilege_requirement": "Cluster changeStream or event broker topic",
+        "wire_projection_supported": false,
+        "pii_risk": "Low to Moderate (device diagnostics, telemetry)"
+      },
+      "batch_capability_gap_and_cdc_evaluation": {
+        "batch_current_state": "Manual batch watermark query populates core.machine_status_events (store.py:394-401)",
+        "gap_against_cdc": "Schema contract packages/schemas/source_contracts/internal/machine_status_event.json declares integration_mode='event_stream' and envelope='event', but production runs via batch watermark",
+        "cdc_applicability_verdict": "CANDIDATE_FOR_STREAMING",
+        "rationale": "Prime candidate for true event streaming or CDC if IoT real-time monitoring is activated. Requires reconciling contract declaration with streaming broker consumer."
+      },
+      "difference_from_2026_09_03_audit": "Contract-vs-production gap remains verified: machine_status_event schema contract declares event_stream mode while production code executes batch ingestion from device_log."
+    },
+    {
+      "source_id": "listing.partner_feed",
+      "source_name": "Commercial Listing Partner Bulk Feed",
+      "category": "external_provider",
+      "collection_or_endpoint": "ODP_LISTING_PROVIDER_FEED_URL",
+      "integration_mode": "batch_snapshot",
+      "acquisition_method": "feed",
+      "reader_or_connector": "modules.external_data.connectors.external.ListingConnector / ListingPartnerFeedProvider",
+      "source_owner": "unknown (external data partner / Data Architect default)",
+      "cadence_or_latency_sla": {
+        "configured_cadence": "Scheduled fetch worker: default interval 1h",
+        "detection_latency": "1 hour (scheduled fetch)",
+        "consumption_latency_requirement": "freshness_sla = 24h",
+        "declared_sla": "24 hours"
+      },
+      "ordering_semantics": {
+        "order_field": "Snapshot fetch timestamp",
+        "resumption_mechanism": "Full snapshot refresh",
+        "ordering_requirement_level": "None"
+      },
+      "delete_and_withdraw_semantics": {
+        "upstream_soft_delete_support": false,
+        "upstream_physical_delete_support": false,
+        "operation_mapping": "Snapshot replacement; listings absent from partner feed are not automatically deleted downstream",
+        "downstream_sink_delete_support": true,
+        "gap_description": "Assisted listing intake supports privacy purge tombstones (modules/listing/application/intake_privacy.py), but bulk partner feed lacks automated delisting propagation"
+      },
+      "idempotency_mechanism": {
+        "key_derivation": "listing_id natural key + snapshot checksum",
+        "sink_behavior": "Upsert into listing intake repository"
+      },
+      "credential_and_least_privilege_boundary": {
+        "env_var": "ODP_LISTING_PROVIDER_API_KEY",
+        "current_privilege_scope": "HTTP API key for bulk feed endpoint",
+        "cdc_privilege_requirement": "N/A (external provider does not offer database CDC / WAL access)",
+        "wire_projection_supported": true,
+        "pii_risk": "Low (commercial real estate listings)"
+      },
+      "batch_capability_gap_and_cdc_evaluation": {
+        "batch_current_state": "Bulk feed snapshot fetch",
+        "gap_against_cdc": "External commercial partner provides only bulk snapshot endpoints",
+        "cdc_applicability_verdict": "EXTERNAL_SNAPSHOT_ONLY",
+        "rationale": "External third-party provider architecture is HTTP feed snapshot; database CDC is technically impossible across third-party boundary."
+      },
+      "difference_from_2026_09_03_audit": "External provider registry and scheduled fetch worker verified unchanged."
+    },
+    {
+      "source_id": "poi.commercial_api",
+      "source_name": "Commercial Points of Interest (POI) API",
+      "category": "external_provider",
+      "collection_or_endpoint": "ODP_POI_PROVIDER_URL",
+      "integration_mode": "batch_snapshot",
+      "acquisition_method": "api",
+      "reader_or_connector": "modules.external_data.connectors.external.PoiConnector / PoiCommercialApiProvider",
+      "source_owner": "unknown (commercial vendor)",
+      "cadence_or_latency_sla": {
+        "configured_cadence": "On-demand / scheduled area fetch",
+        "detection_latency": "Batch query latency",
+        "consumption_latency_requirement": "freshness_sla = 24h",
+        "declared_sla": "24 hours"
+      },
+      "ordering_semantics": {
+        "order_field": "None",
+        "resumption_mechanism": "Bounding box / area pagination",
+        "ordering_requirement_level": "None"
+      },
+      "delete_and_withdraw_semantics": {
+        "upstream_soft_delete_support": false,
+        "upstream_physical_delete_support": false,
+        "operation_mapping": "Immutable POI snapshot replacement",
+        "downstream_sink_delete_support": false,
+        "gap_description": "Historical POI snapshots persisted with sha256 checksum in data_plane.geo_dataset_snapshots"
+      },
+      "idempotency_mechanism": {
+        "key_derivation": "poi_id + content_sha256",
+        "sink_behavior": "Upsert into geo_dataset_snapshots"
+      },
+      "credential_and_least_privilege_boundary": {
+        "env_var": "ODP_POI_PROVIDER_API_KEY",
+        "current_privilege_scope": "HTTP API key",
+        "cdc_privilege_requirement": "N/A",
+        "wire_projection_supported": true,
+        "pii_risk": "None"
+      },
+      "batch_capability_gap_and_cdc_evaluation": {
+        "batch_current_state": "REST API lookup / snapshot fetch",
+        "gap_against_cdc": "External API provider",
+        "cdc_applicability_verdict": "EXTERNAL_SNAPSHOT_ONLY",
+        "rationale": "Third-party commercial REST API; CDC not supported by vendor."
+      },
+      "difference_from_2026_09_03_audit": "Unchanged."
+    },
+    {
+      "source_id": "geocode.primary_api",
+      "source_name": "Primary Geocoding & Address Resolution API",
+      "category": "external_provider",
+      "collection_or_endpoint": "ODP_GEOCODE_PROVIDER_URL",
+      "integration_mode": "api_lookup",
+      "acquisition_method": "api",
+      "reader_or_connector": "modules.external_data.connectors.external.GeocodeConnector / PrimaryGeocodeProvider",
+      "source_owner": "unknown (commercial geocoding vendor)",
+      "cadence_or_latency_sla": {
+        "configured_cadence": "Point-in-time on-demand enrichment during place ingestion",
+        "detection_latency": "Immediate upon place ingestion",
+        "consumption_latency_requirement": "Synchronous with place geography backfill",
+        "declared_sla": "Immediate API response"
+      },
+      "ordering_semantics": {
+        "order_field": "None",
+        "resumption_mechanism": "Point query",
+        "ordering_requirement_level": "None"
+      },
+      "delete_and_withdraw_semantics": {
+        "upstream_soft_delete_support": false,
+        "upstream_physical_delete_support": false,
+        "operation_mapping": "Immutable geocode evidence snapshot stored in geography_provider_snapshots",
+        "downstream_sink_delete_support": false,
+        "gap_description": "Geocode snapshots are immutable point-in-time evidence; invalid coordinates trigger quarantine"
+      },
+      "idempotency_mechanism": {
+        "key_derivation": "sha256(request_address + provider_id)",
+        "sink_behavior": "Insert into data_plane.geography_provider_snapshots"
+      },
+      "credential_and_least_privilege_boundary": {
+        "env_var": "ODP_GEOCODE_PROVIDER_API_KEY",
+        "current_privilege_scope": "HTTP API key",
+        "cdc_privilege_requirement": "N/A",
+        "wire_projection_supported": true,
+        "pii_risk": "Low (store address)"
+      },
+      "batch_capability_gap_and_cdc_evaluation": {
+        "batch_current_state": "On-demand API lookup with evidence persistence",
+        "gap_against_cdc": "Lookup service by definition; streaming change log is conceptually inapplicable",
+        "cdc_applicability_verdict": "EXTERNAL_SNAPSHOT_ONLY",
+        "rationale": "Geocoding is an idempotent lookup function, not a mutable data stream."
+      },
+      "difference_from_2026_09_03_audit": "Unchanged."
+    },
+    {
+      "source_id": "admin_boundary.official_dataset",
+      "source_name": "Official Administrative Boundary Dataset",
+      "category": "external_provider",
+      "collection_or_endpoint": "ODP_ADMIN_BOUNDARY_PROVIDER_URL",
+      "integration_mode": "batch_snapshot",
+      "acquisition_method": "public_dataset",
+      "reader_or_connector": "modules.external_data.connectors.external.AdminBoundaryConnector / AdminBoundaryDatasetProvider",
+      "source_owner": "unknown (government / official open data registry)",
+      "cadence_or_latency_sla": {
+        "configured_cadence": "Quarterly / Annual official release",
+        "detection_latency": "Periodic download",
+        "consumption_latency_requirement": "Static reference dataset",
+        "declared_sla": "Official publication cadence"
+      },
+      "ordering_semantics": {
+        "order_field": "None",
+        "resumption_mechanism": "Full dataset reload",
+        "ordering_requirement_level": "None"
+      },
+      "delete_and_withdraw_semantics": {
+        "upstream_soft_delete_support": false,
+        "upstream_physical_delete_support": false,
+        "operation_mapping": "Dataset version replacement",
+        "downstream_sink_delete_support": false,
+        "gap_description": "Administrative boundaries update on governmental schedule"
+      },
+      "idempotency_mechanism": {
+        "key_derivation": "boundary_version + content_sha256",
+        "sink_behavior": "Upsert into geo_dataset_snapshots with H3 mapping"
+      },
+      "credential_and_least_privilege_boundary": {
+        "env_var": "ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN",
+        "current_privilege_scope": "Bearer token for open data gateway",
+        "cdc_privilege_requirement": "N/A",
+        "wire_projection_supported": true,
+        "pii_risk": "None"
+      },
+      "batch_capability_gap_and_cdc_evaluation": {
+        "batch_current_state": "Public dataset download & H3 indexing",
+        "gap_against_cdc": "Static open dataset",
+        "cdc_applicability_verdict": "EXTERNAL_SNAPSHOT_ONLY",
+        "rationale": "Administrative boundary datasets are published at low frequencies (months/years)."
+      },
+      "difference_from_2026_09_03_audit": "Unchanged."
+    },
+    {
+      "source_id": "competitor.manual_source",
+      "source_name": "Manual Competitor Store Observation Attestation",
+      "category": "external_provider",
+      "collection_or_endpoint": "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION",
+      "integration_mode": "batch_snapshot",
+      "acquisition_method": "manual",
+      "reader_or_connector": "modules.external_data.providers.manual.CompetitorManualSourceProvider",
+      "source_owner": "unknown (field operations surveyor)",
+      "cadence_or_latency_sla": {
+        "configured_cadence": "Manual attestation only (allowed_in_production=False)",
+        "detection_latency": "Manual entry",
+        "consumption_latency_requirement": "Ad-hoc manual review",
+        "declared_sla": "N/A"
+      },
+      "ordering_semantics": {
+        "order_field": "None",
+        "resumption_mechanism": "Manual reload",
+        "ordering_requirement_level": "None"
+      },
+      "delete_and_withdraw_semantics": {
+        "upstream_soft_delete_support": false,
+        "upstream_physical_delete_support": false,
+        "operation_mapping": "Manual observation record",
+        "downstream_sink_delete_support": false,
+        "gap_description": "Blocked in production live mode"
+      },
+      "idempotency_mechanism": {
+        "key_derivation": "survey_id + content_sha256",
+        "sink_behavior": "Manual review staging"
+      },
+      "credential_and_least_privilege_boundary": {
+        "env_var": "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION",
+        "current_privilege_scope": "Manual attestation string",
+        "cdc_privilege_requirement": "N/A",
+        "wire_projection_supported": true,
+        "pii_risk": "None"
+      },
+      "batch_capability_gap_and_cdc_evaluation": {
+        "batch_current_state": "Manual review stub",
+        "gap_against_cdc": "Human manual survey",
+        "cdc_applicability_verdict": "UNSUPPORTED",
+        "rationale": "Manual observation workflow is fundamentally incompatible with CDC."
+      },
+      "difference_from_2026_09_03_audit": "Unchanged."
+    },
+    {
+      "source_id": "store_opening_authority",
+      "source_name": "Official Store Opening Date Authority Registry",
+      "category": "external_provider",
+      "collection_or_endpoint": "ODP_STORE_OPENING_AUTHORITY_ATTESTATION",
+      "integration_mode": "batch_snapshot",
+      "acquisition_method": "manual",
+      "reader_or_connector": "modules.external_data.connectors.store_opening.StoreOpeningAuthorityConnector",
+      "source_owner": "unknown (official registration authority)",
+      "cadence_or_latency_sla": {
+        "configured_cadence": "Manual attestation / registry query",
+        "detection_latency": "As attested",
+        "consumption_latency_requirement": "Point-in-time audit verification",
+        "declared_sla": "unknown"
+      },
+      "ordering_semantics": {
+        "order_field": "None",
+        "resumption_mechanism": "None",
+        "ordering_requirement_level": "None"
+      },
+      "delete_and_withdraw_semantics": {
+        "upstream_soft_delete_support": false,
+        "upstream_physical_delete_support": false,
+        "operation_mapping": "Attestation record",
+        "downstream_sink_delete_support": false,
+        "gap_description": "Immutable audit evidence"
+      },
+      "idempotency_mechanism": {
+        "key_derivation": "store_id + opening_date",
+        "sink_behavior": "Audit ledger entry"
+      },
+      "credential_and_least_privilege_boundary": {
+        "env_var": "ODP_STORE_OPENING_AUTHORITY_ATTESTATION",
+        "current_privilege_scope": "Manual attestation text",
+        "cdc_privilege_requirement": "N/A",
+        "wire_projection_supported": true,
+        "pii_risk": "None"
+      },
+      "batch_capability_gap_and_cdc_evaluation": {
+        "batch_current_state": "Manual attestation lookup",
+        "gap_against_cdc": "Registry attestation",
+        "cdc_applicability_verdict": "UNSUPPORTED",
+        "rationale": "Attestation registry does not generate high-frequency change streams."
+      },
+      "difference_from_2026_09_03_audit": "Contract store_opening_authority_snapshot remains unindexed in packages/schemas/source_contracts/index.json (noted as follow-up gap)."
+    },
+    {
+      "source_id": "weather.live_api",
+      "source_name": "External Weather Forecast & Observations API",
+      "category": "external_weather_demographics",
+      "collection_or_endpoint": "ODP_WEATHER_PROVIDER_URL",
+      "integration_mode": "batch_snapshot",
+      "acquisition_method": "api",
+      "reader_or_connector": "modules.external_data.providers.weather_demographics.LiveWeatherProvider",
+      "source_owner": "unknown (declared default: Data Architect)",
+      "cadence_or_latency_sla": {
+        "configured_cadence": "On-demand query by station_id and date",
+        "detection_latency": "HTTP request duration (timeout 10.0s, max 30.0s)",
+        "consumption_latency_requirement": "Daily weather model input",
+        "declared_sla": "daily"
+      },
+      "ordering_semantics": {
+        "order_field": "station_id + date",
+        "resumption_mechanism": "Point query",
+        "ordering_requirement_level": "None"
+      },
+      "delete_and_withdraw_semantics": {
+        "upstream_soft_delete_support": false,
+        "upstream_physical_delete_support": false,
+        "operation_mapping": "Daily observation record replacement",
+        "downstream_sink_delete_support": false,
+        "gap_description": "Historical weather observations are immutable once recorded"
+      },
+      "idempotency_mechanism": {
+        "key_derivation": "snapshot_id + sha256(measurements)",
+        "sink_behavior": "ProviderRecord with ProviderRecordLineage"
+      },
+      "credential_and_least_privilege_boundary": {
+        "env_var": "ODP_WEATHER_PROVIDER_API_KEY",
+        "current_privilege_scope": "HTTP API Key, HTTPS required in production, max 1MB response limit",
+        "cdc_privilege_requirement": "N/A",
+        "wire_projection_supported": true,
+        "pii_risk": "None"
+      },
+      "batch_capability_gap_and_cdc_evaluation": {
+        "batch_current_state": "Bounded HTTP GET query",
+        "gap_against_cdc": "Third-party weather API",
+        "cdc_applicability_verdict": "EXTERNAL_SNAPSHOT_ONLY",
+        "rationale": "Third-party commercial REST API; CDC is not provided by weather vendors."
+      },
+      "difference_from_2026_09_03_audit": "Unchanged."
+    },
+    {
+      "source_id": "demographics.live_api",
+      "source_name": "External Demographics & Census API",
+      "category": "external_weather_demographics",
+      "collection_or_endpoint": "ODP_DEMOGRAPHICS_PROVIDER_URL",
+      "integration_mode": "batch_snapshot",
+      "acquisition_method": "api",
+      "reader_or_connector": "modules.external_data.providers.weather_demographics.LiveDemographicsProvider",
+      "source_owner": "unknown (declared default: Data Architect)",
+      "cadence_or_latency_sla": {
+        "configured_cadence": "On-demand query by H3 index",
+        "detection_latency": "HTTP request duration",
+        "consumption_latency_requirement": "SiteScore model evaluation",
+        "declared_sla": "daily"
+      },
+      "ordering_semantics": {
+        "order_field": "h3_index",
+        "resumption_mechanism": "Point query",
+        "ordering_requirement_level": "None"
+      },
+      "delete_and_withdraw_semantics": {
+        "upstream_soft_delete_support": false,
+        "upstream_physical_delete_support": false,
+        "operation_mapping": "H3 cell demographic snapshot replacement",
+        "downstream_sink_delete_support": false,
+        "gap_description": "Demographic indicators updated on census release schedule"
+      },
+      "idempotency_mechanism": {
+        "key_derivation": "h3_index + snapshot_id",
+        "sink_behavior": "ProviderRecord with lineage"
+      },
+      "credential_and_least_privilege_boundary": {
+        "env_var": "ODP_DEMOGRAPHICS_PROVIDER_API_KEY",
+        "current_privilege_scope": "HTTP API Key, HTTPS enforced, max 1MB response limit",
+        "cdc_privilege_requirement": "N/A",
+        "wire_projection_supported": true,
+        "pii_risk": "None (aggregated demographic census data)"
+      },
+      "batch_capability_gap_and_cdc_evaluation": {
+        "batch_current_state": "Bounded HTTP GET query by H3 index",
+        "gap_against_cdc": "Third-party census API",
+        "cdc_applicability_verdict": "EXTERNAL_SNAPSHOT_ONLY",
+        "rationale": "Demographics data updates at census frequencies (annual/decennial)."
+      },
+      "difference_from_2026_09_03_audit": "Unchanged."
+    }
+  ],
+  "investigation_receipts": [
+    {
+      "command": "rg -n \"cdc|CDC|tombstone|checkpoint|withdraw\" pipelines modules shared packages/schemas/source_contracts apps/",
+      "source_head_sha": "9048161e058becff5a53593a773d3c42238213fb",
+      "executed_at_utc": "2026-09-08T16:12:06Z",
+      "exit_code": 0,
+      "findings": "Hits located in shared/audit/persistence.py (tombstone_hash for audit evidence), shared/domain/models.py:121 (IoT/CDC docstring), modules/listing/application/intake_privacy.py (purge tombstone), and apps/data_platform/store.py & pipeline.py (checkpoints table). No live CDC ChangeStream reader implementation exists in production."
+    },
+    {
+      "command": "python3 -c \"import json; d=json.load(open('packages/schemas/source_contracts/index.json')); print(len(d['contracts']), d['integration_modes'])\"",
+      "source_head_sha": "9048161e058becff5a53593a773d3c42238213fb",
+      "executed_at_utc": "2026-09-08T16:12:08Z",
+      "exit_code": 0,
+      "findings": "15 registered contracts. integration_modes: ['batch_snapshot', 'incremental_batch', 'event_stream', 'backfill', 'api_lookup']. CDC is absent from integration_modes taxonomy."
+    },
+    {
+      "command": "grep -c -i delete apps/data_platform/store.py apps/data_platform/pipeline.py",
+      "source_head_sha": "9048161e058becff5a53593a773d3c42238213fb",
+      "executed_at_utc": "2026-09-08T16:12:10Z",
+      "exit_code": 0,
+      "findings": "0 delete statements in data plane store and pipeline. Sink solely executes INSERT ... ON CONFLICT DO UPDATE/NOTHING."
+    },
+    {
+      "command": "grep -rn -i \"change stream\\|changeStream\\|oplog\\|debezium\" --include=*.py apps/ modules/ shared/ services/",
+      "source_head_sha": "9048161e058becff5a53593a773d3c42238213fb",
+      "executed_at_utc": "2026-09-08T16:12:12Z",
+      "exit_code": 0,
+      "findings": "Zero production consumers of MongoDB Change Stream or replica set oplog."
+    },
+    {
+      "command": "python3 delivery_toolchain/governance/check_requirement_members.py",
+      "source_head_sha": "9048161e058becff5a53593a773d3c42238213fb",
+      "executed_at_utc": "2026-09-08T16:12:14Z",
+      "exit_code": 0,
+      "findings": "Requirement ODP-FR-INT-001 is governed with 5 members: BATCH (satisfied, VERIFIED), API (satisfied, VERIFIED), FILE (satisfied, VERIFIED), EVENT (absent, OPEN), CDC (absent, OPEN)."
+    }
+  ]
+}

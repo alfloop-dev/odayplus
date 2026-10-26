@@ -35,7 +35,7 @@ CAPABILITY_PACKAGES: dict[OssCapability, tuple[str, ...]] = {
     OssCapability.EVOLUTIONARY_OPTIMIZATION: ("pymoo",),
     OssCapability.OPTIMIZATION: ("ortools", "cvxpy", "pyomo"),
     OssCapability.DATA_QUALITY: ("great_expectations",),
-    OssCapability.MODEL_MONITORING: ("evidently",),
+    OssCapability.MODEL_MONITORING: ("numpy", "pandas", "scipy", "sklearn"),
     OssCapability.TRAINING_ORCHESTRATION: ("dagster",),
 }
 

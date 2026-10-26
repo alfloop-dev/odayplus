@@ -1139,6 +1139,129 @@ EOF
         self.assertEqual(evaluation["decision"], "allow")
         self.assertEqual(evaluation["risk_class"], "safe_bash")
 
+    def _evaluate_during_finalize_dispatch(self, command: str) -> dict[str, object]:
+        config = {"agents": {"claude": {"display_name": "Claude"}}}
+        runtime_state = {
+            "workers": {
+                "run-123": {
+                    "task_id": "BG-006",
+                    "request_snapshot": {"reason": "owned_finalize_dispatch"},
+                }
+            }
+        }
+        status_state = {
+            "tasks": [
+                {
+                    "id": "BG-006",
+                    "owner": "Claude",
+                    "reviewer": "Codex",
+                    "status": "review_approved",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.dict(
+                permission_broker.os.environ,
+                {"ORCH_RUN_ID": "run-123", "ORCH_TASK_ID": "BG-006", "ORCH_AGENT_ID": "claude"},
+                clear=False,
+            ),
+            mock.patch.object(permission_broker, "load_runtime_state", return_value=runtime_state),
+            mock.patch.object(permission_broker, "load_status", return_value=status_state),
+        ):
+            return permission_broker.evaluate_tool_request("Bash", {"command": command}, config)
+
+    def test_finalize_direct_verification_commands_are_denied_for_immutable_approved_head(self) -> None:
+        verification_commands = [
+            "uv run pytest",
+            "uv run pytest .orchestrator/test_watch_events.py -q",
+            "uv run --python 3.12 pytest .orchestrator/test_provider_permissions.py",
+            "uv run --frozen -q pytest",
+            "uv run python -m pytest .orchestrator/test_watch_events.py",
+            "PYTHONPATH=. uv run pytest",
+            "pytest",
+            "python3 -m pytest services/test_foo.py -v",
+            "python3 -m unittest discover",
+            "uv run ruff check .",
+            "mypy services/",
+            "npm test",
+            "npm --prefix apps/web run test",
+            "npm --prefix apps/web run build",
+            "npm --prefix apps/web run lint",
+            "npm --prefix apps/web run typecheck",
+            "npm --prefix apps/web run test:e2e",
+            "npm --prefix apps/web exec vitest run",
+            "npx playwright test",
+            "git status --short && uv run pytest",
+        ]
+
+        for command in verification_commands:
+            with self.subTest(command=command):
+                evaluation = self._evaluate_during_finalize_dispatch(command)
+
+                self.assertEqual(evaluation["decision"], "deny")
+                self.assertEqual(evaluation["risk_class"], "immutable_review_head")
+                self.assertIn("BG-006", evaluation["reason"])
+                self.assertIn("immutable", evaluation["reason"])
+
+    def test_finalize_receipt_reads_stay_allowed_during_finalize(self) -> None:
+        """The closeout toolkit is read-only, so the deny must not reach it."""
+        safe_commands = [
+            "git status --short",
+            "git log -n 5 --oneline",
+            "git show --stat HEAD",
+            "cat docs/evidence/receipt.json",
+            "head -n 20 ci.log",
+            "tail -n 30 verification-summary.txt",
+            "uv run python -c \"import json; print(json.load(open('docs/evidence/receipt.json'))['head_sha'])\"",
+            "uv run --with pytest python -c \"print('receipt ok')\"",
+            "python3 scripts/ai_status.py show BG-006",
+            "npm --prefix apps/web run --silent",
+        ]
+
+        for command in safe_commands:
+            with self.subTest(command=command):
+                evaluation = self._evaluate_during_finalize_dispatch(command)
+
+                self.assertNotEqual(evaluation["decision"], "deny")
+                self.assertNotEqual(evaluation["risk_class"], "immutable_review_head")
+
+    def test_verification_outside_finalize_dispatch_is_not_denied(self) -> None:
+        """Implementation workers still run their tests; only finalize is read-only."""
+        with (
+            mock.patch.dict(
+                permission_broker.os.environ,
+                {"ORCH_RUN_ID": "run-123", "ORCH_TASK_ID": "BG-006", "ORCH_AGENT_ID": "claude"},
+                clear=False,
+            ),
+            mock.patch.object(permission_broker, "load_runtime_state", return_value={}),
+            mock.patch.object(permission_broker, "load_status", return_value={"tasks": []}),
+        ):
+            evaluation = permission_broker.evaluate_tool_request("Bash", {"command": "uv run pytest"}, {})
+
+        self.assertNotEqual(evaluation["decision"], "deny")
+        self.assertNotEqual(evaluation["risk_class"], "immutable_review_head")
+
+    def test_finalize_verification_deny_is_bounded_to_direct_invocations(self) -> None:
+        """Document the boundary: wrapped and piped forms are the prompt's job.
+
+        The broker recognises the canonical direct invocations only. Shell `-c`
+        strings, pipelines and unknown runners deliberately fall through to the
+        normal classification -- the finalize dispatch prompt and
+        `.orchestrator/skills/task-closeout-finalization.md` carry the full ban.
+        """
+        out_of_scope_commands = [
+            "bash -c 'uv run pytest'",
+            "uv run pytest 2>&1 | tail -50",
+            "./scripts/run_verification.sh",
+        ]
+
+        for command in out_of_scope_commands:
+            with self.subTest(command=command):
+                evaluation = self._evaluate_during_finalize_dispatch(command)
+
+                self.assertNotEqual(evaluation["risk_class"], "immutable_review_head")
+
 
 class AgentPRCreationIsDeniedTests(unittest.TestCase):
     """`gh pr create` belongs to ReviewBus, not to agents.

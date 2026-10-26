@@ -1,0 +1,81 @@
+{
+  "case_id": "text_percentile_drifted",
+  "description": "Same text column rewritten from a disjoint vocabulary.",
+  "kind": "data_drift",
+  "metrics_index": {
+    "columns": {
+      "note": {
+        "id": "a713b4a19ac6861365b9fb1cd1bd98c6",
+        "method": "Percentile text content drift",
+        "metric_name": "ValueDrift(column=note,method=Percentile text content drift,threshold=0.95)",
+        "threshold": 0.95,
+        "value": 1.0
+      }
+    },
+    "drifted_columns_count": {
+      "count": 1.0,
+      "drift_share_argument": 0.5,
+      "id": "15e89f895b482f9b84ba7274ed18a106",
+      "metric_name": "DriftedColumnsCount(drift_share=0.5)",
+      "share": 1.0
+    }
+  },
+  "outcome": "completed",
+  "result": {
+    "cohort_key": null,
+    "current_snapshot_id": null,
+    "decision_policy_version_id": null,
+    "drift_detected": true,
+    "drift_share": 1.0,
+    "drifted_column_names": [
+      "note"
+    ],
+    "drifted_columns": 1,
+    "engine": "evidently",
+    "model_name": null,
+    "model_version": null,
+    "prediction_columns": [],
+    "prediction_output_types": null,
+    "reference_snapshot_id": null,
+    "snapshot_id": "baseline-text-perc-drift"
+  },
+  "routing_expectation": "ColumnType.Text, N<=1000 -> perc_text_content_drift_stat_test",
+  "to_dict": {
+    "drift_detected": true,
+    "drift_share": 1.0,
+    "drifted_column_names": [
+      "note"
+    ],
+    "drifted_columns": 1,
+    "engine": "evidently",
+    "report": {
+      "metrics": [
+        {
+          "config": {
+            "drift_share": 0.5,
+            "type": "evidently:metric_v2:DriftedColumnsCount"
+          },
+          "id": "15e89f895b482f9b84ba7274ed18a106",
+          "metric_name": "DriftedColumnsCount(drift_share=0.5)",
+          "value": {
+            "count": 1.0,
+            "share": 1.0
+          }
+        },
+        {
+          "config": {
+            "column": "note",
+            "method": "Percentile text content drift",
+            "threshold": 0.95,
+            "type": "evidently:metric_v2:ValueDrift"
+          },
+          "id": "a713b4a19ac6861365b9fb1cd1bd98c6",
+          "metric_name": "ValueDrift(column=note,method=Percentile text content drift,threshold=0.95)",
+          "value": 1.0
+        }
+      ],
+      "tests": []
+    },
+    "snapshot_id": "baseline-text-perc-drift"
+  }
+}

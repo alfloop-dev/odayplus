@@ -33,6 +33,11 @@ CUTOVER_SKIP_REASON_CODE = "external_fetch_decommissioned"
 #: see :meth:`ODayScheduler.recurring_job_types`.
 EXTERNAL_FETCH_JOB_TYPE = "external-fetch"
 
+#: Refreshes the production Store Ops document from canonical stores and KPIs
+#: (ODP-STOREOPS-STATE-MATERIALIZER-001). Only scheduled where the Store Ops
+#: repository is live: SQLite and in-memory bundles keep their seeded state.
+STORE_OPS_MATERIALIZE_JOB_TYPE = "store-ops-materialize"
+
 
 class SchedulerTenantConfigurationError(RuntimeError):
     """Fail-closed: the scheduler has no configured tenant to enqueue work for.
@@ -122,19 +127,59 @@ class ODayScheduler:
                 f"(code={INVALID_CUTOVER_MODE_REASON_CODE})"
             ) from exc
 
+    def _store_ops_live(self) -> bool:
+        repository = getattr(self.persistence, "store_ops_repository", None)
+        return bool(getattr(repository, "is_live", False))
+
     def recurring_job_types(self) -> tuple[str, ...]:
         """Job types a tick enqueues under the current cutover mode.
 
-        ``external-fetch`` is the only recurring job this scheduler owns, so
-        after the cutover this is empty and the deployment schedules nothing.
-        The deployment unit stays either way: health and metrics still report,
-        and a future recurring job registers here.
+        ``store-ops-materialize`` runs wherever the Store Ops repository is live
+        (PostgreSQL), independent of the cutover. ``external-fetch`` only runs
+        while odayplus still owns external fetch, so after the cutover a
+        non-live deployment schedules nothing. The deployment unit stays either
+        way: health and metrics still report, and a future recurring job
+        registers here.
         """
+        store_ops = (STORE_OPS_MATERIALIZE_JOB_TYPE,) if self._store_ops_live() else ()
+        return store_ops + self._external_fetch_job_types()
+
+    def _external_fetch_job_types(self) -> tuple[str, ...]:
         from modules.external_data.application.market_data_facade import (
             legacy_external_fetch_enabled,
         )
 
         return (EXTERNAL_FETCH_JOB_TYPE,) if legacy_external_fetch_enabled(self.env) else ()
+
+    def _enqueue_store_ops_materialize(self, tenant_id: str, correlation_id: str) -> None:
+        try:
+            self.job_queue.enqueue(
+                JobRequest(
+                    job_type=STORE_OPS_MATERIALIZE_JOB_TYPE,
+                    payload={"tenant_id": tenant_id},
+                    idempotency_key=(
+                        f"store-ops-materialize:{tenant_id}:"
+                        f"{datetime.now(UTC).strftime('%Y%m%d%H%M')}"
+                    ),
+                ),
+                correlation_id=correlation_id,
+            )
+            self.telemetry.logger.info(
+                "Scheduler enqueued store-ops-materialize job",
+                correlation_id=correlation_id,
+                actor="scheduler",
+                resource="job/store-ops-materialize",
+                action="enqueue",
+                result="ok",
+            )
+        except Exception as exc:
+            self.telemetry.logger.error(
+                f"Failed to enqueue scheduled job: {exc}",
+                correlation_id=correlation_id,
+                actor="scheduler",
+                resource="scheduler/tick",
+                error_code=type(exc).__name__,
+            )
 
     def run_once(self) -> None:
         """Orchestrate and enqueue the scheduled tasks.
@@ -146,7 +191,8 @@ class ODayScheduler:
         Once the cutover selects ``PLATFORM_PRIMARY`` the tick still runs and
         still checks its tenant -- a deployment that lost its scheduled-ingestion
         tenant is misconfigured whether or not there is work to enqueue -- but it
-        enqueues nothing, so no provider credential can be reached on a schedule.
+        enqueues no external fetch, so no provider credential can be reached on a
+        schedule. A live Store Ops repository still gets its materialize job.
         Moving the mode back, or pulling the kill switch, restores enqueueing on
         the very next tick without a redeploy.
         """
@@ -164,9 +210,12 @@ class ODayScheduler:
             )
             mode = self._resolve_cutover_mode()
             tenant_id = self._require_tenant_id()
-            if EXTERNAL_FETCH_JOB_TYPE not in self.recurring_job_types():
+            job_types = self.recurring_job_types()
+            if STORE_OPS_MATERIALIZE_JOB_TYPE in job_types:
+                self._enqueue_store_ops_materialize(tenant_id, correlation_id)
+            if EXTERNAL_FETCH_JOB_TYPE not in job_types:
                 self.telemetry.logger.info(
-                    "Scheduler tick enqueued no jobs: external fetch is "
+                    "Scheduler tick enqueued no external-fetch job: external fetch is "
                     f"decommissioned on this deployment (cutover mode {mode})",
                     correlation_id=correlation_id,
                     actor="scheduler",

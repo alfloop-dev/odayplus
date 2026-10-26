@@ -1,0 +1,18 @@
+{
+  "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-orch-quota-recovery-state-001",
+  "head_sha": "8562a4951b82891ad75bac0c8b42ad5a7fe1c00f",
+  "tracked_diff_sha256": "a4185e6b261dfa80a77ac29fe39f908f5807fe8663fce0e2537c34f5ce0cce98",
+  "argv": [
+    ".venv/bin/python",
+    "-m",
+    "pytest",
+    "-o",
+    "addopts=",
+    "-q",
+    ".orchestrator/test_account_pool_admission.py"
+  ],
+  "started_at": "2026-09-12T15:46:45.561622+00:00",
+  "duration_seconds": 3.3009219060186297,
+  "exit_code": 0,
+  "output": "1305-final-admission-check.log"
+}

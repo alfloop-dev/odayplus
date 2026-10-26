@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import os
+import tempfile
+import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
-import pytest
 import rollout_supervisor_runtime as rollout
 
 SHA = "1" * 40
 
 
-def prepare_rollout(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
+def prepare_rollout(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path, Path]:
     source = tmp_path / "source"
     source.mkdir()
     (source / ".git").mkdir()
@@ -71,67 +73,68 @@ def watchdog_rollout_args(source: Path, parent: Path, link: Path, status_root: P
     ]
 
 
-def test_rollout_installs_launcher_for_stable_runtime_link(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source, parent, target, _previous, link, status_root = prepare_rollout(tmp_path)
-    launcher = status_root / "scripts" / "ai-status.sh"
-    launcher.write_text("old writer\n")
-    monkeypatch.setattr(rollout, "git", fake_git)
-    monkeypatch.setattr(rollout, "clean", lambda _repo: True)
-    monkeypatch.setattr(
-        rollout.subprocess,
-        "run",
-        lambda *args, **kwargs: SimpleNamespace(returncode=0),
-    )
+class RolloutSupervisorRuntimeTests(unittest.TestCase):
+    def test_rollout_installs_launcher_for_stable_runtime_link(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            source, parent, target, _previous, link, status_root = prepare_rollout(tmp_path)
+            launcher = status_root / "scripts" / "ai-status.sh"
+            launcher.write_text("old writer\n")
 
-    assert rollout.main(rollout_args(source, parent, link, status_root)) == 0
+            with mock.patch.object(rollout, "git", fake_git), \
+                 mock.patch.object(rollout, "clean", lambda _repo: True), \
+                 mock.patch.object(rollout.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0)):
+                self.assertEqual(rollout.main(rollout_args(source, parent, link, status_root)), 0)
 
-    assert link.resolve() == target.resolve()
-    assert str(link / "scripts" / "ai_status.py") in launcher.read_text()
-    assert "PANTHEON_STATUS_ROOT" in launcher.read_text()
-    assert os.access(launcher, os.X_OK)
+            self.assertEqual(link.resolve(), target.resolve())
+            self.assertIn(str(link / "scripts" / "ai_status.py"), launcher.read_text())
+            self.assertIn("PANTHEON_STATUS_ROOT", launcher.read_text())
+            self.assertNotIn("ORCH_CONFIG_PATH=", launcher.read_text())
+            self.assertTrue(os.access(launcher, os.X_OK))
+
+    def test_failed_restart_restores_runtime_and_launcher(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            source, parent, _target, previous, link, status_root = prepare_rollout(tmp_path)
+            launcher = status_root / "scripts" / "ai-status.sh"
+            launcher.write_text("old writer\n")
+            launcher.chmod(0o744)
+            restarts = iter((SimpleNamespace(returncode=1), SimpleNamespace(returncode=0)))
+
+            with mock.patch.object(rollout, "git", fake_git), \
+                 mock.patch.object(rollout, "clean", lambda _repo: True), \
+                 mock.patch.object(rollout.subprocess, "run", lambda *args, **kwargs: next(restarts)):
+                with self.assertRaisesRegex(SystemExit, "restored previous runtime and status launcher"):
+                    rollout.main(rollout_args(source, parent, link, status_root))
+
+            self.assertEqual(link.resolve(), previous.resolve())
+            self.assertEqual(launcher.read_text(), "old writer\n")
+            self.assertEqual(launcher.stat().st_mode & 0o777, 0o744)
+
+    def test_watchdog_restart_is_used_without_adding_a_service(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            source, parent, target, _previous, link, status_root = prepare_rollout(tmp_path)
+            (status_root / ".orchestrator" / "supervisor.pid").write_text("123\n")
+            observed: list[tuple[int | None, Path, Path, Path]] = []
+
+            def fake_restart(
+                pid: int | None, runtime_link: Path, canonical_root: Path, config_path: Path
+            ) -> bool:
+                observed.append((pid, runtime_link, canonical_root, config_path))
+                return True
+
+            with mock.patch.object(rollout, "git", fake_git), \
+                 mock.patch.object(rollout, "clean", lambda _repo: True), \
+                 mock.patch.object(rollout, "restart_with_watchdog", fake_restart):
+                self.assertEqual(rollout.main(watchdog_rollout_args(source, parent, link, status_root)), 0)
+
+            self.assertEqual(link.resolve(), target.resolve())
+            self.assertEqual(
+                observed,
+                [(123, link, status_root.resolve(), status_root.resolve() / ".orchestrator" / "config.json")]
+            )
 
 
-def test_failed_restart_restores_runtime_and_launcher(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source, parent, _target, previous, link, status_root = prepare_rollout(tmp_path)
-    launcher = status_root / "scripts" / "ai-status.sh"
-    launcher.write_text("old writer\n")
-    launcher.chmod(0o744)
-    restarts = iter((SimpleNamespace(returncode=1), SimpleNamespace(returncode=0)))
-    monkeypatch.setattr(rollout, "git", fake_git)
-    monkeypatch.setattr(rollout, "clean", lambda _repo: True)
-    monkeypatch.setattr(rollout.subprocess, "run", lambda *args, **kwargs: next(restarts))
-
-    with pytest.raises(SystemExit, match="restored previous runtime and status launcher"):
-        rollout.main(rollout_args(source, parent, link, status_root))
-
-    assert link.resolve() == previous.resolve()
-    assert launcher.read_text() == "old writer\n"
-    assert launcher.stat().st_mode & 0o777 == 0o744
-
-
-def test_watchdog_restart_is_used_without_adding_a_service(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source, parent, target, _previous, link, status_root = prepare_rollout(tmp_path)
-    (status_root / ".orchestrator" / "supervisor.pid").write_text("123\n")
-    monkeypatch.setattr(rollout, "git", fake_git)
-    monkeypatch.setattr(rollout, "clean", lambda _repo: True)
-    observed: list[tuple[int | None, Path, Path, Path]] = []
-
-    def fake_restart(
-        pid: int | None, runtime_link: Path, canonical_root: Path, config_path: Path
-    ) -> bool:
-        observed.append((pid, runtime_link, canonical_root, config_path))
-        return True
-
-    monkeypatch.setattr(rollout, "restart_with_watchdog", fake_restart)
-
-    assert rollout.main(watchdog_rollout_args(source, parent, link, status_root)) == 0
-    assert link.resolve() == target.resolve()
-    assert observed == [
-        (123, link, status_root.resolve(), status_root.resolve() / ".orchestrator" / "config.json")
-    ]
+if __name__ == "__main__":
+    unittest.main()

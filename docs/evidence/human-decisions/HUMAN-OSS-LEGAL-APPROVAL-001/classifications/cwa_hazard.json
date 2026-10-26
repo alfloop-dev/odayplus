@@ -1,0 +1,200 @@
+{
+  "authority_reference": {
+    "issued_by": "蔡尚志 (負責人)",
+    "reference": "HUMAN-OSS-LEGAL-APPROVAL-001 source-data approval receipt sha256:2119dc6f74335d3a1884e0a0dfda6db61171df0542c46371c1719c26204d83c7 (alfloop-dev/odayplus#1418, authored by ajoe734)",
+    "scope": "raw field classification of source lane 'cwa_hazard', accepted as reviewed in classification-review.md"
+  },
+  "classification_digest": "3590632f75129b76d545539edd931e3dbc5e9875abffa0e85cfd8b441dffaded",
+  "contract_id": "emgi.source.operating-context.v1",
+  "fields": {
+    "affected_counties": {
+      "basis": "天氣/災害特報正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "affected_h3_cells": {
+      "basis": "天氣/災害特報正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "affected_towns": {
+      "basis": "天氣/災害特報正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "description": {
+      "basis": "天氣/災害特報正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "effective_from": {
+      "basis": "天氣/災害特報正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "effective_to": {
+      "basis": "天氣/災害特報正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "hazard_type": {
+      "basis": "天氣/災害特報正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "headline": {
+      "basis": "天氣/災害特報正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "issued_at": {
+      "basis": "天氣/災害特報正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "metadata": {
+      "basis": "原樣帶入 row.metadata，內容未定義，保守判 INTERNAL",
+      "classification": "INTERNAL"
+    },
+    "severity": {
+      "basis": "天氣/災害特報正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "status": {
+      "basis": "天氣/災害特報正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "title": {
+      "basis": "天氣/災害特報正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "warning_id": {
+      "basis": "天氣/災害特報正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    }
+  },
+  "provider_id": "provider.cwa",
+  "raw_source_fields": {
+    "Description": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_hazard_warnings）；特報公開資料",
+      "classification": "PUBLIC"
+    },
+    "EffectiveTime": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_hazard_warnings）；特報公開資料",
+      "classification": "PUBLIC"
+    },
+    "ExpireTime": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_hazard_warnings）；特報公開資料",
+      "classification": "PUBLIC"
+    },
+    "HazardType": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_hazard_warnings）；特報公開資料",
+      "classification": "PUBLIC"
+    },
+    "Headline": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_hazard_warnings）；特報公開資料",
+      "classification": "PUBLIC"
+    },
+    "Identifier": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_hazard_warnings）；特報公開資料",
+      "classification": "PUBLIC"
+    },
+    "SentTime": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_hazard_warnings）；特報公開資料",
+      "classification": "PUBLIC"
+    },
+    "Severity": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_hazard_warnings）；特報公開資料",
+      "classification": "PUBLIC"
+    },
+    "Status": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_hazard_warnings）；特報公開資料",
+      "classification": "PUBLIC"
+    },
+    "affected_counties": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；氣象署 W-C0033-001 天氣特報公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "affected_h3_cells": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_hazard_warnings）；特報公開資料",
+      "classification": "PUBLIC"
+    },
+    "affected_towns": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；氣象署 W-C0033-001 天氣特報公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "counties": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_hazard_warnings）；特報公開資料",
+      "classification": "PUBLIC"
+    },
+    "datasetInfo": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；氣象署 W-C0033-001 天氣特報公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "description": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；氣象署 W-C0033-001 天氣特報公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "effective_from": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；氣象署 W-C0033-001 天氣特報公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "effective_to": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；氣象署 W-C0033-001 天氣特報公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "event": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_hazard_warnings）；特報公開資料",
+      "classification": "PUBLIC"
+    },
+    "hazardConditions": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；氣象署 W-C0033-001 天氣特報公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "hazard_type": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；氣象署 W-C0033-001 天氣特報公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "headline": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；氣象署 W-C0033-001 天氣特報公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "id": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_hazard_warnings）；特報公開資料",
+      "classification": "PUBLIC"
+    },
+    "issued_at": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；氣象署 W-C0033-001 天氣特報公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "metadata": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）；附帶中繼資料，內容未定義",
+      "classification": "INTERNAL"
+    },
+    "records": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；氣象署 W-C0033-001 天氣特報公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "severity": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；氣象署 W-C0033-001 天氣特報公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "status": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；氣象署 W-C0033-001 天氣特報公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "title": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；氣象署 W-C0033-001 天氣特報公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "towns": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_hazard_warnings）；特報公開資料",
+      "classification": "PUBLIC"
+    },
+    "warning_id": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；氣象署 W-C0033-001 天氣特報公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    }
+  },
+  "schema": "emgi.raw-field-classification.v1",
+  "schema_sha256": "59b130a57ea2939120640de1b968977179205c55f26cdac5b7e26c3172c90b20",
+  "source": "cwa_hazard",
+  "source_version_binding": {
+    "classification_policy": "AUTHORITY_ARTIFACT_REQUIRED",
+    "drafted_against": "origin/dev 24c40ae75e5759a47a21566f4dccfa15d5d38386",
+    "drafted_at": "2026-10-06",
+    "policy_source_id": "cwa",
+    "record_model": "CWAHazardWarning"
+  }
+}

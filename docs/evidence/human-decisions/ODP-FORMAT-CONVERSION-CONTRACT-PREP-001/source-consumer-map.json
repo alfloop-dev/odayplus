@@ -1,0 +1,146 @@
+{
+  "$schema_note": "Source-consumer map for FORMAT_CONVERSION event contract. This is a Stage A draft — no real producer or integration exists.",
+  "task": "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001",
+  "requirement": "ODP-FR-SITE-001 / FORMAT_CONVERSION",
+  "status": "DRAFT_STAGE_A",
+  "date": "2026-09-08",
+  "inspected_head": "cf04c046",
+  "inspected_at": "2026-09-08T16:32:00Z",
+  "event_type": "FORMAT_CONVERSION",
+  "sources": [
+    {
+      "source_id": "STORE_OPS_ERP",
+      "description": "Store Operations ERP or equivalent system that tracks physical store remodeling projects",
+      "current_status": "NOT_AVAILABLE_IN_REPO",
+      "evidence": "Zero matches within the 4 inspected production directories (modules/, models/, solver/, pipelines/) via rg; no producer, connector, or ingestion pipeline for store conversion events exists in inspected code paths.",
+      "provides_fields": [
+        "store_id",
+        "from_format_code",
+        "to_format_code",
+        "conversion_start_date",
+        "conversion_completed_date",
+        "downtime_days",
+        "closure_start_date",
+        "closure_end_date",
+        "conversion_reason",
+        "approved_by"
+      ],
+      "stage_b_requirement": "H04 must identify the actual ERP system, data export format, and access authorization."
+    },
+    {
+      "source_id": "FINANCE_ASSET_SYSTEM",
+      "description": "Finance/Real Estate system providing remodeling capex, asset depreciation, salvage values, and disposal costs",
+      "current_status": "NOT_AVAILABLE_IN_REPO",
+      "evidence": "simulator.py (modules/site_economics/domain/simulator.py) only models greenfield capex via SimulationInput.custom_equipment_capex and custom_fitout_capex. No brownfield remodeling, residual value, or disposal cost paths exist.",
+      "provides_fields": [
+        "remodeling_capex",
+        "residual_value",
+        "disposal_cost"
+      ],
+      "stage_b_requirement": "H04 must provide actual financial parameters, depreciation schedules, and cost breakdown methodology."
+    },
+    {
+      "source_id": "SITE_ECONOMICS_MODEL",
+      "description": "Site Economics domain model providing ramp curves and revenue baselines",
+      "current_status": "PARTIAL_EXISTS_GREENFIELD_ONLY",
+      "evidence": "RampCurveSpec exists in modules/site_economics/domain/formats.py for greenfield stores. TargetFormatRegistry registers ODAY_G2, ODAY_G3_COMPACT, ODAY_FLAGSHIP. No conversion-specific ramp exists.",
+      "provides_fields": [
+        "ramp_months",
+        "ramp_curve_id",
+        "daily_baseline_revenue"
+      ],
+      "stage_b_requirement": "Determine whether conversion ramp differs from greenfield ramp. If yes, define ConversionRampCurveSpec and register per format transition pair. If unknown, curve remains null/unquantified — do NOT fallback to greenfield defaults."
+    },
+    {
+      "source_id": "CORE_STORES_TABLE",
+      "description": "PostgreSQL core.stores and SQLite stores tables",
+      "current_status": "EXISTS_STATIC_ONLY",
+      "evidence": "core.stores in 000001_baseline_canonical_schema.sql / 000002_data_domain_canonical_entities.sql and stores in 000004_durable_product_domain.sql both have store_format_code as static column. No conversion history or event table exists across all 27 migrations (000001–000023).",
+      "provides_fields": [
+        "store_id",
+        "tenant_id"
+      ],
+      "stage_b_requirement": "New migration to create core.store_format_conversions table per contract in ODP_SITE001_COMPONENT_DISPOSITIONS §4.2."
+    }
+  ],
+  "consumers": [
+    {
+      "consumer_id": "SITE_ECONOMICS_SIMULATOR",
+      "description": "Financial simulation engine (modules/site_economics/domain/simulator.py)",
+      "current_status": "GREENFIELD_ONLY",
+      "evidence": "SimulationInput models new-store greenfield projections only; the single entry point is SiteEconomicsSimulator.simulate(SimulationInput). No ConversionSimulationInput or brownfield cash flow path exists: grep -n -i -E 'downtime|conversion|brownfield|remodel' modules/site_economics/domain/simulator.py at HEAD 944f4d71 (blob 30844af0), UTC 2026-09-08T17:57:12Z, raw exit 1, zero matches. Correction to an earlier over-broad claim: equipment residual value and salvage ARE already modelled for new-store assets via format_spec.residual_spec and machine_mix (raw exit 0, lines 325-356 and 529-531). What is missing is the brownfield use of residual value for OLD-format assets, so Stage B extends the existing residual path rather than creating one. See implementation-handoff.md section 5.3 Observation B.",
+      "consumes_fields": [
+        "store_id",
+        "from_format_code",
+        "to_format_code",
+        "remodeling_capex",
+        "downtime_days",
+        "residual_value",
+        "disposal_cost",
+        "ramp_months",
+        "ramp_curve_id",
+        "daily_baseline_revenue"
+      ],
+      "stage_b_action": "Extend simulator.py with ConversionSimulationInput: downtime loss = daily_baseline × downtime_days; net capex = remodeling_capex - residual_value + disposal_cost; apply conversion ramp curve.",
+      "acceptance_tests": [
+        "Downtime is isolated: for one conversion scenario with every other financial input held fixed (remodeling_capex, residual_value, disposal_cost, ramp_months, ramp_curve_id, daily_baseline_revenue, target format, area), increasing downtime_days must strictly lower first-year net cash flow and must not shorten payback. This deliberately does NOT require a brownfield conversion to be worse than a greenfield baseline: different capex, residual and ramp inputs can outweigh downtime, so such a cross-scenario assertion would reject economically correct conversions.",
+        "Residual value increase causes proportional net capex decrease",
+        "Event replay with same event_id does not duplicate cost entries",
+        "Distinct events (different event_id) that both carry a null or omitted idempotency_key remain distinct and retain both cost entries; only a shared valid non-null key may collapse them"
+      ]
+    },
+    {
+      "consumer_id": "SITESCORE_SCORING",
+      "description": "SiteScore evaluation model (modules/sitescore/domain/scoring.py)",
+      "current_status": "NO_FORMAT_CONVERSION_FIELDS",
+      "evidence": "SiteScoreFeatureInput carries target_format_code (L70, the greenfield target format for a candidate site) but no conversion, brownfield, from_format, downtime or brand_transfer field: grep -n -i -E 'conversion|brownfield|from_format|downtime|remodel|brand_transfer' modules/sitescore/domain/scoring.py at HEAD 944f4d71 (blob 1f8f50ab), UTC 2026-09-08T17:57:28Z, raw exit 1, zero matches. SiteScore scores greenfield candidates against a single target format and consumes no conversion data. See implementation-handoff.md section 5.3 Observation C.",
+      "consumes_fields": [],
+      "stage_b_action": "TBD — depends on whether SiteScore should evaluate existing-store conversion ROI or only greenfield site selection. Requires product decision.",
+      "acceptance_tests": []
+    },
+    {
+      "consumer_id": "PERSISTENCE_LAYER",
+      "description": "PostgreSQL core.store_format_conversions table (to be created in Stage B)",
+      "current_status": "TABLE_DOES_NOT_EXIST",
+      "evidence": "No store_format_conversions or conversion event table exists anywhere in the migrations tree. Inspected set is the full tree, 50 files: 27 top-level SQL (000001 to 000023) plus 6 assisted_listing_intake/*.sql plus 17 Alembic versions/*.py. Receipt: grep -rn -i -e format_conversion -e store_format_conversions infra/db/migrations at HEAD 944f4d719b29e765605f55a5fbc366aca3430c36, UTC 2026-09-08T17:56:54Z, raw exit 1, zero matches; see implementation-handoff.md section 5.2. An earlier version of this entry claimed tree-wide absence from an infra/db/migrations/*.sql glob that reached only the 27 top-level files; that glob has been replaced by the recursive scan. Only the static store_format_code column exists, in 000001, 000002 and 000004.",
+      "consumes_fields": [
+        "event_id",
+        "event_type",
+        "store_id",
+        "tenant_id",
+        "from_format_code",
+        "to_format_code",
+        "conversion_start_date",
+        "conversion_completed_date",
+        "remodeling_capex",
+        "downtime_days",
+        "residual_value",
+        "disposal_cost",
+        "effective_date",
+        "recorded_at"
+      ],
+      "stage_b_action": "Create migration for core.store_format_conversions per ODP_SITE001_COMPONENT_DISPOSITIONS §4.2 schema spec. Align SQLite 000004 equivalent.",
+      "acceptance_tests": [
+        "Migration runs cleanly on both PostgreSQL and SQLite schemas",
+        "FK to core.stores enforced",
+        "Unique constraint on event_id prevents duplicate inserts"
+      ]
+    },
+    {
+      "consumer_id": "GOVERNANCE_CHECKER",
+      "description": "Requirement disposition checker (delivery_toolchain/governance/check_requirement_members.py)",
+      "current_status": "ACTIVE_BLOCKED",
+      "evidence": "set_valued_requirements.json records FORMAT_CONVERSION as absent/BLOCKED_BY_EVIDENCE with formal_handback_ref to ODP_SITE001_COMPONENT_DISPOSITIONS. check_requirement_members.py validates this state.",
+      "consumes_fields": [],
+      "stage_b_action": "Provide verified evidence and scoped handoff to WP-90 for centralized disposition update from absent/BLOCKED_BY_EVIDENCE to satisfied/VERIFIED after real producer, migration, and simulator integration are completed and tested.",
+      "acceptance_tests": [
+        "check_requirement_members.py passes in both Stage A (BLOCKED) and Stage B (VERIFIED) states"
+      ]
+    }
+  ],
+  "stage_b_entry_conditions": [
+    "H04 human input provides real conversion events (or planned-event specifications), financial parameters, and operational playbook with acquisition owner and timing",
+    "Cross-source/consumer contract review completed (event schema, persistence migration design, simulator input)",
+    "Store Operations formally approves brownfield conversion playbook with cost schedules and downtime parameters"
+  ]
+}

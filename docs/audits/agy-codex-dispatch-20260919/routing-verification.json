@@ -1,0 +1,154 @@
+[
+  {
+    "id": "XR-SOURCE-APPROVAL-ACTIVATION-001",
+    "owner": "Antigravity",
+    "reviewer": "Codex",
+    "owner_policy_error": null,
+    "reviewer_policy_error": null,
+    "independent_accounts": true
+  },
+  {
+    "id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+    "owner": "Antigravity5",
+    "reviewer": "Codex",
+    "owner_policy_error": null,
+    "reviewer_policy_error": null,
+    "independent_accounts": true
+  },
+  {
+    "id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+    "owner": "Antigravity5",
+    "reviewer": "Codex",
+    "owner_policy_error": null,
+    "reviewer_policy_error": null,
+    "independent_accounts": true
+  },
+  {
+    "id": "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001",
+    "owner": "Antigravity5",
+    "reviewer": "Codex",
+    "owner_policy_error": null,
+    "reviewer_policy_error": null,
+    "independent_accounts": true
+  },
+  {
+    "id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+    "owner": "Antigravity2",
+    "reviewer": "Codex",
+    "owner_policy_error": null,
+    "reviewer_policy_error": null,
+    "independent_accounts": true
+  },
+  {
+    "id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+    "owner": "Antigravity2",
+    "reviewer": "Codex",
+    "owner_policy_error": null,
+    "reviewer_policy_error": null,
+    "independent_accounts": true
+  },
+  {
+    "id": "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+    "owner": "Antigravity",
+    "reviewer": "Codex",
+    "owner_policy_error": null,
+    "reviewer_policy_error": null,
+    "independent_accounts": true
+  },
+  {
+    "id": "ODP-NFR-RUNTIME-EVIDENCE-001",
+    "owner": "Antigravity3",
+    "reviewer": "Codex",
+    "owner_policy_error": null,
+    "reviewer_policy_error": null,
+    "independent_accounts": true
+  },
+  {
+    "id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+    "owner": "Antigravity5",
+    "reviewer": "Codex",
+    "owner_policy_error": null,
+    "reviewer_policy_error": null,
+    "independent_accounts": true
+  },
+  {
+    "id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+    "owner": "Antigravity3",
+    "reviewer": "Codex",
+    "owner_policy_error": null,
+    "reviewer_policy_error": null,
+    "independent_accounts": true
+  },
+  {
+    "id": "XR-EXT-OSS-FINAL-AUDIT-001",
+    "owner": "Antigravity4",
+    "reviewer": "Codex",
+    "owner_policy_error": null,
+    "reviewer_policy_error": null,
+    "independent_accounts": true
+  },
+  {
+    "id": "ODP-BRAND-TRANSFER-IMPLEMENTATION-001",
+    "owner": "Antigravity",
+    "reviewer": "Codex",
+    "owner_policy_error": null,
+    "reviewer_policy_error": null,
+    "independent_accounts": true
+  },
+  {
+    "id": "ODP-FORMAT-CONVERSION-IMPLEMENTATION-001",
+    "owner": "Antigravity6",
+    "reviewer": "Codex",
+    "owner_policy_error": null,
+    "reviewer_policy_error": null,
+    "independent_accounts": true
+  },
+  {
+    "id": "ODP-NET002-LEASE-IMPLEMENTATION-001",
+    "owner": "Antigravity7",
+    "reviewer": "Codex",
+    "owner_policy_error": null,
+    "reviewer_policy_error": null,
+    "independent_accounts": true
+  },
+  {
+    "id": "DPF-CAPTURE-RETENTION-RUNNER-001",
+    "owner": "Antigravity5",
+    "reviewer": "Codex",
+    "owner_policy_error": null,
+    "reviewer_policy_error": null,
+    "independent_accounts": true
+  },
+  {
+    "id": "DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001",
+    "owner": "Antigravity6",
+    "reviewer": "Codex",
+    "owner_policy_error": null,
+    "reviewer_policy_error": null,
+    "independent_accounts": true
+  },
+  {
+    "id": "ODP-DEV-RELEASE-GATE-RECONCILIATION-004",
+    "owner": "Antigravity7",
+    "reviewer": "Codex",
+    "owner_policy_error": null,
+    "reviewer_policy_error": null,
+    "independent_accounts": true
+  },
+  {
+    "id": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+    "owner": "Antigravity6",
+    "reviewer": "Codex",
+    "owner_policy_error": null,
+    "reviewer_policy_error": null,
+    "independent_accounts": true
+  },
+  {
+    "id": "ODP-BRAND-CLASSIFICATION-SYNC-PRESERVATION-001",
+    "owner": "Antigravity7",
+    "reviewer": "Codex",
+    "owner_policy_error": null,
+    "reviewer_policy_error": null,
+    "independent_accounts": true
+  }
+]

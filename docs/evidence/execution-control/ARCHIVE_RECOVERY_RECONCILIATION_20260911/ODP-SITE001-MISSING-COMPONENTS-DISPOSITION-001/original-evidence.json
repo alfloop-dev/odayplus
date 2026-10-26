@@ -1,0 +1,576 @@
+{
+  "inventory_source": "/home/lupin/oday-plus-supervisor-runtime-b66d18130f3b/docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json",
+  "inventory_sha256": "f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715",
+  "entry": {
+    "task_id": "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+    "repository": "alfloop-dev/odayplus",
+    "dependents": [
+      {
+        "id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+        "status": "todo"
+      }
+    ],
+    "inventory_candidate": {
+      "pr_number": 1160,
+      "url": "https://github.com/alfloop-dev/odayplus/pull/1160",
+      "head_sha": "ffe02988a1b4def412090c6b422e6efb26081d9f",
+      "merge_sha": "9f53418df41e558c8f953c801dd8fd1f25f77b5b",
+      "merged_at": "2026-09-03T16:51:21Z",
+      "head_ref": "task/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+      "pr_title": "[ReviewBus] ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001 依 SITE-001 資料證據實作或正式處置 Brand Transfer／Format Conversion"
+    },
+    "candidate_mapping": {
+      "head_ref": "task/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+      "head_ref_equals_task_branch": true,
+      "pr_body_task_id": "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+      "pr_body_task_id_matches": true,
+      "pr_title_mentions_task_id": true,
+      "head_sha_matches_inventory": true,
+      "merge_sha_matches_inventory": true,
+      "merge_commit_in_local_dev_history": true,
+      "head_commit_in_local_dev_history": true,
+      "verdict": "consistent",
+      "pr_body_task_id_sources": {
+        "review_bus_block": "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+        "finalize_header": "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+        "freeform_declaration": null
+      },
+      "pr_body_task_id_resolved_from": "review_bus_block",
+      "pr_body_mentions_task_id": true,
+      "extraction_note": "PR body 的 task id 有四種既有格式：orchestrator ReviewBus 區塊的 `- ID:` 與 `- 任務 ID:`、task_finalize 產生的 `Task:` 標頭行、以及自由格式的 `任務：` 宣告行。第一輪盤點只認得其中一種，因此 33/38 筆誤記為 null。本輪四種格式全部解析，解析優先序為 ReviewBus 區塊 > task_finalize 標頭 > 自由格式宣告。",
+      "verdict_reasons": []
+    },
+    "pull_request": {
+      "number": 1160,
+      "state": "MERGED",
+      "title": "[ReviewBus] ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001 依 SITE-001 資料證據實作或正式處置 Brand Transfer／Format Conversion",
+      "url": "https://github.com/alfloop-dev/odayplus/pull/1160",
+      "base_ref": "dev",
+      "created_at": "2026-09-03T14:24:26Z",
+      "merged_at": "2026-09-03T16:51:21Z",
+      "author": "ajoe734",
+      "merged_by": "ajoe734",
+      "head_sha": "ffe02988a1b4def412090c6b422e6efb26081d9f",
+      "merge_sha": "9f53418df41e558c8f953c801dd8fd1f25f77b5b",
+      "file_count": 5,
+      "evidence_files": [
+        "docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md"
+      ],
+      "review_bus_block": {
+        "task_id": "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+        "status": "review_approved",
+        "owner": "Antigravity5",
+        "reviewer": "Codex",
+        "present": true,
+        "format": "zh",
+        "note": "ReviewBus 區塊由 orchestrator 在送審時寫入 PR body，其 狀態／負責人／評審人 反映當時看板對該任務的記載，是遺失 archive 之外的另一份終態旁證。"
+      }
+    },
+    "original_task_definition": {
+      "source_of_truth": "local orchestrator task brief (generated snapshot, not the lost archive record)",
+      "brief_path": ".orchestrator/task-briefs/odp_site001_missing_components_disposition_001.md",
+      "brief_generated_at": "2026-09-03T16:52:29Z",
+      "task_last_update": "2026-09-03T16:26:04Z",
+      "brief_declared_sha256": "1ff48b5e85805405fef3388e036b1376a37a9b1c9c74a3d5a1e18e6d5e8d177b",
+      "brief_file_sha256_recomputed": "eec0f05e81937ca8f806ce9db9682aa80912423e800a643a769d3b5f8e5b86fb",
+      "title": "依 SITE-001 資料證據實作或正式處置 Brand Transfer／Format Conversion",
+      "status_at_brief": "review_approved",
+      "owner": "Antigravity5",
+      "reviewer": "Codex",
+      "phase": "ODP Remediation · W6 Conditional",
+      "summary": "逐 member 讀取資料 readiness。只有 evidence=IMPLEMENTATION_READY 的 Brand Transfer 或 Format Conversion 才接進 model-ready/production consumer 並測試；沒有資料或業務事件者不得造 placeholder，改建立需人類授權的 amendment/waiver handback 與期限。",
+      "acceptance": [
+        "Brand Transfer 與 Format Conversion 各自有獨立 outcome",
+        "實作者以真 source lineage 接到 production consumer 且有反事實測試",
+        "不適用者只建立 human-authority handback 且 AI 不自簽 waiver",
+        "manifest member 狀態與 formal disposition ref 一致且 checker 綠燈"
+      ],
+      "verification": [],
+      "artifacts": [
+        "pipelines/dbt/models/model_ready",
+        "modules/sitescore",
+        "models/sitescore",
+        "delivery_toolchain/governance/set_valued_requirements.json",
+        "docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md",
+        "tests"
+      ],
+      "source_documents": [
+        "github://alfloop-dev/odayplus@75d25f653aa12c21a3f9627f29af2ed4def73153/docs/plans/ODP_REMEDIATION_PLAN_2026-09-03.md",
+        "github://alfloop-dev/odayplus@75d25f653aa12c21a3f9627f29af2ed4def73153/docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md",
+        "github://alfloop-dev/odayplus@75d25f653aa12c21a3f9627f29af2ed4def73153/docs/evidence/ODP_STRUCTURAL_REMEDIATION_2026-09-01.md"
+      ],
+      "dependencies": [
+        "ODP-SITE001-DATA-READINESS-001: done · 查證 SITE-001 Brand Transfer 與 Format Conversion 的資料與業務事件",
+        "ODP-REQ-DISPOSITION-GOVERNANCE-001: done · 建立 MUST requirement amendment／waiver 的可機讀 disposition gate"
+      ],
+      "next_field": "PR for task ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001 is CI-green and awaiting merge queue; approved branch head remains immutable and finalize dispatch is deferred."
+    },
+    "corroborating_terminal_status": {
+      "method": "other tasks' briefs record this id in their Dependencies section with the status the board held at that time",
+      "references": [],
+      "distinct_statuses": []
+    },
+    "ci_at_exact_head": {
+      "head_sha": "ffe02988a1b4def412090c6b422e6efb26081d9f",
+      "check_runs_total": 7,
+      "conclusions": {
+        "success": 7
+      },
+      "check_runs": [
+        {
+          "name": "product-e2e-gate",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-03T16:06:21Z"
+        },
+        {
+          "name": "performance-gate",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-03T16:01:30Z"
+        },
+        {
+          "name": "product",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-03T16:18:24Z"
+        },
+        {
+          "name": "classify",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-03T16:00:21Z"
+        },
+        {
+          "name": "orchestrator",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-03T16:03:02Z"
+        },
+        {
+          "name": "change-scope",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-03T16:00:20Z"
+        },
+        {
+          "name": "boundary",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-03T16:00:20Z"
+        }
+      ],
+      "skipped_checks": [],
+      "commit_status_rollup": "success",
+      "commit_statuses": [
+        {
+          "context": "task-review-gate",
+          "state": "success",
+          "updated_at": "2026-09-03T16:22:20Z",
+          "description": "Approved by assigned reviewer Codex"
+        }
+      ]
+    },
+    "review_approval_evidence": {
+      "task_review_gate": {
+        "context": "task-review-gate",
+        "state": "success",
+        "updated_at": "2026-09-03T16:22:20Z",
+        "description": "Approved by assigned reviewer Codex"
+      },
+      "approver_named_in_gate": "Codex",
+      "approver_matches_brief_reviewer": true,
+      "approver_differs_from_owner": true,
+      "github_pr_reviews": [],
+      "note": "task-review-gate 是 Pantheon 寫回 GitHub 的 commit status，綁定精確 head；GitHub 原生 PR review 清單為空是正常現象。"
+    },
+    "commit_trailers_at_head": {
+      "LLM-Agent": null,
+      "Task-ID": null,
+      "Reviewer": null,
+      "Verified": null,
+      "head_is_merge_commit": true
+    },
+    "artifact_coverage": {
+      "artifacts": [
+        {
+          "artifact": "pipelines/dbt/models/model_ready",
+          "present_at_merge_commit": true,
+          "present_at_dev_tip": true,
+          "touched_by_candidate_pr": false
+        },
+        {
+          "artifact": "modules/sitescore",
+          "present_at_merge_commit": true,
+          "present_at_dev_tip": true,
+          "touched_by_candidate_pr": false
+        },
+        {
+          "artifact": "models/sitescore",
+          "present_at_merge_commit": true,
+          "present_at_dev_tip": true,
+          "touched_by_candidate_pr": false
+        },
+        {
+          "artifact": "delivery_toolchain/governance/set_valued_requirements.json",
+          "present_at_merge_commit": true,
+          "present_at_dev_tip": true,
+          "touched_by_candidate_pr": true
+        },
+        {
+          "artifact": "docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md",
+          "present_at_merge_commit": true,
+          "present_at_dev_tip": true,
+          "touched_by_candidate_pr": true
+        },
+        {
+          "artifact": "tests",
+          "present_at_merge_commit": true,
+          "present_at_dev_tip": true,
+          "touched_by_candidate_pr": true
+        }
+      ],
+      "all_present_at_merge": true,
+      "all_touched_by_pr": false
+    },
+    "evidence_integrity_scan": {
+      "scanned": [
+        "docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md"
+      ],
+      "findings": []
+    },
+    "requirement_disposition_check": [
+      {
+        "requirement": "ODP-FR-SITE-001",
+        "member": "BRAND_TRANSFER",
+        "status": "absent",
+        "disposition_state": "BLOCKED_BY_EVIDENCE",
+        "decider": null,
+        "decision_ref": null,
+        "expiry": null,
+        "disposition_keys": [
+          "evidence_needed",
+          "evidence_owner",
+          "formal_handback_ref",
+          "next_review_date",
+          "rationale",
+          "reopen_trigger",
+          "state"
+        ]
+      },
+      {
+        "requirement": "ODP-FR-SITE-001",
+        "member": "FORMAT_CONVERSION",
+        "status": "absent",
+        "disposition_state": "BLOCKED_BY_EVIDENCE",
+        "decider": null,
+        "decision_ref": null,
+        "expiry": null,
+        "disposition_keys": [
+          "evidence_needed",
+          "evidence_owner",
+          "formal_handback_ref",
+          "next_review_date",
+          "rationale",
+          "reopen_trigger",
+          "state"
+        ]
+      }
+    ],
+    "acceptance_class": {
+      "code_or_docs": true,
+      "runtime_deployment": false,
+      "external_enablement": false,
+      "human_authority": true
+    },
+    "verified_findings": [
+      "ODP-FR-SITE-001 的 BRAND_TRANSFER 與 FORMAT_CONVERSION 兩 member 皆為 BLOCKED_BY_EVIDENCE，帶 formal_handback_ref 與 reopen_trigger，無自簽 decider，符合『不適用者只建立 human-authority handback 且 AI 不自簽 waiver』。"
+    ],
+    "gaps": [
+      "盤點觀察：兩個需求 member 待人類裁決；候選 PR head commit 無 task trailer。"
+    ],
+    "recommendation": "verified_candidate",
+    "confidence": "high",
+    "recommended_next_minimal_verification": [],
+    "recommendation_applies_to": "inventory_candidate",
+    "acceptance_evidence_map": [
+      {
+        "index": 1,
+        "criterion": "Brand Transfer 與 Format Conversion 各自有獨立 outcome",
+        "classes": [
+          "D",
+          "T"
+        ],
+        "classes_zh": [
+          "程式或文件交付",
+          "可由測試證明"
+        ],
+        "status": "met_by_test_in_green_ci",
+        "status_zh": "本 PR 交付了對應測試檔，且精確 head 上執行該測試的 check 結論為 success（僅到 job 層，未取 job log）",
+        "evidence": [
+          {
+            "kind": "receipt_file",
+            "ref": "docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md @ 9f53418df41e",
+            "finding": "由本 PR 交付並存在於 merge commit"
+          },
+          {
+            "kind": "test_file",
+            "ref": "tests/governance/test_site001_disposition.py @ 9f53418df41e",
+            "finding": "由本 PR 交付並存在於 merge commit"
+          },
+          {
+            "kind": "ci_check",
+            "ref": "check-run product @ ffe02988a1b4",
+            "at": "2026-09-03T16:18:24Z",
+            "finding": "conclusion=success"
+          }
+        ],
+        "note": null
+      },
+      {
+        "index": 2,
+        "criterion": "實作者以真 source lineage 接到 production consumer 且有反事實測試",
+        "classes": [
+          "D"
+        ],
+        "classes_zh": [
+          "程式或文件交付"
+        ],
+        "status": "met_by_delivered_artifact",
+        "status_zh": "交付了對應程式或文件，本盤點只驗其存在與內容涵蓋，未重算其結論",
+        "evidence": [
+          {
+            "kind": "receipt_file",
+            "ref": "docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md @ 9f53418df41e",
+            "finding": "由本 PR 交付並存在於 merge commit"
+          }
+        ],
+        "note": "本 PR 的處置為不實作；「真 source lineage 接到 production consumer」只對被判定為實作者的成員成立。"
+      },
+      {
+        "index": 3,
+        "criterion": "不適用者只建立 human-authority handback 且 AI 不自簽 waiver",
+        "classes": [
+          "D",
+          "H"
+        ],
+        "classes_zh": [
+          "程式或文件交付",
+          "人類授權"
+        ],
+        "status": "met_by_delivered_artifact",
+        "status_zh": "交付了對應程式或文件，本盤點只驗其存在與內容涵蓋，未重算其結論",
+        "evidence": [
+          {
+            "kind": "receipt_file",
+            "ref": "docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md @ 9f53418df41e",
+            "finding": "由本 PR 交付並存在於 merge commit"
+          }
+        ],
+        "note": "不適用者建立 human-authority handback，未自簽 waiver。"
+      },
+      {
+        "index": 4,
+        "criterion": "manifest member 狀態與 formal disposition ref 一致且 checker 綠燈",
+        "classes": [
+          "T"
+        ],
+        "classes_zh": [
+          "可由測試證明"
+        ],
+        "status": "met_by_test_in_green_ci",
+        "status_zh": "本 PR 交付了對應測試檔，且精確 head 上執行該測試的 check 結論為 success（僅到 job 層，未取 job log）",
+        "evidence": [
+          {
+            "kind": "test_file",
+            "ref": "tests/governance/test_site001_disposition.py @ 9f53418df41e",
+            "finding": "由本 PR 交付並存在於 merge commit"
+          },
+          {
+            "kind": "ci_check",
+            "ref": "check-run product @ ffe02988a1b4",
+            "at": "2026-09-03T16:18:24Z",
+            "finding": "conclusion=success"
+          }
+        ],
+        "note": null
+      }
+    ],
+    "acceptance_evidence_summary": {
+      "criteria_total": 4,
+      "by_status": {
+        "met_by_test_in_green_ci": 2,
+        "met_by_delivered_artifact": 2
+      },
+      "has_unmet_per_own_receipt": false,
+      "has_not_evidenced": false,
+      "has_test_delivered_not_executed_at_exact_head": false
+    },
+    "blocking_reasons": [],
+    "recommendation_scope": {
+      "covers": "本建議只涵蓋：候選 PR 與本 ID 的映射一致、精確 head 的 CI 結論、綁定精確 head 的 task-review-gate 核准者，以及上表逐條 acceptance 已定位到的既有證據。",
+      "does_not_cover": "不涵蓋 runtime 部署是否仍然有效、外部來源是否已被授權啟用、任何人類 GO／lease／provider permission，以及測試在 job log 層的個別結果。",
+      "criteria_not_fully_evidenced": []
+    }
+  },
+  "recovery_record_at_dispatch": {
+    "reconstructed": true,
+    "record_kind": "recovery_placeholder",
+    "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
+    "generated_at": "2026-09-08T23:55:11Z",
+    "evidence_tier": "merge_verified",
+    "gaps": [
+      "runtime"
+    ],
+    "historical_actors": {
+      "owner": "UNKNOWN-HISTORICAL",
+      "reviewer": "UNKNOWN-HISTORICAL",
+      "human_go": "UNKNOWN-HISTORICAL"
+    },
+    "recovery_actors": {
+      "owner": "Claude2",
+      "reviewer": "Codex"
+    },
+    "evidence": {
+      "local_merge": {
+        "merge_commit": "9f53418df41e558c8f953c801dd8fd1f25f77b5b",
+        "merged_at": "2026-09-03T16:23:39+00:00",
+        "merge_pr": "#1160",
+        "subject": "Merge pull request #1160 from alfloop-dev/task/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+        "delivery_form": "merge-commit"
+      },
+      "candidates": [
+        {
+          "pr_number": 1160,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1160",
+          "title": "[ReviewBus] ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001 依 SITE-001 資料證據實作或正式處置 Brand Transfer／Format Conversion",
+          "head_ref": "task/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+          "head_oid": "ffe02988a1b4def412090c6b422e6efb26081d9f",
+          "merge_commit": "9f53418df41e558c8f953c801dd8fd1f25f77b5b",
+          "merged_at": "2026-09-03T16:51:21Z",
+          "state": "MERGED"
+        }
+      ],
+      "attestations": {
+        "acceptance": {
+          "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+          "verified_at": "2026-09-07T15:14:37Z",
+          "verifier": "Claude",
+          "detail": {
+            "criteria_total": 4,
+            "by_status": {
+              "met_by_test_in_green_ci": 2,
+              "met_by_delivered_artifact": 2
+            },
+            "confidence": "high"
+          }
+        },
+        "ci": {
+          "source": "gh api repos/alfloop-dev/odayplus/commits/ffe02988a1b4def412090c6b422e6efb26081d9f/check-runs",
+          "verified_at": "2026-09-07T15:14:37Z",
+          "verifier": "Claude",
+          "detail": {
+            "head_sha": "ffe02988a1b4def412090c6b422e6efb26081d9f",
+            "total": 7,
+            "conclusions": {
+              "success": 7
+            },
+            "checks": [
+              {
+                "name": "product-e2e-gate",
+                "conclusion": "success",
+                "completed_at": "2026-09-03T16:06:21Z"
+              },
+              {
+                "name": "performance-gate",
+                "conclusion": "success",
+                "completed_at": "2026-09-03T16:01:30Z"
+              },
+              {
+                "name": "product",
+                "conclusion": "success",
+                "completed_at": "2026-09-03T16:18:24Z"
+              },
+              {
+                "name": "classify",
+                "conclusion": "success",
+                "completed_at": "2026-09-03T16:00:21Z"
+              },
+              {
+                "name": "orchestrator",
+                "conclusion": "success",
+                "completed_at": "2026-09-03T16:03:02Z"
+              },
+              {
+                "name": "change-scope",
+                "conclusion": "success",
+                "completed_at": "2026-09-03T16:00:20Z"
+              },
+              {
+                "name": "boundary",
+                "conclusion": "success",
+                "completed_at": "2026-09-03T16:00:20Z"
+              }
+            ]
+          }
+        },
+        "approval": {
+          "source": "gh api repos/alfloop-dev/odayplus/commits/ffe02988a1b4def412090c6b422e6efb26081d9f/status (context=task-review-gate)",
+          "verified_at": "2026-09-07T15:14:37Z",
+          "verifier": "Claude",
+          "detail": {
+            "head_sha": "ffe02988a1b4def412090c6b422e6efb26081d9f",
+            "state": "success",
+            "updated_at": "2026-09-03T16:22:20Z",
+            "description": "Approved by assigned reviewer Codex",
+            "approver_named_in_gate": "Codex",
+            "approver_differs_from_owner": true
+          }
+        },
+        "_disclosure": {
+          "attested": [
+            "acceptance",
+            "approval",
+            "ci"
+          ],
+          "withheld": [
+            "runtime"
+          ],
+          "acceptance_class": {
+            "code_or_docs": true,
+            "runtime_deployment": false,
+            "external_enablement": false,
+            "human_authority": true
+          },
+          "merged_inventory_confidence": "high",
+          "skipped_checks_at_head": 0,
+          "process_constraint_unverifiable_criteria": 0,
+          "partially_met_criteria": 0,
+          "merged_inventory_gaps": [
+            "盤點觀察：兩個需求 member 待人類裁決；候選 PR head commit 無 task trailer。"
+          ],
+          "candidate_mapping_verdict": "consistent",
+          "local_merge_verified_on_pinned_ref": true
+        }
+      },
+      "verified_at": "2026-09-08T23:55:11Z",
+      "verifier": "Claude2"
+    },
+    "known_dependents": [
+      {
+        "id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+        "status": "unknown-at-rebuild-time"
+      }
+    ],
+    "baseline": {
+      "ref": "origin/dev",
+      "ref_commit": "ef76cf6d295ce7a8a470fe6e5f0eab20a0439169",
+      "inventory_sha256": "54d2386b29a9b601d13e74e55a2f1702550421546c1e992de295c51fe36d12ca",
+      "authorization_sha256": "d7a34fa1fbed837d9f15d2580709689b1178f11f2d1f019383082eebf11deea3"
+    },
+    "note": "重建記錄，來源為 PR/commit 等可驗證證據，不是原始 archive bytes，也不代表原始驗收、CI、部署或核准已完成。"
+  },
+  "original_placeholder_acceptance": [
+    "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
+  ]
+}

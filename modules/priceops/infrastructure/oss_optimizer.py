@@ -27,6 +27,10 @@ class PriceOpsProductionExecutionError(RuntimeError):
     """Raised when the production Optuna/CVXPY contract cannot execute."""
 
 
+class PriceOpsMissingSourceLineageError(PriceOpsProductionExecutionError):
+    """Production price inputs have no traceable snapshot lineage yet."""
+
+
 @dataclass(frozen=True)
 class PriceOpsProductionExecution:
     results: tuple[tuple[PricingPlanItem, OptimizationResult], ...]
@@ -39,7 +43,7 @@ class PriceOpsProductionOptimizer:
             item.item_id for item in plan.items if not item.source_snapshot_ids
         )
         if missing_lineage:
-            raise PriceOpsProductionExecutionError(
+            raise PriceOpsMissingSourceLineageError(
                 "production PriceOps items require source snapshot lineage: "
                 + ", ".join(missing_lineage)
             )
@@ -355,6 +359,8 @@ def _simulate(item: PricingPlanItem, price: float) -> Any:
         unit_cost=item.constraints.unit_cost,
         elasticity=item.elasticity.elasticity_value,
         confidence=item.elasticity.confidence,
+        applicable_min_price=item.constraints.applicable_min_price,
+        applicable_max_price=item.constraints.applicable_max_price,
     )
 
 

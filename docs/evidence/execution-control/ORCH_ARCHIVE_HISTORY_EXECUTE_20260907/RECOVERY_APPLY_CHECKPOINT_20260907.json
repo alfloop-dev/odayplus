@@ -1,0 +1,73 @@
+{
+  "type": "task_history_recovery_blocked_checkpoint",
+  "note": "這不是 apply receipt。apply 未執行（連 PLAN ONLY 都沒有）。這份檔案記錄停在哪裡、卡在什麼、下一條命令是什麼。",
+  "task_id": "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
+  "actor": "Claude2",
+  "reviewer": "Codex",
+  "recorded_at": "2026-09-07T15:57:31Z",
+  "canonical_apply_performed": false,
+  "maintenance_hold_created_or_signed_by_this_worker": false,
+  "supervisor_signalled_by_this_worker": false,
+  "proposed_batch": {
+    "shape": "情境 B：23 筆 archive_reconstructed_done + 15 筆 active_blocked_placeholder",
+    "path_in_this_pr": "docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_batch_20260907_scenarioB.json",
+    "sha256_as_delivered": "639059236692d8b0fc32d9b6cb1f0210f84068c023c0fdcf90c7760875f674a6",
+    "sha256_is_apply_ready": false,
+    "why_not_apply_ready": "baseline 釘住的 board_revision/board_sha256 在量測後數十秒內即漂移；批次必須在窗口內以同一組輸入重新規劃，reviewer 批准的是窗口內那顆 hash。"
+  },
+  "blockers": [
+    {
+      "id": "B-WINDOW",
+      "severity": "structural",
+      "statement": "維護窗口不成立：Supervisor PID 6522 存活（state Ss，非 SIGSTOP），ready_dispatcher.enabled=true，board 每 30–60 秒被改寫一次。",
+      "who_can_clear": "前景協調者／有權限者",
+      "worker_may_clear": false,
+      "worker_reason": "驗收明文禁止 worker 自行停止／恢復 Supervisor 或簽 hold。"
+    },
+    {
+      "id": "B-HOLD",
+      "severity": "structural",
+      "statement": "沒有 maintenance hold 文件。live writer 在 --confirm 判斷之前就要求 hold，因此連不帶 --confirm 的 PLAN ONLY 預演都跑不起來。",
+      "code_reference": "scripts/ai_status.py command_archive_recovery_apply -> _archive_recovery_hold（在 baseline drift 與 --confirm 之前）",
+      "who_can_clear": "Codex（batch_approval.reviewer 必須是 Codex，且不得等於執行 apply 的 actor Claude2）",
+      "worker_may_clear": false
+    },
+    {
+      "id": "B-DRIFT",
+      "severity": "mechanical",
+      "statement": "baseline 漂移：本輪三次量測的 board_revision 分別為 34e02ca4…（15:49:18Z）、4675b33b…（15:50:15Z）、c12ef86277934c1ba51ae1223aa9ac42（2026-09-07T15:57:31Z）。",
+      "who_can_clear": "窗口成立後自然消失（無其他 writer 時 board 不再漂）",
+      "worker_may_clear": false
+    }
+  ],
+  "cleared_this_round": [
+    {
+      "id": "B-AUTH",
+      "was": "PR #1234 停在此處：planner 強制 --authorization 指向一份存在的文件，原 /tmp 授權檔已不存在，執行者不得自行補寫。",
+      "now": "以 Codex 如實轉錄的新來源取代循環等待。",
+      "authorization_path": "/home/lupin/odayplus-handoffs/odp-execution-wave-2026-09-07/USER_EXECUTION_SCOPE.md",
+      "authorization_sha256": "d7a34fa1fbed837d9f15d2580709689b1178f11f2d1f019383082eebf11deea3",
+      "authored_by_this_worker": false,
+      "scope_sufficiency": "足以作為 planner 釘住的授權文件（授權『沿既有任務／Supervisor／canonical writer 核實遺失歷史…在有效維護窗口執行回填』）；明文不足以作為 maintenance hold 或 batch 批准（文件自述『不代表維護窗口已成立或 batch 已獲批准』）。"
+    }
+  ],
+  "next_commands": {
+    "step_1_window": "前景協調者建立維護窗口：停派工、排除 watchdog／worker／其他 writer、Supervisor 真正退出。本 worker 不執行此步。",
+    "step_2_replan_in_window": [
+      "uv run --frozen --python 3.12 python scripts/orchestrator/backfill_task_archive_snapshots.py",
+      "  --archive-dir /home/lupin/odayplus/ai-task-archive/tasks",
+      "  --repo /home/lupin/odayplus --ref origin/dev",
+      "  --board /home/lupin/odayplus/ai-status.json",
+      "  --recovery-inventory <PR1234 的 recovery_inventory_rebuilt_20260907.json 的穩定路徑>",
+      "  --attestations <經 Codex 逐條裁定後的扁平 attestations（見本 PR 的 attestations_planner_input_20260907.json 形狀）>",
+      "  --authorization /home/lupin/odayplus-handoffs/odp-execution-wave-2026-09-07/USER_EXECUTION_SCOPE.md",
+      "  --batch-out <窗口內的新批次路徑>",
+      "  --recovery-owner Claude2 --recovery-reviewer Codex",
+      "sha256sum <窗口內的新批次路徑>"
+    ],
+    "step_3_codex_signs_hold": "Codex 依 maintenance_hold_template_NOT_A_HOLD.json 的欄位，對 step 2 量到的 exact hash 簽出 hold（type 必須是 task_history_recovery_maintenance_hold）。",
+    "step_4_plan_only": "AI_NAME=Claude2 \"$PANTHEON_STATUS_ROOT/scripts/ai-status.sh\" archive_recovery_apply --batch <新批次> --maintenance-hold <hold.json>",
+    "step_5_confirm": "AI_NAME=Claude2 \"$PANTHEON_STATUS_ROOT/scripts/ai-status.sh\" archive_recovery_apply --batch <新批次> --maintenance-hold <hold.json> --checkpoint /home/lupin/odayplus/.orchestrator/recovery-receipts/history-recovery-checkpoint-$(date -u +%%Y%%m%%dT%%H%%M%%SZ).json --confirm",
+    "partial_failure_rule": "基準漂移或 partial failure 立即停在實際結果，保留 checkpoint 與 hold，不繞 CAS、不手寫 archive/board/index、不宣稱 rollback、不在窗口外重試。"
+  }
+}

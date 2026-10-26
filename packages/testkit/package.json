@@ -2,6 +2,7 @@
   "name": "@oday-plus/testkit",
   "version": "0.1.0",
   "private": true,
+  "license": "UNLICENSED",
   "main": "src/index.ts",
   "scripts": {},
   "dependencies": {},

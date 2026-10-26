@@ -1,0 +1,112 @@
+{
+  "authority_reference": {
+    "issued_by": "蔡尚志 (負責人)",
+    "reference": "HUMAN-OSS-LEGAL-APPROVAL-001 source-data approval receipt sha256:2119dc6f74335d3a1884e0a0dfda6db61171df0542c46371c1719c26204d83c7 (alfloop-dev/odayplus#1418, authored by ajoe734)",
+    "scope": "raw field classification of source lane 'osm', accepted as reviewed in classification-review.md"
+  },
+  "classification_digest": "14acb98d595d07037ace7c59626f670bce956d2d7af409d4a1b3d292c9dc1c9a",
+  "contract_id": "emgi.source.osm-pbf.v1",
+  "fields": {
+    "access": {
+      "basis": "OSM 道路網邊正規化（ODbL 1.0，需署名/相同方式分享）",
+      "classification": "PUBLIC"
+    },
+    "backward_access": {
+      "basis": "OSM 道路網邊正規化（ODbL 1.0，需署名/相同方式分享）",
+      "classification": "PUBLIC"
+    },
+    "edge_id": {
+      "basis": "OSM 道路網邊正規化（ODbL 1.0，需署名/相同方式分享）",
+      "classification": "PUBLIC"
+    },
+    "forward_access": {
+      "basis": "OSM 道路網邊正規化（ODbL 1.0，需署名/相同方式分享）",
+      "classification": "PUBLIC"
+    },
+    "from_node": {
+      "basis": "OSM 道路網邊正規化（ODbL 1.0，需署名/相同方式分享）",
+      "classification": "PUBLIC"
+    },
+    "geometry": {
+      "basis": "OSM 道路網邊正規化（ODbL 1.0，需署名/相同方式分享）",
+      "classification": "PUBLIC"
+    },
+    "h3_indices": {
+      "basis": "OSM 道路網邊正規化（ODbL 1.0，需署名/相同方式分享）",
+      "classification": "PUBLIC"
+    },
+    "highway_type": {
+      "basis": "OSM 道路網邊正規化（ODbL 1.0，需署名/相同方式分享）",
+      "classification": "PUBLIC"
+    },
+    "length_meters": {
+      "basis": "OSM 道路網邊正規化（ODbL 1.0，需署名/相同方式分享）",
+      "classification": "PUBLIC"
+    },
+    "maxspeed_kph": {
+      "basis": "OSM 道路網邊正規化（ODbL 1.0，需署名/相同方式分享）",
+      "classification": "PUBLIC"
+    },
+    "oneway": {
+      "basis": "OSM 道路網邊正規化（ODbL 1.0，需署名/相同方式分享）",
+      "classification": "PUBLIC"
+    },
+    "to_node": {
+      "basis": "OSM 道路網邊正規化（ODbL 1.0，需署名/相同方式分享）",
+      "classification": "PUBLIC"
+    },
+    "way_id": {
+      "basis": "OSM 道路網邊正規化（ODbL 1.0，需署名/相同方式分享）",
+      "classification": "PUBLIC"
+    }
+  },
+  "provider_id": "provider.openstreetmap",
+  "raw_source_fields": {
+    "elements": {
+      "basis": "_osm_pbf_to_elements 解碼後元素鍵（座標/集合封套）；ODbL 1.0 公開資料",
+      "classification": "PUBLIC"
+    },
+    "id": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS；OSM 元素識別/版本/時間（ODbL 1.0 公開資料）",
+      "classification": "PUBLIC"
+    },
+    "lat": {
+      "basis": "_osm_pbf_to_elements 解碼後元素鍵（座標/集合封套）；ODbL 1.0 公開資料",
+      "classification": "PUBLIC"
+    },
+    "lon": {
+      "basis": "_osm_pbf_to_elements 解碼後元素鍵（座標/集合封套）；ODbL 1.0 公開資料",
+      "classification": "PUBLIC"
+    },
+    "nodes": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS；OSM 元素識別/版本/時間（ODbL 1.0 公開資料）",
+      "classification": "PUBLIC"
+    },
+    "tags": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS；OSM 自由標籤（ODbL 1.0 公開資料；可能含 POI 名稱/電話/網址，屬公開貢獻）",
+      "classification": "PUBLIC"
+    },
+    "timestamp": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS；OSM 元素識別/版本/時間（ODbL 1.0 公開資料）",
+      "classification": "PUBLIC"
+    },
+    "type": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS；OSM 元素識別/版本/時間（ODbL 1.0 公開資料）",
+      "classification": "PUBLIC"
+    },
+    "version": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS；OSM 元素識別/版本/時間（ODbL 1.0 公開資料）",
+      "classification": "PUBLIC"
+    }
+  },
+  "schema": "emgi.raw-field-classification.v1",
+  "schema_sha256": "52270ba79e17ccb40c5e980cdd265436a695755340c5bafc8f7293d63eba9453",
+  "source": "osm",
+  "source_version_binding": {
+    "classification_policy": "AUTHORITY_ARTIFACT_REQUIRED",
+    "drafted_against": "origin/dev 24c40ae75e5759a47a21566f4dccfa15d5d38386",
+    "drafted_at": "2026-10-06",
+    "policy_source_id": "osm",
+    "record_model": "OSMRoadEdge"
+  }
+}

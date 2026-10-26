@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from modules.opsboard.application.store_ops import DurableStoreOpsRepository
 from shared.infrastructure.persistence.audit_log import DurableAuditLog
+from shared.infrastructure.persistence.decision_policy import (
+    DurableDecisionPolicyRepository,
+    SqlDecisionPolicyRepository,
+)
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.engine import SqliteEngine
 from shared.infrastructure.persistence.factory import (
@@ -33,6 +37,7 @@ from shared.infrastructure.persistence.model_ready import (
     SnapshotSink,
     build_lineage_manifest,
 )
+from shared.infrastructure.persistence.operator_comments import DurableCommentRepository
 from shared.infrastructure.persistence.outbox import (
     DurableOutboxRepository,
     InMemoryOutboxRepository,
@@ -58,6 +63,7 @@ from shared.infrastructure.persistence.repositories import (
     DurableListingRepository,
     DurableMachineCycleRepository,
     DurableMachineRepository,
+    DurableManualCorrectionRepository,
     DurableNetPlanRepository,
     DurablePriceOpsRepository,
     DurableRealizedSiteStore,
@@ -69,9 +75,12 @@ from shared.infrastructure.persistence.repositories import (
     InMemoryBrandRepository,
     InMemoryMachineCycleRepository,
     InMemoryMachineRepository,
+    InMemoryManualCorrectionRepository,
     InMemoryStoreRepository,
     InMemoryTenantRepository,
     InMemoryTransactionRepository,
+    InvalidCorrectionError,
+    StaleRevisionError,
 )
 
 __all__ = [
@@ -84,7 +93,9 @@ __all__ = [
     "DurableAdLiftRepository",
     "DurableArtifactStore",
     "DurableAuditLog",
+    "DurableCommentRepository",
     "DurableDecisionStore",
+    "DurableDecisionPolicyRepository",
     "DurableForecastOpsRepository",
     "DurableHeatZoneResultStore",
     "DurableInterventionRepository",
@@ -109,6 +120,10 @@ __all__ = [
     "DurableBrandRepository",
     "InMemoryAddressLocationRepository",
     "DurableAddressLocationRepository",
+    "InMemoryManualCorrectionRepository",
+    "DurableManualCorrectionRepository",
+    "InvalidCorrectionError",
+    "StaleRevisionError",
     "InMemoryStoreRepository",
     "DurableStoreRepository",
     "InMemoryMachineRepository",
@@ -129,6 +144,7 @@ __all__ = [
     "PostgreSQLSchemaError",
     "SnapshotSink",
     "SqliteDocumentStore",
+    "SqlDecisionPolicyRepository",
     "SqliteEngine",
     "build_lineage_manifest",
     "build_migration_manifest_checksum",

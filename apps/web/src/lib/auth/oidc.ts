@@ -412,6 +412,7 @@ export async function exchangeAuthorizationCode(
     accessToken: token.id_token,
     tokenType: "Bearer",
     subject: claims.sub as string,
+    provider: "oidc",
   };
 }
 

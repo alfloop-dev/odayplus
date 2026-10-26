@@ -2,6 +2,7 @@
   "name": "@oday-plus/design-tokens",
   "version": "0.1.0",
   "private": true,
+  "license": "UNLICENSED",
   "description": "ODay Plus design tokens (single source of token values: TS objects + CSS variables)",
   "type": "module",
   "main": "src/index.ts",

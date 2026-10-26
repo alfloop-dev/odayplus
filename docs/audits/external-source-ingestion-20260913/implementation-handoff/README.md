@@ -1,0 +1,11 @@
+# 未審查實作的封存交接
+
+本目錄是調查證據，不是odayplus程式。tracked.patch.gz解壓後的原始patch與untracked bytes完整保留，SHA與封存前相同。原始Python檔以.py.txt保存，避免將另一個repo的未審查原碼當成這份文件repo的可執行模組；未修改其內容，也不宣稱已通過odayplus的lint。
+
+manifest.json的untracked_files以原始相對路徑列SHA；archive_paths對應本目錄實際保存位置。worker須驗hash，在自己的data-platform乾淨工作樹審查並選擇性還原原始路徑，依data-platform規範測試及提交。
+
+2026-09-13文件交付檢查曾對原樣Python副本使用odayplus lint，发现6項規範差異（import排序、UTC alias、分號）。這不是data-platform驗收結果；不以在文件repo修正副本取代worker的原repo審查。
+
+根對話已停止產品程式實作。不得直接使用根對話的dirty worktree作為Supervisor worker工作樹。
+
+原始patch使用gzip無損封存，避免把patch格式中必需的context空白當成文件尾端空白。先核對tracked_patch_archive_sha256，解壓再核對tracked_patch_sha256；禁止透過刪空白改動原始patch。

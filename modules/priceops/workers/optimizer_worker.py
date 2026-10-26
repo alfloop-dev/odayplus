@@ -15,7 +15,7 @@ from typing import Any
 from uuid import uuid4
 
 from modules.priceops.application.pricing import PriceOpsService
-from modules.priceops.domain.pricing import PricingPlanItem
+from modules.priceops.domain.pricing import PlanAlreadyExistsError, PricingPlanItem
 from modules.priceops.infrastructure.oss_optimizer import PriceOpsProductionOptimizer
 from modules.priceops.infrastructure.repositories import InMemoryPriceOpsRepository
 
@@ -28,6 +28,11 @@ class PlanRequest:
     correlation_id: str
     items: Sequence[PricingPlanItem]
     plan_id: str | None = None
+    created_by: str | None = None
+    exploration_gate_id: str | None = None
+    exploration_algorithm: str = "THOMPSON_SAMPLING"
+    exploration_seed: int | None = None
+    exploration_history: Sequence[tuple[float, float]] | None = None
 
 
 @dataclass(frozen=True)
@@ -71,6 +76,12 @@ class PriceOpsOptimizerWorker:
         job_id: str | None = None,
         optimized_at: datetime | None = None,
     ) -> PriceOpsBatchResult:
+        requests = tuple(requests)
+        plan_ids = [request.plan_id for request in requests if request.plan_id is not None]
+        if len(plan_ids) != len(set(plan_ids)) or any(
+            self.service.repository.get_plan(plan_id) is not None for plan_id in plan_ids
+        ):
+            raise PlanAlreadyExistsError("batch plan id already exists or is repeated")
         completed_at = datetime.now(UTC)
         moment = optimized_at or completed_at
         plan_results: list[dict[str, Any]] = []
@@ -82,9 +93,18 @@ class PriceOpsOptimizerWorker:
                 items=request.items,
                 correlation_id=request.correlation_id,
                 plan_id=request.plan_id,
+                created_by=request.created_by,
             )
             self.service.simulate(plan.plan_id, generated_at=moment)
-            optimization = self.service.optimize(plan.plan_id, optimized_at=moment)
+            optimization = self.service.optimize(
+                plan.plan_id,
+                actor=request.created_by or "system",
+                optimized_at=moment,
+                exploration_gate_id=request.exploration_gate_id,
+                exploration_algorithm=request.exploration_algorithm,
+                exploration_seed=request.exploration_seed,
+                exploration_history=request.exploration_history,
+            )
             total_violations += optimization.hard_constraint_violation_count
             total_incremental += optimization.total_incremental_gross_margin
             plan_results.append(

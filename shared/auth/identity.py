@@ -39,6 +39,8 @@ class Role(StrEnum):
     EXECUTIVE = "executive"
     FRANCHISEE = "franchisee"
     AUDITOR = "auditor"
+    # Explicit opt-in business reads; never implied by platform_admin.
+    OPERATOR_VIEWER = "operator_viewer"
 
 
 class DataClassification(int, Enum):

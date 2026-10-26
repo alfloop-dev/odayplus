@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import errno
 import json
+import urllib.error
 from dataclasses import replace
 from types import SimpleNamespace
+
+import pytest
 
 from modules.external_data.application.market_data_facade import (
     CUTOVER_MODE_LEGACY_ONLY,
@@ -11,6 +15,7 @@ from modules.external_data.application.market_data_facade import (
 from product_ops.deployment import cloud_run_job_entrypoint as entrypoint
 from shared.infrastructure.persistence.factory import build_persistence
 from shared.jobs.queue import InMemoryJobQueue, JobRequest, JobStatus
+from tests.integration._gcs_worm_stub import owned_production_gcs_worm
 
 
 def test_worker_retry_receipt_returns_nonzero_even_when_run_once_returns_true(
@@ -54,6 +59,85 @@ def test_worker_empty_queue_requires_an_explicit_idle_contract(monkeypatch) -> N
 
     assert entrypoint.run_worker(max_jobs=1, require_job=True) == entrypoint.EXIT_FAILED
     assert entrypoint.run_worker(max_jobs=1, require_job=False) == 0
+
+
+def _publisher_clock(monkeypatch, on_sleep=None):
+    current = [0.0]
+
+    def sleep(seconds):
+        current[0] += seconds
+        if on_sleep:
+            on_sleep(current[0])
+
+    monkeypatch.setattr(entrypoint.time, "monotonic", lambda: current[0])
+    monkeypatch.setattr(entrypoint.time, "sleep", sleep)
+    return current
+
+
+def test_actual_image_entrypoint_publisher_waits_for_late_audit_work_and_retains_ordinary(monkeypatch, capsys):
+    from shared.jobs.registry import JobRegistry
+
+    bundle = build_persistence()
+    ordinary, _ = bundle.job_queue.enqueue(JobRequest("ordinary", {}), correlation_id="synthetic")
+    queued = []
+    handled = []
+    exports = []
+    registry = JobRegistry()
+    registry.register("canonical-audit-delivery", lambda job, persistence: handled.append(job.job_id))
+    original_build = entrypoint.build_worker
+
+    def worker(persistence, *, audit_only=False):
+        value = original_build(persistence, audit_only=audit_only)
+        value.registry = registry
+        value.export_metrics = lambda: exports.append(True)
+        return value
+
+    def late_arrival(now):
+        if now >= 1 and not queued:
+            job, _ = bundle.job_queue.enqueue(JobRequest("canonical-audit-delivery", {}), correlation_id="synthetic")
+            queued.append(job.job_id)
+
+    clock = _publisher_clock(monkeypatch, late_arrival)
+    monkeypatch.setattr(entrypoint, "bootstrap_runtime", lambda: bundle)
+    monkeypatch.setattr(entrypoint, "build_worker", worker)
+    assert entrypoint.main(["audit-publisher", "--run-for-seconds", "3"]) == 0
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["receipt_kind"] == "audit_publisher"
+    assert receipt["status"] == "observation_window_complete"
+    assert receipt["audit_only"] and receipt["run_for_seconds"] == 3
+    assert receipt["processed_count"] == 1 and handled == queued
+    assert clock[0] == 3 and len(exports) >= 3
+    assert bundle.job_queue.get(ordinary.job_id).status == JobStatus.QUEUED
+    assert bundle.job_queue.get(ordinary.job_id).attempts == 0
+
+
+def test_publisher_idle_metrics_failure_is_a_failed_receipt(monkeypatch, capsys):
+    bundle = build_persistence()
+    original_build = entrypoint.build_worker
+
+    def worker(persistence, *, audit_only=False):
+        value = original_build(persistence, audit_only=audit_only)
+
+        def unavailable():
+            raise RuntimeError("synthetic exporter outage")
+
+        value.export_metrics = unavailable
+        return value
+
+    _publisher_clock(monkeypatch)
+    monkeypatch.setattr(entrypoint, "bootstrap_runtime", lambda: bundle)
+    monkeypatch.setattr(entrypoint, "build_worker", worker)
+    assert entrypoint.main(["audit-publisher", "--run-for-seconds", "3"]) == entrypoint.EXIT_FAILED
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["status"] == "failed" and receipt["reason"] == "metrics_export_exception"
+
+
+@pytest.mark.parametrize("options", [ ["--max-jobs", "0"], ["--run-for-seconds", "0"], ["--run-for-seconds", "3601"] ])
+def test_publisher_cli_refuses_unbounded_or_empty_run_before_bootstrap(monkeypatch, options):
+    monkeypatch.setattr(entrypoint, "bootstrap_runtime", lambda: pytest.fail("invalid command bootstrapped runtime"))
+    with pytest.raises(SystemExit) as exc:
+        entrypoint.main(["audit-publisher", *options])
+    assert exc.value.code == 2
 
 
 class ExplodingQueue(InMemoryJobQueue):
@@ -147,6 +231,93 @@ def test_database_urls_normalize_sqlalchemy_and_psycopg_drivers() -> None:
     assert entrypoint._database_urls("postgres://user:pass@db/oday") == (
         "postgresql+psycopg://user:pass@db/oday",
         "postgresql://user:pass@db/oday",
+    )
+
+
+def test_public_egress_probe_fails_closed_on_timeout(monkeypatch, capsys) -> None:
+    def timeout(*_args, **_kwargs):
+        raise TimeoutError("probe timed out")
+
+    monkeypatch.setattr(entrypoint.urllib.request, "urlopen", timeout)
+
+    assert entrypoint.run_public_egress_probe() == entrypoint.EXIT_FAILED
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["status"] == "failed"
+    assert receipt["reason"] == "public_probe_error_unclassified"
+
+
+def test_public_egress_probe_fails_closed_on_wrapped_timeout(monkeypatch, capsys) -> None:
+    def timeout(*_args, **_kwargs):
+        raise urllib.error.URLError(TimeoutError("probe timed out"))
+
+    monkeypatch.setattr(entrypoint.urllib.request, "urlopen", timeout)
+
+    assert entrypoint.run_public_egress_probe() == entrypoint.EXIT_FAILED
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["status"] == "failed"
+    assert receipt["reason"] == "public_probe_error_unclassified"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        OSError("network unavailable"),
+        urllib.error.URLError("temporary DNS failure"),
+    ],
+)
+def test_public_egress_probe_fails_closed_on_unclassified_network_failure(
+    monkeypatch, capsys, failure
+) -> None:
+    def unavailable(*_args, **_kwargs):
+        raise failure
+
+    monkeypatch.setattr(entrypoint.urllib.request, "urlopen", unavailable)
+
+    assert entrypoint.run_public_egress_probe() == entrypoint.EXIT_FAILED
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["status"] == "failed"
+    assert receipt["reason"] == "public_probe_error_unclassified"
+
+
+def test_public_egress_probe_accepts_explicit_network_policy_denial(
+    monkeypatch, capsys
+) -> None:
+    def denied(*_args, **_kwargs):
+        raise urllib.error.URLError(OSError(errno.ENETUNREACH, "network unreachable"))
+
+    monkeypatch.setattr(entrypoint.urllib.request, "urlopen", denied)
+    monkeypatch.setenv("ODAY_RELEASE_SHA", "a" * 40)
+    monkeypatch.setenv("ODP_RELEASE_MANIFEST_DIGEST", "sha256:" + "b" * 64)
+    monkeypatch.setenv("ODP_CLOUD_RUN_JOB_NAME", "oday-worker-r-aaaaaaaaaaaa")
+    monkeypatch.setenv("ODP_CLOUD_RUN_VPC_EGRESS", "all-traffic")
+
+    assert entrypoint.run_public_egress_probe() == 0
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["status"] == "succeeded"
+    assert receipt["reason"] == "public_canary_denied"
+    assert receipt["denial_errno"] == errno.ENETUNREACH
+    assert receipt["candidate_sha"] == "a" * 40
+    assert receipt["manifest_digest"] == "sha256:" + "b" * 64
+    assert receipt["job"] == "oday-worker-r-aaaaaaaaaaaa"
+    assert receipt["vpc_egress"] == "ALL_TRAFFIC"
+    assert receipt["result"] == "passed"
+    assert receipt["execution"] == "succeeded"
+
+    # Runtime Release 37214228121 attempt 3 refused this receipt because the
+    # container omitted secret_values_redacted; the deploy script feeds the
+    # exact Cloud Logging receipt through this validator.
+    from delivery_toolchain.release.release_manifest import (
+        validate_sources_off_probe_receipt,
+    )
+
+    assert (
+        validate_sources_off_probe_receipt(
+            receipt,
+            expected_candidate_sha="a" * 40,
+            expected_manifest_digest="sha256:" + "b" * 64,
+            expected_egress="ALL_TRAFFIC",
+        )
+        == []
     )
 
 
@@ -253,6 +424,32 @@ def test_deselected_provider_fetch_stays_auditable_as_a_blocked_run(monkeypatch)
     ) is None
 
 
+def test_disabled_provider_fetch_stays_auditable_without_cutover_failure(
+    monkeypatch,
+) -> None:
+    """Provider-off is a successful worker drain with a blocked no-fetch receipt."""
+    monkeypatch.setenv("ODP_EXTERNAL_PROVIDER_MODE", "disabled")
+    monkeypatch.setenv("ODP_DEPLOY_ENV", "production")
+    # Consumer-only releases normally use PLATFORM_PRIMARY. Provider-off must
+    # take precedence so the probe still reaches the scheduler's blocked path.
+    monkeypatch.delenv(FACADE_MODE_ENV, raising=False)
+    bundle = build_persistence()
+    job, _ = bundle.job_queue.enqueue(
+        JobRequest(job_type="external-fetch", payload=dict(SCHEDULED_FETCH_PAYLOAD)),
+        correlation_id="corr-provider-disabled",
+    )
+    monkeypatch.setattr(entrypoint, "bootstrap_runtime", lambda: bundle)
+
+    assert entrypoint.run_worker(max_jobs=1, require_job=True) == 0
+    persisted = bundle.job_queue.get(job.job_id)
+    assert persisted is not None
+    assert persisted.status == JobStatus.SUCCEEDED
+    runs = bundle.ingestion_run_store.list_runs(provider_id="listing.partner_feed")
+    assert [run.status for run in runs] == ["FAILED"]
+    assert runs[0].alerts[0]["reason_code"] == "provider_mode_disabled"
+    assert runs[0].source_snapshot_ids == ()
+
+
 def test_worker_dead_letters_unregistered_provider_on_the_first_attempt(
     monkeypatch,
 ) -> None:
@@ -275,3 +472,15 @@ def test_worker_dead_letters_unregistered_provider_on_the_first_attempt(
     assert persisted.attempts == 1
     # The dead-letter carries the true root cause, not a masked circuit message.
     assert "provider_not_registered" in (persisted.error_message or "")
+
+
+_PRODUCTION_GCS_CALLBACKS = frozenset(['test_disabled_provider_fetch_stays_auditable_without_cutover_failure'])
+
+
+@pytest.fixture(autouse=True)
+def _owned_gcs_for_original_production_callbacks(request, monkeypatch):
+    if request.node.originalname not in _PRODUCTION_GCS_CALLBACKS:
+        yield
+        return
+    with owned_production_gcs_worm(monkeypatch):
+        yield

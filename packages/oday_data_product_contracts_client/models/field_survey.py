@@ -2,7 +2,7 @@
 #
 # Contract:  emgi.field-survey.v1 (source_evidence, v1.0.0)
 # Release:   oday-data-product-contracts.v0.4.1
-# Producer:  alfloop-dev/oday-data-platform@245aa00e417b6f8450baa608e8976584e00be6fc
+# Producer:  alfloop-dev/oday-data-platform@606c35f26a47df9eae7667eaeb82f5eebf75fa22
 # Schema:    schemas/field-survey.schema.json
 # Digest:    b9ac0d8e09a29d4f040f225b4f53ac4bc06c317d8b95ca9d97016da8bb938f4c
 """Portable, versioned document snapshot of governed field-survey observations and retractions."""

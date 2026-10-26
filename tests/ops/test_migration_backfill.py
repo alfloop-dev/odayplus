@@ -22,11 +22,287 @@ def test_migration_plan_indexes_revision_hashes_and_rollback() -> None:
     assert plan.database_url_env == "ODAY_DATABASE_URL"
     assert plan.target_revision == "head"
     assert plan.dry_run is True
-    assert [step.revision for step in plan.steps] == ["0001", "0002", "0003"]
+    assert [step.revision for step in plan.steps] == [
+        "0001",
+        "0002",
+        "0003",
+        "0004",
+        "0005",
+        "0006",
+        "0007",
+        "0008",
+        "0009",
+        "0010",
+        "0011",
+        "0012",
+        "0013",
+        "0014",
+        "0015",
+        "0016",
+        "0017",
+        "0018",
+        "0019",
+        "0020",
+        "0021",
+        "0022",
+        "0023",
+        "0024",
+    ]
     assert len(plan.manifest_sha256) == 64
     assert all(len(step.sha256) == 64 for step in plan.steps)
     assert all(any(asset.role == "sql" for asset in step.assets) for step in plan.steps)
     assert plan.rollback["command"] == "alembic downgrade -1"
+    deal_outcome_step = next(step for step in plan.steps if step.revision == "0006")
+    assert deal_outcome_step.path.endswith("0006_avm_deal_outcomes.py")
+    assert {
+        asset.path
+        for asset in deal_outcome_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000014_avm_deal_outcomes.sql"}
+    assert len(deal_outcome_step.sha256) == 64
+
+
+def test_intake_policy_calendar_ddl_is_in_the_deployment_manifest() -> None:
+    from hashlib import sha256
+    from pathlib import Path
+
+    plan = build_migration_plan(environment="dev")
+    step = next(step for step in plan.steps if step.revision == "0023")
+    assert step.path.endswith("0023_intake_policy_calendar_kinds.py")
+    assets = [asset for asset in step.assets if asset.role == "sql"]
+    assert len(assets) == 1
+    assert assets[0].path == "infra/db/migrations/000029_intake_policy_calendar_kinds.sql"
+    assert assets[0].sha256 == sha256(Path(assets[0].path).read_bytes()).hexdigest()
+
+
+def test_intake_audit_retention_ddl_is_in_the_deployment_manifest() -> None:
+    from hashlib import sha256
+    from pathlib import Path
+
+    plan = build_migration_plan(environment="dev")
+    step = next(step for step in plan.steps if step.revision == "0024")
+    assert step.path.endswith("0024_intake_audit_retention_kind.py")
+    assets = [asset for asset in step.assets if asset.role == "sql"]
+    assert len(assets) == 1
+    assert assets[0].path == "infra/db/migrations/000030_intake_audit_retention_kind.sql"
+    assert assets[0].sha256 == sha256(Path(assets[0].path).read_bytes()).hexdigest()
+
+
+def test_forecastops_feedback_ddl_is_reachable_from_alembic_head() -> None:
+    """The feedback table is a named deliverable of ODP-FR-FCT-008, so its DDL
+    has to be applied by a revision rather than merely sit in the migrations
+    directory where only ``compute_migration_digest``'s glob would see it."""
+    plan = build_migration_plan(environment="dev")
+    feedback_step = next(step for step in plan.steps if step.revision == "0007")
+
+    assert feedback_step.path.endswith("0007_forecastops_feedback.py")
+    assert {
+        asset.path
+        for asset in feedback_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000015_forecastops_feedback.sql"}
+
+
+def test_decision_policy_registry_ddl_is_reachable_from_alembic_head() -> None:
+    """The four-light path is fail-closed: with no ``workflow.decision_policies``
+    row to resolve, ``_alert_for()`` raises rather than falling back to the old
+    literals. So a database provisioned by ``alembic upgrade head`` that never
+    ran this DDL cannot raise alerts at all -- the registry has to hang off a
+    revision, not just sit in the migrations directory."""
+    plan = build_migration_plan(environment="dev")
+    registry_step = next(step for step in plan.steps if step.revision == "0008")
+
+    assert registry_step.path.endswith("0008_decision_policy_registry.py")
+    assert {
+        asset.path
+        for asset in registry_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000014_decision_policy_registry.sql"}
+
+
+def test_alert_precision_tracking_ddl_is_reachable_from_alembic_head() -> None:
+    """ODP-FR-FCT-006: Alert precision and lead time tracking schema."""
+    plan = build_migration_plan(environment="dev")
+    precision_step = next(step for step in plan.steps if step.revision == "0009")
+
+    assert precision_step.path.endswith("0009_alert_precision_tracking.py")
+    assert {
+        asset.path
+        for asset in precision_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000016_alert_precision_tracking.sql"}
+
+
+def test_model_performance_policy_migration_is_reachable_from_alembic_head() -> None:
+    plan = build_migration_plan(environment="dev")
+    policy_step = next(step for step in plan.steps if step.revision == "0010")
+
+    assert policy_step.path.endswith("0010_model_performance_drift_policy.py")
+    assert {
+        asset.path
+        for asset in policy_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000014_decision_policy_registry.sql"}
+
+
+def test_prediction_drift_persistence_migration_is_reachable_from_alembic_head() -> None:
+    plan = build_migration_plan(environment="dev")
+    drift_step = next(step for step in plan.steps if step.revision == "0011")
+
+    assert drift_step.path.endswith("0011_learninghub_prediction_drift.py")
+    assert {
+        asset.path
+        for asset in drift_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000017_learninghub_prediction_drift.sql"}
+
+
+def test_netplan_disclosure_migration_is_reachable_from_alembic_head() -> None:
+    """The acknowledgement table has to be applied, not merely present on disk.
+
+    `decide()` refuses when the disclosure policy does not resolve, so a
+    deployment that shipped the code without this revision would not degrade to
+    ungoverned approvals -- it would stop approving network plans entirely.
+    """
+    plan = build_migration_plan(environment="dev")
+    disclosure_step = next(step for step in plan.steps if step.revision == "0012")
+
+    assert disclosure_step.path.endswith("0012_netplan_constraint_disclosure.py")
+    assert {
+        asset.path
+        for asset in disclosure_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000017_netplan_constraint_disclosure.sql"}
+
+
+def test_work_orders_root_cause_disposition_ddl_is_reachable_from_alembic_head() -> None:
+    """ODP-FR-FCT-004: WorkOrder root_cause column reserved disposition schema."""
+    plan = build_migration_plan(environment="dev")
+    disposition_step = next(step for step in plan.steps if step.revision == "0013")
+
+    assert disposition_step.path.endswith("0013_work_orders_root_cause_disposition.py")
+    assert {
+        asset.path
+        for asset in disposition_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000018_work_orders_root_cause_disposition.sql"}
+
+
+def test_learninghub_backtest_receipt_ddl_is_reachable_from_alembic_head() -> None:
+    """Backtest receipts must be applied by the release-gate revision."""
+    plan = build_migration_plan(environment="dev")
+    backtest_step = next(step for step in plan.steps if step.revision == "0014")
+
+    assert backtest_step.path.endswith("0014_learninghub_backtest_receipts.py")
+    assert {
+        asset.path
+        for asset in backtest_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000019_learninghub_backtest_receipts.sql"}
+
+
+def test_price_exploration_gate_migration_is_reachable_from_alembic_head() -> None:
+    """ODP-FR-PRICE-006: Price exploration gate and decision tracking schema."""
+    plan = build_migration_plan(environment="dev")
+    gate_step = next(step for step in plan.steps if step.revision == "0015")
+
+    assert gate_step.path.endswith("0015_price_exploration_gate.py")
+    assert {
+        asset.path
+        for asset in gate_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000020_price_exploration_gate.sql"}
+
+
+def test_manual_corrections_audit_schema_migration_is_reachable_from_alembic_head() -> None:
+    """ODP-INT-006: Manual corrections, audit trail and rollback schema."""
+    plan = build_migration_plan(environment="dev")
+    correction_step = next(step for step in plan.steps if step.revision == "0016")
+
+    assert correction_step.path.endswith("0016_manual_corrections_audit_schema.py")
+    assert {
+        asset.path
+        for asset in correction_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000021_manual_corrections_audit_schema.sql"}
+
+
+def test_heatzone_composition_ddl_is_reachable_from_alembic_head() -> None:
+    """Heatzone composition and absorption outcome DDL must be reachable from alembic head."""
+    plan = build_migration_plan(environment="dev")
+    heatzone_step = next(step for step in plan.steps if step.revision == "0017")
+
+    assert heatzone_step.path.endswith("0017_heatzone_composition.py")
+    assert {
+        asset.path
+        for asset in heatzone_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000023_heatzone_composition.sql"}
+
+
+def test_avm_quality_nullable_migration_is_reachable_from_alembic_head() -> None:
+    plan = build_migration_plan(environment="dev")
+    quality_step = next(step for step in plan.steps if step.revision == "0018")
+
+    assert quality_step.path.endswith("0018_avm_quality_score_nullable.py")
+    assert {
+        asset.path
+        for asset in quality_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000024_avm_quality_score_nullable.sql"}
+
+
+def test_intervention_adjust_lineage_migration_is_reachable_from_alembic_head() -> None:
+    """ODP-FR-INTV-006: Replacement lineage must be applied in production."""
+    plan = build_migration_plan(environment="dev")
+    lineage_step = next(step for step in plan.steps if step.revision == "0019")
+
+    assert lineage_step.path.endswith("0019_intervention_adjust_lineage.py")
+    assert {
+        asset.path
+        for asset in lineage_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000025_intervention_adjust_lineage.sql"}
+
+
+def test_canonical_measurement_nullable_migration_is_reachable_from_alembic_head() -> None:
+    """ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001: 0020 nullable migration reachability."""
+    plan = build_migration_plan(environment="dev")
+    measurement_step = next(step for step in plan.steps if step.revision == "0020")
+
+    assert measurement_step.path.endswith("0020_canonical_measurement_nullable.py")
+    assert {
+        asset.path
+        for asset in measurement_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000026_canonical_measurement_nullable.sql"}
+
+
+def test_machine_status_events_record_lifecycle_migration_is_reachable_from_alembic_head() -> None:
+    """ODP-CDC-MACHINE-EVENT-LIFECYCLE-001: 0021 record lifecycle migration reachability."""
+    plan = build_migration_plan(environment="dev")
+    lifecycle_step = next(step for step in plan.steps if step.revision == "0021")
+
+    assert lifecycle_step.path.endswith("0021_machine_status_events_record_lifecycle.py")
+    assert {
+        asset.path
+        for asset in lifecycle_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000027_machine_status_events_record_lifecycle.sql"}
+
+
+def test_invitation_acceptance_budget_migration_is_reachable_from_alembic_head() -> None:
+    """The durable acceptance budget must ship through normal release migrations."""
+    plan = build_migration_plan(environment="dev")
+    budget_step = next(step for step in plan.steps if step.revision == "0022")
+
+    assert budget_step.path.endswith("0022_identity_invitation_acceptance_budget.py")
+    assert {
+        asset.path
+        for asset in budget_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000028_identity_invitation_acceptance_budget.sql"}
+    assert len(budget_step.sha256) == 64
 
 
 def test_migration_plan_uses_explicit_alembic_sql_references() -> None:
@@ -36,6 +312,15 @@ def test_migration_plan_uses_explicit_alembic_sql_references() -> None:
 
     assert "infra/db/migrations/000002_data_domain_canonical_entities.sql" in asset_paths
     assert "infra/db/migrations/000002_durable_e2e_persistence.sql" not in asset_paths
+
+
+def test_identity_session_server_fields_are_part_of_alembic_head() -> None:
+    plan = build_migration_plan(environment="dev")
+    session_step = next(step for step in plan.steps if step.revision == "0005")
+    asset_paths = {asset.path for asset in session_step.assets}
+
+    assert "infra/db/migrations/000012_identity_session_server_secrets.sql" in asset_paths
+    assert session_step.path.endswith("0005_identity_session_server_secrets.py")
 
 
 def test_migration_runner_validates_manifest_without_executing() -> None:
@@ -94,9 +379,7 @@ def test_migration_runner_applies_full_assisted_intake_stack(
         include_assisted_intake=True,
     )
 
-    assert applied_urls == [
-        "postgresql+psycopg://user:pass@db/oday"
-    ]
+    assert applied_urls == ["postgresql+psycopg://user:pass@db/oday"]
     assert run.assisted_intake_schema_status == "verified"
     assert run.assisted_intake_manifest_sha256 == "a" * 64
     assert run.assisted_intake_steps == (

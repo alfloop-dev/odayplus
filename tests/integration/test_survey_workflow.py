@@ -574,6 +574,9 @@ def test_tenant_isolation_and_audit_trail(service: MarketSurveyService, audit_lo
 
 
 def test_fastapi_http_survey_workflow(client: TestClient) -> None:
+    http_now = datetime.now(UTC)
+    http_future_expiry = http_now + timedelta(days=7)
+
     headers_staff = {
         **auth_headers(Role.EXPANSION_USER, subject="surveyor-helen"),
         "x-tenant-id": "tenant-http",
@@ -591,7 +594,7 @@ def test_fastapi_http_survey_workflow(client: TestClient) -> None:
             "target_entity_id": "site-http-101",
             "target_entity_kind": "CANDIDATE_SITE",
             "survey_type": "PHYSICAL_FEASIBILITY",
-            "expires_at": FUTURE_EXPIRY.isoformat(),
+            "expires_at": http_future_expiry.isoformat(),
             "created_by": "manager-ian",
             "assigned_to": "surveyor-helen",
             "instructions": {"focus": "foot_traffic"},
@@ -628,7 +631,7 @@ def test_fastapi_http_survey_workflow(client: TestClient) -> None:
             "media_attachments": [
                 {
                     "blob_id": "blob-101",
-                    "captured_at": NOW.isoformat(),
+                    "captured_at": http_now.isoformat(),
                     "media_id": "med-101",
                     "media_kind": "PHOTO",
                     "sha256": "sha101",

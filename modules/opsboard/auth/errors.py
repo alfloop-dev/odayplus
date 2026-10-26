@@ -33,10 +33,25 @@ class AuthFailureReason(StrEnum):
     TOKEN_EXPIRED = "token_expired"
     TOKEN_NOT_YET_VALID = "token_not_yet_valid"
     MISSING_SUBJECT = "missing_subject"
+    # Contract §4.3 declares sub/sid/iat/exp/tenant_id as required on local
+    # access tokens; a token missing one of them is rejected before any
+    # identity lookup.
+    MISSING_REQUIRED_CLAIM = "missing_required_claim"
+    # The token's tenant_id claim disagrees with the authoritative account row.
+    TENANT_MISMATCH = "tenant_mismatch"
 
     # Service identity problems.
     UNKNOWN_SERVICE = "unknown_service"
     BAD_SERVICE_SECRET = "bad_service_secret"
+
+    # Identity store / federated / session problems (ODP-WEB-LOCAL-AUTH-API-TRUST-001)
+    FEDERATED_IDENTITY_NOT_LINKED = "federated_identity_not_linked"
+    ACCOUNT_NOT_FOUND = "account_not_found"
+    ACCOUNT_INACTIVE = "account_inactive"
+    SESSION_REVOKED = "session_revoked"
+    SESSION_EXPIRED = "session_expired"
+    SESSION_NOT_FOUND = "session_not_found"
+    ISSUER_NOT_REGISTERED = "issuer_not_registered"
 
 
 class AuthenticationError(Exception):

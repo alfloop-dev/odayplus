@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "kind": "verification_receipt",
+  "task_id": "ODP-ORCH-AGY-MODEL-COMPAT-001",
+  "head_sha": "3d53be07537585f91ed7376568a09ac1cbd76fd1",
+  "command": "uv run --python 3.12 pytest -q .orchestrator/test_model_rotation.py",
+  "command_audit": {
+    "command": "uv run --python 3.12 pytest -q .orchestrator/test_model_rotation.py",
+    "ok": true,
+    "violations": [],
+    "details": [],
+    "runner": "pytest"
+  },
+  "runner": "pytest",
+  "selection": {
+    "scope": "targeted",
+    "items": [
+      ".orchestrator/test_model_rotation.py"
+    ],
+    "fingerprint": "ea20c8367791e6cb326cce65314e90f0"
+  },
+  "exit_code": 1,
+  "signal": null,
+  "timed_out": false,
+  "outcome": "failed",
+  "passed": false,
+  "duration_seconds": 4.011,
+  "started_at": "2026-10-04T12:32:25Z",
+  "finished_at": "2026-10-04T12:32:29Z",
+  "recorded_at": "2026-10-04T12:32:29Z",
+  "run_kind": "baseline",
+  "attempt": 1,
+  "retry_reason": null,
+  "agent": "Pi",
+  "run_id": "pi-20261004T122510Z-05b6643d",
+  "produced_by": "delivery_toolchain/git/task_verification.py",
+  "output_tail": "FAILURES ===================================\n___ CooldownLifecycleTests.test_queue_wait_still_reconciles_moved_assignment ___\n\nself = <test_model_rotation.CooldownLifecycleTests testMethod=test_queue_wait_still_reconciles_moved_assignment>\n\n    def test_queue_wait_still_reconciles_moved_assignment(self):\n>       self._run_queue({\"priority\": \"P0\"}, move_owner=True)\n\n.orchestrator/test_model_rotation.py:1405: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n.orchestrator/test_model_rotation.py:1362: in _run_queue\n    self.assertTrue(sv.prune_event_queue(self.config, state))\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n.orchestrator/supervisor.py:5446: in prune_event_queue\n    replace_event_queue(config, original_events=events, retained_events=kept)\n.orchestrator/runtime_state.py:1211: in replace_event_queue\n    path = config_path(config, \"event_queue\")\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nconfig = {'paths': {'status_file': '/tmp/tmprj4ee0q0/ai-status.json'}, 'agents': {'antigravity5': {'id': 'antigravity5', 'displ...'schema': {'tasks_path': 'tasks', 'task_id_field': 'id', 'assignee_field': 'owner', 'reviewer_field': 'reviewer'}, ...}\nkey = 'event_queue', default = None\n\n    def config_path(config: dict[str, Any], key: str, default: str | None = None) -> Path:\n        if key == \"status_file\" and default is None:\n            default = str(ROOT / \"ai-status.json\")\n        value = config.get(\"paths\", {}).get(key, default)\n        path = resolve_path(value)\n        if path is None:\n>           raise KeyError(f\"Missing config path for {key}\")\nE           KeyError: 'Missing config path for event_queue'\n\n.orchestrator/common.py:395: KeyError\n=========================== short test summary info ============================\nFAILED .orchestrator/test_model_rotation.py::CooldownLifecycleTests::test_queue_wait_still_reconciles_moved_assignment\n",
+  "receipt_id": "8116ea0fff59a9cb"
+}

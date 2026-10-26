@@ -1,0 +1,31 @@
+================================================================================
+ODP-DEV-RELEASE-GATE-RECONCILIATION-004: Candidate Ancestry Probe
+================================================================================
+Timestamp: 2026-09-20T06:03:10Z
+Candidate SHA: 39ae43f6fe679f03dd7df459a51835cbd2d54f77
+Target Branch: origin/dev
+Task Branch:   task/ODP-DEV-RELEASE-GATE-RECONCILIATION-004
+
+1. Verification against Candidate SHA:
+   candidate_sha: 39ae43f6fe679f03dd7df459a51835cbd2d54f77
+   expected_sha:  39ae43f6fe679f03dd7df459a51835cbd2d54f77
+   result:        PASS (ancestry errors: [])
+
+2. Verification of Evidence-Only Ancestry Path:
+   `check_candidate_ancestry()` verifies:
+   - git merge-base --is-ancestor candidate_sha expected_sha (EXIT=0)
+   - git diff --name-only candidate_sha expected_sha
+   - git log --format= --name-only --first-parent -m candidate_sha..expected_sha
+   - All touched paths belong to allowed evidence/documentation paths
+   result:        PASS (ancestry errors: [])
+
+3. Build Run Identification:
+   Producer Run: GitHub Actions run 35492613570 (phase=build, conclusion=failure at step 20)
+   Handoff Run:  GitHub Actions run 35493018607 (phase=build, initial_release_recovery=true, conclusion=success)
+   Exact Checkout SHA in both runs: 39ae43f6fe679f03dd7df459a51835cbd2d54f77
+   Workflow Head SHA in both runs:  39ae43f6fe679f03dd7df459a51835cbd2d54f77
+
+================================================================================
+CONCLUSION: Clean evidence-only candidate reconciliation established.
+Fail-closed NO-GO decision preserved.
+================================================================================

@@ -140,6 +140,8 @@ def test_training_pipeline_default_call_persists_reloadable_model_and_real_metri
             "feature_snapshot_time": snapshot_time.isoformat(),
             "prediction_origin_time": prediction_time.isoformat(),
             "source_snapshot_ids": ["synthetic-oss-training"],
+            "data_quality_score": 0.98,
+            "confidence": 0.95,
             "labels": {"target": LABELS[index]},
             "label_maturity_time": snapshot_time.isoformat(),
             "features": dict(FEATURE_ROWS[index]),

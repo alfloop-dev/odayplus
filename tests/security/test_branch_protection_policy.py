@@ -186,7 +186,8 @@ def test_shipped_policy_configures_merge_queue_for_dev_only() -> None:
     assert dev_queue["grouping_strategy"] == "ALLGREEN"
     assert dev_queue["max_entries_to_build"] == 5
     assert dev_queue["max_entries_to_merge"] == 5
-    assert dev_queue["min_entries_to_merge"] == 1
+    assert dev_queue["min_entries_to_merge"] == 2
+    assert dev_queue["min_entries_to_merge_wait_minutes"] == 10
     assert dev_queue["check_response_timeout_minutes"] == 60
     assert main_queue is None
 

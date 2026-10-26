@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "record_kind": "pending-user-approval-request",
+  "status": "awaiting-user-decision",
+  "is_approval": false,
+  "task_id": "ODP-DEV-CANDIDATE-REBIND-B175-001",
+  "target_environment": "dev",
+  "action": "deploy",
+  "candidate_sha": "f5496614c01b815d5c78d5ee1a2fd7445932e739",
+  "manifest_digest": "sha256:a0fc3aa9647834528a44ac19d1ea9429c4933071248424bfa386591452322e9c",
+  "manifest_raw_sha256": "sha256:c79c5283048a497bd0cc33268e5046905b84c35c6be88f497ceac8ea98e3b07f",
+  "manifest_run_id": 36799446467,
+  "question_for_user_zh_tw": "是否授權新 candidate 的 dev 部署？條件與 HUMANOPS-DEV-MIGRATION-20260930T145659Z 相同，只改綁新 candidate：candidate f5496614c01b815d5c78d5ee1a2fd7445932e739、manifest sha256:a0fc3aa9647834528a44ac19d1ea9429c4933071248424bfa386591452322e9c、build run 36799446467。只部署 dev；缺 H01 收據，以及 npm 開發工具漏洞（js-yaml GHSA-2883-xcg3-v3hh、vitest/mocker GHSA-82fw-gwwq-j7x9，加上新出現的 brace-expansion GHSA-qhr7-859c-m2p7、GHSA-6j4f-fj2g-mc7p、GHSA-q2hr-2g5m-vwhr，皆只在開發依賴），都視為 dev-only deviation。證據 PR #1384 要先通過 exact-head review 並合併，才能申請 lease。到期時間是 24 小時。",
+  "proposed_deviations": [
+    "Missing external authoritative H01 Legal/Security receipt for the four conditionally-used LGPL cases (dev only; not relabeled as passed).",
+    "Dev-only npm findings listed in dev-npm-audit-f5496614.json; build production audit is 0 findings."
+  ],
+  "proposed_scope_limits": "same as HUMANOPS-DEV-MIGRATION-20260930T145659Z (one fresh request, one short-lived lease, existing deploy phase; no DB reset/stamp/deletion; 16 external sources disabled; staging/production unchanged)",
+  "does_not_carry_over": "HUMANOPS-DEV-MIGRATION-20260930T145659Z is bound to b175b231 and manifest sha256:b26b7135; it is not extended to this candidate.",
+  "how_recorded": "Only the user can answer. An interactive session transcribes the reply into user-deploy-authorization-<approval_id>.json and rebinds gate-4 and release.decision; this auto worker does not sign for Human/Ops."
+}

@@ -1,0 +1,97 @@
+# agy background command recovery
+
+The old single-prompt CLI could return exit 0 after terminating a background
+command. Owner reassignment and dispatch notes could then be mistaken for task
+progress, while the same dirty checkout was repeatedly handed back.
+
+## Implementation
+
+The Antigravity adapter now invokes `agy_session.py` from its immutable runtime.
+It preserves the selected binary, model, account environment, permission options,
+and native print timeout. The transport uses agy 1.2.7's supported
+`--input-format stream-json --output-format stream-json --print=` interface and
+keeps stdin open until the result and terminal tool events are observed. It
+closes the stream only after that point. A prematurely yielded result can receive
+at most two requests to await existing handles; commands are not relaunched.
+
+The session saves lifecycle-only receipts next to the worker runner status as
+`<status-path>.agy.json`. Each command exit code comes from the native session's
+terminal header, not assistant prose or tool stdout. Unknown/cancelled command
+results, missing results and malformed events cannot become successful worker
+exits. A known nonzero command exit remains recorded as nonzero; it need not fail
+a whole development session in which the agent subsequently fixes the test.
+
+Progress excludes owner, notes, title and priority. Real head/artifact/PR changes
+and lifecycle decisions still count. Reassignment preserves failure history;
+real sealed progress clears it. Repeated identical head/dirt/reason handoffs
+share a budget across owner aliases and use the existing `after_attempts` setting.
+Files are neither discarded nor admitted for review without a clean handoff.
+Replacement retries and inbox fallback inherit the consumed retry count.
+A real retry/start regression traverses three aliases to exhaustion, including
+actual isolated runtime state persistence/reload between attempts. Exhausted
+file-inbox fallback stays pending for explicit recovery instead of being
+automatically deleted and redispatched with a fresh budget. Healthy initial
+inbox delivery can still recover automatically.
+
+Replacement launch persists the child and parent handoff together before
+returning; retry/poll loops and queue updates reacquire current records after
+state persistence replaces nested dictionaries. Tests cover two simultaneously
+due retries and repeated poll/queue ticks with actual save/load semantics.
+
+The transport polls CLI termination independently of pipe EOF. If a crashed
+CLI leaves descendants holding stdout/stderr, its drain deadline still starts;
+cleanup kills the session process group and records interruption. A subprocess
+regression covers exit 17 with a 45-second descendant that ignores SIGTERM.
+
+Failed native stream session results preserve provider quota/auth diagnostics.
+Tool output and successful response quotations are excluded from that authority.
+
+## Evidence and limits
+
+`native-command-canary.json` records actual short success, a 12-second success,
+and an intentional command exit 7. `native-cancel-canary.json` records a cancelled
+native command: the CLI itself returned 0, while the transport returned 75 and
+classified its unavailable terminal command result as interrupted.
+
+These are local transport probes. They do not assert that a product acceptance
+passed or that the production Supervisor has already loaded this patch. Runtime
+promotion and live task progression are separate post-merge checks.
+
+Local verification: the full required tooling suite completed with 3,119 tests
+and 689 subtests passing (6 skipped, 10 deselected), exit 0 in 382.87 seconds.
+Ten session subprocess regressions also passed after cleanup hardening. Ruff,
+config schema and all 190 config wiring checks passed. `local-verification.json`
+records commands and content hashes; GitHub CI remains the immutable final-head
+validation required before merge. A subsequent provider-error compatibility
+check passed all 91 failure-policy tests and 23 subtests in 18.67 seconds.
+
+The two Codex2 findings on `db5fff768ce579be4a2655f74f497deeb14ade16`
+were subsequently repaired. The session and failure-policy suites completed
+with exit 0; their terminal output and implementation hashes are recorded in
+`local-verification.json`. Duration was not captured for that invocation.
+
+The later Codex2 R1a/R1b findings on the composed `74fb6187` head were
+addressed through the deployed file-inbox path and actual state persistence.
+A focused lifecycle run passed 35 tests and 5 subtests (809 deselected), exit 0
+in 12.106 seconds; pytest reported 10.60 seconds. The test reads the on-disk
+parent handoff before an outer tick save, and repeated poll/queue cycles do not
+create new deliveries after exhaustion.
+
+Legacy workers and CLI startup failures can have a runner marker without the
+new session sidecar. Nullable/malformed/unreadable sidecars now fall back to
+existing runner and authoritative-log handling instead of raising during boot
+or terminal polling. Coverage includes missing, invalid JSON, non-object and
+unreadable receipts, a real CLI launch failure, and dead-worker boot/poll
+reconciliation. The initial targeted run passed 30 tests but exposed a missing
+approval-queue path in the new integration fixture; after fixing that fixture,
+the affected integration test passed with both subtests (exit 0, 9.177 seconds).
+Both original results are retained in `local-verification.json`.
+
+## Deployment
+
+Merge the existing PR #1347 using the repository's pure-development-tooling scope
+and required CI gates. Prepare a clean source at the merged `origin/dev`, then use
+`scripts/orchestrator/rollout_supervisor_runtime.py` with the existing canonical
+status root, stable runtime symlink and watchdog PID file. Do not modify a running
+runtime or install a second Supervisor. Verify the loaded SHA, heartbeat and a
+new agy worker's session receipt. Retain the previous runtime for rollback.

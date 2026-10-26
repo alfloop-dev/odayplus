@@ -116,3 +116,18 @@ def test_matching_trailer_does_not_excuse_a_subject_without_the_task_id(tmp_path
     assert any("subject must start with the task id" in error for error in errors), (
         "a matching Task-ID trailer must not excuse a subject that does not name the task"
     )
+
+
+def test_historical_long_subject_passes_delivery_identity(tmp_path: Path) -> None:
+    repo = repository(tmp_path)
+    long_subject = "TASK-ONE: " + "a" * 80
+    head = commit(repo, long_subject, "TASK-ONE")
+
+    assert validate_delivery_identity(
+        repo,
+        task_id="TASK-ONE",
+        base="dev",
+        head=head,
+        expected_branch="task/TASK-ONE",
+        actual_branch="task/TASK-ONE",
+    ) == []

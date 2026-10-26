@@ -1,0 +1,18 @@
+{
+  "head_sha": "ec7ff5bd683f36878e2edb30a472593a17f1bc11",
+  "command": "uv run pytest -q .orchestrator/test_model_rotation.py",
+  "selection": "uv run pytest -q .orchestrator/test_model_rotation.py",
+  "exit_code": 2,
+  "duration_seconds": 0.113304,
+  "started_at": "2026-10-04T11:40:01.575585+00:00",
+  "status": "failed",
+  "tested_blobs": {
+    ".orchestrator/model_rotation.py": "496cbe35b04d75dc2d784f9b1268ce8eaa5e9875",
+    ".orchestrator/adapters/antigravity.py": "3d89e2cd04e2b2bbd2ba95139cc42f47487357be",
+    ".orchestrator/test_model_rotation.py": "b6313b9c631a625ee01e0fffaaea8f4dfc2596d6",
+    ".orchestrator/config.example.json": "949296653a65cdbdb60ce597faf7673d72f2e1bb"
+  },
+  "output": "Using CPython 3.14.7\nCreating virtual environment at: .venv\nerror: Distribution `pgserver==0.1.4 @ registry+https://pypi.org/simple` can't be installed because it doesn't have a source distribution or wheel for the current platform\n\nhint: You're using CPython 3.14 (`cp314`), but `pgserver` (v0.1.4) only has wheels with the following Python ABI tag: `cp312`\n",
+  "output_sha256": "eedf2c49f51a90a1d79b03324f60243069f3a9d513c5af126287dee2c37a8d45",
+  "no_live_inference": true
+}

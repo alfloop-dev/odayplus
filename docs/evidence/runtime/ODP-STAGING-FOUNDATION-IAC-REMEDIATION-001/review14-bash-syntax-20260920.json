@@ -1,0 +1,24 @@
+{
+  "tested_head": "9edf17f41637e83150c376045aed07edfa59386c",
+  "base_head": "3150c72e7440aa3f0b389bbad3474d8a278c91d7",
+  "argv": [
+    "bash",
+    "-n",
+    "infra/terraform/bootstrap/bootstrap.sh"
+  ],
+  "started_at": "2026-09-20T04:54:57.169883+00:00",
+  "finished_at": "2026-09-20T04:54:57.173427+00:00",
+  "duration_seconds": 0.004,
+  "exit_code": 0,
+  "stdout": "",
+  "stderr": "",
+  "source_sha256": {
+    "infra/terraform/bootstrap/bootstrap.sh": "0999816fa653b6e61b7dc33ce71bd8d45133365005772916b4cf886e3f000310",
+    "infra/terraform/bootstrap/outputs.tf": "a560f95dd9c7440fbd3d12e0ed1847db9edce85d52b9697ad7eb015ea0336855",
+    "infra/terraform/tests/test_bootstrap.py": "79eaa3c5fb89851bb4c428870ce9d2e9b45cec40b2a80503fa5b8be96757c6d0",
+    "infra/terraform/tests/test_runtime_foundation.py": "b44df44e7a50760bd003c8aa757eecd63ac8e84f3f40d9945fe5139a6bf4796f",
+    "delivery_toolchain/release/release_manifest.py": "4bc132ca69476cc97ae863c091cd3af4e0b753836f91afc52faa1ce958d678e8",
+    "tests/release/test_foundation_egress_contract.py": "1798186b4f983afcbd1f2562ced7520c0c839b5a9632461bd2bfa12c9f840eec"
+  },
+  "scope": "offline validation; no Terraform/GCP apply or new live readback"
+}

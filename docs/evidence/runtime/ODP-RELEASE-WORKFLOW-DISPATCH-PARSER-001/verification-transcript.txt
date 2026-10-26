@@ -1,0 +1,79 @@
+ODP-RELEASE-WORKFLOW-DISPATCH-PARSER-001 驗證逐字記錄
+產生時間 (UTC): 2026-08-26T18:25:26Z
+工作樹 HEAD: 32cb6ff45c2b703071a81b3651f78107c644baa4
+分支: task/ODP-RELEASE-WORKFLOW-DISPATCH-PARSER-001
+未提交的追蹤檔案: 0
+
+每一段都記錄指令、合併後的 stdout/stderr 與 exit code。
+第 4、5 段是刻意讓它失敗的對照：把缺陷放回去，證明新的 contract test 真的會擋。
+================================================================
+$ uv run --frozen --python 3.12 python -m pytest tests/ops/test_workflow_expression_contexts.py -q
+----------------------------------------------------------------
+...........                                                              [100%]
+EXIT=0
+
+================================================================
+$ uv run --frozen --python 3.12 python -m pytest tests/ops/ -q
+----------------------------------------------------------------
+........................................................................ [ 10%]
+........................................................................ [ 21%]
+........................................................................ [ 32%]
+........................................................................ [ 43%]
+........................................................................ [ 54%]
+........................................................................ [ 65%]
+........................................................................ [ 75%]
+........................................................................ [ 86%]
+.......................................................... [ 95%]
+..............................                                           [100%]
+=============================== warnings summary ===============================
+tests/ops/test_cloud_run_live_deployment.py::test_real_app_platform_health_job_queue_contract
+  /tmp/pantheon-worker-worktrees/pantheon/odp-release-workflow-dispatch-parser-001/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+EXIT=0
+
+================================================================
+$ uv run --frozen --python 3.12 ruff check tests/ops/ delivery_toolchain/release/ tests/release/
+----------------------------------------------------------------
+All checks passed!
+EXIT=0
+
+================================================================
+對照 A：把 job 層級那一筆放回去，contract test 必須失敗
+$ sed -i 's|HANDOFF_DIR: .odp_data/release/runtime-release-handoff|HANDOFF_DIR: ${{ runner.temp }}/runtime-release-handoff|' .github/workflows/deploy-dev.yml
+$ uv run --frozen --python 3.12 python -m pytest tests/ops/test_workflow_expression_contexts.py -q
+----------------------------------------------------------------
+E       AssertionError: GitHub refuses to compile a workflow that names an unavailable context, and an uncompilable workflow cannot be dispatched at all:
+E         deploy-dev.yml:jobs.build.env.HANDOFF_DIR uses `runner.*`, which GitHub does not provide to jobs.<job_id>.env (allowed: github, inputs, matrix, needs, secrets, strategy, vars)
+E       assert not ['deploy-dev.yml:jobs.build.env.HANDOFF_DIR uses `runner.*`, which GitHub does not provide to jobs.<job_id>.env (allowed: github, inputs, matrix, needs, secrets, strategy, vars)']
+=========================== short test summary info ============================
+FAILED tests/ops/test_workflow_expression_contexts.py::test_no_expression_names_a_context_github_withholds_at_that_key[deploy-dev.yml]
+EXIT=1 (預期失敗)
+
+================================================================
+相對 staging 真的可用：receipt writer 自己建 parent，git 不追蹤
+$ rm -rf .odp_data/release
+$ python3 delivery_toolchain/release/check_release_phase.py --phase build --environment dev --release-sha <HEAD> --task-id ODP-RELEASE-WORKFLOW-DISPATCH-PARSER-001 --lease-supplied false --receipt .odp_data/release/release-phase-receipt.json
+----------------------------------------------------------------
+build 階段前置條件全部通過；release_sha=32cb6ff45c2b703071a81b3651f78107c644baa4、environment=dev。
+EXIT=0
+$ ls .odp_data/release/ && git status --short --untracked-files=all | grep -c odp_data
+----------------------------------------------------------------
+release-phase-receipt.json
+git 看到的 .odp_data 路徑數: 0
+EXIT=0
+
+================================================================
+對照 B：.dockerignore 排除生效 —— 同一個 COPY，有排除時找不到，拿掉排除就成功
+$ printf 'FROM scratch\nCOPY .odp_data/release/release-phase-receipt.json /receipt.json\n' > probe.Dockerfile
+$ docker build --no-cache -f probe.Dockerfile .
+----------------------------------------------------------------
+ERROR: failed to build: failed to solve: failed to compute cache key: failed to calculate checksum of ref oob5r8xx2ym6xrdsxkbp30s10::j9jbjg19msm8o1ypeg836i61i: "/.odp_data/release/release-phase-receipt.json": not found
+EXIT=1 (預期：.odp_data 不在 build context 內)
+
+$ grep -v '^\.odp_data$' .dockerignore > .dockerignore.tmp && mv .dockerignore.tmp .dockerignore
+$ docker build --no-cache -f probe.Dockerfile .
+----------------------------------------------------------------
+EXIT=0 (拿掉排除後同一個 COPY 成功，證明 receipt 本來會進每一個 image)
+

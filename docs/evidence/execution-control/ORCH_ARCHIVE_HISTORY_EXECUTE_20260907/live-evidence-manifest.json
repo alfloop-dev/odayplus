@@ -1,0 +1,113 @@
+{
+  "purpose": "Actual rollout and canonical invalidation evidence; subsequent owner closeout does not rerun live operations.",
+  "files": [
+    {
+      "source": "/home/lupin/odayplus-handoffs/archive-invalidation-live-20260909/plan.json",
+      "name": "plan.json",
+      "sha256": "9edb88c60dbe490b8f3a04b835dd32456739e9668127a536e51d96a8698daea8",
+      "bytes": 2319
+    },
+    {
+      "source": "/home/lupin/odayplus-handoffs/archive-invalidation-live-20260909/rollout-preflight.json",
+      "name": "rollout-preflight.json",
+      "sha256": "cd805edf4c1b5fce602c36e2f05360c1ceb7915ab02874c21968803e1eff31c6",
+      "bytes": 1209
+    },
+    {
+      "source": "/home/lupin/odayplus-handoffs/archive-invalidation-live-20260909/rollout-result.json",
+      "name": "rollout-result.json",
+      "sha256": "fbfa8cdf843b35d0a9db4648f717a8d9d89110d5b52c7fc34217974c79713e91",
+      "bytes": 1550
+    },
+    {
+      "source": "/home/lupin/odayplus-handoffs/archive-invalidation-live-20260909/maintenance-window.json",
+      "name": "maintenance-window.json",
+      "sha256": "fe681d1b81dc704c626c5b6cbe1ed3a1d60f127e6f9f3aeb8b4144db2a848d14",
+      "bytes": 1097
+    },
+    {
+      "source": "/home/lupin/odayplus-handoffs/archive-invalidation-live-20260909/before-apply.json",
+      "name": "before-apply.json",
+      "sha256": "3b372db1192c65b15375c95791d8e2beeed43f832ae713506fc03a1147128105",
+      "bytes": 23241
+    },
+    {
+      "source": "/home/lupin/odayplus-handoffs/archive-invalidation-live-20260909/after-apply.json",
+      "name": "after-apply.json",
+      "sha256": "ad69bef2d23657d99117f836cf25f95d4a320462e39ce44708510a437f005350",
+      "bytes": 24962
+    },
+    {
+      "source": "/home/lupin/odayplus-handoffs/archive-invalidation-live-20260909/before-readback-command.json",
+      "name": "before-readback-command.json",
+      "sha256": "d14167907a017535d30c6a3c89da5db33d055391ca7cec2253a8dfa88357ad40",
+      "bytes": 1406
+    },
+    {
+      "source": "/home/lupin/odayplus-handoffs/archive-invalidation-live-20260909/after-readback-command.json",
+      "name": "after-readback-command.json",
+      "sha256": "7321b3dca8b64a6b3720cb19e504ca3c2a394e5ea83b983acbc69c63748bcb8e",
+      "bytes": 3005
+    },
+    {
+      "source": "/home/lupin/odayplus-handoffs/archive-invalidation-live-20260909/dry-run-1.json",
+      "name": "dry-run-1.json",
+      "sha256": "af89475d392a2bb7d1fc4686054919dc6cdea74d16e5b41d4a889558c0bc9348",
+      "bytes": 1843
+    },
+    {
+      "source": "/home/lupin/odayplus-handoffs/archive-invalidation-live-20260909/dry-run-2.json",
+      "name": "dry-run-2.json",
+      "sha256": "99a5c27f6fa55fe5aa880ba085f04f6f53fcac307c101acdb98342e54e67dee6",
+      "bytes": 1875
+    },
+    {
+      "source": "/home/lupin/odayplus-handoffs/archive-invalidation-live-20260909/confirm-1.json",
+      "name": "confirm-1.json",
+      "sha256": "3ceb6a46cab3cf23c235d38297ffe6180e9327e26b6a8411649d0866373e59a3",
+      "bytes": 2062
+    },
+    {
+      "source": "/home/lupin/odayplus-handoffs/archive-invalidation-live-20260909/confirm-2.json",
+      "name": "confirm-2.json",
+      "sha256": "5eb66cad0532ad20a939ae04f5d2f223af80b28534299d7fecec275f9969e19b",
+      "bytes": 2092
+    },
+    {
+      "source": "/home/lupin/odayplus-handoffs/archive-invalidation-live-20260909/canonical-show-1.json",
+      "name": "canonical-show-1.json",
+      "sha256": "2c4acb2b7457ddd26e6b594470fbcf669b657c8d8a4a34f0b35c3f2f4b13ba5f",
+      "bytes": 21699
+    },
+    {
+      "source": "/home/lupin/odayplus-handoffs/archive-invalidation-live-20260909/canonical-show-2.json",
+      "name": "canonical-show-2.json",
+      "sha256": "341f8addde5a74004c950e0d14aaea604b87acc28a3c9e10660b4be11b4a404c",
+      "bytes": 21293
+    },
+    {
+      "source": "/home/lupin/odayplus-handoffs/archive-invalidation-live-20260909/supervisor-restart.json",
+      "name": "supervisor-restart.json",
+      "sha256": "71af05961963fab4793c10230ccebcb472276f5db0f228e74396c11b4b2eb21f",
+      "bytes": 446
+    },
+    {
+      "source": "/home/lupin/odayplus-handoffs/archive-invalidation-live-20260909/post-restart-health.json",
+      "name": "post-restart-health.json",
+      "sha256": "0a97ae386008ba05b56e5ee5829af67dae1e5a2a06d3b86e0f1d8e5c10acc8bc",
+      "bytes": 2610
+    },
+    {
+      "source": "/home/lupin/odayplus-handoffs/archive-invalidation-live-20260909/readback.py",
+      "name": "readback.py",
+      "sha256": "99ed1d2c328d4867220ca4ab7bde9e83d9317e2ccb6ee26e4653eaccc7161041",
+      "bytes": 5026
+    },
+    {
+      "source": "/home/lupin/odayplus-handoffs/archive-invalidation-live-20260909/apply_window.py",
+      "name": "apply_window.py",
+      "sha256": "e79fab35c00b0a2a44c028b71cbfefeef29a379f4773d974dbb6e2e649da0e55",
+      "bytes": 8737
+    }
+  ]
+}

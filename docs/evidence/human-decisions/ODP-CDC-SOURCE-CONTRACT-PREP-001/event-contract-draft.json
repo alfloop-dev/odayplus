@@ -1,0 +1,246 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "contract_id": "odp_cdc_event_contract_draft",
+  "title": "ODay Plus CDC & Event Streaming Exchange Contract Draft",
+  "version": "1.0.0-draft.34a",
+  "spec_date": "2026-09-08",
+  "governance": {
+    "task_id": "ODP-CDC-SOURCE-CONTRACT-PREP-001",
+    "work_package": "WP-34A",
+    "requirement_id": "ODP-FR-INT-001",
+    "decision_ref": "D20",
+    "status": "DRAFT_PENDING_HUMAN_INPUT_H07",
+    "owner": "Antigravity2",
+    "reviewer": "Codex"
+  },
+  "envelopes": {
+    "cdc_change_envelope": {
+      "kind": "cdc_stream",
+      "doc_ref": "ODP-DATA-02 §6.2 (Proposed)",
+      "description": "Streaming envelope for row/document-level Change Data Capture events generated from database write-ahead logs or change streams.",
+      "type": "object",
+      "required": [
+        "change_id",
+        "source_system",
+        "source_database",
+        "source_collection_or_table",
+        "operation",
+        "resume_token",
+        "source_timestamp",
+        "server_timestamp",
+        "ingested_at",
+        "idempotency_key",
+        "sequence_number",
+        "tenant_id"
+      ],
+      "properties": {
+        "change_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Globally unique identifier for this change event instance."
+        },
+        "source_system": {
+          "type": "string",
+          "enum": ["fongniao_mongo", "data_plane_postgres", "external_partner_cdc"],
+          "description": "Identifier of the source storage engine producing the change."
+        },
+        "source_database": {
+          "type": "string",
+          "description": "Source database name (e.g. fongniao_prod)."
+        },
+        "source_collection_or_table": {
+          "type": "string",
+          "description": "Source collection or relational table name (e.g. orders, device_log, place)."
+        },
+        "operation": {
+          "type": "string",
+          "enum": [
+            "insert",
+            "update",
+            "replace",
+            "delete",
+            "void",
+            "refund",
+            "withdraw",
+            "tombstone",
+            "snapshot_backfill"
+          ],
+          "description": "Specific data mutation operation."
+        },
+        "resume_token": {
+          "type": "string",
+          "description": "Opaque cluster resume token (e.g. MongoDB _data binary hex or PostgreSQL LSN) used for exact cursor resume."
+        },
+        "source_timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the client/device issued the transaction."
+        },
+        "server_timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Database server commit timestamp (commit timestamp / oplog ts)."
+        },
+        "ingested_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp recorded by Integration CDC consumer upon reading the event."
+        },
+        "sequence_number": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Monotonically increasing sequence number within partition."
+        },
+        "transaction_id": {
+          "type": ["string", "null"],
+          "description": "Source transaction/session identifier if multi-document transaction."
+        },
+        "idempotency_key": {
+          "type": "string",
+          "description": "Deterministic deduplication hash: sha256(source_system + ':' + source_collection_or_table + ':' + document_id + ':' + sequence_or_updated_at)."
+        },
+        "correlation_id": {
+          "type": "string",
+          "description": "Distributed tracing context identifier."
+        },
+        "tenant_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Governing tenant ID ensuring data isolation."
+        },
+        "document_key": {
+          "type": "object",
+          "description": "Primary key / _id of the affected document or row.",
+          "required": ["_id"]
+        },
+        "before_payload": {
+          "type": ["object", "null"],
+          "description": "Pre-image payload before change (only available if pre-images enabled; null on insert)."
+        },
+        "after_payload": {
+          "type": ["object", "null"],
+          "description": "Post-image payload after change (null on physical delete)."
+        },
+        "updated_fields": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "List of top-level or dot-notated field paths modified in this operation."
+        },
+        "removed_fields": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "List of field paths removed in this update."
+        },
+        "tombstone": {
+          "type": ["object", "null"],
+          "description": "Purge tombstone evidence bundle if operation is delete or tombstone.",
+          "properties": {
+            "tombstone_hash": {"type": "string"},
+            "purged_at": {"type": "string", "format": "date-time"},
+            "reason": {"type": "string"},
+            "retained_until": {"type": "string", "format": "date-time"}
+          }
+        }
+      }
+    },
+    "event_stream_envelope": {
+      "kind": "event_stream",
+      "doc_ref": "ODP-DATA-02 §6.1",
+      "description": "Domain event streaming envelope compatible with existing packages/schemas/source_contracts/envelopes/event_envelope.json with added partitioning and tracing extensions.",
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "event_version",
+        "source_system",
+        "idempotency_key",
+        "event_time",
+        "observation_time",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {"type": "string"},
+        "event_type": {"type": "string"},
+        "event_version": {"type": "string"},
+        "source_system": {"type": "string"},
+        "idempotency_key": {"type": "string"},
+        "correlation_id": {"type": "string"},
+        "partition_key": {"type": "string"},
+        "event_time": {"type": "string", "format": "date-time"},
+        "observation_time": {"type": "string", "format": "date-time"},
+        "payload": {"type": "object"}
+      }
+    }
+  },
+  "checkpoint_and_resume_protocol": {
+    "storage_table": "data_plane.cdc_checkpoints",
+    "schema_ddl": "CREATE TABLE IF NOT EXISTS data_plane.cdc_checkpoints (source_id TEXT NOT NULL, partition_id TEXT NOT NULL, resume_token TEXT NOT NULL, last_sequence_no BIGINT NOT NULL, last_server_timestamp TIMESTAMPTZ NOT NULL, processed_count BIGINT NOT NULL DEFAULT 0, status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'STALE', 'EXPIRED', 'PAUSED')), updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (source_id, partition_id));",
+    "resume_sequence": [
+      "1. Reader loads durable checkpoint: SELECT resume_token, last_sequence_no FROM data_plane.cdc_checkpoints WHERE source_id = :source_id AND partition_id = :partition_id",
+      "2. If resume_token exists: Initialize stream with resume_after = resume_token",
+      "3. If resume_token is accepted: Stream continues from exact next change log entry without dropping or duplicating events",
+      "4. If resume_token is rejected by database (OplogExpired / CursorNotFound): Consumer halts with OplogCursorExpiredError. Fail-closed: do NOT advance cursor automatically",
+      "5. Recovery fallback: Trigger authorized full snapshot reconciliation pass before creating new CDC baseline resume token"
+    ],
+    "commit_guarantee": "At-least-once delivery with idempotent transactional sink write. Checkpoints are recorded in the same PostgreSQL transaction as downstream state updates or canonical lineage entries."
+  },
+  "tombstone_and_delete_propagation_protocol": {
+    "delete_propagation_modes": {
+      "soft_delete": {
+        "description": "Downstream sink maps operation in ('void', 'refund', 'delete', 'withdraw') to status columns (e.g. transaction_status = 'voided', store_status = 'inactive').",
+        "action": "UPDATE core.<table_name> SET status = :status, updated_at = :server_timestamp WHERE <id> = :id"
+      },
+      "tombstone_purge": {
+        "description": "For physical deletion or privacy purge requests, replace entity payload with cryptographic tombstone and record purge evidence.",
+        "evidence_table": "data_plane.quarantined_records / shared.audit.persistence",
+        "action": "INSERT INTO data_plane.tombstones (entity_type, entity_id, tombstone_hash, purged_at, context) VALUES (:type, :id, :hash, :ts, :context)"
+      },
+      "sink_delete": {
+        "description": "Downstream relational tables physically remove records only when configured with explicit cascading tombstone authorization.",
+        "action": "DELETE FROM core.<table_name> WHERE <id> = :id"
+      }
+    },
+    "reconciliation_rule": "Periodic audit reconciler compares upstream snapshot checksum with downstream live table checksum. Inconsistencies caused by unpropagated deletions are flagged as SINK_DELETE_DRIFT."
+  },
+  "ordering_and_idempotency_invariants": {
+    "partition_key_rules": [
+      "Orders & Transactions: partition_key = tenant_id + ':' + store_id",
+      "Device & IoT: partition_key = machine_id",
+      "Place & Geography: partition_key = store_id",
+      "Merchant / Tenant: partition_key = tenant_id"
+    ],
+    "idempotency_invariants": [
+      "Every change event must carry a deterministic idempotency_key.",
+      "Downstream sink must execute conditional upserts: `INSERT INTO ... ON CONFLICT (...) DO UPDATE ... WHERE EXCLUDED.server_timestamp >= target.server_timestamp`.",
+      "Out-of-order events with older server_timestamp than target record are ignored or routed to data_plane.projection_failures with retryable=false and error_type='SOURCE_SUPERSEDED'."
+    ]
+  },
+  "security_and_least_privilege_boundaries": {
+    "database_role_requirements": {
+      "mongodb": {
+        "role_name": "odp_cdc_reader",
+        "privileges": [
+          {
+            "resource": {"db": "fongniao_prod", "collection": "orders"},
+            "actions": ["changeStream", "find"]
+          },
+          {
+            "resource": {"db": "fongniao_prod", "collection": "device_log"},
+            "actions": ["changeStream", "find"]
+          }
+        ],
+        "restrictions": "Granting cluster-wide readAnyDatabase or unconstrained changeStream is strictly forbidden without Human/Ops security sign-off."
+      }
+    },
+    "client_side_projection_enforcement": "Because MongoDB change streams return full documents, the CDC adapter pipeline must execute field redaction and PII masking in memory immediately upon packet deserialization, before any event is placed on internal buffers or persisted."
+  },
+  "error_handling_and_quarantine_taxonomy": {
+    "quarantine_reasons": [
+      {"code": "SCHEMA_VALIDATION_FAILED", "description": "Incoming CDC payload does not conform to entity draft schema."},
+      {"code": "RESUME_TOKEN_EXPIRED", "description": "Database oplog retention window lapsed; full re-sync required."},
+      {"code": "TENANT_BOUNDARY_VIOLATION", "description": "Change event tenant_id does not match authorized partition routing."},
+      {"code": "CORRUPTED_PAYLOAD_CHECKSUM", "description": "Payload hash does not match computed SHA-256."},
+      {"code": "SOURCE_SUPERSEDED", "description": "Out-of-order event arrived after newer state was already committed."}
+    ]
+  }
+}

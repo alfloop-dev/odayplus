@@ -9,6 +9,7 @@ happen before any push.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -139,6 +140,11 @@ def test_overlong_subject_is_rejected():
     assert any("limit is 72" in e for e in validate_message(message, task_id=TASK))
 
 
+def test_validate_message_allows_long_subject_when_subject_length_limit_disabled():
+    message = GOOD_MESSAGE.replace("add a thing", "x" * 80)
+    assert validate_message(message, task_id=TASK, require_subject_length_limit=False) == []
+
+
 def test_subject_must_start_with_task_id():
     message = GOOD_MESSAGE.replace(f"{TASK}: add a thing", "add a thing")
     assert any("must start with the task id" in e for e in validate_message(message, task_id=TASK))
@@ -245,6 +251,16 @@ def test_worker_commit_refuses_bad_message(repo: Path, tmp_path: Path):
     assert "commit message rejected" in result.stderr
 
 
+def test_worker_commit_refuses_overlong_subject(repo: Path, tmp_path: Path):
+    git(repo, "switch", "--quiet", "--create", f"task/{TASK}")
+    (repo / "owned.txt").write_text("owned\n", encoding="utf-8")
+    msg = write_msg(tmp_path, GOOD_MESSAGE.replace("add a thing", "x" * 80))
+
+    result = worker_commit(repo, "--task-id", TASK, "--message-file", str(msg), "--scope", "owned.txt")
+    assert result.returncode == 1
+    assert "limit is 72" in result.stderr
+
+
 def test_worker_commit_uses_the_requested_index_file(repo: Path, tmp_path: Path):
     git(repo, "switch", "--quiet", "--create", f"task/{TASK}")
     (repo / "owned.txt").write_text("owned\n", encoding="utf-8")
@@ -320,6 +336,79 @@ def test_task_start_refuses_to_attach_existing_branch_outside_worker_manager(rep
 
 def test_task_start_requires_a_task_id(repo: Path):
     assert task_start(repo).returncode == 2
+
+
+def test_task_start_accepts_verified_immutable_review_checkout_detached_head(repo: Path, tmp_path: Path):
+    git(repo, "switch", "--quiet", "--create", f"task/{TASK}")
+    (repo / "owned.txt").write_text("owned\n", encoding="utf-8")
+    msg = write_msg(tmp_path, GOOD_MESSAGE)
+    committed = worker_commit(repo, "--task-id", TASK, "--message-file", str(msg), "--scope", "owned.txt")
+    assert committed.returncode == 0
+
+    submitted_sha = git(repo, "rev-parse", "HEAD").stdout.strip()
+    (repo / "ai-status.json").write_text(
+        json.dumps({"tasks": [{"id": TASK, "review_submission": {"remote_sha": submitted_sha}}]}),
+        encoding="utf-8",
+    )
+    git(repo, "switch", "--quiet", "dev")
+    git(repo, "merge", "--no-ff", "-m", f"Merge task/{TASK}", f"task/{TASK}")
+    git(repo, "checkout", "--quiet", submitted_sha)
+    assert git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "HEAD"
+
+    result = task_start(repo, TASK)
+    assert result.returncode == 0
+    assert "verified immutable review checkout" in result.stdout
+
+
+def test_task_start_refuses_same_task_stale_anchor_commit(repo: Path, tmp_path: Path):
+    """R2: A detached HEAD on an older same-task anchor must be rejected even with matching Task ID."""
+    git(repo, "switch", "--quiet", "--create", f"task/{TASK}")
+    (repo / "anchor.txt").write_text("anchor work\n", encoding="utf-8")
+    msg1 = tmp_path / "msg1.txt"
+    msg1.write_text(f"{TASK}: anchor intermediate work\n\nLLM-Agent: Antigravity2\nTask-ID: {TASK}\nReviewer: Codex2\n", encoding="utf-8")
+    committed1 = worker_commit(repo, "--task-id", TASK, "--message-file", str(msg1), "--scope", "anchor.txt")
+    assert committed1.returncode == 0
+    stale_anchor_sha = git(repo, "rev-parse", "HEAD").stdout.strip()
+
+    (repo / "final.txt").write_text("final work\n", encoding="utf-8")
+    msg2 = tmp_path / "msg2.txt"
+    msg2.write_text(f"{TASK}: final submitted work\n\nLLM-Agent: Antigravity2\nTask-ID: {TASK}\nReviewer: Codex2\n", encoding="utf-8")
+    committed2 = worker_commit(repo, "--task-id", TASK, "--message-file", str(msg2), "--scope", "final.txt")
+    assert committed2.returncode == 0
+    final_submitted_sha = git(repo, "rev-parse", "HEAD").stdout.strip()
+
+    (repo / "ai-status.json").write_text(
+        json.dumps({"tasks": [{"id": TASK, "review_submission": {"remote_sha": final_submitted_sha}}]}),
+        encoding="utf-8",
+    )
+    git(repo, "switch", "--quiet", "dev")
+    git(repo, "merge", "--no-ff", "-m", f"Merge task/{TASK}", f"task/{TASK}")
+
+    # Checkout stale anchor commit in detached HEAD
+    git(repo, "checkout", "--quiet", stale_anchor_sha)
+    assert git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "HEAD"
+
+    result = task_start(repo, TASK)
+    assert result.returncode == 1
+    assert "outside its Worker Manager lease" in result.stderr
+
+    # Checkout exact authoritative head in detached HEAD
+    git(repo, "checkout", "--quiet", final_submitted_sha)
+    assert git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "HEAD"
+
+    result_ok = task_start(repo, TASK)
+    assert result_ok.returncode == 0
+    assert "verified immutable review checkout" in result_ok.stdout
+
+
+def test_task_start_refuses_detached_head_on_unrelated_commit(repo: Path):
+    dev_sha = git(repo, "rev-parse", "HEAD").stdout.strip()
+    git(repo, "checkout", "--quiet", dev_sha)
+    assert git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "HEAD"
+
+    result = task_start(repo, TASK)
+    assert result.returncode == 1
+    assert "outside its Worker Manager lease" in result.stderr
 
 
 # --------------------------------------------------------------------------
@@ -399,6 +488,21 @@ def test_task_finalize_rejects_head_that_done_cannot_close(
     assert result.returncode == 1
     assert expected_error in result.stderr
     assert "dry-run: git push" not in result.stdout
+
+
+def test_task_finalize_allows_historical_commit_with_long_subject(repo: Path):
+    git(repo, "switch", "--quiet", "--create", f"task/{TASK}")
+    (repo / "owned.txt").write_text("owned\n", encoding="utf-8")
+    git(repo, "add", "owned.txt")
+    long_subject_msg = (
+        f"{TASK}: " + "very long summary that exceeds seventy two characters limit intentionally"
+        "\n\nBody text.\n\nLLM-Agent: Claude2\nTask-ID: " + TASK + "\nReviewer: Antigravity4\n"
+    )
+    git(repo, "commit", "--no-verify", "-m", long_subject_msg)
+
+    result = task_finalize(repo, TASK, "--dry-run")
+    assert result.returncode == 0, result.stderr
+    assert "dry-run: git push" in result.stdout
 
 
 def test_task_finalize_refuses_a_branch_whose_own_python_fails_lint(repo: Path, tmp_path: Path):
@@ -509,6 +613,49 @@ def test_task_finalize_requires_a_task_id(repo: Path):
     assert task_finalize(repo).returncode == 2
 
 
+def test_task_finalize_dry_run_with_missing_gh_on_already_merged_branch(repo: Path, tmp_path: Path):
+    git(repo, "switch", "--quiet", "--create", f"task/{TASK}")
+    (repo / "owned.txt").write_text("owned\n", encoding="utf-8")
+    msg = write_msg(tmp_path, GOOD_MESSAGE)
+    committed = worker_commit(repo, "--task-id", TASK, "--message-file", str(msg), "--scope", "owned.txt")
+    assert committed.returncode == 0
+
+    git(repo, "switch", "--quiet", "dev")
+    git(repo, "merge", "--no-ff", "-m", f"Merge task/{TASK}", f"task/{TASK}")
+    git(repo, "push", "--quiet", "origin", "dev")
+    git(repo, "switch", "--quiet", f"task/{TASK}")
+    git(repo, "merge", "--ff-only", "dev")
+
+    empty_dir = tmp_path / "empty_bin"
+    empty_dir.mkdir()
+    env = {"PATH": f"{empty_dir}:/bin:/usr/bin", "GH": str(empty_dir / "nonexistent_gh")}
+    result = run(["bash", str(GIT_DIR / "task_finalize.sh"), TASK, "--dry-run"], repo, env=env)
+    assert result.returncode == 0, result.stderr
+    assert "already an ancestor" in result.stdout
+    assert "no PR needed" in result.stdout
+
+
+def test_task_finalize_refuses_when_gh_missing_in_non_dry_run_on_merged_branch(repo: Path, tmp_path: Path):
+    git(repo, "switch", "--quiet", "--create", f"task/{TASK}")
+    (repo / "owned.txt").write_text("owned\n", encoding="utf-8")
+    msg = write_msg(tmp_path, GOOD_MESSAGE)
+    committed = worker_commit(repo, "--task-id", TASK, "--message-file", str(msg), "--scope", "owned.txt")
+    assert committed.returncode == 0
+
+    git(repo, "switch", "--quiet", "dev")
+    git(repo, "merge", "--no-ff", "-m", f"Merge task/{TASK}", f"task/{TASK}")
+    git(repo, "push", "--quiet", "origin", "dev")
+    git(repo, "switch", "--quiet", f"task/{TASK}")
+    git(repo, "merge", "--ff-only", "dev")
+
+    empty_dir = tmp_path / "empty_bin"
+    empty_dir.mkdir()
+    env = {"PATH": f"{empty_dir}:/bin:/usr/bin", "GH": str(empty_dir / "nonexistent_gh")}
+    result = run(["bash", str(GIT_DIR / "task_finalize.sh"), TASK], repo, env=env)
+    assert result.returncode == 1
+    assert "GitHub CLI ('gh') not found" in result.stderr
+
+
 # --------------------------------------------------------------------------
 # hook + syntax
 # --------------------------------------------------------------------------
@@ -546,3 +693,24 @@ def test_commit_msg_hook_blocks_a_bad_message(repo: Path):
 
     good = run(["git", "commit", "-m", GOOD_MESSAGE], repo)
     assert good.returncode == 0, good.stderr
+
+
+def test_commit_msg_hook_blocks_overlong_subject(repo: Path):
+    hooks = repo / ".githooks"
+    hooks.mkdir()
+    (hooks / "commit-msg").write_text((REPO_ROOT / ".githooks" / "commit-msg").read_text(), encoding="utf-8")
+    (hooks / "commit-msg").chmod(0o755)
+    tool_git = repo / "delivery_toolchain" / "git"
+    tool_git.mkdir(parents=True)
+    (tool_git / "check_commit_trailers.py").write_text(
+        (GIT_DIR / "check_commit_trailers.py").read_text(), encoding="utf-8"
+    )
+    git(repo, "config", "core.hooksPath", ".githooks")
+    git(repo, "switch", "--quiet", "--create", f"task/{TASK}")
+
+    (repo / "owned.txt").write_text("owned\n", encoding="utf-8")
+    git(repo, "add", "owned.txt")
+    overlong = GOOD_MESSAGE.replace("add a thing", "x" * 80)
+    bad = run(["git", "commit", "-m", overlong], repo)
+    assert bad.returncode != 0
+    assert "limit is 72" in bad.stderr

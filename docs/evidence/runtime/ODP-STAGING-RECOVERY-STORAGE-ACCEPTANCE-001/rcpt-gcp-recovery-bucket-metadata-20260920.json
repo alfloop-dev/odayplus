@@ -1,0 +1,36 @@
+{
+  "receipt_id": "RCPT-GCP-RECOVERY-BUCKET-METADATA-20260920",
+  "name": "admin-bucket-metadata",
+  "started_at_utc": "2026-09-20T06:53:16.708413+00:00",
+  "duration_seconds": 2.633,
+  "command": "gcloud --quiet --account=admin@dev.cctech-support.com storage buckets describe gs://oday-staging-recovery-odayplus-runtime-20260825 '--format=json(name,location,default_kms_key,versioning_enabled,retention_policy,public_access_prevention,uniform_bucket_level_access,creation_time,update_time)'",
+  "argv": [
+    "gcloud",
+    "--quiet",
+    "--account=admin@dev.cctech-support.com",
+    "storage",
+    "buckets",
+    "describe",
+    "gs://oday-staging-recovery-odayplus-runtime-20260825",
+    "--format=json(name,location,default_kms_key,versioning_enabled,retention_policy,public_access_prevention,uniform_bucket_level_access,creation_time,update_time)"
+  ],
+  "exit_code": 0,
+  "stdout": {
+    "creation_time": "2026-09-12T15:34:56+0000",
+    "default_kms_key": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime",
+    "location": "ASIA-EAST1",
+    "name": "oday-staging-recovery-odayplus-runtime-20260825",
+    "public_access_prevention": "enforced",
+    "retention_policy": {
+      "effectiveTime": "2026-09-12T15:34:56.845000+00:00",
+      "retentionPeriod": "2592000"
+    },
+    "uniform_bucket_level_access": true,
+    "update_time": "2026-09-12T15:34:57+0000",
+    "versioning_enabled": true
+  },
+  "stderr": "",
+  "source_path": "/tmp/odp-recovery-readback-audit-20260920/post-login/admin-bucket-metadata.json",
+  "source_sha256": "6aa9a1b7a48253d140af708ba118177c3d0a0a0bc49c85ef4260fb2754e1d005",
+  "scope": "Read-only bucket metadata; explicit admin account; no object/secret contents or IAM changes"
+}

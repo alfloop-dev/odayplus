@@ -4,7 +4,7 @@ from __future__ import annotations
 
 """Worker lifecycle logic extracted from legacy supervisor."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from common import (
@@ -47,20 +47,52 @@ def _entrypoint(func):
 _parse_iso_utc = parse_iso_timestamp
 
 
+_RUNNER_FAILURE_STATUSES = frozenset(
+    {
+        "failed",
+        "error",
+        "failure",
+        "terminated",
+        "cancelled",
+        "canceled",
+        "aborted",
+        "stopped",
+    }
+)
+
+
+def _runner_reports_failure(worker: dict[str, Any] | None) -> bool:
+    """Return whether the runner marker says this process cannot continue.
+
+    A worker lifecycle status is the supervisor's disposition, while the
+    runner status is the process's own result.  The latter must win before the
+    poller refreshes a lease: the wrapper can briefly remain alive after it
+    publishes its failed marker.
+    """
+    if not isinstance(worker, dict):
+        return False
+    runner_status = str(worker.get("runner_status") or "").strip().lower()
+    if runner_status in _RUNNER_FAILURE_STATUSES:
+        return True
+    if worker_was_terminated(worker):
+        return True
+    try:
+        return int(worker.get("exit_code")) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def _helper_worker_runtime_assignment_is_valid(
     config: dict[str, Any],
     worker: dict[str, Any],
     task_map: dict[str, dict[str, Any]],
     now: datetime,
 ) -> bool:
-    """Keep an active helper alive after its dispatch claim is released.
+    """Return whether the worker still owns its bound helper claim.
 
-    ``helper_execution_lease`` controls when another worker may be assigned
-    the task; ``worker.lease_expires_at`` controls the process that is already
-    running.  The former is intentionally allowed to expire while the latter
-    remains valid.  The dispatch snapshot is the only durable record of which
-    helper claim generation this process started with, so use it to distinguish
-    claim expiry from a real owner/reviewer/claim handoff.
+    The claim and process leases are separate clocks, but a live helper may
+    only use the process lease after its claim is bound to that exact run. An
+    expired or missing claim is not an alternate assignment mechanism.
     """
     request = worker.get("request_snapshot")
     if not isinstance(request, dict) or str(request.get("reason") or "") != "helper_claim_dispatch":
@@ -69,7 +101,10 @@ def _helper_worker_runtime_assignment_is_valid(
     task_id = str(worker.get("task_id") or "")
     task = task_map.get(task_id)
     dispatched_task = worker_dispatch_task_snapshot(worker)
-    if not isinstance(task, dict) or str(dispatched_task.get("id") or "") != task_id:
+    task_id_field = (config.get("schema", {}) or {}).get("task_id_field", "id")
+    if not isinstance(task, dict) or str(
+        dispatched_task.get(task_id_field) or dispatched_task.get("id") or ""
+    ) != task_id:
         return False
 
     task_status = str(task.get("status") or "").lower()
@@ -94,6 +129,9 @@ def _helper_worker_runtime_assignment_is_valid(
     dispatched_claim = dispatched_task.get("helper_execution_lease")
     if not isinstance(dispatched_claim, dict):
         return False
+    current_claim = task.get("helper_execution_lease")
+    if not isinstance(current_claim, dict):
+        return False
     generation = dispatched_claim.get("generation")
     if generation is None:
         return False
@@ -108,50 +146,258 @@ def _helper_worker_runtime_assignment_is_valid(
     dispatched_claim_owner = normalize_agent_id(str(dispatched_claim.get("claimed_by") or ""))
     if not worker_agent or worker_agent != dispatched_claim_owner:
         return False
+    try:
+        current_generation = int(current_claim.get("generation"))
+    except (TypeError, ValueError):
+        return False
+    if current_generation != generation:
+        return False
+    if normalize_agent_id(str(current_claim.get("claimed_by") or "")) != worker_agent:
+        return False
 
     runtime_lease_expires_at = _parse_iso_utc(str(worker.get("lease_expires_at") or ""))
     if runtime_lease_expires_at is None or now > runtime_lease_expires_at.astimezone(UTC):
         return False
 
+    current_run_id = str(current_claim.get("run_id") or "").strip()
+    if current_run_id != str(worker.get("run_id") or "").strip():
+        return False
     runtime_settings = worker_runtime_settings(config)
     heartbeat_stale_after = max(
         60,
         int(runtime_settings.get("heartbeat_stale_seconds", 300))
         + int(runtime_settings.get("heartbeat_grace_seconds", 60)),
     )
-    process_activity_stale_after = max(
-        60,
-        int(config.get("supervisor", {}).get("stall_after_seconds", heartbeat_stale_after)),
-    )
-    has_fresh_activity = False
-    for field, stale_after in (
-        ("last_heartbeat_at", heartbeat_stale_after),
-        ("last_process_activity_at", process_activity_stale_after),
-    ):
-        activity_at = _parse_iso_utc(str(worker.get(field) or ""))
-        if activity_at is not None and (now - activity_at.astimezone(UTC)).total_seconds() <= stale_after:
-            has_fresh_activity = True
-            break
-    if not has_fresh_activity:
+    heartbeat_at = _parse_iso_utc(str(worker.get("last_heartbeat_at") or ""))
+    if heartbeat_at is None:
         return False
+    if (now - heartbeat_at.astimezone(UTC)).total_seconds() > heartbeat_stale_after:
+        return False
+    return True
 
-    current_claim = task.get("helper_execution_lease")
-    if isinstance(current_claim, dict) and current_claim:
-        try:
-            current_generation = int(current_claim.get("generation"))
-        except (TypeError, ValueError):
-            return False
-        return (
-            current_generation == generation
-            and normalize_agent_id(str(current_claim.get("claimed_by") or "")) == worker_agent
+
+def _helper_claim_dispatch_matches(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    task: dict[str, Any] | None,
+    *,
+    require_owned_status: bool = True,
+) -> bool:
+    """Check task roles, generation, claimant, and run binding exactly."""
+    if not isinstance(task, dict):
+        return False
+    request = worker.get("request_snapshot")
+    if not isinstance(request, dict) or str(request.get("reason") or "") != "helper_claim_dispatch":
+        return False
+    dispatched_task = worker_dispatch_task_snapshot(worker)
+    task_id = str(worker.get("task_id") or "").strip()
+    task_id_field = (config.get("schema", {}) or {}).get("task_id_field", "id")
+    if not task_id or str(
+        dispatched_task.get(task_id_field) or dispatched_task.get("id") or ""
+    ).strip() != task_id:
+        return False
+    schema = config.get("schema", {}) or {}
+    owner_field = schema.get("assignee_field", "owner")
+    reviewer_field = schema.get("reviewer_field", "reviewer")
+    for field in (owner_field, reviewer_field):
+        dispatched_identity = dispatched_task.get(
+            field,
+            dispatched_task.get("owner" if field == owner_field else "reviewer"),
         )
+        if normalize_agent_id(str(task.get(field) or "")) != normalize_agent_id(str(dispatched_identity or "")):
+            return False
 
-    # The supervisor removes an expired helper claim before this lifecycle poll.
-    # Only treat an absent claim as that release when the worker's captured
-    # claim really did expire; an unexplained claim disappearance must not
-    # become a second assignment/lease mechanism.
-    claim_expires_at = _parse_iso_utc(str(dispatched_claim.get("lease_expires_at") or ""))
-    return claim_expires_at is not None and now >= claim_expires_at.astimezone(UTC)
+    if require_owned_status:
+        task_status = str(task.get("status") or "").lower()
+        owned_statuses = normalized_status_set(
+            ready_dispatch_settings(config).get("owned_statuses"),
+            ["in_progress", "todo"],
+        )
+        if task_status not in owned_statuses:
+            return False
+    dispatched_claim = dispatched_task.get("helper_execution_lease")
+    current_claim = task.get("helper_execution_lease")
+    if not isinstance(dispatched_claim, dict) or not isinstance(current_claim, dict):
+        return False
+    try:
+        dispatched_generation = int(dispatched_claim.get("generation"))
+        current_generation = int(current_claim.get("generation"))
+    except (TypeError, ValueError):
+        return False
+    worker_agent = normalize_agent_id(
+        display_name_for(config, worker_logical_dispatch_agent_id(config, worker))
+    )
+    return bool(
+        worker_agent
+        and normalize_agent_id(str(dispatched_claim.get("claimed_by") or "")) == worker_agent
+        and normalize_agent_id(str(current_claim.get("claimed_by") or "")) == worker_agent
+        and dispatched_generation == current_generation
+        and str(current_claim.get("run_id") or "").strip() == str(worker.get("run_id") or "").strip()
+    )
+
+
+def _helper_claim_renewal_window_seconds(config: dict[str, Any], lease_seconds: int) -> int:
+    poll_interval = float(config.get("supervisor", {}).get("poll_interval_seconds", 180) or 180)
+    return max(60, min(max(60, lease_seconds // 2), int(max(60, poll_interval * 2))))
+
+
+def _helper_claim_is_due_for_renewal(
+    config: dict[str, Any],
+    claim: dict[str, Any],
+    now: datetime,
+) -> bool:
+    expires_at = _parse_iso_utc(str(claim.get("lease_expires_at") or ""))
+    if expires_at is None:
+        return True
+    helper_settings = ready_dispatch_settings(config).get("helper_execution_lease", {}) or {}
+    lease_seconds = max(60, int(float(helper_settings.get("lease_seconds", 1800) or 1800)))
+    return (expires_at.astimezone(UTC) - now).total_seconds() <= _helper_claim_renewal_window_seconds(
+        config, lease_seconds
+    )
+
+
+def _persist_helper_claim_change(
+    config: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+    task_id: str,
+    *,
+    generation: int,
+    claimed_by: str,
+    run_id: str,
+    lease_expires_at: str | None,
+) -> bool:
+    """CAS-write a claim mutation without changing task ownership."""
+    status = load_status(config)
+    latest_task = task_index_from_status(config, status).get(task_id)
+    current_claim = latest_task.get("helper_execution_lease") if isinstance(latest_task, dict) else None
+    if not isinstance(latest_task, dict) or not isinstance(current_claim, dict):
+        return False
+    try:
+        current_generation = int(current_claim.get("generation"))
+    except (TypeError, ValueError):
+        return False
+    if (
+        current_generation != generation
+        or normalize_agent_id(str(current_claim.get("claimed_by") or "")) != normalize_agent_id(claimed_by)
+        or str(current_claim.get("run_id") or "").strip() != run_id
+    ):
+        return False
+    if lease_expires_at is None:
+        latest_task.pop("helper_execution_lease", None)
+    else:
+        current_claim["lease_expires_at"] = lease_expires_at
+        current_claim["last_renewed_at"] = utc_now()
+    try:
+        committed = commit_canonical_task_transition(config, status)
+    except (KeyError, OSError, ValueError):
+        return False
+    if committed:
+        original_task = task_map.get(task_id)
+        if isinstance(original_task, dict):
+            updated_task = dict(latest_task)
+            original_task.clear()
+            original_task.update(updated_task)
+    return committed
+
+
+def _reconcile_helper_claim(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+    *,
+    now: datetime,
+    alive: bool,
+    runner_reports_failure: bool,
+) -> tuple[str, bool]:
+    """Renew a live helper claim or release only this worker's claim.
+
+    The result is ``(disposition, changed)`` where disposition is ``valid``
+    or ``invalid``. A run mismatch never deletes the current claim: it belongs
+    to another dispatch and the normal lifecycle supersede path handles the
+    old worker.
+    """
+    request = worker.get("request_snapshot")
+    if not isinstance(request, dict) or str(request.get("reason") or "") != "helper_claim_dispatch":
+        return "not_helper", False
+    task_id = str(worker.get("task_id") or "").strip()
+    task = task_map.get(task_id)
+    if not task:
+        return "invalid", False
+    current_claim = task.get("helper_execution_lease")
+    dispatched_task = worker_dispatch_task_snapshot(worker)
+    dispatched_claim = dispatched_task.get("helper_execution_lease")
+    if not isinstance(current_claim, dict) or not isinstance(dispatched_claim, dict):
+        return "invalid", False
+
+    try:
+        generation = int(dispatched_claim.get("generation"))
+    except (TypeError, ValueError):
+        return "invalid", False
+    claimed_by = normalize_agent_id(str(dispatched_claim.get("claimed_by") or ""))
+    run_id = str(worker.get("run_id") or "").strip()
+    claim_matches_worker = _helper_claim_dispatch_matches(
+        config,
+        worker,
+        task,
+        require_owned_status=False,
+    )
+    current_run_id = str(current_claim.get("run_id") or "").strip()
+    current_claim_is_this_run = (
+        claim_matches_worker
+        and current_run_id == run_id
+        and run_id
+    )
+    if (
+        alive
+        and not runner_reports_failure
+        and worker.get("status") in active_worker_statuses(config)
+        and _helper_worker_runtime_assignment_is_valid(config, worker, task_map, now)
+    ):
+        if not _helper_claim_is_due_for_renewal(config, current_claim, now):
+            return "valid", False
+        helper_settings = ready_dispatch_settings(config).get("helper_execution_lease", {}) or {}
+        lease_seconds = max(60, int(float(helper_settings.get("lease_seconds", 1800) or 1800)))
+        renewed_until = isoformat_utc(now + timedelta(seconds=lease_seconds))
+        if not current_claim_is_this_run:
+            return "invalid", False
+        changed = _persist_helper_claim_change(
+            config,
+            task_map,
+            task_id,
+            generation=generation,
+            claimed_by=claimed_by,
+            run_id=run_id,
+            lease_expires_at=renewed_until,
+        )
+        if changed:
+            write_activity_log(
+                config,
+                {
+                    "type": "helper_claim_renewed",
+                    "task_id": task_id,
+                    "claimed_by": claimed_by,
+                    "worker_run_id": run_id,
+                    "generation": generation,
+                    "lease_expires_at": renewed_until,
+                    "message": "Fresh heartbeat renewed the helper claim for the same worker run.",
+                },
+            )
+        return "valid", changed
+
+    # Release only a claim proven to belong to this worker. If the claim was
+    # replaced by another generation/run, leave it untouched for that worker.
+    if current_claim_is_this_run:
+        changed = _persist_helper_claim_change(
+            config,
+            task_map,
+            task_id,
+            generation=generation,
+            claimed_by=claimed_by,
+            run_id=run_id,
+            lease_expires_at=None,
+        )
+        return "invalid", changed
+    return "invalid", False
 
 
 @_entrypoint
@@ -410,6 +656,50 @@ def process_queue(
             )
             changed = True
             continue
+
+        # Workspace preparation can take long enough for the canonical task
+        # graph to change (for example while an upstream login-throttling PR
+        # is still merging).  Re-read the board at the final launch boundary;
+        # the event was queued earlier, so its original dependency snapshot is
+        # not an authorization to start a worker now.
+        try:
+            latest_status = load_status(config)
+            latest_task_map = task_index_from_status(config, latest_status)
+        except Exception as exc:
+            record["status"] = "failed"
+            record["processed_at"] = utc_now()
+            record["error"] = f"Dependency gate revalidation failed closed: {type(exc).__name__}: {exc}"
+            write_activity_log(
+                config,
+                {
+                    "type": "wake_skipped",
+                    "task_id": event.get("task_id"),
+                    "target_agent": event.get("target_display_name") or event.get("target_agent"),
+                    "message": record["error"],
+                    "queue_event_id": event_id,
+                },
+            )
+            changed = True
+            continue
+        skip_message = stale_dispatch_skip_message(config, event, latest_task_map)
+        if skip_message:
+            record["status"] = "completed"
+            record["processed_at"] = utc_now()
+            record["skip_reason"] = "stale_dispatch_event"
+            record["requeue_reason"] = "dependency or task state changed before worker launch"
+            write_activity_log(
+                config,
+                {
+                    "type": "wake_skipped",
+                    "task_id": event.get("task_id"),
+                    "target_agent": event.get("target_display_name") or event.get("target_agent"),
+                    "message": skip_message,
+                    "queue_event_id": event_id,
+                },
+            )
+            changed = True
+            continue
+
         record["attempt_count"] = int(record.get("attempt_count", 0)) + 1
         record["last_attempt_at"] = utc_now()
         ok, outcome, delivery = start_worker_for_request(
@@ -421,7 +711,36 @@ def process_queue(
             attempt_count=record["attempt_count"],
             event_id_for_log=event_id,
         )
+        # Successful launch persists and replaces nested state records.
+        record = queue_event_record(state, event_id)
         if not ok:
+            delivery_metadata = delivery.get("metadata") if isinstance(delivery, dict) else None
+            dispatch_wait = (
+                delivery_metadata.get(model_rotation.DISPATCH_WAIT_KEY)
+                if isinstance(delivery_metadata, dict) else None
+            )
+            if isinstance(dispatch_wait, dict) and dispatch_wait.get("kind") == "model_cooldown":
+                # Use the existing environmental queue wait/retry state. No
+                # worker launched: do not spend the failure/retry budget,
+                # reassign the owner, or record another pool exhaustion.
+                record["status"] = "retry_backoff"
+                record["next_retry_at"] = dispatch_wait["retry_at"]
+                record["last_wait_reason"] = outcome
+                record[model_rotation.DISPATCH_WAIT_KEY] = dict(dispatch_wait)
+                record["attempt_count"] = max(0, int(record.get("attempt_count", 0)) - 1)
+                write_activity_log(
+                    config,
+                    {
+                        "type": "dispatch_capacity_wait",
+                        "provider": request_provider,
+                        "task_id": request_task_id,
+                        "queue_event_id": event_id,
+                        "message": outcome,
+                        **dispatch_wait,
+                    },
+                )
+                changed = True
+                continue
             failure_worker = {
                 "provider": request_provider,
                 "agent_id": request_agent_id,
@@ -540,6 +859,8 @@ def process_queue(
         record["lease_expires_at"] = queue_lease_expiry(config, queue_started_at)
         record["processed_at"] = isoformat_utc(queue_started_at)
         record.pop("last_wait_reason", None)
+        record.pop(model_rotation.DISPATCH_WAIT_KEY, None)
+        record.pop("next_retry_at", None)
         sync_dispatched_task_status(config, event)
         changed = True
     return changed
@@ -566,6 +887,9 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             resolved_by_run.setdefault(run_id, []).append(item)
 
     stall_after = float(config.get("supervisor", {}).get("stall_after_seconds", 300))
+    hard_inactivity_after = float(
+        config.get("supervisor", {}).get("hard_inactivity_seconds", 3600)
+    )
     now = datetime.now(UTC)
     if provider_report is None:
         provider_report = load_provider_report(config)
@@ -573,18 +897,99 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
     poll_counts = {
         "marker_updates": 0,
         "lease_refreshes": 0,
+        "helper_claim_renewals": 0,
+        "helper_claim_releases": 0,
         "expired_lease_workers_failed": 0,
         "supersede_deferrals": 0,
     }
     workers = state.setdefault("workers", {})
-    for run_id, worker in list(workers.items()):
+    for run_id in list(workers):
+        # Retry/fallback launch can replace the nested worker map on save.
+        workers = state.setdefault("workers", {})
+        worker = workers.get(run_id)
+        if not isinstance(worker, dict):
+            continue
+        pending_fence = worker.get("pending_fence")
+        if isinstance(pending_fence, dict):
+            if worker_writers_are_alive(worker):
+                terminate_worker_writers(worker)
+            if not worker_writers_are_alive(worker):
+                settled = _settle_fenced_sibling_worker(
+                    config,
+                    state,
+                    worker,
+                    str(pending_fence.get("pool_id") or ""),
+                    str(pending_fence.get("reason") or ""),
+                )
+                if settled:
+                    changed = True
+                    continue
+            continue
         # These records already have a durable terminal disposition. Re-reading
         # their old marker/log after a later re-review or reviewer reopen must
         # never count the same run again or reassign the current lifecycle.
-        if str(worker.get("status") or "").lower() in TERMINAL_WORKER_STATUSES:
-            continue
+        lifecycle_status = str(worker.get("status") or "").lower()
+        markers_checked = False
+        if lifecycle_status in TERMINAL_WORKER_STATUSES:
+            # A failed runner marker may arrive while the lifecycle record
+            # still says `completed`, and a failed lifecycle record can be
+            # persisted before its queue lease is finalized. Read the marker
+            # before applying the historical-terminal fast path so neither
+            # case keeps a queue event or provider failure unseen.
+            marker_changed = update_worker_runtime_markers(worker)
+            markers_checked = True
+            if marker_changed:
+                poll_counts["marker_updates"] += 1
+                changed = True
+            runner_reports_failure = _runner_reports_failure(worker)
+            helper_disposition, helper_claim_changed = _reconcile_helper_claim(
+                config,
+                worker,
+                task_map,
+                now=now,
+                alive=False,
+                runner_reports_failure=runner_reports_failure,
+            )
+            if helper_claim_changed:
+                poll_counts[
+                    "helper_claim_renewals"
+                    if helper_disposition == "valid"
+                    else "helper_claim_releases"
+                ] += 1
+                changed = True
+            queue_event_id = worker.get("queue_event_id")
+            queue_record = (
+                (state.get("queue") or {}).get("events", {}).get(queue_event_id)
+                if queue_event_id
+                else None
+            )
+            queue_status = str((queue_record or {}).get("status") or "").lower()
+            queue_unsettled = isinstance(queue_record, dict) and queue_status not in {
+                "completed",
+                "failed",
+                "done",
+            }
+            if lifecycle_status == "failed" and queue_unsettled:
+                if not pid_is_alive(worker.get("pid")):
+                    preserve_dead_worker_worktree(
+                        config,
+                        state,
+                        worker,
+                        task=task_map.get(str(worker.get("task_id") or "")),
+                        trigger="runner_failed",
+                    )
+                failure_reason = str(worker.get("last_error") or GENERIC_WORKER_EXIT_REASON)
+                finalize_queue_event_record(config, state, worker, "failed", failure_reason)
+                changed = True
+            if not queue_unsettled or lifecycle_status != "completed" or not runner_reports_failure:
+                continue
         previous_last_event_at = worker.get("last_event_at")
         previous_last_process_activity_at = worker.get("last_process_activity_at")
+        previous_worktree_activity_at = (
+            (worker.get("worktree_activity") or {}).get("last_activity_at")
+            if isinstance(worker.get("worktree_activity"), dict)
+            else None
+        )
         if worker.get("queue_event_id") and worker.get("queue_event_id") not in valid_queue_event_ids:
             if worker.get("status") in {"running", "waiting_approval", "retry_backoff", "manual_pending", "stalled"} and not pid_is_alive(worker.get("pid")):
                 task_status = str(task_map.get(worker.get("task_id"), {}).get("status") or "").lower()
@@ -615,13 +1020,29 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 )
                 changed = True
                 continue
-        marker_changed = update_worker_runtime_markers(worker)
-        if marker_changed:
-            poll_counts["marker_updates"] += 1
+        if not markers_checked:
+            marker_changed = update_worker_runtime_markers(worker)
+            if marker_changed:
+                poll_counts["marker_updates"] += 1
+                changed = True
+        runner_reports_failure = _runner_reports_failure(worker)
+        if not runner_reports_failure:
+            update_from_log(config, worker)
+        worktree_activity_changed = observe_worker_worktree_activity(
+            config,
+            state,
+            worker,
+            task_map.get(str(worker.get("task_id") or "")),
+            now=now,
+        )
+        if worktree_activity_changed:
             changed = True
-        update_from_log(config, worker)
         try:
-            adopted_approval = correlate_deferred_tool_approval(config, worker, approval_state)
+            adopted_approval = (
+                correlate_deferred_tool_approval(config, worker, approval_state)
+                if not runner_reports_failure
+                else None
+            )
         except Exception as error:  # pragma: no cover - queue write failures must fail closed, not crash
             adopted_approval = None
             write_activity_log(
@@ -641,7 +1062,53 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 "pending" if adopted_approval.get("status") == "pending" else "history", []
             ).append(adopted_approval)
             changed = True
-        alive = pid_is_alive(worker.get("pid"))
+        process_alive = pid_is_alive(worker.get("pid"))
+        runner_reports_failure = _runner_reports_failure(worker)
+        if runner_reports_failure and process_alive:
+            # A runner publishes its failed marker immediately before the
+            # wrapper exits. Stop a lingering wrapper before preserving the
+            # worktree so no process can write while it is being copied.
+            terminate_worker_pid(worker.get("pid"))
+        alive = process_alive and not runner_reports_failure
+        worktree_preserved = False
+
+        helper_disposition, helper_claim_changed = _reconcile_helper_claim(
+            config,
+            worker,
+            task_map,
+            now=now,
+            alive=alive,
+            runner_reports_failure=runner_reports_failure,
+        )
+        if helper_claim_changed:
+            poll_counts[
+                "helper_claim_renewals"
+                if helper_disposition == "valid"
+                else "helper_claim_releases"
+            ] += 1
+            changed = True
+
+        def preserve_worker_worktree_once(
+            trigger: str,
+            *,
+            current_worker: dict[str, Any] = worker,
+        ) -> None:
+            nonlocal worktree_preserved
+            if worktree_preserved:
+                return
+            preserve_dead_worker_worktree(
+                config,
+                state,
+                current_worker,
+                task=task_map.get(str(current_worker.get("task_id") or "")),
+                trigger=trigger,
+            )
+            worktree_preserved = True
+
+        if not alive:
+            preserve_worker_worktree_once(
+                "runner_failed" if runner_reports_failure else "missing_process"
+            )
         if not alive and str(worker.get("status") or "").lower() == "stalled":
             current_task = task_map.get(str(worker.get("task_id") or ""), {})
             terminal_statuses = {
@@ -675,13 +1142,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             # the helper declines cheaply (`nothing_to_preserve`) when the
             # worktree is clean -- so there is no reason to gamble on which
             # exits leave work behind.
-            preserve_dead_worker_worktree(
-                config,
-                state,
-                worker,
-                task=current_task,
-                trigger=f"reaped_dead_stalled_worker:{queue_status}",
-            )
+            preserve_worker_worktree_once(f"reaped_dead_stalled_worker:{queue_status}")
             finalize_queue_event_record(
                 config,
                 state,
@@ -738,7 +1199,18 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             worker.get("last_process_activity_at")
             and worker.get("last_process_activity_at") > str(previous_last_process_activity_at or "")
         )
-        if manual_pending_inbox_can_auto_redeliver(config, state, provider_report, worker):
+        current_worktree_activity_at = (
+            (worker.get("worktree_activity") or {}).get("last_activity_at")
+            if isinstance(worker.get("worktree_activity"), dict)
+            else None
+        )
+        worktree_activity_advanced = bool(
+            current_worktree_activity_at
+            and current_worktree_activity_at > str(previous_worktree_activity_at or "")
+        )
+        if not runner_reports_failure and manual_pending_inbox_can_auto_redeliver(
+            config, state, provider_report, worker
+        ):
             changed = (
                 requeue_stale_manual_pending_worker(
                     config,
@@ -752,8 +1224,25 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 or changed
             )
             continue
+        dispatched_task = worker_dispatch_task_snapshot(worker)
+        dispatched_claim = dispatched_task.get("helper_execution_lease")
+        is_bound_helper = (
+            str((worker.get("request_snapshot") or {}).get("reason") or "")
+            == "helper_claim_dispatch"
+            and isinstance(dispatched_claim, dict)
+        )
         assignment_matches = worker_matches_current_assignment(config, worker, task_map)
-        if not assignment_matches and alive:
+        if is_bound_helper:
+            # The generic assignment predicate only knows claimant/lease
+            # liveness. Helper workers additionally require the dispatch
+            # generation and run binding, otherwise an old worker can keep a
+            # replacement helper's claim alive.
+            assignment_matches = _helper_claim_dispatch_matches(
+                config,
+                worker,
+                task_map.get(str(worker.get("task_id") or "")),
+            )
+        elif not assignment_matches and alive:
             assignment_matches = _helper_worker_runtime_assignment_is_valid(
                 config,
                 worker,
@@ -792,7 +1281,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 config, worker, now
             )
             grace_seconds = max(0, int(worker_runtime_settings(config).get("supersede_grace_seconds", 120)))
-            if alive and heartbeat_is_fresh and grace_seconds > 0:
+            if alive and heartbeat_is_fresh and grace_seconds > 0 and not is_bound_helper:
                 deferred_since = _parse_iso_utc(str(worker.get("supersede_deferred_since") or ""))
                 if deferred_since is None:
                     worker["supersede_deferred_since"] = utc_now()
@@ -819,6 +1308,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 # Grace exhausted: the worker is not exiting on its own, so fall
                 # through and reclaim it as before.
             worker.pop("supersede_deferred_since", None)
+            preserve_worker_worktree_once("worker_superseded:assignment_moved")
             if alive:
                 terminate_worker_pid(worker.get("pid"))
             worker["status"] = "superseded"
@@ -852,6 +1342,9 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             and worker.get("status") in active_statuses
             and higher_priority_ready_task_exists(config, worker, task_map, state)
         ):
+            if not worker_can_be_preempted(config, worker, task_map, state, now=now):
+                continue
+            preserve_worker_worktree_once("preempted_priority_escalation")
             if alive:
                 terminate_worker_pid(worker.get("pid"))
             worker["status"] = "superseded"
@@ -891,13 +1384,25 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             # about to be deleted, and it is the only thing that knows where the
             # workspace is. Reassigning the task does not make whatever this
             # dead worker had written worth losing.
-            preserve_dead_worker_worktree(
-                config,
-                state,
-                worker,
-                task=task_map.get(str(worker.get("task_id") or "")),
-                trigger="assignment_moved",
-            )
+            #
+            # Called directly rather than through `preserve_worker_worktree_once`
+            # so the ordering stays visible to a reader (and to the AST guard in
+            # `test_the_orphan_path_preserves_before_the_record_disappears`), but
+            # gated on the same flag: every worker reaching this branch is `not
+            # alive` and was therefore already preserved above. The helper is not
+            # idempotent -- each call mints a fresh UUID backup directory and a
+            # second `worker_death_worktree_preserved` activity entry -- so an
+            # unconditional call here duplicated both for the one path that is
+            # supposed to be the safety net.
+            if not worktree_preserved:
+                preserve_dead_worker_worktree(
+                    config,
+                    state,
+                    worker,
+                    task=task_map.get(str(worker.get("task_id") or "")),
+                    trigger="assignment_moved",
+                )
+                worktree_preserved = True
             workers.pop(run_id, None)
             finalize_queue_event_record(
                 config,
@@ -925,10 +1430,19 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         # task and can reassign it away from the successor that is running now.
         if str(worker.get("status") or "").lower() in HANDED_OFF_WORKER_STATUSES:
             continue
+        if not alive and model_rotation.has_dispatch_cooldown_wait(worker):
+            # retry_due_workers owns this pre-launch environmental wait. The
+            # dead parent's log/exit marker describes the *original* failure,
+            # already charged to its budget, not a new inference attempt.
+            # Keep assignment/orphan reconciliation above active while never
+            # replaying that failure or replacing the pool-reset deadline.
+            continue
         pending = pending_by_run.get(worker["run_id"], [])
         resolved = resolved_by_run.get(worker["run_id"], [])
         if pending:
-            if not alive and not worker_supports_approval_resume(config, worker):
+            if not alive and (
+                runner_reports_failure or not worker_supports_approval_resume(config, worker)
+            ):
                 worker["status"] = "failed"
                 worker["deferred_action"] = None
                 worker["deferred_tool_use"] = None
@@ -962,7 +1476,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 changed = True
                 continue
             approval = pending[0]
-            next_status = "waiting_approval" if pid_is_alive(worker.get("pid")) else "suspended_approval"
+            next_status = "waiting_approval" if alive else "suspended_approval"
             if worker.get("status") != next_status:
                 worker["status"] = next_status
                 worker["deferred_action"] = approval.get("approval_id")
@@ -1060,7 +1574,9 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             changed = True
 
         if alive:
-            if worker.get("status") == "stalled" and (last_event_advanced or process_activity_advanced):
+            if worker.get("status") == "stalled" and (
+                last_event_advanced or process_activity_advanced or worktree_activity_advanced
+            ):
                 worker["status"] = "running"
                 write_activity_log(
                     config,
@@ -1068,7 +1584,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                         "type": "worker_recovered",
                         "provider": worker.get("provider"),
                         "task_id": worker.get("task_id"),
-                        "message": "Worker produced output or process activity after being marked stalled; status restored to running.",
+                        "message": "Worker produced output, process, or worktree activity after being marked stalled; status restored to running.",
                         "worker_run_id": worker["run_id"],
                     },
                 )
@@ -1078,9 +1594,48 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 )
                 changed = True
                 continue
+            # Second, much slower tier.  The stall timer above trusts any counter
+            # movement, which a CLI blocked forever on an unterminated shell
+            # command still produces.  Storage I/O is what such a process stops
+            # producing, so a worker that has written nothing for an hour is hung
+            # even though it looks busy.  The window is long on purpose: a worker
+            # waiting on a slow model reply is also quiet, just not for this long.
+            disk_activity_dt = parse_iso_timestamp(str(worker.get("last_disk_activity_at") or ""))
+            if hard_inactivity_after > 0 and disk_activity_dt is not None:
+                inactive_seconds = (now - disk_activity_dt.astimezone(UTC)).total_seconds()
+                if inactive_seconds >= hard_inactivity_after:
+                    terminate_worker_pid(worker.get("pid"))
+                    worker["status"] = "failed"
+                    worker["last_event_at"] = utc_now()
+                    worker["last_error"] = (
+                        f"Worker produced no storage activity for {int(inactive_seconds)} seconds "
+                        "while still reporting heartbeats; terminated for redispatch."
+                    )
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "worker_failed",
+                            "provider": worker.get("provider"),
+                            "task_id": worker.get("task_id"),
+                            "message": worker["last_error"],
+                            "worker_run_id": worker["run_id"],
+                        },
+                    )
+                    finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
+                    console_log(
+                        f"worker terminated after hard inactivity: task={worker.get('task_id')} "
+                        f"provider={worker.get('provider')} run={worker.get('run_id')}",
+                        quiet=SUPERVISOR_LOG_QUIET,
+                    )
+                    changed = True
+                    continue
             activity_times = [
                 parse_iso_timestamp(str(value or ""))
-                for value in (worker.get("last_event_at"), worker.get("last_process_activity_at"))
+                for value in (
+                    worker.get("last_event_at"),
+                    worker.get("last_process_activity_at"),
+                    current_worktree_activity_at,
+                )
             ]
             activity_times = [value.astimezone(UTC) for value in activity_times if value is not None]
             if activity_times:
@@ -1123,7 +1678,28 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     changed = True
             continue
 
-        failure_reason = None if worker_runner_succeeded(worker) else detect_worker_failure(worker)
+        runner_succeeded = is_structured_successful_worker(worker)
+        current_task = task_map.get(worker.get("task_id"), {})
+        terminal_statuses = {
+            str(value).lower()
+            for value in ready_dispatch_settings(config).get(
+                "worker_terminal_statuses", ["done", "review_approved"]
+            )
+        }
+        success_outcome = (
+            successful_worker_exit_outcome(
+                worker,
+                current_task,
+                terminal_statuses=terminal_statuses,
+            )
+            if runner_succeeded
+            else None
+        )
+        # A structured zero-exit runner may legitimately skip log-based failure
+        # detection even when it has not satisfied the task postcondition yet.
+        # Keep failure-scan eligibility separate from the completion outcome so
+        # the no-progress path below can still record and reassign the task.
+        failure_reason = None if runner_succeeded else detect_worker_failure(worker)
         if failure_reason and worker.get("status") != "failed":
             failure = classify_worker_failure(config, worker, failure_reason)
             failure_summary = summarize_failure_reason(failure_reason, str(worker.get("provider") or worker.get("agent_id") or ""))
@@ -1160,6 +1736,32 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             if is_terminal_quota_failure_kind(failure_kind):
                 fence_account_pool_workers(config, state, worker, failure_reason)
             if is_terminal_quota_failure_kind(failure_kind):
+                # `fence_account_pool_workers` skips the triggering run, so this
+                # is the one worker in the fenced pool that never received the
+                # deferred handoff its siblings get. Changing the canonical owner
+                # while this run's writers are still mutating the worktree
+                # strands the final bytes: the successor is granted a lease whose
+                # dirt fingerprint no longer matches, and `finalize_queue_event_record`
+                # below marks the event completed, so no later poll comes back for
+                # it. Fence it exactly like a sibling instead and let the
+                # `pending_fence` path in `poll_workers` / `reconcile_runtime_on_boot`
+                # preserve, reseal and transfer once the writers are confirmed dead.
+                if worker_writers_are_alive(worker):
+                    terminate_worker_writers(worker)
+                if worker_writers_are_alive(worker):
+                    worker["pending_fence"] = {
+                        "pool_id": agent_account_pool_id(
+                            config, worker_logical_dispatch_agent_id(config, worker)
+                        ),
+                        "reason": failure_reason,
+                        "fenced_at": (worker.get("pending_fence") or {}).get("fenced_at")
+                        or utc_now(),
+                    }
+                    worker["last_error"] = failure_summary.get("summary") or failure_reason
+                    worker["last_error_raw_ref"] = raw_ref
+                    worker["last_event_at"] = utc_now()
+                    changed = True
+                    continue
                 reassigned_to = None
                 if not antigravity_pool_fallback_available(
                     config, str(worker.get("provider") or worker.get("agent_id") or "")
@@ -1245,8 +1847,16 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             changed = True
             continue
 
-        if worker.get("status") not in {"completed", "failed", "manual_pending"}:
-            if worker_is_discussion_planning(worker):
+        if (
+            worker.get("status") not in {"completed", "failed", "manual_pending"}
+            or runner_reports_failure
+        ):
+            if (
+                not worker_was_terminated(worker)
+                and not _has_explicit_failure_evidence(worker)
+                and not failure_reason
+                and worker_is_discussion_planning(worker)
+            ):
                 worker["status"] = "completed"
                 worker["last_event_at"] = utc_now()
                 clear_task_failure_streak(state, worker=worker)
@@ -1266,7 +1876,12 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 finalize_queue_event_record(config, state, worker, "completed")
                 changed = True
                 continue
-            if worker_is_coordination_dispatch(worker):
+            if (
+                not worker_was_terminated(worker)
+                and not _has_explicit_failure_evidence(worker)
+                and not failure_reason
+                and worker_is_coordination_dispatch(worker)
+            ):
                 worker["status"] = "completed"
                 worker["last_event_at"] = utc_now()
                 clear_task_failure_streak(state, worker=worker)
@@ -1291,12 +1906,16 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 for value in ready_dispatch_settings(config).get("worker_terminal_statuses", ["done", "review_approved"])
             }
             current_task = task_map.get(worker.get("task_id"), {})
-            success_outcome = successful_worker_exit_outcome(
-                worker,
-                current_task,
-                terminal_statuses=terminal_statuses,
+            success_outcome = (
+                successful_worker_exit_outcome(
+                    worker,
+                    current_task,
+                    terminal_statuses=terminal_statuses,
+                )
+                if runner_succeeded
+                else None
             )
-            if success_outcome in {"lifecycle_complete", "review_decided", "incremental_progress"}:
+            if runner_succeeded and success_outcome in {"lifecycle_complete", "review_decided", "incremental_progress"}:
                 request_snapshot = worker.get("request_snapshot")
                 raw_dispatch_reason = (
                     request_snapshot.get("reason")
@@ -1346,6 +1965,41 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                             changed = True
                             continue
                     record_unsealed_worker_handoff(config, state, worker, current_task, handoff_seal)
+                    block = ((state.get("worker_worktrees") or {}).get("handoff_blocks") or {}).get(worker.get("task_id"))
+                    rejection_count = int((block or {}).get("rejection_count", 1))
+                    max_rejections = int(
+                        (config.get("worker_reassignment") or {}).get("after_attempts", 2)
+                    )
+                    record_task_failure_streak(
+                        state,
+                        worker,
+                        f"Handoff seal rejected: {handoff_seal.reason}: {handoff_seal.detail}",
+                        failure_kind="handoff_seal_rejected",
+                    )
+                    if rejection_count > max_rejections:
+                        worker["status"] = "failed"
+                        worker["last_event_at"] = utc_now()
+                        worker["progress_outcome"] = "handoff_seal_rejected"
+                        worker["last_error"] = (
+                            f"Handoff seal rejected repeated {rejection_count} times exceeding limit "
+                            f"({max_rejections}): {handoff_seal.reason}: {handoff_seal.detail}"
+                        )
+                        finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "worker_handoff_rejected",
+                                "provider": worker.get("provider"),
+                                "task_id": worker.get("task_id"),
+                                "message": worker["last_error"],
+                                "worker_run_id": worker.get("run_id"),
+                                "handoff_reason": handoff_seal.reason,
+                                "handoff_detail": handoff_seal.detail,
+                                "rejection_count": rejection_count,
+                            },
+                        )
+                        changed = True
+                        continue
                     worker["status"] = "completed"
                     worker["last_event_at"] = utc_now()
                     worker["progress_outcome"] = "handoff_seal_rejected"
@@ -1361,6 +2015,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                             "worker_run_id": worker.get("run_id"),
                             "handoff_reason": handoff_seal.reason,
                             "handoff_detail": handoff_seal.detail,
+                            "rejection_count": rejection_count,
                         },
                     )
                     changed = True
@@ -1370,7 +2025,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 worker["status"] = "completed"
                 worker["last_event_at"] = utc_now()
                 worker["progress_outcome"] = success_outcome
-                clear_task_failure_streak(state, worker=worker)
+                clear_task_failure_streaks_for_task(state, worker.get("task_id"))
                 message = (
                     "Background worker process exited after recording meaningful incremental progress; task remains dispatchable."
                     if success_outcome == "incremental_progress"
@@ -1389,6 +2044,15 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                         "progress_outcome": success_outcome,
                     },
                 )
+                # A real task run that reached its postcondition is the
+                # authenticated canary the cooldown was waiting for. Without
+                # this, only a discussion-planning exit could ever end a
+                # `recovering` pool, so an account whose next dispatch happened
+                # to be ordinary task work stayed capped at one slot forever.
+                # The failure branches above all `continue` before reaching
+                # here, so a non-zero exit, a signal termination, a quota
+                # fence, or a rejected handoff seal can never restore capacity.
+                record_account_pool_canary_success(config, state, worker)
                 finalize_queue_event_record(config, state, worker, "completed")
             elif task_status in redispatch_statuses:
                 failure_reason = NO_PROGRESS_WORKER_EXIT_REASON

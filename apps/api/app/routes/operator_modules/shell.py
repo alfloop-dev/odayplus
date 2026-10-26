@@ -26,11 +26,17 @@ resource with its own grants.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
+from apps.api.oday_api.security.dependencies import (
+    OPERATOR_NETWORK_READ_RESOURCE,
+    operator_permission_decision,
+)
+from modules.listing.application.intake_authorization import authorize_intake_action
+from modules.opsboard.application.operator_live_repository import OperatorLiveRepositoryError
 from modules.opsboard.application.operator_state import OperatorStateService
 from modules.opsboard.application.shell import (
     ShellConflict,
@@ -39,7 +45,68 @@ from modules.opsboard.application.shell import (
     ShellPolicyError,
     ShellService,
 )
-from shared.auth import Action, Principal
+from shared.auth import Action, DataClassification, Principal, ResourceDescriptor, rbac_allows
+
+
+def project_operator_navigation(
+    envelope: dict[str, Any], request: Request,
+) -> dict[str, Any]:
+    """Project nav from the verified principal, not a shared display persona.
+
+    Use the same Operator resource decision and intake collection authorization
+    as the reads behind each tab. This does not load data or bypass API guards.
+    """
+    principal = request.state.operator_principal
+
+    def can_read(resource_type: str, *, scoped: bool = False) -> bool:
+        return operator_permission_decision(
+            principal,
+            ResourceDescriptor(
+                type=resource_type,
+                tenant_id=principal.tenant_id,
+                module="operator_console",
+                data_classification=DataClassification.CONFIDENTIAL,
+            ),
+            Action.VIEW,
+            scoped_read_resource=OPERATOR_NETWORK_READ_RESOURCE if scoped else None,
+        ).allowed
+
+    listing_read = can_read("listing", scoped=True)
+    if listing_read:
+        try:
+            authorize_intake_action(
+                principal, "view", tenant_id=principal.tenant_id,
+                operator_role_id=request.state.operator_role_id,
+            )
+        except HTTPException:
+            listing_read = False
+    scoring_read = can_read("sitescore", scoped=True)
+    # Rebalance has no operator_network alternative; composition uses the
+    # general HeatZone router's type-level RBAC, not the Operator read grant.
+    tab_access = {
+        "areas": listing_read,
+        "radar": listing_read,
+        "candidates": scoring_read,
+        "score": scoring_read,
+        "compare": scoring_read,
+        "review": scoring_read,
+        "rebalance": can_read("listing"),
+        "composition": rbac_allows(principal, "heatzone", Action.VIEW),
+    }
+    allowed_tabs = [tab for tab, allowed in tab_access.items() if allowed]
+    console_read = can_read("operator_console")
+    allowed_workspaces = [
+        workspace["id"] for workspace in envelope["navigation"]["workspaces"]
+        if (bool(allowed_tabs) if workspace["id"] == "network" else console_read)
+    ]
+    envelope["navigation"]["allowedWorkspaces"] = allowed_workspaces
+    envelope["navigation"]["allowedTabs"] = {"network": allowed_tabs}
+    for workspace in envelope["navigation"]["workspaces"]:
+        workspace["allowed"] = workspace["id"] in allowed_workspaces
+    # Personas remain labels, never a substitute for the principal's grants.
+    for role in [envelope["meta"]["role"], *envelope["navigation"]["roles"]]:
+        role["allowedWorkspaces"] = list(allowed_workspaces)
+    return envelope
 
 # ----------------------------------------------------------------------
 # Request bodies
@@ -169,8 +236,11 @@ def create_shell_sub_router(
         )
 
     # ------------------------------------------------------------------
-    # Legacy Operator Console reads (unchanged contract)
+    # Legacy Operator Console reads (principal-projected navigation)
     # ------------------------------------------------------------------
+
+    def today_for(request: Request, **context: Any) -> dict[str, Any]:
+        return project_operator_navigation(state_service.get_today(**context), request)
 
     @legacy_router.get("/bootstrap", dependencies=[Depends(require_view_permission_fn)])
     def bootstrap(
@@ -181,7 +251,7 @@ def create_shell_sub_router(
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         """Return the full operator console bootstrap payload."""
-        return state_service.get_today(
+        return today_for(request,
             **_context_from_request(
                 request,
                 x_operator_role=x_operator_role,
@@ -200,7 +270,7 @@ def create_shell_sub_router(
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         """Return today's operational snapshot (alias of bootstrap for FE compat)."""
-        return state_service.get_today(
+        return today_for(request,
             **_context_from_request(
                 request,
                 x_operator_role=x_operator_role,
@@ -268,6 +338,8 @@ def create_shell_sub_router(
         assignee: str | None = Query(default=None),
         task_status: str | None = Query(default=None, alias="status"),
         task_id: str | None = Query(default=None, alias="taskId"),
+        request_key: str | None = Query(default=None, alias="requestKey"),
+        view: Literal["all", "assigned", "approvals", "initiated", "completed"] | None = Query(default=None),
         x_operator_role: str | None = Header(default=None, alias="X-Operator-Role"),
         x_subject_id: str | None = Header(default=None, alias="X-Subject-Id"),
         x_roles: str | None = Header(default=None, alias="X-Roles"),
@@ -275,10 +347,12 @@ def create_shell_sub_router(
     ) -> dict[str, Any]:
         """Return the Task Center list with SLA/assignee filters and deep links."""
         return shell_for(request).get_tasks(
+            view=view,
             sla=sla,
             assignee=assignee,
             status=task_status,
             task_id=task_id,
+            request_key=request_key,
             **_context_from_request(
                 request,
                 x_operator_role=x_operator_role,
@@ -336,7 +410,7 @@ def create_shell_sub_router(
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         """Return the durable notification inbox for the acting role."""
-        return shell_for(request).get_notifications(
+        result = shell_for(request).get_notifications(
             severity=severity,
             acknowledged=acknowledged,
             **_context_from_request(
@@ -347,6 +421,20 @@ def create_shell_sub_router(
                 x_correlation_id=x_correlation_id,
             ),
         )
+
+        # Advisory UI eligibility uses the exact existing principal resource gate.
+        # The POST dependency remains authoritative (including session/audit guards).
+        principal = request.state.operator_principal
+        allowed = operator_permission_decision(
+            principal,
+            ResourceDescriptor(
+                type="operator_console", tenant_id=principal.tenant_id,
+                module="operator_console", data_classification=DataClassification.CONFIDENTIAL,
+            ),
+            Action.UPDATE,
+        ).allowed
+        result["actions"] = {"acknowledge": {"allowed": allowed}}
+        return result
 
     @router.get(
         "/shell/notifications/preferences",
@@ -368,7 +456,19 @@ def create_shell_sub_router(
             x_correlation_id=x_correlation_id,
         )
         context.pop("correlation_id", None)
-        return shell_for(request).get_notification_preferences(**context)
+        result = shell_for(request).get_notification_preferences(**context)
+        # Advisory eligibility only: the existing PUT guard is authoritative.
+        principal = request.state.operator_principal
+        allowed = operator_permission_decision(
+            principal,
+            ResourceDescriptor(
+                type="operator_console", tenant_id=principal.tenant_id,
+                module="operator_console", data_classification=DataClassification.CONFIDENTIAL,
+            ),
+            Action.UPDATE,
+        ).allowed
+        result["actions"] = {"update": {"allowed": allowed}}
+        return result
 
     @router.put(
         "/shell/notifications/preferences",
@@ -616,6 +716,20 @@ def create_shell_sub_router(
                 idempotency_key=idempotency_key,
                 correlation_id=getattr(request.state, "correlation_id", None) or x_correlation_id,
             )
+        except _SHELL_ERRORS as exc:
+            raise _translate(exc) from exc
+
+    @router.get(
+        "/shell/franchisee/reports/{report_id}",
+        dependencies=[Depends(require_view_permission_fn)],
+    )
+    def shell_supervisor_franchisee_report(report_id: str, request: Request) -> dict[str, Any]:
+        # The live resolver captures the actual app-boundary principal; the
+        # application owner admits only current supervisor/canonical store scope.
+        try:
+            return shell_for(request).get_supervisor_report(report_id)
+        except OperatorLiveRepositoryError as exc:
+            raise HTTPException(status_code=503, detail={"code": "SUPERVISOR_REPORT_OWNER_UNAVAILABLE"}) from exc
         except _SHELL_ERRORS as exc:
             raise _translate(exc) from exc
 

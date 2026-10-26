@@ -1,0 +1,58 @@
+{
+  "task_id": "OPS-AGY-HARD-TIMEOUT-2H-001",
+  "timestamp": "2026-08-27T03:01:00Z",
+  "owner": "Antigravity2",
+  "reviewer": "Codex2",
+  "timeout_setting": "2h",
+  "files_updated": [
+    ".orchestrator/adapters/antigravity.py",
+    ".orchestrator/config.example.json",
+    ".orchestrator/test_model_rotation.py",
+    "docs/evidence/execution-control/OPS-AGY-HARD-TIMEOUT-2H-001/README.md",
+    "docs/evidence/execution-control/OPS-AGY-HARD-TIMEOUT-2H-001/verification_receipt.json"
+  ],
+  "live_config_updated": [
+    "/home/lupin/odayplus/.orchestrator/config.json"
+  ],
+  "supervisor_runtime_worker_receipt": {
+    "supervisor_pid": 3979693,
+    "receipt_file": "/home/lupin/odayplus/.orchestrator/worker-runtime/status/antigravity-20260827T025914Z-485e7dcb.json",
+    "run_id": "antigravity-20260827T025914Z-485e7dcb",
+    "worker_pid": 3995866,
+    "started_at": "2026-08-27T02:59:14Z",
+    "worker_argv_print_timeout": "2h",
+    "command_sample": [
+      "/home/lupin/oday-plus-supervisor-runtime-fe698e88d916/.orchestrator/bin/agy",
+      "--model",
+      "gemini-3.7-flash-high",
+      "--print-timeout",
+      "2h",
+      "--dangerously-skip-permissions",
+      "--add-dir",
+      "/tmp/pantheon-worker-worktrees/pantheon/ops-agy-hard-timeout-2h-001"
+    ]
+  },
+  "checks": {
+    "pytest_test_model_rotation": {
+      "command": "uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml pytest .orchestrator/test_model_rotation.py -q",
+      "exit_code": 0,
+      "passed": 38
+    },
+    "check_orchestrator_config": {
+      "command": "python3 delivery_toolchain/governance/check_orchestrator_config.py --config /home/lupin/odayplus/.orchestrator/config.json",
+      "exit_code": 0
+    },
+    "check_config_wiring": {
+      "command": "python3 delivery_toolchain/governance/check_config_wiring.py",
+      "exit_code": 0
+    },
+    "check_code_boundaries": {
+      "command": "python3 delivery_toolchain/governance/check_code_boundaries.py",
+      "exit_code": 0
+    },
+    "git_diff_check": {
+      "command": "git diff --check origin/dev",
+      "exit_code": 0
+    }
+  }
+}

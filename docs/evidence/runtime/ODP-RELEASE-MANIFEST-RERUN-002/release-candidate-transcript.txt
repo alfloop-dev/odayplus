@@ -1,0 +1,391 @@
+ODP-RELEASE-MANIFEST-RERUN-002 -- release candidate audit transcript
+Recorded by : Claude2 (Pantheon auto worker)
+Candidate   : a027fa1c3935360e6fc4b3bd073cd91cbee07548 (origin/dev tip)
+Superseded  : ace4265b5190c00c72846b637fc04850bacec77e (odp-20260826-001)
+Registry    : asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev
+
+Every entry below records the literal command, its combined stdout+stderr,
+and its real exit code. The harness runs each command directly and reads
+$? before any pipeline, so no exit code is masked by a pipe.
+
+================================================================
+SECTION 0 -- Candidate identity
+================================================================
+
+----------------------------------------------------------------
+STEP: Fetch the dev branch tip from origin
+CMD : git fetch --no-tags origin dev 
+--- output ---
+From https://github.com/alfloop-dev/odayplus
+ * branch              dev        -> FETCH_HEAD
+--- EXIT=0 ---
+
+----------------------------------------------------------------
+STEP: Resolve the exact candidate SHA
+CMD : git rev-parse origin/dev 
+--- output ---
+a027fa1c3935360e6fc4b3bd073cd91cbee07548
+--- EXIT=0 ---
+
+----------------------------------------------------------------
+STEP: Show the candidate commit subject
+CMD : git log -1 --format=%H%n%an%n%aI%n%s origin/dev 
+--- output ---
+a027fa1c3935360e6fc4b3bd073cd91cbee07548
+ajoe734
+2026-08-26T13:58:47+00:00
+Merge pull request #1025 from alfloop-dev/task/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001
+--- EXIT=0 ---
+
+
+================================================================
+SECTION 1 -- Why the committed release artifact must be rebuilt
+================================================================
+
+----------------------------------------------------------------
+STEP: Gate registry ancestry check against the current dev tip
+CMD : python3 delivery_toolchain/e2e/check_release_gate_registry.py --expected-sha a027fa1c3935360e6fc4b3bd073cd91cbee07548 
+--- output ---
+Release gate registry: ODP-RELEASE-GATE-REGISTRY
+Release candidate SHA: ace4265b5190c00c72846b637fc04850bacec77e
+Admission boundary: candidate-built / dev -> dev
+Recorded decision: no-go
+Gates cleared: 0/7
+- [OPEN] gate-0 Code Gate: blocked
+    blocker: No Code Gate receipt is bound to release candidate ace4265b5190c00c72846b637fc04850bacec77e; a green CI run on an earlier commit is not a receipt for this candidate.
+    blocker: ODP-PLAN-ENGINEERING-HARDENING-001 (OpenAPI, frontend dependency, and documentation hardening) is open.
+- [OPEN] gate-1 Contract Gate: blocked
+    blocker: No Contract Gate receipt is bound to release candidate ace4265b5190c00c72846b637fc04850bacec77e.
+    blocker: ODP-PLAN-ENGINEERING-HARDENING-001 must close the OpenAPI and frontend dependency hardening gap before contract compatibility can be attested.
+- [OPEN] gate-2 Data Gate: blocked
+    blocker: No Data Gate receipt is bound to release candidate ace4265b5190c00c72846b637fc04850bacec77e.
+    blocker: check_live_production_data.py has not been run against a live deployment of this candidate; deterministic fixtures and source stubs do not satisfy the Data Gate.
+- [OPEN] gate-3 Model and Solver Gate: blocked
+    blocker: No Model and Solver Gate receipt is bound to release candidate ace4265b5190c00c72846b637fc04850bacec77e.
+    blocker: ODP-PLAN-FORECAST-RELEASE-EVIDENCE-001 (ForecastOps formal model release evidence) is open.
+    blocker: ODP-PLAN-SITESCORE-OUTCOME-001 and ODP-PLAN-AVM-OUTCOME-001 remain open; ForecastOps history and an approved production alias are still unverified.
+    blocker: ODP-PLAN-SOLVER-RUNTIME-COMPAT-001, ODP-PLAN-HEATZONE-OUTCOME-001, and ODP-PLAN-NETPLAN-ACCEPTANCE-001 are archived done, but task completion is not an exact-candidate Gate 3 receipt or Human/Ops model approval.
+- [OPEN] gate-4 Security and Privacy Gate: blocked
+    blocker: No Security and Privacy Gate receipt is bound to release candidate ace4265b5190c00c72846b637fc04850bacec77e.
+    blocker: ODP-PLAN-OSS-LICENSE-GATE-001 and ODP-PLAN-DEFERRED-OSS-ADR-001 are archived done, but no exact-candidate Gate 4 receipt or Human/Ops legal approval is recorded.
+- [OPEN] gate-5 E2E, Performance and UAT Gate: blocked
+    blocker: No E2E, Performance and UAT Gate receipt is bound to release candidate ace4265b5190c00c72846b637fc04850bacec77e.
+    blocker: ODP-PLAN-ACCEPTANCE-REAL-EXEC-001 and ODP-PLAN-CANONICAL-SHELL-LIVE-001 are archived done, but those implementation receipts do not prove this exact release candidate in staging or UAT.
+    blocker: ODP-PLAN-LIVE-STAGING-PROOF-001 must produce exact-SHA live staging end-to-end proof.
+    blocker: ODP-PLAN-UAT-SIGNOFF-001 (cross-role UAT defect closeout and formal sign-off) is open.
+- [OPEN] gate-6 Ops, Release and Audit Gate: blocked
+    blocker: No Ops, Release and Audit Gate receipt is bound to release candidate ace4265b5190c00c72846b637fc04850bacec77e.
+    blocker: ODP-PLAN-OBSERVABILITY-LIVE-001 (production observability and on-call route) is open.
+    blocker: Every Human/Ops row in docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md is still pending-human.
+    blocker: ODP-PLAN-FINAL-GATE-AUDIT-001 has not re-run the Stage 0-7 / Gate 0-6 RTM audit.
+RELEASE STATE: NO-GO
+Release gate registry integrity errors:
+- release.candidate_sha 'ace4265b5190c00c72846b637fc04850bacec77e' is an ancestor of expected SHA 'a027fa1c3935360e6fc4b3bd073cd91cbee07548', but intervening commits touch non-evidence paths: delivery_toolchain/release/check_runtime_admission.py, delivery_toolchain/release/release_manifest.py, delivery_toolchain/security/sign_images.sh, docs/audits/code-boundary-inventory.csv, tests/e2e/test_release_gate_registry.py, tests/ops/test_dev_rollout.py, tests/release/test_release_manifest.py, tests/release/test_release_manifest_cli.py, tests/release/test_sign_images.py
+--- EXIT=1 ---
+
+----------------------------------------------------------------
+STEP: Non-evidence paths changed between the superseded candidate and the current tip
+CMD : git diff --name-only ace4265b5190c00c72846b637fc04850bacec77e a027fa1c3935360e6fc4b3bd073cd91cbee07548 
+--- output ---
+delivery_toolchain/release/check_runtime_admission.py
+delivery_toolchain/release/release_manifest.py
+delivery_toolchain/security/sign_images.sh
+docs/audits/code-boundary-inventory.csv
+docs/evidence/gates/README.md
+docs/evidence/gates/RELEASE_GATE_REGISTRY.json
+docs/evidence/gates/RELEASE_MANIFEST.json
+docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/README.md
+docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/image-build-and-digest-audit.json
+docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt
+docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/release-blocker.json
+docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/release-manifest-binding.json
+docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/release-receipts-index.json
+docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/sbom-and-signature-verification.json
+tests/e2e/test_release_gate_registry.py
+tests/ops/test_dev_rollout.py
+tests/release/test_release_manifest.py
+tests/release/test_release_manifest_cli.py
+tests/release/test_sign_images.py
+--- EXIT=0 ---
+
+
+================================================================
+SECTION 2 -- Candidate container images in Artifact Registry
+================================================================
+
+----------------------------------------------------------------
+STEP: Resolve candidate release tag for oday-staging-api
+CMD : docker buildx imagetools inspect asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548 
+--- output ---
+ERROR: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548: not found
+--- EXIT=1 ---
+
+----------------------------------------------------------------
+STEP: Resolve candidate release tag for oday-staging-web
+CMD : docker buildx imagetools inspect asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548 
+--- output ---
+ERROR: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548: not found
+--- EXIT=1 ---
+
+----------------------------------------------------------------
+STEP: Resolve candidate release tag for oday-data-platform
+CMD : docker buildx imagetools inspect asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548 
+--- output ---
+ERROR: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548: not found
+--- EXIT=1 ---
+
+----------------------------------------------------------------
+STEP: Resolve candidate release tag for oday-staging-worker
+CMD : docker buildx imagetools inspect asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548 
+--- output ---
+ERROR: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548: not found
+--- EXIT=1 ---
+
+----------------------------------------------------------------
+STEP: Resolve candidate release tag for oday-staging-scheduler
+CMD : docker buildx imagetools inspect asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548 
+--- output ---
+ERROR: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548: not found
+--- EXIT=1 ---
+
+----------------------------------------------------------------
+STEP: Resolve candidate release tag for oday-staging-migration
+CMD : docker buildx imagetools inspect asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-migration:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548 
+--- output ---
+ERROR: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-migration:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548: not found
+--- EXIT=1 ---
+
+----------------------------------------------------------------
+STEP: Resolve candidate release tag for oday-api
+CMD : docker buildx imagetools inspect asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548 
+--- output ---
+ERROR: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548: not found
+--- EXIT=1 ---
+
+----------------------------------------------------------------
+STEP: Resolve candidate release tag for oday-web
+CMD : docker buildx imagetools inspect asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548 
+--- output ---
+ERROR: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548: not found
+--- EXIT=1 ---
+
+----------------------------------------------------------------
+STEP: Resolve candidate release tag for oday-worker
+CMD : docker buildx imagetools inspect asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548 
+--- output ---
+ERROR: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548: not found
+--- EXIT=1 ---
+
+----------------------------------------------------------------
+STEP: Resolve candidate release tag for oday-scheduler
+CMD : docker buildx imagetools inspect asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548 
+--- output ---
+ERROR: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548: not found
+--- EXIT=1 ---
+
+----------------------------------------------------------------
+STEP: Resolve candidate release tag for oday-migration
+CMD : docker buildx imagetools inspect asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-migration:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548 
+--- output ---
+ERROR: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-migration:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548: not found
+--- EXIT=1 ---
+
+
+================================================================
+SECTION 3 -- Release workflow provenance
+================================================================
+
+----------------------------------------------------------------
+STEP: Runtime Release runs bound to the candidate SHA
+CMD : gh run list --repo alfloop-dev/odayplus --workflow deploy-dev.yml --commit a027fa1c3935360e6fc4b3bd073cd91cbee07548 --json databaseId\,headSha\,status\,conclusion\,url 
+--- output ---
+[]
+--- EXIT=0 ---
+
+----------------------------------------------------------------
+STEP: Any workflow run bound to the candidate SHA
+CMD : gh run list --repo alfloop-dev/odayplus --commit a027fa1c3935360e6fc4b3bd073cd91cbee07548 --json databaseId\,workflowName\,headSha\,status\,conclusion 
+--- output ---
+[{"conclusion":"success","databaseId":32979386062,"headSha":"a027fa1c3935360e6fc4b3bd073cd91cbee07548","status":"completed","workflowName":"CI"},{"conclusion":"success","databaseId":32977482459,"headSha":"a027fa1c3935360e6fc4b3bd073cd91cbee07548","status":"completed","workflowName":"Merge queue review gate"},{"conclusion":"success","databaseId":32977482468,"headSha":"a027fa1c3935360e6fc4b3bd073cd91cbee07548","status":"completed","workflowName":"CI"}]
+--- EXIT=0 ---
+
+----------------------------------------------------------------
+STEP: Most recent Runtime Release runs of any SHA
+CMD : gh run list --repo alfloop-dev/odayplus --workflow deploy-dev.yml --limit 5 --json databaseId\,headSha\,event\,status\,conclusion\,createdAt 
+--- output ---
+[{"conclusion":"failure","createdAt":"2026-08-20T10:36:14Z","databaseId":32359736962,"event":"push","headSha":"208262cf372af0527d2a27adca8e1810f9bf7ccb","status":"completed"},{"conclusion":"cancelled","createdAt":"2026-08-20T10:34:23Z","databaseId":32359586288,"event":"push","headSha":"55fe2275be9442ada3bfe1012c74efca1b8b038d","status":"completed"},{"conclusion":"failure","createdAt":"2026-08-20T06:59:26Z","databaseId":32341943807,"event":"push","headSha":"56a2b4a55504c1690ff5f99fdb0a8af2d1e186c2","status":"completed"},{"conclusion":"failure","createdAt":"2026-08-20T03:06:15Z","databaseId":32327030934,"event":"push","headSha":"7cc1c3c6b8492d059719a7f8211727c26341661f","status":"completed"},{"conclusion":"failure","createdAt":"2026-08-20T02:11:00Z","databaseId":32323723277,"event":"push","headSha":"115e0d924e0ee85a86efa62b4d968e98433c0d27","status":"completed"}]
+--- EXIT=0 ---
+
+
+================================================================
+SECTION 4 -- Signing and SBOM tooling in this environment
+================================================================
+
+----------------------------------------------------------------
+STEP: cosign availability
+CMD : command -v cosign 
+--- output ---
+--- EXIT=1 ---
+
+----------------------------------------------------------------
+STEP: syft availability
+CMD : command -v syft 
+--- output ---
+--- EXIT=1 ---
+
+----------------------------------------------------------------
+STEP: Fail-closed check of the signing helper
+CMD : env CI=true ./delivery_toolchain/security/sign_images.sh verify asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548 
+--- output ---
+Error: cosign is required for image signing/verification; refusing to simulate success.
+--- EXIT=1 ---
+
+
+================================================================
+SECTION 5 -- Candidate SBOM and signature artifacts
+================================================================
+
+----------------------------------------------------------------
+STEP: Shared SBOM repository probe
+CMD : docker buildx imagetools inspect --raw asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/sbom:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548 
+--- output ---
+ERROR: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/sbom:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548: not found
+--- EXIT=1 ---
+
+----------------------------------------------------------------
+STEP: Cosign signature tag for the superseded API image digest
+CMD : docker buildx imagetools inspect --raw asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api:sha256-002d43d0b6ea180946df2f1bfc4ff15a9eb8fc2abfbd49b89055a696a6986ce7.sig 
+--- output ---
+ERROR: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api:sha256-002d43d0b6ea180946df2f1bfc4ff15a9eb8fc2abfbd49b89055a696a6986ce7.sig: not found
+--- EXIT=1 ---
+
+----------------------------------------------------------------
+STEP: Cosign SBOM tag for the superseded API image digest
+CMD : docker buildx imagetools inspect --raw asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api:sha256-002d43d0b6ea180946df2f1bfc4ff15a9eb8fc2abfbd49b89055a696a6986ce7.sbom 
+--- output ---
+ERROR: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api:sha256-002d43d0b6ea180946df2f1bfc4ff15a9eb8fc2abfbd49b89055a696a6986ce7.sbom: not found
+--- EXIT=1 ---
+
+
+================================================================
+SECTION 6 -- Hosted release admission configuration
+================================================================
+
+----------------------------------------------------------------
+STEP: Actions variable names configured for the dev environment
+CMD : gh variable list --repo alfloop-dev/odayplus --env dev --json name 
+--- output ---
+[{"name":"GCP_AR_REPO"},{"name":"GCP_CLOUD_SQL_INSTANCE"},{"name":"GCP_PROJECT_ID"},{"name":"GCP_REGION"},{"name":"GCP_SERVICE_ACCOUNT"},{"name":"GCP_WORKLOAD_IDENTITY_PROVIDER"},{"name":"MLFLOW_TRACKING_URI"},{"name":"ODAY_DATABASE_URL_SECRET"},{"name":"ODP_AUTH_AUDIENCES"},{"name":"ODP_AUTH_ISSUER"},{"name":"ODP_AUTH_JWKS_URI"},{"name":"ODP_AUTH_PRINCIPAL_MAP_SECRET"},{"name":"ODP_AUTH_SUBJECT_ROLE_BINDINGS"},{"name":"ODP_CLOUD_RUN_API_SERVICE"},{"name":"ODP_CLOUD_RUN_MIGRATION_JOB"},{"name":"ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT"},{"name":"ODP_CLOUD_RUN_SCHEDULER_JOB"},{"name":"ODP_CLOUD_RUN_WEB_SERVICE"},{"name":"ODP_CLOUD_RUN_WORKER_JOB"},{"name":"ODP_CLOUD_SCHEDULER_SCHEDULER_TRIGGER"},{"name":"ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT"},{"name":"ODP_CLOUD_SCHEDULER_WORKER_TRIGGER"},{"name":"ODP_DEV_DEPLOY_URL"},{"name":"ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS"},{"name":"ODP_FORECAST_ENGINE"},{"name":"ODP_FORECAST_MODEL"},{"name":"ODP_MLFLOW_CLOUD_RUN_AUDIENCE"},{"name":"ODP_OPERATOR_SMOKE_ROLE"},{"name":"ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT"},{"name":"ODP_OPERATOR_SMOKE_SUBJECT"},{"name":"ODP_SCHEDULED_INGESTION_TENANT_ID"},{"name":"ODP_SCHEDULER_CRON"},{"name":"ODP_SCHEDULER_TIME_ZONE"},{"name":"ODP_SNAPSHOT_BUCKET"},{"name":"ODP_TENANT_ID"},{"name":"ODP_WEB_OIDC_ISSUER"},{"name":"ODP_WEB_SESSION_SECRET_SECRET"},{"name":"ODP_WORKER_CRON"}]
+--- EXIT=0 ---
+
+----------------------------------------------------------------
+STEP: Actions variable names configured for the staging environment
+CMD : gh variable list --repo alfloop-dev/odayplus --env staging --json name 
+--- output ---
+[{"name":"GCP_AR_REPO"},{"name":"GCP_CLOUD_SQL_INSTANCE"},{"name":"GCP_PROJECT_ID"},{"name":"GCP_REGION"},{"name":"GCP_SERVICE_ACCOUNT"},{"name":"GCP_WORKLOAD_IDENTITY_PROVIDER"},{"name":"MLFLOW_TRACKING_URI"},{"name":"ODAY_DATABASE_URL_SECRET"},{"name":"ODP_AUTH_AUDIENCES"},{"name":"ODP_AUTH_ISSUER"},{"name":"ODP_AUTH_JWKS_URI"},{"name":"ODP_AUTH_PRINCIPAL_MAP_SECRET"},{"name":"ODP_CLOUD_RUN_API_SERVICE"},{"name":"ODP_CLOUD_RUN_MIGRATION_JOB"},{"name":"ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT"},{"name":"ODP_CLOUD_RUN_SCHEDULER_JOB"},{"name":"ODP_CLOUD_RUN_VPC_CONNECTOR"},{"name":"ODP_CLOUD_RUN_VPC_EGRESS"},{"name":"ODP_CLOUD_RUN_WEB_SERVICE"},{"name":"ODP_CLOUD_RUN_WORKER_JOB"},{"name":"ODP_CLOUD_SCHEDULER_SCHEDULER_TRIGGER"},{"name":"ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT"},{"name":"ODP_CLOUD_SCHEDULER_WORKER_TRIGGER"},{"name":"ODP_EXTERNAL_PROVIDER_MODE"},{"name":"ODP_FORECAST_ENGINE"},{"name":"ODP_FORECAST_MODEL"},{"name":"ODP_LIVE_E2E_DEPLOYMENT_MODE"},{"name":"ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS"},{"name":"ODP_MLFLOW_CLOUD_RUN_AUDIENCE"},{"name":"ODP_OPERATOR_SMOKE_ROLE"},{"name":"ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT"},{"name":"ODP_RELEASE_LEASE_PUBLIC_KEY"},{"name":"ODP_RELEASE_LEASE_STATE_URI"},{"name":"ODP_SCHEDULED_INGESTION_TENANT_ID"},{"name":"ODP_SCHEDULER_CRON"},{"name":"ODP_SCHEDULER_TIME_ZONE"},{"name":"ODP_SNAPSHOT_BUCKET"},{"name":"ODP_STAGING_SECRET_OWNER"},{"name":"ODP_TENANT_ID"},{"name":"ODP_WEB_OIDC_ISSUER"},{"name":"ODP_WEB_SESSION_SECRET_SECRET"},{"name":"ODP_WORKER_CRON"}]
+--- EXIT=0 ---
+
+----------------------------------------------------------------
+STEP: Actions variable names configured for the production environment
+CMD : gh variable list --repo alfloop-dev/odayplus --env production --json name 
+--- output ---
+[{"name":"GCP_AR_REPO"},{"name":"GCP_CLOUD_SQL_INSTANCE"},{"name":"GCP_PROJECT_ID"},{"name":"GCP_REGION"},{"name":"GCP_SERVICE_ACCOUNT"},{"name":"GCP_WORKLOAD_IDENTITY_PROVIDER"},{"name":"MLFLOW_TRACKING_URI"},{"name":"ODAY_DATABASE_URL_SECRET"},{"name":"ODP_AUTH_ISSUER"},{"name":"ODP_AUTH_JWKS_URI"},{"name":"ODP_AUTH_PRINCIPAL_MAP_SECRET"},{"name":"ODP_CLOUD_RUN_API_SERVICE"},{"name":"ODP_CLOUD_RUN_MIGRATION_JOB"},{"name":"ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT"},{"name":"ODP_CLOUD_RUN_SCHEDULER_JOB"},{"name":"ODP_CLOUD_RUN_WEB_SERVICE"},{"name":"ODP_CLOUD_RUN_WORKER_JOB"},{"name":"ODP_CLOUD_SCHEDULER_SCHEDULER_TRIGGER"},{"name":"ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT"},{"name":"ODP_CLOUD_SCHEDULER_WORKER_TRIGGER"},{"name":"ODP_EXTERNAL_PROVIDER_MODE"},{"name":"ODP_FORECAST_ENGINE"},{"name":"ODP_FORECAST_MODEL"},{"name":"ODP_LIVE_E2E_DEPLOYMENT_MODE"},{"name":"ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS"},{"name":"ODP_MLFLOW_CLOUD_RUN_AUDIENCE"},{"name":"ODP_OPERATOR_SMOKE_ROLE"},{"name":"ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT"},{"name":"ODP_RELEASE_LEASE_PUBLIC_KEY"},{"name":"ODP_RELEASE_LEASE_STATE_URI"},{"name":"ODP_SCHEDULED_INGESTION_TENANT_ID"},{"name":"ODP_SCHEDULER_CRON"},{"name":"ODP_SCHEDULER_TIME_ZONE"},{"name":"ODP_SNAPSHOT_BUCKET"},{"name":"ODP_TENANT_ID"},{"name":"ODP_WEB_OIDC_ISSUER"},{"name":"ODP_WEB_SESSION_SECRET_SECRET"},{"name":"ODP_WORKER_CRON"}]
+--- EXIT=0 ---
+
+----------------------------------------------------------------
+STEP: Repository-scope Actions variable names
+CMD : gh variable list --repo alfloop-dev/odayplus --json name 
+--- output ---
+[]
+--- EXIT=0 ---
+
+
+================================================================
+SECTION 7 -- Release workflow surface at the candidate SHA
+================================================================
+
+----------------------------------------------------------------
+STEP: Workflow name and trigger block at the candidate SHA (first 45 lines)
+CMD : bash -c set\ -o\ pipefail\;\ git\ show\ \'a027fa1c3935360e6fc4b3bd073cd91cbee07548:.github/workflows/deploy-dev.yml\'\ \|\ sed\ -n\ \'1\,45p\' 
+--- output ---
+name: Runtime Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Release environment"
+        required: true
+        type: choice
+        options: [dev, staging, production]
+      release_sha:
+        description: "Exact 40-character commit SHA to release"
+        required: true
+        type: string
+      task_id:
+        description: "Supervisor-owned release task ID"
+        required: true
+        type: string
+      release_lease:
+        description: "Base64-encoded signed Supervisor release lease document (JSON)"
+        required: true
+        type: string
+      api_image:
+        description: "Immutable API image reference from the first build (repo/service@sha256:...)"
+        required: false
+        default: ""
+        type: string
+      web_image:
+        description: "Immutable Web image reference from the first build (repo/service@sha256:...)"
+        required: false
+        default: ""
+        type: string
+      worker_image:
+        description: "Immutable Worker image reference from the first build (repo/service@sha256:...)"
+        required: false
+        default: ""
+        type: string
+      scheduler_image:
+        description: "Immutable Scheduler image reference from the first build (repo/service@sha256:...)"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: runtime-release-${{ inputs.environment }}
+--- EXIT=0 ---
+
+----------------------------------------------------------------
+STEP: Lease and WIF preconditions asserted by the admission job
+CMD : bash -c set\ -o\ pipefail\;\ git\ show\ \'a027fa1c3935360e6fc4b3bd073cd91cbee07548:.github/workflows/deploy-dev.yml\'\ \|\ grep\ -n\ \'HAS_WIF\\\|RELEASE_LEASE_STATE_URI\\\|ODP_RELEASE_LEASE_PUBLIC_KEY\\\|Validate\ WIF\' 
+--- output ---
+62:      HAS_WIF: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
+113:      - name: Validate WIF and shared lease store configuration
+115:          RELEASE_LEASE_STATE_URI: ${{ vars.ODP_RELEASE_LEASE_STATE_URI }}
+118:          if [ "${HAS_WIF}" != "true" ]; then
+122:          if [[ ! "${RELEASE_LEASE_STATE_URI}" =~ ^gs://[^/]+/.+ ]]; then
+136:      # The lease is the authorisation. `ODP_RELEASE_LEASE_PUBLIC_KEY` is the
+147:          ODP_RELEASE_LEASE_PUBLIC_KEY: ${{ vars.ODP_RELEASE_LEASE_PUBLIC_KEY }}
+148:          RELEASE_LEASE_STATE_URI: ${{ vars.ODP_RELEASE_LEASE_STATE_URI }}
+158:            --lease-state-dir "${RELEASE_LEASE_STATE_URI}" \
+186:      HAS_WIF: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
+236:      - name: Validate WIF authentication for the build
+239:          if [ "${HAS_WIF}" != "true" ]; then
+245:        if: ${{ env.HAS_WIF == 'true' }}
+252:        if: ${{ env.HAS_WIF == 'true' }}
+377:      HAS_WIF: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
+475:      - name: Validate WIF authentication and live runtime preflight
+477:          if [ "${HAS_WIF}" != "true" ]; then
+487:        if: ${{ env.HAS_WIF == 'true' }}
+--- EXIT=0 ---
+
+----------------------------------------------------------------
+STEP: Last commit that changed the release workflow
+CMD : git log -1 --format=%H%n%aI%n%s a027fa1c3935360e6fc4b3bd073cd91cbee07548 -- .github/workflows/deploy-dev.yml 
+--- output ---
+56b439d4202d9f81ac3bb0b53e3a49751263b4b8
+2026-08-26T08:34:35+00:00
+ODP-RELEASE-ADMISSION-HOSTED-WIF-GUARD-001: WIF/GCS preflight
+--- EXIT=0 ---
+
+END OF TRANSCRIPT

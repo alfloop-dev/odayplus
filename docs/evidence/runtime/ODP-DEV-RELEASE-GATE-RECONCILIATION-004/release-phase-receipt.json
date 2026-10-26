@@ -1,0 +1,25 @@
+{
+  "receipt_kind": "runtime-release-phase-precheck",
+  "schema_version": 1,
+  "verifier": "delivery_toolchain/release/check_release_phase.py",
+  "phase": "build",
+  "environment": "dev",
+  "release_sha": "39ae43f6fe679f03dd7df459a51835cbd2d54f77",
+  "task_id": "ODP-DEV-RELEASE-GATE-RECONCILIATION-004",
+  "admitted": true,
+  "checked_at": "2026-09-20T05:58:49+00:00",
+  "lease_supplied": false,
+  "image_handoff": {
+    "api": null,
+    "web": null,
+    "worker": null,
+    "scheduler": null
+  },
+  "manifest_handoff": {
+    "run_id": null,
+    "manifest_digest": null
+  },
+  "blockers_zh_tw": [],
+  "summary_zh_tw": "build 階段前置條件全部通過；release_sha=39ae43f6fe679f03dd7df459a51835cbd2d54f77、environment=dev。",
+  "secret_values_redacted": true
+}

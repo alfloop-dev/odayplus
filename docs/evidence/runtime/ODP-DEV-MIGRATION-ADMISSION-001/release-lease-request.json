@@ -1,0 +1,21 @@
+{
+  "kind": "runtime_release_deploy",
+  "status": "approved",
+  "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+  "approved_by": "Human/Ops",
+  "approval_id": "HUMANOPS-DEV-MIGRATION-20260927T161813Z",
+  "nonce": "732912beacd54e17aa6e840155322326",
+  "candidate_sha": "355a94b52b14badc236be4b3e52eb936a7075549",
+  "manifest_digest": "sha256:a1e3fcf6b765861dc269e3fd395b7bec6ac4b2b6f3b3207a3ffb623c6ca6dfaa",
+  "manifest_run_id": "36313147910",
+  "target_environment": "dev",
+  "action": "deploy",
+  "approved_at": "2026-09-27T16:18:13Z",
+  "expires_at": "2026-09-27T22:18:13Z",
+  "transcribed_by": {
+    "written_by": "Codex",
+    "basis": "Explicit current interactive user confirmation of the exact dev admission and local synchronization requests",
+    "authorization_artifact": "docs/evidence/runtime/ODP-DEV-MIGRATION-ADMISSION-001/user-authorization.json",
+    "note": "approved_by is the protocol role, not the author; no external identity signature claimed."
+  }
+}

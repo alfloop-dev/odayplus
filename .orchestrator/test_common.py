@@ -199,6 +199,34 @@ class ConfigContractTests(unittest.TestCase):
         self.assertEqual(loaded["supervisor"]["poll_interval_seconds"], 45)
         self.assertEqual(worker_env[common.CONFIG_PATH_ENV_VAR], str(runtime))
 
+    def test_load_config_resolves_from_authoritative_status_root_when_env_unset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_root = Path(tmpdir)
+            orch_dir = status_root / ".orchestrator"
+            orch_dir.mkdir(parents=True)
+            config_file = orch_dir / "config.json"
+            config_file.write_text(
+                json.dumps({
+                    "supervisor": {"poll_interval_seconds": 25},
+                    "paths": {"status_file": "ai-status.json"},
+                }),
+                encoding="utf-8",
+            )
+            with mock.patch.dict(
+                common.os.environ,
+                {
+                    common.STATUS_ROOT_ENV_VAR: str(status_root),
+                    common.CONFIG_PATH_ENV_VAR: "",
+                    common.LEGACY_CONFIG_PATH_ENV_VAR: "",
+                },
+                clear=False,
+            ):
+                loaded = common.load_config()
+
+            self.assertEqual(loaded["supervisor"]["poll_interval_seconds"], 25)
+            # Relative paths in config are anchored to status_root
+            self.assertEqual(loaded["paths"]["status_file"], str(status_root / "ai-status.json"))
+
 
 class FailureSummaryTests(unittest.TestCase):
     def test_summarize_failure_reason_treats_claude_credit_balance_as_quota(self) -> None:
@@ -363,6 +391,82 @@ class ClaudeAuthTests(unittest.TestCase):
             mock.patch.object(common, "refresh_claude_oauth_tokens", return_value=None),
         ):
             self.assertFalse(common.claude_auth_ready("claude"))
+
+    def test_probe_accepts_expired_access_token_with_valid_refresh_token(self) -> None:
+        status = mock.Mock(returncode=0, stdout=json.dumps({"loggedIn": True}))
+        now_ms = int(common.time.time() * 1000)
+        expired_oauth = {
+            "accessToken": "old-access",
+            "refreshToken": "old-refresh",
+            "expiresAt": now_ms - 60_000,
+            "refreshTokenExpiresAt": now_ms + 86_400_000,
+        }
+        with (
+            mock.patch.object(common, "run_command", return_value=status),
+            mock.patch.object(common, "load_claude_oauth_tokens", return_value=({}, expired_oauth, Path("/tmp/.credentials.json"))),
+            mock.patch.object(common, "refresh_claude_oauth_tokens") as refresh,
+        ):
+            self.assertTrue(common.claude_auth_ready("claude", env={"HOME": "/tmp/test-home"}, refresh_if_needed=False))
+
+        refresh.assert_not_called()
+
+    def test_probe_leaves_expired_env_token_branch_unchanged(self) -> None:
+        # Scoped out of this fix: an env token that mirrors the expired stored
+        # token still needs deliver()'s refresh before it counts as ready.
+        env = {"HOME": "/tmp/test-home", "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-old"}
+        expired_oauth = {
+            "accessToken": "sk-ant-oat01-old",
+            "refreshToken": "old-refresh",
+            "expiresAt": 1,
+            "refreshTokenExpiresAt": int(common.time.time() * 1000) + 86_400_000,
+        }
+        with (
+            mock.patch.object(common, "load_claude_oauth_tokens", return_value=({}, expired_oauth, Path("/tmp/.credentials.json"))),
+            mock.patch.object(common, "refresh_claude_oauth_tokens") as refresh,
+            mock.patch.object(common, "run_command") as run_command,
+        ):
+            self.assertFalse(common.claude_auth_ready("claude", env=env, refresh_if_needed=False))
+
+        refresh.assert_not_called()
+        run_command.assert_not_called()
+        self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "sk-ant-oat01-old")
+
+    def test_probe_rejects_expired_access_token_without_usable_refresh_token(self) -> None:
+        status = mock.Mock(returncode=0, stdout=json.dumps({"loggedIn": True}))
+        now_ms = int(common.time.time() * 1000)
+        for refresh_fields in (
+            {},
+            {"refreshToken": ""},
+            {"refreshToken": "old-refresh", "refreshTokenExpiresAt": now_ms - 60_000},
+            {"refreshToken": "old-refresh", "refreshTokenExpiresAt": "not-a-timestamp"},
+        ):
+            with self.subTest(refresh_fields=refresh_fields):
+                expired_oauth = {"accessToken": "old-access", "expiresAt": now_ms - 60_000, **refresh_fields}
+                with (
+                    mock.patch.object(common, "run_command", return_value=status),
+                    mock.patch.object(common, "load_claude_oauth_tokens", return_value=({}, expired_oauth, Path("/tmp/.credentials.json"))),
+                    mock.patch.object(common, "refresh_claude_oauth_tokens") as refresh,
+                ):
+                    self.assertFalse(common.claude_auth_ready("claude", env={"HOME": "/tmp/test-home"}, refresh_if_needed=False))
+
+                refresh.assert_not_called()
+
+    def test_probe_rejects_logged_in_status_without_stored_credentials(self) -> None:
+        status = mock.Mock(returncode=0, stdout=json.dumps({"loggedIn": True}))
+        with (
+            mock.patch.object(common, "run_command", return_value=status),
+            mock.patch.object(common, "load_claude_oauth_tokens", return_value=None),
+            mock.patch.object(common, "refresh_claude_oauth_tokens") as refresh,
+        ):
+            self.assertFalse(common.claude_auth_ready("claude", env={"HOME": "/tmp/test-home"}, refresh_if_needed=False))
+            # Delivery still defers to the CLI's own login when no file is present.
+            self.assertTrue(common.claude_auth_ready("claude", env={"HOME": "/tmp/test-home"}))
+
+        refresh.assert_not_called()
+
+    def test_claude_oauth_refreshable_treats_missing_refresh_expiry_as_valid(self) -> None:
+        self.assertTrue(common.claude_oauth_refreshable({"refreshToken": "old-refresh"}))
+        self.assertFalse(common.claude_oauth_refreshable({"refreshToken": "  "}))
 
     def test_refresh_claude_oauth_tokens_updates_credentials_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

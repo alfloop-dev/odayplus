@@ -1,0 +1,187 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "ODP-RELEASE-ACCEPTANCE-CARRYFORWARD-001",
+  "purpose": "Fixed owner inventory the obligation validator binds against. A canonical_owner_task or prerequisite must appear in active_tasks; archived tasks are historical sources only; anything else is unknown and rejected. Not a task registry: re-read the canonical status root before acting on any status here.",
+  "provenance": {
+    "read_at": "2026-10-03T01:16:53Z",
+    "read_by": "Claude",
+    "status_root": "canonical live writer (PANTHEON_STATUS_ROOT)",
+    "ai_status_json_sha256": "3cf818ec91915dc3c0ce97e1bb37179ca7ca9876a3b362f6b1ec92554c4b0262",
+    "archive_dir": "ai-task-archive/tasks/",
+    "method": "Read-only JSON readback of ai-status.json tasks[] and per-task archive records; no status writes."
+  },
+  "active_statuses": [
+    "todo",
+    "in_progress",
+    "review",
+    "blocked"
+  ],
+  "lane_role_definitions": {
+    "pre_production_admission": "Evidence or authority that must exist before Human GO and production cutover; may only depend on dev/staging/upstream state.",
+    "production_cutover": "Production 0%-green smoke/readback executed by the blue-green rollout after Human GO and a valid lease; neither admission evidence nor a post-deploy window.",
+    "post_deploy_observation": "Windows measured on live production traffic after cutover (24h, 7 operating days, full calendar month).",
+    "dev_runtime_observation": "Dev-only runtime behaviour observed under natural traffic; not on the production admission path.",
+    "code_remediation": "Engineering delivery still in flight.",
+    "deferred": "Explicitly deferred, not a current release dependency."
+  },
+  "active_tasks": [
+    {
+      "task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "status": "in_progress",
+      "owner": "Antigravity2",
+      "reviewer": "Codex2",
+      "phase": "Wave 3 - Staging Rollout",
+      "title": "建立 ephemeral staging 並完成全套 release rehearsal",
+      "lane_roles": [
+        "pre_production_admission"
+      ]
+    },
+    {
+      "task_id": "ODP-PRODUCTION-MODEL-REGISTRY-001",
+      "status": "todo",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "phase": "Recovered model/data execution · awaiting real inputs",
+      "title": "續辦真實模型訓練與治理登錄（待歷史資料與模型批准）",
+      "lane_roles": [
+        "pre_production_admission"
+      ]
+    },
+    {
+      "task_id": "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001",
+      "status": "todo",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "phase": "Recovered model/data execution · awaiting real inputs",
+      "title": "續辦真實 Forecast 歷史回填（待資料來源與操作准入）",
+      "lane_roles": [
+        "pre_production_admission"
+      ]
+    },
+    {
+      "task_id": "HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001",
+      "status": "todo",
+      "owner": "Human/Ops",
+      "reviewer": "Codex",
+      "phase": "Original Remediation Human Handback",
+      "title": "裁決六項仍未關閉的原始需求／資料缺口",
+      "lane_roles": [
+        "pre_production_admission"
+      ]
+    },
+    {
+      "task_id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+      "status": "blocked",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "phase": "Wave 4 - Production Rollout",
+      "title": "執行 production 0% green 驗證與 100% blue-green 切換",
+      "lane_roles": [
+        "pre_production_admission",
+        "production_cutover"
+      ],
+      "lane_role_basis": "Acceptance item 1 'Human GO與有效Supervisor lease存在' is the admission decision it consumes; the remaining items are the 0%-green cutover."
+    },
+    {
+      "task_id": "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001",
+      "status": "todo",
+      "owner": "Antigravity3",
+      "reviewer": "Codex2",
+      "phase": "Wave 4 - Release Closeout",
+      "title": "完成 production watch、staging cleanup 與 release archive",
+      "lane_roles": [
+        "post_deploy_observation"
+      ]
+    },
+    {
+      "task_id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+      "status": "todo",
+      "owner": "Antigravity5",
+      "reviewer": "Codex2",
+      "phase": "ODP Remediation · Final Verification",
+      "title": "重跑 production-path 證據並關閉 ODP 20 項 structural remediation ledger",
+      "lane_roles": [
+        "dev_runtime_observation"
+      ]
+    },
+    {
+      "task_id": "ODP-CDC-MACHINE-EVENT-LIFECYCLE-001",
+      "status": "review",
+      "owner": "Antigravity2",
+      "reviewer": "Codex2",
+      "phase": "Remaining work correction · 2026-10-03",
+      "title": "補齊 machine_status_events 軟刪除生命週期與 CDC 接線",
+      "lane_roles": [
+        "code_remediation"
+      ]
+    },
+    {
+      "task_id": "HUMAN-GCP-WEB-OAUTH-CLIENTS-001",
+      "status": "todo",
+      "owner": "Human/Ops",
+      "reviewer": "Codex",
+      "phase": "Wave 3 - Human OAuth Gate",
+      "title": "選用功能：Google OAuth 未啟用（帳密登入已定案）",
+      "lane_roles": [
+        "deferred"
+      ]
+    }
+  ],
+  "archived_tasks": [
+    {
+      "task_id": "ODP-NFR-RUNTIME-EVIDENCE-001",
+      "status": "done",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "archive_record": "ai-task-archive/tasks/ODP-NFR-RUNTIME-EVIDENCE-001.json",
+      "archive_record_sha256": "ba3f305099279421ca310e6f3dfc094fb6d25c92cee98a2163ea057705f38467"
+    },
+    {
+      "task_id": "ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001",
+      "status": "done",
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "archive_record": "ai-task-archive/tasks/ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001.json",
+      "archive_record_sha256": "473f04f50646c5393f951182c91d226379de5a008f70a95445707075fc2e2800"
+    },
+    {
+      "task_id": "ODP-MERGE-QUEUE-H08-ACTIVATION-001",
+      "status": "done",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "archive_record": "ai-task-archive/tasks/ODP-MERGE-QUEUE-H08-ACTIVATION-001.json",
+      "archive_record_sha256": "188cf73dee3956407c9b7480d9ed4ea6f3c0ac8f8228253d6e7ad3f4017a824a"
+    },
+    {
+      "task_id": "ODP-DURABLE-PARTIAL-IMPL-001",
+      "status": "done",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "archive_record": "ai-task-archive/tasks/ODP-DURABLE-PARTIAL-IMPL-001.json",
+      "archive_record_sha256": "b586e3e6f17b0cf5db0aa2d80fec89585fabc27308ebe27836123f252dbf89e2"
+    },
+    {
+      "task_id": "ODP-AVM-DEPRECIATION-INTEGRATION-001",
+      "status": "done",
+      "owner": "Antigravity6",
+      "reviewer": "Codex2",
+      "archive_record": "ai-task-archive/tasks/ODP-AVM-DEPRECIATION-INTEGRATION-001.json",
+      "archive_record_sha256": "1f5ff92c72427bc72bc6fac404459966f03385ceb7a40ade19f1e92e96e97f12"
+    },
+    {
+      "task_id": "ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001",
+      "status": "done",
+      "owner": "Antigravity4",
+      "reviewer": "Codex",
+      "archive_record": "ai-task-archive/tasks/ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001.json",
+      "archive_record_sha256": "544a9adadf26f3216d0a1bf42b93f2a575ae03070eba4b277bf231faaeadc4f3"
+    }
+  ],
+  "deferred_backlog_refs": [
+    {
+      "ref": "DEFERRED-BACKLOG-WAVE5",
+      "kind": "backlog_reference_not_a_task",
+      "source": "support/handoffs/remaining-work-corrections-20261003/EXECUTION.md and Wave 5+ root-cause backlog; no canonical task exists"
+    }
+  ]
+}

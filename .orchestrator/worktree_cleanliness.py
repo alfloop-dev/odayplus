@@ -52,7 +52,7 @@ def parse_porcelain_entries(porcelain_status: str | bytes) -> list[tuple[str, st
             if len(code) >= 2 and (code[0] in {"R", "C"} or code[1] in {"R", "C"}):
                 if index < len(raw_entries):
                     index += 1
-            path = os.fsdecode(path_bytes).strip()
+            path = os.fsdecode(path_bytes)
             if path:
                 entries.append((code, path))
         return entries
@@ -268,7 +268,7 @@ def inspect_worktree(
     path = Path(worktree_path)
     try:
         proc = subprocess.run(
-            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"],
             cwd=path,
             capture_output=True,
             check=False,

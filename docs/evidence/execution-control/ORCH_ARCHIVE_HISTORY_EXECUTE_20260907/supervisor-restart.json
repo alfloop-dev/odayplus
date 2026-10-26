@@ -1,0 +1,14 @@
+{
+  "started_at": "2026-09-09T16:23:45.639780+00:00",
+  "finished_at": "2026-09-09T16:23:46.503640+00:00",
+  "argv": [
+    "bash",
+    "/home/lupin/oday-plus-supervisor-runtime-current/scripts/run-supervisor-watchdog.sh",
+    "--config",
+    "/home/lupin/odayplus/.orchestrator/config.json",
+    "--restart"
+  ],
+  "exit_code": 0,
+  "stdout": "watchdog decision=restart_supervisor reason=missing_pid pid=None new_pid=1789757\n",
+  "stderr": ""
+}

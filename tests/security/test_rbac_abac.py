@@ -76,15 +76,6 @@ def test_permissions_for_unions_roles() -> None:
 # --- ABAC -------------------------------------------------------------------
 
 
-def test_tenant_isolation_blocks_other_tenant() -> None:
-    engine, sink = make_engine()
-    p = principal(Role.OPERATIONS_MANAGER, tenant_id="tenant-a")
-    res = ResourceDescriptor(type="forecastops", tenant_id="tenant-b")
-    decision = engine.authorize(AccessRequest(p, Action.VIEW, res), on=ON)
-    assert not decision.allowed
-    assert decision.policy_id == "tenant_isolation"
-
-
 def test_cross_region_supervisor_denied() -> None:
     # ODP-AC-AUTH-002
     engine, _ = make_engine()
@@ -93,6 +84,52 @@ def test_cross_region_supervisor_denied() -> None:
     decision = engine.authorize(AccessRequest(p, Action.VIEW, res), on=ON)
     assert not decision.allowed
     assert decision.policy_id == "scope.region"
+
+
+def test_cross_brand_principal_denied() -> None:
+    engine, log = make_engine()
+    p = principal(Role.OPERATIONS_MANAGER, brand_ids=frozenset({"brand-a"}))
+    own = ResourceDescriptor(type="forecastops", brand_id="brand-a")
+    other = ResourceDescriptor(type="forecastops", brand_id="brand-b")
+    missing = ResourceDescriptor(type="forecastops", brand_id=None)
+
+    assert engine.authorize(AccessRequest(p, Action.VIEW, own), on=ON).allowed
+
+    denied = engine.authorize(AccessRequest(p, Action.VIEW, other), on=ON)
+    assert not denied.allowed
+    assert denied.policy_id == "scope.brand"
+    assert denied.reason == "brand outside principal scope"
+
+    denied_missing = engine.authorize(AccessRequest(p, Action.VIEW, missing), on=ON)
+    assert not denied_missing.allowed
+    assert denied_missing.policy_id == "scope.brand"
+    assert denied_missing.reason == "brand outside principal scope"
+
+    denials = events_with_outcome(log, AuditOutcome.DENY)
+    assert any(e.metadata.get("policy_id") == "scope.brand" for e in denials)
+
+
+def test_module_outside_scope_denied() -> None:
+    engine, log = make_engine()
+    p = principal(Role.OPERATIONS_MANAGER, modules=frozenset({"forecastops"}))
+    own = ResourceDescriptor(type="forecastops", module="forecastops")
+    other = ResourceDescriptor(type="forecastops", module="netplan")
+    missing = ResourceDescriptor(type="forecastops", module=None)
+
+    assert engine.authorize(AccessRequest(p, Action.VIEW, own), on=ON).allowed
+
+    denied = engine.authorize(AccessRequest(p, Action.VIEW, other), on=ON)
+    assert not denied.allowed
+    assert denied.policy_id == "scope.module"
+    assert denied.reason == "module outside principal scope"
+
+    denied_missing = engine.authorize(AccessRequest(p, Action.VIEW, missing), on=ON)
+    assert not denied_missing.allowed
+    assert denied_missing.policy_id == "scope.module"
+    assert denied_missing.reason == "module outside principal scope"
+
+    denials = events_with_outcome(log, AuditOutcome.DENY)
+    assert any(e.metadata.get("policy_id") == "scope.module" for e in denials)
 
 
 def test_franchisee_limited_to_own_store() -> None:

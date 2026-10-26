@@ -8,7 +8,7 @@ test.describe("Market Intelligence Features", () => {
     );
 
     // The page should have the headers
-    await expect(page.locator("h1")).toHaveText("Market Intelligence");
+    await expect(page.getByRole("heading", { level: 1, name: "Market Intelligence", exact: true })).toHaveText("Market Intelligence");
 
     // Since the backend might not have mocked data for these endpoints,
     // the components might show "No cells found" or "No evidence" or throw errors.

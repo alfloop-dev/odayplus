@@ -1,0 +1,40 @@
+{
+  "approval_id": "HUMANOPS-DEV-MIGRATION-20260930T145659Z",
+  "approved_by": "Human/Ops (user reply transcribed by interactive Claude; not an external identity-system signature)",
+  "user_reply": "授權",
+  "question_answered": "是否授權新 candidate 的 dev 部署？條件跟上次相同，只是改綁新的 candidate：candidate b175b231cea7e063286670405650ae987230d7d7、manifest sha256:b26b71357b0107a17f115b07f6ff1f71551314197ae3f4f8c4de590d9447924d、build run 36724677720。只部署 dev；缺 H01 收據與 npm 開發工具漏洞都視為 dev-only deviation。證據 PR 要先通過 exact-head review 並合併，才能申請 lease。到期時間是 24 小時。",
+  "recorded_at": "2026-09-30T14:56:59Z",
+  "expires_at": "2026-10-01T14:56:59Z",
+  "supersedes": [
+    "HUMANOPS-DEV-MIGRATION-20260929T053234Z (ee06d1d8; expired 2026-09-30T05:32:34Z; its lease lease-410e6cf6... was consumed by failed Deploy Dev run 36657889962)"
+  ],
+  "candidate_sha": "b175b231cea7e063286670405650ae987230d7d7",
+  "manifest_digest": "sha256:b26b71357b0107a17f115b07f6ff1f71551314197ae3f4f8c4de590d9447924d",
+  "manifest_run_id": 36724677720,
+  "target_environment": "dev",
+  "action": "deploy",
+  "accepted_deviations": [
+    "Missing external authoritative H01 Legal/Security receipt for the four conditionally-used LGPL cases, accepted as a dev-only deviation. H01 is not relabeled as passed; staging and production still require the real H01 receipt.",
+    "Disclosed dev-tool npm findings (js-yaml GHSA-2883-xcg3-v3hh, vitest/mocker GHSA-82fw-gwwq-j7x9), accepted as a dev-only deviation. Build production npm audit for this candidate is 0 findings; the automated full audit is not relabeled as passing."
+  ],
+  "dispatch_preconditions": [
+    "Reviewer accepts the exact submitted head of the ODP-DEV-CANDIDATE-REBIND-B175-001 PR through the canonical task flow.",
+    "That PR is merged before a fresh lease request is registered on ODP-DEV-LIVE-DEPLOY-EXECUTION-001."
+  ],
+  "authorized_scope": [
+    "one fresh release request",
+    "one standard short-lived Supervisor lease",
+    "existing Runtime Release deploy phase only"
+  ],
+  "scope_limits": [
+    "no database reset",
+    "no Alembic stamp",
+    "no database deletion",
+    "no rewriting foreign Dagster migration history",
+    "no reuse of expired approval/request/nonce",
+    "all 16 external sources remain disabled",
+    "provider credentials absent",
+    "egress default-deny",
+    "staging and production unchanged"
+  ]
+}

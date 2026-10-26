@@ -1,0 +1,453 @@
+import "@testing-library/jest-dom/vitest";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { OperatorConsole, operatorBootstrapRetryPolicy } from "../OperatorConsole";
+import { DEFAULT_OPERATOR_ROLE_ID, OPERATOR_ROLES, getOperatorRole } from "../navigation";
+
+// Preserve the existing protected-read premise while the shell now rechecks
+// the canonical session. This is unit transport data, not a grant/principal.
+function stubAuthenticatedFetch(read: typeof fetch) {
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => String(input) === "/auth/session"
+    ? Promise.resolve(new Response(JSON.stringify({ subject: "unit-shell-account", expiresAt: Math.floor(Date.now() / 1000) + 3600 }), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    })) : read(input, init)));
+}
+
+const productionRetryDelays = [...operatorBootstrapRetryPolicy.delaysMs];
+
+const liveEnvelope = {
+  meta: {
+    source: "operator-shell-production",
+    dataMode: "live",
+    role: {
+      id: "ops-lead",
+      label: "Live Operations",
+      subtitle: "Production tenant",
+      allowedWorkspaces: ["today", "store"],
+      heroName: "Live Operator",
+    },
+    counts: { approvals: 2, critical: 1, notifications: 3, search: 0, taskCenter: 1 },
+  },
+  navigation: {
+    roles: [{
+      id: "ops-lead",
+      label: "Live Operations",
+      subtitle: "Production tenant",
+      allowedWorkspaces: ["today", "store"],
+    }],
+    workspaces: [
+      { id: "today", label: "Today", shortLabel: "Today", description: "Live queue", allowed: true },
+      { id: "store", label: "Store", shortLabel: "Store", description: "Store ops", allowed: true },
+    ],
+    allowedWorkspaces: ["today", "store"],
+  },
+  header: {
+    counts: { approvals: 2, critical: 1, notifications: 3, search: 0, taskCenter: 1 },
+  },
+  today: {
+    hero: {
+      name: "Live Operator",
+      roleLabel: "Live Operations",
+      scope: "Tenant production scope",
+      dateLabel: "2026-10-08",
+    },
+    kpis: [{ label: "Live unresolved", value: "1", tone: "danger" }],
+    queue: [{
+      id: "LIVE-ISSUE-1",
+      title: "Production issue",
+      workspace: "today",
+      owner: "Live owner",
+      status: "OPEN",
+      meta: "SLA 30m",
+      time: "30m",
+      tone: "danger",
+      target: { workspace: "today" },
+    }],
+    decisions: [],
+    riskRows: [],
+    auditFeed: [],
+  },
+  notifications: [],
+  search: { count: 0, items: [] },
+};
+
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+/** Class structure of the shared header, independent of counts and labels. */
+function headerSignature() {
+  const inner = screen.getByTestId("operator-topbar-inner");
+  const header = inner.parentElement as HTMLElement;
+  return {
+    consoleClass: screen.getByTestId("operator-console").className,
+    headerClass: header.className,
+    innerClass: inner.className,
+    regions: Array.from(inner.children).map((child) => child.className),
+    badge: within(header).getByTestId("operator-environment-badge").className,
+  };
+}
+
+describe("Operator shared header chrome", () => {
+  it("preserves the API expansion contributor persona rather than falling back to operations", async () => {
+    const envelope = structuredClone(liveEnvelope);
+    envelope.meta.role = { ...envelope.meta.role, id: "expansion-staff", label: "展店專員", allowedWorkspaces: ["today", "network"] };
+    envelope.navigation.roles = [{ id: "expansion-staff", label: "展店專員", subtitle: "Own intake work", allowedWorkspaces: ["today", "network"] }];
+    envelope.navigation.allowedWorkspaces = ["today", "network"];
+    envelope.today.hero.roleLabel = "展店專員";
+    stubAuthenticatedFetch( vi.fn().mockImplementation(async () => jsonResponse(envelope)));
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+    await waitFor(() => expect(screen.getByTitle("展店專員")).toBeInTheDocument());
+    fireEvent.click(screen.getByTitle("展店專員"));
+    fireEvent.click(await screen.findByRole("button", { name: /展店專員 Own intake work/ }));
+    expect(window.sessionStorage.getItem("oday.operator.role")).toBe("expansion-staff");
+  });
+
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    operatorBootstrapRetryPolicy.delaysMs = productionRetryDelays.map(() => 0);
+  });
+
+  afterEach(() => {
+    operatorBootstrapRetryPolicy.delaysMs = [...productionRetryDelays];
+    cleanup();
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps the same header structure for ready Today, other workspaces and the data gate", async () => {
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(jsonResponse(liveEnvelope)));
+    const ready = render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+    expect(await screen.findByText("Live unresolved")).toBeInTheDocument();
+    const readyToday = headerSignature();
+    expect(screen.getByRole("main").className).toMatch(/shell_today/);
+    ready.unmount();
+
+    stubAuthenticatedFetch( vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "store" }} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("operator-data-unavailable")).toHaveAttribute("data-status", "error"),
+    );
+    const gated = headerSignature();
+    expect(screen.getByRole("main").className).not.toMatch(/shell_today/);
+
+    expect(gated).toEqual(readyToday);
+  });
+
+  it("labels the deployment environment from deploy config, not from the fixture policy", async () => {
+    stubAuthenticatedFetch( vi.fn().mockResolvedValue(jsonResponse(liveEnvelope)));
+    const dev = render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+    const devBadge = screen.getByTestId("operator-environment-badge");
+    expect(devBadge).toHaveTextContent("DEV");
+    expect(devBadge).toHaveAttribute("data-environment", "dev");
+    expect(screen.queryByText("PRODUCTION")).not.toBeInTheDocument();
+    expect(await screen.findByText("Live unresolved")).toBeInTheDocument();
+    expect(screen.getByTestId("operator-environment-badge")).toHaveTextContent("DEV");
+    dev.unmount();
+
+    stubAuthenticatedFetch( vi.fn().mockRejectedValue(new Error("offline")));
+    const staging = render(<OperatorConsole deploymentEnvironment="staging" searchParams={{ ws: "today" }} />);
+    await screen.findByTestId("operator-data-unavailable");
+    expect(screen.getByTestId("operator-environment-badge")).toHaveTextContent("STAGING");
+    staging.unmount();
+
+    render(<OperatorConsole deploymentEnvironment="production" searchParams={{ ws: "today" }} />);
+    expect(screen.getByTestId("operator-environment-badge")).toHaveTextContent("PRODUCTION");
+  });
+
+  it("explains a bootstrap timeout in operator terms and keeps the raw error as traceable detail", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValue(new DOMException("signal timed out", "TimeoutError"));
+    stubAuthenticatedFetch( fetchMock);
+
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-failure-kind", "timeout"));
+    expect(within(gate).getByRole("heading", { level: 1 })).toHaveTextContent("營運資料回應逾時");
+    expect(within(gate).getByRole("button", { name: "重新載入" })).toBeInTheDocument();
+
+    const technical = within(gate).getByTestId("operator-data-unavailable-technical");
+    expect(technical).toHaveTextContent("signal timed out");
+    expect(technical).toHaveTextContent("OPERATOR_DATA_TIMEOUT");
+    // The raw exception text is never the headline or the explanation.
+    for (const visible of within(gate).getAllByText(/./, { selector: "h1, p" })) {
+      expect(visible).not.toHaveTextContent(/signal timed out|fail closed|OPERATOR_DATA/);
+    }
+
+    const sent = fetchMock.mock.calls[0][1] as { headers: Record<string, string> };
+    const correlationId = sent.headers["X-Correlation-Id"];
+    expect(correlationId).toMatch(/^corr-operator-bootstrap-/);
+    expect(within(gate).getByTestId("operator-data-unavailable-correlation")).toHaveTextContent(correlationId);
+  });
+
+  it("treats an upstream 504 as a timeout and reports the server correlation id", async () => {
+    stubAuthenticatedFetch(
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: { code: "WEB_API_UPSTREAM_TIMEOUT", retryable: true } }), {
+          status: 504,
+          headers: { "Content-Type": "application/json", "X-Correlation-Id": "corr-from-server" },
+        }),
+      ),
+    );
+
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-failure-kind", "timeout"));
+    expect(within(gate).getByTestId("operator-data-unavailable-correlation")).toHaveTextContent(
+      "corr-from-server",
+    );
+    expect(within(gate).getByTestId("operator-data-unavailable-technical")).toHaveTextContent("504");
+    // A persistent upstream timeout uses the whole cold-start budget, then gates.
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === "/api/v1/operator/bootstrap")).toHaveLength(4);
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url) === "/auth/session")).toBe(true);
+  });
+
+  it("retries a cold-start 504 once with the same correlation id and renders live data", async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { code: "WEB_API_UPSTREAM_TIMEOUT", retryable: true } }), {
+          status: 504,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(liveEnvelope));
+    stubAuthenticatedFetch( fetchMock);
+
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+
+    expect(await screen.findByText("Live unresolved")).toBeInTheDocument();
+    expect(screen.queryByTestId("operator-data-unavailable")).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [first, second] = fetchMock.mock.calls.map(
+      (call) => (call[1] as { headers: Record<string, string> }).headers["X-Correlation-Id"],
+    );
+    expect(second).toBe(first);
+    // The browser budget outlasts the Web BFF's 10s upstream timeout.
+    expect(Math.min(...timeoutSpy.mock.calls.map(([ms]) => ms))).toBeGreaterThan(10_000);
+  });
+
+  /** A 200 whose headers arrived but whose streamed body then fails. */
+  function failingBodyResponse(error: Error) {
+    return {
+      ok: true,
+      status: 200,
+      headers: new Headers({ "Content-Type": "application/json" }),
+      json: () => Promise.reject(error),
+    } as unknown as Response;
+  }
+
+  it("retries once when the 200 body times out mid-stream, then renders live data", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(failingBodyResponse(new DOMException("signal timed out", "TimeoutError")))
+      .mockResolvedValueOnce(jsonResponse(liveEnvelope));
+    stubAuthenticatedFetch( fetchMock);
+
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+
+    expect(await screen.findByText("Live unresolved")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const ids = fetchMock.mock.calls.map(
+      (call) => (call[1] as { headers: Record<string, string> }).headers["X-Correlation-Id"],
+    );
+    expect(ids[1]).toBe(ids[0]);
+  });
+
+  it("makes exactly four attempts when the body keeps failing with a network error", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(async () => failingBodyResponse(new TypeError("network error")));
+    stubAuthenticatedFetch( fetchMock);
+
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-failure-kind", "network"));
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  /** Attempt signals that have already timed out, as after a 20s body stall. */
+  function stubTimedOutAttemptSignals() {
+    return vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
+      const controller = new AbortController();
+      controller.abort(new DOMException("signal timed out", "TimeoutError"));
+      return controller.signal;
+    });
+  }
+
+  it("retries a body read that the timeout aborts with AbortError (Chromium < 154)", async () => {
+    stubTimedOutAttemptSignals();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(failingBodyResponse(new DOMException("The operation was aborted.", "AbortError")))
+      .mockResolvedValueOnce(jsonResponse(liveEnvelope));
+    stubAuthenticatedFetch( fetchMock);
+
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+
+    expect(await screen.findByText("Live unresolved")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("makes exactly four attempts when every body read is aborted by the timeout", async () => {
+    stubTimedOutAttemptSignals();
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(async () =>
+        failingBodyResponse(new DOMException("The operation was aborted.", "AbortError")),
+      );
+    stubAuthenticatedFetch( fetchMock);
+
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-failure-kind", "timeout"));
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("rides out a cold start longer than three BFF timeouts and says the service is starting", async () => {
+    const coldStart = () =>
+      new Response(JSON.stringify({ error: { code: "WEB_API_UPSTREAM_TIMEOUT", retryable: true } }), {
+        status: 504,
+        headers: { "Content-Type": "application/json" },
+      });
+    let releaseFourth: (value: Response) => void = () => undefined;
+    const fourth = new Promise<Response>((resolve) => {
+      releaseFourth = resolve;
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(coldStart())
+      .mockResolvedValueOnce(coldStart())
+      .mockResolvedValueOnce(coldStart())
+      .mockReturnValueOnce(fourth);
+    stubAuthenticatedFetch( fetchMock);
+
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+
+    // While retrying, the gate stays in loading and explains the cold start.
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+    const gate = screen.getByTestId("operator-data-unavailable");
+    expect(gate).toHaveAttribute("data-status", "loading");
+    expect(within(gate).getByTestId("operator-data-unavailable-detail")).toHaveTextContent("正在啟動");
+
+    releaseFourth(jsonResponse(liveEnvelope));
+    expect(await screen.findByText("Live unresolved")).toBeInTheDocument();
+    const ids = new Set(
+      fetchMock.mock.calls.map((call) => (call[1] as { headers: Record<string, string> }).headers["X-Correlation-Id"]),
+    );
+    expect(ids.size).toBe(1);
+  });
+
+  it("keeps the starting message when a superseded bootstrap resolves during the next one's retries", async () => {
+    const deferred = () => {
+      let resolve: (value: Response) => void = () => undefined;
+      const promise = new Promise<Response>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    };
+    const superseded = deferred();
+    const retry = deferred();
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(superseded.promise)
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { code: "WEB_API_UPSTREAM_TIMEOUT", retryable: true } }), {
+          status: 504,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockReturnValueOnce(retry.promise);
+    stubAuthenticatedFetch( fetchMock);
+
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    // Switching role cancels the pending load and starts another, which hits
+    // a cold start and begins retrying.
+    const currentRole = getOperatorRole(DEFAULT_OPERATOR_ROLE_ID);
+    const otherRole = OPERATOR_ROLES.find((role) => role.id !== currentRole.id)!;
+    fireEvent.click(screen.getByTitle(currentRole.label));
+    const menu = document.querySelector<HTMLElement>('[data-screen-label="Role Switch Menu"]')!;
+    fireEvent.click(within(menu).getByText(otherRole.label));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    const detail = () => screen.getByTestId("operator-data-unavailable-detail");
+    await waitFor(() => expect(detail()).toHaveTextContent("正在啟動"));
+
+    // The superseded load finishing must not erase the notice.
+    superseded.resolve(jsonResponse(liveEnvelope));
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    expect(detail()).toHaveTextContent("正在啟動");
+
+    const selectedEnvelope = structuredClone(liveEnvelope);
+    selectedEnvelope.meta.role = { ...selectedEnvelope.meta.role, ...otherRole };
+    selectedEnvelope.navigation.roles = [otherRole];
+    retry.resolve(jsonResponse(selectedEnvelope));
+    expect(await screen.findByText("Live unresolved")).toBeInTheDocument();
+  });
+
+  it("does not retry a malformed JSON body", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(failingBodyResponse(new SyntaxError("Unexpected token < in JSON")));
+    stubAuthenticatedFetch( fetchMock);
+
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-status", "error"));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry a permission denial", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ detail: "forbidden" }, 403));
+    stubAuthenticatedFetch( fetchMock);
+
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-failure-kind", "forbidden"));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells an expired session to sign in again instead of showing permission guidance", async () => {
+    stubAuthenticatedFetch(
+      vi.fn().mockResolvedValue(
+        jsonResponse({ error: { code: "WEB_SESSION_REQUIRED", message: "A valid web session is required." } }, 401),
+      ),
+    );
+    window.history.replaceState({}, "", "/operator?ws=store");
+
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "store" }} />);
+
+    const gate = await screen.findByTestId("operator-data-unavailable");
+    await waitFor(() => expect(gate).toHaveAttribute("data-failure-kind", "unauthenticated"));
+    expect(within(gate).getByRole("heading", { level: 1 })).toHaveTextContent("登入已過期");
+    expect(within(gate).getByTestId("operator-data-unavailable-login-link")).toHaveAttribute(
+      "href",
+      `/login?returnTo=${encodeURIComponent("/operator?ws=store")}`,
+    );
+    expect(within(gate).queryByTestId("operator-data-unavailable-admin-link")).not.toBeInTheDocument();
+    expect(gate).not.toHaveTextContent("沒有營運資料讀取權限");
+  });
+
+  it("does not show implementation jargon in the data-mode banner", async () => {
+    stubAuthenticatedFetch( vi.fn().mockRejectedValue(new Error("offline")));
+    render(<OperatorConsole deploymentEnvironment="dev" searchParams={{ ws: "today" }} />);
+    // The gate exists during loading too; wait for the final error banner,
+    // not merely the gate's first render, before checking its wording.
+    const banner = (await screen.findByText("正式資料未就緒")).parentElement as HTMLElement;
+    expect(banner).not.toHaveTextContent(/fail closed|seed|API required|loading/i);
+  });
+});

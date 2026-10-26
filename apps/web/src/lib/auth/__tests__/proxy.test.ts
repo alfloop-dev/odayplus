@@ -1,19 +1,25 @@
 import { NextRequest } from "next/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  resolveGoogleMetadataIdentityToken,
-} from "../cloudRunIdentity";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveGoogleMetadataIdentityToken } from "../cloudRunIdentity";
+import { localJwtExpiresAt, mintLocalJwt } from "../localAuth";
 import { buildUpstreamHeaders, proxyApiRequest } from "../proxy";
 import {
   readWebSession,
-  sealWebSession,
+  sealWebSessionReference,
   webSessionCookieName,
-  type WebSession,
 } from "../session";
+import { MockSessionStore, setSessionStoreForTests } from "../sessionStore";
 
 const SECRET = "test-session-secret-with-at-least-32-bytes";
+let testSessionStore: MockSessionStore;
+
+beforeEach(() => {
+  testSessionStore = new MockSessionStore();
+  setSessionStoreForTests(testSessionStore);
+});
 
 afterEach(() => {
+  setSessionStoreForTests(undefined);
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
@@ -51,15 +57,23 @@ describe("production BFF", () => {
   it("forwards through the configured upstream with only session identity", async () => {
     vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
     const now = Math.floor(Date.now() / 1000);
-    const session: WebSession = {
+    const session = {
       kind: "web-session",
-      accessToken: "real-access-token",
-      tokenType: "Bearer",
-      subject: "user-123",
+      sid: "session-123",
+      provider: "oidc",
       issuedAt: now,
       expiresAt: now + 600,
-    };
-    const cookie = await sealWebSession(session, SECRET);
+    } as const;
+    await testSessionStore.createSession({
+      sessionId: "session-123",
+      accountId: "account-123",
+      provider: "oidc",
+      accessToken: "real-access-token",
+      subject: "user-123",
+      idleTimeoutMs: 30 * 60 * 1000,
+      absoluteLifetimeMs: 8 * 60 * 60 * 1000,
+    });
+    const cookie = await sealWebSessionReference(session, SECRET);
     const fetchMock = vi.fn(async (_url: URL, init?: RequestInit) => {
       const headers = new Headers(init?.headers);
       expect(headers.get("authorization")).toBe("Bearer real-access-token");
@@ -90,7 +104,11 @@ describe("production BFF", () => {
     );
     request.cookies.set(webSessionCookieName, cookie);
     expect(request.cookies.get(webSessionCookieName)?.value).toBe(cookie);
-    await expect(readWebSession(cookie)).resolves.toEqual(session);
+    await expect(readWebSession(cookie)).resolves.toMatchObject({
+      sid: session.sid,
+      subject: "user-123",
+      accessToken: "real-access-token",
+    });
 
     const response = await proxyApiRequest(
       request,
@@ -114,6 +132,76 @@ describe("production BFF", () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
       "https://api.internal.example/api/v1/operator/bootstrap?view=today",
     );
+  });
+
+  it("renews an expired local token before forwarding to the API", async () => {
+    vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
+    const now = Math.floor(Date.now() / 1000);
+    const signingSecret = "test-local-signing-material-at-least-32-bytes";
+    const expiredToken = await mintLocalJwt({
+      subject: "account-local",
+      sid: "session-local",
+      tenantId: "tenant-local",
+      nowSeconds: now - 600,
+      expiresInSeconds: 300,
+      signingSecret,
+    });
+    await testSessionStore.createSession({
+      sessionId: "session-local",
+      accountId: "account-local",
+      provider: "local_password",
+      accessToken: expiredToken,
+      subject: "operator",
+      tenantId: "tenant-local",
+      idleTimeoutMs: 30 * 60 * 1000,
+      absoluteLifetimeMs: 8 * 60 * 60 * 1000,
+    });
+    const cookie = await sealWebSessionReference(
+      {
+        kind: "web-session",
+        sid: "session-local",
+        provider: "local_password",
+        issuedAt: now - 60,
+        expiresAt: now + 600,
+      },
+      SECRET,
+    );
+    let forwardedToken = "";
+    const fetchMock = vi.fn(async (_url: URL, init?: RequestInit) => {
+      forwardedToken =
+        new Headers(init?.headers)
+          .get("authorization")
+          ?.replace(/^Bearer /, "") || "";
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const request = new NextRequest(
+      "https://web.example/api/v1/operator/bootstrap",
+    );
+    request.cookies.set(webSessionCookieName, cookie);
+
+    const response = await proxyApiRequest(
+      request,
+      "/api/v1/operator/bootstrap",
+      {
+        NODE_ENV: "production",
+        ODP_API_BASE_URL: "https://api.internal.example",
+        ODP_API_SERVICE_AUDIENCE: "https://api.internal.example",
+        ODP_IDENTITY_TOKEN_SIGNING_KEY: signingSecret,
+        ODP_AUTH_LOCAL_ISSUER: "urn:odp:identity:local",
+        ODP_AUTH_AUDIENCES: "https://api.internal.example",
+      },
+      {
+        resolveServiceIdentityToken: async () => "service-identity-token",
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(forwardedToken).not.toBe(expiredToken);
+    expect(localJwtExpiresAt(forwardedToken)).toBeGreaterThan(now);
+    await expect(
+      testSessionStore.validateSession("session-local"),
+    ).resolves.toMatchObject({ accessToken: forwardedToken });
   });
 
   it("fails closed before contacting the upstream without a session", async () => {
@@ -227,11 +315,12 @@ describe("production BFF", () => {
   it("passes an upstream 404 through without substituting data", async () => {
     vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
     const cookie = await productionSessionCookie();
-    const fetchMock = vi.fn(async () =>
-      new Response(JSON.stringify({ error: { code: "NOT_FOUND" } }), {
-        status: 404,
-        headers: { "content-type": "application/json" },
-      }),
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: { code: "NOT_FOUND" } }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        }),
     );
     vi.stubGlobal("fetch", fetchMock);
     const request = new NextRequest(
@@ -264,11 +353,9 @@ describe("production BFF", () => {
         new Promise((_resolve, reject) => {
           const signal = init?.signal;
           expect(signal).toBeInstanceOf(AbortSignal);
-          signal?.addEventListener(
-            "abort",
-            () => reject(signal.reason),
-            { once: true },
-          );
+          signal?.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
         }),
     );
     vi.stubGlobal("fetch", fetchMock);
@@ -323,15 +410,144 @@ describe("production BFF", () => {
 
 async function productionSessionCookie(): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
-  return sealWebSession(
+  await testSessionStore.createSession({
+    sessionId: "session-123",
+    accountId: "account-123",
+    provider: "oidc",
+    accessToken: "real-access-token",
+    subject: "user-123",
+    idleTimeoutMs: 30 * 60 * 1000,
+    absoluteLifetimeMs: 8 * 60 * 60 * 1000,
+  });
+  return sealWebSessionReference(
     {
       kind: "web-session",
-      accessToken: "real-access-token",
-      tokenType: "Bearer",
-      subject: "user-123",
+      sid: "session-123",
+      provider: "oidc",
       issuedAt: now,
       expiresAt: now + 600,
     },
     SECRET,
   );
 }
+
+describe("actual actor caller constraint forwarding", () => {
+  it("forwards If-Actor-Match while stripping browser bearer and identity grants", () => {
+    const result = buildUpstreamHeaders({
+      requestHeaders: new Headers({
+        "If-Actor-Match": "account-current", authorization: "Bearer browser-forged-token",
+        "x-subject-id": "browser-forged-subject", "x-tenant-id": "browser-forged-tenant", "x-roles": "admin",
+      }),
+      accessToken: "server-owned-token", allowLegacyIdentity: false,
+    });
+    expect(result.get("if-actor-match")).toBe("account-current");
+    expect(result.get("authorization")).toBe("Bearer server-owned-token");
+    expect(result.get("x-subject-id")).toBeNull();
+    expect(result.get("x-tenant-id")).toBeNull();
+    expect(result.get("x-roles")).toBeNull();
+  });
+
+  it("carries actual request constraint through production proxy without granting browser identity", async () => {
+    vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
+    const cookie = await productionSessionCookie();
+    const fetchMock = vi.fn(async (_url: URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("if-actor-match")).toBe("account-123");
+      expect(headers.get("authorization")).toBe("Bearer real-access-token");
+      expect(headers.get("x-serverless-authorization")).toBe("Bearer server-service-token");
+      expect(headers.get("x-subject-id")).toBeNull();
+      expect(headers.get("x-tenant-id")).toBeNull();
+      expect(headers.get("x-roles")).toBeNull();
+      return new Response("{}", { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const request = new NextRequest("https://web.example/api/v1/operator/bootstrap", {
+      headers: {
+        "If-Actor-Match": "account-123", authorization: "Bearer browser-forged-token",
+        "x-subject-id": "browser-forged-subject", "x-tenant-id": "browser-forged-tenant", "x-roles": "admin",
+      },
+    });
+    request.cookies.set(webSessionCookieName, cookie);
+    const response = await proxyApiRequest(request, "/api/v1/operator/bootstrap", {
+      NODE_ENV: "production", ODP_API_BASE_URL: "https://api.internal.example", ODP_API_SERVICE_AUDIENCE: "https://api.internal.example",
+    }, { resolveServiceIdentityToken: async () => "server-service-token" });
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+});
+
+
+describe("retained AVM integrity through the actual production response proxy", () => {
+  it("forwards exact export identity and digest with original download metadata while denying secret response headers", async () => {
+    vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
+    const cookie = await productionSessionCookie();
+    const exportId = "avm-export-11111111-1111-4111-8111-111111111111";
+    const bytes = new TextEncoder().encode(JSON.stringify({ exportId, sourceDocumentBytesIncluded: false }));
+    const { createHash } = await import("node:crypto");
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    const disposition = `attachment; filename="${exportId}.json"`;
+    const fetchMock = vi.fn(async (_url: URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("if-actor-match")).toBe("user-123");
+      expect(headers.get("authorization")).toBe("Bearer real-access-token");
+      expect(headers.get("x-serverless-authorization")).toBe("Bearer trusted-service-token");
+      return new Response(bytes, { status: 200, headers: {
+        "content-type": "application/json", "content-disposition": disposition,
+        etag: `"${digest}"`, "x-avm-export-id": exportId, "x-content-sha256": digest,
+        "cache-control": "public, max-age=3600", authorization: "Bearer upstream-secret",
+        "x-serverless-authorization": "Bearer upstream-service-secret", "set-cookie": "upstream-private-cookie=secret",
+        "x-internal-debug": "private-provider-detail",
+      } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const path = `/api/v1/operator/avm/cases/actual-case/dataroom/exports/${exportId}`;
+    const request = new NextRequest(`https://web.example${path}`, { headers: { "If-Actor-Match": "user-123" } });
+    request.cookies.set(webSessionCookieName, cookie);
+    const response = await proxyApiRequest(request, path, {
+      NODE_ENV: "production", ODP_API_BASE_URL: "https://api.internal.example", ODP_API_SERVICE_AUDIENCE: "https://api.internal.example",
+    }, { resolveServiceIdentityToken: async () => "trusted-service-token" });
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(response.headers.get("x-avm-export-id")).toBe(exportId);
+    expect(response.headers.get("x-content-sha256")).toBe(digest);
+    expect(response.headers.get("content-disposition")).toBe(disposition);
+    expect(response.headers.get("content-type")).toBe("application/json");
+    expect(response.headers.get("etag")).toBe(`"${digest}"`);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    for (const name of ["authorization", "x-serverless-authorization", "set-cookie", "x-internal-debug"]) {
+      expect(response.headers.get(name)).toBeNull();
+    }
+    const actualBytes = new Uint8Array(await response.arrayBuffer());
+    expect(actualBytes).toEqual(bytes);
+    expect(createHash("sha256").update(actualBytes).digest("hex")).toBe(response.headers.get("x-content-sha256"));
+  });
+});
+
+
+it("preserves actual Survey attachment no-sniff and bytes through the authenticated production BFF without forwarding private upstream headers", async () => {
+  vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
+  const cookie = await productionSessionCookie();
+  const bytes = new Uint8Array([255, 216, 255, 0, 1, 2, 255, 217]);
+  const { createHash } = await import("node:crypto");
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  vi.stubGlobal("fetch", vi.fn(async (_url: URL, init?: RequestInit) => {
+    expect(new Headers(init?.headers).get("authorization")).toBe("Bearer real-access-token");
+    return new Response(bytes, { status: 200, headers: { "content-type": "application/octet-stream",
+      "content-disposition": 'attachment; filename="survey-media-owned.bin"', "x-content-type-options": "nosniff",
+      "x-content-sha256": digest, "cache-control": "public, max-age=3600", "set-cookie": "private=upstream",
+      authorization: "Bearer private-upstream-token", "x-internal-debug": "private-detail" } });
+  }));
+  const path = "/api/v1/market-survey/assignments/asgn-owned/attachments/media-owned/content";
+  const request = new NextRequest(`https://web.example${path}`); request.cookies.set(webSessionCookieName, cookie);
+  const result = await proxyApiRequest(request, path, { NODE_ENV: "production", ODP_API_BASE_URL: "https://api.internal.example",
+    ODP_API_SERVICE_AUDIENCE: "https://api.internal.example" }, { resolveServiceIdentityToken: async () => "trusted-service-token" });
+  expect(result.status).toBe(200);
+  expect(result.headers.get("x-content-type-options")).toBe("nosniff");
+  expect(result.headers.get("content-type")).toBe("application/octet-stream");
+  expect(result.headers.get("content-disposition")).toBe('attachment; filename="survey-media-owned.bin"');
+  expect(result.headers.get("cache-control")).toBe("no-store");
+  expect(result.headers.get("x-content-sha256")).toBe(digest);
+  for (const name of ["set-cookie", "authorization", "x-internal-debug"]) expect(result.headers.get(name)).toBeNull();
+  const actual = new Uint8Array(await result.arrayBuffer());
+  expect(actual).toEqual(bytes); expect(createHash("sha256").update(actual).digest("hex")).toBe(digest);
+});

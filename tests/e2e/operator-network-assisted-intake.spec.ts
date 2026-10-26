@@ -8,9 +8,9 @@ import {
 /**
  * Assisted Listing Intake — product E2E (ODP-OC-R5-011 / ODP-OC-R5-004).
  *
- * This test suite drives the REAL Operator Console UI against the REAL FastAPI backend
- * (both booted by playwright.config.ts). Nothing here is stubbed: every assertion
- * reflects a durable server decision.
+ * This suite drives the real Operator UI and FastAPI server with explicitly
+ * synthetic fixture records and header-trust test identities. Assertions cover
+ * persisted test effects; this is not a production login or real role UAT.
  *
  * ============================================================================
  * TEST-TO-ACCEPTANCE MAPPING (ODP-OC-R5-004)
@@ -44,12 +44,16 @@ import {
  * ============================================================================
  */
 
+import { openPgScenario } from "./_intakeScorePg";
+
 import {
   acquireOperatorBackendLock,
   releaseOperatorBackendLock,
 } from "./_operatorBackendLock";
 
 const API_BASE_URL = process.env.ODP_API_BASE_URL ?? "http://127.0.0.1:8099";
+// Deliberate test input, not a production catalog choice.
+const SYNTHETIC_TARGET_FORMAT = "synthetic-manual-format:Audit/v1";
 
 const URLS = {
   clean: "https://www.synthetic.example/detail-77120345.html", // → READY / NEW
@@ -91,6 +95,14 @@ test.beforeEach(async () => {
 
 /** Open the Network workspace as 展店經理 — the only role holding listing grants. */
 async function openRadarAsExpansionManager(page: Page) {
+  // Keep the actual synthetic browser principal aligned with its session
+  // subject; the generic config identity must not impersonate this operator.
+  await page.setExtraHTTPHeaders({
+    "x-subject-id": "operator-expansion-manager",
+    "x-roles": "expansion_user,site_reviewer",
+    "x-operator-role": "expansion-manager",
+    "x-tenant-id": "tenant-a",
+  });
   await page.addInitScript(() => {
     window.sessionStorage.setItem("oday.operator.role", "expansion-manager");
     // The operator identity is fail-closed: without a session subject the UI
@@ -124,11 +136,8 @@ async function getIntakeApi(id: string) {
     baseURL: API_BASE_URL,
     extraHTTPHeaders: {
       "x-subject-id": "operator-expansion-manager",
-      // Read the durable record as the same manager principal that drove the
-      // UI (expansion-manager maps to expansion_user,site_reviewer). Staff
-      // `view` is ownership-scoped against the record's submitter/owner (a
-      // display label, not this probe's subject id), so a staff read of a
-      // UI-created record correctly fails closed with OWNERSHIP_REQUIRED.
+      // The same verified fixture subject owns the record. Platform roles,
+      // rather than client display/persona labels, determine the audit role.
       "x-roles": "expansion_user,site_reviewer",
       "x-operator-role": "expansion-manager",
       "x-tenant-id": "tenant-a",
@@ -604,13 +613,19 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
   test("a role without listing permission gets the permission-limited state, not an empty queue", async ({
     page,
   }) => {
+    // The generic QA browser holds Network grants. Use this case's actual
+    // restricted Principal as well as its display-persona preference.
+    await page.setExtraHTTPHeaders({
+      "x-subject-id": "synthetic-denied-ops", "x-roles": "operations_manager",
+      "x-operator-role": "ops-lead", "x-tenant-id": "tenant-a",
+    });
     await page.addInitScript(() => {
       window.sessionStorage.setItem("oday.operator.role", "ops-lead");
     });
     await page.goto("/operator?ws=network");
-    await page.getByTestId("network-tab-1").click();
-
-    await expect(page.getByTestId("intake-no-access")).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Operator workspaces" }).getByRole("button", { name: /展店與店網/ })).toHaveAttribute("aria-disabled", "true");
+    const denied = await page.request.get("/api/v1/operator/network-listings/intake", { headers: {"x-operator-role": "ops-lead", "x-roles": "operations_manager", "x-subject-id": "synthetic-denied-ops", "x-tenant-id": "tenant-a"} });
+    expect(denied.status()).toBe(403);
     // It must not imply "no submissions exist", and must offer no write action.
     await expect(page.getByTestId("intake-inbox-empty")).toHaveCount(0);
     await expect(page.getByTestId("intake-add-button")).toHaveCount(0);
@@ -977,7 +992,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
 
   test("verify audit envelope for CREATE and PROMOTE decisions", async ({
     page,
-  }) => {
+  }, info) => {
     await openRadarAsExpansionManager(page);
 
     // 1. CREATE decision
@@ -1003,7 +1018,8 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       (e: any) => e.action === "intake.decide.create",
     );
     expect(auditCreate).toBeDefined();
-    expect(auditCreate.actorRoleId).toBe("expansion-manager");
+    expect(auditCreate.actorRoleId).toBe("site_reviewer");
+    expect(auditCreate.actorName).toBe("operator-expansion-manager");
     expect(auditCreate.occurredAt).toBeTruthy();
     expect(auditCreate.message).toContain("Audit test create reason");
     expect(auditCreate.correlationId).toBeTruthy();
@@ -1017,53 +1033,73 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
     const createdListingId = auditCreate.metadata.targetListingId;
     expect(createdListingId).toBeTruthy();
 
-    // 2. PROMOTE decision (requires targetListingId created above)
-    const apiContext = await playwrightRequest.newContext({
-      baseURL: API_BASE_URL,
-      extraHTTPHeaders: {
-        "x-subject-id": "operator-expansion-manager",
-        "x-roles": "expansion_user",
-        "x-operator-role": "expansion-staff",
-        "x-tenant-id": "tenant-a",
-        "X-Correlation-Id": "promote-corr-id-12345",
-        "Idempotency-Key": "promote-key-12345",
-      },
-    });
-    const promoteRes = await apiContext.post(
-      `/api/v1/operator/network-listings/intake/${id1}/promote`,
-      {
-        data: {
-          reason: "Audit test promote reason",
-          riskSummary: "測試推廣風險宣告",
-          riskAcknowledged: true,
-          actorRoleId: "expansion-manager",
-          actorName: "林曉青",
-        },
-      },
-    );
-    expect(promoteRes.status()).toBe(200);
-    const promoteResultData = await promoteRes.json();
-    await apiContext.dispose();
-
-    // Package 10 promotion is a reviewed two-actor saga: this endpoint only
-    // records the promotion *request* (candidate creation happens after the
-    // independent review, covered by the canonical assisted-listing spec).
-    expect(promoteResultData.status).toBe("PENDING_REVIEW");
-    expect(promoteResultData.promotion_decision_id).toBeTruthy();
-
-    const data1Updated = await getIntakeApi(id1);
-    const auditPromote = data1Updated.auditEvents.find(
-      (e: any) => e.action === "intake.promote_request",
-    );
-    expect(auditPromote).toBeDefined();
-    expect(auditPromote.actorRoleId).toBe("expansion-manager");
-    expect(auditPromote.occurredAt).toBeTruthy();
-    expect(auditPromote.message).toContain("Audit test promote reason");
-    expect(auditPromote.correlationId).toBe("promote-corr-id-12345");
-    expect(auditPromote.metadata.targetListingId).toBe(createdListingId);
-    expect(auditPromote.metadata.reason).toBe("Audit test promote reason");
-    expect(auditPromote.metadata.riskSummary).toBe("測試推廣風險宣告");
-    expect(auditPromote.metadata.riskAcknowledged).toBe(true);
+    // 2. Canonical promotion uses a separately admitted, measured PG fixture.
+    // The created legacy row above has real hard-rule failures; its 422 is a
+    // correct guard, not a reason to manufacture geocode or weaken acceptance.
+    const pgPage = await page.context().newPage();
+    const { api, scenario } = await openPgScenario(pgPage);
+    try {
+      await expect(pgPage.getByTestId("promotion-target-format")).toHaveValue("");
+      await pgPage.getByTestId("promotion-target-format").fill(SYNTHETIC_TARGET_FORMAT);
+      await pgPage.getByTestId("promotion-request-reason").fill("Audit test canonical promotion reason");
+      await pgPage.getByTestId("promotion-request-ack").check();
+      const [requested] = await Promise.all([
+        pgPage.waitForResponse((r) => r.url().includes("/promotion-requests") && r.request().method() === "POST"),
+        pgPage.getByTestId("promotion-request-submit").click(),
+      ]);
+      expect(requested.status(), await requested.text()).toBe(202);
+      const requestReceipt = await requested.json();
+      expect(requestReceipt.status).toBe("PENDING_REVIEW");
+      expect(requested.request().postDataJSON().target_format_code).toBe(SYNTHETIC_TARGET_FORMAT);
+      expect(requestReceipt.target_format_code).toBe(SYNTHETIC_TARGET_FORMAT);
+      await expect(pgPage.getByTestId("promotion-self-review-denied")).toBeVisible();
+      await pgPage.setExtraHTTPHeaders({ "x-subject-id": scenario.reviewer_id, "x-tenant-id": scenario.tenant_id,
+        "x-roles": "expansion_user,site_reviewer", "x-operator-role": "expansion-manager" });
+      await pgPage.evaluate((actor) => sessionStorage.setItem("oday.operator.subject", actor), scenario.reviewer_id);
+      await pgPage.reload();
+      await expect(pgPage.getByTestId("promotion-second-actor-ok")).toBeVisible();
+      await expect(pgPage.getByTestId("promotion-receipt")).toContainText(SYNTHETIC_TARGET_FORMAT);
+      await pgPage.getByTestId("promotion-review-reason").fill("Audit test independent review reason");
+      await pgPage.getByTestId("promotion-review-ack").check();
+      await pgPage.getByTestId("promotion-approve-btn").click();
+      await expect(pgPage.getByTestId("promotion-review-summary")).toContainText(SYNTHETIC_TARGET_FORMAT);
+      const [reviewed] = await Promise.all([
+        pgPage.waitForResponse((r) => r.url().includes("/actions/review") && r.request().method() === "POST"),
+        pgPage.getByTestId("promotion-confirm-approve-btn").click(),
+      ]);
+      expect(reviewed.status(), await reviewed.text()).toBe(200);
+      const reviewReceipt = await reviewed.json();
+      expect(reviewReceipt.status).toBe("SCORE_QUEUED");
+      expect(reviewReceipt.target_format_code).toBe(SYNTHETIC_TARGET_FORMAT);
+      const evidenceResponse = await api.get(`/_synthetic/evidence/${scenario.scenario_id}`);
+      expect(evidenceResponse.status(), await evidenceResponse.text()).toBe(200);
+      const evidence = await evidenceResponse.json();
+      const requestAudit = evidence.audits.find((event: any) => event.audit_event_id === requestReceipt.audit_event_id);
+      expect(requestAudit).toMatchObject({ actor_subject_id: scenario.proposer_id, action: "intake.promotion_requested",
+        resource_id: requestReceipt.promotion_decision_id, result: "SUCCEEDED", before_value: null });
+      expect(requestAudit.after_value).toMatchObject({ listing_id: scenario.listing_id, intake_id: scenario.intake_id,
+        reason: "Audit test canonical promotion reason", status: "PENDING_REVIEW", target_format_code: SYNTHETIC_TARGET_FORMAT });
+      expect(requestAudit.correlation_id).toBe((await requested.request().allHeaders())["x-correlation-id"]);
+      expect(requestAudit.occurred_at).toBeTruthy();
+      const reviewAudit = evidence.audits.find((event: any) => event.audit_event_id === reviewReceipt.audit_event_id);
+      expect(reviewAudit).toMatchObject({ actor_subject_id: scenario.reviewer_id, action: "promotion.score_queued",
+        resource_id: requestReceipt.promotion_decision_id, result: "SUCCEEDED" });
+      expect(reviewAudit.before_value.status).toBe("PENDING_REVIEW");
+      expect(reviewAudit.after_value).toMatchObject({ status: "SCORE_QUEUED", review_reason: "Audit test independent review reason",
+        risk_acknowledged: true, site_score_job_id: reviewReceipt.site_score_job_id, candidate_site_id: reviewReceipt.candidate_site_id });
+      expect(reviewAudit.correlation_id).toBe((await reviewed.request().allHeaders())["x-correlation-id"]);
+      expect(reviewAudit.occurred_at).toBeTruthy();
+      expect(evidence.job).toMatchObject({ job_id: reviewReceipt.site_score_job_id, status: "QUEUED", attempt: 0 });
+      await info.attach("physical-pg-request-and-review-audit", { body: JSON.stringify(evidence, null, 2), contentType: "application/json" });
+      // Leave the isolated queue settled so a later positive case can run its
+      // own true worker without inheriting another scenario's pending work.
+      const drained = await api.post("/_synthetic/worker/drain", { data: { scenario_id: scenario.scenario_id }, timeout: 45_000 });
+      expect(drained.ok(), await drained.text()).toBe(true);
+      expect((await drained.json()).job.status).toBe("SUCCEEDED");
+    } finally {
+      await api.dispose();
+      await pgPage.close();
+    }
   });
 
   test("verify audit envelope for REVISE decision", async ({ page }) => {
@@ -1091,7 +1127,8 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       (e: any) => e.action === "intake.decide.revise",
     );
     expect(auditRevise).toBeDefined();
-    expect(auditRevise.actorRoleId).toBe("expansion-manager");
+    expect(auditRevise.actorRoleId).toBe("site_reviewer");
+    expect(auditRevise.actorName).toBe("operator-expansion-manager");
     expect(auditRevise.occurredAt).toBeTruthy();
     expect(auditRevise.message).toContain("Audit test revise reason");
     expect(auditRevise.correlationId).toBeTruthy();
@@ -1130,7 +1167,8 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       (e: any) => e.action === "intake.decide.duplicate",
     );
     expect(auditDup).toBeDefined();
-    expect(auditDup.actorRoleId).toBe("expansion-manager");
+    expect(auditDup.actorRoleId).toBe("site_reviewer");
+    expect(auditDup.actorName).toBe("operator-expansion-manager");
     expect(auditDup.occurredAt).toBeTruthy();
     expect(auditDup.message).toContain("Audit test duplicate reason");
     expect(auditDup.correlationId).toBeTruthy();
@@ -1169,7 +1207,8 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       (e: any) => e.action === "intake.decide.quarantine",
     );
     expect(auditQuarantine).toBeDefined();
-    expect(auditQuarantine.actorRoleId).toBe("expansion-manager");
+    expect(auditQuarantine.actorRoleId).toBe("site_reviewer");
+    expect(auditQuarantine.actorName).toBe("operator-expansion-manager");
     expect(auditQuarantine.occurredAt).toBeTruthy();
     expect(auditQuarantine.message).toContain("Audit test quarantine reason");
     expect(auditQuarantine.correlationId).toBeTruthy();
@@ -1207,7 +1246,27 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
         "Idempotency-Key": "reject-key-12345",
       },
     });
-    const rejectRes = await apiContext.post(
+    const deniedStaff = await apiContext.post(
+      `/api/v1/operator/network-listings/intake/${id5}/decide`,
+      { data: { action: "reject", reason: "Staff cannot manufacture manager authority",
+        riskSummary: "Synthetic rejection risk", riskAcknowledged: true,
+        actorRoleId: "expansion-manager", actorName: "forged-manager" } },
+    );
+    expect(deniedStaff.status()).toBe(422);
+    const unchanged = await getIntakeApi(id5);
+    expect(unchanged.stage).toBe("NEEDS_REVIEW");
+    expect(unchanged.auditEvents.filter((event: any) => event.action === "intake.decide.reject")).toHaveLength(0);
+    await apiContext.dispose();
+    // Explicit authorized test identity, rather than a body-supplied persona.
+    const managerContext = await playwrightRequest.newContext({
+      baseURL: API_BASE_URL, extraHTTPHeaders: {
+        "x-subject-id": "operator-expansion-manager",
+        "x-roles": "expansion_user,site_reviewer", "x-operator-role": "expansion-manager",
+        "x-tenant-id": "tenant-a", "X-Correlation-Id": "reject-corr-id-12345",
+        "Idempotency-Key": "reject-key-12345",
+      },
+    });
+    const rejectRes = await managerContext.post(
       `/api/v1/operator/network-listings/intake/${id5}/decide`,
       {
         data: {
@@ -1221,7 +1280,7 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       },
     );
     expect(rejectRes.status()).toBe(200);
-    await apiContext.dispose();
+    await managerContext.dispose();
 
     const data5 = await getIntakeApi(id5);
     expect(data5.parserVersion).toBeTruthy();
@@ -1230,7 +1289,8 @@ test.describe("Assisted Listing Intake — Package 7 product surfaces", () => {
       (e: any) => e.action === "intake.decide.reject",
     );
     expect(auditReject).toBeDefined();
-    expect(auditReject.actorRoleId).toBe("expansion-manager");
+    expect(auditReject.actorRoleId).toBe("site_reviewer");
+    expect(auditReject.actorName).toBe("operator-expansion-manager");
     expect(auditReject.occurredAt).toBeTruthy();
     expect(auditReject.message).toContain("Audit test reject reason");
     expect(auditReject.correlationId).toBe("reject-corr-id-12345");

@@ -1,0 +1,9 @@
+# Operator inputs/evidence must stay in governed storage, never in the PR.
+*.tfvars
+*.tfvars.json
+backend.hcl
+*.plan
+*.tfplan
+*.tfstate
+*.tfstate.*
+.terraform/

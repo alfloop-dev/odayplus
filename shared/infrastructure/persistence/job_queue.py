@@ -10,28 +10,55 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from enum import Enum
 from typing import Any
 
 from shared.infrastructure.persistence.engine import SqliteEngine
 from shared.jobs.queue import (
+    AUDIT_DELIVERY_JOB_TYPES,
+    DELIVERY_SETTLED_JOB_STATUSES,
     NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES,
+    JobDeliveryState,
+    JobFenceRejectedError,
     JobRecord,
     JobRequest,
     JobStatus,
+    NonRetryableJobError,
+    check_job_feature_flag,
+    resolve_job_feature_flag_key,
+)
+
+_LEGACY_RETRYING_STATUS_VALUES = (JobDeliveryState.RETRYING.value, "RETRYING")
+
+# Polling must not query tenant-protected business tables before the signed
+# reference is authenticated. The bridge mirrors canonical eligibility into
+# this delivery-only column in its transaction, then rechecks the canonical
+# due time/fence under tenant RLS before executing. Existing unmigrated score
+# deliveries remain parked until tenant-scoped reconciliation binds a schedule.
+_CANONICAL_INTAKE_SCORE_ELIGIBILITY = (
+    " AND (durable_jobs.job_type <> 'intake-sitescore' OR available_at IS NOT NULL) "
 )
 
 
-class JobFenceRejectedError(ValueError):
-    """Raised when a job write/checkpoint fails due to stale fence_token or version."""
-
-    pass
+# The four bound audit-type parameters below mirror the shared closed runtime
+# vocabulary. Keep literal SQL arity aligned when a reviewed type is added;
+# job-type values remain parameters rather than query text.
 
 
 class DurableJobQueue:
     """``enqueue`` / ``get`` over the ``durable_jobs`` table."""
 
-    def __init__(self, engine: SqliteEngine) -> None:
+    def __init__(
+        self, engine: SqliteEngine, *, canonical_intake_score_schedule: bool = False,
+        flags: Any = None,
+    ) -> None:
         self._engine = engine
+        self._flags = flags
+        if canonical_intake_score_schedule and str(getattr(engine, "dialect", "")).lower() != "postgresql":
+            raise ValueError("Canonical intake score scheduling requires PostgreSQL")
+        self._claim_eligibility = (
+            _CANONICAL_INTAKE_SCORE_ELIGIBILITY if canonical_intake_score_schedule else ""
+        )
 
     def count_active_jobs(self, *, tenant_id: str | None = None) -> int:
         with self._engine.lock:
@@ -39,6 +66,7 @@ class DurableJobQueue:
             params: list[str] = [
                 JobStatus.QUEUED.value,
                 JobStatus.RUNNING.value,
+                *_LEGACY_RETRYING_STATUS_VALUES,
                 *(f"%{suffix}" for suffix in NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES),
             ]
             if tenant_id is not None:
@@ -50,32 +78,35 @@ class DurableJobQueue:
             # tenant_clause is one of two fixed SQL fragments; the value is bound.
             row = self._engine.query_one(
                 "SELECT COUNT(*) as count FROM durable_jobs "
-                "WHERE (status = ? OR status = ?) "
+                "WHERE status IN (?, ?, ?, ?) "
                 "AND job_type NOT LIKE ? AND job_type NOT LIKE ?" + tenant_clause,  # nosec B608
                 tuple(params),
             )
             return row["count"] if row else 0
 
     def enqueue(self, request: JobRequest, *, correlation_id: str) -> tuple[JobRecord, bool]:
+        self._check_feature_flag(request.job_type, request.payload)
         record = JobRecord(
             job_type=request.job_type,
             payload=request.payload,
             correlation_id=correlation_id,
             idempotency_key=request.idempotency_key,
+            **({"job_id": request.job_id} if request.job_id else {}),
         )
         with self._engine.lock:
             result = self._engine.execute(
                 "INSERT INTO durable_jobs("
-                "  job_id, job_type, status, correlation_id, idempotency_key, "
+                "  job_id, job_type, status, delivery_state, correlation_id, idempotency_key, "
                 "  payload_json, created_at, fence_token, version, locked_by, "
                 "  heartbeat_at, lease_expires_at, attempts, error_message, "
                 "  leased_until, max_retries"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT DO NOTHING",
                 (
                     record.job_id,
                     record.job_type,
                     record.status.value,
+                    record.delivery_state.value if record.delivery_state else None,
                     record.correlation_id,
                     record.idempotency_key,
                     json.dumps(record.payload),
@@ -110,35 +141,59 @@ class DurableJobQueue:
         from datetime import UTC, timedelta
 
         with self._engine.lock:
-            now = datetime.now(UTC)
+            postgresql = str(getattr(self._engine, "dialect", "")).lower() == "postgresql"
+            now = (
+                datetime.fromisoformat(self._engine.query_one(
+                    "SELECT statement_timestamp() AS claim_time"
+                )["claim_time"])
+                if postgresql else datetime.now(UTC)
+            )
             now_str = now.isoformat()
+            row_lock = " FOR UPDATE SKIP LOCKED" if postgresql else ""
+            available = (
+                " AND (available_at IS NULL OR available_at <= statement_timestamp()) "
+                if postgresql else
+                " AND (available_at IS NULL OR julianday(available_at) <= julianday(?)) "
+            )
 
             while True:
                 # Find the oldest eligible job
+                # Eligibility and row_lock are fixed literals selected by the
+                # constructor boolean / engine dialect; all values are bound.
                 row = self._engine.query_one(
-                    "SELECT * FROM durable_jobs "
-                    "WHERE (status = ? OR (status = ? AND leased_until < ?)) "
+                    "SELECT * FROM durable_jobs "  # nosec B608
+                    "WHERE (status IN (?, ?, ?) OR (status = ? AND leased_until < ?)) "
                     "AND job_type NOT LIKE ? AND job_type NOT LIKE ? "
-                    "ORDER BY created_at ASC LIMIT 1",
+                    + available
+                    + self._claim_eligibility
+                    + "ORDER BY CASE WHEN job_type IN (?, ?, ?, ?) THEN 0 ELSE 1 END, created_at, job_id LIMIT 1"
+                    + row_lock,
                     (
                         JobStatus.QUEUED.value,
+                        *_LEGACY_RETRYING_STATUS_VALUES,
                         JobStatus.RUNNING.value,
                         now_str,
                         *(f"%{suffix}" for suffix in NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES),
+                        *((now_str,) if not postgresql else ()),
+                        *AUDIT_DELIVERY_JOB_TYPES,
                     ),
                 )
                 if row is None:
                     return None
 
                 job_id = row["job_id"]
+                record = self._row_to_record(row)
+                if not self._flag_admitted(record):
+                    continue
                 current_attempts = row["attempts"]
                 max_retries = row["max_retries"]
 
                 # Check if it has exceeded max_retries
                 if current_attempts >= max_retries:
                     self._engine.execute(
-                        "UPDATE durable_jobs SET status = ?, leased_until = NULL WHERE job_id = ?",
-                        (JobStatus.FAILED.value, job_id),
+                        "UPDATE durable_jobs SET status = ?, delivery_state = ?, "
+                        "leased_until = NULL WHERE job_id = ?",
+                        (JobStatus.FAILED.value, JobDeliveryState.DEAD_LETTER.value, job_id),
                     )
                     continue
 
@@ -147,8 +202,17 @@ class DurableJobQueue:
                 leased_until_str = leased_until_dt.isoformat()
 
                 self._engine.execute(
-                    "UPDATE durable_jobs SET status = ?, attempts = ?, leased_until = ? WHERE job_id = ?",
-                    (JobStatus.RUNNING.value, new_attempts, leased_until_str, job_id),
+                    "UPDATE durable_jobs SET status = ?, attempts = ?, leased_until = ?, "
+                    "delivery_state = CASE WHEN status IN (?, ?) THEN ? "
+                    "ELSE delivery_state END WHERE job_id = ?",
+                    (
+                        JobStatus.RUNNING.value,
+                        new_attempts,
+                        leased_until_str,
+                        *_LEGACY_RETRYING_STATUS_VALUES,
+                        JobDeliveryState.RETRYING.value,
+                        job_id,
+                    ),
                 )
 
                 updated_row = self._engine.query_one(
@@ -172,7 +236,8 @@ class DurableJobQueue:
                 if row["status"] != JobStatus.RUNNING.value or row["leased_until"] != token_str:
                     return False
             self._engine.execute(
-                "UPDATE durable_jobs SET status = ?, leased_until = NULL WHERE job_id = ?",
+                "UPDATE durable_jobs SET status = ?, delivery_state = NULL, "
+                "leased_until = NULL WHERE job_id = ?",
                 (JobStatus.SUCCEEDED.value, job_id),
             )
             return True
@@ -201,18 +266,22 @@ class DurableJobQueue:
                 max_retries = row["max_retries"]
                 if attempts < max_retries:
                     self._engine.execute(
-                        "UPDATE durable_jobs SET status = ?, leased_until = NULL WHERE job_id = ?",
-                        (JobStatus.QUEUED.value, job_id),
+                        "UPDATE durable_jobs SET status = ?, delivery_state = ?, "
+                        "leased_until = NULL WHERE job_id = ?",
+                        (JobStatus.QUEUED.value, JobDeliveryState.RETRYING.value, job_id),
                     )
                 else:
                     self._engine.execute(
-                        "UPDATE durable_jobs SET status = ?, leased_until = NULL WHERE job_id = ?",
-                        (JobStatus.FAILED.value, job_id),
+                        "UPDATE durable_jobs SET status = ?, delivery_state = ?, "
+                        "leased_until = NULL WHERE job_id = ?",
+                        (JobStatus.FAILED.value, JobDeliveryState.DEAD_LETTER.value, job_id),
                     )
             return True
 
-    def claim_next(self, worker_id: str = "worker-1") -> JobRecord | None:
-        with self._engine.lock:
+    def claim_next(self, worker_id: str = "worker-1", *, audit_only: bool = False) -> JobRecord | None:
+        # A temporary owner/read failure must undo the claim's attempts/fence
+        # update, not consume work as if the flag were permanently disabled.
+        with self._engine.transaction():
             now = datetime.now(UTC)
             now_str = now.isoformat()
             heartbeat = now_str
@@ -222,48 +291,66 @@ class DurableJobQueue:
             )
 
             if str(getattr(self._engine, "dialect", "")).lower() == "postgresql":
+                # The constructor boolean selects the fixed eligibility
+                # constant; no caller-provided SQL or payload is interpolated.
                 updated = self._engine.query_one(
-                    "WITH candidate AS ("
+                    "WITH candidate AS ("  # nosec B608
                     "  SELECT job_id FROM durable_jobs "
-                    "  WHERE (status = ? OR (status = ? AND lease_expires_at IS NOT NULL "
-                    "    AND lease_expires_at < ?)) "
+                    "  WHERE (status IN (?, ?, ?) OR (status = ? AND lease_expires_at IS NOT NULL "
+                    "    AND lease_expires_at < statement_timestamp())) "
                     "  AND job_type NOT LIKE ? AND job_type NOT LIKE ? "
-                    "  ORDER BY created_at "
+                    "  AND (? = FALSE OR job_type IN (?, ?, ?, ?)) "
+                    "  AND (available_at IS NULL OR available_at <= statement_timestamp()) "
+                    + self._claim_eligibility
+                    + "  ORDER BY CASE WHEN job_type IN (?, ?, ?, ?) THEN 0 ELSE 1 END, created_at, job_id "  # nosec B608
                     "  FOR UPDATE SKIP LOCKED "
                     "  LIMIT 1"
                     ") "
                     "UPDATE durable_jobs AS jobs SET "
-                    "  status = ?, fence_token = jobs.fence_token + 1, "
-                    "  version = jobs.version + 1, locked_by = ?, heartbeat_at = ?, "
-                    "  lease_expires_at = ?, attempts = jobs.attempts + 1 "
+                    "  status = ?, delivery_state = COALESCE(jobs.delivery_state, "
+                    "CASE WHEN jobs.status IN (?, ?) THEN ? ELSE NULL END), "
+                    "  fence_token = jobs.fence_token + 1, "
+                    "  version = jobs.version + 1, locked_by = ?, heartbeat_at = statement_timestamp(), "
+                    "  lease_expires_at = statement_timestamp() + interval '45 seconds', attempts = jobs.attempts + 1 "
                     "FROM candidate "
                     "WHERE jobs.job_id = candidate.job_id "
                     "RETURNING jobs.*",
                     (
                         JobStatus.QUEUED.value,
+                        *_LEGACY_RETRYING_STATUS_VALUES,
                         JobStatus.RUNNING.value,
-                        now_str,
                         *receipt_patterns,
+                        audit_only,
+                        *AUDIT_DELIVERY_JOB_TYPES,
+                        *AUDIT_DELIVERY_JOB_TYPES,
                         JobStatus.RUNNING.value,
+                        *_LEGACY_RETRYING_STATUS_VALUES,
+                        JobDeliveryState.RETRYING.value,
                         worker_id,
-                        heartbeat,
-                        lease_expires,
                     ),
                 )
-                return None if updated is None else self._row_to_record(updated)
+                record = None if updated is None else self._row_to_record(updated)
+                return record if record is None or self._flag_admitted(record) else None
 
             while True:
                 row = self._engine.query_one(
                     "SELECT * FROM durable_jobs "
-                    "WHERE (status = ? OR (status = ? AND lease_expires_at IS NOT NULL "
+                    "WHERE (status IN (?, ?, ?) OR (status = ? AND lease_expires_at IS NOT NULL "
                     "AND lease_expires_at < ?)) "
                     "AND job_type NOT LIKE ? AND job_type NOT LIKE ? "
-                    "ORDER BY created_at LIMIT 1",
+                    "AND (? = FALSE OR job_type IN (?, ?, ?, ?)) "
+                    "AND (available_at IS NULL OR julianday(available_at) <= julianday(?)) "
+                    "ORDER BY CASE WHEN job_type IN (?, ?, ?, ?) THEN 0 ELSE 1 END, created_at, job_id LIMIT 1",
                     (
                         JobStatus.QUEUED.value,
+                        *_LEGACY_RETRYING_STATUS_VALUES,
                         JobStatus.RUNNING.value,
                         now_str,
                         *receipt_patterns,
+                        audit_only,
+                        *AUDIT_DELIVERY_JOB_TYPES,
+                        now_str,
+                        *AUDIT_DELIVERY_JOB_TYPES,
                     ),
                 )
                 if row is None:
@@ -271,21 +358,26 @@ class DurableJobQueue:
                 record = self._row_to_record(row)
                 result = self._engine.execute(
                     "UPDATE durable_jobs SET "
-                    "status = ?, fence_token = fence_token + 1, version = version + 1, "
+                    "status = ?, delivery_state = ?, fence_token = fence_token + 1, "
+                    "version = version + 1, "
                     "locked_by = ?, heartbeat_at = ?, lease_expires_at = ?, "
                     "attempts = attempts + 1 "
                     "WHERE job_id = ? AND version = ? "
-                    "AND (status = ? OR (status = ? AND lease_expires_at IS NOT NULL "
-                    "AND lease_expires_at < ?))",
+                    "AND (status IN (?, ?, ?) OR (status = ? AND lease_expires_at IS NOT NULL "
+                    "AND lease_expires_at < ?)) "
+                    "AND (available_at IS NULL OR julianday(available_at) <= julianday(?))",
                     (
                         JobStatus.RUNNING.value,
+                        record.delivery_state.value if record.delivery_state else None,
                         worker_id,
                         heartbeat,
                         lease_expires,
                         record.job_id,
                         record.version,
                         JobStatus.QUEUED.value,
+                        *_LEGACY_RETRYING_STATUS_VALUES,
                         JobStatus.RUNNING.value,
+                        now_str,
                         now_str,
                     ),
                 )
@@ -296,7 +388,32 @@ class DurableJobQueue:
                 )
                 if updated is None:
                     raise RuntimeError("claimed durable job disappeared")
-                return self._row_to_record(updated)
+                record = self._row_to_record(updated)
+                if self._flag_admitted(record):
+                    return record
+
+    def _check_feature_flag(self, job_type: str, payload: dict[str, Any]) -> None:
+        if resolve_job_feature_flag_key(job_type, payload) is None:
+            return
+        from shared.infrastructure.persistence.feature_flags import require_durable_flag_owner
+
+        require_durable_flag_owner(self._flags, self._engine, queue=self)
+        check_job_feature_flag(job_type, payload, flags=self._flags)
+
+    def _flag_admitted(self, record: JobRecord) -> bool:
+        try:
+            self._check_feature_flag(record.job_type, record.payload)
+        except NonRetryableJobError as exc:
+            self._engine.execute(
+                "UPDATE durable_jobs SET status = ?, delivery_state = ?, "
+                "version = version + 1, locked_by = NULL, heartbeat_at = NULL, "
+                "lease_expires_at = NULL, leased_until = NULL, error_message = ? "
+                "WHERE job_id = ? AND version = ? AND fence_token = ? AND status = ?",
+                (JobStatus.FAILED.value, JobDeliveryState.DEAD_LETTER.value, str(exc),
+                 record.job_id, record.version, record.fence_token, record.status.value),
+            )
+            return False
+        return True
 
     def get_by_idempotency_key(self, idempotency_key: str) -> JobRecord | None:
         row = self._engine.query_one(
@@ -330,7 +447,7 @@ class DurableJobQueue:
 
             payload_json = json.dumps(payload)
             result = self._engine.execute(
-                "UPDATE durable_jobs SET status = ?, payload_json = ?, "
+                "UPDATE durable_jobs SET status = ?, delivery_state = NULL, payload_json = ?, "
                 "version = version + 1, attempts = 0, error_message = NULL, "
                 "locked_by = NULL, heartbeat_at = NULL, lease_expires_at = NULL "
                 "WHERE job_id = ? AND version = ? AND fence_token = ?",
@@ -357,63 +474,141 @@ class DurableJobQueue:
         status: JobStatus,
         payload: dict[str, Any] | None = None,
         *,
+        delivery_state: JobDeliveryState | None = None,
         expected_version: int | None = None,
         fence_token: int | None = None,
         error_message: str | None = None,
     ) -> None:
+        """Write a job's outcome, and settle its delivery state alongside it.
+
+        ``delivery_state`` keeps its existing three-way meaning for callers:
+
+        - omitted / ``None`` on a non-settled status (``QUEUED``, ``RUNNING``,
+          ``FAILED``) leaves the stored delivery state untouched;
+        - an explicit value writes that value, so the worker's
+          ``FAILED`` + ``DEAD_LETTER`` and ``QUEUED`` + ``RETRYING`` writes in
+          ``apps/worker/oday_worker/main.py`` are unchanged;
+        - any status in :data:`DELIVERY_SETTLED_JOB_STATUSES` clears it to
+          ``None``, because the work is finished and no delivery attempt is
+          still owed.
+
+        The settled-status rule wins over an explicit ``delivery_state``. That
+        is the pre-existing behaviour for ``SUCCEEDED``, now extended to
+        ``PARTIAL`` and ``CANCELLED``; no call site has to change and no
+        signature changes.
+        """
+
         with self._engine.lock:
-            assignments = [
-                "status = ?",
-                "version = version + 1",
-                "error_message = ?",
-            ]
-            params: list[Any] = [status.value, error_message]
-            if payload is not None:
-                assignments.append("payload_json = ?")
-                params.append(json.dumps(payload))
-            if status != JobStatus.RUNNING:
-                assignments.extend(
-                    [
-                        "locked_by = NULL",
-                        "heartbeat_at = NULL",
-                        "lease_expires_at = NULL",
-                    ]
+            max_retries = 10
+            for _attempt in range(max_retries):
+                curr_row = self._engine.query_one(
+                    "SELECT version, fence_token, job_type, correlation_id, idempotency_key, created_at, payload_json, status FROM durable_jobs WHERE job_id = ?",
+                    (job_id,),
                 )
+                if curr_row is None:
+                    raise ValueError(f"Job {job_id} not found")
 
-            predicates = ["job_id = ?"]
-            params.append(job_id)
-            if expected_version is not None:
-                predicates.append("version = ?")
-                params.append(expected_version)
-            if fence_token is not None:
-                predicates.append("fence_token = ?")
-                params.append(fence_token)
+                if expected_version is not None and int(curr_row["version"]) != expected_version:
+                    raise JobFenceRejectedError(
+                        f"Job {job_id} fence/version rejected: expected v{expected_version}, got v{curr_row['version']}"
+                    )
+                if fence_token is not None and curr_row["fence_token"] is not None and int(curr_row["fence_token"]) != fence_token:
+                    raise JobFenceRejectedError(
+                        f"Job {job_id} fence/version rejected: expected f{fence_token}, got f{curr_row['fence_token']}"
+                    )
 
-            # assignments/predicates hold only fixed literal fragments;
-            # every value is bound through ? placeholders in `params`.
-            result = self._engine.execute(
-                "UPDATE durable_jobs SET "  # nosec B608 - fixed fragments, values bound via ? placeholders
-                + ", ".join(assignments)
-                + " WHERE "
-                + " AND ".join(predicates),
-                tuple(params),
-            )
-            if int(getattr(result, "rowcount", 0)) == 1:
-                return
+                target_version = int(curr_row["version"])
 
-            current = self._engine.query_one(
-                "SELECT version, fence_token FROM durable_jobs WHERE job_id = ?",
-                (job_id,),
-            )
-            if current is None:
-                raise ValueError(f"Job {job_id} not found")
-            if expected_version is not None or fence_token is not None:
-                raise JobFenceRejectedError(
-                    f"Job {job_id} fence/version rejected: expected "
-                    f"v{expected_version} f{fence_token}, got "
-                    f"v{current['version']} f{current['fence_token']}"
+                resolved_payload = payload
+                resolved_status = status
+                if status == JobStatus.CANCELLED:
+                    from shared.jobs.receipts import settle_cancelled_batch_receipt
+
+                    base_payload: dict[str, Any] = {}
+                    if resolved_payload is not None:
+                        base_payload = resolved_payload
+                    elif curr_row["payload_json"]:
+                        try:
+                            parsed = json.loads(curr_row["payload_json"])
+                            if isinstance(parsed, dict):
+                                base_payload = parsed
+                        except Exception:
+                            pass
+
+                    resolved_payload = settle_cancelled_batch_receipt(
+                        base_payload,
+                        job_id=job_id,
+                        job_type=curr_row["job_type"],
+                        tenant_id=base_payload.get("tenant_id"),
+                        correlation_id=curr_row["correlation_id"],
+                        idempotency_key=curr_row["idempotency_key"],
+                        created_at=curr_row["created_at"],
+                    )
+                    if isinstance(resolved_payload, dict) and "receipt" in resolved_payload:
+                        receipt_status = resolved_payload["receipt"].get("status")
+                        if receipt_status:
+                            resolved_status = JobStatus(receipt_status.lower())
+
+                assignments = [
+                    "status = ?",
+                    "version = version + 1",
+                    "error_message = ?",
+                ]
+                params: list[Any] = [resolved_status.value, error_message]
+                if resolved_status in DELIVERY_SETTLED_JOB_STATUSES:
+                    # Without this, writing PARTIAL/CANCELLED with delivery_state=None
+                    # emitted no delivery_state assignment at all and the row kept the
+                    # RETRYING left by the previous attempt.
+                    assignments.append("delivery_state = NULL")
+                elif delivery_state is not None:
+                    assignments.append("delivery_state = ?")
+                    params.append(delivery_state.value)
+                if resolved_payload is not None:
+                    assignments.append("payload_json = ?")
+                    params.append(json.dumps(resolved_payload))
+                if resolved_status != JobStatus.RUNNING:
+                    assignments.extend(
+                        [
+                            "locked_by = NULL",
+                            "heartbeat_at = NULL",
+                            "lease_expires_at = NULL",
+                        ]
+                    )
+
+                predicates = ["job_id = ?", "version = ?"]
+                params.extend([job_id, target_version])
+                if fence_token is not None:
+                    predicates.append("fence_token = ?")
+                    params.append(fence_token)
+
+                # assignments/predicates hold only fixed literal fragments;
+                # every value is bound through ? placeholders in `params`.
+                result = self._engine.execute(
+                    "UPDATE durable_jobs SET "  # nosec B608 - fixed fragments, values bound via ? placeholders
+                    + ", ".join(assignments)
+                    + " WHERE "
+                    + " AND ".join(predicates),
+                    tuple(params),
                 )
-            raise RuntimeError(f"Job {job_id} status update did not persist")
+                if int(getattr(result, "rowcount", 0)) == 1:
+                    return
+
+                if expected_version is not None:
+                    current = self._engine.query_one(
+                        "SELECT version, fence_token FROM durable_jobs WHERE job_id = ?",
+                        (job_id,),
+                    )
+                    if current is None:
+                        raise ValueError(f"Job {job_id} not found")
+                    raise JobFenceRejectedError(
+                        f"Job {job_id} fence/version rejected: expected "
+                        f"v{expected_version} f{fence_token}, got "
+                        f"v{current['version']} f{current['fence_token']}"
+                    )
+                # If caller did not provide expected_version, retry CAS loop
+                continue
+
+            raise JobFenceRejectedError(f"Job {job_id} status update CAS failed after {max_retries} attempts")
 
     def heartbeat(self, job_id: str, expected_version: int, fence_token: int) -> int:
         """Update lease expiration and heartbeat timestamp.
@@ -421,24 +616,31 @@ class DurableJobQueue:
         Returns the new version number after successful update, or raises JobFenceRejectedError.
         """
         with self._engine.lock:
-            now = datetime.now(UTC)
-            heartbeat_at = now.isoformat()
-            lease_expires_at = (now + timedelta(seconds=45)).isoformat()
             new_version = expected_version + 1
-
-            result = self._engine.execute(
-                "UPDATE durable_jobs SET heartbeat_at = ?, lease_expires_at = ?, "
-                "version = version + 1 "
-                "WHERE job_id = ? AND status = ? AND version = ? AND fence_token = ?",
-                (
-                    heartbeat_at,
-                    lease_expires_at,
-                    job_id,
-                    JobStatus.RUNNING.value,
-                    expected_version,
-                    fence_token,
-                ),
-            )
+            if str(getattr(self._engine, "dialect", "")).lower() == "postgresql":
+                result = self._engine.execute(
+                    "UPDATE durable_jobs SET heartbeat_at = statement_timestamp(), "
+                    "lease_expires_at = statement_timestamp() + interval '45 seconds', "
+                    "version = version + 1 "
+                    "WHERE job_id = ? AND status = ? AND version = ? AND fence_token = ? "
+                    "AND lease_expires_at > statement_timestamp()",
+                    (job_id, JobStatus.RUNNING.value, expected_version, fence_token),
+                )
+            else:
+                now = datetime.now(UTC)
+                result = self._engine.execute(
+                    "UPDATE durable_jobs SET heartbeat_at = ?, lease_expires_at = ?, "
+                    "version = version + 1 "
+                    "WHERE job_id = ? AND status = ? AND version = ? AND fence_token = ?",
+                    (
+                        now.isoformat(),
+                        (now + timedelta(seconds=45)).isoformat(),
+                        job_id,
+                        JobStatus.RUNNING.value,
+                        expected_version,
+                        fence_token,
+                    ),
+                )
             if int(getattr(result, "rowcount", 0)) == 1:
                 return new_version
 
@@ -470,12 +672,42 @@ class DurableJobQueue:
         if "lease_expires_at" in keys and row["lease_expires_at"] is not None:
             lease_val = datetime.fromisoformat(row["lease_expires_at"])
 
+        raw_status = row["status"]
+        status_text = raw_status.value if isinstance(raw_status, Enum) else str(raw_status)
+        status_key = status_text.strip().lower()
+        raw_delivery_state = row["delivery_state"] if "delivery_state" in keys else None
+        delivery_text = (
+            raw_delivery_state.value
+            if isinstance(raw_delivery_state, Enum)
+            else str(raw_delivery_state).strip().lower()
+            if raw_delivery_state
+            else None
+        )
+        delivery_state = JobDeliveryState(delivery_text) if delivery_text else None
+
+        # Before outcome/delivery separation, the public legacy adapter encoded
+        # these delivery mechanics directly in ``status``. Read those rows at
+        # the persistence boundary without carrying the legacy values forward.
+        if status_key == "retrying":
+            status_key = JobStatus.QUEUED.value
+            delivery_state = JobDeliveryState.RETRYING
+        elif status_key == "dead_letter":
+            status_key = JobStatus.FAILED.value
+            delivery_state = JobDeliveryState.DEAD_LETTER
+
+        status_val = JobStatus(status_key)
+        if delivery_state is None and attempts >= max_retries and status_val == JobStatus.FAILED:
+            # Rows written by the old durable queue have no delivery column;
+            # FAILED at the retry limit is the unambiguous legacy DLQ shape.
+            delivery_state = JobDeliveryState.DEAD_LETTER
+
         return JobRecord(
             job_type=row["job_type"],
             payload=json.loads(row["payload_json"]),
             correlation_id=row["correlation_id"],
             idempotency_key=row["idempotency_key"],
-            status=JobStatus(row["status"]),
+            status=status_val,
+            delivery_state=delivery_state,
             job_id=row["job_id"],
             created_at=datetime.fromisoformat(row["created_at"]),
             attempts=attempts,

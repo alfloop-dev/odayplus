@@ -1,0 +1,2269 @@
+{
+  "audited_but_not_installed": [],
+  "banned_package_presence": {
+    "evidently": {
+      "audited": false,
+      "committed_inventory": false,
+      "installed": false,
+      "sbom_pypi": false,
+      "uv_lock": false
+    },
+    "nltk": {
+      "audited": false,
+      "committed_inventory": false,
+      "installed": false,
+      "sbom_pypi": false,
+      "uv_lock": false
+    }
+  },
+  "banned_packages_found_in": {},
+  "counts": {
+    "audited_with_advisory_data": 215,
+    "committed_inventory_packages": 215,
+    "installed_distributions": 215,
+    "lock_entries_not_installed_on_this_platform": 6,
+    "sbom_pypi_components": 221,
+    "skipped_by_pip_audit": 0,
+    "uv_lock_packages": 221,
+    "vulnerability_findings": 0
+  },
+  "generated_at_utc": "2026-09-08T02:43:27.294135+00:00",
+  "generated_by": "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/tools/audit_scope_crosscheck.py",
+  "inputs": {
+    "audit_payload": {
+      "path": "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_attempt1_stdout.json",
+      "sha256": "f32d534e0612b51171bc2b83c5d051acf9ee1e6a5ea44b50a044434962c21cd9"
+    },
+    "installed_inventory": {
+      "path": "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/installed_inventory.json",
+      "sha256": "efcd05d48227bd8d8a701c9dcc3e45aeef8c6b88ac323b46a3e63dc48de89de6"
+    },
+    "sbom": {
+      "path": "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/sbom.json",
+      "sha256": "b53c4a2749939d360a60f4785bb634df77398655efa35a3125ecbd394f94d44d"
+    },
+    "uv_lock": {
+      "path": "uv.lock",
+      "sha256": "ba5c393e49538e4da9e59de001cffc28c4cadfab8aebacf6dbf1503eb3a49a5d"
+    }
+  },
+  "installed_but_not_audited": [],
+  "lock_only_entries": [
+    {
+      "excluded_because": "every requirement of it is gated by a Windows-only environment marker",
+      "is_this_project": false,
+      "name": "colorama",
+      "required_by": [
+        "click requires it when: sys_platform == 'win32'",
+        "colorlog requires it when: sys_platform == 'win32'",
+        "pytest requires it when: sys_platform == 'win32'",
+        "tqdm requires it when: sys_platform == 'win32'",
+        "uvicorn requires it when: sys_platform == 'win32'"
+      ],
+      "version": "0.4.6"
+    },
+    {
+      "excluded_because": "this project itself, not a third-party dependency",
+      "is_this_project": true,
+      "name": "odayplus",
+      "required_by": [],
+      "version": "0.1.0"
+    },
+    {
+      "excluded_because": "every requirement of it is gated by a Windows-only environment marker",
+      "is_this_project": false,
+      "name": "pyreadline3",
+      "required_by": [
+        "humanfriendly requires it when: sys_platform == 'win32'"
+      ],
+      "version": "3.5.6"
+    },
+    {
+      "excluded_because": "every requirement of it is gated by a Windows-only environment marker",
+      "is_this_project": false,
+      "name": "pywin32",
+      "required_by": [
+        "dagster requires it when: sys_platform == 'win32'",
+        "dlt requires it when: sys_platform == 'win32'",
+        "docker requires it when: sys_platform == 'win32'"
+      ],
+      "version": "312"
+    },
+    {
+      "excluded_because": "every requirement of it is gated by a Windows-only environment marker",
+      "is_this_project": false,
+      "name": "waitress",
+      "required_by": [
+        "mlflow requires it when: sys_platform == 'win32'"
+      ],
+      "version": "3.0.2"
+    },
+    {
+      "excluded_because": "every requirement of it is gated by a Windows-only environment marker",
+      "is_this_project": false,
+      "name": "win-precise-time",
+      "required_by": [
+        "dlt requires it when: python_full_version < '3.13' and os_name == 'nt'"
+      ],
+      "version": "1.4.2"
+    }
+  ],
+  "mismatches": [],
+  "per_package": [
+    {
+      "audited_name": "about-time",
+      "audited_version": "4.2.1",
+      "installed_version": "4.2.1",
+      "lock_version": "4.2.1",
+      "problems": [],
+      "recorded_inventory_version": "4.2.1",
+      "sbom_version": "4.2.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "absl-py",
+      "audited_version": "2.5.0",
+      "installed_version": "2.5.0",
+      "lock_version": "2.5.0",
+      "problems": [],
+      "recorded_inventory_version": "2.5.0",
+      "sbom_version": "2.5.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "adagio",
+      "audited_version": "0.2.6",
+      "installed_version": "0.2.6",
+      "lock_version": "0.2.6",
+      "problems": [],
+      "recorded_inventory_version": "0.2.6",
+      "sbom_version": "0.2.6",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "aiohappyeyeballs",
+      "audited_version": "2.7.1",
+      "installed_version": "2.7.1",
+      "lock_version": "2.7.1",
+      "problems": [],
+      "recorded_inventory_version": "2.7.1",
+      "sbom_version": "2.7.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "aiohttp",
+      "audited_version": "3.14.3",
+      "installed_version": "3.14.3",
+      "lock_version": "3.14.3",
+      "problems": [],
+      "recorded_inventory_version": "3.14.3",
+      "sbom_version": "3.14.3",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "aiosignal",
+      "audited_version": "1.4.0",
+      "installed_version": "1.4.0",
+      "lock_version": "1.4.0",
+      "problems": [],
+      "recorded_inventory_version": "1.4.0",
+      "sbom_version": "1.4.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "alembic",
+      "audited_version": "1.18.5",
+      "installed_version": "1.18.5",
+      "lock_version": "1.18.5",
+      "problems": [],
+      "recorded_inventory_version": "1.18.5",
+      "sbom_version": "1.18.5",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "alive-progress",
+      "audited_version": "3.3.0",
+      "installed_version": "3.3.0",
+      "lock_version": "3.3.0",
+      "problems": [],
+      "recorded_inventory_version": "3.3.0",
+      "sbom_version": "3.3.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "altair",
+      "audited_version": "6.2.2",
+      "installed_version": "6.2.2",
+      "lock_version": "6.2.2",
+      "problems": [],
+      "recorded_inventory_version": "6.2.2",
+      "sbom_version": "6.2.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "annotated-doc",
+      "audited_version": "0.0.4",
+      "installed_version": "0.0.4",
+      "lock_version": "0.0.4",
+      "problems": [],
+      "recorded_inventory_version": "0.0.4",
+      "sbom_version": "0.0.4",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "annotated-types",
+      "audited_version": "0.7.0",
+      "installed_version": "0.7.0",
+      "lock_version": "0.7.0",
+      "problems": [],
+      "recorded_inventory_version": "0.7.0",
+      "sbom_version": "0.7.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "antlr4-python3-runtime",
+      "audited_version": "4.13.2",
+      "installed_version": "4.13.2",
+      "lock_version": "4.13.2",
+      "problems": [],
+      "recorded_inventory_version": "4.13.2",
+      "sbom_version": "4.13.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "anyio",
+      "audited_version": "4.13.0",
+      "installed_version": "4.13.0",
+      "lock_version": "4.13.0",
+      "problems": [],
+      "recorded_inventory_version": "4.13.0",
+      "sbom_version": "4.13.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "argon2-cffi",
+      "audited_version": "25.1.0",
+      "installed_version": "25.1.0",
+      "lock_version": "25.1.0",
+      "problems": [],
+      "recorded_inventory_version": "25.1.0",
+      "sbom_version": "25.1.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "argon2-cffi-bindings",
+      "audited_version": "26.1.0",
+      "installed_version": "26.1.0",
+      "lock_version": "26.1.0",
+      "problems": [],
+      "recorded_inventory_version": "26.1.0",
+      "sbom_version": "26.1.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "attrs",
+      "audited_version": "26.1.0",
+      "installed_version": "26.1.0",
+      "lock_version": "26.1.0",
+      "problems": [],
+      "recorded_inventory_version": "26.1.0",
+      "sbom_version": "26.1.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "autograd",
+      "audited_version": "1.9.1",
+      "installed_version": "1.9.1",
+      "lock_version": "1.9.1",
+      "problems": [],
+      "recorded_inventory_version": "1.9.1",
+      "sbom_version": "1.9.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "autograd-gamma",
+      "audited_version": "0.5.0",
+      "installed_version": "0.5.0",
+      "lock_version": "0.5.0",
+      "problems": [],
+      "recorded_inventory_version": "0.5.0",
+      "sbom_version": "0.5.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "blinker",
+      "audited_version": "1.9.0",
+      "installed_version": "1.9.0",
+      "lock_version": "1.9.0",
+      "problems": [],
+      "recorded_inventory_version": "1.9.0",
+      "sbom_version": "1.9.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "cachetools",
+      "audited_version": "7.1.6",
+      "installed_version": "7.1.6",
+      "lock_version": "7.1.6",
+      "problems": [],
+      "recorded_inventory_version": "7.1.6",
+      "sbom_version": "7.1.6",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "catboost",
+      "audited_version": "1.2.10",
+      "installed_version": "1.2.10",
+      "lock_version": "1.2.10",
+      "problems": [],
+      "recorded_inventory_version": "1.2.10",
+      "sbom_version": "1.2.10",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "certifi",
+      "audited_version": "2026.6.17",
+      "installed_version": "2026.6.17",
+      "lock_version": "2026.6.17",
+      "problems": [],
+      "recorded_inventory_version": "2026.6.17",
+      "sbom_version": "2026.6.17",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "cffi",
+      "audited_version": "2.1.0",
+      "installed_version": "2.1.0",
+      "lock_version": "2.1.0",
+      "problems": [],
+      "recorded_inventory_version": "2.1.0",
+      "sbom_version": "2.1.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "charset-normalizer",
+      "audited_version": "3.4.9",
+      "installed_version": "3.4.9",
+      "lock_version": "3.4.9",
+      "problems": [],
+      "recorded_inventory_version": "3.4.9",
+      "sbom_version": "3.4.9",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "clarabel",
+      "audited_version": "0.11.1",
+      "installed_version": "0.11.1",
+      "lock_version": "0.11.1",
+      "problems": [],
+      "recorded_inventory_version": "0.11.1",
+      "sbom_version": "0.11.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "click",
+      "audited_version": "8.4.2",
+      "installed_version": "8.4.2",
+      "lock_version": "8.4.2",
+      "problems": [],
+      "recorded_inventory_version": "8.4.2",
+      "sbom_version": "8.4.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "cloudpickle",
+      "audited_version": "3.1.2",
+      "installed_version": "3.1.2",
+      "lock_version": "3.1.2",
+      "problems": [],
+      "recorded_inventory_version": "3.1.2",
+      "sbom_version": "3.1.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "cma",
+      "audited_version": "4.4.4",
+      "installed_version": "4.4.4",
+      "lock_version": "4.4.4",
+      "problems": [],
+      "recorded_inventory_version": "4.4.4",
+      "sbom_version": "4.4.4",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "coloredlogs",
+      "audited_version": "14.0",
+      "installed_version": "14.0",
+      "lock_version": "14.0",
+      "problems": [],
+      "recorded_inventory_version": "14.0",
+      "sbom_version": "14.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "colorlog",
+      "audited_version": "6.12.0",
+      "installed_version": "6.12.0",
+      "lock_version": "6.12.0",
+      "problems": [],
+      "recorded_inventory_version": "6.12.0",
+      "sbom_version": "6.12.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "contourpy",
+      "audited_version": "1.3.3",
+      "installed_version": "1.3.3",
+      "lock_version": "1.3.3",
+      "problems": [],
+      "recorded_inventory_version": "1.3.3",
+      "sbom_version": "1.3.3",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "coreforecast",
+      "audited_version": "0.0.18",
+      "installed_version": "0.0.18",
+      "lock_version": "0.0.18",
+      "problems": [],
+      "recorded_inventory_version": "0.0.18",
+      "sbom_version": "0.0.18",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "cryptography",
+      "audited_version": "50.0.1",
+      "installed_version": "50.0.1",
+      "lock_version": "50.0.1",
+      "problems": [],
+      "recorded_inventory_version": "50.0.1",
+      "sbom_version": "50.0.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "cvxpy",
+      "audited_version": "1.9.2",
+      "installed_version": "1.9.2",
+      "lock_version": "1.9.2",
+      "problems": [],
+      "recorded_inventory_version": "1.9.2",
+      "sbom_version": "1.9.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "cycler",
+      "audited_version": "0.12.1",
+      "installed_version": "0.12.1",
+      "lock_version": "0.12.1",
+      "problems": [],
+      "recorded_inventory_version": "0.12.1",
+      "sbom_version": "0.12.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "dagster",
+      "audited_version": "1.13.15",
+      "installed_version": "1.13.15",
+      "lock_version": "1.13.15",
+      "problems": [],
+      "recorded_inventory_version": "1.13.15",
+      "sbom_version": "1.13.15",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "dagster-pipes",
+      "audited_version": "1.13.15",
+      "installed_version": "1.13.15",
+      "lock_version": "1.13.15",
+      "problems": [],
+      "recorded_inventory_version": "1.13.15",
+      "sbom_version": "1.13.15",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "dagster-shared",
+      "audited_version": "1.13.15",
+      "installed_version": "1.13.15",
+      "lock_version": "1.13.15",
+      "problems": [],
+      "recorded_inventory_version": "1.13.15",
+      "sbom_version": "1.13.15",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "databricks-sdk",
+      "audited_version": "0.122.0",
+      "installed_version": "0.122.0",
+      "lock_version": "0.122.0",
+      "problems": [],
+      "recorded_inventory_version": "0.122.0",
+      "sbom_version": "0.122.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "deprecated",
+      "audited_version": "1.3.1",
+      "installed_version": "1.3.1",
+      "lock_version": "1.3.1",
+      "problems": [],
+      "recorded_inventory_version": "1.3.1",
+      "sbom_version": "1.3.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "dlt",
+      "audited_version": "1.29.1",
+      "installed_version": "1.29.1",
+      "lock_version": "1.29.1",
+      "problems": [],
+      "recorded_inventory_version": "1.29.1",
+      "sbom_version": "1.29.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "docker",
+      "audited_version": "7.2.0",
+      "installed_version": "7.2.0",
+      "lock_version": "7.2.0",
+      "problems": [],
+      "recorded_inventory_version": "7.2.0",
+      "sbom_version": "7.2.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "docstring-parser",
+      "audited_version": "0.18.0",
+      "installed_version": "0.18.0",
+      "lock_version": "0.18.0",
+      "problems": [],
+      "recorded_inventory_version": "0.18.0",
+      "sbom_version": "0.18.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "duckdb",
+      "audited_version": "1.5.4",
+      "installed_version": "1.5.4",
+      "lock_version": "1.5.4",
+      "problems": [],
+      "recorded_inventory_version": "1.5.4",
+      "sbom_version": "1.5.4",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "execnet",
+      "audited_version": "2.1.2",
+      "installed_version": "2.1.2",
+      "lock_version": "2.1.2",
+      "problems": [],
+      "recorded_inventory_version": "2.1.2",
+      "sbom_version": "2.1.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "fastapi",
+      "audited_version": "0.138.1",
+      "installed_version": "0.138.1",
+      "lock_version": "0.138.1",
+      "problems": [],
+      "recorded_inventory_version": "0.138.1",
+      "sbom_version": "0.138.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "fasteners",
+      "audited_version": "0.20",
+      "installed_version": "0.20",
+      "lock_version": "0.20",
+      "problems": [],
+      "recorded_inventory_version": "0.20",
+      "sbom_version": "0.20",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "filelock",
+      "audited_version": "3.32.0",
+      "installed_version": "3.32.0",
+      "lock_version": "3.32.0",
+      "problems": [],
+      "recorded_inventory_version": "3.32.0",
+      "sbom_version": "3.32.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "flask",
+      "audited_version": "3.1.3",
+      "installed_version": "3.1.3",
+      "lock_version": "3.1.3",
+      "problems": [],
+      "recorded_inventory_version": "3.1.3",
+      "sbom_version": "3.1.3",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "flask-cors",
+      "audited_version": "6.0.5",
+      "installed_version": "6.0.5",
+      "lock_version": "6.0.5",
+      "problems": [],
+      "recorded_inventory_version": "6.0.5",
+      "sbom_version": "6.0.5",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "fonttools",
+      "audited_version": "4.63.0",
+      "installed_version": "4.63.0",
+      "lock_version": "4.63.0",
+      "problems": [],
+      "recorded_inventory_version": "4.63.0",
+      "sbom_version": "4.63.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "formulaic",
+      "audited_version": "1.2.2",
+      "installed_version": "1.2.2",
+      "lock_version": "1.2.2",
+      "problems": [],
+      "recorded_inventory_version": "1.2.2",
+      "sbom_version": "1.2.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "frozenlist",
+      "audited_version": "1.8.0",
+      "installed_version": "1.8.0",
+      "lock_version": "1.8.0",
+      "problems": [],
+      "recorded_inventory_version": "1.8.0",
+      "sbom_version": "1.8.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "fsspec",
+      "audited_version": "2026.6.0",
+      "installed_version": "2026.6.0",
+      "lock_version": "2026.6.0",
+      "problems": [],
+      "recorded_inventory_version": "2026.6.0",
+      "sbom_version": "2026.6.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "fugue",
+      "audited_version": "0.9.7",
+      "installed_version": "0.9.7",
+      "lock_version": "0.9.7",
+      "problems": [],
+      "recorded_inventory_version": "0.9.7",
+      "sbom_version": "0.9.7",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "gitdb",
+      "audited_version": "4.0.12",
+      "installed_version": "4.0.12",
+      "lock_version": "4.0.12",
+      "problems": [],
+      "recorded_inventory_version": "4.0.12",
+      "sbom_version": "4.0.12",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "gitpython",
+      "audited_version": "3.1.61",
+      "installed_version": "3.1.61",
+      "lock_version": "3.1.61",
+      "problems": [],
+      "recorded_inventory_version": "3.1.61",
+      "sbom_version": "3.1.61",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "giturlparse",
+      "audited_version": "0.15.0",
+      "installed_version": "0.15.0",
+      "lock_version": "0.15.0",
+      "problems": [],
+      "recorded_inventory_version": "0.15.0",
+      "sbom_version": "0.15.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "google-api-core",
+      "audited_version": "2.33.0",
+      "installed_version": "2.33.0",
+      "lock_version": "2.33.0",
+      "problems": [],
+      "recorded_inventory_version": "2.33.0",
+      "sbom_version": "2.33.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "google-auth",
+      "audited_version": "2.56.2",
+      "installed_version": "2.56.2",
+      "lock_version": "2.56.2",
+      "problems": [],
+      "recorded_inventory_version": "2.56.2",
+      "sbom_version": "2.56.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "google-cloud-core",
+      "audited_version": "2.6.0",
+      "installed_version": "2.6.0",
+      "lock_version": "2.6.0",
+      "problems": [],
+      "recorded_inventory_version": "2.6.0",
+      "sbom_version": "2.6.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "google-cloud-storage",
+      "audited_version": "3.13.0",
+      "installed_version": "3.13.0",
+      "lock_version": "3.13.0",
+      "problems": [],
+      "recorded_inventory_version": "3.13.0",
+      "sbom_version": "3.13.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "google-crc32c",
+      "audited_version": "1.8.0",
+      "installed_version": "1.8.0",
+      "lock_version": "1.8.0",
+      "problems": [],
+      "recorded_inventory_version": "1.8.0",
+      "sbom_version": "1.8.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "google-resumable-media",
+      "audited_version": "2.10.0",
+      "installed_version": "2.10.0",
+      "lock_version": "2.10.0",
+      "problems": [],
+      "recorded_inventory_version": "2.10.0",
+      "sbom_version": "2.10.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "googleapis-common-protos",
+      "audited_version": "1.75.0",
+      "installed_version": "1.75.0",
+      "lock_version": "1.75.0",
+      "problems": [],
+      "recorded_inventory_version": "1.75.0",
+      "sbom_version": "1.75.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "graphemeu",
+      "audited_version": "0.7.2",
+      "installed_version": "0.7.2",
+      "lock_version": "0.7.2",
+      "problems": [],
+      "recorded_inventory_version": "0.7.2",
+      "sbom_version": "0.7.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "graphene",
+      "audited_version": "3.4.3",
+      "installed_version": "3.4.3",
+      "lock_version": "3.4.3",
+      "problems": [],
+      "recorded_inventory_version": "3.4.3",
+      "sbom_version": "3.4.3",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "graphql-core",
+      "audited_version": "3.2.11",
+      "installed_version": "3.2.11",
+      "lock_version": "3.2.11",
+      "problems": [],
+      "recorded_inventory_version": "3.2.11",
+      "sbom_version": "3.2.11",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "graphql-relay",
+      "audited_version": "3.2.0",
+      "installed_version": "3.2.0",
+      "lock_version": "3.2.0",
+      "problems": [],
+      "recorded_inventory_version": "3.2.0",
+      "sbom_version": "3.2.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "graphviz",
+      "audited_version": "0.21",
+      "installed_version": "0.21",
+      "lock_version": "0.21",
+      "problems": [],
+      "recorded_inventory_version": "0.21",
+      "sbom_version": "0.21",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "great-expectations",
+      "audited_version": "1.19.0",
+      "installed_version": "1.19.0",
+      "lock_version": "1.19.0",
+      "problems": [],
+      "recorded_inventory_version": "1.19.0",
+      "sbom_version": "1.19.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "greenlet",
+      "audited_version": "3.5.3",
+      "installed_version": "3.5.3",
+      "lock_version": "3.5.3",
+      "problems": [],
+      "recorded_inventory_version": "3.5.3",
+      "sbom_version": "3.5.3",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "grpcio",
+      "audited_version": "1.83.0",
+      "installed_version": "1.83.0",
+      "lock_version": "1.83.0",
+      "problems": [],
+      "recorded_inventory_version": "1.83.0",
+      "sbom_version": "1.83.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "grpcio-health-checking",
+      "audited_version": "1.81.1",
+      "installed_version": "1.81.1",
+      "lock_version": "1.81.1",
+      "problems": [],
+      "recorded_inventory_version": "1.81.1",
+      "sbom_version": "1.81.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "gunicorn",
+      "audited_version": "26.0.0",
+      "installed_version": "26.0.0",
+      "lock_version": "26.0.0",
+      "problems": [],
+      "recorded_inventory_version": "26.0.0",
+      "sbom_version": "26.0.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "h11",
+      "audited_version": "0.16.0",
+      "installed_version": "0.16.0",
+      "lock_version": "0.16.0",
+      "problems": [],
+      "recorded_inventory_version": "0.16.0",
+      "sbom_version": "0.16.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "h3",
+      "audited_version": "4.5.0",
+      "installed_version": "4.5.0",
+      "lock_version": "4.5.0",
+      "problems": [],
+      "recorded_inventory_version": "4.5.0",
+      "sbom_version": "4.5.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "highspy",
+      "audited_version": "1.15.1",
+      "installed_version": "1.15.1",
+      "lock_version": "1.15.1",
+      "problems": [],
+      "recorded_inventory_version": "1.15.1",
+      "sbom_version": "1.15.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "httpcore",
+      "audited_version": "1.0.9",
+      "installed_version": "1.0.9",
+      "lock_version": "1.0.9",
+      "problems": [],
+      "recorded_inventory_version": "1.0.9",
+      "sbom_version": "1.0.9",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "httptools",
+      "audited_version": "0.8.0",
+      "installed_version": "0.8.0",
+      "lock_version": "0.8.0",
+      "problems": [],
+      "recorded_inventory_version": "0.8.0",
+      "sbom_version": "0.8.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "httpx",
+      "audited_version": "0.28.1",
+      "installed_version": "0.28.1",
+      "lock_version": "0.28.1",
+      "problems": [],
+      "recorded_inventory_version": "0.28.1",
+      "sbom_version": "0.28.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "huey",
+      "audited_version": "3.3.0",
+      "installed_version": "3.3.0",
+      "lock_version": "3.3.0",
+      "problems": [],
+      "recorded_inventory_version": "3.3.0",
+      "sbom_version": "3.3.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "humanfriendly",
+      "audited_version": "10.0",
+      "installed_version": "10.0",
+      "lock_version": "10.0",
+      "problems": [],
+      "recorded_inventory_version": "10.0",
+      "sbom_version": "10.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "humanize",
+      "audited_version": "4.16.0",
+      "installed_version": "4.16.0",
+      "lock_version": "4.16.0",
+      "problems": [],
+      "recorded_inventory_version": "4.16.0",
+      "sbom_version": "4.16.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "idna",
+      "audited_version": "3.18",
+      "installed_version": "3.18",
+      "lock_version": "3.18",
+      "problems": [],
+      "recorded_inventory_version": "3.18",
+      "sbom_version": "3.18",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "immutabledict",
+      "audited_version": "4.3.1",
+      "installed_version": "4.3.1",
+      "lock_version": "4.3.1",
+      "problems": [],
+      "recorded_inventory_version": "4.3.1",
+      "sbom_version": "4.3.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "importlib-metadata",
+      "audited_version": "9.0.0",
+      "installed_version": "9.0.0",
+      "lock_version": "9.0.0",
+      "problems": [],
+      "recorded_inventory_version": "9.0.0",
+      "sbom_version": "9.0.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "iniconfig",
+      "audited_version": "2.3.0",
+      "installed_version": "2.3.0",
+      "lock_version": "2.3.0",
+      "problems": [],
+      "recorded_inventory_version": "2.3.0",
+      "sbom_version": "2.3.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "interface-meta",
+      "audited_version": "2.0.1",
+      "installed_version": "2.0.1",
+      "lock_version": "2.0.1",
+      "problems": [],
+      "recorded_inventory_version": "2.0.1",
+      "sbom_version": "2.0.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "itsdangerous",
+      "audited_version": "2.2.0",
+      "installed_version": "2.2.0",
+      "lock_version": "2.2.0",
+      "problems": [],
+      "recorded_inventory_version": "2.2.0",
+      "sbom_version": "2.2.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "jinja2",
+      "audited_version": "3.1.6",
+      "installed_version": "3.1.6",
+      "lock_version": "3.1.6",
+      "problems": [],
+      "recorded_inventory_version": "3.1.6",
+      "sbom_version": "3.1.6",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "joblib",
+      "audited_version": "1.5.3",
+      "installed_version": "1.5.3",
+      "lock_version": "1.5.3",
+      "problems": [],
+      "recorded_inventory_version": "1.5.3",
+      "sbom_version": "1.5.3",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "jsonpath-ng",
+      "audited_version": "1.8.0",
+      "installed_version": "1.8.0",
+      "lock_version": "1.8.0",
+      "problems": [],
+      "recorded_inventory_version": "1.8.0",
+      "sbom_version": "1.8.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "jsonschema",
+      "audited_version": "4.26.0",
+      "installed_version": "4.26.0",
+      "lock_version": "4.26.0",
+      "problems": [],
+      "recorded_inventory_version": "4.26.0",
+      "sbom_version": "4.26.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "jsonschema-path",
+      "audited_version": "0.5.0",
+      "installed_version": "0.5.0",
+      "lock_version": "0.5.0",
+      "problems": [],
+      "recorded_inventory_version": "0.5.0",
+      "sbom_version": "0.5.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "jsonschema-specifications",
+      "audited_version": "2025.9.1",
+      "installed_version": "2025.9.1",
+      "lock_version": "2025.9.1",
+      "problems": [],
+      "recorded_inventory_version": "2025.9.1",
+      "sbom_version": "2025.9.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "kiwisolver",
+      "audited_version": "1.5.0",
+      "installed_version": "1.5.0",
+      "lock_version": "1.5.0",
+      "problems": [],
+      "recorded_inventory_version": "1.5.0",
+      "sbom_version": "1.5.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "lazy-object-proxy",
+      "audited_version": "1.12.0",
+      "installed_version": "1.12.0",
+      "lock_version": "1.12.0",
+      "problems": [],
+      "recorded_inventory_version": "1.12.0",
+      "sbom_version": "1.12.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "lifelines",
+      "audited_version": "0.30.3",
+      "installed_version": "0.30.3",
+      "lock_version": "0.30.3",
+      "problems": [],
+      "recorded_inventory_version": "0.30.3",
+      "sbom_version": "0.30.3",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "lightgbm",
+      "audited_version": "4.7.0",
+      "installed_version": "4.7.0",
+      "lock_version": "4.7.0",
+      "problems": [],
+      "recorded_inventory_version": "4.7.0",
+      "sbom_version": "4.7.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "mako",
+      "audited_version": "1.3.12",
+      "installed_version": "1.3.12",
+      "lock_version": "1.3.12",
+      "problems": [],
+      "recorded_inventory_version": "1.3.12",
+      "sbom_version": "1.3.12",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "markdown-it-py",
+      "audited_version": "4.2.0",
+      "installed_version": "4.2.0",
+      "lock_version": "4.2.0",
+      "problems": [],
+      "recorded_inventory_version": "4.2.0",
+      "sbom_version": "4.2.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "markupsafe",
+      "audited_version": "3.0.3",
+      "installed_version": "3.0.3",
+      "lock_version": "3.0.3",
+      "problems": [],
+      "recorded_inventory_version": "3.0.3",
+      "sbom_version": "3.0.3",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "marshmallow",
+      "audited_version": "3.26.2",
+      "installed_version": "3.26.2",
+      "lock_version": "3.26.2",
+      "problems": [],
+      "recorded_inventory_version": "3.26.2",
+      "sbom_version": "3.26.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "matplotlib",
+      "audited_version": "3.11.1",
+      "installed_version": "3.11.1",
+      "lock_version": "3.11.1",
+      "problems": [],
+      "recorded_inventory_version": "3.11.1",
+      "sbom_version": "3.11.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "mdurl",
+      "audited_version": "0.1.2",
+      "installed_version": "0.1.2",
+      "lock_version": "0.1.2",
+      "problems": [],
+      "recorded_inventory_version": "0.1.2",
+      "sbom_version": "0.1.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "mistune",
+      "audited_version": "3.3.4",
+      "installed_version": "3.3.4",
+      "lock_version": "3.3.4",
+      "problems": [],
+      "recorded_inventory_version": "3.3.4",
+      "sbom_version": "3.3.4",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "mlflow",
+      "audited_version": "3.16.0",
+      "installed_version": "3.16.0",
+      "lock_version": "3.16.0",
+      "problems": [],
+      "recorded_inventory_version": "3.16.0",
+      "sbom_version": "3.16.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "mlflow-skinny",
+      "audited_version": "3.16.0",
+      "installed_version": "3.16.0",
+      "lock_version": "3.16.0",
+      "problems": [],
+      "recorded_inventory_version": "3.16.0",
+      "sbom_version": "3.16.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "mlflow-tracing",
+      "audited_version": "3.16.0",
+      "installed_version": "3.16.0",
+      "lock_version": "3.16.0",
+      "problems": [],
+      "recorded_inventory_version": "3.16.0",
+      "sbom_version": "3.16.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "mlforecast",
+      "audited_version": "1.1.0",
+      "installed_version": "1.1.0",
+      "lock_version": "1.1.0",
+      "problems": [],
+      "recorded_inventory_version": "1.1.0",
+      "sbom_version": "1.1.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "moocore",
+      "audited_version": "0.3.2",
+      "installed_version": "0.3.2",
+      "lock_version": "0.3.2",
+      "problems": [],
+      "recorded_inventory_version": "0.3.2",
+      "sbom_version": "0.3.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "multidict",
+      "audited_version": "6.7.1",
+      "installed_version": "6.7.1",
+      "lock_version": "6.7.1",
+      "problems": [],
+      "recorded_inventory_version": "6.7.1",
+      "sbom_version": "6.7.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "narwhals",
+      "audited_version": "2.23.0",
+      "installed_version": "2.23.0",
+      "lock_version": "2.23.0",
+      "problems": [],
+      "recorded_inventory_version": "2.23.0",
+      "sbom_version": "2.23.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "numpy",
+      "audited_version": "2.5.1",
+      "installed_version": "2.5.1",
+      "lock_version": "2.5.1",
+      "problems": [],
+      "recorded_inventory_version": "2.5.1",
+      "sbom_version": "2.5.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "openapi-schema-validator",
+      "audited_version": "0.9.0",
+      "installed_version": "0.9.0",
+      "lock_version": "0.9.0",
+      "problems": [],
+      "recorded_inventory_version": "0.9.0",
+      "sbom_version": "0.9.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "openapi-spec-validator",
+      "audited_version": "0.9.0",
+      "installed_version": "0.9.0",
+      "lock_version": "0.9.0",
+      "problems": [],
+      "recorded_inventory_version": "0.9.0",
+      "sbom_version": "0.9.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "opentelemetry-api",
+      "audited_version": "1.44.0",
+      "installed_version": "1.44.0",
+      "lock_version": "1.44.0",
+      "problems": [],
+      "recorded_inventory_version": "1.44.0",
+      "sbom_version": "1.44.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "opentelemetry-proto",
+      "audited_version": "1.44.0",
+      "installed_version": "1.44.0",
+      "lock_version": "1.44.0",
+      "problems": [],
+      "recorded_inventory_version": "1.44.0",
+      "sbom_version": "1.44.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "opentelemetry-sdk",
+      "audited_version": "1.44.0",
+      "installed_version": "1.44.0",
+      "lock_version": "1.44.0",
+      "problems": [],
+      "recorded_inventory_version": "1.44.0",
+      "sbom_version": "1.44.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "opentelemetry-semantic-conventions",
+      "audited_version": "0.65b0",
+      "installed_version": "0.65b0",
+      "lock_version": "0.65b0",
+      "problems": [],
+      "recorded_inventory_version": "0.65b0",
+      "sbom_version": "0.65b0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "optuna",
+      "audited_version": "4.9.0",
+      "installed_version": "4.9.0",
+      "lock_version": "4.9.0",
+      "problems": [],
+      "recorded_inventory_version": "4.9.0",
+      "sbom_version": "4.9.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "orjson",
+      "audited_version": "3.11.9",
+      "installed_version": "3.11.9",
+      "lock_version": "3.11.9",
+      "problems": [],
+      "recorded_inventory_version": "3.11.9",
+      "sbom_version": "3.11.9",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "ortools",
+      "audited_version": "9.15.6755",
+      "installed_version": "9.15.6755",
+      "lock_version": "9.15.6755",
+      "problems": [],
+      "recorded_inventory_version": "9.15.6755",
+      "sbom_version": "9.15.6755",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "osqp",
+      "audited_version": "1.1.3",
+      "installed_version": "1.1.3",
+      "lock_version": "1.1.3",
+      "problems": [],
+      "recorded_inventory_version": "1.1.3",
+      "sbom_version": "1.1.3",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "packaging",
+      "audited_version": "26.2",
+      "installed_version": "26.2",
+      "lock_version": "26.2",
+      "problems": [],
+      "recorded_inventory_version": "26.2",
+      "sbom_version": "26.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "pandas",
+      "audited_version": "2.3.3",
+      "installed_version": "2.3.3",
+      "lock_version": "2.3.3",
+      "problems": [],
+      "recorded_inventory_version": "2.3.3",
+      "sbom_version": "2.3.3",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "pathable",
+      "audited_version": "0.6.0",
+      "installed_version": "0.6.0",
+      "lock_version": "0.6.0",
+      "problems": [],
+      "recorded_inventory_version": "0.6.0",
+      "sbom_version": "0.6.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "pathlib-abc",
+      "audited_version": "0.5.2",
+      "installed_version": "0.5.2",
+      "lock_version": "0.5.2",
+      "problems": [],
+      "recorded_inventory_version": "0.5.2",
+      "sbom_version": "0.5.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "pathvalidate",
+      "audited_version": "3.3.1",
+      "installed_version": "3.3.1",
+      "lock_version": "3.3.1",
+      "problems": [],
+      "recorded_inventory_version": "3.3.1",
+      "sbom_version": "3.3.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "patsy",
+      "audited_version": "1.0.2",
+      "installed_version": "1.0.2",
+      "lock_version": "1.0.2",
+      "problems": [],
+      "recorded_inventory_version": "1.0.2",
+      "sbom_version": "1.0.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "pendulum",
+      "audited_version": "3.2.0",
+      "installed_version": "3.2.0",
+      "lock_version": "3.2.0",
+      "problems": [],
+      "recorded_inventory_version": "3.2.0",
+      "sbom_version": "3.2.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "pgserver",
+      "audited_version": "0.1.4",
+      "installed_version": "0.1.4",
+      "lock_version": "0.1.4",
+      "problems": [],
+      "recorded_inventory_version": "0.1.4",
+      "sbom_version": "0.1.4",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "pillow",
+      "audited_version": "12.3.0",
+      "installed_version": "12.3.0",
+      "lock_version": "12.3.0",
+      "problems": [],
+      "recorded_inventory_version": "12.3.0",
+      "sbom_version": "12.3.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "platformdirs",
+      "audited_version": "4.11.0",
+      "installed_version": "4.11.0",
+      "lock_version": "4.11.0",
+      "problems": [],
+      "recorded_inventory_version": "4.11.0",
+      "sbom_version": "4.11.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "plotly",
+      "audited_version": "5.24.1",
+      "installed_version": "5.24.1",
+      "lock_version": "5.24.1",
+      "problems": [],
+      "recorded_inventory_version": "5.24.1",
+      "sbom_version": "5.24.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "pluggy",
+      "audited_version": "1.6.0",
+      "installed_version": "1.6.0",
+      "lock_version": "1.6.0",
+      "problems": [],
+      "recorded_inventory_version": "1.6.0",
+      "sbom_version": "1.6.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "prettytable",
+      "audited_version": "3.18.0",
+      "installed_version": "3.18.0",
+      "lock_version": "3.18.0",
+      "problems": [],
+      "recorded_inventory_version": "3.18.0",
+      "sbom_version": "3.18.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "propcache",
+      "audited_version": "0.5.2",
+      "installed_version": "0.5.2",
+      "lock_version": "0.5.2",
+      "problems": [],
+      "recorded_inventory_version": "0.5.2",
+      "sbom_version": "0.5.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "proto-plus",
+      "audited_version": "1.28.2",
+      "installed_version": "1.28.2",
+      "lock_version": "1.28.2",
+      "problems": [],
+      "recorded_inventory_version": "1.28.2",
+      "sbom_version": "1.28.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "protobuf",
+      "audited_version": "6.33.6",
+      "installed_version": "6.33.6",
+      "lock_version": "6.33.6",
+      "problems": [],
+      "recorded_inventory_version": "6.33.6",
+      "sbom_version": "6.33.6",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "psutil",
+      "audited_version": "7.2.2",
+      "installed_version": "7.2.2",
+      "lock_version": "7.2.2",
+      "problems": [],
+      "recorded_inventory_version": "7.2.2",
+      "sbom_version": "7.2.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "psycopg",
+      "audited_version": "3.3.4",
+      "installed_version": "3.3.4",
+      "lock_version": "3.3.4",
+      "problems": [],
+      "recorded_inventory_version": "3.3.4",
+      "sbom_version": "3.3.4",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "psycopg-binary",
+      "audited_version": "3.3.4",
+      "installed_version": "3.3.4",
+      "lock_version": "3.3.4",
+      "problems": [],
+      "recorded_inventory_version": "3.3.4",
+      "sbom_version": "3.3.4",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "psycopg-pool",
+      "audited_version": "3.3.1",
+      "installed_version": "3.3.1",
+      "lock_version": "3.3.1",
+      "problems": [],
+      "recorded_inventory_version": "3.3.1",
+      "sbom_version": "3.3.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "psycopg2-binary",
+      "audited_version": "2.9.12",
+      "installed_version": "2.9.12",
+      "lock_version": "2.9.12",
+      "problems": [],
+      "recorded_inventory_version": "2.9.12",
+      "sbom_version": "2.9.12",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "pyarrow",
+      "audited_version": "24.0.0",
+      "installed_version": "24.0.0",
+      "lock_version": "24.0.0",
+      "problems": [],
+      "recorded_inventory_version": "24.0.0",
+      "sbom_version": "24.0.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "pyasn1",
+      "audited_version": "0.6.4",
+      "installed_version": "0.6.4",
+      "lock_version": "0.6.4",
+      "problems": [],
+      "recorded_inventory_version": "0.6.4",
+      "sbom_version": "0.6.4",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "pyasn1-modules",
+      "audited_version": "0.4.2",
+      "installed_version": "0.4.2",
+      "lock_version": "0.4.2",
+      "problems": [],
+      "recorded_inventory_version": "0.4.2",
+      "sbom_version": "0.4.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "pycparser",
+      "audited_version": "3.0",
+      "installed_version": "3.0",
+      "lock_version": "3.0",
+      "problems": [],
+      "recorded_inventory_version": "3.0",
+      "sbom_version": "3.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "pydantic",
+      "audited_version": "2.13.4",
+      "installed_version": "2.13.4",
+      "lock_version": "2.13.4",
+      "problems": [],
+      "recorded_inventory_version": "2.13.4",
+      "sbom_version": "2.13.4",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "pydantic-core",
+      "audited_version": "2.46.4",
+      "installed_version": "2.46.4",
+      "lock_version": "2.46.4",
+      "problems": [],
+      "recorded_inventory_version": "2.46.4",
+      "sbom_version": "2.46.4",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "pydantic-settings",
+      "audited_version": "2.14.2",
+      "installed_version": "2.14.2",
+      "lock_version": "2.14.2",
+      "problems": [],
+      "recorded_inventory_version": "2.14.2",
+      "sbom_version": "2.14.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "pygments",
+      "audited_version": "2.20.0",
+      "installed_version": "2.20.0",
+      "lock_version": "2.20.0",
+      "problems": [],
+      "recorded_inventory_version": "2.20.0",
+      "sbom_version": "2.20.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "pymoo",
+      "audited_version": "0.6.2",
+      "installed_version": "0.6.2",
+      "lock_version": "0.6.2",
+      "problems": [],
+      "recorded_inventory_version": "0.6.2",
+      "sbom_version": "0.6.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "pyomo",
+      "audited_version": "6.10.1",
+      "installed_version": "6.10.1",
+      "lock_version": "6.10.1",
+      "problems": [],
+      "recorded_inventory_version": "6.10.1",
+      "sbom_version": "6.10.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "pyparsing",
+      "audited_version": "3.3.2",
+      "installed_version": "3.3.2",
+      "lock_version": "3.3.2",
+      "problems": [],
+      "recorded_inventory_version": "3.3.2",
+      "sbom_version": "3.3.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "pytest",
+      "audited_version": "9.1.1",
+      "installed_version": "9.1.1",
+      "lock_version": "9.1.1",
+      "problems": [],
+      "recorded_inventory_version": "9.1.1",
+      "sbom_version": "9.1.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "pytest-xdist",
+      "audited_version": "3.8.0",
+      "installed_version": "3.8.0",
+      "lock_version": "3.8.0",
+      "problems": [],
+      "recorded_inventory_version": "3.8.0",
+      "sbom_version": "3.8.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "python-dateutil",
+      "audited_version": "2.9.0.post0",
+      "installed_version": "2.9.0.post0",
+      "lock_version": "2.9.0.post0",
+      "problems": [],
+      "recorded_inventory_version": "2.9.0.post0",
+      "sbom_version": "2.9.0.post0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "python-dotenv",
+      "audited_version": "1.2.2",
+      "installed_version": "1.2.2",
+      "lock_version": "1.2.2",
+      "problems": [],
+      "recorded_inventory_version": "1.2.2",
+      "sbom_version": "1.2.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "pytz",
+      "audited_version": "2026.2",
+      "installed_version": "2026.2",
+      "lock_version": "2026.2",
+      "problems": [],
+      "recorded_inventory_version": "2026.2",
+      "sbom_version": "2026.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "pyyaml",
+      "audited_version": "6.0.3",
+      "installed_version": "6.0.3",
+      "lock_version": "6.0.3",
+      "problems": [],
+      "recorded_inventory_version": "6.0.3",
+      "sbom_version": "6.0.3",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "qdldl",
+      "audited_version": "0.1.9.post1",
+      "installed_version": "0.1.9.post1",
+      "lock_version": "0.1.9.post1",
+      "problems": [],
+      "recorded_inventory_version": "0.1.9.post1",
+      "sbom_version": "0.1.9.post1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "referencing",
+      "audited_version": "0.37.0",
+      "installed_version": "0.37.0",
+      "lock_version": "0.37.0",
+      "problems": [],
+      "recorded_inventory_version": "0.37.0",
+      "sbom_version": "0.37.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "requests",
+      "audited_version": "2.34.2",
+      "installed_version": "2.34.2",
+      "lock_version": "2.34.2",
+      "problems": [],
+      "recorded_inventory_version": "2.34.2",
+      "sbom_version": "2.34.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "requirements-parser",
+      "audited_version": "0.13.1",
+      "installed_version": "0.13.1",
+      "lock_version": "0.13.1",
+      "problems": [],
+      "recorded_inventory_version": "0.13.1",
+      "sbom_version": "0.13.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "rfc3339-validator",
+      "audited_version": "0.1.4",
+      "installed_version": "0.1.4",
+      "lock_version": "0.1.4",
+      "problems": [],
+      "recorded_inventory_version": "0.1.4",
+      "sbom_version": "0.1.4",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "rich",
+      "audited_version": "15.0.0",
+      "installed_version": "15.0.0",
+      "lock_version": "15.0.0",
+      "problems": [],
+      "recorded_inventory_version": "15.0.0",
+      "sbom_version": "15.0.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "rich-argparse",
+      "audited_version": "1.8.0",
+      "installed_version": "1.8.0",
+      "lock_version": "1.8.0",
+      "problems": [],
+      "recorded_inventory_version": "1.8.0",
+      "sbom_version": "1.8.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "rpds-py",
+      "audited_version": "2026.6.3",
+      "installed_version": "2026.6.3",
+      "lock_version": "2026.6.3",
+      "problems": [],
+      "recorded_inventory_version": "2026.6.3",
+      "sbom_version": "2026.6.3",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "ruamel-yaml",
+      "audited_version": "0.19.1",
+      "installed_version": "0.19.1",
+      "lock_version": "0.19.1",
+      "problems": [],
+      "recorded_inventory_version": "0.19.1",
+      "sbom_version": "0.19.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "ruff",
+      "audited_version": "0.15.20",
+      "installed_version": "0.15.20",
+      "lock_version": "0.15.20",
+      "problems": [],
+      "recorded_inventory_version": "0.15.20",
+      "sbom_version": "0.15.20",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "scikit-learn",
+      "audited_version": "1.9.0",
+      "installed_version": "1.9.0",
+      "lock_version": "1.9.0",
+      "problems": [],
+      "recorded_inventory_version": "1.9.0",
+      "sbom_version": "1.9.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "scipy",
+      "audited_version": "1.18.0",
+      "installed_version": "1.18.0",
+      "lock_version": "1.18.0",
+      "problems": [],
+      "recorded_inventory_version": "1.18.0",
+      "sbom_version": "1.18.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "scs",
+      "audited_version": "3.2.11",
+      "installed_version": "3.2.11",
+      "lock_version": "3.2.11",
+      "problems": [],
+      "recorded_inventory_version": "3.2.11",
+      "sbom_version": "3.2.11",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "semver",
+      "audited_version": "3.0.4",
+      "installed_version": "3.0.4",
+      "lock_version": "3.0.4",
+      "problems": [],
+      "recorded_inventory_version": "3.0.4",
+      "sbom_version": "3.0.4",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "setuptools",
+      "audited_version": "83.0.0",
+      "installed_version": "83.0.0",
+      "lock_version": "83.0.0",
+      "problems": [],
+      "recorded_inventory_version": "83.0.0",
+      "sbom_version": "83.0.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "simplejson",
+      "audited_version": "4.1.1",
+      "installed_version": "4.1.1",
+      "lock_version": "4.1.1",
+      "problems": [],
+      "recorded_inventory_version": "4.1.1",
+      "sbom_version": "4.1.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "six",
+      "audited_version": "1.17.0",
+      "installed_version": "1.17.0",
+      "lock_version": "1.17.0",
+      "problems": [],
+      "recorded_inventory_version": "1.17.0",
+      "sbom_version": "1.17.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "skops",
+      "audited_version": "0.14.0",
+      "installed_version": "0.14.0",
+      "lock_version": "0.14.0",
+      "problems": [],
+      "recorded_inventory_version": "0.14.0",
+      "sbom_version": "0.14.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "smmap",
+      "audited_version": "5.0.3",
+      "installed_version": "5.0.3",
+      "lock_version": "5.0.3",
+      "problems": [],
+      "recorded_inventory_version": "5.0.3",
+      "sbom_version": "5.0.3",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "sparsediffpy",
+      "audited_version": "0.3.0",
+      "installed_version": "0.3.0",
+      "lock_version": "0.3.0",
+      "problems": [],
+      "recorded_inventory_version": "0.3.0",
+      "sbom_version": "0.3.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "sqlalchemy",
+      "audited_version": "2.0.51",
+      "installed_version": "2.0.51",
+      "lock_version": "2.0.51",
+      "problems": [],
+      "recorded_inventory_version": "2.0.51",
+      "sbom_version": "2.0.51",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "sqlglot",
+      "audited_version": "30.13.0",
+      "installed_version": "30.13.0",
+      "lock_version": "30.13.0",
+      "problems": [],
+      "recorded_inventory_version": "30.13.0",
+      "sbom_version": "30.13.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "sqlparse",
+      "audited_version": "0.6.0",
+      "installed_version": "0.6.0",
+      "lock_version": "0.6.0",
+      "problems": [],
+      "recorded_inventory_version": "0.6.0",
+      "sbom_version": "0.6.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "starlette",
+      "audited_version": "1.3.1",
+      "installed_version": "1.3.1",
+      "lock_version": "1.3.1",
+      "problems": [],
+      "recorded_inventory_version": "1.3.1",
+      "sbom_version": "1.3.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "statsforecast",
+      "audited_version": "2.1.1",
+      "installed_version": "2.1.1",
+      "lock_version": "2.1.1",
+      "problems": [],
+      "recorded_inventory_version": "2.1.1",
+      "sbom_version": "2.1.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "statsmodels",
+      "audited_version": "0.14.6",
+      "installed_version": "0.14.6",
+      "lock_version": "0.14.6",
+      "problems": [],
+      "recorded_inventory_version": "0.14.6",
+      "sbom_version": "0.14.6",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "structlog",
+      "audited_version": "26.1.0",
+      "installed_version": "26.1.0",
+      "lock_version": "26.1.0",
+      "problems": [],
+      "recorded_inventory_version": "26.1.0",
+      "sbom_version": "26.1.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "tabulate",
+      "audited_version": "0.10.0",
+      "installed_version": "0.10.0",
+      "lock_version": "0.10.0",
+      "problems": [],
+      "recorded_inventory_version": "0.10.0",
+      "sbom_version": "0.10.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "tenacity",
+      "audited_version": "9.1.4",
+      "installed_version": "9.1.4",
+      "lock_version": "9.1.4",
+      "problems": [],
+      "recorded_inventory_version": "9.1.4",
+      "sbom_version": "9.1.4",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "threadpoolctl",
+      "audited_version": "3.6.0",
+      "installed_version": "3.6.0",
+      "lock_version": "3.6.0",
+      "problems": [],
+      "recorded_inventory_version": "3.6.0",
+      "sbom_version": "3.6.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "tomli",
+      "audited_version": "2.4.1",
+      "installed_version": "2.4.1",
+      "lock_version": "2.4.1",
+      "problems": [],
+      "recorded_inventory_version": "2.4.1",
+      "sbom_version": "2.4.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "tomlkit",
+      "audited_version": "0.15.1",
+      "installed_version": "0.15.1",
+      "lock_version": "0.15.1",
+      "problems": [],
+      "recorded_inventory_version": "0.15.1",
+      "sbom_version": "0.15.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "toposort",
+      "audited_version": "1.10",
+      "installed_version": "1.10",
+      "lock_version": "1.10",
+      "problems": [],
+      "recorded_inventory_version": "1.10",
+      "sbom_version": "1.10",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "tqdm",
+      "audited_version": "4.69.0",
+      "installed_version": "4.69.0",
+      "lock_version": "4.69.0",
+      "problems": [],
+      "recorded_inventory_version": "4.69.0",
+      "sbom_version": "4.69.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "triad",
+      "audited_version": "1.0.2",
+      "installed_version": "1.0.2",
+      "lock_version": "1.0.2",
+      "problems": [],
+      "recorded_inventory_version": "1.0.2",
+      "sbom_version": "1.0.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "typing-extensions",
+      "audited_version": "4.15.0",
+      "installed_version": "4.15.0",
+      "lock_version": "4.15.0",
+      "problems": [],
+      "recorded_inventory_version": "4.15.0",
+      "sbom_version": "4.15.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "typing-inspection",
+      "audited_version": "0.4.2",
+      "installed_version": "0.4.2",
+      "lock_version": "0.4.2",
+      "problems": [],
+      "recorded_inventory_version": "0.4.2",
+      "sbom_version": "0.4.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "tzdata",
+      "audited_version": "2026.2",
+      "installed_version": "2026.2",
+      "lock_version": "2026.2",
+      "problems": [],
+      "recorded_inventory_version": "2026.2",
+      "sbom_version": "2026.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "tzlocal",
+      "audited_version": "5.4.4",
+      "installed_version": "5.4.4",
+      "lock_version": "5.4.4",
+      "problems": [],
+      "recorded_inventory_version": "5.4.4",
+      "sbom_version": "5.4.4",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "universal-pathlib",
+      "audited_version": "0.3.10",
+      "installed_version": "0.3.10",
+      "lock_version": "0.3.10",
+      "problems": [],
+      "recorded_inventory_version": "0.3.10",
+      "sbom_version": "0.3.10",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "urllib3",
+      "audited_version": "2.7.0",
+      "installed_version": "2.7.0",
+      "lock_version": "2.7.0",
+      "problems": [],
+      "recorded_inventory_version": "2.7.0",
+      "sbom_version": "2.7.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "utilsforecast",
+      "audited_version": "0.2.16",
+      "installed_version": "0.2.16",
+      "lock_version": "0.2.16",
+      "problems": [],
+      "recorded_inventory_version": "0.2.16",
+      "sbom_version": "0.2.16",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "uvicorn",
+      "audited_version": "0.50.2",
+      "installed_version": "0.50.2",
+      "lock_version": "0.50.2",
+      "problems": [],
+      "recorded_inventory_version": "0.50.2",
+      "sbom_version": "0.50.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "uvloop",
+      "audited_version": "0.22.1",
+      "installed_version": "0.22.1",
+      "lock_version": "0.22.1",
+      "problems": [],
+      "recorded_inventory_version": "0.22.1",
+      "sbom_version": "0.22.1",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "watchdog",
+      "audited_version": "6.0.0",
+      "installed_version": "6.0.0",
+      "lock_version": "6.0.0",
+      "problems": [],
+      "recorded_inventory_version": "6.0.0",
+      "sbom_version": "6.0.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "watchfiles",
+      "audited_version": "1.2.0",
+      "installed_version": "1.2.0",
+      "lock_version": "1.2.0",
+      "problems": [],
+      "recorded_inventory_version": "1.2.0",
+      "sbom_version": "1.2.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "wcwidth",
+      "audited_version": "0.8.2",
+      "installed_version": "0.8.2",
+      "lock_version": "0.8.2",
+      "problems": [],
+      "recorded_inventory_version": "0.8.2",
+      "sbom_version": "0.8.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "websockets",
+      "audited_version": "16.0",
+      "installed_version": "16.0",
+      "lock_version": "16.0",
+      "problems": [],
+      "recorded_inventory_version": "16.0",
+      "sbom_version": "16.0",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "werkzeug",
+      "audited_version": "3.1.8",
+      "installed_version": "3.1.8",
+      "lock_version": "3.1.8",
+      "problems": [],
+      "recorded_inventory_version": "3.1.8",
+      "sbom_version": "3.1.8",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "wrapt",
+      "audited_version": "2.2.2",
+      "installed_version": "2.2.2",
+      "lock_version": "2.2.2",
+      "problems": [],
+      "recorded_inventory_version": "2.2.2",
+      "sbom_version": "2.2.2",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "yarl",
+      "audited_version": "1.24.5",
+      "installed_version": "1.24.5",
+      "lock_version": "1.24.5",
+      "problems": [],
+      "recorded_inventory_version": "1.24.5",
+      "sbom_version": "1.24.5",
+      "vuln_count": 0
+    },
+    {
+      "audited_name": "zipp",
+      "audited_version": "4.1.0",
+      "installed_version": "4.1.0",
+      "lock_version": "4.1.0",
+      "problems": [],
+      "recorded_inventory_version": "4.1.0",
+      "sbom_version": "4.1.0",
+      "vuln_count": 0
+    }
+  ],
+  "python_executable": "/tmp/pantheon-worker-worktrees/pantheon/odp-drift-security-verify-003/.venv/bin/python3",
+  "reconciled": true,
+  "skipped_entries": [],
+  "unexplained_lock_only_entries": [],
+  "vulnerability_findings": []
+}

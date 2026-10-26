@@ -42,6 +42,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
@@ -83,7 +84,7 @@ HEX_KEY_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 # The bound identity of a lease. Every field is signed; none may be supplied by
 # the verifier at admission time.
-LEASE_FIELDS = (
+LEASE_REQUIRED_FIELDS = (
     "schema_version",
     "lease_id",
     "task_id",
@@ -96,6 +97,12 @@ LEASE_FIELDS = (
     "expires_at",
     "nonce",
 )
+LEASE_OPTIONAL_FIELDS = (
+    "request_fingerprint",
+    "approval_id",
+    "approval_nonce_digest",
+)
+LEASE_FIELDS = LEASE_REQUIRED_FIELDS + LEASE_OPTIONAL_FIELDS
 
 PRIVATE_KEY_ENV = "ODP_RELEASE_LEASE_PRIVATE_KEY"
 PUBLIC_KEY_ENV = "ODP_RELEASE_LEASE_PUBLIC_KEY"
@@ -178,14 +185,13 @@ def signature_errors(lease: dict[str, Any], *, public_key: Ed25519PublicKey) -> 
     algorithm = block.get("algorithm")
     if algorithm != SIGNATURE_ALGORITHM:
         errors.append(
-            f"lease.signature.algorithm must be {SIGNATURE_ALGORITHM!r}, got: {algorithm!r}"
+            f"lease.signature.algorithm must be {SIGNATURE_ALGORITHM!r}"
         )
 
     expected_key_id = public_key_id(public_key)
     if block.get("key_id") != expected_key_id:
         errors.append(
-            f"lease.signature.key_id {block.get('key_id')!r} was not issued by the "
-            f"configured verification key {expected_key_id!r}"
+            f"lease.signature.key_id was not issued by the configured verification key {expected_key_id!r}"
         )
 
     value = block.get("value")
@@ -226,6 +232,19 @@ def load_private_key(
     """
 
     material = _read_key_material(key_path=key_path, env_var=env_var, kind="private")
+    return load_private_key_material(material)
+
+
+def load_private_key_material(material: bytes) -> Ed25519PrivateKey:
+    """Parse private-key bytes that an authorised issuer kept only in memory.
+
+    ``load_private_key`` remains the file/environment convenience API for
+    offline issuance. The live Supervisor issuer obtains its key from the
+    governed Secret Manager reference and must neither materialise it on disk
+    nor inject it into a child environment, so it needs this bytes-only parser.
+    Callers own the lifetime of ``material`` and must never log or persist it.
+    """
+
     if HEX_KEY_PATTERN.fullmatch(material.decode("utf-8", "ignore").strip()):
         return Ed25519PrivateKey.from_private_bytes(
             bytes.fromhex(material.decode("utf-8").strip())
@@ -239,12 +258,8 @@ def load_private_key(
     return key
 
 
-def load_public_key(
-    *, key_path: Path | None = None, env_var: str = PUBLIC_KEY_ENV
-) -> Ed25519PublicKey:
-    """Load the verification key from a PEM file, PEM env var, or raw hex."""
-
-    material = _read_key_material(key_path=key_path, env_var=env_var, kind="public")
+def load_public_key_material(material: bytes) -> Ed25519PublicKey:
+    """Parse public-key bytes in-memory without requiring a file path."""
     text = material.decode("utf-8", "ignore").strip()
     if HEX_KEY_PATTERN.fullmatch(text):
         return Ed25519PublicKey.from_public_bytes(bytes.fromhex(text))
@@ -255,6 +270,15 @@ def load_public_key(
     if not isinstance(key, Ed25519PublicKey):
         raise LeaseKeyError("release lease public key must be an Ed25519 key")
     return key
+
+
+def load_public_key(
+    *, key_path: Path | None = None, env_var: str = PUBLIC_KEY_ENV
+) -> Ed25519PublicKey:
+    """Load the verification key from a PEM file, PEM env var, or raw hex."""
+
+    material = _read_key_material(key_path=key_path, env_var=env_var, kind="public")
+    return load_public_key_material(material)
 
 
 def _read_key_material(*, key_path: Path | None, env_var: str, kind: str) -> bytes:
@@ -292,6 +316,195 @@ def generate_keypair() -> tuple[bytes, bytes]:
 # ---------------------------------------------------------------------------
 
 
+class _GCSLeaseStateStore:
+    """GCS-backed CAS store shared by Supervisor and hosted release runners.
+
+    The object generation is the compare-and-set token.  Issuance uses
+    ``if_generation_match=0`` and transitions use the generation observed while
+    reading the record, so two callers cannot both consume one lease.  The
+    bucket is provisioned outside this module; this class never creates a
+    bucket or silently falls back to a runner-local directory.
+    """
+
+    def __init__(self, uri: str, *, require_existing: bool) -> None:
+        parsed = urlsplit(uri)
+        if parsed.scheme != "gs" or not parsed.netloc:
+            raise LeaseStateError(
+                "GCS lease state must use a gs://bucket/prefix URI"
+            )
+        self._uri = uri.rstrip("/")
+        self._bucket_name = parsed.netloc
+        self._prefix = parsed.path.strip("/")
+        try:
+            from google.cloud import storage
+        except ImportError as exc:  # pragma: no cover - dependency contract
+            raise LeaseStateError(
+                "google-cloud-storage is required for gs:// lease state"
+            ) from exc
+        try:
+            # The long-lived Supervisor normally uses ADC.  A local operator
+            # may instead pass a short-lived gcloud access token explicitly;
+            # hosted runners never use this escape hatch and authenticate via
+            # WIF before admission.
+            access_token = os.environ.get("ODP_RELEASE_LEASE_GCS_ACCESS_TOKEN", "").strip()
+            if access_token:
+                from google.oauth2.credentials import Credentials
+
+                self._client = storage.Client(credentials=Credentials(token=access_token))
+            else:
+                self._client = storage.Client()
+            self._bucket = self._client.bucket(self._bucket_name)
+            if require_existing and not self._bucket.exists():
+                raise LeaseStateError(
+                    f"durable lease state bucket does not exist: {self._bucket_name}"
+                )
+        except LeaseStateError:
+            raise
+        except Exception as exc:
+            raise LeaseStateError(
+                f"cannot access durable lease state bucket {self._bucket_name}: {exc}"
+            ) from exc
+
+    @property
+    def directory(self) -> str:
+        return self._uri
+
+    def _blob(self, lease_id: str):
+        if not LEASE_ID_PATTERN.fullmatch(lease_id):
+            raise LeaseStateError(f"lease_id {lease_id!r} is not a valid lease identifier")
+        name = f"{self._prefix}/{lease_id}.json" if self._prefix else f"{lease_id}.json"
+        return self._bucket.blob(name)
+
+    def _read(self, lease_id: str) -> tuple[dict[str, Any], int] | None:
+        try:
+            blob = self._blob(lease_id)
+            blob.reload()
+            generation = blob.generation
+            payload = blob.download_as_text(if_generation_match=generation)
+            record = json.loads(payload)
+        except Exception as exc:
+            if exc.__class__.__name__ == "NotFound":
+                return None
+            if isinstance(exc, LeaseStateError):
+                raise
+            raise LeaseStateError(
+                f"lease state record gs://{self._bucket_name}/{lease_id}.json is unreadable: {exc}"
+            ) from exc
+        if not isinstance(record, dict) or not isinstance(generation, int):
+            raise LeaseStateError("lease state record is malformed")
+        return record, generation
+
+    def get(self, lease_id: str) -> dict[str, Any] | None:
+        result = self._read(lease_id)
+        return result[0] if result else None
+
+    def record_issued(self, lease: dict[str, Any], *, issued_by: str) -> dict[str, Any]:
+        record = {
+            "lease_id": lease["lease_id"],
+            "state": STATE_ISSUED,
+            "issued_at": lease["issued_at"],
+            "issued_by": issued_by,
+            "expires_at": lease["expires_at"],
+            "request_fingerprint": lease.get("request_fingerprint"),
+            "approval_id": lease.get("approval_id"),
+            "approval_nonce_digest": lease.get("approval_nonce_digest"),
+            "consumed_at": None,
+            "consumed_by": None,
+            "revoked_at": None,
+            "revoked_reason": None,
+            "lease": lease,
+        }
+        payload = json.dumps(record, indent=2, ensure_ascii=False) + "\n"
+        try:
+            self._blob(lease["lease_id"]).upload_from_string(
+                payload,
+                content_type="application/json",
+                if_generation_match=0,
+            )
+        except Exception as exc:
+            if exc.__class__.__name__ == "PreconditionFailed":
+                raise LeaseStateError(
+                    f"lease {lease['lease_id']} already exists in the durable state store"
+                ) from exc
+            raise LeaseStateError(
+                f"cannot record lease state in {self._uri}: {exc}"
+            ) from exc
+        return record
+
+    def consume(self, lease: dict[str, Any], *, consumed_by: str) -> dict[str, Any]:
+        return self._transition(lease, STATE_CONSUMED, "consumed_by", consumed_by)
+
+    def revoke(self, lease: dict[str, Any], *, reason: str) -> dict[str, Any]:
+        return self._transition(lease, STATE_REVOKED, "revoked_reason", reason)
+
+    def _transition(
+        self, lease: dict[str, Any], to_state: str, actor_field: str, actor: str
+    ) -> dict[str, Any]:
+        lease_id = lease.get("lease_id")
+        if not isinstance(lease_id, str):
+            raise LeaseStateError("lease is missing lease_id; cannot transition state")
+        result = self._read(lease_id)
+        if result is None:
+            raise LeaseStateError(f"lease {lease_id} is not present in the durable state store")
+        record, generation = result
+        if record.get("state") != STATE_ISSUED:
+            raise LeaseStateError(
+                f"lease {lease_id} is {record.get('state')!r}, not {STATE_ISSUED!r}; "
+                f"refusing to mark it {to_state!r} (replay)"
+            )
+        stored = record.get("lease")
+        if not isinstance(stored, dict) or canonical_bytes(stored) != canonical_bytes(lease):
+            raise LeaseStateError(
+                f"lease {lease_id} does not match the lease recorded at issuance"
+            )
+        record["state"] = to_state
+        record[f"{to_state}_at"] = _utc_now().isoformat()
+        record[actor_field] = actor
+        payload = json.dumps(record, indent=2, ensure_ascii=False) + "\n"
+        try:
+            self._blob(lease_id).upload_from_string(
+                payload,
+                content_type="application/json",
+                if_generation_match=generation,
+            )
+        except Exception as exc:
+            if exc.__class__.__name__ == "PreconditionFailed":
+                raise LeaseStateError(
+                    f"lease {lease_id} changed concurrently; refusing transition"
+                ) from exc
+            raise LeaseStateError(
+                f"cannot transition lease {lease_id} in {self._uri}: {exc}"
+            ) from exc
+        return record
+
+    def list_records(self) -> list[dict[str, Any]]:
+        prefix = f"{self._prefix}/" if self._prefix else ""
+        try:
+            blobs = self._client.list_blobs(self._bucket, prefix=prefix)
+            records: list[dict[str, Any]] = []
+            for blob in blobs:
+                name = blob.name[len(prefix):] if prefix and blob.name.startswith(prefix) else blob.name
+                if "/" in name or not name.endswith(".json"):
+                    continue
+                lease_id = name[:-5]
+                if not LEASE_ID_PATTERN.fullmatch(lease_id):
+                    continue
+                record = self.get(lease_id)
+                if record is not None:
+                    records.append(record)
+            return records
+        except Exception as exc:
+            raise LeaseStateError(f"cannot list lease records in {self._uri}: {exc}") from exc
+
+    def find_leases_for_task(self, task_id: str) -> list[dict[str, Any]]:
+        matching: list[dict[str, Any]] = []
+        for record in self.list_records():
+            stored_lease = record.get("lease")
+            if isinstance(stored_lease, dict) and str(stored_lease.get("task_id") or "").strip() == task_id:
+                matching.append(record)
+        return matching
+
+
 class LeaseStateStore:
     """Durable Supervisor-owned CAS store for lease lifecycle state.
 
@@ -306,7 +519,16 @@ class LeaseStateStore:
     "consume" a lease that stays `issued` everywhere that matters.
     """
 
-    def __init__(self, state_dir: Path, *, require_existing: bool = False) -> None:
+    def __init__(self, state_dir: Path | str, *, require_existing: bool = False) -> None:
+        raw_state_dir = str(state_dir)
+        self._remote = (
+            _GCSLeaseStateStore(raw_state_dir, require_existing=require_existing)
+            if raw_state_dir.startswith("gs://")
+            else None
+        )
+        if self._remote is not None:
+            self._dir = None
+            return
         self._dir = Path(state_dir)
         if require_existing:
             if not self._dir.is_dir():
@@ -319,7 +541,9 @@ class LeaseStateStore:
             self._dir.mkdir(parents=True, exist_ok=True)
 
     @property
-    def directory(self) -> Path:
+    def directory(self) -> Path | str:
+        if self._remote is not None:
+            return self._remote.directory
         return self._dir
 
     def _path(self, lease_id: str) -> Path:
@@ -327,7 +551,37 @@ class LeaseStateStore:
             raise LeaseStateError(f"lease_id {lease_id!r} is not a valid lease identifier")
         return self._dir / f"{lease_id}.json"
 
+    def list_records(self) -> list[dict[str, Any]]:
+        if self._remote is not None:
+            return self._remote.list_records()
+        records: list[dict[str, Any]] = []
+        try:
+            for path in sorted(self._dir.glob("*.json")):
+                if not path.is_file():
+                    continue
+                lease_id = path.stem
+                if not LEASE_ID_PATTERN.fullmatch(lease_id):
+                    continue
+                record = self.get(lease_id)
+                if record is not None:
+                    records.append(record)
+            return records
+        except OSError as exc:
+            raise LeaseStateError(f"cannot list lease records in {self._dir}: {exc}") from exc
+
+    def find_leases_for_task(self, task_id: str) -> list[dict[str, Any]]:
+        if self._remote is not None:
+            return self._remote.find_leases_for_task(task_id)
+        matching: list[dict[str, Any]] = []
+        for record in self.list_records():
+            stored_lease = record.get("lease")
+            if isinstance(stored_lease, dict) and str(stored_lease.get("task_id") or "").strip() == task_id:
+                matching.append(record)
+        return matching
+
     def get(self, lease_id: str) -> dict[str, Any] | None:
+        if self._remote is not None:
+            return self._remote.get(lease_id)
         try:
             path = self._path(lease_id)
         except LeaseStateError:
@@ -335,12 +589,26 @@ class LeaseStateStore:
         if not path.exists():
             return None
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            # Bytes that are not UTF-8 are as unreadable as bytes that are not
+            # JSON. Left unwrapped, UnicodeDecodeError escapes every caller that
+            # catches LeaseStateError and the verifier dies without a receipt.
             raise LeaseStateError(f"lease state record {path} is unreadable: {exc}") from exc
+        # A record that exists but is not an object (``null``, a list, a bare
+        # string) is damage, not absence. Returning None here would let
+        # list_records drop it and present a corrupted history as an empty one,
+        # which is exactly what an initial-release lineage check must not see.
+        # The GCS backend refuses the same shape in _read.
+        if not isinstance(record, dict):
+            raise LeaseStateError(f"lease state record {path} is malformed")
+        return record
 
     def record_issued(self, lease: dict[str, Any], *, issued_by: str = "supervisor") -> dict[str, Any]:
         """Persist a freshly minted lease. Fails closed if the id already exists."""
+
+        if self._remote is not None:
+            return self._remote.record_issued(lease, issued_by=issued_by)
 
         path = self._path(lease["lease_id"])
         record = {
@@ -349,6 +617,9 @@ class LeaseStateStore:
             "issued_at": lease["issued_at"],
             "issued_by": issued_by,
             "expires_at": lease["expires_at"],
+            "request_fingerprint": lease.get("request_fingerprint"),
+            "approval_id": lease.get("approval_id"),
+            "approval_nonce_digest": lease.get("approval_nonce_digest"),
             "consumed_at": None,
             "consumed_by": None,
             "revoked_at": None,
@@ -376,6 +647,9 @@ class LeaseStateStore:
     def consume(self, lease: dict[str, Any], *, consumed_by: str) -> dict[str, Any]:
         """CAS `issued` -> `consumed`, binding the presented lease to the record."""
 
+        if self._remote is not None:
+            return self._remote.consume(lease, consumed_by=consumed_by)
+
         return self._transition(
             lease,
             to_state=STATE_CONSUMED,
@@ -385,6 +659,9 @@ class LeaseStateStore:
 
     def revoke(self, lease: dict[str, Any], *, reason: str) -> dict[str, Any]:
         """CAS `issued` -> `revoked`. A revoked lease can never be consumed."""
+
+        if self._remote is not None:
+            return self._remote.revoke(lease, reason=reason)
 
         return self._transition(
             lease,
@@ -413,8 +690,10 @@ class LeaseStateStore:
             try:
                 try:
                     record = json.loads(handle.read())
-                except json.JSONDecodeError as exc:
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                     raise LeaseStateError(f"lease state record {path} is unreadable: {exc}") from exc
+                if not isinstance(record, dict):
+                    raise LeaseStateError(f"lease state record {path} is malformed")
 
                 current = record.get("state")
                 if current != STATE_ISSUED:
@@ -457,6 +736,9 @@ def build_lease(
     private_key: Ed25519PrivateKey,
     ttl_seconds: int = DEFAULT_TTL_SECONDS,
     issued_at: datetime | None = None,
+    request_fingerprint: str | None = None,
+    approval_id: str | None = None,
+    approval_nonce_digest: str | None = None,
 ) -> dict[str, Any]:
     """Mint one signed lease. Field validation only; no authorisation policy.
 
@@ -473,6 +755,9 @@ def build_lease(
         target_environment=target_environment,
         allowed_action=allowed_action,
         ttl_seconds=ttl_seconds,
+        request_fingerprint=request_fingerprint,
+        approval_id=approval_id,
+        approval_nonce_digest=approval_nonce_digest,
     )
     if errors:
         raise LeaseIssuanceError(errors)
@@ -492,6 +777,12 @@ def build_lease(
         "expires_at": (now + timedelta(seconds=ttl_seconds)).isoformat(),
         "nonce": nonce,
     }
+    if request_fingerprint is not None:
+        lease["request_fingerprint"] = request_fingerprint
+    if approval_id is not None:
+        lease["approval_id"] = approval_id
+    if approval_nonce_digest is not None:
+        lease["approval_nonce_digest"] = approval_nonce_digest
     lease["signature"] = sign_lease(lease, private_key=private_key)
     return lease
 
@@ -505,6 +796,9 @@ def _issuance_field_errors(
     target_environment: str,
     allowed_action: str,
     ttl_seconds: int,
+    request_fingerprint: str | None = None,
+    approval_id: str | None = None,
+    approval_nonce_digest: str | None = None,
 ) -> list[str]:
     errors: list[str] = []
     if not isinstance(task_id, str) or not TASK_ID_PATTERN.fullmatch(task_id):
@@ -525,6 +819,12 @@ def _issuance_field_errors(
         errors.append("ttl_seconds must be a positive integer")
     elif ttl_seconds > MAX_TTL_SECONDS:
         errors.append(f"ttl_seconds {ttl_seconds} exceeds the maximum {MAX_TTL_SECONDS}")
+    if request_fingerprint is not None and (not isinstance(request_fingerprint, str) or not SHA256_DIGEST_PATTERN.fullmatch(request_fingerprint)):
+        errors.append("request_fingerprint must be a sha256:<64 lowercase hex> digest")
+    if approval_id is not None and (not isinstance(approval_id, str) or not approval_id.strip()):
+        errors.append("approval_id must be a non-empty string")
+    if approval_nonce_digest is not None and (not isinstance(approval_nonce_digest, str) or not SHA256_DIGEST_PATTERN.fullmatch(approval_nonce_digest)):
+        errors.append("approval_nonce_digest must be a sha256:<64 lowercase hex> digest")
     return errors
 
 
@@ -543,6 +843,9 @@ def verify_lease(
     expected_manifest_digest: str | None = None,
     expected_environment: str | None = None,
     expected_action: str | None = DEFAULT_ACTION,
+    expected_request_fingerprint: str | None = None,
+    expected_approval_id: str | None = None,
+    expected_approval_nonce_digest: str | None = None,
     now: datetime | None = None,
 ) -> list[str]:
     """Return every reason the lease is not admissible; empty means admissible.
@@ -560,11 +863,11 @@ def verify_lease(
 
     if lease.get("schema_version") != LEASE_SCHEMA_VERSION:
         errors.append(
-            f"lease.schema_version must be {LEASE_SCHEMA_VERSION}, "
-            f"got: {lease.get('schema_version')!r}"
+            f"lease.schema_version must be {LEASE_SCHEMA_VERSION}; "
+            "actual value does not match"
         )
 
-    missing = [field for field in (*LEASE_FIELDS, "signature") if field not in lease]
+    missing = [field for field in (*LEASE_REQUIRED_FIELDS, "signature") if field not in lease]
     if missing:
         # Signature verification over a partial payload would be meaningless.
         return errors + [f"lease missing required field: {field}" for field in missing]
@@ -586,6 +889,9 @@ def verify_lease(
             expected_manifest_digest=expected_manifest_digest,
             expected_environment=expected_environment,
             expected_action=expected_action,
+            expected_request_fingerprint=expected_request_fingerprint,
+            expected_approval_id=expected_approval_id,
+            expected_approval_nonce_digest=expected_approval_nonce_digest,
         )
     )
     errors.extend(_state_errors(lease, state_store))
@@ -608,11 +914,16 @@ def _field_format_errors(lease: dict[str, Any]) -> list[str]:
         errors.append("lease.manifest_digest must be a sha256:<64 lowercase hex> digest")
     if lease.get("target_environment") not in TARGET_ENVIRONMENTS:
         errors.append(
-            f"lease.target_environment must be one of {list(TARGET_ENVIRONMENTS)}, "
-            f"got: {lease.get('target_environment')!r}"
+            f"lease.target_environment must be one of {list(TARGET_ENVIRONMENTS)}"
         )
     if not ACTION_PATTERN.fullmatch(str(lease.get("allowed_action"))):
         errors.append("lease.allowed_action is not a valid action identifier")
+    if "request_fingerprint" in lease and not SHA256_DIGEST_PATTERN.fullmatch(str(lease.get("request_fingerprint"))):
+        errors.append("lease.request_fingerprint must be a sha256:<64 lowercase hex> digest")
+    if "approval_nonce_digest" in lease and not SHA256_DIGEST_PATTERN.fullmatch(str(lease.get("approval_nonce_digest"))):
+        errors.append("lease.approval_nonce_digest must be a sha256:<64 lowercase hex> digest")
+    if "approval_id" in lease and (not isinstance(lease.get("approval_id"), str) or not str(lease.get("approval_id")).strip()):
+        errors.append("lease.approval_id must be a non-empty string")
     return errors
 
 
@@ -653,6 +964,9 @@ def _binding_errors(
     expected_manifest_digest: str | None,
     expected_environment: str | None,
     expected_action: str | None,
+    expected_request_fingerprint: str | None = None,
+    expected_approval_id: str | None = None,
+    expected_approval_nonce_digest: str | None = None,
 ) -> list[str]:
     errors: list[str] = []
     expectations = (
@@ -661,6 +975,9 @@ def _binding_errors(
         ("manifest_digest", expected_manifest_digest),
         ("target_environment", expected_environment),
         ("allowed_action", expected_action),
+        ("request_fingerprint", expected_request_fingerprint),
+        ("approval_id", expected_approval_id),
+        ("approval_nonce_digest", expected_approval_nonce_digest),
     )
     for field, expected in expectations:
         if expected is None:
@@ -668,7 +985,7 @@ def _binding_errors(
         actual = lease.get(field)
         if actual != expected:
             errors.append(
-                f"lease.{field} {actual!r} does not match the requested {expected!r}"
+                f"lease.{field} does not match the requested {expected!r}"
             )
     return errors
 
@@ -677,8 +994,8 @@ def _state_errors(lease: dict[str, Any], state_store: LeaseStateStore) -> list[s
     lease_id = str(lease.get("lease_id"))
     try:
         record = state_store.get(lease_id)
-    except LeaseStateError as exc:
-        return [str(exc)]
+    except LeaseStateError:
+        return ["durable lease state lookup failed"]
 
     if record is None:
         return [
@@ -687,8 +1004,9 @@ def _state_errors(lease: dict[str, Any], state_store: LeaseStateStore) -> list[s
         ]
     state = record.get("state")
     if state != STATE_ISSUED:
+        safe_state = state if isinstance(state, str) and len(state) <= 32 and state.isalnum() else "invalid"
         return [
-            f"lease {lease_id} is {state!r} in durable state, expected {STATE_ISSUED!r} "
+            f"lease {lease_id} is {safe_state!r} in durable state, expected {STATE_ISSUED!r} "
             "(already used, or revoked)"
         ]
     stored = record.get("lease")
@@ -744,6 +1062,9 @@ def build_receipt(
         "allowed_action": document.get("allowed_action"),
         "issued_at": document.get("issued_at"),
         "expires_at": document.get("expires_at"),
+        "request_fingerprint": document.get("request_fingerprint"),
+        "approval_id": document.get("approval_id"),
+        "approval_nonce_digest": document.get("approval_nonce_digest"),
         "signature_key_id": (
             signature.get("key_id") if isinstance(signature, dict) else None
         ),
@@ -886,7 +1207,9 @@ __all__ = [
     "generate_keypair",
     "load_lease",
     "load_private_key",
+    "load_private_key_material",
     "load_public_key",
+    "load_public_key_material",
     "public_key_id",
     "sign_lease",
     "signature_errors",

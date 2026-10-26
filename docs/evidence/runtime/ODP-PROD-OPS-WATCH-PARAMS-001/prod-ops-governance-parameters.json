@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-PROD-OPS-WATCH-PARAMS-001",
+  "item_id": "PROD-OPS-05",
+  "category": "Operations & Incident Governance",
+  "status": "populated_loose_initial_baseline",
+  "governance_parameters": {
+    "watch_window_minutes": 30,
+    "slo_thresholds": {
+      "error_rate_percent": "< 5%",
+      "p95_latency_seconds": "< 5s"
+    },
+    "rollback_triggers": [
+      {
+        "metric": "error_rate",
+        "threshold": "> 10%",
+        "duration_minutes": 5
+      },
+      {
+        "metric": "p95_latency",
+        "threshold": "> 10s",
+        "duration_minutes": 5
+      },
+      {
+        "metric": "health_check",
+        "threshold": "3 consecutive failures"
+      },
+      {
+        "metric": "operational_anomalies",
+        "threshold": "auth failure, data quality anomalies, job failure, queue lag, audit deficiency, or operator discretion"
+      }
+    ],
+    "rollback_and_on_call_owner": {
+      "role": "Human/Ops",
+      "email": "bjoe734@gmail.com"
+    }
+  },
+  "operational_constraints": {
+    "baseline_nature": "loose_initial_values_without_live_production_traffic_basis",
+    "post_launch_action": "tighten_thresholds_with_empirical_production_metrics",
+    "automation_boundary": {
+      "is_automated_gate": false,
+      "decision_mode": "manual_human_operational_judgment",
+      "bluegreen_release_script": "has rollback subcommand, no watch subcommand or threshold parameters",
+      "deploy_workflow": "production blue-green verification only validates release_id and traffic structure; no automated fallback"
+    }
+  },
+  "other_prod_checklists_unaffected": [
+    "PROD-GCP-01",
+    "PROD-GCP-02",
+    "PROD-GCP-03",
+    "PROD-GCP-04"
+  ]
+}

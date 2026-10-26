@@ -143,9 +143,9 @@ def build_ruleset_payload(config: dict, branch: str) -> dict:
                     "grouping_strategy": config.get("grouping_strategy", "ALLGREEN"),
                     "max_entries_to_build": config.get("max_entries_to_build", 5),
                     "max_entries_to_merge": config.get("max_entries_to_merge", 5),
-                    "min_entries_to_merge": config.get("min_entries_to_merge", 1),
+                    "min_entries_to_merge": config.get("min_entries_to_merge", 2),
                     "min_entries_to_merge_wait_minutes": config.get(
-                        "min_entries_to_merge_wait_minutes", 5
+                        "min_entries_to_merge_wait_minutes", 10
                     ),
                     "check_response_timeout_minutes": config.get(
                         "check_response_timeout_minutes", 60

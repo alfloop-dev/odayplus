@@ -95,18 +95,16 @@ def require_authenticated(request: AccessRequest) -> Decision | None:
     return None
 
 
-def tenant_isolation(request: AccessRequest) -> Decision | None:
-    """Principal home tenant must match the resource tenant (SD-09 §10 threat:
-    cross-tenant access)."""
+def operator_viewer_tenant_isolation(request: AccessRequest) -> Decision | None:
+    """The opt-in read role never authorizes tenant-less or foreign objects."""
 
-    resource_tenant = request.resource.tenant_id
-    if resource_tenant is None:
-        return None
-    principal_tenant = request.principal.tenant_id
-    if principal_tenant is not None and principal_tenant != resource_tenant:
+    principal = request.principal
+    if principal.has_role(Role.OPERATOR_VIEWER) and (
+        not principal.tenant_id or request.resource.tenant_id != principal.tenant_id
+    ):
         return Decision.deny(
-            f"tenant {principal_tenant!r} may not access tenant {resource_tenant!r}",
-            policy_id="tenant_isolation",
+            "operator viewer requires matching tenant evidence",
+            policy_id="operator.tenant_isolation",
         )
     return None
 
@@ -160,7 +158,7 @@ def franchisee_isolation(request: AccessRequest) -> Decision | None:
 # (any single deny wins) but is arranged cheap-checks-first for readability.
 DEFAULT_POLICIES: tuple[AbacPolicy, ...] = (
     require_authenticated,
-    tenant_isolation,
+    operator_viewer_tenant_isolation,
     scope_containment,
     data_classification_visibility,
     franchisee_isolation,

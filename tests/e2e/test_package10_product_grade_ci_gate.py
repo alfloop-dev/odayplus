@@ -67,3 +67,47 @@ def test_remote_visual_approval_rejects_local_or_incomplete_evidence(
     assert any("zero production fixtures" in error for error in errors)
     assert any("required viewport" in error for error in errors)
     assert any("required route" in error for error in errors)
+
+
+def _go_record(status: str, final: str) -> str:
+    return (
+        "# Product Release Go/No-Go\n\n"
+        f"Decision status: {status}  \n"
+        "Decision owner: Human/Ops  \n\n"
+        "| Item | Requirement | Status |\n|---|---|---|\n"
+        f"| Final decision recorded | Human/Ops writes approved / approved-with-actions / rejected | {final} |\n"
+    )
+
+
+def test_release_go_requires_structured_unconditional_human_approval() -> None:
+    authorized, reason = GATE.evaluate_release_go_decision(_go_record("go", "approved"))
+    assert authorized, reason
+    authorized, _ = GATE.evaluate_release_go_decision(
+        _go_record("GO for production", "approved-with-actions")
+    )
+    assert authorized
+
+
+def test_release_go_rejects_go_substrings_and_non_final_decisions() -> None:
+    rejected = [
+        _go_record("NO-GO", "rejected"),
+        _go_record("no go", "approved"),
+        _go_record("conditional go for deterministic product E2E", "pending-human"),
+        _go_record("go", "pending-human"),
+        _go_record("blocked pending sign-off", "approved"),
+        _go_record("go pending production authorization", "approved-with-actions"),
+        _go_record("go, subject to Human/Ops sign-off", "approved"),
+        _go_record("approved except staging", "approved"),
+        "# Product Release Go/No-Go\n\nThis document mentions go many times but records nothing.\n",
+    ]
+    for text in rejected:
+        authorized, reason = GATE.evaluate_release_go_decision(text)
+        assert not authorized, (text, reason)
+
+
+def test_current_release_record_does_not_authorize_release() -> None:
+    authorized, reason = GATE.evaluate_release_go_decision(
+        GATE.RELEASE_GO_PATH.read_text(encoding="utf-8")
+    )
+    assert not authorized
+    assert "conditional" in reason

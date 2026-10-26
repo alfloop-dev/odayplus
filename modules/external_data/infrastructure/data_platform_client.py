@@ -12,9 +12,10 @@ raw producer tables or direct database credentials.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, TypeVar, runtime_checkable
 
 # Foundation contracts client
 from packages.oday_data_contracts_client import (
@@ -32,6 +33,7 @@ from packages.oday_data_contracts_client import (
 )
 from packages.oday_data_contracts_client.models import (
     EMGIPlatformFoundationConfig,
+    OperationalStartObservation,
     StoreDailyPerformance,
     StoreDayCoverage,
     StoreReference,
@@ -42,7 +44,9 @@ from packages.oday_data_product_contracts_client import (
     ContractClientError as ProductClientError,
 )
 from packages.oday_data_product_contracts_client import (
+    ProductRelease,
     ProductVersion,
+    load_release,
     product_version,
 )
 from packages.oday_data_product_contracts_client import (
@@ -103,7 +107,11 @@ class DataPlatformDocumentNotFoundError(DataPlatformClientError):
 
 
 class DataPlatformValidationError(DataPlatformClientError):
-    """Raised when data returned by the data platform fails schema validation."""
+    """Raised when platform data fails schema validation.
+
+    Public context must stay independent of unvalidated payloads and decoder
+    values: parsing can fail before the product envelope is tenant-checked.
+    """
 
     def __init__(self, message: str, *, details: Mapping[str, Any] | None = None) -> None:
         super().__init__(message, code="contract_validation_error", details=details)
@@ -144,6 +152,65 @@ class DataPlatformTransport(Protocol):
 # rather than the surface envelope. Consumers filter a surface down to the
 # cells they asked about, so these must never be matched top-level.
 COVERAGE_CELL_PARAMS = ("admin_code", "h3_index", "business_date", "readiness", "state")
+
+# Root-document fields that carry a product document's contract/version
+# identity. Only the names live here: which of them a document declares, and
+# what each may hold, come from the pinned release schema of that contract.
+PRODUCT_VERSION_ENVELOPE_FIELDS = ("contract_id", "contract_version", "product_version")
+
+# Keywords in a version-envelope field schema that annotate rather than
+# constrain. Any other keyword is a constraint this boundary does not
+# evaluate, so it fails closed instead of being silently skipped.
+_ENVELOPE_ANNOTATION_KEYWORDS = frozenset(
+    {"default", "description", "title", "examples", "$comment"}
+)
+
+_JSON_TYPE_CHECKS = {
+    "string": lambda value: isinstance(value, str),
+    "null": lambda value: value is None,
+    "boolean": lambda value: isinstance(value, bool),
+    "integer": lambda value: isinstance(value, int) and not isinstance(value, bool),
+    "number": lambda value: isinstance(value, int | float) and not isinstance(value, bool),
+}
+
+_ProductDocumentT = TypeVar(
+    "_ProductDocumentT",
+    SiteMarketContextDocument,
+    MarketCellProfileDocument,
+    CatchmentProfileDocument,
+    PropertyObservationDocument,
+)
+
+
+def _json_equal(value: Any, expected: Any) -> bool:
+    """JSON equality: ``true`` is not ``1``."""
+    return value == expected and isinstance(value, bool) == isinstance(expected, bool)
+
+
+def _envelope_field_violations(declared: Mapping[str, Any], value: Any) -> list[str]:
+    """Return the schema keywords of one declared envelope field that ``value`` fails."""
+    failed: list[str] = []
+    for keyword, constraint in declared.items():
+        if keyword in _ENVELOPE_ANNOTATION_KEYWORDS:
+            continue
+        if keyword == "type":
+            types = [constraint] if isinstance(constraint, str) else list(constraint)
+            ok = any(_JSON_TYPE_CHECKS.get(name, lambda _v: False)(value) for name in types)
+        elif keyword == "enum":
+            ok = any(_json_equal(value, option) for option in constraint)
+        elif keyword == "const":
+            ok = _json_equal(value, constraint)
+        elif keyword == "minLength":
+            ok = not isinstance(value, str) or len(value) >= constraint
+        elif keyword == "maxLength":
+            ok = not isinstance(value, str) or len(value) <= constraint
+        elif keyword == "pattern":
+            ok = not isinstance(value, str) or re.search(constraint, value) is not None
+        else:
+            ok = False
+        if not ok:
+            failed.append(keyword)
+    return failed
 
 
 @dataclass
@@ -430,6 +497,110 @@ class DataPlatformClient:
                 code="missing_transport",
             )
         self._transport = transport
+        self._product_release: ProductRelease | None = None
+
+    def _verified_product_release(self) -> ProductRelease:
+        """Load the checksum-verified pinned product release once per client."""
+        if self._product_release is None:
+            try:
+                release = load_release()
+                verify_product_release(release)
+            except ProductClientError as err:
+                raise DataPlatformIntegrityError(
+                    f"Product contract release verification failed: {err}"
+                ) from err
+            self._product_release = release
+        return self._product_release
+
+    def _version_envelope_violations(
+        self, contract_id: str, raw: Mapping[str, Any]
+    ) -> list[str]:
+        """Check the raw root envelope against its pinned version-field constraints.
+
+        Generated ``from_dict`` fills a missing ``contract_version`` or
+        ``product_version`` from its default and keeps any other string, so
+        this must run on the fetched mapping before decoding. Only fields the
+        pinned root model declares are checked, with exactly the constraints
+        the schema states; a document that declares none is not given any.
+        Violations name the field and keyword only, never the payload value.
+        """
+        release = self._verified_product_release()
+        try:
+            pinned = release.pin.contract(contract_id)
+            schema = release.schema_for(pinned)
+        except ProductClientError as err:
+            raise DataPlatformIntegrityError(
+                f"Pinned product contract {contract_id} is unavailable: {err}"
+            ) from err
+        defs = schema.get("$defs") or {}
+        root = defs[pinned.root_model] if pinned.root_model in defs else schema
+        properties = root.get("properties")
+        if not isinstance(properties, Mapping):
+            raise DataPlatformIntegrityError(
+                f"Pinned product contract {contract_id} declares no root model properties"
+            )
+        required = set(root.get("required") or ())
+
+        violations: list[str] = []
+        for name in PRODUCT_VERSION_ENVELOPE_FIELDS:
+            declared = properties.get(name)
+            if not isinstance(declared, Mapping):
+                continue
+            if name not in raw:
+                if name in required:
+                    violations.append(f"{name}:required")
+                continue
+            violations.extend(
+                f"{name}:{keyword}"
+                for keyword in _envelope_field_violations(declared, raw[name])
+            )
+        return violations
+
+    def _decode_product_document(
+        self,
+        contract_id: str,
+        model: type[_ProductDocumentT],
+        raw: Mapping[str, Any],
+        *,
+        preserve_missing_tenant: bool,
+    ) -> _ProductDocumentT:
+        """Decode a fetched product document after its version envelope holds."""
+        if not isinstance(raw, Mapping):
+            raise DataPlatformValidationError(
+                f"Failed to parse {model.__name__}",
+                details={"contract_id": contract_id},
+            )
+        violations = self._version_envelope_violations(contract_id, raw)
+        if violations:
+            raise DataPlatformValidationError(
+                f"{model.__name__} version envelope does not satisfy the pinned contract",
+                details={
+                    "contract_id": contract_id,
+                    "version_envelope_violations": violations,
+                },
+            )
+        payload = self._preserve_missing_product_tenant(raw) if preserve_missing_tenant else raw
+        try:
+            return model.from_dict(payload)
+        except Exception as err:
+            raise DataPlatformValidationError(
+                f"Failed to parse {model.__name__}",
+                details={"contract_id": contract_id},
+            ) from err
+
+    @staticmethod
+    def _preserve_missing_product_tenant(raw: Mapping[str, Any]) -> dict[str, Any]:
+        """Keep an omitted tenant envelope omitted through generated parsing.
+
+        Some released product models use ``"default"`` as the generated
+        dataclass default for their optional ``tenant_id`` field. Treating
+        that code-generation fallback as a real owner would turn an
+        unscoped payload into a cross-tenant decision instead of the required
+        fail-closed missing-tenant decision.
+        """
+        payload = dict(raw)
+        payload.setdefault("tenant_id", None)
+        return payload
 
     @property
     def transport(self) -> DataPlatformTransport:
@@ -529,13 +700,12 @@ class DataPlatformClient:
                     "tenant_id": tenant_id,
                 },
             )
-        try:
-            return SiteMarketContextDocument.from_dict(raw)
-        except Exception as err:
-            raise DataPlatformValidationError(
-                f"Failed to parse SiteMarketContextDocument: {err}",
-                details={"contract_id": "emgi.site-market-context.v1", "raw": raw},
-            ) from err
+        return self._decode_product_document(
+            "emgi.site-market-context.v1",
+            SiteMarketContextDocument,
+            raw,
+            preserve_missing_tenant=True,
+        )
 
     def get_site_market_context(
         self,
@@ -615,13 +785,12 @@ class DataPlatformClient:
                     "tenant_id": tenant_id,
                 },
             )
-        try:
-            return MarketCellProfileDocument.from_dict(raw)
-        except Exception as err:
-            raise DataPlatformValidationError(
-                f"Failed to parse MarketCellProfileDocument: {err}",
-                details={"contract_id": "emgi.market-cell-profile.v1", "raw": raw},
-            ) from err
+        return self._decode_product_document(
+            "emgi.market-cell-profile.v1",
+            MarketCellProfileDocument,
+            raw,
+            preserve_missing_tenant=True,
+        )
 
     def get_market_cell_profile(
         self,
@@ -701,13 +870,12 @@ class DataPlatformClient:
                     "tenant_id": tenant_id,
                 },
             )
-        try:
-            return CatchmentProfileDocument.from_dict(raw)
-        except Exception as err:
-            raise DataPlatformValidationError(
-                f"Failed to parse CatchmentProfileDocument: {err}",
-                details={"contract_id": "emgi.catchment-profile.v1", "raw": raw},
-            ) from err
+        return self._decode_product_document(
+            "emgi.catchment-profile.v1",
+            CatchmentProfileDocument,
+            raw,
+            preserve_missing_tenant=False,
+        )
 
     def get_catchment_profile(
         self,
@@ -784,13 +952,12 @@ class DataPlatformClient:
                     "tenant_id": tenant_id,
                 },
             )
-        try:
-            return PropertyObservationDocument.from_dict(raw)
-        except Exception as err:
-            raise DataPlatformValidationError(
-                f"Failed to parse PropertyObservationDocument: {err}",
-                details={"contract_id": "emgi.property-observation.v1", "raw": raw},
-            ) from err
+        return self._decode_product_document(
+            "emgi.property-observation.v1",
+            PropertyObservationDocument,
+            raw,
+            preserve_missing_tenant=False,
+        )
 
     def get_property_entity(
         self, property_id: str, *, tenant_id: str | None = None
@@ -835,7 +1002,7 @@ class DataPlatformClient:
             return EMGIPlatformFoundationConfig.from_dict(raw)
         except Exception as err:
             raise DataPlatformValidationError(
-                f"Failed to parse EMGIPlatformFoundationConfig: {err}"
+                "Failed to parse EMGIPlatformFoundationConfig"
             ) from err
 
     def get_store_reference(self, store_id: str) -> StoreReference:
@@ -851,7 +1018,7 @@ class DataPlatformClient:
         try:
             return StoreReference.from_dict(raw)
         except Exception as err:
-            raise DataPlatformValidationError(f"Failed to parse StoreReference: {err}") from err
+            raise DataPlatformValidationError("Failed to parse StoreReference") from err
 
     def get_store_day_coverage(self, store_id: str, date_key: str) -> StoreDayCoverage:
         """Retrieve StoreDayCoverage for (store_id, date_key)."""
@@ -869,7 +1036,7 @@ class DataPlatformClient:
         try:
             return StoreDayCoverage.from_dict(raw)
         except Exception as err:
-            raise DataPlatformValidationError(f"Failed to parse StoreDayCoverage: {err}") from err
+            raise DataPlatformValidationError("Failed to parse StoreDayCoverage") from err
 
     def get_store_daily_performance(self, store_id: str, date_key: str) -> StoreDailyPerformance:
         """Retrieve StoreDailyPerformance for (store_id, date_key)."""
@@ -888,7 +1055,27 @@ class DataPlatformClient:
             return StoreDailyPerformance.from_dict(raw)
         except Exception as err:
             raise DataPlatformValidationError(
-                f"Failed to parse StoreDailyPerformance: {err}"
+                "Failed to parse StoreDailyPerformance"
+            ) from err
+
+    def get_operational_start_observation(self, store_id: str) -> OperationalStartObservation:
+        """Retrieve OperationalStartObservation for store_id."""
+        doc_id = store_id
+        raw = self._transport.fetch_document(
+            "oday.operational-start-observation.v1",
+            document_id=doc_id,
+            params={"store_id": store_id},
+        )
+        if raw is None:
+            raise DataPlatformDocumentNotFoundError(
+                f"OperationalStartObservation not found for store_id={store_id}",
+                details={"store_id": store_id},
+            )
+        try:
+            return OperationalStartObservation.from_dict(raw)
+        except Exception as err:
+            raise DataPlatformValidationError(
+                "Failed to parse OperationalStartObservation"
             ) from err
 
 

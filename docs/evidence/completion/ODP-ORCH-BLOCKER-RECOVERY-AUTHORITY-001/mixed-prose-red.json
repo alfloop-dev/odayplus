@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "kind": "verification_receipt",
+  "task_id": "ODP-ORCH-BLOCKER-RECOVERY-AUTHORITY-001",
+  "head_sha": "fb6548154cdc681b45291b4e51397553912509fc",
+  "command": "uv run --frozen --python 3.12 pytest -q .orchestrator/test_blocker_recovery_authority.py .orchestrator/test_task_dependency_gate.py",
+  "command_audit": {
+    "command": "uv run --frozen --python 3.12 pytest -q .orchestrator/test_blocker_recovery_authority.py .orchestrator/test_task_dependency_gate.py",
+    "ok": true,
+    "violations": [],
+    "details": [],
+    "runner": "pytest"
+  },
+  "runner": "pytest",
+  "selection": {
+    "scope": "targeted",
+    "items": [
+      ".orchestrator/test_blocker_recovery_authority.py",
+      ".orchestrator/test_task_dependency_gate.py"
+    ],
+    "fingerprint": "047f1953e94271dce19ed0b23f05d91c"
+  },
+  "exit_code": 1,
+  "signal": null,
+  "timed_out": false,
+  "outcome": "failed",
+  "passed": false,
+  "duration_seconds": 4.091,
+  "started_at": "2026-10-03T00:50:25Z",
+  "finished_at": "2026-10-03T00:50:29Z",
+  "recorded_at": "2026-10-03T00:50:29Z",
+  "run_kind": "baseline",
+  "attempt": 1,
+  "retry_reason": null,
+  "agent": "Pi",
+  "run_id": "pi-20261003T004730Z-35f48844",
+  "produced_by": "delivery_toolchain/git/task_verification.py",
+  "output_tail": "nfig)\n>       assert json.loads(path.read_text()) == before\nE       AssertionError: assert {'tasks': [{'...2becef8cf348'} == {'tasks': [{'...n': 'initial'}\nE         \nE         Omitting 1 identical items, use -vv to show\nE         Differing items:\nE         {'blockers': [{'task_id': 'AUTHORITY-001', 'owner': 'Codex', 'waiting_for': 'Claude', 'status': 'resolved', ...}]} != {'blockers': [{'task_id': 'AUTHORITY-001', 'owner': 'Codex', 'waiting_for': 'Claude', 'status': 'open', ...}]}\nE         {'_status_write_revision': '28ce433eac18453691982becef8cf348'} != {'_status_write_revision': 'initial'}\nE         {'tasks': [{'id': 'AUTHORITY-001', 'status': 'todo', 'owner': 'Codex', 'reviewer': 'Claude', ...}, {'id': 'UPSTREAM-DATASET-001', 'status': 'done', 'depends_on': []}]} != {'tasks': [{'id...\nE         \nE         ...Full output truncated (2 lines hidden), use '-vv' to show\n\n.orchestrator/test_blocker_recovery_authority.py:124: AssertionError\n----------------------------- Captured stdout call -----------------------------\n[2026-10-03 08:50:27] policy reassignment: task=AUTHORITY-001 owner=Codex->Codex reviewer=Claude->Claude\n=========================== short test summary info ============================\nFAILED .orchestrator/test_blocker_recovery_authority.py::test_mixed_gate_prose_is_not_erased_as_a_path[External-data/dataset gate: provider handoff pending; A1 raw/masked and A2/A3 live still missing-False]\nFAILED .orchestrator/test_blocker_recovery_authority.py::test_mixed_gate_prose_is_not_erased_as_a_path[External-data/dataset gate: provider handoff pending; A1 raw/masked and A2/A3 live still missing-True]\nFAILED .orchestrator/test_blocker_recovery_authority.py::test_mixed_gate_prose_is_not_erased_as_a_path[Unclassified business gate: provider handoff pending; input still missing-False]\nFAILED .orchestrator/test_blocker_recovery_authority.py::test_mixed_gate_prose_is_not_erased_as_a_path[Unclassified business gate: provider handoff pending; input still missing-True]\n",
+  "receipt_id": "0a86ecad3781ee6b"
+}

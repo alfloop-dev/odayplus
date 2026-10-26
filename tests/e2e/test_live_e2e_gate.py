@@ -12,7 +12,9 @@ import json
 import subprocess
 import sys
 from copy import deepcopy
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
 from typing import Any
 
 import pytest
@@ -29,6 +31,7 @@ NOW = "2026-07-26T15:00:00Z"
 # ODP_DEPLOY_ENV=dev. It is the deploy env, not the product mode -- a dev deploy
 # is a production-*mode* runtime (ODP_PRODUCT_MODE) that reports `dev` here.
 DEPLOYMENT_MODE = "dev"
+TRANSPORT_TOKEN = "cloud-run-transport-token-value"
 
 
 def load_checker() -> Any:
@@ -179,6 +182,14 @@ def readiness_payload() -> dict[str, Any]:
             "database": "healthy",
             "requireLiveData": True,
             "deploymentMode": DEPLOYMENT_MODE,
+            # What `runtime_mode.release_profile()` reports for a revision
+            # deployed without ODP_RELEASE_PROFILE: the complete scope.
+            "releaseProfile": {
+                "name": "full",
+                "valid": True,
+                "modelReadinessClaimed": True,
+                "error": None,
+            },
             "persistence": {
                 "configuredMode": "postgresql",
                 "runtimeMode": "postgres",
@@ -234,6 +245,42 @@ def readiness_payload() -> dict[str, Any]:
             },
         },
     }
+
+
+def disabled_readiness_payload() -> dict[str, Any]:
+    """The ``details.provider`` block a consumer-only release actually serves.
+
+    This is not a hand-shaped guess: ``test_disabled_readiness_provider_block_\
+matches_the_real_api`` builds the real FastAPI app with
+    ``ODP_EXTERNAL_PROVIDER_MODE=disabled`` and asserts this dict is equal to
+    what ``GET /readiness`` returns, field for field. If the API changes the
+    disabled provider report, that test fails here rather than letting the gate
+    pass against a fixture the deployment no longer matches.
+    """
+
+    payload = deepcopy(readiness_payload())
+    provider = payload["details"]["provider"]
+    provider.update(
+        {
+            "mode": "disabled",
+            "configurationValid": True,
+            "connectivityHealthy": False,
+            "healthy": True,
+            "live": False,
+            "probeEvidence": {
+                "status": "disabled",
+                "mode": "disabled",
+                "configuration_valid": True,
+                "connectivity_healthy": False,
+                "required_provider_ids": [],
+                "checked_at": None,
+                "expires_at": None,
+                "probes": [],
+                "configuration_errors": [],
+            },
+        }
+    )
+    return payload
 
 
 def governed_disabled_capability(service: str) -> dict[str, Any]:
@@ -331,6 +378,27 @@ def ingestion_payload() -> dict[str, Any]:
     return {"items": runs, "count": len(runs)}
 
 
+def disabled_ingestion_payload() -> dict[str, Any]:
+    return {
+        "items": [
+            {
+                "run_id": "run-provider-disabled-20260726",
+                "provider_id": gate.DISABLED_WORKER_PROBE_PROVIDER_ID,
+                "schedule_id": "live-e2e-gate",
+                "trigger": "scheduled",
+                "status": "FAILED",
+                "data_status": "BLOCKED",
+                "completed_at": "2026-07-26T14:00:00+00:00",
+                "raw_snapshot_id": "",
+                "canonical_snapshot_id": "",
+                "source_snapshot_ids": [],
+                "alerts": [{"reason_code": "provider_mode_disabled"}],
+            }
+        ],
+        "count": 1,
+    }
+
+
 def enqueue_payload(
     *, created: bool = True, status: str = "queued", job_id: str = JOB_ID
 ) -> dict[str, Any]:
@@ -389,6 +457,20 @@ def jobs_enqueue_route() -> Any:
         created = key not in issued
         issued[key] = job_id
         return response(202, enqueue_payload(created=created, job_id=job_id))
+
+    return handler
+
+
+def disabled_jobs_enqueue_route() -> Any:
+    issued: set[str] = set()
+
+    def handler(body: Any, headers: Any) -> Any:
+        del headers
+        request = body if isinstance(body, dict) else {}
+        key = str(request.get("idempotency_key") or "")
+        created = key not in issued
+        issued.add(key)
+        return response(202, enqueue_payload(created=created, job_id=JOB_ID))
 
     return handler
 
@@ -477,12 +559,29 @@ def live_routes(**overrides: Any) -> dict[str, Any]:
     return routes
 
 
+def disabled_routes(**overrides: Any) -> dict[str, Any]:
+    routes = live_routes(
+        **{
+            "anon GET /readiness": response(200, disabled_readiness_payload()),
+            "GET /api/v1/external-data/ingestion-runs?limit=100": response(
+                200, disabled_ingestion_payload()
+            ),
+            "POST /api/v1/jobs": disabled_jobs_enqueue_route(),
+        }
+    )
+    routes.update(overrides)
+    return routes
+
+
 def config(**overrides: Any) -> Any:
     values: dict[str, Any] = {
         "api_url": API_URL,
         "expected_sha": EXPECTED_SHA,
         "bearer_token": "operator-token-value",
         "operator_role": "ops_admin",
+        # Cloud Run transport identity for the private API service; a separate
+        # credential from the application bearer token above.
+        "api_transport_token": TRANSPORT_TOKEN,
         # The web origin is part of the release contract: the gate now blocks
         # rather than silently skipping the protected-route assertion.
         "web_url": WEB_URL,
@@ -495,6 +594,15 @@ def config(**overrides: Any) -> Any:
     }
     values.update(overrides)
     return gate.GateConfig(**values)
+
+
+def disabled_config(**overrides: Any) -> Any:
+    values = {
+        "external_provider_mode": "disabled",
+        "required_provider_ids": (),
+    }
+    values.update(overrides)
+    return config(**values)
 
 
 def passing_web_http() -> Any:
@@ -547,6 +655,149 @@ def test_fully_live_deployment_passes() -> None:
     assert report["inputs"]["secret_values_redacted"] is True
 
 
+def test_disabled_deployment_still_proves_worker_lifecycle_and_blocked_receipt() -> None:
+    driver = FakeWorkerDriver()
+    checks, report = run_gate(
+        disabled_routes(), cfg=disabled_config(), worker_driver=driver
+    )
+
+    assert report["ok"] is True, report["blockers"]
+    assert all(check.ok for check in checks)
+    assert report["worker"]["terminal_status"] == "succeeded"
+    assert driver.calls == 1
+    names = {check.name for check in checks}
+    # Disabled mode is a no-fetch receipt, not a skipped worker lifecycle.
+    assert "worker:terminal_disabled" in names
+    # ...and it is not an exemption from the data-binding contract either.
+    assert "data:no_surrogate_markers" in names
+
+
+def _disabled_readiness_from_the_real_app(monkeypatch: Any) -> dict[str, Any]:
+    """Boot the deployed API in consumer-only mode and read `/readiness` for real.
+
+    The counterpart of `_live_readiness_details_from_the_real_app`. Nothing here
+    is fabricated: the provider report is the one `provider_health` builds and
+    the readiness handler publishes, so a shape change in either fails here
+    instead of quietly passing against a fixture.
+    """
+    from fastapi.testclient import TestClient
+
+    # Import before ODP_REQUIRE_LIVE_DATA is set: apps.api.oday_api.main builds
+    # a module-level app at import time, and that build fail-closes on a
+    # non-production persistence bundle.
+    monkeypatch.delenv("ODP_REQUIRE_LIVE_DATA", raising=False)
+    from apps.api.oday_api.main import create_app
+    from shared.infrastructure.persistence.factory import _memory_bundle
+
+    # The real switch, not an injected double: this test exists to prove the
+    # deployment env var the rollout plan sets produces the disabled contract.
+    monkeypatch.setenv("ODP_EXTERNAL_PROVIDER_MODE", "disabled")
+    monkeypatch.delenv("ODP_PRODUCTION_PROVIDER_IDS", raising=False)
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+
+    app = create_app(persistence=_memory_bundle())
+    return TestClient(app).get("/readiness").json()["details"]
+
+
+def test_disabled_ingestion_history_still_fails_on_surrogate_markers() -> None:
+    """A consumer-only release still may not serve placeholder ingestion data.
+
+    The disabled branch of ``_check_source_data`` returns early, so this is the
+    regression that keeps ``data:no_surrogate_markers`` on that path.
+    """
+    payload = disabled_ingestion_payload()
+    payload["items"][0]["schedule_id"] = "fixture-live-e2e-gate"
+    routes = disabled_routes(
+        **{
+            "GET /api/v1/external-data/ingestion-runs?limit=100": response(
+                200, payload
+            )
+        }
+    )
+
+    _, report = run_gate(routes, cfg=disabled_config())
+
+    assert report["ok"] is False
+    assert "data:no_surrogate_markers" in blocker_names(report)
+
+
+def test_disabled_readiness_provider_block_matches_the_real_api(
+    monkeypatch: Any,
+) -> None:
+    """Bind the gate's disabled assertions to the payload the API really serves.
+
+    Every other disabled-mode test here drives the gate from a fixture. A
+    fixture can drift from the deployment it stands in for -- and a drifted
+    fixture makes the gate look proven while the real release is unchecked.
+    """
+    real_provider = _disabled_readiness_from_the_real_app(monkeypatch)["provider"]
+
+    assert real_provider == disabled_readiness_payload()["details"]["provider"]
+    # The exact fields the gate reads, spelled out so a rename fails loudly.
+    assert real_provider["mode"] == "disabled"
+    assert real_provider["configurationValid"] is True
+    assert real_provider["connectivityHealthy"] is False
+    assert real_provider["live"] is False
+    assert real_provider["healthy"] is True
+    assert real_provider["probeEvidence"]["status"] == "disabled"
+    assert real_provider["probeEvidence"]["required_provider_ids"] == []
+    assert real_provider["probeEvidence"]["probes"] == []
+
+    assert gate._disabled_provider_runtime_confirmed(disabled_config(), real_provider)
+
+    # Splice the real provider block into an otherwise-live deployment: the
+    # whole gate must still pass, so the disabled contract is proven end to end
+    # rather than only at the predicate.
+    payload = readiness_payload()
+    payload["details"]["provider"] = deepcopy(real_provider)
+    checks, report = run_gate(
+        disabled_routes(**{"anon GET /readiness": response(200, payload)}),
+        cfg=disabled_config(),
+    )
+    assert report["ok"] is True, report["blockers"]
+    assert all(check.ok for check in checks)
+
+
+def test_real_api_disabled_mode_does_not_block_readiness_on_provider(
+    monkeypatch: Any,
+) -> None:
+    """Disabled is a governed runtime state, not a provider outage.
+
+    ``PROVIDER_NOT_LIVE`` must not appear: a consumer-only release is allowed to
+    serve, and the remaining blockers must be the genuinely unmet ones.
+    """
+    data = _disabled_readiness_from_the_real_app(monkeypatch)["data"]
+
+    assert "PROVIDER_NOT_LIVE" not in data["blockingReasons"]
+    assert set(data["blockingReasons"]) == {
+        "MEMORY_PERSISTENCE",
+        "OPERATOR_LIVE_REPOSITORY_UNAVAILABLE",
+    }
+
+
+def test_gate_disabled_reason_code_matches_the_scheduler_constant() -> None:
+    """The gate is a standalone script, so it pins the shared string by test."""
+    from modules.external_data.workers.scheduled_fetch import (
+        PROVIDER_MODE_DISABLED_REASON_CODE,
+    )
+
+    assert gate.PROVIDER_MODE_DISABLED_REASON_CODE == PROVIDER_MODE_DISABLED_REASON_CODE
+
+
+def test_disabled_gate_does_not_skip_when_runtime_reports_live() -> None:
+    driver = FakeWorkerDriver()
+    checks, report = run_gate(
+        live_routes(), cfg=disabled_config(), worker_driver=driver
+    )
+
+    assert report["ok"] is False
+    assert "runtime:provider_mode_alignment" in blocker_names(report)
+    assert "worker:provider_mode_alignment" in blocker_names(report)
+    # A mismatched runtime is fail-closed: it is not allowed to dispatch an
+    # external-fetch probe under the wrong semantics.
+    assert driver.calls == 0
+
+
 def test_report_never_contains_the_bearer_token() -> None:
     routes = live_routes()
     routes["GET /api/v1/operator/bootstrap"] = response(
@@ -557,6 +808,179 @@ def test_report_never_contains_the_bearer_token() -> None:
     serialized = json.dumps(report)
     assert "operator-token-value" not in serialized
     assert "<redacted>" in serialized
+
+
+# ---------------------------------------------------------------------------
+# Private API transport identity (ODP-DEV-PRIVATE-API-TRANSPORT-AUTH-001)
+# ---------------------------------------------------------------------------
+
+
+def test_missing_api_transport_credential_blocks_before_any_request() -> None:
+    http = FakeHttp(live_routes())
+    clock = FakeClock()
+    _, report = gate.evaluate_gate(
+        config(api_transport_token=""),
+        http=http,
+        worker_driver=FakeWorkerDriver(),
+        correlation_id=CORRELATION_ID,
+        now=NOW,
+        web_http=passing_web_http(),
+        monotonic=clock.monotonic,
+        sleep=clock.sleep,
+    )
+
+    assert report["ok"] is False
+    blocker = next(
+        b for b in report["blockers"] if b["check"] == "config:api_transport_credential"
+    )
+    assert blocker["dependency"] == "config"
+    assert gate.API_TRANSPORT_TOKEN_ENV in blocker["detail"]
+    assert report["inputs"]["api_transport_credential_configured"] is False
+    # A Cloud Run 403 must never stand in for the app's anonymous denial, so
+    # nothing is sent without the transport identity.
+    assert http.calls == []
+
+
+def test_report_never_contains_the_transport_token() -> None:
+    routes = live_routes()
+    routes["GET /api/v1/operator/bootstrap"] = response(
+        500, {"detail": f"transport {TRANSPORT_TOKEN} rejected"}
+    )
+    _, report = run_gate(routes)
+
+    serialized = json.dumps(report)
+    assert TRANSPORT_TOKEN not in serialized
+    assert report["inputs"]["api_transport_credential_configured"] is True
+
+
+class _CapturingOpener:
+    def __init__(self, sink: list[Any]) -> None:
+        self.sink = sink
+
+    def open(self, request: Any, timeout: float) -> Any:
+        self.sink.append(request)
+
+        class _Response:
+            status = 200
+            headers: dict[str, str] = {}
+
+            def read(self) -> bytes:
+                return b"{}"
+
+            def __enter__(self) -> Any:
+                return self
+
+            def __exit__(self, *exc: Any) -> None:
+                return None
+
+        return _Response()
+
+
+def _capture_requests(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    sink: list[Any] = []
+    monkeypatch.setattr(
+        gate.urllib.request, "build_opener", lambda *handlers: _CapturingOpener(sink)
+    )
+    return sink
+
+
+def _api_client(transport_token: str = TRANSPORT_TOKEN) -> Any:
+    return gate.UrllibHttpClient(
+        API_URL,
+        timeout=1.0,
+        bearer_token="operator-token-value",
+        operator_role="ops_admin",
+        operator_subject="live-e2e-gate",
+        operator_tenant="",
+        correlation_id=CORRELATION_ID,
+        transport_token=transport_token,
+    )
+
+
+def test_anonymous_api_request_keeps_transport_identity_without_app_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent = _capture_requests(monkeypatch)
+
+    _api_client().request("GET", "/api/v1/operator/bootstrap", authenticated=False)
+
+    (request,) = sent
+    headers = {key.lower(): value for key, value in request.header_items()}
+    assert headers["x-serverless-authorization"] == f"Bearer {TRANSPORT_TOKEN}"
+    # authenticated=False means "no application bearer", not "no Cloud Run
+    # identity": the application, not Cloud Run IAM, decides the denial.
+    assert "authorization" not in headers
+    assert "x-operator-role" not in headers
+
+
+def test_authenticated_api_request_separates_app_and_transport_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent = _capture_requests(monkeypatch)
+
+    _api_client().request(
+        "POST",
+        "/api/v1/jobs",
+        body={"job_type": "external-fetch"},
+        headers={"X-Serverless-Authorization": "Bearer caller-override"},
+    )
+
+    (request,) = sent
+    headers = {key.lower(): value for key, value in request.header_items()}
+    assert headers["authorization"] == "Bearer operator-token-value"
+    assert headers["x-serverless-authorization"] == f"Bearer {TRANSPORT_TOKEN}"
+
+
+def test_web_client_never_receives_the_api_transport_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent = _capture_requests(monkeypatch)
+    web = gate._web_client(config(), CORRELATION_ID)
+    assert web is not None
+
+    web.request("GET", "/operator", authenticated=False, follow_redirects=False)
+
+    (request,) = sent
+    headers = {key.lower(): value for key, value in request.header_items()}
+    assert "x-serverless-authorization" not in headers
+    assert "authorization" not in headers
+
+
+def test_main_wires_the_transport_token_to_the_api_client_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_evaluate_gate(config_value: Any, **kwargs: Any) -> Any:
+        captured["config"] = config_value
+        captured.update(kwargs)
+        return [], {"ok": True, "blockers": [], "blocking_dependencies": []}
+
+    monkeypatch.setattr(gate, "evaluate_gate", fake_evaluate_gate)
+    monkeypatch.setenv("ODP_OPERATOR_SMOKE_BEARER_TOKEN", "operator-token-value")
+    monkeypatch.setenv(gate.API_TRANSPORT_TOKEN_ENV, TRANSPORT_TOKEN)
+
+    exit_code = gate.main(
+        [
+            "--api-url",
+            API_URL,
+            "--web-url",
+            WEB_URL,
+            "--expected-sha",
+            EXPECTED_SHA,
+            "--expected-deployment",
+            DEPLOYMENT_MODE,
+            "--output",
+            str(tmp_path / "report.json"),
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["config"].api_transport_token == TRANSPORT_TOKEN
+    assert captured["config"].bearer_token == "operator-token-value"
+    assert captured["http"]._transport_token == TRANSPORT_TOKEN
+    assert captured["web_http"]._transport_token == ""
+    assert TRANSPORT_TOKEN not in (tmp_path / "report.json").read_text(encoding="utf-8")
 
 
 def test_every_check_declares_a_known_runtime_dependency() -> None:
@@ -1978,3 +2402,104 @@ def test_web_login_redirect_contract_matches_the_deployed_middleware() -> None:
 
     assert 'new URL("/login", request.url)' in middleware
     assert '"returnTo",' in middleware
+
+
+# ---------------------------------------------------------------------------
+# A redirect must never carry the API credentials to another origin
+# ---------------------------------------------------------------------------
+
+
+def _serve(handler: type[BaseHTTPRequestHandler]) -> tuple[ThreadingHTTPServer, str]:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    Thread(target=server.serve_forever, daemon=True).start()
+    host, port = server.server_address
+    return server, f"http://{host}:{port}"
+
+
+@pytest.fixture
+def redirecting_api() -> Any:
+    """A local API origin that redirects to a second, recording origin."""
+
+    collected: list[dict[str, str]] = []
+
+    class Collector(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            collected.append({key.lower(): value for key, value in self.headers.items()})
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    collector, collector_url = _serve(Collector)
+
+    class Api(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            if self.path == "/landing":
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"landed": true}')
+                return
+            self.send_response(302)
+            target = "/landing" if self.path == "/same-origin" else f"{collector_url}/collect"
+            self.send_header("location", target)
+            self.send_header("content-length", "0")
+            self.end_headers()
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    api, api_url = _serve(Api)
+    try:
+        yield api_url, collected
+    finally:
+        api.shutdown()
+        collector.shutdown()
+
+
+@pytest.mark.parametrize("authenticated", [True, False])
+def test_api_client_refuses_a_cross_origin_redirect(
+    redirecting_api: Any, authenticated: bool
+) -> None:
+    api_url, collected = redirecting_api
+    client = gate.UrllibHttpClient(
+        api_url,
+        timeout=5.0,
+        bearer_token="operator-token-value",
+        operator_role="ops_admin",
+        operator_subject="live-e2e-gate",
+        operator_tenant="",
+        correlation_id=CORRELATION_ID,
+        transport_token=TRANSPORT_TOKEN,
+    )
+
+    result = client.request("GET", "/api/v1/operator/bootstrap", authenticated=authenticated)
+
+    # Fail closed, and the second origin is never contacted with either credential.
+    assert result.status == 0
+    assert result.error == "refused cross-origin redirect for /api/v1/operator/bootstrap"
+    assert TRANSPORT_TOKEN not in result.error
+    assert collected == []
+
+
+def test_api_client_still_follows_a_same_origin_redirect(redirecting_api: Any) -> None:
+    api_url, collected = redirecting_api
+    client = gate.UrllibHttpClient(
+        api_url,
+        timeout=5.0,
+        bearer_token="operator-token-value",
+        operator_role="ops_admin",
+        operator_subject="live-e2e-gate",
+        operator_tenant="",
+        correlation_id=CORRELATION_ID,
+        transport_token=TRANSPORT_TOKEN,
+    )
+
+    result = client.request("GET", "/same-origin")
+
+    assert result.status == 200
+    assert result.payload == {"landed": True}
+    assert collected == []

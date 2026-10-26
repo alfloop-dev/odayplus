@@ -85,6 +85,92 @@ class SqliteDocumentStore:
                 ),
             )
 
+    def put_if_absent(
+        self,
+        collection: str,
+        doc_id: str,
+        obj: Any,
+        *,
+        group_key: str | None = None,
+        seq: int | None = None,
+        correlation_id: str | None = None,
+    ) -> bool:
+        """Insert ``obj`` under ``(collection, doc_id)`` only if it does not exist.
+
+        Returns True if inserted, False if already exists.
+        """
+        blob = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
+        with self._engine.lock:
+            existing = self._engine.query_one(
+                "SELECT ordinal FROM durable_documents WHERE collection = ? AND doc_id = ?",
+                (collection, doc_id),
+            )
+            if existing is not None:
+                return False
+            ordinal = self._engine.next_ordinal(f"documents:{collection}")
+            cur = self._engine.execute(
+                "INSERT INTO durable_documents("
+                "  collection, doc_id, group_key, seq, ordinal, correlation_id, data, created_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(collection, doc_id) DO NOTHING",
+                (
+                    collection,
+                    doc_id,
+                    group_key,
+                    seq,
+                    ordinal,
+                    correlation_id,
+                    blob,
+                    _now(),
+                ),
+            )
+            return bool(getattr(cur, "rowcount", 0) > 0)
+
+    def replace_version(self, collection: str, doc_id: str, obj: Any, *, expected_version: int) -> bool:
+        """CAS the persisted aggregate's actual version; no synthetic row version."""
+        with self.engine.lock, self.engine.transaction():
+            row = self.engine.query_one(
+                "SELECT data FROM durable_documents WHERE collection = ? AND doc_id = ?",
+                (collection, doc_id),
+            )
+            if row is None or getattr(pickle.loads(row["data"]), "version", None) != expected_version:
+                return False
+            cursor = self.engine.execute(
+                "UPDATE durable_documents SET data = ? WHERE collection = ? AND doc_id = ? AND data = ?",
+                (pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL), collection, doc_id, row["data"]),
+            )
+            return cursor.rowcount == 1
+    def compare_and_put(
+        self,
+        collection: str,
+        doc_id: str,
+        obj: Any,
+        *,
+        expected_version: int | None,
+    ) -> int | None:
+        """Write ``obj`` only if the stored version still equals ``expected_version``.
+
+        The version lives in the row's ``seq`` column (a legacy row written by
+        :meth:`put` has none and counts as version 0). ``expected_version=None``
+        means "create only if absent". Returns the new version, or ``None`` when
+        another writer got there first. The check and the write are one SQL
+        statement, so the guard holds across processes, not just threads.
+        """
+        if expected_version is None:
+            inserted = self.put_if_absent(collection, doc_id, obj, seq=1)
+            return 1 if inserted else None
+        blob = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
+        next_version = int(expected_version) + 1
+        with self._engine.lock:
+            cur = self._engine.execute(
+                "UPDATE durable_documents SET data = ?, seq = ? "
+                "WHERE collection = ? AND doc_id = ? AND COALESCE(seq, 0) = ?",
+                (blob, next_version, collection, doc_id, int(expected_version)),
+            )
+            if int(getattr(cur, "rowcount", 0)) != 1:
+                return None
+        return next_version
+
     def append_version(
         self,
         collection: str,
@@ -149,6 +235,16 @@ class SqliteDocumentStore:
             (collection, doc_id),
         )
         return None if row is None else pickle.loads(row["data"])
+
+    def get_versioned(self, collection: str, doc_id: str) -> tuple[Any, int] | None:
+        """``(obj, version)`` for :meth:`compare_and_put`, or ``None`` if absent."""
+        row = self._engine.query_one(
+            "SELECT data, seq FROM durable_documents WHERE collection = ? AND doc_id = ?",
+            (collection, doc_id),
+        )
+        if row is None:
+            return None
+        return pickle.loads(row["data"]), int(row["seq"] or 0)
 
     def list_all(self, collection: str) -> list[Any]:
         rows = self._engine.query(

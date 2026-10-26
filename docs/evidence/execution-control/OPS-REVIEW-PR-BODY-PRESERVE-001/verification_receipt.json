@@ -1,0 +1,41 @@
+{
+  "task_id": "OPS-REVIEW-PR-BODY-PRESERVE-001",
+  "timestamp": "2026-08-27T04:16:00Z",
+  "owner": "Antigravity6",
+  "reviewer": "Codex2",
+  "files_updated": [
+    ".orchestrator/github_bus.py",
+    ".orchestrator/templates/github_review_pr.md",
+    ".orchestrator/test_github_bus.py",
+    "docs/evidence/execution-control/OPS-REVIEW-PR-BODY-PRESERVE-001/README.md",
+    "docs/evidence/execution-control/OPS-REVIEW-PR-BODY-PRESERVE-001/verification_receipt.json"
+  ],
+  "checks": {
+    "pytest_test_github_bus": {
+      "command": "uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml pytest .orchestrator/test_github_bus.py -q",
+      "exit_code": 0,
+      "passed": 102
+    },
+    "unittest_test_github_bus": {
+      "command": "PYTHONPATH=.orchestrator python3 -m unittest test_github_bus",
+      "exit_code": 0,
+      "passed": 102
+    },
+    "check_orchestrator_config": {
+      "command": "python3 delivery_toolchain/governance/check_orchestrator_config.py --config /home/lupin/odayplus/.orchestrator/config.json",
+      "exit_code": 0
+    },
+    "check_config_wiring": {
+      "command": "python3 delivery_toolchain/governance/check_config_wiring.py",
+      "exit_code": 0
+    },
+    "check_code_boundaries": {
+      "command": "python3 delivery_toolchain/governance/check_code_boundaries.py",
+      "exit_code": 0
+    },
+    "git_diff_check": {
+      "command": "git diff --check origin/dev",
+      "exit_code": 0
+    }
+  }
+}

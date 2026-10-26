@@ -1,0 +1,20 @@
+{
+  "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-avm-depreciation-integration-001",
+  "head_sha": "8a2bc4f420e04f6c57c59f8f50c71590e69983c3",
+  "tracked_diff_sha256": "d7d46d61ee23b9cf93e2c423f5d5b77bc998e0363068828f5276c9d8866f43f3",
+  "argv": [
+    ".venv/bin/python",
+    "-m",
+    "pytest",
+    "-o",
+    "addopts=",
+    "-q",
+    "modules/avm/tests/test_avm_depreciation_contract.py",
+    "-k",
+    "fractional_useful_life_is_rejected or integral_useful_life_preserves"
+  ],
+  "started_at": "2026-09-13T00:39:09.770266+00:00",
+  "duration_seconds": 2.6652195579954423,
+  "exit_code": 1,
+  "output": "1295-precision-red.log"
+}

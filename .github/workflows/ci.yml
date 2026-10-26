@@ -16,6 +16,7 @@ on:
 jobs:
   change-scope:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       scope: ${{ steps.classify.outputs.scope }}
     steps:
@@ -65,6 +66,7 @@ jobs:
 
   orchestrator:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -81,6 +83,12 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
       - name: Install dependencies
         run: uv sync
 
@@ -90,25 +98,59 @@ jobs:
       - name: Enforce product and development code boundaries
         run: uv run python delivery_toolchain/governance/check_code_boundaries.py
 
-      - name: Lint orchestrator code
-        run: uv run ruff check .orchestrator delivery_toolchain scripts
+      # A bounded quality or confidence score that defaults to its maximum makes
+      # "nobody measured this" indistinguishable from "measured, and perfect".
+      # The score does not travel through one layer, so neither does the check:
+      # it reads dataclass and Pydantic defaults, row-mapper fallbacks such as
+      # record.get("confidence", 1.0), SQL column defaults, dbt coalesce and
+      # constant projections, OpenAPI schema defaults and TypeScript ?? 1.
+      # Fixing one layer and leaving the next is the ordinary failure -- heat
+      # zone's input types were correctly made optional while the result mapper
+      # kept restoring 1.0. Existing instances are listed in
+      # measurement_default_exemptions.json with an owner, a reason and an
+      # expiry date; new ones fail here, and so does an entry past its date or
+      # an entry whose field was fixed without deleting it in the same commit.
+      - name: Refuse bounded scores that default to perfect
+        run: uv run python delivery_toolchain/governance/check_measurement_defaults.py
+
+      # ODP-SA-06 has no per-requirement acceptance criteria -- its Trigger and
+      # Acceptance columns are the same boilerplate seventy-one times -- so five
+      # of the fifteen verified gaps are simply "implemented three of five and
+      # stopped", with nothing written down to break. For requirements that
+      # enumerate a set, this holds the set: every satisfied member names a
+      # symbol that must resolve, and every absent one must say what is missing.
+      - name: Check set-valued requirements against their member lists
+        run: uv run python delivery_toolchain/governance/check_requirement_members.py
+
+      # A concept spanning a Python enum, a TypeScript contract and an API
+      # payload has three lifecycles and no owner, and forks silently. Evidence
+      # Level had four definitions; ODP-EVIDENCE-LEVEL-ALIGNMENT-001 aligned it
+      # once by hand and still missed three of them, because a sweep is not a
+      # standing constraint. This fails on a stale generated module, a diverging
+      # canonical TypeScript type, or a new definition of a governed vocabulary.
+      - name: Check governed vocabularies for drift and new forks
+        run: uv run python delivery_toolchain/governance/generate_vocabularies.py --check
+
+      - name: Lint orchestrator and infrastructure code
+        run: uv run ruff check .orchestrator delivery_toolchain scripts infra
 
       - name: Check config wiring
         run: |
           uv run python delivery_toolchain/governance/check_orchestrator_config.py
           uv run python delivery_toolchain/governance/check_config_wiring.py
 
-      # tests/tooling covers the delivery scripts themselves. It lives under
-      # tests/ but must run here: the `product` job is skipped for
-      # development_tooling scope, so a tooling-only change that breaks these
-      # scripts would otherwise land on dev with the covering tests never run.
-      - name: Test orchestrator code
-        run: uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling
+      # tests/tooling covers the delivery scripts themselves and infra covers
+      # ephemeral staging Terraform/harness tests. They must run here: the `product`
+      # job is skipped for development_tooling scope, so a tooling/infra-only change
+      # would otherwise land on dev with these tests never run.
+      - name: Test orchestrator and infrastructure code
+        run: uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling infra
 
-  product:
+  product-lint-unit:
     needs: change-scope
     if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     services:
       postgres:
         image: postgis/postgis:16-3.5
@@ -127,10 +169,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Full history: the API contract gate diffs the OpenAPI artifact
-          # against its merge base with the target branch. The default shallow
-          # clone has no merge base, which would make the breaking-change check
-          # silently skip rather than fail.
+          # Full history: acceptance coverage and contract tests verify git
+          # ancestry and merge bases against the tested source commit.
           fetch-depth: 0
 
       - name: Install uv
@@ -178,8 +218,176 @@ jobs:
       - name: Test product code
         run: uv run pytest -m "not requires_live_env and not performance" tests modules apps shared models -n auto
 
+  product-db:
+    needs: change-scope
+    if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgis/postgis:16-3.5
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: oday_product_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      INTAKE_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/oday_product_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Prepare local config
+        run: make bootstrap
+
+      - name: Bind native review tests to the owned PostgreSQL service
+        run: |
+          uv run python - <<'PY'
+          import os
+          import shutil
+          import tempfile
+          from pathlib import Path
+          from urllib.parse import urlsplit
+
+          runner = Path(os.environ["RUNNER_TEMP"]).resolve()
+          assert "\n" not in str(runner) and "\r" not in str(runner)
+          dsn = os.environ["INTAKE_TEST_DATABASE_URL"]
+          parsed = urlsplit(dsn)
+          assert parsed.scheme == "postgresql"
+          assert parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+          assert parsed.username == "postgres" and parsed.path == "/oday_product_test"
+          assert parsed.port is not None and not parsed.query and not parsed.fragment
+          descriptor, target = tempfile.mkstemp(prefix="oday-ci-owned-postgres-admin-", suffix=".dsn", dir=runner)
+          evidence = None
+          try:
+              with os.fdopen(descriptor, "w") as stream:
+                  stream.write(dsn + "\n")
+              evidence = Path(tempfile.mkdtemp(prefix="oday-ci-native-review-evidence-", dir=runner))
+              exported = {name: target for name in (
+                  "ODP_SUBMIT_AUTHOR_ADMIN_DSN_FILE", "ODP_NATIVE_SCOPE_ADMIN_DSN_FILE")}
+              exported["ODP_CI_NATIVE_REVIEW_EVIDENCE_DIR"] = str(evidence)
+              for name in ("ODP_SUBMIT_SOD_EVIDENCE_DIR", "ODP_NATIVE_SCOPE_EVIDENCE_DIR",
+                           "ODP_NATIVE_VERSION_EVIDENCE_DIR", "ODP_NEW_REPORT_ROUNDS_EVIDENCE_DIR"):
+                  directory = evidence / name.lower()
+                  directory.mkdir(mode=0o700)
+                  exported[name] = str(directory)
+              with Path(os.environ["GITHUB_ENV"]).open("a") as export:
+                  export.write("".join(name + "=" + value + "\n" for name, value in exported.items()))
+          except BaseException:
+              Path(target).unlink(missing_ok=True)
+              if evidence is not None:
+                  shutil.rmtree(evidence)
+              raise
+          PY
+
       - name: Test official real-estate outcomes on PostgreSQL 16
         run: uv run pytest tests/integration/test_official_real_estate_postgresql.py
+
+      # `requires_live_env` was doing two jobs at once. Some of the tests behind
+      # it genuinely need a live multi-repo checkout (.orchestrator's sidecar
+      # coordination tests); the rest only need a PostgreSQL, which `pgserver`
+      # already provides as a project dependency with no root and no service
+      # container -- `make security` has been running database tests that way
+      # all along. Conflating the two meant ~79 database tests never ran
+      # anywhere, and that is how the assisted-listing schema validator sat
+      # broken from commit 549ce261 onwards: the test that would have reported
+      # it was excluded by the same marker expression.
+      #
+      # This step runs all database-side live-environment cases, including the
+      # canonical PostGIS migration supported by the service image above. The
+      # multi-repo coordination tests remain outside these selected paths.
+      - name: Test database contracts, migrations and schema gates
+        run: |
+          uv run pytest -ra --junitxml="$RUNNER_TEMP/product-db-results.xml" \
+            -m "requires_live_env" \
+            tests/contract tests/ops tests/integration
+
+      - name: Require the selected database cases to execute
+        run: |
+          uv run python - <<'PY'
+          import os
+          from pathlib import Path
+          from xml.etree import ElementTree
+
+          cases = ElementTree.parse(Path(os.environ["RUNNER_TEMP"]) / "product-db-results.xml").findall(".//testcase")
+          counts = {name: sum(case.find(name) is not None for case in cases)
+                    for name in ("failure", "error", "skipped")}
+          if not cases or any(counts.values()):
+              raise SystemExit(f"Database gate did not execute every selected case: {len(cases)} cases, {counts}")
+          print(f"Database gate executed {len(cases)} cases with no failures, errors or skips")
+          PY
+
+      - name: Preserve database execution evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-db-execution-evidence
+          path: |
+            ${{ runner.temp }}/product-db-results.xml
+            ${{ env.ODP_CI_NATIVE_REVIEW_EVIDENCE_DIR }}
+          if-no-files-found: warn
+
+      - name: Remove owned native review connection file
+        if: ${{ always() }}
+        run: |
+          uv run python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          names = {os.environ[key] for key in ("ODP_SUBMIT_AUTHOR_ADMIN_DSN_FILE", "ODP_NATIVE_SCOPE_ADMIN_DSN_FILE")
+                   if os.environ.get(key)}
+          for name in names:
+              target = Path(name)
+              assert target.parent.resolve() == Path(os.environ["RUNNER_TEMP"]).resolve()
+              assert re.fullmatch(r"oday-ci-owned-postgres-admin-[a-z0-9_]+\.dsn", target.name)
+              target.unlink(missing_ok=True)
+          PY
+
+  product-api-contract:
+    needs: change-scope
+    if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: the API contract gate diffs the OpenAPI artifact
+          # against its merge base with the target branch. The default shallow
+          # clone has no merge base, which would make the breaking-change check
+          # silently skip rather than fail.
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Prepare local config
+        run: make bootstrap
 
       # Blocks: an API change that never reached the checked-in OpenAPI
       # artifact, an artifact change that never reached the generated client,
@@ -190,11 +398,91 @@ jobs:
         env:
           ODP_API_BASE_REF: ${{ github.base_ref && format('origin/{0}', github.base_ref) || 'origin/dev' }}
 
+  product-security:
+    needs: change-scope
+    if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: |
+          uv sync
+          npm ci
+
+      - name: Prepare local config
+        run: make bootstrap
+
       - name: Run security checks
         run: make security
 
+  product-node:
+    needs: change-scope
+    if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # Canonical Review frontend evidence exercises the real durable Python
+      # producer before validating its DTO. Keep that bridge in this lane.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install Python dependencies for canonical frontend evidence
+        run: uv sync --frozen --python 3.12
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Run Node workspace checks
         run: make node-check
+
+  # product is the required status check context. It aggregates the parallel
+  # product verification lanes (lint/unit, db, api-contract, security, node).
+  # It always runs, inspecting `needs` to ensure all required lanes succeeded
+  # when change scope requires them, failing closed on any error or missing lane.
+  product:
+    needs:
+      - change-scope
+      - product-lint-unit
+      - product-db
+      - product-api-contract
+      - product-security
+      - product-node
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify parallel product lanes
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          python3 delivery_toolchain/governance/verify_ci_product_jobs.py
+
 
   # ODP-CI-PERFORMANCE-GATE-ISOLATION-001.
   #
@@ -213,6 +501,7 @@ jobs:
     needs: change-scope
     if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -279,6 +568,21 @@ jobs:
     needs: change-scope
     if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      listing-search-postgres:
+        image: postgis/postgis:16-3.5
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: odp_score_browser_ci
+        # The original fixed130 Docker composition retains its own DB port.
+        ports:
+          - 5438:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d odp_score_browser_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
         with:
@@ -300,14 +604,188 @@ jobs:
           node-version: "20"
 
       - name: Install product E2E dependencies
+        run: make product-e2e-bootstrap
+
+      # Fixture UI geometry/axe checks are supplemental, not part of the exact
+      # 18-spec/130-test deterministic product receipt inventory. Fail this required
+      # lane on visual regressions without changing release authority or counts.
+      - name: Verify Store Ops Package 10 geometry and accessibility
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ runner.temp }}/product-e2e-supplemental/geometry45/report.json
+          PLAYWRIGHT_HTML_OUTPUT_DIR: ${{ runner.temp }}/product-e2e-supplemental/geometry45/html-report
+          PLAYWRIGHT_HTML_OPEN: never
+        run: >-
+          npx playwright test --config tests/visual/operator-store-ops-parity.config.ts
+          --output "$RUNNER_TEMP/product-e2e-supplemental/geometry45/test-results"
+          --reporter=list,json,html
+
+      # Separate supplemental diagnostics; never inputs to the fixed130 collector.
+      # Retain first-attempt failure PNG/trace/context even when this gate fails.
+      - name: Preserve supplemental geometry45 Playwright diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-e2e-supplemental-geometry45-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/product-e2e-supplemental/geometry45/
+          if-no-files-found: warn
+          retention-days: 90
+
+      # Preserve the two reviewed narrow-viewport engineering controls without
+      # adding them to the exact 18-spec/130-case product receipt inventory.
+      - name: Verify Governance long-record geometry at 390 and 1024
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ runner.temp }}/product-e2e-supplemental/governance-visual2/report.json
+          PLAYWRIGHT_HTML_OUTPUT_DIR: ${{ runner.temp }}/product-e2e-supplemental/governance-visual2/html-report
+          PLAYWRIGHT_HTML_OPEN: never
+        run: >-
+          npx playwright test --config tests/visual/operator-governance-long-records.config.ts
+          --output "$RUNNER_TEMP/product-e2e-supplemental/governance-visual2/test-results"
+          --reporter=list,json,html
+
+      - name: Preserve supplemental Governance visual2 Playwright diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-e2e-supplemental-governance-visual2-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/product-e2e-supplemental/governance-visual2/
+          if-no-files-found: warn
+          retention-days: 90
+
+      # This build is explicit synthetic fixture proof. The ordinary build and
+      # its unchanged capacity budget remain owned by product-node.
+      - name: Build personal listing search supplemental fixture
+        timeout-minutes: 15
+        env:
+          ODP_API_BASE_URL: http://127.0.0.1:8116
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8116
+          ODP_DATA_BINDING_MODE: fixture
+          NEXT_PUBLIC_ODP_DATA_BINDING_MODE: fixture
+          ODP_PRODUCT_MODE: poc
+          NEXT_PUBLIC_ODP_PRODUCT_MODE: poc
+          ODP_DEPLOY_ENV: e2e
+          NEXT_PUBLIC_ODP_DEPLOY_ENV: e2e
+          ODP_E2E_MODE: "true"
+          NEXT_PUBLIC_ODP_E2E_MODE: "true"
+          ODAY_ENV: test
+        run: npm run build --workspace=@oday-plus/web
+
+      - name: Verify personal listing search with canonical API and PostgreSQL
+        timeout-minutes: 10
+        env:
+          ODP_SCORE_BROWSER_MODE: isolated-synthetic
+          ODP_SCORE_BROWSER_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5438/odp_score_browser_ci
+          ODP_SCORE_BROWSER_CONTROL_KEY: synthetic-browser-control-20261013-local-only
+          PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ runner.temp }}/product-e2e-supplemental/personal-search3/report.json
+          PLAYWRIGHT_HTML_OUTPUT_DIR: ${{ runner.temp }}/product-e2e-supplemental/personal-search3/html-report
+          PLAYWRIGHT_HTML_OPEN: never
+        run: >-
+          npx playwright test --config tests/visual/operator-personal-listing-search.config.ts
+          --output "$RUNNER_TEMP/product-e2e-supplemental/personal-search3/test-results"
+          --reporter=list,json,html
+
+      - name: Preserve supplemental personal listing search3 diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-e2e-supplemental-personal-search3-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/product-e2e-supplemental/personal-search3/
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Verify area planning drafts with password session and PostgreSQL
+        timeout-minutes: 10
+        env:
+          ODP_SCORE_BROWSER_MODE: isolated-synthetic
+          ODP_SCORE_BROWSER_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5438/odp_score_browser_quarterly_ci
+          ODP_SCORE_BROWSER_CONTROL_KEY: synthetic-quarterly-browser-control-20261016-local-only
+          PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ runner.temp }}/product-e2e-supplemental/area-planning3/report.json
+          PLAYWRIGHT_HTML_OUTPUT_DIR: ${{ runner.temp }}/product-e2e-supplemental/area-planning3/html-report
+          PLAYWRIGHT_HTML_OPEN: never
         run: |
-          uv sync --frozen
-          npm ci
-          npx playwright install --with-deps chromium
+          .venv/bin/python - <<'PY'
+          import os
+          import psycopg
+          from psycopg.conninfo import conninfo_to_dict
+          options = conninfo_to_dict(os.environ["ODP_SCORE_BROWSER_DATABASE_URL"])
+          assert options["host"] == "127.0.0.1" and options["dbname"] == "odp_score_browser_quarterly_ci"
+          options["dbname"] = "postgres"
+          with psycopg.connect(**options, autocommit=True) as connection:
+              connection.execute("CREATE DATABASE odp_score_browser_quarterly_ci")
+          PY
+          npx playwright test --config tests/visual/operator-area-planning-draft.config.ts \
+            --output "$RUNNER_TEMP/product-e2e-supplemental/area-planning3/test-results" \
+            --reporter=list,json,html
+
+      - name: Preserve supplemental area planning3 diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-e2e-supplemental-area-planning3-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/product-e2e-supplemental/area-planning3/
+          if-no-files-found: warn
+          retention-days: 90
 
       # A reviewed task PR must prove its current source through the complete
       # deterministic E2E runner. It must not manufacture production release
       # authority: a well-formed NO-GO Gate 0-6 registry is valid here, while
       # dev -> main promotion separately requires an authentic GO decision.
       - name: Run product E2E dev merge gate
+        id: product_e2e
         run: make product-e2e-gate
+
+      - name: Collect current-source product E2E evidence
+        if: always()
+        env:
+          E2E_RUNNER_OUTCOME: ${{ steps.product_e2e.outcome }}
+        run: |
+          args=()
+          if [[ "$E2E_RUNNER_OUTCOME" == "success" ]]; then
+            args+=(--expect-complete)
+          fi
+          python3 delivery_toolchain/e2e/collect_ci_product_e2e_evidence.py \
+            --output "$RUNNER_TEMP/product-e2e-evidence" "${args[@]}"
+
+      - name: Preserve product E2E execution evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          # The collector includes only traces/screenshots/context explicitly
+          # referenced by the validated current-source Playwright artifact.
+          name: product-e2e-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/product-e2e-evidence/
+          if-no-files-found: error
+          retention-days: 90
+
+      # Startup can fail before Playwright produces a source-bound receipt.
+      # Keep its explicit diagnostics separately; they grant no acceptance.
+      - name: Preserve product E2E startup diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-e2e-startup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .odp_data/e2e-diagnostics/source-identity.json
+            .odp_data/e2e-diagnostics/compose-ps.txt
+            .odp_data/e2e-diagnostics/compose-tail.log
+          if-no-files-found: warn
+          retention-days: 90
+
+  automatic-dev-release:
+    name: Request automatic dev release after checks
+    needs: [orchestrator, product, performance-gate, product-e2e-gate]
+    if: >-
+      ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/dev'
+          && needs.orchestrator.result == 'success' && needs.product.result == 'success'
+          && (needs.performance-gate.result == 'success' || needs.performance-gate.result == 'skipped')
+          && (needs.product-e2e-gate.result == 'success' || needs.product-e2e-gate.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dispatch the existing dev release workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ODAY_RELEASE_SHA: ${{ github.sha }}
+        run: python3 -m delivery_toolchain.release.automatic_dev dispatch

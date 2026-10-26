@@ -1281,5 +1281,129 @@ class TaskBriefSourceDocsTests(unittest.TestCase):
             self.assertNotIn("M README.md", proc.stdout)
 
 
+class MaterializedContextExcludeTests(unittest.TestCase):
+    """The supervisor's own seed must not read as worker dirt at finalize time.
+
+    Materialized `source_docs` land wherever the board points them. They are
+    untracked in the worktree, so without a local exclude entry the finalize
+    worktree-cleanliness check fails closed on a file the orchestrator wrote
+    itself, and the task can never be submitted.
+    """
+
+    def _git(self, repo: Path, *args: str) -> str:
+        return subprocess.run(
+            ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+        ).stdout
+
+    def _repo(self, root: Path) -> Path:
+        repo = root / "worktree"
+        repo.mkdir()
+        self._git(repo, "init", "-q", "-b", "main")
+        (repo / "README.md").write_text("seed\n", encoding="utf-8")
+        self._git(repo, "add", "README.md")
+        self._git(
+            repo, "-c", "user.name=Test", "-c", "user.email=test@example.com",
+            "commit", "-q", "-m", "seed",
+        )
+        return repo
+
+    def _materialize(self, tmp_path: Path, repo: Path, *, rel_paths: list[str], task_id: str):
+        status_root = tmp_path / "pantheon"
+        status_file = status_root / "ai-status.json"
+        task = {
+            "id": task_id,
+            "title": "Materialized context exclude",
+            "status": "in_progress",
+            "owner": "Claude2",
+            "reviewer": "Codex2",
+            "source_docs": list(rel_paths),
+        }
+        status_file.write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+        config = {"paths": {"status_file": str(status_file)}}
+        req = supervisor.DeliveryRequest(
+            agent_id="Claude2",
+            provider="claude",
+            delivery_mode="claude",
+            message="wake",
+            task_id=task_id,
+            context_files=list(rel_paths),
+        )
+        return supervisor.materialize_worker_context_files(config, req, repo), req
+
+    def test_materialized_source_doc_does_not_leave_the_worktree_dirty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            status_root = tmp_path / "pantheon"
+            (status_root / "ai-task-archive" / "tasks").mkdir(parents=True)
+            rel = "ai-task-archive/tasks/ODP-ORCH-WORKER-ACTIVITY-001.json"
+            (status_root / rel).write_text('{"id": "ODP-ORCH-WORKER-ACTIVITY-001"}\n', encoding="utf-8")
+
+            repo = self._repo(tmp_path)
+            materialized, _req = self._materialize(
+                tmp_path, repo, rel_paths=[rel], task_id="ODP-EXCLUDE-001"
+            )
+
+            self.assertEqual(materialized, [rel])
+            self.assertTrue((repo / rel).is_file(), "the source doc was not seeded")
+            self.assertEqual(
+                self._git(repo, "status", "--porcelain"),
+                "",
+                "the supervisor's own seed made the worktree look dirty",
+            )
+
+    def test_the_exclude_entry_is_the_exact_path_not_a_directory_sweep(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            status_root = tmp_path / "pantheon"
+            (status_root / "ai-task-archive" / "tasks").mkdir(parents=True)
+            rel = "ai-task-archive/tasks/ODP-ORCH-WORKER-ACTIVITY-001.json"
+            (status_root / rel).write_text("{}\n", encoding="utf-8")
+
+            repo = self._repo(tmp_path)
+            self._materialize(tmp_path, repo, rel_paths=[rel], task_id="ODP-EXCLUDE-002")
+
+            exclude = (repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+            self.assertIn("/" + rel, exclude.splitlines())
+            self.assertNotIn("ai-task-archive/", exclude.splitlines())
+
+            # A file the worker creates next to the seed is still dirt.
+            stray = repo / "ai-task-archive" / "tasks" / "worker-scratch.json"
+            stray.write_text("{}\n", encoding="utf-8")
+            self.assertIn(
+                "worker-scratch.json", self._git(repo, "status", "--porcelain", "--untracked-files=all")
+            )
+
+    def test_unmaterialized_untracked_files_are_still_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            status_root = tmp_path / "pantheon"
+            (status_root / "docs").mkdir(parents=True)
+            rel = "docs/source.md"
+            (status_root / rel).write_text("canonical\n", encoding="utf-8")
+
+            repo = self._repo(tmp_path)
+            self._materialize(tmp_path, repo, rel_paths=[rel], task_id="ODP-EXCLUDE-003")
+
+            (repo / "docs" / "not-seeded.md").write_text("worker wrote this\n", encoding="utf-8")
+            status = self._git(repo, "status", "--porcelain", "--untracked-files=all")
+            self.assertIn("not-seeded.md", status)
+            self.assertNotIn("source.md", status)
+
+    def test_exclude_entries_are_not_duplicated_across_dispatches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            status_root = tmp_path / "pantheon"
+            (status_root / "docs").mkdir(parents=True)
+            rel = "docs/source.md"
+            (status_root / rel).write_text("canonical\n", encoding="utf-8")
+
+            repo = self._repo(tmp_path)
+            for _ in range(3):
+                self._materialize(tmp_path, repo, rel_paths=[rel], task_id="ODP-EXCLUDE-004")
+
+            lines = (repo / ".git" / "info" / "exclude").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(lines.count("/" + rel), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

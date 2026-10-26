@@ -1,0 +1,18 @@
+{
+  "command": "gcloud --quiet auth list --format=json",
+  "argv": [
+    "gcloud",
+    "--quiet",
+    "auth",
+    "list",
+    "--format=json"
+  ],
+  "exit_code": 0,
+  "timestamp_utc": "2026-09-08T11:46:10Z",
+  "executor_account": "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com",
+  "target": "gcp-auth",
+  "readback_masked": false,
+  "stdout": "[\n  {\n    \"account\": \"oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com\",\n    \"status\": \"ACTIVE\"\n  }\n]",
+  "stderr": "",
+  "finding": "Command succeeded (exit 0). Target gcp-auth inspected."
+}

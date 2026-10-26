@@ -37,6 +37,8 @@ class ElasticityFit:
     confidence: float
     r_squared: float
     sample_size: int
+    applicable_min_price: float | None = None
+    applicable_max_price: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -44,6 +46,8 @@ class ElasticityFit:
             "confidence": self.confidence,
             "r_squared": self.r_squared,
             "sample_size": self.sample_size,
+            "applicable_min_price": self.applicable_min_price,
+            "applicable_max_price": self.applicable_max_price,
         }
 
 
@@ -67,13 +71,19 @@ def estimate_elasticity(
     distinct_prices = {round(price, 10) for price, _ in points}
     if len(points) < 2 or len(distinct_prices) < 2:
         return ElasticityFit(
-            elasticity=0.0, confidence=0.0, r_squared=0.0, sample_size=len(points)
+            elasticity=0.0,
+            confidence=0.0,
+            r_squared=0.0,
+            sample_size=len(points),
+            applicable_min_price=min(p for p, _ in points) if points else None,
+            applicable_max_price=max(p for p, _ in points) if points else None,
         )
 
     import numpy as np
     from sklearn.linear_model import LinearRegression
 
-    log_price = np.log(np.asarray([price for price, _ in points], dtype=float)).reshape(-1, 1)
+    prices = [price for price, _ in points]
+    log_price = np.log(np.asarray(prices, dtype=float)).reshape(-1, 1)
     log_demand = np.log(np.asarray([demand for _, demand in points], dtype=float))
     model = LinearRegression().fit(log_price, log_demand)
     r_squared = float(model.score(log_price, log_demand))
@@ -83,6 +93,8 @@ def estimate_elasticity(
         confidence=round(confidence, 6),
         r_squared=round(r_squared, 6),
         sample_size=len(points),
+        applicable_min_price=round(min(prices), 4),
+        applicable_max_price=round(max(prices), 4),
     )
 
 
@@ -95,6 +107,9 @@ class SimulationResult:
     demand: Band
     revenue: Band
     gross_margin: Band
+    applicable_min_price: float | None = None
+    applicable_max_price: float | None = None
+    is_extrapolated: bool = False
 
     @property
     def expected_gross_margin(self) -> float:
@@ -115,6 +130,9 @@ class SimulationResult:
             "gross_margin": self.gross_margin.to_dict(),
             "expected_gross_margin": self.expected_gross_margin,
             "downside_gross_margin": self.downside_gross_margin,
+            "applicable_min_price": self.applicable_min_price,
+            "applicable_max_price": self.applicable_max_price,
+            "is_extrapolated": self.is_extrapolated,
         }
 
 
@@ -156,6 +174,8 @@ def simulate_price(
     unit_cost: float,
     elasticity: float,
     confidence: float = 1.0,
+    applicable_min_price: float | None = None,
+    applicable_max_price: float | None = None,
 ) -> SimulationResult:
     """Simulate demand/revenue/gross-margin bands for a single ``price``."""
     elasticities = _elasticity_band(elasticity, confidence)
@@ -184,12 +204,20 @@ def simulate_price(
         p50=round(demand.p50 * unit_margin, 4),
         p90=round(demand.p90 * unit_margin, 4),
     )
+    is_extrapolated = False
+    if applicable_min_price is not None and price < applicable_min_price - 1e-9:
+        is_extrapolated = True
+    if applicable_max_price is not None and price > applicable_max_price + 1e-9:
+        is_extrapolated = True
     return SimulationResult(
         price=price,
         unit_cost=unit_cost,
         demand=demand,
         revenue=revenue,
         gross_margin=gross_margin,
+        applicable_min_price=applicable_min_price,
+        applicable_max_price=applicable_max_price,
+        is_extrapolated=is_extrapolated,
     )
 
 

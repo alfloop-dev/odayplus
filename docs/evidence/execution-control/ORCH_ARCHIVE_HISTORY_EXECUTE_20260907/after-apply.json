@@ -1,0 +1,419 @@
+{
+  "observed_at": "2026-09-09T16:23:44.201153+00:00",
+  "observed_by": "Codex",
+  "runtime_path": "/home/lupin/oday-plus-supervisor-runtime-50581b3b180a",
+  "runtime_sha": "50581b3b180aedaf76fbe4aaffb3bf7e2d120050",
+  "runtime_module_paths": {
+    "supervisor": "/home/lupin/oday-plus-supervisor-runtime-50581b3b180a/.orchestrator/supervisor.py",
+    "task_archive": "/home/lupin/oday-plus-supervisor-runtime-50581b3b180a/.orchestrator/task_archive.py"
+  },
+  "targets": [
+    {
+      "task_id": "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+      "original_status": "done",
+      "snapshot_sha256": "2f1436d107dd1b13111db3550b1b7566c2db69e90bd8a757cf33a085a1237114",
+      "effective_status": "blocked",
+      "dependency_satisfied": false,
+      "correction": {
+        "schema_version": 1,
+        "type": "archive_recovery_invalidation",
+        "task_id": "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+        "snapshot_sha256": "2f1436d107dd1b13111db3550b1b7566c2db69e90bd8a757cf33a085a1237114",
+        "invalidated_at": "2026-09-09T16:22:59Z",
+        "actor": "Codex",
+        "coordination_task_id": "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
+        "reason": "撤回錯誤歷史完成判定：原驗收要求缺少權威裁決時保持 blocked；目前沒有適用的 Human/Ops 裁決證據。",
+        "evidence_ref": "https://github.com/alfloop-dev/odayplus/blob/af6b027439f2525cd03e78b5720f6cef855869ff/docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_disposition_corrections_20260909.json",
+        "effective_status": "blocked",
+        "dependency_satisfied": false
+      },
+      "downstream_task_id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+      "downstream_status": "todo",
+      "downstream_declares_target_dependency": true,
+      "downstream_admission_by_runtime": false
+    },
+    {
+      "task_id": "ODP-MODELREADY-QUALITY-NULLABLE-001",
+      "original_status": "done",
+      "snapshot_sha256": "d70d96a8acae775d9babb277d033760062c84a702210d68827455fdfa1be73ea",
+      "effective_status": "blocked",
+      "dependency_satisfied": false,
+      "correction": {
+        "schema_version": 1,
+        "type": "archive_recovery_invalidation",
+        "task_id": "ODP-MODELREADY-QUALITY-NULLABLE-001",
+        "snapshot_sha256": "d70d96a8acae775d9babb277d033760062c84a702210d68827455fdfa1be73ea",
+        "invalidated_at": "2026-09-09T16:23:21Z",
+        "actor": "Codex",
+        "coordination_task_id": "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
+        "reason": "撤回錯誤歷史完成判定：原 A4 所要求的缺值 production-entry 測試證據尚未成立；所引測試仍提供完整 quality/confidence。",
+        "evidence_ref": "https://github.com/alfloop-dev/odayplus/blob/af6b027439f2525cd03e78b5720f6cef855869ff/docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_disposition_corrections_20260909.json",
+        "effective_status": "blocked",
+        "dependency_satisfied": false
+      },
+      "downstream_task_id": "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+      "downstream_status": "todo",
+      "downstream_declares_target_dependency": true,
+      "downstream_admission_by_runtime": false
+    }
+  ],
+  "original_archive_sha256": {
+    "ai-task-archive/tasks/DPF-EMGI-LIVE-ROLLOUT-001-SIDECAR-902C95B2.json": "61b8450ba6da8612769718b04eb1ea6a398ba1dbdb4c9646f3a0bd83557728e2",
+    "ai-task-archive/tasks/DPF-EMGI-MASKED-RELEASE-SNAPSHO-SIDECAR-C4E84D0D.json": "417e7694ed3458d965dc81c01ce1ca4f0235b12d6ad99643041ee64ded33c392",
+    "ai-task-archive/tasks/ODP-API-COLD-ROUTE-RACE-001.json": "0c14489d0104b6ddf31d0196b216a015f5a3340895576c916d58ff6473506a24",
+    "ai-task-archive/tasks/ODP-AVM-DEPRECIATION-CONTRACT-001.json": "aac3dcc725f6747123b20054c179bb24db09d6ae8123ef6f7639041cbf89b565",
+    "ai-task-archive/tasks/ODP-AVM-QUALITY-NULLABLE-001-SIDECAR-7ADA379B.json": "64af487c6d49d0dd483cec319f6f7b33888698b7aa00a49dccd70c15dacbf71b",
+    "ai-task-archive/tasks/ODP-BRAND-TRANSFER-CONTRACT-PREP-001.json": "572eb22da48f7d367a15fe82a191dcb1379aaca91db3d31fe632c01bac885975",
+    "ai-task-archive/tasks/ODP-BRAND-TRANSFER-IMPLEMENTATI-SIDECAR-EF4CFDE4.json": "9f065456f970c81738b44c005744529fedd453ac5303441b1fc98d91a67d2cba",
+    "ai-task-archive/tasks/ODP-CANONICAL-LEGACY-LINEAGE-001.json": "4f0fbc242345dbe9dc4ffc05c74707907d42be22cdcf5e613d6d5a492a49d48e",
+    "ai-task-archive/tasks/ODP-CDC-SCOPED-ADAPTER-IMPLEMEN-SIDECAR-65E61FF1.json": "71cbad63592133685d2f08f5d8362bfab2dbbb24b09bfb31ac0bf7b3776faa0c",
+    "ai-task-archive/tasks/ODP-CDC-SOURCE-CONTRACT-PREP-001.json": "ca639399692dd6b915949cacd2f80f2b9b7b99b2ec812534fba9f47907f6b61d",
+    "ai-task-archive/tasks/ODP-CI-DEPENDENCY-AUDIT-BOUNDARY-001.json": "42eb0dffd7188789c0d3653019ab906dab787a6a8e95f8dd87735ea7f7992b1e",
+    "ai-task-archive/tasks/ODP-CODEX-CLI-ASTRA-COMPAT-UPGR-SIDECAR-0034B398.json": "0cb216e2027fa35610fbdccf931e928e8e302c3826a569b249a689e741af0d65",
+    "ai-task-archive/tasks/ODP-CODEX-CLI-ASTRA-COMPAT-UPGRADE-001.json": "a8df66286542a4af6941484cd7366dceb101843ba97510d5968ff3d65521a933",
+    "ai-task-archive/tasks/ODP-CODEX-ULTRA-DRIFT-REPAIR-001.json": "c0fb9fa3770715441c592c1766c904d50b2615edaa1341665016c255cba0a122",
+    "ai-task-archive/tasks/ODP-DATA-CATALOG-METADATA-ALIGNMENT-001.json": "38695e2d7a30a51fd58971aac65c5dd53e1f86b98d8e467b8f49ab9d1bffd02b",
+    "ai-task-archive/tasks/ODP-DEV-BUILD-ARTIFACT-HANDOFF-003.json": "a87b5165a1091c41515bbe1e5ae2ffd786fcb068bf1bb983dbba5d25ec7c4545",
+    "ai-task-archive/tasks/ODP-DEV-BUILD-ARTIFACT-HANDOFF-SIDECAR-D5B6EA87.json": "f5a236da26bf2130014e40d75b64c145886b340ee911f9bc3d3b847713d1cff6",
+    "ai-task-archive/tasks/ODP-DEV-CANDIDATE-GATE-RECONCIL-SIDECAR-5D18B859.json": "8339b97166f9ef5893485343810831cc3b9b6d5476f618d2928a2927f30c809a",
+    "ai-task-archive/tasks/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-003.json": "638d4cc909d5794e292d6d169382fbc0a9da59897775bf226e8f2f5961c37aab",
+    "ai-task-archive/tasks/ODP-DEV-LIVE-ROLLOUT-REMEDIATIO-SIDECAR-7CC5581A.json": "11ac24e19bada5d5cf2c2ca8b0a010e9d09dc5b7091fb705ba557112b1f7e79a",
+    "ai-task-archive/tasks/ODP-DEV-ROLLOUT-001-SIDECAR-26E14070.json": "6bb4cc4fa907990a63d264f22bc50fdd3db5e629333b5f3657d46f898fdfa248",
+    "ai-task-archive/tasks/ODP-DEV-STAGED-GATE-RECONCILIAT-SIDECAR-A5413F33.json": "a88014e6457a8fa01700314a6525ad6005ca10030ed8793354fbe7b8dec3e2c9",
+    "ai-task-archive/tasks/ODP-DRIFT-DEP-REMOVE-002.json": "3fe71f40c756d10c22cafae4174c5d00ab6f3597b3157f6b21c544c4fb8d06b5",
+    "ai-task-archive/tasks/ODP-DRIFT-SECURITY-VERIFY-003.json": "b41799285b457262575b390244f57b86a71bc22bae7898da59916d7bb5c329dc",
+    "ai-task-archive/tasks/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001.json": "98347ad0f6b4230c3594eaceb174a95daded7d56700c57d2017a9b9a0515ba6e",
+    "ai-task-archive/tasks/ODP-EPHEMERAL-STAGING-IAC-001-SIDECAR-DC3F3C1C.json": "7d20384eab432ac65fa6a0df4729b382b974459afadbbf288c2814843d4ff0b9",
+    "ai-task-archive/tasks/ODP-EPHEMERAL-STAGING-ROLLOUT-0-SIDECAR-C1E25549.json": "d0444ad813ee02c69915479fbe98e03a92244cb940b7c9f0d4e504cf81dbeca0",
+    "ai-task-archive/tasks/ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001.json": "e301e34584b136a9ac2376b4ce65d42e0302b72ed4cc33e29d7b4bd6c3b57863",
+    "ai-task-archive/tasks/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001.json": "9af75cde28b5507aec4229d74674b3f2abf652d71ababc6dacccae7055324185",
+    "ai-task-archive/tasks/ODP-FORMAT-CONVERSION-IMPLEMENT-SIDECAR-8F693813.json": "3628fe070a337e09fd38ef6c2767f0da7f7a5e4254fe24398cd4ffb74ba0979f",
+    "ai-task-archive/tasks/ODP-GCP-STAGING-EXECUTION-PREFL-SIDECAR-FF72D3C4.json": "558d10016d3e2d2192b1e2f9efa2cd77a16ad979c043792d283a846d15d6a927",
+    "ai-task-archive/tasks/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-002.json": "59d1f885685d82192af1c4fc56f14eda1aea0ba59ad9d08f11de75fbf5ee3288",
+    "ai-task-archive/tasks/ODP-GITHUB-GCP-ENV-BOOTSTRAP-00-SIDECAR-603F7594.json": "12702cc0e8583d38490f1ae3c86f5237a7d179cdee626adfb86553de1973cda8",
+    "ai-task-archive/tasks/ODP-HUMAN-DECISIONS-EXECUTION-P-SIDECAR-CAD75975.json": "72198ba9bc4a1c4ec2f6cfa4f85d1cbfaebf5bd02d33f6fc33d48cb728c120b6",
+    "ai-task-archive/tasks/ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001.json": "9dfeedca3ca9301a167b8c153e946aee5f08c6c0e5d5b60538a5e02fadf1fcbf",
+    "ai-task-archive/tasks/ODP-HUMAN-DECISIONS-HANDBACK-INTEGRATION-001.json": "f85e86ee91129030e398e67fe0a55efbebb921a5e455af193d5bc466264f3dcf",
+    "ai-task-archive/tasks/ODP-HUMAN-DECISIONS-WAVE-IMPORT-001.json": "9d5652d94eee5d098c695db2e349d6adec4370dcd41e10f10afbab3ec9341257",
+    "ai-task-archive/tasks/ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001.json": "b03e462447e3ce6c0270fe2ef9b51cb3c58e94cf8a374924520eed7629de88b6",
+    "ai-task-archive/tasks/ODP-INT-MANUAL-CORRECTION-AUDIT-001.json": "1a7335b0b5007237740b034b57397d0cb93319dfc8c5b8a4dc8ffdecda99bd4e",
+    "ai-task-archive/tasks/ODP-INT001-CDC-DISPOSITION-001-SIDECAR-2D279EB4.json": "413b31980bb1b1a9fe6fefb0137753f40561a6edc7b81dcbf16030a466bda206",
+    "ai-task-archive/tasks/ODP-JOB-DELIVERY-STATE-CLEAR-001.json": "43f1913024d12221c005e9a2ae9a601a4f1099371135ad956f22fef846ac5962",
+    "ai-task-archive/tasks/ODP-JOB-PARTIAL-DISPOSITION-001-SIDECAR-6B6EAFEB.json": "d217a2d35004c7987732caaf8cdf86cdd58aef8a55d21d19077d260d624782d0",
+    "ai-task-archive/tasks/ODP-LH-PREDICTION-DRIFT-001.json": "31eee5dfcb14f600670fd5d18bda755ce484aa7d0794657d56e5b2ed46e1ebca",
+    "ai-task-archive/tasks/ODP-LH003-BACKTEST-RELEASE-GATE-001.json": "727303eac509fa586e5ca7afb4162091ebf199480335d3dbede9f74608a04b7c",
+    "ai-task-archive/tasks/ODP-MEASUREMENT-CROSSLAYER-GATE-001.json": "bff31e0e24eaf77594b58e05412f5551fa681e5fbbbb0d0f8145c02afbc4c6f5",
+    "ai-task-archive/tasks/ODP-MERGE-QUEUE-BATCH-DESIGN-001.json": "a7a730614e0bcc3194362677d59e1d7eafd896b22354f9f43b5b4bb95a5b564b",
+    "ai-task-archive/tasks/ODP-MERGE-QUEUE-BATCH-IMPLEMENTATION-001.json": "996dc061711e363ac2ef27af876e324ba337019220192976bf4c9b3665472af1",
+    "ai-task-archive/tasks/ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001.json": "2f1436d107dd1b13111db3550b1b7566c2db69e90bd8a757cf33a085a1237114",
+    "ai-task-archive/tasks/ODP-MODELREADY-QUALITY-NULLABLE-001.json": "d70d96a8acae775d9babb277d033760062c84a702210d68827455fdfa1be73ea",
+    "ai-task-archive/tasks/ODP-NET002-LEASE-CONTRACT-PREP-001.json": "64e24e62c452d4a8c0b491c50dea6b211cf07f5b732d951bd19ba0e923de0313",
+    "ai-task-archive/tasks/ODP-NET002-LEASE-DISPOSITION-00-SIDECAR-CF2569BA.json": "2da1cde10941b5f3a4c6e9997ed0ee6a163ce288b9f7dc86c628690ea42e14e0",
+    "ai-task-archive/tasks/ODP-NET002-LEASE-IMPLEMENTATION-SIDECAR-FD6529DA.json": "06dddf05dae638401630c7333a06db19a5347647b3684310bf5d35629a6db95f",
+    "ai-task-archive/tasks/ODP-NETPLAN-DISCLOSURE-UI-E2E-001.json": "d88b30c072338c6c6ae04197cce0133195c378528f9d6cf3ea8c606f74a1bb84",
+    "ai-task-archive/tasks/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001.json": "f30f7edf00fa650cf31469d37311de13b2cb27372cab6b72606e3372fd45cc8e",
+    "ai-task-archive/tasks/ODP-OPS002-DECISION-COMMENTS-001.json": "7e2a976dd88a87ba6f6abf3f3301cb06815abb1b753f47a8b27ab51bec14f175",
+    "ai-task-archive/tasks/ODP-ORCH-REPO-SLUG-MERGE-ROUTING-001.json": "d2809e912c8c0224f7ec77198815ffb2e9fd0bea50fcb985f86cbf2d73bc0f38",
+    "ai-task-archive/tasks/ODP-OSS-DECISION-PACK-001.json": "e00232ebeab4147e314b18ecbe1f0ba10935f6509913b29f05244d75a8a2d33d",
+    "ai-task-archive/tasks/ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001.json": "5eed324f836d9ffcdeb89add672d43cf7a4ad4f1aee852b53c2079bbd222dae2",
+    "ai-task-archive/tasks/ODP-PRICE006-BANDIT-GATED-001.json": "fa9f70257e250f85049918deaa86a034f3e3f59f8ec69c36fa7a9a2b97afe2eb",
+    "ai-task-archive/tasks/ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001.json": "e6fc92432c3550ab058c2046727a6b7d654f1f97c2ccb4e19214ee9f2bbd6cf2",
+    "ai-task-archive/tasks/ODP-RELEASE-GATE-FIXTURE-STAGING-002.json": "ae3ecc8ce084e70e4de9e517fe635993ba9eada3ecaa7ee65a6cd39d545b515f",
+    "ai-task-archive/tasks/ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001.json": "1b35059496b0541e59cb9049867ac05ca7f8ef3ef74b632da79fab066fa48340",
+    "ai-task-archive/tasks/ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001.json": "3e79613b50fd408ee8e420bc8db8a920df26841a6201649143d2f2088c2e6c8f",
+    "ai-task-archive/tasks/ODP-REQ-DISPOSITION-GOVERNANCE-001.json": "c306deecf0a9c4b449a23bc970d8a9d3d74773c0847e3c8ac00ba98a36ae067b",
+    "ai-task-archive/tasks/ODP-ROLE-PROVIDER-CODEX-REVIEW-SIDECAR-05EE5639.json": "31ad46a2a8b94d0f95fa21e20763bb8724e67ad84001492684a6e8970cac7678",
+    "ai-task-archive/tasks/ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001.json": "3cef429545c1ef06ecd6babc4836c1bff8b90c76df663a3b978c9f671e33dcb9",
+    "ai-task-archive/tasks/ODP-RUNTIME-RELEASE-SINGLE-PATH-SIDECAR-40A34B94.json": "310d06e7d9ec0da47341a92c0bca2710ef368a2b9269ad297846ec8d6e26e557",
+    "ai-task-archive/tasks/ODP-RUNTIME-RELEASE-STAGING-LIF-SIDECAR-0FF6A8C9.json": "7308d14473b492db8064f76ad11e198e906d5bb1d584e02d3d638aabcb2f5cad",
+    "ai-task-archive/tasks/ODP-SCHEMA-STORE-OPENING-AUTHORITY-001.json": "d55f0d119478fb1488bdcc169c777b1aebf837eadd24f334a9855216542ce4cb",
+    "ai-task-archive/tasks/ODP-SITE001-MISSING-COMPONENTS-SIDECAR-B1C7533F.json": "eb6028261a6706cd095124f0c1512e681a95ae9675651dcc5da62fd83f93e0ce",
+    "ai-task-archive/tasks/ODP-SITESCORE-QUALITY-NULLABLE-001.json": "ef6c499e23d4349c5f6b5c624ad3c4f0ae5be921309c5aaf4514337c15699478",
+    "ai-task-archive/tasks/ODP-SPEC-SOURCE-PROVENANCE-001.json": "bb63787648120e917021b7d08a093a42df74ccedec722ce15342bdf543e4c83c",
+    "ai-task-archive/tasks/ODP-STAGING-FOUNDATION-IAC-REME-SIDECAR-D7ED3693.json": "b5b894554efb7d48ccedb110c8ef124b5ff5ec52846f3f4348f56c393e7527c8",
+    "ai-task-archive/tasks/ODP-STAGING-RECOVERY-BUNDLE-STO-SIDECAR-CF995A06.json": "54654cfb1d0a3725c30c23359c7b0791dd4e7ca2b84cdeee55f68f83a6a4eeb2",
+    "ai-task-archive/tasks/ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001.json": "04fb5506932c8c38690b55948e428cfc549efddf4472f62c60e0e35360a3198a",
+    "ai-task-archive/tasks/ODP-WEB-PASSWORD-FIRST-SECURITY-SIDECAR-D9D3F64B.json": "dbf0077816ead06cbd8c1596f5fe9712570b0a9deaa0e9bac3bc71f822a7ceb0",
+    "ai-task-archive/tasks/ORCH-ACCOUNT-POOL-CANARY-RECOVERY-001.json": "18a12f2da619e93618d1799fa06025011e5acd7d13ace2287b0c07667c757044",
+    "ai-task-archive/tasks/ORCH-ARCHIVE-HISTORY-APPLY-001.json": "8b5978c99be6bf19bd1d6739149f32869cd9fb0ace09156c49a6925beb6fb911",
+    "ai-task-archive/tasks/ORCH-ARCHIVE-HISTORY-EXECUTE-00-SIDECAR-898AE6DA.json": "59ae544bc013485b1cea0eb7379024d5db615c35f26c7a5693bf941483ca3449",
+    "ai-task-archive/tasks/ORCH-ARCHIVE-HISTORY-RECOVERY-001.json": "d234dc3e36a27d305df8519f5f8198e49a7193811f1a6fe563faf752a9eb9501",
+    "ai-task-archive/tasks/ORCH-ARCHIVE-HISTORY-RESTORE-002.json": "a843f418e48118e42e9956f9a9092868821fd4090caebf56c0e0840e7ce62a5a",
+    "ai-task-archive/tasks/ORCH-ARCHIVE-RECOVERY-EVIDENCE-001.json": "e210be1c59ade925da76d69e568e851905054553f2a20a2939a9c8e0daff752d",
+    "ai-task-archive/tasks/ORCH-ARCHIVE-RECOVERY-INVALIDATION-001.json": "2e51e928a60426a59166d9a6220469e50417a794b4f4c5a85220286b7ba57c32",
+    "ai-task-archive/tasks/ORCH-CAPACITY-ARCHIVE-DEDUP-001.json": "8f3b8eeadb4371811a597d23bf481c04f64656212facf7c4e6424a76b4ad2afd",
+    "ai-task-archive/tasks/ORCH-PREEMPTION-READINESS-001.json": "308d27c773b5190d8e699172a831b43ce8ec83587561ac1fd46da01bf5974c15",
+    "ai-task-archive/tasks/ORCH-PROVIDER-OWNER-FAILOVER-001.json": "c77d8b50d120c78518609982e03ed350fb72306d1a3505dfb75e71bf098abaa9",
+    "ai-task-archive/tasks/ORCH-STATUS-SYNC-RUNTIME-AUTHORITY-001.json": "5fc0af9249ca94a4fa9e38d0d673528d08f7dddae67425134bdee285ebb59da1",
+    "ai-task-archive/tasks/XR-EXT-OSS-FINAL-AUDIT-001-SIDECAR-8FE3DD46.json": "09506decc1bc359133314fa11b71a34cbd0cbb31bddf26c8c7d2155682aeade2"
+  },
+  "immutable_evidence_sha256": {
+    "/home/lupin/odayplus/.orchestrator/recovery-receipts/history-recovery-checkpoint-20260908T235531Z.json": "cee66fee0de0fd9ed39d1d7ed8abc9a176b3cc96065f2004cc7efe02a2de8f40",
+    "/tmp/odayplus-recovery-plan-ef76/recovery_batch_window.json": "1833ca8656ae30efc34d6ade6437ba850c5a53f9fcda67bb1cd4f7c8c70b34fe",
+    "/tmp/odayplus-recovery-plan-ef76/maintenance_hold_window.json": "e88435aecada1b7b84f4811c3144a54afdb9e428299430e6f6766d4b1ec60348",
+    "/home/lupin/odayplus/ai-task-archive/index.json": "eb46239564ea1c9475ae1a090b15b54da409fa5ec459189dde793222669c956c"
+  },
+  "reconstructed": [
+    {
+      "task_id": "ODP-AVM-DEPRECIATION-CONTRACT-001",
+      "snapshot_sha256": "aac3dcc725f6747123b20054c179bb24db09d6ae8123ef6f7639041cbf89b565",
+      "effective_status": "done",
+      "dependency_satisfied": true
+    },
+    {
+      "task_id": "ODP-CANONICAL-LEGACY-LINEAGE-001",
+      "snapshot_sha256": "4f0fbc242345dbe9dc4ffc05c74707907d42be22cdcf5e613d6d5a492a49d48e",
+      "effective_status": "done",
+      "dependency_satisfied": true
+    },
+    {
+      "task_id": "ODP-DRIFT-DEP-REMOVE-002",
+      "snapshot_sha256": "3fe71f40c756d10c22cafae4174c5d00ab6f3597b3157f6b21c544c4fb8d06b5",
+      "effective_status": "done",
+      "dependency_satisfied": true
+    },
+    {
+      "task_id": "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+      "snapshot_sha256": "e301e34584b136a9ac2376b4ce65d42e0302b72ed4cc33e29d7b4bd6c3b57863",
+      "effective_status": "done",
+      "dependency_satisfied": true
+    },
+    {
+      "task_id": "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+      "snapshot_sha256": "b03e462447e3ce6c0270fe2ef9b51cb3c58e94cf8a374924520eed7629de88b6",
+      "effective_status": "done",
+      "dependency_satisfied": true
+    },
+    {
+      "task_id": "ODP-INT-MANUAL-CORRECTION-AUDIT-001",
+      "snapshot_sha256": "1a7335b0b5007237740b034b57397d0cb93319dfc8c5b8a4dc8ffdecda99bd4e",
+      "effective_status": "done",
+      "dependency_satisfied": true
+    },
+    {
+      "task_id": "ODP-LH-PREDICTION-DRIFT-001",
+      "snapshot_sha256": "31eee5dfcb14f600670fd5d18bda755ce484aa7d0794657d56e5b2ed46e1ebca",
+      "effective_status": "done",
+      "dependency_satisfied": true
+    },
+    {
+      "task_id": "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+      "snapshot_sha256": "727303eac509fa586e5ca7afb4162091ebf199480335d3dbede9f74608a04b7c",
+      "effective_status": "done",
+      "dependency_satisfied": true
+    },
+    {
+      "task_id": "ODP-MEASUREMENT-CROSSLAYER-GATE-001",
+      "snapshot_sha256": "bff31e0e24eaf77594b58e05412f5551fa681e5fbbbb0d0f8145c02afbc4c6f5",
+      "effective_status": "done",
+      "dependency_satisfied": true
+    },
+    {
+      "task_id": "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+      "snapshot_sha256": "2f1436d107dd1b13111db3550b1b7566c2db69e90bd8a757cf33a085a1237114",
+      "effective_status": "blocked",
+      "dependency_satisfied": false
+    },
+    {
+      "task_id": "ODP-MODELREADY-QUALITY-NULLABLE-001",
+      "snapshot_sha256": "d70d96a8acae775d9babb277d033760062c84a702210d68827455fdfa1be73ea",
+      "effective_status": "blocked",
+      "dependency_satisfied": false
+    },
+    {
+      "task_id": "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+      "snapshot_sha256": "d88b30c072338c6c6ae04197cce0133195c378528f9d6cf3ea8c606f74a1bb84",
+      "effective_status": "done",
+      "dependency_satisfied": true
+    },
+    {
+      "task_id": "ODP-OPS002-DECISION-COMMENTS-001",
+      "snapshot_sha256": "7e2a976dd88a87ba6f6abf3f3301cb06815abb1b753f47a8b27ab51bec14f175",
+      "effective_status": "done",
+      "dependency_satisfied": true
+    },
+    {
+      "task_id": "ODP-PRICE006-BANDIT-GATED-001",
+      "snapshot_sha256": "fa9f70257e250f85049918deaa86a034f3e3f59f8ec69c36fa7a9a2b97afe2eb",
+      "effective_status": "done",
+      "dependency_satisfied": true
+    },
+    {
+      "task_id": "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+      "snapshot_sha256": "e6fc92432c3550ab058c2046727a6b7d654f1f97c2ccb4e19214ee9f2bbd6cf2",
+      "effective_status": "done",
+      "dependency_satisfied": true
+    },
+    {
+      "task_id": "ODP-RELEASE-GATE-FIXTURE-STAGING-002",
+      "snapshot_sha256": "ae3ecc8ce084e70e4de9e517fe635993ba9eada3ecaa7ee65a6cd39d545b515f",
+      "effective_status": "done",
+      "dependency_satisfied": true
+    },
+    {
+      "task_id": "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+      "snapshot_sha256": "1b35059496b0541e59cb9049867ac05ca7f8ef3ef74b632da79fab066fa48340",
+      "effective_status": "done",
+      "dependency_satisfied": true
+    },
+    {
+      "task_id": "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+      "snapshot_sha256": "3e79613b50fd408ee8e420bc8db8a920df26841a6201649143d2f2088c2e6c8f",
+      "effective_status": "done",
+      "dependency_satisfied": true
+    },
+    {
+      "task_id": "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+      "snapshot_sha256": "c306deecf0a9c4b449a23bc970d8a9d3d74773c0847e3c8ac00ba98a36ae067b",
+      "effective_status": "done",
+      "dependency_satisfied": true
+    },
+    {
+      "task_id": "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+      "snapshot_sha256": "3cef429545c1ef06ecd6babc4836c1bff8b90c76df663a3b978c9f671e33dcb9",
+      "effective_status": "done",
+      "dependency_satisfied": true
+    },
+    {
+      "task_id": "ODP-SITESCORE-QUALITY-NULLABLE-001",
+      "snapshot_sha256": "ef6c499e23d4349c5f6b5c624ad3c4f0ae5be921309c5aaf4514337c15699478",
+      "effective_status": "done",
+      "dependency_satisfied": true
+    },
+    {
+      "task_id": "ODP-SPEC-SOURCE-PROVENANCE-001",
+      "snapshot_sha256": "bb63787648120e917021b7d08a093a42df74ccedec722ce15342bdf543e4c83c",
+      "effective_status": "done",
+      "dependency_satisfied": true
+    },
+    {
+      "task_id": "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
+      "snapshot_sha256": "04fb5506932c8c38690b55948e428cfc549efddf4472f62c60e0e35360a3198a",
+      "effective_status": "done",
+      "dependency_satisfied": true
+    }
+  ],
+  "placeholders": [
+    {
+      "task_id": "DPF-EMGI-LIVE-ROLLOUT-001",
+      "source": "active",
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "task_id": "ODP-DEV-ROLLOUT-001",
+      "source": "active",
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "task_id": "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+      "source": "active",
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "task_id": "ODP-EPHEMERAL-STAGING-IAC-001",
+      "source": "active",
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "task_id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+      "source": "active",
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "task_id": "ODP-INT001-CDC-DISPOSITION-001",
+      "source": "active",
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "task_id": "ODP-JOB-PARTIAL-DISPOSITION-001",
+      "source": "active",
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "task_id": "ODP-NET002-LEASE-DISPOSITION-001",
+      "source": "active",
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "task_id": "ODP-ROLE-PROVIDER-CODEX-REVIEW-001",
+      "source": "active",
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "task_id": "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+      "source": "active",
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "task_id": "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+      "source": "active",
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "task_id": "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+      "source": "active",
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "task_id": "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
+      "source": "active",
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "task_id": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+      "source": "active",
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "task_id": "XR-EXT-OSS-FINAL-AUDIT-001",
+      "source": "active",
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops"
+    }
+  ],
+  "named_gate_readback": {
+    "ODP-DRIFT-SECURITY-VERIFY-003": {
+      "source": "archive",
+      "status": "done",
+      "terminal_outcome": "completed",
+      "waiting_for": null,
+      "review_reopen_count": 4
+    },
+    "ODP-AVM-QUALITY-NULLABLE-001": {
+      "source": "active",
+      "status": "blocked",
+      "terminal_outcome": null,
+      "waiting_for": "Human/Ops",
+      "review_reopen_count": 11
+    }
+  }
+}

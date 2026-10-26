@@ -8,7 +8,7 @@
     "packages/*"
   ],
   "scripts": {
-    "audit:security": "npm audit --omit=dev --audit-level=high",
+    "audit:security": "python3 delivery_toolchain/security/npm_audit_gate.py",
     "build": "npm run build --workspaces --if-present",
     "bundle:budget": "npm run bundle:budget --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
@@ -21,11 +21,14 @@
     "@axe-core/playwright": "^4.12.1",
     "@playwright/test": "1.61.1",
     "@vitejs/plugin-react": "^6.0.3",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.12"
   },
   "overrides": {
-    "postcss": "^8.5.10",
-    "sharp": "0.35.3"
+    "next": {
+      "postcss": "8.5.28"
+    },
+    "postcss": "8.5.28",
+    "sharp": "0.35.5"
   },
   "engines": {
     "node": ">=20"

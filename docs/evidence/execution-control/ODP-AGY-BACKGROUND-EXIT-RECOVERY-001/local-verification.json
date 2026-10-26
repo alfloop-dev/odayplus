@@ -1,0 +1,152 @@
+{
+  "recorded_at": "2026-09-19T23:09:18.076777+00:00",
+  "implementation_commit": "b8669ab554f1b779fa8db371992bf83cae943c8e",
+  "implementation_sha256": {
+    ".orchestrator/agy_session.py": "368e1d6085ca353fe412656bdf776542ab565081186e45bdaaff5f42b0b718ff",
+    ".orchestrator/adapters/antigravity.py": "90d49a7aaf45a6d18a002de300a9e1fd4043a296e1324a642166adeeea4f94da",
+    ".orchestrator/worker_failure_policy.py": "66dc5a01fea843860de90a1e09b90d69e7e1ca41dfb3d921a109a8a13cfc0708",
+    ".orchestrator/worker_lifecycle.py": "565f653430896dc17d528bc385b9cf4b4acc651370d784d397206b67d3f0fcbd",
+    ".orchestrator/worker_workspace.py": "7f573d750c81b9d6fa52ce5e329a7d3087e1200e92481bd3a8bc7cd8c24470a1"
+  },
+  "checks": [
+    {
+      "command": "uv run --python 3.12 pytest -m 'not requires_live_env' .orchestrator delivery_toolchain scripts tests/tooling infra",
+      "exit_code": 0,
+      "duration_seconds": 382.87,
+      "summary": "3119 passed, 6 skipped, 10 deselected, 3 warnings, 689 subtests passed",
+      "log_sha256": "b0651d1cae003bb3cd58fd67334ead4efe31cf854b2e961c73e9ad61ab4afae1"
+    },
+    {
+      "command": "uv run --python 3.12 pytest -q .orchestrator/test_agy_session.py",
+      "exit_code": 0,
+      "summary": "10 subprocess regressions passed after transport cleanup hardening",
+      "log_sha256": "7040371af15613c02e821ec0eecc1d1330f691ace4cef93a41bfa358822c4103"
+    },
+    {
+      "command": "uv run ruff check .orchestrator delivery_toolchain scripts infra",
+      "exit_code": 0
+    },
+    {
+      "command": "uv run python delivery_toolchain/governance/check_orchestrator_config.py",
+      "exit_code": 0,
+      "summary": "3 config documents and merged runtime views validated"
+    },
+    {
+      "command": "uv run python delivery_toolchain/governance/check_config_wiring.py",
+      "exit_code": 0,
+      "summary": "190 config keys wired"
+    }
+  ],
+  "measurement_notes": "Full suite started on the candidate worktree before the anchor commit; content hashes identify delivered implementation. Session cleanup hardening was covered by the separate final session subprocess run. GitHub required CI must validate the final immutable PR head before merge.",
+  "supplemental_stream_error_verification": {
+    "recorded_at": "2026-09-19T23:18:57.494603+00:00",
+    "base_commit": "2cc9bbaf5825fe9eb54835fa99b6cbb8d301e7ea",
+    "command": "uv run --python 3.12 pytest .orchestrator/test_worker_failure_policy.py",
+    "exit_code": 0,
+    "duration_seconds": 18.67,
+    "summary": "91 passed, 23 subtests passed",
+    "source_sha256": {
+      ".orchestrator/worker_failure_policy.py": "92c9dd7f686456ffeb6ec92b0c55273c42d9699106a4e18a64b288207af0501d",
+      ".orchestrator/test_worker_failure_policy.py": "9d35a8ff5ec0b649a3aab2f485daa89165b62a35e7b6dc8100e52b40a12de4ef"
+    },
+    "log_sha256": "5a302b771b83794a83c952a58a16d3180d0fca04bb447f37b98d68d33eb65f26"
+  },
+  "review_findings_verification": {
+    "recorded_at": "2026-09-19T23:36:23.254036+00:00",
+    "base_commit": "db5fff768ce579be4a2655f74f497deeb14ade16",
+    "findings": [
+      "R1 retry count reset on replacement",
+      "R2 CLI death with retained pipes"
+    ],
+    "command": "uv run --python 3.12 pytest .orchestrator/test_agy_session.py .orchestrator/test_worker_failure_policy.py -q",
+    "exit_code": 0,
+    "duration_seconds": null,
+    "measurement_notes": "Original tool process completed with exit 0; quiet output has no duration/count summary. No second run was performed to manufacture those metrics.",
+    "source_sha256": {
+      ".orchestrator/agy_session.py": "0ea25a0f6fee228eb77ef70a3b4bd93ba0d50558942b09b687cdba4cb964404e",
+      ".orchestrator/supervisor.py": "ed56132fbc2a6d2692e487d9b20ac95d23e77ab58263b61ac38dff716f237d8d",
+      ".orchestrator/worker_failure_policy.py": "bd6ba4ed178c8d3a39344ef8b5333ef16f2083790de9f8e1c3209859746ee14f",
+      ".orchestrator/test_agy_session.py": "9f059a352a645e0b179f8e5bb4ce24c8203795b4d2af36343f3a9c26d39a6a54",
+      ".orchestrator/test_worker_failure_policy.py": "a1ddf2688686a36d560662e448ae279a2a6cead65e15c7ae04251cc6693d8f50"
+    },
+    "log_sha256": "b683397ca50a7f1e8d0dfeaad043d57f3c1dd25f6600e279cc6800a976a8cea5"
+  },
+  "actual_persistence_verification": {
+    "command": [
+      "uv",
+      "run",
+      "--python",
+      "3.12",
+      "pytest",
+      ".orchestrator/test_worker_failure_policy.py",
+      ".orchestrator/test_supervisor.py",
+      ".orchestrator/test_runtime_state.py",
+      "-k",
+      "retry or fallback or manual_pending or AgyBackgroundExitRecoveryTests"
+    ],
+    "exit_code": 0,
+    "duration_seconds": 12.106,
+    "recorded_at": "2026-09-19T23:57:20.034370+00:00",
+    "base_commit": "74fb6187ce8aa01c6a87c2a2ea22924ca6b1763f",
+    "summary": "35 passed, 809 deselected, 5 subtests passed in 10.60s",
+    "findings": [
+      "R1a exhausted inbox requeue",
+      "R1b state replacement detaches parent and loop references"
+    ],
+    "source_sha256": {
+      ".orchestrator/supervisor.py": "bb8512d99e2ef1d85e5e8fdccd50f257eeffe46dbffc1e7cc01b23e8769f0ce4",
+      ".orchestrator/worker_failure_policy.py": "585caacfb0a7cd07f37867ae02d05c2000e21caf127e2a691a1626955b66a7da",
+      ".orchestrator/worker_lifecycle.py": "66dd9fd37913689630824fa22c97c4a6b7379694fb098028147744abc4608a94",
+      ".orchestrator/test_worker_failure_policy.py": "b1c5f7d0a1a37088d090f3d6160058e8713e096e7a0247609823a199b3142184"
+    },
+    "log_sha256": "aac25f6750d507ed8d36171f4d57cfbd4b9419c5e21f826fa17b868496cd96d5"
+  },
+  "legacy_reconciliation_verification": {
+    "recorded_at": "2026-09-20T00:10:39.691993+00:00",
+    "base_commit": "09372ca331ddf4a23f14de528b5d44019ab84f14",
+    "finding": "Absent session receipt raises during dead legacy worker reconciliation",
+    "checks": [
+      {
+        "command": [
+          "uv",
+          "run",
+          "--python",
+          "3.12",
+          "pytest",
+          ".orchestrator/test_worker_failure_policy.py",
+          ".orchestrator/test_supervisor.py",
+          ".orchestrator/test_agy_session.py",
+          "-k",
+          "AgyBackgroundExitRecoveryTests or reconcile_dead_agy or test_agy_session"
+        ],
+        "exit_code": 1,
+        "duration_seconds": 49.125,
+        "summary": "30 passed; 2 subtest failures in new fixture due to missing isolated approval_queue path, corrected before the focused rerun"
+      },
+      {
+        "command": [
+          "uv",
+          "run",
+          "--python",
+          "3.12",
+          "pytest",
+          ".orchestrator/test_supervisor.py::RuntimeLeaseReconciliationTests::test_reconcile_dead_agy_without_session_receipt"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 9.177,
+        "retry_reason": "Corrected missing isolated approval_queue fixture path; rerun only affected integration test",
+        "summary": "1 passed, 2 subtests passed in 7.72s"
+      }
+    ],
+    "source_sha256": {
+      ".orchestrator/worker_failure_policy.py": "c530d1991142ebfa709f669340c670f753c0fcdd7b3577ea620a99ec356ef1f1",
+      ".orchestrator/test_worker_failure_policy.py": "ba7365927a339145c9b544bf3b96dee11d42109fd116190bcb7f071385a8815e",
+      ".orchestrator/test_supervisor.py": "02d49a6e57ffed8483499fa6887b7a70a83966f540f1bfaeb79e17b4023e4910",
+      ".orchestrator/test_agy_session.py": "b77ea895dd3a4083c24f7db55a637fe2f228bd51b81f6cfc87fa331edd97a5e1"
+    },
+    "log_sha256": {
+      "odp-legacy-session-receipt-tests.log": "0ec8954a72ab7608f5895daf0070b7297671191f870b7d019c26950924e24954",
+      "odp-legacy-reconciliation-recheck.log": "bd27ed7c55e2e864d025d2015501ef7efa97b77c7c4a54df64a096f6f1835f7b"
+    }
+  }
+}

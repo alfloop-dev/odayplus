@@ -161,7 +161,7 @@ Rollback 是高風險可逆動作，UI 必須提供明確 affordance 與證據�
 ## 11. 發布列表 / 發布詳情 Page
 
 - 發布列表 columns：`release_id`、`model_name` `from_version`→`to_version`、`release_type`、`approval_id`、`monitoring_window`、approved_by、created_at、Action(open)。`compact` 密度。
-- 發布詳情：呈現 `ModelReleaseDecision` 全欄位、`success_criteria`/`fail_criteria`、`affected_modules`，並以 `DecisionAuditTimeline`（§5.13）顯示 Prediction→…→Feedback 固定節點與 `audit_event_id`。可匯出證據（見 `ODAY_PLUS_AUDIT_EVIDENCE_UI_SPEC.md`），匯出記 Audit。
+- 發布詳情：呈現 `ModelReleaseDecision` 全欄位、`success_criteria`/`fail_criteria`、`affected_modules`，並以 `DecisionAuditTimeline`（§5.13）顯示 Prediction→…→Outcome observed 固定節點與 `audit_event_id`。可匯出證據（見 `ODAY_PLUS_AUDIT_EVIDENCE_UI_SPEC.md`），匯出記 Audit。
 
 ## 12. Cross-Cutting Rules
 

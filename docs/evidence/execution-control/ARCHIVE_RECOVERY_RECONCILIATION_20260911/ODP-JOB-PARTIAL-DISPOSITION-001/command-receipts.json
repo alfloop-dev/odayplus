@@ -1,0 +1,337 @@
+{
+  "task_id": "ODP-JOB-PARTIAL-DISPOSITION-001",
+  "generated_at": "2026-09-12T09:49:35Z",
+  "target_repository": "alfloop-dev/odayplus",
+  "continuation_branch": "task/ODP-JOB-PARTIAL-DISPOSITION-001-RECOVERY-20260911",
+  "target_dev_baseline": "cbbd686d632656bc4098cd8ef4491def1eecbd55",
+  "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
+  "provenance_sources": [
+    {
+      "name": "original-evidence.json",
+      "path": "support/handoffs/archive-recovery-dispatch-20260911/ODP-JOB-PARTIAL-DISPOSITION-001/original-evidence.json",
+      "sha256": "a4317b4aa8568c54f25bab0b571955b846e8f2c214b090adabaab98ec6586300",
+      "kind": "canonical_recovery_snapshot",
+      "note": "Recovery dispatch original-evidence.json containing historical task brief, PR #1172 snapshot, CI checks, and Claude approval snapshot; recovery_dispatch.original_history_sha256 is 6c276f06b7804bb283462a77c88c34d6250c038e7d9ba69a361b6afef0174dce"
+    },
+    {
+      "name": "metadata.json",
+      "path": "support/handoffs/archive-recovery-dispatch-20260911/ODP-JOB-PARTIAL-DISPOSITION-001/metadata.json",
+      "sha256": "448b7ff80aefb007cf90b94065d509a42a5d93ce0975b359330a3778d22031dc",
+      "original_history_sha256": "6c276f06b7804bb283462a77c88c34d6250c038e7d9ba69a361b6afef0174dce",
+      "kind": "dispatch_metadata"
+    },
+    {
+      "name": "HANDOFF.md",
+      "path": "support/handoffs/archive-recovery-dispatch-20260911/ODP-JOB-PARTIAL-DISPOSITION-001/HANDOFF.md",
+      "sha256": "fc954d5a0f888ea8ec2fd62a63c3e309711593fe7b0d1c13c5cd6f967b28ffc5",
+      "kind": "dispatch_handoff"
+    },
+    {
+      "name": "task_evidence_inventory.json",
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json @ b66d18130f3bac78cf5af32b1c7000933e5d931d",
+      "lines": "7854-8250 (task_id: ODP-JOB-PARTIAL-DISPOSITION-001)",
+      "kind": "pinned_historical_inventory"
+    },
+    {
+      "name": "ai-status.json",
+      "path": "/home/lupin/odayplus/ai-status.json",
+      "sha256": "b6df6e594144b663538c9a93c4cab101e43cefd0074faab1b5036a629c83b658",
+      "kind": "live_canonical_board"
+    }
+  ],
+  "historical_facts_provenance": {
+    "historical_pr": {
+      "number": 1172,
+      "url": "https://github.com/alfloop-dev/odayplus/pull/1172",
+      "head_sha": "f8caf62e11643f9cbe59ea6b958faeab746fcac2",
+      "merge_commit_sha": "9647d673ccf2c0f11ef565e78511099821d85c19",
+      "merged_at": "2026-09-04T13:14:12Z",
+      "merged_by": "ajoe734",
+      "historical_owner": "Antigravity6",
+      "historical_reviewer": "Claude"
+    },
+    "historical_ci_checks": {
+      "head_sha": "f8caf62e11643f9cbe59ea6b958faeab746fcac2",
+      "total_checks": 7,
+      "conclusions": {
+        "success": 7
+      },
+      "checks": [
+        {
+          "name": "change-scope",
+          "conclusion": "success",
+          "completed_at": "2026-09-04T12:30:15Z"
+        },
+        {
+          "name": "boundary",
+          "conclusion": "success",
+          "completed_at": "2026-09-04T12:30:19Z"
+        },
+        {
+          "name": "classify",
+          "conclusion": "success",
+          "completed_at": "2026-09-04T12:30:20Z"
+        },
+        {
+          "name": "orchestrator",
+          "conclusion": "success",
+          "completed_at": "2026-09-04T12:33:20Z"
+        },
+        {
+          "name": "product",
+          "conclusion": "success",
+          "completed_at": "2026-09-04T12:51:24Z"
+        },
+        {
+          "name": "performance-gate",
+          "conclusion": "success",
+          "completed_at": "2026-09-04T12:31:49Z"
+        },
+        {
+          "name": "product-e2e-gate",
+          "conclusion": "success",
+          "completed_at": "2026-09-04T12:36:41Z"
+        }
+      ]
+    },
+    "historical_approval": {
+      "context": "task-review-gate",
+      "state": "success",
+      "approver": "Claude",
+      "updated_at": "2026-09-04T12:50:50Z",
+      "description": "Approved by assigned reviewer Claude"
+    },
+    "historical_raw_execution_metadata": "unknown (historical raw terminal execution timestamps, per-command process duration, and raw log files for PR #1172 runs were not retained in local repository logs following the 2026-09-06 archive incident; substantiated by pinned inventory snapshot and exact-head commit statuses without re-running whole test suites for statistics)"
+  },
+  "governance_and_evolution_provenance": {
+    "durable_partial_impl_pr1285": {
+      "pr_number": 1285,
+      "head_sha": "b19513a1419497dce2ddd5054df5bbe0bd732a69",
+      "merge_commit": "91dd050ad1e357af141750a39f144afd54ff588e",
+      "implemented_symbols": [
+        "apps/worker/oday_worker/handlers.py::handle_batch_listing_intake",
+        "apps/worker/oday_worker/handlers.py::build_default_registry",
+        "apps/worker/oday_worker/handlers.py::checkpoint_batch_item_result",
+        "shared/jobs/receipts.py::derive_batch_status_and_summary",
+        "shared/jobs/receipts.py::DurableJobReceipt"
+      ],
+      "verification_suite": "tests/reliability/test_durable_partial_batch.py"
+    },
+    "producer_reconciliation_pr1302": {
+      "pr_number": 1302,
+      "head_sha": "d6a0f327",
+      "merge_commit": "84a024c3448cc4ec418882b5a38e026ed407e6be",
+      "reconciled_manifest": "delivery_toolchain/governance/set_valued_requirements.json",
+      "reconciled_tests": "tests/governance/test_job_partial_disposition.py",
+      "reconciled_doc": "docs/evidence/human-decisions/ODP-JOB-PARTIAL-PRODUCER-RECONCILIATION-001/README.md",
+      "retained_disposition": "BLOCKED_BY_EVIDENCE"
+    }
+  },
+  "provenance_and_receipts_degradation_policy": {
+    "historical_process_metadata_status": "unknown_historical_process_non_blocking",
+    "prior_unmeasured_local_execution_status": "unknown_unretained_local_log",
+    "policy_note": "In accordance with Codex review findings and verification evidence policy: (1) Historical PR #1172 terminal logs are unknown and substantiated by exact-head 7/7 green CI check-runs. (2) Prior local verification runs whose raw terminal handles were not retained in the worktree are degraded to unknown_unretained_local_log with exit_code=null, started_at=null, duration=null, and snippets=null rather than asserting unverified execution receipts. (3) Verification policy prohibits re-running passing test suites just for statistics. (4) DAG cycle absence is verified via offline DFS traversal over the preserved 30-node graph snapshot."
+  },
+  "dag_snapshot_and_cycle_verification": {
+    "source_file": "/home/lupin/odayplus/ai-status.json",
+    "source_file_sha256": "b6df6e594144b663538c9a93c4cab101e43cefd0074faab1b5036a629c83b658",
+    "total_tasks_evaluated": 30,
+    "observed_at": "2026-09-12T09:49:35Z",
+    "graph_snapshot": {
+      "DPF-EMGI-LIVE-ROLLOUT-001": [],
+      "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001": [
+        "DPF-EMGI-LIVE-ROLLOUT-001",
+        "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001"
+      ],
+      "HUMAN-GCP-WEB-OAUTH-CLIENTS-001": [],
+      "HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001": [],
+      "HUMAN-OSS-LEGAL-APPROVAL-001": [
+        "XR-EXT-OSS-FINAL-AUDIT-001"
+      ],
+      "ODP-AVM-DEPRECIATION-INTEGRATION-001": [
+        "ODP-AVM-QUALITY-NULLABLE-001",
+        "ODP-AVM-DEPRECIATION-CONTRACT-001"
+      ],
+      "ODP-BRAND-TRANSFER-IMPLEMENTATION-001": [
+        "ODP-BRAND-TRANSFER-CONTRACT-PREP-001"
+      ],
+      "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001": [
+        "ODP-SPEC-SOURCE-PROVENANCE-001",
+        "ODP-MEASUREMENT-CROSSLAYER-GATE-001",
+        "ODP-CANONICAL-LEGACY-LINEAGE-001",
+        "ODP-AVM-DEPRECIATION-INTEGRATION-001",
+        "ODP-SITESCORE-QUALITY-NULLABLE-001",
+        "ODP-MODELREADY-A4-REMEDIATION-001",
+        "ODP-INT-MANUAL-CORRECTION-AUDIT-001",
+        "ORCH-ARCHIVE-HISTORY-EXECUTE-003"
+      ],
+      "ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001": [
+        "ODP-CDC-SOURCE-CONTRACT-PREP-001",
+        "ODP-DATA-PLANE-DELETE-PROPAGATION-001",
+        "ODP-DATA-CATALOG-METADATA-ALIGNMENT-001"
+      ],
+      "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": [
+        "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+        "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+        "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+        "DPF-EMGI-LIVE-ROLLOUT-001",
+        "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+        "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+        "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+        "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+        "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+        "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
+      ],
+      "ODP-DEV-ROLLOUT-001": [],
+      "ODP-EPHEMERAL-STAGING-IAC-001": [],
+      "ODP-EPHEMERAL-STAGING-ROLLOUT-001": [
+        "ODP-EPHEMERAL-STAGING-IAC-001",
+        "ODP-DEV-ROLLOUT-001",
+        "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+        "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+        "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001"
+      ],
+      "ODP-FORMAT-CONVERSION-IMPLEMENTATION-001": [
+        "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001"
+      ],
+      "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001": [],
+      "ODP-INTV006-ADJUST-WORKFLOW-001": [
+        "ODP-AVM-QUALITY-NULLABLE-001"
+      ],
+      "ODP-JOB-PARTIAL-DISPOSITION-001": [],
+      "ODP-NET002-LEASE-DISPOSITION-001": [],
+      "ODP-NET002-LEASE-IMPLEMENTATION-001": [
+        "ODP-NET002-LEASE-CONTRACT-PREP-001"
+      ],
+      "ODP-NFR-RUNTIME-EVIDENCE-001": [
+        "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"
+      ],
+      "ODP-ORCH-QUOTA-RECOVERY-STATE-001": [],
+      "ODP-ORCH-REVIEW-DISPATCH-CAS-STARVATION-001": [],
+      "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001": [
+        "ODP-PROD-BLUEGREEN-ROLLOUT-001"
+      ],
+      "ODP-PROD-BLUEGREEN-ROLLOUT-001": [
+        "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+        "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001"
+      ],
+      "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001": [],
+      "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001": [],
+      "ODP-STAGING-STATE-PLAN-QUARANTINE-CLEANUP-001": [],
+      "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001": [
+        "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+        "ODP-SPEC-SOURCE-PROVENANCE-001",
+        "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+        "ODP-LH-PREDICTION-DRIFT-001",
+        "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
+        "ODP-JOB-PARTIAL-DISPOSITION-001",
+        "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+        "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+        "ODP-NET002-LEASE-DISPOSITION-001",
+        "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+        "ODP-PRICE006-BANDIT-GATED-001",
+        "ODP-INT001-CDC-DISPOSITION-001",
+        "ODP-INTV006-ADJUST-WORKFLOW-001",
+        "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+        "ODP-OPS002-DECISION-COMMENTS-001",
+        "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+        "ODP-NFR-RUNTIME-EVIDENCE-001"
+      ],
+      "XR-EXT-OSS-FINAL-AUDIT-001": [],
+      "XR-SOURCE-APPROVAL-ACTIVATION-001": [
+        "HUMAN-OSS-LEGAL-APPROVAL-001"
+      ]
+    },
+    "traversal_algorithm": "Depth-First Search (DFS) with 3-state cycle detection (0=unvisited, 1=visiting, 2=visited) on preserved 30-node graph snapshot",
+    "historical_run_receipt_status": "unknown_unretained_local_log",
+    "cycles_detected": false,
+    "cycles_list": [],
+    "task_incoming_dependencies": [],
+    "downstream_dependent": {
+      "task_id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+      "status": "todo",
+      "total_dependencies_count": 17,
+      "contains_this_task": true
+    },
+    "note": "前輪本地執行 handle 未在隔離 worktree 保存，舊退出收據標記為 unknown_unretained_local_log；無環結論由保存之 30-node graph_snapshot 經離線 DFS 遍歷驗證支持。"
+  },
+  "current_measured_verification_receipts": [
+    {
+      "label": "git_diff_check",
+      "argv": [
+        "git",
+        "diff",
+        "--check",
+        "cbbd686d632656bc4098cd8ef4491def1eecbd55",
+        "HEAD"
+      ],
+      "repository": "alfloop-dev/odayplus",
+      "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
+      "measured_head_sha": null,
+      "started_at": null,
+      "duration_seconds": null,
+      "exit_code": null,
+      "status": "unknown_unretained_local_log",
+      "stdout_snippet": null,
+      "stderr_snippet": null,
+      "purpose": "Verify clean git diff with no trailing whitespaces or formatting conflicts against origin/dev base (cbbd686d)",
+      "note": "原始執行收據未保存 (unknown_unretained_local_log)；依 Codex 審查意見與驗證證據政策降格，不自填未經審計之退出碼、耗時或 snippets。"
+    },
+    {
+      "label": "canonical_board_dag_snapshot_and_cycle_verification",
+      "argv": [
+        "python3",
+        "-c",
+        "import json; data = json.load(open(\"/home/lupin/odayplus/ai-status.json\")); tasks = {t[\"id\"]: t.get(\"depends_on\", []) for t in data.get(\"tasks\", []) if \"id\" in t}; visited = {};\ndef check_cycle(n, p):\n visited[n] = 1\n for m in tasks.get(n, []):\n  if m in tasks:\n   if visited.get(m) == 1: return True, p + [m]\n   if visited.get(m) != 2:\n    c, cp = check_cycle(m, p + [m])\n    if c: return True, cp\n visited[n] = 2\n return False, []\ncycles = [cp for n in tasks if n not in visited for c, cp in [check_cycle(n, [n])] if c]; assert len(cycles) == 0; assert tasks.get(\"ODP-JOB-PARTIAL-DISPOSITION-001\") == []; assert \"ODP-JOB-PARTIAL-DISPOSITION-001\" in tasks.get(\"ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001\", []); print(f\"DAG check passed: {len(tasks)} nodes, 0 cycles\")"
+      ],
+      "repository": "alfloop-dev/odayplus",
+      "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
+      "measured_head_sha": null,
+      "started_at": null,
+      "duration_seconds": null,
+      "exit_code": null,
+      "status": "unknown_unretained_local_log",
+      "stdout_snippet": null,
+      "stderr_snippet": null,
+      "purpose": "Verify canonical board task state, empty incoming dependencies for this task, downstream dependency link from ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001, and absence of cycles across all 30 board task dependencies",
+      "note": "原始執行收據未保存 (unknown_unretained_local_log)；無環結論改由 dag_snapshot_and_cycle_verification.graph_snapshot 之離線 DFS 遍歷驗證支持。"
+    },
+    {
+      "label": "governance_check_requirement_members",
+      "argv": [
+        "python3",
+        "delivery_toolchain/governance/check_requirement_members.py"
+      ],
+      "repository": "alfloop-dev/odayplus",
+      "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
+      "measured_head_sha": null,
+      "started_at": null,
+      "duration_seconds": null,
+      "exit_code": null,
+      "status": "unknown_unretained_local_log",
+      "stdout_snippet": null,
+      "stderr_snippet": null,
+      "purpose": "Assert governance set_valued_requirements.json member status and BLOCKED_BY_EVIDENCE disposition validity",
+      "note": "原始執行收據未保存 (unknown_unretained_local_log)；依 Codex 審查意見與驗證證據政策降格，不自填未經審計之退出碼、耗時或 snippets。"
+    },
+    {
+      "label": "offline_json_schema_and_evidence_consistency_check",
+      "argv": [
+        "python3",
+        "-c",
+        "import json, os\np = \"docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-JOB-PARTIAL-DISPOSITION-001\"\nassert os.path.isfile(os.path.join(p, \"README.md\"))\nar = json.load(open(os.path.join(p, \"acceptance-reconciliation.json\")))\ncr = json.load(open(os.path.join(p, \"command-receipts.json\")))\nassert ar[\"task_id\"] == \"ODP-JOB-PARTIAL-DISPOSITION-001\"\nassert cr[\"task_id\"] == \"ODP-JOB-PARTIAL-DISPOSITION-001\"\nassert len(ar[\"acceptance_criteria_reconciliation\"]) == 4\nassert all(c[\"status\"] == \"met\" for c in ar[\"acceptance_criteria_reconciliation\"])\nassert ar[\"dependencies_and_dag_reconciliation\"][\"current_canonical_dependencies\"][\"depends_on\"] == []\nassert ar[\"dependencies_and_dag_reconciliation\"][\"cycle_verification\"][\"cycles_detected\"] is False\nprint(\"Offline JSON schema and evidence consistency check passed.\")"
+      ],
+      "repository": "alfloop-dev/odayplus",
+      "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
+      "measured_head_sha": null,
+      "started_at": null,
+      "duration_seconds": null,
+      "exit_code": null,
+      "status": "unknown_unretained_local_log",
+      "stdout_snippet": null,
+      "stderr_snippet": null,
+      "purpose": "Assert internal consistency, schema validity, and criteria completeness across evidence artifacts",
+      "note": "原始執行收據未保存 (unknown_unretained_local_log)；依 Codex 審查意見與驗證證據政策降格，不自填未經審計之退出碼、耗時或 snippets。"
+    }
+  ]
+}

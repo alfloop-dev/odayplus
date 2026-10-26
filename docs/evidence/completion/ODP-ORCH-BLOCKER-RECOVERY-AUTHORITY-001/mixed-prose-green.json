@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "kind": "verification_receipt",
+  "task_id": "ODP-ORCH-BLOCKER-RECOVERY-AUTHORITY-001",
+  "head_sha": "3f757620f2a3e9f4bad1bf13a851af2bb83d661c",
+  "command": "uv run --frozen --python 3.12 pytest -q .orchestrator/test_blocker_recovery_authority.py .orchestrator/test_task_dependency_gate.py",
+  "command_audit": {
+    "command": "uv run --frozen --python 3.12 pytest -q .orchestrator/test_blocker_recovery_authority.py .orchestrator/test_task_dependency_gate.py",
+    "ok": true,
+    "violations": [],
+    "details": [],
+    "runner": "pytest"
+  },
+  "runner": "pytest",
+  "selection": {
+    "scope": "targeted",
+    "items": [
+      ".orchestrator/test_blocker_recovery_authority.py",
+      ".orchestrator/test_task_dependency_gate.py"
+    ],
+    "fingerprint": "047f1953e94271dce19ed0b23f05d91c"
+  },
+  "exit_code": 0,
+  "signal": null,
+  "timed_out": false,
+  "outcome": "passed",
+  "passed": true,
+  "duration_seconds": 3.534,
+  "started_at": "2026-10-03T00:52:54Z",
+  "finished_at": "2026-10-03T00:52:58Z",
+  "recorded_at": "2026-10-03T00:52:58Z",
+  "run_kind": "baseline",
+  "attempt": 1,
+  "retry_reason": null,
+  "agent": "Pi",
+  "run_id": "pi-20261003T004730Z-35f48844",
+  "produced_by": "delivery_toolchain/git/task_verification.py",
+  "output_tail": "........................................................... [ 96%]\n..                                                                       [100%]\n",
+  "receipt_id": "ee47e510372fee17"
+}

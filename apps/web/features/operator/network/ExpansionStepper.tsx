@@ -11,6 +11,20 @@ export type ExpansionStep = {
   tabIndex: number;
   entityId?: string | null;
   summary: string;
+  /** Read presentation only; unknown progress does not deny ordinary tab reads. */
+  stateLabel?: string;
+  navigationAvailable?: boolean;
+};
+
+// Package 10 S05 flowVals: what the operator does at each step, shown as
+// 「下一步：…」. The API step summaries stay available as button titles.
+const stepActions: Record<string, string> = {
+  find: "選擇目標區域",
+  radar: "查看本區物件並轉為候選點",
+  candidate: "補齊候選點資料",
+  sitescore: "執行 SiteScore",
+  compare: "加入比較",
+  review: "送審並完成審核決策",
 };
 
 const stepLabels: Record<string, { zh: string; en: string }> = {
@@ -26,14 +40,22 @@ export function ExpansionStepper({
   activeTab,
   onStepSelect,
   steps,
+  workflowNotice,
+  workflowNextAction,
 }: {
   activeTab: number;
   onStepSelect: (tabIndex: number) => void;
   steps: ExpansionStep[];
+  workflowNotice?: string;
+  workflowNextAction?: string;
 }) {
   if (!steps.length) {
     return null;
   }
+
+  const activeStep = steps.find((step) => activeTab === step.tabIndex);
+  const activeLabel = activeStep ? stepLabels[activeStep.id] ?? { zh: activeStep.label, en: activeStep.label } : null;
+  const blockedNext = nextActionableStep(steps)?.state === "blocked" ? nextActionableStep(steps) : undefined;
 
   return (
     <section
@@ -44,8 +66,10 @@ export function ExpansionStepper({
     >
       <div className={styles.flowHeader}>
         <span>EXPANSION FLOW · 找點流程</span>
-        <strong>{steps.find((step) => activeTab === step.tabIndex)?.summary ?? steps[0]?.summary}</strong>
-        <em>{nextActionLabel(steps)}</em>
+        <strong title={activeStep?.summary}>
+          {activeLabel ? `目前步驟：${activeLabel.zh} ${activeLabel.en}` : "低效重配 — 不在找點流程內"}
+        </strong>
+        <em>{workflowNextAction ?? nextActionLabel(steps)}</em>
       </div>
       <div className={styles.expansionStepGrid}>
         {steps.map((step, index) => {
@@ -57,21 +81,21 @@ export function ExpansionStepper({
               className={styles.expansionStep}
               data-state={step.state}
               data-testid={`network-step-${step.id}`}
-              disabled={isBlocked}
+              disabled={step.navigationAvailable === false || isBlocked && step.navigationAvailable !== true}
               key={step.id}
               onClick={() => onStepSelect(step.tabIndex)}
               title={step.summary}
               type="button"
             >
               <span className={styles.expansionStepIndex} aria-hidden="true">
-                {step.state === "completed" ? "✓" : step.state === "blocked" ? "!" : index + 1}
+                {step.state === "completed" ? "✓" : step.state === "blocked" && step.navigationAvailable !== true ? "!" : index + 1}
               </span>
               <span className={styles.expansionStepBody}>
                 <strong>{label.zh}</strong>
                 <small>{label.en}</small>
               </span>
               <span className={styles.expansionStepState}>
-                {step.state === "blocked" ? "缺資料" : step.entityId ?? stateLabel(step.state)}
+                {step.stateLabel ?? (step.state === "blocked" ? "缺資料" : step.entityId ?? stateLabel(step.state))}
               </span>
               <span className={styles.srOnly}>{step.state}</span>
             </button>
@@ -83,7 +107,7 @@ export function ExpansionStepper({
         {steps.map((step, index) => (
           <button
             aria-current={activeTab === step.tabIndex ? "step" : undefined}
-            disabled={step.state === "blocked"}
+            disabled={step.navigationAvailable === false || step.state === "blocked" && step.navigationAvailable !== true}
             key={step.id}
             onClick={() => onStepSelect(step.tabIndex)}
             type="button"
@@ -93,26 +117,36 @@ export function ExpansionStepper({
           </button>
         ))}
       </div>
-      {steps.some((step) => step.state === "blocked") ? (
+      {/*
+        Later steps are routinely "blocked" until a candidate exists; that is
+        already shown by their 缺資料 tags. The notice is for a blocked step
+        the operator has to act on now, as in Package 10 (flowBlockShow).
+      */}
+      {workflowNotice ? <div className={styles.flowBlockNotice} role="status" data-testid="network-workflow-context-notice">{workflowNotice}</div> : blockedNext ? (
         <div className={styles.flowBlockNotice} role="status">
           <span aria-hidden="true">!</span>
-          {steps.find((step) => step.state === "blocked")?.summary}
+          {blockedNext.summary}
         </div>
       ) : null}
     </section>
   );
 }
 
-function nextActionLabel(steps: ExpansionStep[]) {
+/** The step after the current one (or the first "next" step). */
+function nextActionableStep(steps: ExpansionStep[]) {
   const currentIndex = steps.findIndex((step) => step.state === "current");
-  const next = currentIndex >= 0 ? steps[currentIndex + 1] : steps.find((step) => step.state === "next");
-  if (next && next.state !== "blocked") {
-    return `下一步：${next.summary}`;
+  return currentIndex >= 0 ? steps[currentIndex + 1] : steps.find((step) => step.state === "next");
+}
+
+function nextActionLabel(steps: ExpansionStep[]) {
+  // Package 10 names the first unfinished step: while the radar is current the
+  // operator's job is still 「查看本區物件並轉為候選點」.
+  const todo = steps.find((step) => step.state === "current") ?? nextActionableStep(steps);
+  if (!todo) {
+    return steps.length && steps.every((step) => step.state === "completed") ? "流程完成" : "流程資料同步中";
   }
-  if (next?.state === "blocked") {
-    return `下一步受阻：${next.summary}`;
-  }
-  return "流程資料同步中";
+  const action = stepActions[todo.id] ?? todo.summary;
+  return todo.state === "blocked" ? `下一步受阻：${action}` : `下一步：${action}`;
 }
 
 function stateLabel(state: ExpansionStepState) {

@@ -1,0 +1,20 @@
+{
+  "cwd": "/tmp/codex-1304-ejected-fix",
+  "head_sha": "1d9a43c367c4f54d6e5dbf67d3cbb6061a94f497",
+  "tracked_diff_sha256": "5ac69b2ec314c016ebe5f2ebda890757061add55292bc6c3107d9e7a398a2344",
+  "argv": [
+    "/tmp/pantheon-worker-worktrees/pantheon/odp-orch-review-dispatch-cas-starvation-001/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    ".orchestrator/test_dispatch_policy.py",
+    "-k",
+    "diagnostic_cas or review_dispatch or stale_wake or cas or release_dead_helper_claims",
+    ".orchestrator/test_supervisor.py::DispatchStatusSyncTests",
+    ".orchestrator/test_supervisor.py::AutomaticRecoveryTests::test_ci_failure_requeue_fails_closed_on_stale_status_snapshot"
+  ],
+  "started_at": "2026-09-12T15:24:10.186040+00:00",
+  "duration_seconds": 12.985731451015454,
+  "exit_code": 0,
+  "output": "1304-ejected-green.log"
+}

@@ -1,0 +1,25 @@
+{
+  "kind": "interactive_user_dev_release_authorization",
+  "approval_id": "HUMANOPS-DEV-MIGRATION-20260927T161813Z",
+  "approved_by": "Human/Ops",
+  "user_reply": "確認",
+  "recorded_at": "2026-09-27T16:18:13Z",
+  "expires_at": "2026-09-27T22:18:13Z",
+  "transcribed_by": "interactive Codex",
+  "identity_note": "Human/Ops denotes the user approval role; Codex transcribed the current user response and does not claim an external identity-system signature or a named third-party signoff.",
+  "candidate_sha": "355a94b52b14badc236be4b3e52eb936a7075549",
+  "manifest_digest": "sha256:a1e3fcf6b765861dc269e3fd395b7bec6ac4b2b6f3b3207a3ffb623c6ca6dfaa",
+  "manifest_run_id": "36313147910",
+  "target_environment": "dev",
+  "action": "deploy",
+  "approved_scope": [
+    "The current user confirmed both immediately preceding requests: candidate-specific dev admission and backup/synchronization of the two local release input files.",
+    "Accept only existing dev-toolchain findings GHSA-2883-xcg3-v3hh and GHSA-82fw-gwwq-j7x9 (js-yaml high, vitest/@vitest/mocker moderate) on this exact candidate; no critical findings, new advisories or production dependency exposure.",
+    "Retain existing four LGPL conditional-use obligations and explicitly accept missing external authoritative H01 receipt as a dev-only deviation; do not falsify external legal approval or change license_policy/license_exemptions.",
+    "Authorize fresh supervisor release request valid for 6 hours and standard short-lived lease; deploy through the existing Runtime Release workflow. Sources remain off, egress default-deny, staging/production unchanged.",
+    "Back up and synchronize /home/lupin/odayplus/docs/evidence/gates/RELEASE_GATE_REGISTRY.json and RELEASE_MANIFEST.json from reviewed merged records for this candidate, including the reviewed GO after this approval."
+  ],
+  "request_document": "docs/evidence/runtime/ODP-DEV-MIGRATION-LIVE-PREFLIGHT-001/dev-admission-request.md",
+  "request_document_at_sha": "4ac3f5b106091f197b8fe55831709994fe57a43e",
+  "live_database_reset_or_stamp_authorized": false
+}

@@ -1,0 +1,78 @@
+# ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001 — bounded recovery of the Forecast model/history handoff
+
+Baseline: `origin/dev` `1b14b276447a7778f1dad1045ced1a5bd6abe01e`. Read-only; no cloud write,
+no training, no alias, no gate change. Machine-readable result: `recovery_evidence.json`,
+checked by `verify_recovery_evidence.py` / `test_recovery_evidence.py`. Every cited Git blob is
+saved verbatim under `sources/` and bound by sha256 (and compared with the Git object when the
+commit is present locally); registry, history and board claims are parsed from the saved receipts.
+
+## Result
+
+**Within the observed scope, no approved Forecast artifact was located; this task restored nothing.**
+That is a scoped finding, not proof of absence:
+
+- Observed: dev MLflow `forecast_revenue_interval` 404 and empty dev artifact bucket (saved receipt,
+  2026-10-02T19:17Z / 19:20Z); the located legacy training run `2dzlg` failed closed before
+  registration; the two original task branches carry no approval file.
+- Not observed: legacy bucket `gs://alfaloop-data-project-oday-plus-model-artifacts/`
+  (`access_unknown`), legacy MLflow `oday-mlflow-7sxbjoeozq-de` (not queried), current dev DB counts
+  (unknown), approvals held outside the repo/receipts, and the current state of the other three models.
+  Whether a legacy version or approval exists there remains open.
+
+| Original task | Branch head | Merged | Terminal evidence (saved under `sources/`) |
+|---|---|---|---|
+| ODP-PRODUCTION-MODEL-REGISTRY-001 | `950b852c` (2026-07-28) | no, no PR (sidecar #657 only) | legacy inventory `pmb8m`: 1 303 eligible rows, 2026-06-19..22; training `2dzlg` exit 2, `release_mutation_completed=false` |
+| ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001 | `c1af59a9` (2026-07-29) | no, no PR (sidecar #654 only) | backfill stopped on reauth (`invalid_rapt`); §12 After state is a placeholder on that head |
+
+The failed run bounds only that run. The 4-day legacy count is not used as the current count.
+
+`product_ops/modeling/release.py` exposes only `inventory`, `train`, `promote`; there is no
+import-existing-artifact subcommand. No one-time restore plan is proposed because nothing approved
+was located; the legacy scope must first be read under explicit authorization.
+
+## Four readiness models — only what was actually read
+
+- `forecast_revenue_interval`: registry absent in dev (receipt-bound); artifact_missing and
+  approval_missing scoped to the observed scope with the unobserved legacy scope listed; history unknown.
+- `dealroom_avm`, `sitescore_propensity`, `heatzone_priority`: registry, artifact and approval
+  **not read currently**. Their 2026-07/08 handbacks (facts bound to saved copies) report 0 eligible
+  labels; that is not extended to a current claim.
+
+The 2026-07-25 risk acceptance deferred bindings for that deploy; it is not a current GO.
+
+## Board state and handback
+
+- Historical observation (saved receipt, 2026-10-02T19:20:19Z): neither original task id was on the
+  board or archive.
+- Current (board readback `board-readback-20261003.json`, 2026-10-03T00:06:50Z): both re-registered —
+  BACKFILL at 23:57:22Z and REGISTRY at 23:57:30Z, `todo`, `non_dispatchable`, owner Claude2 /
+  reviewer Codex, pending real inputs and operation admission.
+
+Missing inputs and owners are in `missing_inputs`, handed back to those two holders (history,
+legacy custody decision, authorized legacy registry/bucket readback, fresh governed train, promotion
+approval) and to the three outcome backfill tasks (current readback of the other models).
+
+The history handback keeps window coverage apart from training readiness and distinguishes
+present/ingested prior days from eligible attested target dates:
+- Window coverage (criterion 3): an h28 window needs 28 eligible target dates, requiring a 56
+  contiguous present/ingested day span (28 present prior days + 28 attested target dates; or 56
+  attested days in the all-attested settled state).
+- Training readiness (criterion 5): the registry's own segment-holdout gate (20% distinct origin
+  dates held out, at least 7 holdout rows per store; `models/model_ready/contracts.py`, `release.py`
+  `_temporal_split` / `_segment_validation`) first passes at 58 eligible target dates = 86 contiguous
+  present/ingested days on a favourable uniform grid (28 present/ingested prior days + 58 attested
+  target dates; backfill README §11 & §14).
+- The 86-day present span (yielding 58 eligible dates) is a necessary floor, not a sufficient condition;
+  a fully attested 86-day span is an optional/stronger settled-state scenario rather than a necessary
+  condition, because prior dates only need to be present/ingested in `mature_daily` (backfill README
+  §14, `product_ops/modeling/sql/model_ready_views.sql:126-163`). Real-data, lineage and quality gates
+  stay open and current counts stay unknown.
+
+The verifier accepts no positive `recovered` / `approved` state or `model_ready` /
+`historical_state_bytes_recovered` claim: this bounded investigation saved no artifact bytes or
+training/approval/rollback provenance that could attest one, and a hash-shaped string or non-empty
+ref is not such evidence.
+
+Status separation: code delivered = evidence + verifier only; historical state bytes recovered = no;
+cloud authority = none; real data available = no; model ready = no; deployed / live validated /
+signed off = no.

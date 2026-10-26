@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "kind": "verification_receipt",
+  "task_id": "ODP-ORCH-AGY-MODEL-COMPAT-001",
+  "head_sha": "ace36a1b862ce6efcb923ef2f11b6cea83238336",
+  "command": "uv run --python 3.12 pytest -q .orchestrator/test_model_rotation.py -k CooldownLifecycleTests",
+  "command_audit": {
+    "command": "uv run --python 3.12 pytest -q .orchestrator/test_model_rotation.py -k CooldownLifecycleTests",
+    "ok": true,
+    "violations": [],
+    "details": [],
+    "runner": "pytest"
+  },
+  "runner": "pytest",
+  "selection": {
+    "scope": "targeted",
+    "items": [
+      "-k=CooldownLifecycleTests",
+      ".orchestrator/test_model_rotation.py"
+    ],
+    "fingerprint": "6c5c28d03f48454b28b34073f6da18d7"
+  },
+  "exit_code": 1,
+  "signal": null,
+  "timed_out": false,
+  "outcome": "failed",
+  "passed": false,
+  "duration_seconds": 2.362,
+  "started_at": "2026-10-04T12:30:35Z",
+  "finished_at": "2026-10-04T12:30:37Z",
+  "recorded_at": "2026-10-04T12:30:37Z",
+  "run_kind": "baseline",
+  "attempt": 1,
+  "retry_reason": null,
+  "agent": "Pi",
+  "run_id": "pi-20261004T122510Z-05b6643d",
+  "produced_by": "delivery_toolchain/git/task_verification.py",
+  "output_tail": "les_moved_assignment>\n\n    def test_queue_wait_still_reconciles_moved_assignment(self):\n>       self._run_queue({\"priority\": \"P0\"}, move_owner=True)\n\n.orchestrator/test_model_rotation.py:1402: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n.orchestrator/test_model_rotation.py:1323: in _run_queue\n    self.assertTrue(sv.process_queue(self.config, state, {}))\nE   AssertionError: False is not true\n__ CooldownLifecycleTests.test_retired_pin_is_terminal_not_environmental_wait __\n\nself = <test_model_rotation.CooldownLifecycleTests testMethod=test_retired_pin_is_terminal_not_environmental_wait>\n\n    def test_retired_pin_is_terminal_not_environmental_wait(self):\n>       self._run_queue({\"priority\": \"P0\"}, terminal_pin=True)\n\n.orchestrator/test_model_rotation.py:1399: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n.orchestrator/test_model_rotation.py:1309: in _run_queue\n    self.assertTrue(sv.process_queue(self.config, state, {}))\nE   AssertionError: False is not true\n=========================== short test summary info ============================\nFAILED .orchestrator/test_model_rotation.py::CooldownLifecycleTests::test_both_pools_cooling_wait_then_resume_high_model\nSUBFAILED(fields={'priority': 'P0'}) .orchestrator/test_model_rotation.py::CooldownLifecycleTests::test_p0_p1_and_reopened_wait_then_resume_same_owner_exact_model\nSUBFAILED(fields={'priority': 'P1'}) .orchestrator/test_model_rotation.py::CooldownLifecycleTests::test_p0_p1_and_reopened_wait_then_resume_same_owner_exact_model\nSUBFAILED(fields={'priority': 'P2', 'review_reopen_count': 1}) .orchestrator/test_model_rotation.py::CooldownLifecycleTests::test_p0_p1_and_reopened_wait_then_resume_same_owner_exact_model\nFAILED .orchestrator/test_model_rotation.py::CooldownLifecycleTests::test_queue_wait_still_reconciles_moved_assignment\nFAILED .orchestrator/test_model_rotation.py::CooldownLifecycleTests::test_retired_pin_is_terminal_not_environmental_wait\n",
+  "receipt_id": "6b0736931c81b91b"
+}

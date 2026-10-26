@@ -1,0 +1,62 @@
+{
+  "observed_at": "2026-10-04T04:26:22.287008+00:00",
+  "task_id": "ODP-DEV-AUTOMATIC-DEPLOYMENT-001",
+  "policy_authority": "User request on 2026-10-04: automatic dev updates/deployments; staging and production require human confirmation",
+  "source_base_sha": "9209dfaea40f0f4cccaa0e67e65b5d2e71946810",
+  "dev_protected": true,
+  "actual_ci_readback": {
+    "id": 37166011950,
+    "path": ".github/workflows/ci.yml",
+    "event": "push",
+    "head_branch": "dev",
+    "head_sha": "9209dfaea40f0f4cccaa0e67e65b5d2e71946810",
+    "status": "completed",
+    "conclusion": "success"
+  },
+  "actual_ci_identity_validation": "passed with automatic_dev.ci_errors",
+  "environments": {
+    "dev": {
+      "protection_rule_types": [],
+      "reviewers": []
+    },
+    "dev-build": {
+      "protection_rule_types": [],
+      "reviewers": []
+    },
+    "staging": {
+      "protection_rule_types": [
+        "required_reviewers"
+      ],
+      "reviewers": [
+        "Alien-alfaloop",
+        "ajoe734"
+      ]
+    },
+    "production": {
+      "protection_rule_types": [
+        "required_reviewers"
+      ],
+      "reviewers": [
+        "Alien-alfaloop",
+        "ajoe734"
+      ]
+    }
+  },
+  "workflow_syntax_validation": {
+    "tool": "actionlint 1.7.12",
+    "official_archive_checksum_verified": true,
+    "exit_code": 0,
+    "shellcheck_and_pyflakes": "separately disabled; Python lint performed with Ruff"
+  },
+  "verification_contract": "Run task_verification.py run after final commit; canonical receipts bind each exact command and exit code to that HEAD. No test/merge/build receipt is a deployment receipt.",
+  "deployment_status": {
+    "this_task_live_deployment_verified": false,
+    "build_or_deploy_dispatched": false,
+    "blocking_prerequisites": [
+      "Independent source review and merge",
+      "Connector egress live prerequisites owned separately by ODP-DEV-CONNECTOR-EGRESS-PLAN-001",
+      "Nominated first-admin identity and live runtime acceptance remain rollout obligations"
+    ]
+  },
+  "network_work_not_duplicated": true
+}

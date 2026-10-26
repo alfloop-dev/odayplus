@@ -10,12 +10,14 @@ from modules.learninghub.application.monitor import (
 from modules.learninghub.application.release import (
     DEFAULT_RELEASE_LEASE_SECONDS,
     AliasReconciliationReceipt,
+    BacktestReceipt,
     LearningHubConflictError,
     LearningHubError,
     LearningHubPreconditionRequiredError,
     LearningHubService,
     ModelReleaseDecision,
     ReleaseType,
+    evaluate_backtest_run,
 )
 from modules.learninghub.domain import (
     InferenceComparison,
@@ -28,6 +30,7 @@ from modules.learninghub.domain import (
 __all__ = [
     "DEFAULT_RELEASE_LEASE_SECONDS",
     "AliasReconciliationReceipt",
+    "BacktestReceipt",
     "GuardrailBreach",
     "InferenceComparison",
     "InferenceComparisonMode",
@@ -43,5 +46,6 @@ __all__ = [
     "ReleaseMonitorAssessment",
     "ReleaseType",
     "RetrainingRequest",
+    "evaluate_backtest_run",
     "evaluate_guardrails",
 ]

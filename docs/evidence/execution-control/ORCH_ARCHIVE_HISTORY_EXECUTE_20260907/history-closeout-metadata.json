@@ -1,0 +1,31 @@
+{
+  "started_at": "2026-09-09T16:24:12.204746+00:00",
+  "finished_at": "2026-09-09T16:24:34.144034+00:00",
+  "actor": "Codex",
+  "argv": [
+    "/home/lupin/odayplus/scripts/ai-status.sh",
+    "assign",
+    "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
+    "Antigravity3",
+    "Codex"
+  ],
+  "metadata": {
+    "owned_paths": [
+      "docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/",
+      "docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_EXECUTE_APPLY_20260908_ZH_TW.md"
+    ],
+    "acceptance": [
+      "先讀本次真實使用者工程範圍記錄 /home/lupin/odayplus-handoffs/odp-execution-wave-2026-09-07/USER_EXECUTION_SCOPE.md；這是Codex如實轉錄目前對話的新來源，不是補造遺失原檔或Human/Ops签章。以新來源的hash/provenance取代指向已消失tmp授權檔的循環等待；若其scope不足指出精確所需內容，不自行擴張授權。",
+      "重用PR1234的inventory、evidence dossier與23筆attestations草案。請指定reviewer逐條驗證attestation真實來源與適用性後才能採用，不把PR合併等同23筆批准。先產出既有planner plan-only批次供review；維持15筆缺證據blocked及歷史actor unknown，特別核實NLTK REMOVE-002與HZ006，禁止全38done。",
+      "實際apply前由前景協調者建立有效維護窗口：排除supervisor/watchdog/worker/其他writer，窗口內重新plan並取得指定Codex對exact batch hash的獨立批准。worker不得自行簽hold或停止/恢復Supervisor，不SIGCONT安全停止session。若待窗口則以blocked checkpoint留下具體batch與下一條命令，而非done或另開無限preflight。",
+      "窗口與hash審查成立後，以自己真實owner身份經唯一canonical scripts/ai-status.sh archive_recovery_apply plan/confirm及persistent checkpoint執行；基準漂移或partial failure立即停在實際結果，保留hold，不繞CAS、不手寫archive/board/index。",
+      "完成須提交apply receipt、原snapshots未改證據、回填各ID readback、依賴解析前後與Supervisor恢复派工結果。NLTK最終驗證可派送與否明列；AVM的Human-only review-churn continuation獨立保留，不能把修復歷史當解除churn。沒有apply就不標本任務done。",
+      "保留其他人工作樹與原 PR 歷史，沿既有 Worker Manager / task_start / task_finalize 與 canonical writer 執行；所有結果綁 exact SHA 與真實命令時間。由指定 Codex reviewer 獨立審查。",
+      "禁止降低安全、效能與資料契約門檻或偽造 Human/Ops／reviewer 批准。只跑影響範圍必要驗證；不得用文檔已合併宣稱尚未完成的上游或部署已完成。",
+      "工具 PR #1287 已合併且前景 Codex 已完成新 runtime 與兩筆 canonical invalidation。依 /home/lupin/odayplus-handoffs/archive-invalidation-live-20260909/HISTORY_CLOSEOUT_HANDOFF_ZH_TW.md 與同目錄實際收據補齊原 PR #1278：原始 bytes 保留、有效 21 done/2 blocked/15 placeholders、依賴撤回與 Supervisor 健康實測；舊命令時間不可恢復則 unknown。此輪只整理實際證據，不再開維護窗口或重跑 apply/invalidation。"
+    ]
+  },
+  "exit_code": 0,
+  "stdout": "",
+  "stderr": ""
+}

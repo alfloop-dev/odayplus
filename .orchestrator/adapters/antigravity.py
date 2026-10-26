@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import model_rotation
@@ -26,11 +27,8 @@ from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, Deli
 ANTIGRAVITY_OAUTH_TOKEN_REL = Path(".gemini") / "antigravity-cli" / "antigravity-oauth-token"
 
 # `agy --print-timeout` is an absolute wall-clock limit; it does not observe
-# worker process-tree activity.  The supervisor already owns activity-aware
-# stall detection and terminates genuinely inactive workers, so keep the CLI
-# timeout only as a last-resort runaway guard.  A week is deliberately beyond
-# the normal task lifetime without pretending the CLI can reset this timer.
-DEFAULT_HARD_PRINT_TIMEOUT = "168h"
+# worker process-tree activity. The single absolute wall-clock timeout is 2 hours.
+DEFAULT_HARD_PRINT_TIMEOUT = "2h"
 
 # `agy --effort` accepts only these levels.
 ANTIGRAVITY_EFFORT_LEVELS = ("low", "medium", "high")
@@ -41,11 +39,9 @@ def _effort_args(settings: dict, model: str) -> list[str]:
 
     Reasoning strength reaches agy two different ways and they are not
     interchangeable. Gemini ids carry it in the id itself
-    (`gemini-3.7-flash-high` vs `-low`), while the reasoning Claude ids reject
-    the flag outright -- `agy --model claude-opus-4-6-thinking --effort high`
-    exits with "--effort is not supported for model ...", which would fail the
-    dispatch rather than degrade it. So the flag is opt-in per provider and is
-    never sent for a model that cannot take it.
+    (`gemini-3.7-flash-high` vs `-low`); Claude reasoning IDs encode the
+    level too (`claude-opus-5-5-high`). Do not combine them with a separate
+    --effort override. The flag remains opt-in for non-Claude models.
     """
     effort = str(settings.get("effort") or "").strip().lower()
     if not effort:
@@ -88,8 +84,16 @@ def _auth_ready(config: dict | None = None, provider_id: str | None = None) -> b
 class AntigravityAdapter(BaseAdapter):
     name = "antigravity"
 
-    def capability(self, agent_id: str) -> DeliveryCapability:
-        provider_id = provider_key(self.config, default="antigravity", agent_id=agent_id)
+    def capability(self, agent_id: str, *, provider_id: str | None = None) -> DeliveryCapability:
+        # ``agent_id`` may be a shared execution slot. When capability is
+        # checked for a request, the request's provider is authoritative; the
+        # slot must not select the account/profile for that probe.
+        provider_id = provider_key(
+            self.config,
+            default="antigravity",
+            agent_id=agent_id,
+            provider_id=provider_id,
+        )
         allow_inbox_fallback = inbox_fallback_enabled(
             self.config, default="antigravity", provider_id=provider_id
         )
@@ -122,7 +126,7 @@ class AntigravityAdapter(BaseAdapter):
         provider_id = provider_key(
             self.config, default="antigravity", agent_id=request.agent_id, provider_id=request.provider
         )
-        capability = self.capability(request.agent_id)
+        capability = self.capability(request.agent_id, provider_id=provider_id)
         if not capability.supported or not capability.can_auto_deliver:
             return self.unavailable_or_inbox(
                 request,
@@ -151,15 +155,47 @@ class AntigravityAdapter(BaseAdapter):
         command = [cli]
         # Model rotation: cycle Gemini <-> Claude/GPT per the provider's quota
         # cooldown state (falls back to the static `model` setting when rotation
-        # is disabled). '' means let agy use its default (Gemini) model.
-        selection = model_rotation.resolve_active_selection(
-            self.config,
-            provider_id,
-            settings,
-            task=request.metadata.get("task") if isinstance(request.metadata, dict) else None,
-            reason=request.reason,
-        )
-        model = str(selection.get("model") or "").strip()
+        # is disabled). Legacy explicit pins remain selection authority, but
+        # known unavailable IDs must fail, not silently run the CLI default.
+        try:
+            selection = model_rotation.resolve_active_selection(
+                self.config,
+                provider_id,
+                settings,
+                task=request.metadata.get("task") if isinstance(request.metadata, dict) else None,
+                reason=request.reason,
+            )
+            model = str(selection.get("model") or "").strip()
+            if model in model_rotation.RETIRED_MODEL_IDS:
+                raise ValueError(
+                    f"Antigravity model {model!r} is unavailable in the installed AGY registry; "
+                    "explicit config pin was preserved. Operator migration requires review; "
+                    "no CLI-default fallback was launched."
+                )
+        except model_rotation.ModelCooldownWait as exc:
+            # No process was launched. Carry the existing reset deadline to the
+            # queue as an environmental wait, not a new quota/failure signal.
+            return DeliveryResult(
+                ok=False,
+                adapter=self.name,
+                mode="antigravity",
+                target=display_name,
+                auto_delivered=False,
+                manual_confirmation_required=False,
+                notes=str(exc),
+                metadata={model_rotation.DISPATCH_WAIT_KEY: exc.metadata},
+            )
+        except ValueError as exc:
+            return DeliveryResult(
+                ok=False,
+                adapter=self.name,
+                mode="antigravity",
+                target=display_name,
+                auto_delivered=False,
+                manual_confirmation_required=False,
+                error=str(exc),
+                notes=str(exc),
+            )
         dispatched_pool = model_rotation.normalize_pool(selection.get("pool"))
         if model:
             # Structured argv: the model string is one argument, never shell text.
@@ -198,7 +234,7 @@ class AntigravityAdapter(BaseAdapter):
             provider_id=provider_id,
             mode="antigravity",
             display_name=display_name,
-            command=command,
+            command=[sys.executable, str(Path(__file__).resolve().parents[1] / "agy_session.py"), "--", *command],
             notes="Antigravity CLI wake-up started in the background.",
             workspace_root=workspace_root,
             env_overrides=env_overrides,

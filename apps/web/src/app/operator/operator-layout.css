@@ -3,10 +3,33 @@ body {
   padding: 0 !important;
 }
 
+/* Native scrolling must leave controls below the sticky, responsive topbar. */
+html:has([data-testid="operator-console"]) {
+  --operator-header-before-hydration: 53px;
+  scroll-padding-top: calc(var(--operator-sticky-header-height, var(--operator-header-before-hydration)) + 12px);
+}
+
+/* Server-rendered controls can receive native focus before React measures
+ * the header. Match its responsive rows until the measured value is ready. */
+@media (max-width: 1240px) {
+  html:has([data-testid="operator-console"]) {
+    --operator-header-before-hydration: 91px;
+  }
+}
+
+@media (max-width: 768px) {
+  html:has([data-testid="operator-console"]) {
+    --operator-header-before-hydration: 171px;
+  }
+}
+
 /*
  * Intake detail is the sole content layer below the Package 10 top navigation.
  * Neutralize legacy console minimum widths only while that durable detail
- * context is open; the top navigation remains horizontally usable.
+ * context is open. The header reflows on its own (wrapping rows, scrollable
+ * workspace nav), so it must not become a scroll container: that would clip
+ * its popovers, including the user menu that holds 管理後台 / 登出.
+ * `overflow-x: clip` trims horizontally without creating a scroll container.
  */
 html:has(.operatorIntakeDetailOpen),
 body:has(.operatorIntakeDetailOpen) {
@@ -21,7 +44,7 @@ body:has(.operatorIntakeDetailOpen) {
   width: 100%;
   min-width: 0 !important;
   max-width: 100vw !important;
-  overflow-x: hidden !important;
+  overflow-x: clip !important;
 }
 
 .operatorIntakeDetailOpen > header {
@@ -29,8 +52,6 @@ body:has(.operatorIntakeDetailOpen) {
   width: 100%;
   min-width: 0 !important;
   max-width: 100vw !important;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
 }
 
 @media (max-width: 768px) {

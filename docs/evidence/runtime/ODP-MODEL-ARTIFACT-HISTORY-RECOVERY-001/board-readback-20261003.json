@@ -1,0 +1,25 @@
+{
+  "captured_at": "2026-10-03T00:06:50Z",
+  "source": "canonical ai-status.json at PANTHEON_STATUS_ROOT (read-only jq select)",
+  "status_write_revision": "d4c3d59a7c6b4c1da28354a9f3560a7e",
+  "tasks": [
+    {
+      "id": "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001",
+      "status": "todo",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "last_update": "2026-10-02T23:57:22Z",
+      "non_dispatchable": true,
+      "next": "已恢復遺失追蹤並保存原branch/head；non_dispatchable待真實輸入，未授予任何live操作。目前dev可用權威日營收歷史/lineage與具名資料owner；是否允許舊專案資料移交及其範圍；現有identity與一次受控回填操作准入。當前DB row count和舊bucket內容均unknown。"
+    },
+    {
+      "id": "ODP-PRODUCTION-MODEL-REGISTRY-001",
+      "status": "todo",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "last_update": "2026-10-02T23:57:30Z",
+      "non_dispatchable": true,
+      "next": "已恢復遺失追蹤並保存原branch/head；non_dispatchable待真實輸入，未授予任何live操作。可驗且符合training contract的真實資料；具名model owner/risk approver；既有環境的訓練/註冊操作准入及promotion/rollback證據。dev Forecast registry 404是已觀察事實，其餘三模型目前未讀回。"
+    }
+  ]
+}

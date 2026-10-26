@@ -38,7 +38,9 @@ def test_user_role_service_defaults_and_queries() -> None:
     assert ops_lead["status"] == "active"
 
     roles = service.list_roles()
-    assert len(roles) == 18
+    assert len(roles) == len(Role)
+    assert {r["role_id"] for r in roles} == {role.value for role in Role}
+    assert any(r["role_id"] == Role.OPERATOR_VIEWER.value for r in roles)
     assert any(r["role_id"] == Role.PLATFORM_ADMIN.value for r in roles)
     assert any(r["role_id"] == Role.OPERATIONS_MANAGER.value for r in roles)
 
@@ -186,11 +188,12 @@ def test_operator_router_rbac_guards_and_audit_actor() -> None:
     assert "users" in data
     assert data["count"] >= 5
 
-    # 2. PLATFORM_ADMIN can list 18 canonical roles
+    # 2. PLATFORM_ADMIN can list every canonical role, including operator_viewer
     res = client.get("/api/v1/operator/users/roles", headers=admin_headers)
     assert res.status_code == 200
     data = res.json()
-    assert data["count"] == 18
+    assert data["count"] == len(Role)
+    assert {r["role_id"] for r in data["roles"]} == {role.value for role in Role}
 
     # 3. OPERATIONS_MANAGER gets 403 on GET /operator/users
     res = client.get("/api/v1/operator/users", headers=ops_headers)
@@ -537,4 +540,62 @@ def test_operator_router_ui_shaped_flow_leaves_visible_audit_trail() -> None:
         "USER_CREATED",
         "USER_STATUS_UPDATED",
     ]
+
+
+def test_operator_router_invite_endpoint_rbac_and_audit() -> None:
+    audit_log = InMemoryAuditLog()
+    router = create_operator_router(audit_log=audit_log)
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1")
+    client = TestClient(app)
+
+    admin_headers = {
+        "x-subject-id": "platform-admin-user",
+        "x-roles": "platform_admin",
+        "x-tenant-id": "tenant-a",
+        "x-operator-role": "platform-admin",
+    }
+    ops_headers = {
+        "x-subject-id": "ops-manager-user",
+        "x-roles": "operations_manager",
+        "x-tenant-id": "tenant-a",
+        "x-operator-role": "ops-lead",
+    }
+
+    # 1. Non-admin denied from inviting users
+    res = client.post(
+        "/api/v1/operator/users/invite",
+        headers=ops_headers,
+        json={
+            "username": "new-ops-lead",
+            "email": "new-ops-lead@odayplus.com",
+            "roles": ["operations_manager"],
+        },
+    )
+    assert res.status_code == 403
+
+    # 2. Document/fixture administration cannot manufacture identity credentials
+    res = client.post(
+        "/api/v1/operator/users/invite",
+        headers=admin_headers,
+        json={
+            "username": "new-ops-lead",
+            "email": "new-ops-lead@odayplus.com",
+            "name": "新營運主管",
+            "roles": ["operations_manager"],
+            "scope": {
+                "tenant_id": "tenant-default",
+                "brand_ids": ["brand-a"],
+                "clearance": "CONFIDENTIAL",
+            },
+            "reason": "Invited from operator console",
+        },
+    )
+    assert res.status_code == 503, res.text
+    assert res.json()["error"]["code"] == "IDENTITY_PERSISTENCE_UNAVAILABLE"
+    listed = client.get("/api/v1/operator/users", headers=admin_headers).json()["users"]
+    assert not any(u["subject_id"] == "new-ops-lead" for u in listed)
+    assert not any(e.event_type == "identity.account.invite" for e in audit_log.list_events())
+
 

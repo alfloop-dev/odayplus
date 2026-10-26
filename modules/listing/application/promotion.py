@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -30,6 +31,62 @@ def to_status_str(state: PromotionState) -> str:
     return state.value
 
 
+# Geocode confidence is a property of the address, not of the listing record.
+# A listing's own `confidence` is extraction confidence -- how sure the parser
+# is about the rent, area and floor it read -- and the two are unrelated.
+# Accepting it as a fallback spelling is what let the gate pass a listing whose
+# geocode had failed: V1ListingRepositoryAdapter emits the address value under
+# `geocode_confidence` and the listing value under `confidence`, so a 0.0
+# geocode was masked by a 1.0 extraction confidence one key away.
+_GEOCODE_CONFIDENCE_KEYS = ("geocodeConfidence", "geocode_confidence")
+
+
+class PromotionScoreQueueError(RuntimeError):
+    """A score-queue failure whose durable candidate/checkpoint must be retained.
+
+    Persistence and transaction failures are deliberately not classified as
+    this business outcome; callers must roll those failures back.
+    """
+
+
+def _listing_with_status(listing: Any, status: str) -> Any:
+    updated = replace(listing, listing_status=status)
+    # Listing retains measured feature and property extensions outside its
+    # dataclass fields. Status changes must preserve their exact provenance.
+    for name, value in vars(listing).items():
+        if name not in listing.__dataclass_fields__:
+            object.__setattr__(updated, name, value)
+    return updated
+
+
+def geocode_confidence_of(listing: Any) -> float | None:
+    """Return the address geocode confidence, or None when there is no geocode.
+
+    Zero is absence, not a low-but-real confidence. `AddressLocation`
+    defaults `geocode_confidence` to 0.0 and the persistence layer coerces a
+    NULL column to 0.0, so nothing distinguishes "geocoder returned 0.0" from
+    "never geocoded". `to_sitescore_model_row()` already reads it that way
+    (``if not value.geocode_confidence``) and rejects the row; this gate has to
+    agree, or it hands SiteScore a listing that SiteScore itself would refuse.
+
+    A value that is present but not a number is also treated as absent: the
+    caller cannot act on it, and guessing is the failure mode being removed.
+    The first key that is present decides, rather than the first that looks
+    usable -- the two spellings are aliases of one address field, so
+    disagreeing values are a data fault, not a second opinion to fall back on.
+    """
+    for key in _GEOCODE_CONFIDENCE_KEYS:
+        value = listing.get(key)
+        if value is None:
+            continue
+        try:
+            confidence = float(value)
+        except (TypeError, ValueError):
+            return None
+        return confidence if confidence > 0 else None
+    return None
+
+
 class PromotionService:
     """Manages the Intake-to-Listing-to-Candidate promotion saga."""
 
@@ -40,12 +97,14 @@ class PromotionService:
         intake_repository: Any,
         outbox_repository: Any = None,
         score_queue_hook: Callable[[], None] | None = None,
+        score_dispatcher: Any = None,
     ) -> None:
         self.promotion_repository = promotion_repository
         self.listing_repository = listing_repository
         self.intake_repository = intake_repository
         self.outbox_repository = outbox_repository
         self.score_queue_hook = score_queue_hook
+        self.score_dispatcher = score_dispatcher
 
     def request_promotion(
         self,
@@ -74,6 +133,7 @@ class PromotionService:
         listing = self.listing_repository.get_listing(target_listing_id)
         if not listing:
             raise ValueError(f"Listing {target_listing_id} not found")
+        self._property_identity(listing)
 
         # Verify listing status
         if listing.get("status") in {"duplicate", "archived", "expired"}:
@@ -82,11 +142,7 @@ class PromotionService:
                 f"Listing status {listing.get('status')} is not eligible for promotion"
             )
 
-        if listing.get("hardRuleFailures"):
-            raise DomainValidationError(
-                DenialCode.WORKFLOW_STATE_DENIED,
-                "Listing has hard rule failures"
-            )
+        self._assert_recorded_hard_rules(listing)
 
         # Validate candidate gate (listing fields validation)
         validation_errors = self._validate_listing_fields(listing)
@@ -171,7 +227,8 @@ class PromotionService:
                 "promotion_decision_id": promo_id,
                 "intake_id": intake_id,
                 "listing_id": target_listing_id,
-                "status": "REQUESTED",
+                "status": promo_record["status"],
+                "decision_type": promo_record["decision_type"],
                 "version": promo_record["version"],
             },
             tenant_id=context.actor.tenant_id,
@@ -201,6 +258,36 @@ class PromotionService:
                 "Tenant isolation mismatch"
             )
 
+        if decision == "APPROVE":
+            listing_id = promo.get("listing_id")
+            if not listing_id:
+                raise ValueError(f"Promotion decision {promotion_decision_id} missing listing_id")
+            listing = self.listing_repository.get_listing(listing_id)
+            if not listing:
+                raise ValueError(f"Listing {listing_id} not found")
+
+            # Re-run the candidate gate on the record actually being promoted,
+            # before mutating approval state or starting the saga.
+            #
+            # request_promotion() gates these fields at intake, but nothing
+            # re-checked them here, and every accessor in the derivation below
+            # supplied a plausible-looking default for a missing value: "HZ-01" for
+            # an absent cell, "" for an absent address, 1.0 for an absent geocode
+            # confidence, 75.0 when heat-zone scoring raised. A listing with no
+            # address therefore reached score_site() carrying full confidence and a
+            # passing demand signal, and could come back GO. ODP-BR-LST-001 is a
+            # Hard Constraint: no address or failed geocode must not enter
+            # SiteScore.
+            #
+            # It runs before state transition so a gate failure leaves the
+            # durable record in PENDING_REVIEW rather than mutating it to APPROVED
+            # without a candidate or stranding the promotion mid-saga.
+            promotion_address = self._assert_promotable(listing)
+            property_id = self._property_identity(listing)
+        else:
+            listing = None
+            promotion_address = None
+
         current_state = to_state_enum(promo["status"])
         promo_agg = PromotionAggregate(
             id=promotion_decision_id,
@@ -212,6 +299,12 @@ class PromotionService:
 
         target_state = PromotionState.APPROVED if decision == "APPROVE" else PromotionState.REJECTED
         PromotionStateMachine.transition(promo_agg, target_state, context)
+        if target_state == PromotionState.APPROVED and self.score_dispatcher is None:
+            from modules.listing.application.intake_score_delivery import (
+                ScoreDeliveryUnavailable,
+            )
+
+            raise ScoreDeliveryUnavailable("SCORE_DELIVERY_UNAVAILABLE")
 
         promo["version"] = promo_agg.version
         promo["status"] = to_status_str(target_state)
@@ -224,7 +317,8 @@ class PromotionService:
             self.promotion_repository.save_promotion(promo)
             return promo
 
-        # APPROVED path: transition APPROVED -> CANDIDATE_CREATING -> CANDIDATE_CREATED -> SCORE_QUEUED -> COMPLETED
+        # Approval creates a pending candidate and dispatches actual work. Only
+        # the worker may acknowledge the SCORE_QUEUED checkpoint.
         system_actor = Actor(
             actor_id="system",
             role=PrincipalRole.SVC_PROMOTION,
@@ -235,11 +329,6 @@ class PromotionService:
             idempotency_key=f"system-exec-{context.idempotency_key}",
             correlation_id=context.correlation_id,
         )
-
-        listing_id = promo["listing_id"]
-        listing = self.listing_repository.get_listing(listing_id)
-        if not listing:
-            raise ValueError(f"Listing {listing_id} not found")
 
         # Remember original listing status and candidate count for compensation
         if hasattr(listing, "get"):
@@ -266,79 +355,31 @@ class PromotionService:
                         "DUPLICATE_CANDIDATE"
                     )
 
-            # Get fitScore or equivalent demand signal
+            # The gate already ran, above the saga. Every accessor below reads
+            # a value the gate confirmed is present; none of them substitutes
+            # one it does not have.
             if hasattr(listing, "get"):
-                fit_score = listing.get("heat_zone_score") or listing.get("fitScore") or listing.get("fit_score")
-                h3_val = listing.get("heatZoneId") or listing.get("hz") or listing.get("h3Index") or listing.get("h3_index") or "HZ-01"
-                address_val = listing.get("address") or listing.get("address_raw") or ""
-                rent_val = listing.get("rentPerMonth") or listing.get("rent_amount") or 0.0
-                area_val = listing.get("areaPing") or listing.get("area_ping") or 0.0
-                frontage_val = listing.get("frontage_m") or listing.get("frontage") or 0.0
-                conf_val = listing.get("geocodeConfidence") or listing.get("confidence") or 1.0
+                h3_val = listing.get("heatZoneId") or listing.get("hz") or listing.get("h3Index") or listing.get("h3_index")
+                address_val = listing.get("address") or listing.get("address_raw")
+                conf_val = geocode_confidence_of(listing)
                 title_val = listing.get("title") or f"{listing_id} 候選點"
                 ds_id = listing.get("datasetSnapshotId") or listing.get("snapshot_id") or listing.get("dataset_snapshot_id")
             else:
-                # Domain object Listing
-                address_obj = (
-                    self.listing_repository.get_address(listing.address_id)
-                    if hasattr(self.listing_repository, "get_address")
-                    else None
-                )
-                h3_val = address_obj.h3_res_9 if (address_obj and address_obj.h3_res_9) else "HZ-01"
-                address_val = address_obj.normalized_address if address_obj else ""
-                rent_val = listing.rent_amount
-                area_val = listing.area_ping
-                frontage_val = listing.frontage_m
-                conf_val = address_obj.geocode_confidence if address_obj else listing.confidence
-                fit_score = getattr(listing, "heat_zone_score", None) or getattr(listing, "fit_score", None)
+                # Domain object Listing. The gate resolved and checked its
+                # address already, so it is reused rather than re-fetched.
+                address_obj = promotion_address
+                h3_val = address_obj.h3_res_9
+                address_val = address_obj.normalized_address
+                conf_val = address_obj.geocode_confidence
                 title_val = f"{listing_id} 候選點"
                 ds_id = getattr(listing, "snapshot_id", None)
 
-            if fit_score is None:
-                from modules.heatzone.domain.scoring import HeatZoneFeatureInput, score_heatzones
-                try:
-                    hz_results = score_heatzones([HeatZoneFeatureInput(h3_index=h3_val)])
-                    fit_score = hz_results[0].score if hz_results else 75.0
-                except Exception:
-                    fit_score = 75.0
+            # No score or model result exists before the admitted worker runs.
+            # Preserve an actual snapshot ID verbatim; do not manufacture one
+            # from a listing ID or give a local heuristic production authority.
+            ds_snapshot_id = str(ds_id) if ds_id else None
 
-            if ds_id and str(ds_id).startswith("FS-"):
-                ds_snapshot_id = str(ds_id)
-            elif ds_id:
-                ds_snapshot_id = f"FS-{ds_id}"
-            else:
-                ds_snapshot_id = f"FS-{listing_id}"
-
-            # Derive candidate fields from the listing and a real scoring call
-            from modules.sitescore.domain.scoring import SiteScoreFeatureInput, score_site
-            feature_input = SiteScoreFeatureInput(
-                candidate_site_id=candidate_id,
-                heat_zone_id=h3_val,
-                heat_zone_score=float(fit_score),
-                monthly_rent=float(rent_val),
-                area_ping=float(area_val),
-                frontage_m=float(frontage_val),
-                average_confidence=float(conf_val),
-            )
-            score_report = score_site(feature_input)
-
-            # Map score and recommendation
-            rec_val = score_report.recommendation.value
-            if rec_val == "GO":
-                payback = getattr(score_report, "payback_p50_months", 30.0) or 30.0
-                score_val = 80 + int(max(0.0, min(1.0, (36.0 - payback) / 36.0)) * 19)
-            elif rec_val == "WAIT":
-                payback = getattr(score_report, "payback_p50_months", 50.0) or 50.0
-                score_val = 60 + int(max(0.0, min(1.0, (72.0 - payback) / 36.0)) * 19)
-            else:
-                payback = getattr(score_report, "payback_p50_months", 100.0) or 100.0
-                score_val = int(max(0.0, min(1.0, (120.0 - payback) / 120.0)) * 59)
-
-            prop_ent_id = (
-                listing.get("property_id") or listing.get("propertyId") or listing.get("platform_property_id")
-                if hasattr(listing, "get")
-                else getattr(listing, "property_id", None) or getattr(listing, "platform_property_id", None)
-            )
+            prop_ent_id = property_id
             list_obs_id = (
                 listing.get("listing_obs_id") or listing.get("listingObsId") or listing.get("platform_observation_id")
                 if hasattr(listing, "get")
@@ -383,16 +424,17 @@ class PromotionService:
             candidate_dict = {
                 "id": candidate_id,
                 "listingId": listing_id,
+                "targetFormatCode": promo["target_format_code"],
                 "heatZoneId": h3_val,
                 "title": title_val,
                 "address": address_val,
-                "status": "ready",
-                "score": score_val,
-                "recommendation": rec_val,
-                "modelVersion": score_report.model_version,
+                "status": "new",
+                "score": None,
+                "recommendation": None,
+                "modelVersion": None,
                 "datasetSnapshotId": ds_snapshot_id,
                 "missingData": [],
-                "reviewId": f"RV-{uuid.uuid4().hex[:8].upper()}",
+                "reviewId": None,
             }
             if prop_ent_id:
                 candidate_dict["propertyId"] = prop_ent_id
@@ -435,8 +477,8 @@ class PromotionService:
                     candidate_site_id=candidate_id,
                     listing_id=listing_id,
                     address_id=orig_addr.address_id,
-                    target_format_code="FORMAT-A",
-                    site_status="ready",
+                    target_format_code=promo["target_format_code"],
+                    site_status="new",
                     created_by=context.actor.actor_id,
                 )
                 candidate_listing = (
@@ -452,11 +494,15 @@ class PromotionService:
                     candidate_site=c_site,
                     heat_zone_id=h3_val,
                     status="CANDIDATE",
-                    score=score_val,
-                    recommendation=rec_val,
-                    model_version=score_report.model_version,
+                    score=None,
+                    recommendation=None,
+                    model_version=None,
                     dataset_snapshot_id=ds_snapshot_id,
-                    review_id=candidate_dict["reviewId"],
+                    review_id=None,
+                    prior_90d_cell_net_revenue=getattr(candidate_listing, "prior_90d_cell_net_revenue", None),
+                    prior_90d_cell_transaction_count=getattr(candidate_listing, "prior_90d_cell_transaction_count", None),
+                    prior_90d_cell_store_count=getattr(candidate_listing, "prior_90d_cell_store_count", None),
+                    feature_snapshot_time=getattr(candidate_listing, "feature_snapshot_time", None),
                     property_entity_id=prop_ent_id,
                     listing_observation_id=list_obs_id,
                     rent_benchmark_median=float(bench_median) if bench_median is not None else None,
@@ -477,28 +523,7 @@ class PromotionService:
                 listing["candidateId"] = candidate_id
                 self.listing_repository.save_listing(listing)
             else:
-                from shared.domain.models import Listing
-                updated_listing = Listing(
-                    listing_id=listing.listing_id,
-                    source_listing_id=listing.source_listing_id,
-                    source_id=listing.source_id,
-                    listing_status="candidate",
-                    address_id=listing.address_id,
-                    rent_amount=listing.rent_amount,
-                    currency=listing.currency,
-                    area_ping=listing.area_ping,
-                    floor=listing.floor,
-                    frontage_m=listing.frontage_m,
-                    depth_m=listing.depth_m,
-                    corner_flag=listing.corner_flag,
-                    parking_flag=listing.parking_flag,
-                    utility_electricity_flag=listing.utility_electricity_flag,
-                    utility_drainage_flag=listing.utility_drainage_flag,
-                    utility_gas_flag=listing.utility_gas_flag,
-                    available_from=listing.available_from,
-                    snapshot_id=listing.snapshot_id,
-                    confidence=listing.confidence,
-                )
+                updated_listing = _listing_with_status(listing, "candidate")
                 self.listing_repository.save_listing(updated_listing)
 
             # Transition CANDIDATE_CREATING -> CANDIDATE_CREATED
@@ -509,21 +534,15 @@ class PromotionService:
             self.promotion_repository.save_promotion(promo)
 
             # Emit candidate.created event
-            property_id = (
-                listing.get("property_id") or listing.get("propertyId")
-                if hasattr(listing, "get")
-                else getattr(listing, "property_id", None) or getattr(listing, "propertyId", None)
-            )
-            if not property_id:
-                property_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"property-{listing_id}"))
-
             self._emit_event(
                 event_type="candidate.created",
                 payload={
                     "candidate_site_id": candidate_id,
                     "property_id": property_id,
-                    "source_listing_id": listing_id,
-                    "target_format_code": promo.get("target_format_code") or "FORMAT-A",
+                    "listing_id": listing_id,
+                    "promotion_decision_id": promotion_decision_id,
+                    "target_format_code": promo["target_format_code"],
+                    "status": "NEW",
                     "version": 1,
                 },
                 tenant_id=context.actor.tenant_id,
@@ -542,28 +561,7 @@ class PromotionService:
                         listing["candidateId"] = None
                     self.listing_repository.save_listing(listing)
                 else:
-                    from shared.domain.models import Listing
-                    updated_listing = Listing(
-                        listing_id=listing.listing_id,
-                        source_listing_id=listing.source_listing_id,
-                        source_id=listing.source_id,
-                        listing_status=before_status,
-                        address_id=listing.address_id,
-                        rent_amount=listing.rent_amount,
-                        currency=listing.currency,
-                        area_ping=listing.area_ping,
-                        floor=listing.floor,
-                        frontage_m=listing.frontage_m,
-                        depth_m=listing.depth_m,
-                        corner_flag=listing.corner_flag,
-                        parking_flag=listing.parking_flag,
-                        utility_electricity_flag=listing.utility_electricity_flag,
-                        utility_drainage_flag=listing.utility_drainage_flag,
-                        utility_gas_flag=listing.utility_gas_flag,
-                        available_from=listing.available_from,
-                        snapshot_id=listing.snapshot_id,
-                        confidence=listing.confidence,
-                    )
+                    updated_listing = _listing_with_status(listing, before_status)
                     self.listing_repository.save_listing(updated_listing)
 
             # Compensate candidate site
@@ -579,78 +577,104 @@ class PromotionService:
                         if c.get("id") != candidate_id
                     ]
 
-            PromotionStateMachine.transition(promo_agg, PromotionState.FAILED, system_context)
-            promo["status"] = to_status_str(PromotionState.FAILED)
-            promo["version"] = promo_agg.version
-            self.promotion_repository.save_promotion(promo)
+            if promo_agg.status == PromotionState.CANDIDATE_CREATING:
+                PromotionStateMachine.transition(promo_agg, PromotionState.FAILED, system_context)
+                promo["status"] = to_status_str(PromotionState.FAILED)
+                promo["version"] = promo_agg.version
+                self.promotion_repository.save_promotion(promo)
+            # Later persistence/outbox failures are rolled back by the command
+            # transaction. An illegal CANDIDATE_CREATED -> FAILED transition
+            # must not replace the original failure with a workflow denial.
             raise exc
 
-        # 2. CANDIDATE_CREATED -> SCORE_QUEUED -> COMPLETED
-        try:
-            PromotionStateMachine.transition(promo_agg, PromotionState.SCORE_QUEUED, system_context)
-            promo["status"] = to_status_str(PromotionState.SCORE_QUEUED)
-            promo["version"] = promo_agg.version
-
-            score_job_id = str(uuid.uuid4())
-            promo["site_score_job_id"] = score_job_id
-            self.promotion_repository.save_promotion(promo)
-
-            if self.score_queue_hook:
-                self.score_queue_hook()
-
-            PromotionStateMachine.transition(promo_agg, PromotionState.COMPLETED, system_context)
-            promo["status"] = to_status_str(PromotionState.COMPLETED)
-            promo["version"] = promo_agg.version
-            self.promotion_repository.save_promotion(promo)
-
-            # Emit candidate.promotion_completed event
-            self._emit_event(
-                event_type="candidate.promotion_completed",
-                payload={
-                    "promotion_decision_id": promotion_decision_id,
-                    "intake_id": promo["intake_id"],
-                    "listing_id": promo["listing_id"],
-                    "status": "COMPLETED",
-                    "version": promo["version"],
-                },
-                tenant_id=context.actor.tenant_id,
-                aggregate_type="promotion_decision",
-                aggregate_id=promotion_decision_id,
-                aggregate_version=promo["version"],
-                correlation_id=context.correlation_id,
-            )
-
-        except Exception as exc:
-            # Scoring failure is recoverable: retain the candidate and listing
-            # association, mark the candidate for operator visibility, and let
-            # job.replay restart the SCORE_QUEUED checkpoint.
-            for candidate in self.listing_repository.list_candidates():
-                candidate_key = (
-                    candidate.candidate_site.candidate_site_id
-                    if hasattr(candidate, "candidate_site")
-                    else candidate.get("id")
-                )
-                if candidate_key == candidate_id and hasattr(candidate, "get"):
-                    candidate["status"] = "SCORING_FAILED"
-            underlying_repo = getattr(self.listing_repository, "repo", None)
-            if underlying_repo is not None and hasattr(underlying_repo, "candidates"):
-                from dataclasses import replace
-
-                for draft in underlying_repo.candidates:
-                    if draft.candidate_site.candidate_site_id == candidate_id:
-                        draft.candidate_site = replace(
-                            draft.candidate_site,
-                            site_status="SCORING_FAILED",
-                        )
-                        break
-
-            PromotionStateMachine.transition(promo_agg, PromotionState.SCORE_FAILED, system_context)
-            promo["status"] = to_status_str(PromotionState.SCORE_FAILED)
-            promo["version"] = promo_agg.version
-            self.promotion_repository.save_promotion(promo)
-            raise exc
+        # The dispatcher commits the canonical job and its executable delivery
+        # in this command transaction. Storage failures roll everything back.
+        PromotionStateMachine.transition(promo_agg, PromotionState.SCORE_QUEUED, system_context)
+        promo["status"] = to_status_str(PromotionState.SCORE_QUEUED)
+        promo["version"] = promo_agg.version
+        self.promotion_repository.save_promotion(promo)
+        receipt = self.score_dispatcher.enqueue(promo, context=context)
+        promo["site_score_job_id"] = receipt["job_id"]
+        self.promotion_repository.save_promotion(promo)
+        if self.score_queue_hook:
+            # This explicit test hook probes a transaction failure. It cannot
+            # manufacture a retained failed receipt for work that never ran.
+            self.score_queue_hook()
 
         return promo
+
+    def _property_identity(self, listing: Any) -> str | None:
+        read = listing.get if hasattr(listing, "get") else lambda key: getattr(listing, key, None)
+        value = read("property_id") or read("propertyId") or read("platform_property_id")
+        if self.outbox_repository is not None:
+            # CandidateCreatedV1 names an existing identity. A UUID derived
+            # from a listing ID is not evidence of that identity binding.
+            try:
+                value = str(uuid.UUID(value))
+            except (ValueError, TypeError, AttributeError) as exc:
+                raise DomainValidationError(
+                    DenialCode.SOURCE_POLICY_DENIED,
+                    "Candidate promotion requires a recorded property identity",
+                ) from exc
+        return value
+
+    def _assert_promotable(self, listing: Any) -> Any | None:
+        """Raise unless `listing` still satisfies the candidate gate.
+
+        Returns the resolved `AddressLocation` when the listing is a domain
+        object, so the caller derives the SiteScore input from the same address
+        this checked, and `None` for a mapping, which carries its address
+        fields inline.
+
+        The two branches ask the same questions of two shapes:
+        `_validate_listing_fields` reads a mapping, while a domain `Listing`
+        keeps address, cell and geocode confidence on a separate record.
+        """
+        self._assert_recorded_hard_rules(listing)
+        if hasattr(listing, "get"):
+            errors = self._validate_listing_fields(listing)
+            address_obj = None
+        else:
+            address_obj = (
+                self.listing_repository.get_address(listing.address_id)
+                if hasattr(self.listing_repository, "get_address")
+                else None
+            )
+            errors = []
+            if address_obj is None or not address_obj.normalized_address:
+                errors.append("address")
+            if address_obj is None or not address_obj.h3_res_9:
+                errors.append("H3")
+            if address_obj is None or not address_obj.geocode_confidence:
+                # Same rule as geocode_confidence_of(): 0.0 is what
+                # AddressLocation carries when nothing geocoded it, so it
+                # cannot be read as a real measurement.
+                errors.append("geocode")
+            if not listing.rent_amount or listing.rent_amount <= 0:
+                errors.append("rent")
+            if not listing.area_ping or listing.area_ping <= 0:
+                errors.append("area")
+
+        if errors:
+            raise DomainValidationError(
+                DenialCode.SOURCE_POLICY_DENIED,
+                f"Candidate gate failed at promotion: missing {', '.join(errors)}"
+            )
+        return address_obj
+
+    @staticmethod
+    def _assert_recorded_hard_rules(listing: Any) -> None:
+        failures = (listing.get("hardRuleFailures") if hasattr(listing, "get")
+                    else getattr(listing, "hard_rule_failures", None))
+        if not isinstance(failures, list) or not all(isinstance(item, str) for item in failures):
+            raise DomainValidationError(
+                DenialCode.SOURCE_POLICY_DENIED,
+                "HARD_RULE_EVIDENCE_REQUIRED: recorded hard-rule verdict is required",
+            )
+        if failures:
+            raise DomainValidationError(
+                DenialCode.WORKFLOW_STATE_DENIED, "Listing has hard rule failures",
+            )
 
     def _validate_listing_fields(self, listing: dict[str, Any]) -> list[str]:
         errors = []
@@ -669,10 +693,27 @@ class PromotionService:
         if not h3:
             errors.append("H3")
 
-        lat = listing.get("lat") or listing.get("latitude") or 25.0339
-        lng = listing.get("lng") or listing.get("longitude") or 121.5645
-        conf = listing.get("geocodeConfidence") or listing.get("confidence")
-        if lat is None or lng is None or conf is None:
+        # Geocode completeness is carried by the H3 cell (checked above) and
+        # the geocode confidence, which is what the SiteScore input downstream
+        # actually consumes -- SiteScoreFeatureInput takes heat_zone_id, not a
+        # coordinate pair.
+        #
+        # This used to read:
+        #
+        #     lat = listing.get("lat") or listing.get("latitude") or 25.0339
+        #     lng = listing.get("lng") or listing.get("longitude") or 121.5645
+        #     conf = listing.get("geocodeConfidence") or listing.get("confidence")
+        #     if lat is None or lng is None or conf is None:
+        #
+        # which rejected almost nothing. The coordinate fallback made
+        # `lat is None` unreachable, so the condition reduced to `conf is None`;
+        # and `conf` fell through to the listing's own extraction confidence, so
+        # a failed geocode still produced a number. Coordinates are deliberately
+        # not restored as a gate field -- AddressLocation defaults
+        # latitude/longitude to 0.0, the promotion payload does not carry them,
+        # and SiteScoreFeatureInput takes heat_zone_id -- so promoting them to a
+        # real requirement belongs with the address contract, not here.
+        if geocode_confidence_of(listing) is None:
             errors.append("geocode")
 
         return errors

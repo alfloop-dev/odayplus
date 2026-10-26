@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from contextlib import nullcontext
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import wraps
+from inspect import signature
 from typing import Any
 from uuid import uuid4
 
@@ -9,16 +13,27 @@ from models.shared_ml.production_runtime import (
     ProductionExecutionConfigurationError,
     production_execution_required,
 )
-from modules.avm.application.production import AVMProductionExecutor
+from modules.avm.application.calibration import (
+    DealOutcomeCalibrationReport,
+    evaluate_calibration_coverage,
+)
+from modules.avm.application.production import (
+    AVMProductionExecutionError,
+    AVMProductionExecutor,
+)
 from modules.avm.domain import (
+    LEGACY_UNKNOWN_QUALITY_STATUS,
+    QUALITY_SCORE_REQUIRED_MESSAGE,
     ApprovalDecision,
     DataRoom,
+    DealOutcome,
     NormalizedMargin,
     ValuationCase,
     ValuationCaseStatus,
     ValuationInput,
     ValuationReport,
     build_valuation_view,
+    ensure_legacy_quality_disposition,
     generate_data_room,
     normalize_margin,
     value_store,
@@ -30,6 +45,102 @@ class AVMError(ValueError):
     pass
 
 
+class AVMReviewRequiredFailure(AVMError):
+    """A named valuation refusal whose REVIEW_REQUIRED state is complete."""
+
+
+@dataclass(frozen=True)
+class DepreciationRollbackReceipt:
+    decider: str
+    decision_time: datetime | str
+    reason: str
+    target_expiry: str | datetime
+    depreciation_version_pin: str
+    receipt_id: str = field(default_factory=lambda: f"dep-rollback-{uuid4()}")
+
+    def validate(
+        self,
+        expected_pin: str | None = None,
+        *,
+        current_time: datetime | None = None,
+    ) -> None:
+        if not self.decider or not str(self.decider).strip():
+            raise AVMError("rollback receipt requires a non-empty decider")
+        if not self.reason or not str(self.reason).strip():
+            raise AVMError("rollback receipt requires a non-empty reason")
+        if not self.depreciation_version_pin or not str(self.depreciation_version_pin).strip():
+            raise AVMError("rollback receipt requires a depreciation_version_pin")
+        if expected_pin and str(self.depreciation_version_pin).strip() != expected_pin:
+            raise AVMError(
+                f"rollback receipt version pin {self.depreciation_version_pin!r} does not match active pin {expected_pin!r}"
+            )
+        dt = (
+            self.decision_time
+            if isinstance(self.decision_time, datetime)
+            else datetime.fromisoformat(str(self.decision_time).replace("Z", "+00:00"))
+        )
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        exp = (
+            self.target_expiry
+            if isinstance(self.target_expiry, datetime)
+            else datetime.fromisoformat(str(self.target_expiry).replace("Z", "+00:00"))
+        )
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=UTC)
+        if exp <= dt:
+            raise AVMError("rollback receipt target_expiry must be after decision_time")
+        now = current_time or datetime.now(UTC)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=UTC)
+        if exp <= now:
+            raise AVMError("rollback receipt target_expiry has already expired")
+
+    def to_dict(self) -> dict[str, Any]:
+        dt = (
+            self.decision_time.isoformat()
+            if hasattr(self.decision_time, "isoformat")
+            else str(self.decision_time)
+        )
+        exp = (
+            self.target_expiry.isoformat()
+            if hasattr(self.target_expiry, "isoformat")
+            else str(self.target_expiry)
+        )
+        return {
+            "receipt_id": self.receipt_id,
+            "decider": self.decider,
+            "decision_time": dt,
+            "reason": self.reason,
+            "target_expiry": exp,
+            "depreciation_version_pin": self.depreciation_version_pin,
+        }
+
+
+def _serialized_case_mutation(method):
+    """Keep memory behavior; durable owners lock before the first native read."""
+    method_signature = signature(method)
+
+    @wraps(method)
+    def invoke(self, *args, **kwargs):
+        arguments = method_signature.bind(self, *args, **kwargs).arguments
+        entry = getattr(self.repository, "case_transaction", None)
+        review_failure = None
+        with entry(arguments["case_id"]) if callable(entry) else nullcontext():
+            try:
+                return method(self, *args, **kwargs)
+            except AVMReviewRequiredFailure as exc:
+                if type(exc) is not AVMReviewRequiredFailure:
+                    raise
+                # Only the explicitly saved named refusal is a completed
+                # business result. Every other exception still rolls back.
+                review_failure = exc
+        if review_failure is not None:
+            raise review_failure
+
+    return invoke
+
+
 class AVMService:
     def __init__(
         self,
@@ -37,6 +148,8 @@ class AVMService:
         repository: InMemoryAVMRepository | None = None,
         production_executor: AVMProductionExecutor | None = None,
         runtime_mode: str | None = None,
+        depreciation_version_pin: str | None = None,
+        rollback_receipt: DepreciationRollbackReceipt | None = None,
     ) -> None:
         self.production_required = production_execution_required(runtime_mode)
         self.strict_production_composition = runtime_mode is not None and self.production_required
@@ -52,6 +165,8 @@ class AVMService:
             )
         self.repository = repository or InMemoryAVMRepository()
         self.production_executor = production_executor
+        self.depreciation_version_pin = depreciation_version_pin
+        self.rollback_receipt = rollback_receipt
 
     def create_case(
         self,
@@ -69,6 +184,7 @@ class AVMService:
     def get_case(self, case_id: str) -> ValuationCase | None:
         return self.repository.get_case(case_id)
 
+    @_serialized_case_mutation
     def normalize(self, case_id: str, *, actor: str, correlation_id: str) -> NormalizedMargin:
         case = self._case(case_id)
         self._require_status(
@@ -76,6 +192,8 @@ class AVMService:
             {ValuationCaseStatus.DATA_READY},
             action="normalize valuation inputs",
         )
+        if case.valuation_input.quality_score is None:
+            raise AVMError(QUALITY_SCORE_REQUIRED_MESSAGE)
         active = self.repository.save_case(
             case.transition(
                 ValuationCaseStatus.NORMALIZING,
@@ -95,7 +213,17 @@ class AVMService:
         )
         return margin
 
-    def value(self, case_id: str, *, actor: str, correlation_id: str) -> ValuationReport:
+    @_serialized_case_mutation
+    def value(
+        self,
+        case_id: str,
+        *,
+        actor: str,
+        correlation_id: str,
+        depreciation_version_pin: str | None = None,
+        rollback_receipt: DepreciationRollbackReceipt | None = None,
+        clock: datetime | None = None,
+    ) -> ValuationReport:
         case = self._case(case_id)
         self._require_status(
             case,
@@ -108,20 +236,59 @@ class AVMService:
                 raise AVMError("normalized margin required before valuation")
             margin = self.normalize(case_id, actor=actor, correlation_id=correlation_id)
             case = self._case(case_id)
+        else:
+            # A legacy case may already have a persisted margin produced under
+            # the former implicit-perfect quality default.  Do not let the
+            # presence of that margin bypass the legacy discount and low
+            # confidence disposition.
+            disposed_margin = ensure_legacy_quality_disposition(case, margin)
+            if disposed_margin != margin:
+                margin = self.repository.save_margin(disposed_margin)
         valuing = case.transition(
             ValuationCaseStatus.VALUING,
             actor=actor,
             reason="valuation started",
             correlation_id=correlation_id,
         )
-        if self.production_required:
-            executor = self.production_executor
-            if executor is None:
-                executor = AVMProductionExecutor.from_environment()
-                self.production_executor = executor
-            report = executor.execute(valuing, margin)
-        else:
-            report = value_store(valuing, margin)
+        pin = depreciation_version_pin or self.depreciation_version_pin
+        receipt = rollback_receipt or self.rollback_receipt
+
+        from modules.avm.domain import AVM_DEPRECIATION_LEGACY_VERSION
+
+        if pin == AVM_DEPRECIATION_LEGACY_VERSION:
+            if receipt is None:
+                raise AVMError(
+                    "depreciation rollback to v0 requires a valid matching DepreciationRollbackReceipt"
+                )
+            receipt.validate(expected_pin=pin, current_time=clock)
+        elif receipt is not None:
+            raise AVMError("rollback receipt provided without an active rollback version pin")
+
+        try:
+            if self.production_required:
+                executor = self.production_executor
+                if executor is None:
+                    executor = AVMProductionExecutor.from_environment()
+                    self.production_executor = executor
+                report = executor.execute(valuing, margin, depreciation_version_pin=pin)
+            else:
+                report = value_store(valuing, margin, depreciation_version_pin=pin)
+        except (ValueError, AVMProductionExecutionError) as exc:
+            # R5: Persist case transition to REVIEW_REQUIRED on named depreciation / valuation failures
+            self.repository.save_case(
+                valuing.transition(
+                    ValuationCaseStatus.REVIEW_REQUIRED,
+                    actor=actor,
+                    reason=f"valuation failed: {exc}",
+                    correlation_id=correlation_id,
+                )
+            )
+            raise AVMReviewRequiredFailure(str(exc)) from exc
+
+        if receipt is not None and pin is not None:
+            report.execution_metadata["depreciation_rollback_receipt"] = receipt.to_dict()
+        if case.valuation_input.effective_quality_score_status == LEGACY_UNKNOWN_QUALITY_STATUS:
+            report = report.with_legacy_quality_disposition()
         self.repository.save_case(valuing)
         report = self.repository.save_report(report)
         self.repository.save_case(
@@ -134,6 +301,7 @@ class AVMService:
         )
         return report
 
+    @_serialized_case_mutation
     def approve_finance(
         self,
         case_id: str,
@@ -156,6 +324,11 @@ class AVMService:
         report = self.repository.latest_report(case_id)
         if report is None:
             raise AVMError("valuation report required before finance approval")
+        if report.is_legacy_quality_unknown:
+            raise AVMError(
+                "legacy valuation report is downgraded; recompute with measured quality "
+                "before finance approval"
+            )
         if report.finance_approval is not None:
             raise AVMError("latest valuation report is already finance approved")
         approval = ApprovalDecision(
@@ -180,6 +353,7 @@ class AVMService:
         )
         return approved_report
 
+    @_serialized_case_mutation
     def build_dataroom(self, case_id: str, *, actor: str, correlation_id: str) -> DataRoom:
         case = self._case(case_id)
         self._require_status(
@@ -187,15 +361,20 @@ class AVMService:
             {ValuationCaseStatus.APPROVED, ValuationCaseStatus.DATAROOM_READY},
             action="build data room",
         )
+        report = self.repository.latest_report(case_id)
+        if report is None:
+            raise AVMError("valuation report required before data room")
+        if report.is_legacy_quality_unknown:
+            raise AVMError(
+                "legacy valuation report is downgraded; recompute with measured quality "
+                "before building a data room"
+            )
+        if report.finance_approval is None:
+            raise AVMError("finance approval required before data room")
         if case.status is ValuationCaseStatus.DATAROOM_READY:
             existing = self.repository.get_dataroom(case_id)
             if existing is not None:
                 return existing
-        report = self.repository.latest_report(case_id)
-        if report is None:
-            raise AVMError("valuation report required before data room")
-        if report.finance_approval is None:
-            raise AVMError("finance approval required before data room")
         dataroom = self.repository.save_dataroom(generate_data_room(report))
         self.repository.save_case(
             case.transition(
@@ -207,6 +386,7 @@ class AVMService:
         )
         return dataroom
 
+    @_serialized_case_mutation
     def export_dataroom(
         self,
         case_id: str,
@@ -226,6 +406,10 @@ class AVMService:
         dataroom = self.repository.get_dataroom(case_id)
         if dataroom is None:
             raise AVMError("data room must be built before export")
+        if dataroom.is_legacy_quality_unknown:
+            raise AVMError(
+                "legacy data room is downgraded; recompute valuation before export"
+            )
         return self.repository.save_dataroom(
             dataroom.with_export(actor=actor, reason=reason, correlation_id=correlation_id)
         )
@@ -238,6 +422,54 @@ class AVMService:
 
     def dataroom(self, case_id: str) -> DataRoom | None:
         return self.repository.get_dataroom(case_id)
+
+    def record_deal_outcome(self, outcome: DealOutcome | Mapping[str, Any]) -> DealOutcome:
+        item = outcome if isinstance(outcome, DealOutcome) else DealOutcome.from_mapping(outcome)
+        return self.repository.save_deal_outcome(item)
+
+    def get_deal_outcome(self, outcome_id: str) -> DealOutcome | None:
+        return self.repository.get_deal_outcome(outcome_id)
+
+    def list_deal_outcomes(self) -> list[DealOutcome]:
+        return self.repository.list_deal_outcomes()
+
+    def get_deal_outcomes_for_valuation(self, valuation_id: str) -> list[DealOutcome]:
+        return self.repository.get_deal_outcomes_for_valuation(valuation_id)
+
+    def calibrate_deal_outcomes(
+        self,
+        outcomes: Sequence[DealOutcome] | None = None,
+    ) -> DealOutcomeCalibrationReport:
+        items = list(outcomes) if outcomes is not None else self.list_deal_outcomes()
+        if not items:
+            return DealOutcomeCalibrationReport(
+                total_outcomes=0,
+                sold_count=0,
+                unsold_count=0,
+                aligned_count=0,
+                p10_p90_coverage_rate=0.0,
+                p10_p50_coverage_rate=0.0,
+                p50_p90_coverage_rate=0.0,
+                mae=0.0,
+                mape=0.0,
+                mean_deviation=0.0,
+                median_calibration_ratio=0.0,
+                is_coverage_target_met=False,
+                no_deal_reason_distribution={},
+                items=(),
+            )
+        # Collect reports from repository for all case_ids
+        reports_map: dict[str, ValuationReport] = {}
+        for case in self.repository.list_cases():
+            rep = self.repository.latest_report(case.case_id)
+            if rep is not None:
+                reports_map[rep.report_id] = rep
+                reports_map[rep.case_id] = rep
+            for r in self.repository.report_history(case.case_id):
+                reports_map[r.report_id] = r
+                reports_map[r.case_id] = r
+
+        return evaluate_calibration_coverage(items, reports_map)
 
     def _case(self, case_id: str) -> ValuationCase:
         case = self.repository.get_case(case_id)

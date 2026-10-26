@@ -413,3 +413,100 @@ def test_adlift_api_runs_incrementality_and_is_idempotent() -> None:
         event["event_type"] == "adlift.incrementality_evaluated.v1"
         for event in audit.json()["events"]
     )
+
+
+def _api_campaign_payload(
+    *, campaign_id: str, treatment_reports_during_campaign: bool
+) -> dict:
+    payload: dict = {
+        "campaign_id": campaign_id,
+        "name": f"API Campaign {campaign_id}",
+        "channel": "paid_search",
+        "treatment_store_ids": ["t1", "t2"],
+        "candidate_control_store_ids": ["c1", "c2"],
+        "pre_period_start": "2026-05-01",
+        "pre_period_end": "2026-05-10",
+        "campaign_period_start": "2026-05-11",
+        "campaign_period_end": "2026-05-20",
+        "ad_spend": 1_000.0,
+        "observations": [],
+    }
+    for store, pre, post in (
+        ("t1", 1_000, 1_300),
+        ("t2", 1_000, 1_300),
+        ("c1", 1_000, 1_100),
+        ("c2", 1_000, 1_100),
+    ):
+        is_treatment = store.startswith("t")
+        for day in PRE_DAYS:
+            payload["observations"].append(
+                {
+                    "store_id": store,
+                    "business_date": f"2026-05-{day:02d}",
+                    "revenue": pre,
+                    "gross_margin_rate": GROSS_MARGIN_RATE,
+                }
+            )
+        if is_treatment and not treatment_reports_during_campaign:
+            continue
+        for day in CAMPAIGN_DAYS:
+            payload["observations"].append(
+                {
+                    "store_id": store,
+                    "business_date": f"2026-05-{day:02d}",
+                    "revenue": post,
+                    "gross_margin_rate": GROSS_MARGIN_RATE,
+                }
+            )
+    return payload
+
+
+def test_report_listing_survives_an_unassessable_report() -> None:
+    """One unassessable report must not break the filtered listing.
+
+    ADR-0004 D3 made `evidence_level` optional, so `/adlift/reports` can no
+    longer dereference it unconditionally. Without the guard, a single campaign
+    whose treatment stores went dark turns *every* filtered call into a 500 --
+    including calls asking for an entirely different level.
+    """
+    client = TestClient(create_app(), headers=ADLIFT_HEADERS)
+    body = {
+        "generated_at": GENERATED_AT.isoformat(),
+        "campaigns": [
+            _api_campaign_payload(
+                campaign_id="camp-readable", treatment_reports_during_campaign=True
+            ),
+            _api_campaign_payload(
+                campaign_id="camp-dark", treatment_reports_during_campaign=False
+            ),
+        ],
+    }
+    created = client.post(
+        "/adlift/incrementality-jobs",
+        json=body,
+        headers={"Idempotency-Key": "adlift-idem-unassessable"},
+    )
+    assert created.status_code == 202
+
+    reports = {
+        report["campaign_id"]: report for report in created.json()["reports"]
+    }
+    assert reports["camp-dark"]["evidence_level"] is None
+    assert reports["camp-dark"]["evidence_assessable"] is False
+    assert reports["camp-dark"]["insufficiency_reason_code"] == "NO_TREATMENT_DATA"
+    assert (
+        reports["camp-dark"]["report_card"]["evidenceLevel"] == "INSUFFICIENT_EVIDENCE"
+    )
+
+    filtered = client.get("/adlift/reports", params={"evidence_level": "L3"})
+    assert filtered.status_code == 200
+    assert [item["campaign_id"] for item in filtered.json()["items"]] == [
+        "camp-readable"
+    ]
+
+    unfiltered = client.get("/adlift/reports")
+    assert unfiltered.status_code == 200
+    assert {item["campaign_id"] for item in unfiltered.json()["items"]} == {
+        "camp-readable",
+        "camp-dark",
+    }

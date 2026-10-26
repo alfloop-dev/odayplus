@@ -1,0 +1,354 @@
+{
+  "task_id": "DPF-SOURCE-SA-SD-BASELINE-001",
+  "title": "納入外部來源調查與 SA／SD 設計基線",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "phase": "SA/SD execution plan 2026-09-13",
+  "repository": "alfloop-dev/odayplus",
+  "completed_at": "2026-09-13T17:02:00Z",
+  "status": "ready_for_review",
+  "publication_authorized": true,
+  "publication_destination": "alfloop-dev/odayplus",
+
+  "source_baseline": {
+    "mainline_commit": "b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb",
+    "mainline_repo": "alfloop-dev/oday-data-platform",
+    "audit_commit": "cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1",
+    "audit_repo": "alfloop-dev/odayplus",
+    "source_index_count": 16,
+    "sha256_verification": "ALL_PASS",
+    "verification_timestamp": "2026-09-13T14:13:04Z"
+  },
+
+  "verification_execution_receipt": {
+    "command": "git diff --check origin/dev...HEAD",
+    "base_sha": "8beb382949f05b36d2f94353827ab20fbe24e46d",
+    "measured_head_sha": "9a4c0360d2646fc36fceef109f3daacd7146a1a4",
+    "measured_tree_sha": "23851f12f22586fec6d05cb6e0cf4c9f89bf954b",
+    "exit_code": 0,
+    "duration_seconds": 0.011245,
+    "test_selection": "docs/architecture/external-source-ingestion/*, docs/evidence/completion/DPF-SOURCE-SA-SD-BASELINE-001/*",
+    "status": "PASS",
+    "stdout": "",
+    "stderr": "",
+    "evidence_chain_relationship": "Substantive documentation head 9a4c0360d264 verified with zero diff violations against origin/dev (8beb382949f0); completion receipt added as an evidence-only child commit.",
+    "prior_reviewed_heads_evidence": {
+      "2ec09fffd4a378efadc06ec42d50f395330cc06c": {
+        "tree_sha": "79ef7e413d638f9233b79efa50cada886d728c55",
+        "exit_code": 0,
+        "duration_seconds": 0.000007292,
+        "reviewer_chunk": "abc1d8",
+        "ci_checks": "12/12 passed (run 34768544547)"
+      },
+      "8cc73bc69ee821e43a3b1030bc9ce71c46f32fa9": {
+        "tree_sha": "f26ed4b02005a161e3f520da447e2d008bf995eb",
+        "exit_code": 0,
+        "duration_seconds": 0.012
+      }
+    }
+  },
+
+  "traceability": {
+    "sa_requirements": {
+      "total": 12,
+      "ids": ["FR01", "FR02", "FR03", "FR04", "FR05", "FR06", "FR07", "FR08", "FR09", "FR10", "FR11", "FR12"],
+      "all_mapped_to_sd": true,
+      "all_mapped_to_sources": true
+    },
+    "sd_design_sections": {
+      "total": 8,
+      "ids": ["D01", "D02", "D03", "D04", "D05", "D06", "D07", "D08"],
+      "all_mapped_to_fr": true
+    },
+    "gaps_identified": 3,
+    "gap_descriptions": [
+      "NFR lacks explicit ID numbering (suggest NFR01-NFR06)",
+      "D03 dedup key 'request partition' not mapped to existing program model field",
+      "D05 dynamic manifest count validation vs E12 fixed 54,443 count"
+    ]
+  },
+
+  "domain_assessment": {
+    "total_domains": 8,
+    "domain_levels": {
+      "cwa_events": "CONFIGURED",
+      "transport_osm_tdx": "CONFIGURED",
+      "open_poi": "CONFIGURED",
+      "mof_moi": "LIVE_CAPTURED_bounded_probe_100_records_raw_readback_verified",
+      "ris_nlsc": "NORMALIZED_VERIFIED_bounded_probe_31_records_zero_isolation",
+      "listing_observations": "CONFIGURED",
+      "mobility": "CONFIGURED",
+      "site_market_context": "CONFIGURED"
+    },
+    "historical_bounded_probe_evidence": {
+      "mof_raw_bytes_landed": true,
+      "mof_raw_sha256_verified": true,
+      "ris_raw_bytes_landed": true,
+      "ris_raw_sha256_verified": true,
+      "ris_normalized_verified": true
+    },
+    "retained_in_cloud_status": "unknown_not_verified_in_investigation",
+    "release_eligible_status": "pending_eight_domain_retention",
+    "activation_status": "unknown_runtime_not_readback_policy_default_deny",
+    "assessment_notes": "Historical bounded probe evidence (MOF 100 / RIS 31) inherited from audit cae4dd7e; absence of local cloud readback indicates verification pending at that layer, not that cloud retention proofs do not exist"
+  },
+
+  "task_dedup": {
+    "new_tasks": 7,
+    "reused_tasks": 1,
+    "preserved_existing": [
+      "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+      "XR-SOURCE-APPROVAL-ACTIVATION-001",
+      "XR-EXT-OSS-FINAL-AUDIT-001",
+      "HUMAN-OSS-LEGAL-APPROVAL-001"
+    ],
+    "path_ownership_conflicts": 0,
+    "shared_files_serialization": [
+      "src/oday_data_platform/defs/external/mof_moi.py",
+      "src/oday_data_platform/defs/external/ris_nlsc.py",
+      "tests/sources/test_official_live_acquisition.py",
+      "tests/sources/official_source_fixtures.py"
+    ],
+    "canonical_dispatch_alignment": {
+      "mutates_canonical_all_true": true,
+      "manual_hold_lifted": true,
+      "baseline_repository": "alfloop-dev/odayplus",
+      "product_repository": "alfloop-dev/oday-data-platform"
+    }
+  },
+
+  "downstream_canonical_assign_receipts": [
+    {
+      "task_id": "DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "canonical_command": "AI_NAME=Antigravity \"$PANTHEON_STATUS_ROOT/scripts/ai-status.sh\" assign DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001 Antigravity Codex2 \"接手MOF／RIS局部修正並完成公開來源實測\"",
+      "task_metadata_json": {
+        "verification": [
+          "uv run --frozen pytest -q tests/sources/test_public_source_ingestion.py tests/sources/test_official_live_acquisition.py tests/external/test_live_acquisition_kernel.py tests/sources/test_mof_moi.py tests/sources/test_ris_nlsc.py",
+          "uv run python scripts/capture_public_source_evidence.py --source mof --output <new_private_mof_dir>",
+          "RIS_RELEASE_KEY=\"2026-08\" RIS_COUNTY=\"臺北市\" RIS_TOWN=\"中正區\" RIS_VILLAGE=\"\" RIS_MAX_PAGES=\"5\" uv run python scripts/capture_public_source_evidence.py --source ris --output <new_private_ris_dir>",
+          "NOT_EXECUTED: 需由本 task 於實作時自 implementation-handoff 匯入 patch 與測試檔，設定有界地理/月份環境變數（歷史觀察 31 筆非預設保證），執行分源 capture_public_source_evidence.py 至互異私有目錄，產出有界 live capture 與 normalized readback 證據收據",
+          "git diff --check"
+        ]
+      },
+      "exit_code": 0,
+      "previous_last_update": "2026-09-13T16:22:36Z",
+      "updated_last_update": "2026-09-13T16:59:34Z",
+      "verification_before": [
+        "uv run --frozen pytest -q tests/sources/test_public_source_ingestion.py tests/sources/test_official_live_acquisition.py tests/external/test_live_acquisition_kernel.py tests/sources/test_mof_moi.py tests/sources/test_ris_nlsc.py",
+        "uv run python scripts/capture_public_source_evidence.py --source mof --output <new_private_dir> && uv run python scripts/capture_public_source_evidence.py --source ris --output <new_private_dir>",
+        "NOT_EXECUTED: 需由本 task 於實作時自 implementation-handoff 匯入 patch 與測試檔，執行分源 capture_public_source_evidence.py 產出有界 100/31 筆 live capture 與 normalized readback 證據收據",
+        "git diff --check"
+      ],
+      "verification_after": [
+        "uv run --frozen pytest -q tests/sources/test_public_source_ingestion.py tests/sources/test_official_live_acquisition.py tests/external/test_live_acquisition_kernel.py tests/sources/test_mof_moi.py tests/sources/test_ris_nlsc.py",
+        "uv run python scripts/capture_public_source_evidence.py --source mof --output <new_private_mof_dir>",
+        "RIS_RELEASE_KEY=\"2026-08\" RIS_COUNTY=\"臺北市\" RIS_TOWN=\"中正區\" RIS_VILLAGE=\"\" RIS_MAX_PAGES=\"5\" uv run python scripts/capture_public_source_evidence.py --source ris --output <new_private_ris_dir>",
+        "NOT_EXECUTED: 需由本 task 於實作時自 implementation-handoff 匯入 patch 與測試檔，設定有界地理/月份環境變數（歷史觀察 31 筆非預設保證），執行分源 capture_public_source_evidence.py 至互異私有目錄，產出有界 live capture 與 normalized readback 證據收據",
+        "git diff --check"
+      ],
+      "acceptance_preserved_count": 7,
+      "depends_on_preserved": ["DPF-SOURCE-SA-SD-BASELINE-001"],
+      "operation_notes": "Re-executed canonical assign to refine RIS execution environment variables, separate private directories, and explicit historical observation distinction."
+    },
+    {
+      "task_id": "DPF-OFFICIAL-SOURCE-ENDPOINT-INTEGRATION-001",
+      "owner": "Antigravity3",
+      "reviewer": "Codex2",
+      "canonical_command": "AI_NAME=Antigravity \"$PANTHEON_STATUS_ROOT/scripts/ai-status.sh\" assign DPF-OFFICIAL-SOURCE-ENDPOINT-INTEGRATION-001 Antigravity3 Codex2 \"完成CWA／MOI租賃／NLSC真實來源接入\"",
+      "task_metadata_json": {
+        "verification": [
+          "uv run --frozen pytest -q tests/sources/test_official_live_acquisition.py tests/sources/test_mof_moi.py tests/sources/test_ris_nlsc.py tests/sources/test_official_source_endpoints.py",
+          "NOT_EXECUTED: 需由本 task 於實作時建立 test_official_source_endpoints.py，查證 CWA_API_KEY 可用性（market-event 未核實前不可稱已接入）、MOI 租賃期別檔案格式與 NLSC GeoJSON 邊界/行政代碼 join 驗證",
+          "git diff --check"
+        ]
+      },
+      "exit_code": 0,
+      "previous_last_update": "2026-09-13T15:42:26Z",
+      "updated_last_update": "2026-09-13T16:22:38Z",
+      "verification_before": [
+        "uv run --frozen pytest -q tests/sources/test_official_live_acquisition.py tests/sources/test_mof_moi.py tests/sources/test_ris_nlsc.py tests/sources/test_official_source_endpoints.py",
+        "git diff --check"
+      ],
+      "verification_after": [
+        "uv run --frozen pytest -q tests/sources/test_official_live_acquisition.py tests/sources/test_mof_moi.py tests/sources/test_ris_nlsc.py tests/sources/test_official_source_endpoints.py",
+        "NOT_EXECUTED: 需由本 task 於實作時建立 test_official_source_endpoints.py，查證 CWA_API_KEY 可用性（market-event 未核實前不可稱已接入）、MOI 租賃期別檔案格式與 NLSC GeoJSON 邊界/行政代碼 join 驗證",
+        "git diff --check"
+      ],
+      "acceptance_preserved_count": 6,
+      "depends_on_preserved": ["DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001"],
+      "operation_notes": "Canonical assign executed at 16:22:38Z to align NOT_EXECUTED gaps and endpoint/join verification requirements."
+    },
+    {
+      "task_id": "DPF-TRANSPORT-POI-RELEASE-INTEGRATION-001",
+      "owner": "Antigravity4",
+      "reviewer": "Codex2",
+      "canonical_command": "AI_NAME=Antigravity \"$PANTHEON_STATUS_ROOT/scripts/ai-status.sh\" assign DPF-TRANSPORT-POI-RELEASE-INTEGRATION-001 Antigravity4 Codex2 \"完成OSM／TDX與開放POI真實release接入\"",
+      "task_metadata_json": {
+        "verification": [
+          "uv run --frozen pytest -q tests/sources/test_transport_poi_live_acquisition.py tests/sources/test_real_transport_poi_releases.py",
+          "NOT_EXECUTED: 需由本 task 於實作時建立 test_real_transport_poi_releases.py，取得 OSM Taiwan PBF 二進位檔、TDX token/配額（與 Google verifier 隔離）及 Overture/Foursquare release 物件後執行 binary/Parquet/coverage 讀回驗證",
+          "git diff --check"
+        ]
+      },
+      "exit_code": 0,
+      "previous_last_update": "2026-09-13T15:42:28Z",
+      "updated_last_update": "2026-09-13T16:22:41Z",
+      "verification_before": [
+        "uv run --frozen pytest -q tests/sources/test_transport_poi_live_acquisition.py tests/sources/test_real_transport_poi_releases.py",
+        "git diff --check"
+      ],
+      "verification_after": [
+        "uv run --frozen pytest -q tests/sources/test_transport_poi_live_acquisition.py tests/sources/test_real_transport_poi_releases.py",
+        "NOT_EXECUTED: 需由本 task 於實作時建立 test_real_transport_poi_releases.py，取得 OSM Taiwan PBF 二進位檔、TDX token/配額（與 Google verifier 隔離）及 Overture/Foursquare release 物件後執行 binary/Parquet/coverage 讀回驗證",
+        "git diff --check"
+      ],
+      "acceptance_preserved_count": 6,
+      "depends_on_preserved": ["DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001"],
+      "operation_notes": "Canonical assign executed at 16:22:41Z to align NOT_EXECUTED gaps and binary/Parquet/coverage verification requirements."
+    },
+    {
+      "task_id": "DPF-LISTING-PRODUCTION-ASSET-INTEGRATION-001",
+      "owner": "Antigravity5",
+      "reviewer": "Codex2",
+      "canonical_command": "AI_NAME=Antigravity \"$PANTHEON_STATUS_ROOT/scripts/ai-status.sh\" assign DPF-LISTING-PRODUCTION-ASSET-INTEGRATION-001 Antigravity5 Codex2 \"將刊登production asset接到真實來源channel\"",
+      "task_metadata_json": {
+        "verification": [
+          "uv run --frozen pytest -q tests/sources/test_listing_production_asset.py",
+          "NOT_EXECUTED: 需由本 task 於實作時建立 test_listing_production_asset.py，移除 LST-101 示例與 now approval，對接 ListingObservationService，驗證 listing lifecycle/敏感欄位/raw response hash 讀回與缺來源不造假 listing 負例（fixture 僅支持 offline 層）",
+          "git diff --check"
+        ]
+      },
+      "exit_code": 0,
+      "previous_last_update": "2026-09-13T15:42:31Z",
+      "updated_last_update": "2026-09-13T16:22:44Z",
+      "verification_before": [
+        "uv run --frozen pytest -q tests/sources/test_listing_production_asset.py",
+        "git diff --check"
+      ],
+      "verification_after": [
+        "uv run --frozen pytest -q tests/sources/test_listing_production_asset.py",
+        "NOT_EXECUTED: 需由本 task 於實作時建立 test_listing_production_asset.py，移除 LST-101 示例與 now approval，對接 ListingObservationService，驗證 listing lifecycle/敏感欄位/raw response hash 讀回與缺來源不造假 listing 負例（fixture 僅支持 offline 層）",
+        "git diff --check"
+      ],
+      "acceptance_preserved_count": 6,
+      "depends_on_preserved": ["DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001"],
+      "operation_notes": "Canonical assign executed at 16:22:44Z to align NOT_EXECUTED gaps and listing observation/negative control verification requirements."
+    },
+    {
+      "task_id": "DPF-MOBILITY-PRODUCTION-ASSET-INTEGRATION-001",
+      "owner": "Antigravity6",
+      "reviewer": "Codex2",
+      "canonical_command": "AI_NAME=Antigravity \"$PANTHEON_STATUS_ROOT/scripts/ai-status.sh\" assign DPF-MOBILITY-PRODUCTION-ASSET-INTEGRATION-001 Antigravity6 Codex2 \"將observed mobility接到真實聚合資料feed\"",
+      "task_metadata_json": {
+        "verification": [
+          "uv run --frozen pytest -q tests/sources/test_mobility_production_asset.py tests/sources/test_listing_mobility_live_acquisition.py",
+          "NOT_EXECUTED: 需由本 task 於實作時建立 test_mobility_production_asset.py，移除 flow_count=1000 示例數值，分離 observed/synthetic，驗證 business_date/timezone、raw 到 counted rows 讀回與缺時段不補造 0 負例",
+          "git diff --check"
+        ]
+      },
+      "exit_code": 0,
+      "previous_last_update": "2026-09-13T15:42:33Z",
+      "updated_last_update": "2026-09-13T16:22:46Z",
+      "verification_before": [
+        "uv run --frozen pytest -q tests/sources/test_mobility_production_asset.py tests/sources/test_listing_mobility_live_acquisition.py",
+        "git diff --check"
+      ],
+      "verification_after": [
+        "uv run --frozen pytest -q tests/sources/test_mobility_production_asset.py tests/sources/test_listing_mobility_live_acquisition.py",
+        "NOT_EXECUTED: 需由本 task 於實作時建立 test_mobility_production_asset.py，移除 flow_count=1000 示例數值，分離 observed/synthetic，驗證 business_date/timezone、raw 到 counted rows 讀回與缺時段不補造 0 負例",
+        "git diff --check"
+      ],
+      "acceptance_preserved_count": 6,
+      "depends_on_preserved": ["DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001"],
+      "operation_notes": "Canonical assign executed at 16:22:46Z to align NOT_EXECUTED gaps and observed mobility/timezone verification requirements."
+    },
+    {
+      "task_id": "DPF-ACQUISITION-RETENTION-BRIDGE-001",
+      "owner": "Antigravity7",
+      "reviewer": "Codex2",
+      "canonical_command": "AI_NAME=Antigravity \"$PANTHEON_STATUS_ROOT/scripts/ai-status.sh\" assign DPF-ACQUISITION-RETENTION-BRIDGE-001 Antigravity7 Codex2 \"銜接擷取證據與受治理raw retention\"",
+      "task_metadata_json": {
+        "verification": [
+          "uv run --frozen pytest -q tests/deploy/test_retained_raw_snapshots.py tests/external/test_acquisition_retained_import.py",
+          "NOT_EXECUTED: 需由本 task 於實作時建立 test_acquisition_retained_import.py，移除固定 54,443 count，改以動態 manifest 驗證 capture/normalized receipts 匯入、分類與持久化讀回，及 hash/count/domain 篡改負例",
+          "git diff --check"
+        ]
+      },
+      "exit_code": 0,
+      "previous_last_update": "2026-09-13T15:42:35Z",
+      "updated_last_update": "2026-09-13T16:22:49Z",
+      "verification_before": [
+        "uv run --frozen pytest -q tests/deploy/test_retained_raw_snapshots.py tests/external/test_acquisition_retained_import.py",
+        "git diff --check"
+      ],
+      "verification_after": [
+        "uv run --frozen pytest -q tests/deploy/test_retained_raw_snapshots.py tests/external/test_acquisition_retained_import.py",
+        "NOT_EXECUTED: 需由本 task 於實作時建立 test_acquisition_retained_import.py，移除固定 54,443 count，改以動態 manifest 驗證 capture/normalized receipts 匯入、分類與持久化讀回，及 hash/count/domain 篡改負例",
+        "git diff --check"
+      ],
+      "acceptance_preserved_count": 7,
+      "depends_on_preserved": ["DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001"],
+      "operation_notes": "Canonical assign executed at 16:22:49Z to align NOT_EXECUTED gaps and retention bridge dynamic manifest verification requirements."
+    },
+    {
+      "task_id": "DPF-SITE-CONTEXT-REAL-COMPONENTS-001",
+      "owner": "Antigravity2",
+      "reviewer": "Codex2",
+      "canonical_command": "AI_NAME=Antigravity \"$PANTHEON_STATUS_ROOT/scripts/ai-status.sh\" assign DPF-SITE-CONTEXT-REAL-COMPONENTS-001 Antigravity2 Codex2 \"將site market context接到真實component manifests\"",
+      "task_metadata_json": {
+        "verification": [
+          "uv run --frozen pytest -q tests/products/test_site_context_real_components.py tests/products/test_site_context.py",
+          "NOT_EXECUTED: 需由本 task 於實作時建立 test_site_context_real_components.py，依賴 BRIDGE-001 提供真實 component manifests，呼叫組裝服務並驗證 component content digest（禁止 hash(identifier)）與 tampered digest 負例",
+          "git diff --check"
+        ]
+      },
+      "exit_code": 0,
+      "previous_last_update": "2026-09-13T15:42:38Z",
+      "updated_last_update": "2026-09-13T16:22:51Z",
+      "verification_before": [
+        "uv run --frozen pytest -q tests/products/test_site_context_real_components.py tests/products/test_site_context.py",
+        "git diff --check"
+      ],
+      "verification_after": [
+        "uv run --frozen pytest -q tests/products/test_site_context_real_components.py tests/products/test_site_context.py",
+        "NOT_EXECUTED: 需由本 task 於實作時建立 test_site_context_real_components.py，依賴 BRIDGE-001 提供真實 component manifests，呼叫組裝服務並驗證 component content digest（禁止 hash(identifier)）與 tampered digest 負例",
+        "git diff --check"
+      ],
+      "acceptance_preserved_count": 6,
+      "depends_on_preserved": ["DPF-ACQUISITION-RETENTION-BRIDGE-001"],
+      "operation_notes": "Canonical assign executed at 16:22:51Z to align NOT_EXECUTED gaps and component content SHA digest verification requirements."
+    }
+  ],
+
+  "verification_amendment": {
+    "circular_dependency_analysis": "Resolved. Structural dependencies (PR #63 sources-off materializer, PR #1312 technical audit) separated from Legal Gate (HUMAN-OSS-LEGAL-APPROVAL-001) and subsequent activation (XR-SOURCE-APPROVAL-ACTIVATION-001). Offline/governed snapshot comparison separated from live production dual-run.",
+    "downstream_verification_plan_reconciled": true,
+    "not_executed_gaps_annotated": true,
+    "canonical_assign_metadata_synced": true,
+    "existing_decisions_preserved": ["D01-D14", "D15"],
+    "acceptance_criteria_modified": false,
+    "policy_thresholds_modified": false
+  },
+
+  "deliverables": [
+    "docs/architecture/external-source-ingestion/README.md",
+    "docs/architecture/external-source-ingestion/SOURCE_VERIFICATION.md",
+    "docs/architecture/external-source-ingestion/TRACEABILITY.md",
+    "docs/architecture/external-source-ingestion/DOMAIN_GAP_ASSESSMENT.md",
+    "docs/architecture/external-source-ingestion/TASK_DEDUP_REPORT.md",
+    "docs/architecture/external-source-ingestion/VERIFICATION_PLAN_AMENDMENT.md",
+    "docs/evidence/completion/DPF-SOURCE-SA-SD-BASELINE-001/baseline-reconciliation-receipt.json"
+  ],
+
+  "constraints": {
+    "code_modified": false,
+    "sources_enabled": false,
+    "receipts_fabricated": false,
+    "public_upload_approved": true,
+    "scope_restricted_to_owned_docs": true
+  },
+
+  "next_action": "submit_for_codex2_review"
+}

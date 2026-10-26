@@ -5,12 +5,14 @@ from adapters.base import BaseAdapter
 from adapters.claude_cli import ClaudeCLIAdapter
 from adapters.codex import CodexAdapter
 from adapters.file_inbox import FileInboxAdapter
+from adapters.pi import PiAdapter
 
 ADAPTERS: dict[str, type[BaseAdapter]] = {
     "file_inbox": FileInboxAdapter,
     "claude_cli": ClaudeCLIAdapter,
     "antigravity": AntigravityAdapter,
     "codex": CodexAdapter,
+    "pi": PiAdapter,
 }
 
 

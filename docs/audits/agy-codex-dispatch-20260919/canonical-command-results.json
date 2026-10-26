@@ -1,0 +1,134 @@
+[
+  {
+    "source_file": "dispatch-mutations.json",
+    "operation": "assign",
+    "task_id": "DPF-CAPTURE-RETENTION-RUNNER-001",
+    "exit_code": 0
+  },
+  {
+    "source_file": "dispatch-mutations.json",
+    "operation": "note",
+    "task_id": "DPF-CAPTURE-RETENTION-RUNNER-001",
+    "exit_code": 0
+  },
+  {
+    "source_file": "dispatch-mutations.json",
+    "operation": "assign",
+    "task_id": "DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001",
+    "exit_code": 0
+  },
+  {
+    "source_file": "dispatch-mutations.json",
+    "operation": "note",
+    "task_id": "DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001",
+    "exit_code": 0
+  },
+  {
+    "source_file": "dispatch-mutations.json",
+    "operation": "assign",
+    "task_id": "ODP-DEV-RELEASE-GATE-RECONCILIATION-004",
+    "exit_code": 0
+  },
+  {
+    "source_file": "dispatch-mutations.json",
+    "operation": "note",
+    "task_id": "ODP-DEV-RELEASE-GATE-RECONCILIATION-004",
+    "exit_code": 0
+  },
+  {
+    "source_file": "dispatch-mutations.json",
+    "operation": "note",
+    "task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+    "exit_code": 0
+  },
+  {
+    "source_file": "dispatch-mutations.json",
+    "operation": "reopen",
+    "task_id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+    "exit_code": 0
+  },
+  {
+    "source_file": "dispatch-mutations.json",
+    "operation": "reopen",
+    "task_id": "XR-EXT-OSS-FINAL-AUDIT-001",
+    "exit_code": 0
+  },
+  {
+    "source_file": "dispatch-mutations.json",
+    "operation": "set_dependencies",
+    "task_id": "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+    "exit_code": 0
+  },
+  {
+    "source_file": "dispatch-mutations.json",
+    "operation": "reopen",
+    "task_id": "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+    "exit_code": 0
+  },
+  {
+    "source_file": "dispatch-mutations.json",
+    "operation": "set_dependencies",
+    "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+    "exit_code": 0
+  },
+  {
+    "source_file": "dispatch-mutations.json",
+    "operation": "reopen",
+    "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+    "exit_code": 0
+  },
+  {
+    "source_file": "dispatch-mutations.json",
+    "operation": "note",
+    "task_id": "HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001",
+    "exit_code": 0
+  },
+  {
+    "source_file": "deployment-routing-mutations.json",
+    "operation": "assign",
+    "task_id": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+    "exit_code": 0
+  },
+  {
+    "source_file": "deployment-routing-mutations.json",
+    "operation": "assign",
+    "task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+    "exit_code": 0
+  },
+  {
+    "source_file": "deployment-routing-mutations.json",
+    "operation": "set_dependencies",
+    "task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+    "exit_code": 0
+  },
+  {
+    "source_file": "deployment-routing-mutations.json",
+    "operation": "reopen",
+    "task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+    "exit_code": 0
+  },
+  {
+    "source_file": "deployment-routing-mutations.json",
+    "operation": "assign",
+    "task_id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+    "exit_code": 0
+  },
+  {
+    "source_file": "deployment-routing-mutations.json",
+    "operation": "note",
+    "task_id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+    "exit_code": 0
+  },
+  {
+    "source_file": "deployment-routing-mutations.json",
+    "operation": "assign",
+    "task_id": "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001",
+    "exit_code": 0
+  },
+  {
+    "source_file": "deployment-routing-mutations.json",
+    "operation": "note",
+    "task_id": "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001",
+    "exit_code": 0
+  }
+]

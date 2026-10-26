@@ -1,0 +1,425 @@
+{
+  "observed_at": "2026-09-19T14:28:04.643093+00:00",
+  "canonical_updated_at": "2026-09-19T14:26:47Z",
+  "excludes_document_publication_task_not_yet_registered": true,
+  "task_count": 23,
+  "status_counts": {
+    "todo": 11,
+    "in_progress": 5,
+    "blocked": 4,
+    "review": 3
+  },
+  "tasks": [
+    {
+      "id": "HUMAN-OSS-LEGAL-APPROVAL-001",
+      "title": "逐一決定每個資料來源與 OSS 的許可及義務",
+      "owner": "Human/Ops",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "XR-EXT-OSS-FINAL-AUDIT-001"
+      ],
+      "repository": "alfloop-dev/odayplus",
+      "owned_paths": [
+        "docs/evidence/oss-legal-policy/"
+      ]
+    },
+    {
+      "id": "XR-SOURCE-APPROVAL-ACTIVATION-001",
+      "title": "依逐來源許可決定啟用自動更新，未核准來源保持關閉",
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "HUMAN-OSS-LEGAL-APPROVAL-001"
+      ],
+      "repository": "alfloop-dev/oday-data-platform",
+      "owned_paths": [
+        "deploy/k8s/emgi/configmap.yaml",
+        "src/oday_data_platform/external/policy/",
+        "tests/external/test_source_update_policy.py",
+        "docs/evidence/completion/XR-SOURCE-APPROVAL-ACTIVATION-001/"
+      ]
+    },
+    {
+      "id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "title": "建立 ephemeral staging 並完成全套 release rehearsal",
+      "owner": "Antigravity5",
+      "reviewer": "Codex",
+      "status": "in_progress",
+      "depends_on": [
+        "ODP-EPHEMERAL-STAGING-IAC-001",
+        "ODP-DEV-ROLLOUT-001",
+        "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+        "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+        "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+        "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001"
+      ],
+      "repository": "alfloop-dev/odayplus",
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1014",
+      "non_dispatchable": false
+    },
+    {
+      "id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+      "title": "執行 production 0% green 驗證與 100% blue-green 切換",
+      "owner": "Antigravity5",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+        "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+        "ODP-PROD-RUNTIME-RELEASE-PATH-001"
+      ],
+      "repository": "alfloop-dev/odayplus",
+      "non_dispatchable": false
+    },
+    {
+      "id": "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001",
+      "title": "完成 production watch、staging cleanup 與 release archive",
+      "owner": "Antigravity5",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "ODP-PROD-BLUEGREEN-ROLLOUT-001"
+      ],
+      "repository": "alfloop-dev/odayplus",
+      "non_dispatchable": false
+    },
+    {
+      "id": "HUMAN-GCP-WEB-OAUTH-CLIENTS-001",
+      "title": "選用功能：Google OAuth 未啟用（帳密登入已定案）",
+      "owner": "Human/Ops",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [],
+      "repository": "alfloop-dev/odayplus",
+      "non_dispatchable": true
+    },
+    {
+      "id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+      "title": "以真實 artifact 完成 dev live rollout 並取代 false-done 前提",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "status": "in_progress",
+      "depends_on": [
+        "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+        "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+        "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+        "DPF-EMGI-LIVE-ROLLOUT-001",
+        "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+        "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+        "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+        "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+        "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+        "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+        "ODP-DEV-RELEASE-GATE-RECONCILIATION-004"
+      ],
+      "repository": "alfloop-dev/odayplus",
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1107",
+      "owned_paths": [
+        "docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/"
+      ],
+      "non_dispatchable": false
+    },
+    {
+      "id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+      "title": "補齊 ephemeral staging 的受治理 foundation 與 durable state",
+      "owner": "Antigravity3",
+      "reviewer": "Codex",
+      "status": "in_progress",
+      "depends_on": [],
+      "repository": "alfloop-dev/odayplus",
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1046",
+      "owned_paths": [
+        "infra/terraform/main.tf",
+        "infra/terraform/network.tf",
+        "infra/terraform/kms.tf",
+        "infra/terraform/database.tf",
+        "infra/terraform/variables.tf",
+        "infra/terraform/outputs.tf",
+        "infra/terraform/modules/runtime_foundation/",
+        "infra/terraform/bootstrap/",
+        "infra/terraform/tests/test_runtime_foundation.py",
+        "docs/deployment/STAGING_FOUNDATION_BOOTSTRAP.md",
+        "docs/evidence/runtime/ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001/",
+        "delivery_toolchain/release/release_manifest.py",
+        "tests/release/test_foundation_egress_contract.py"
+      ]
+    },
+    {
+      "id": "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+      "title": "產生可驗證的 EMGI masked release snapshot artifact",
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "status": "blocked",
+      "depends_on": [
+        "DPF-EMGI-LIVE-ROLLOUT-001",
+        "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+        "DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001"
+      ],
+      "repository": "alfloop-dev/oday-data-platform",
+      "pr_url": "https://github.com/alfloop-dev/oday-data-platform/pull/63",
+      "owned_paths": [
+        "src/oday_data_platform/release_snapshot.py",
+        "scripts/materialize_emgi_release_snapshot.py",
+        "tests/deploy/test_emgi_release_snapshot.py",
+        "infra/k8s/data-platform/runtime/",
+        ".github/workflows/emgi-runtime-deploy.yml",
+        "docs/evidence/runtime/DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001/"
+      ]
+    },
+    {
+      "id": "ODP-STAGING-STATE-PLAN-QUARANTINE-CLEANUP-001",
+      "title": "清理 staging state bucket 中受 retention 隔離的 non-state plan object",
+      "owner": "Human/Ops",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [],
+      "non_dispatchable": true
+    },
+    {
+      "id": "ODP-NFR-RUNTIME-EVIDENCE-001",
+      "title": "在可信 live rollout 後驗證 SHARED-008 與 PERF／BATCH／AVAIL／RPO",
+      "owner": "Antigravity3",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"
+      ]
+    },
+    {
+      "id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+      "title": "重跑 production-path 證據並關閉 ODP 20 項 structural remediation ledger",
+      "owner": "Antigravity5",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+        "ODP-SPEC-SOURCE-PROVENANCE-001",
+        "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+        "ODP-LH-PREDICTION-DRIFT-001",
+        "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
+        "ODP-JOB-PARTIAL-DISPOSITION-001",
+        "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+        "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+        "ODP-NET002-LEASE-DISPOSITION-001",
+        "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+        "ODP-PRICE006-BANDIT-GATED-001",
+        "ODP-INT001-CDC-DISPOSITION-001",
+        "ODP-INTV006-ADJUST-WORKFLOW-001",
+        "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+        "ODP-OPS002-DECISION-COMMENTS-001",
+        "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+        "ODP-NFR-RUNTIME-EVIDENCE-001"
+      ]
+    },
+    {
+      "id": "HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001",
+      "title": "裁決六項仍未關閉的原始需求／資料缺口",
+      "owner": "Human/Ops",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [],
+      "repository": "alfloop-dev/odayplus",
+      "non_dispatchable": true
+    },
+    {
+      "id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+      "title": "歷史驗收續辦：ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+      "owner": "Antigravity3",
+      "reviewer": "Codex",
+      "status": "review",
+      "depends_on": [],
+      "repository": "pantheon",
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1314",
+      "owned_paths": [
+        "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/",
+        "docs/evidence/runtime/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/production-authority-prerequisites.json"
+      ],
+      "non_dispatchable": false
+    },
+    {
+      "id": "XR-EXT-OSS-FINAL-AUDIT-001",
+      "title": "歷史驗收續辦：XR-EXT-OSS-FINAL-AUDIT-001",
+      "owner": "Antigravity4",
+      "reviewer": "Codex",
+      "status": "in_progress",
+      "depends_on": [],
+      "repository": "pantheon",
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1312",
+      "owned_paths": [
+        "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/",
+        "docs/audits/code-boundary-inventory.csv"
+      ],
+      "non_dispatchable": false
+    },
+    {
+      "id": "ODP-BRAND-TRANSFER-IMPLEMENTATION-001",
+      "title": "實作真實品牌轉移觀測、freshness 與 SiteScore 消費",
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "status": "blocked",
+      "depends_on": [
+        "ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
+        "ODP-BRAND-CLASSIFICATION-SYNC-PRESERVATION-001"
+      ],
+      "repository": "alfloop-dev/odayplus",
+      "owned_paths": [
+        "modules/sitescore/",
+        "shared/infrastructure/persistence/",
+        "infra/db/migrations/",
+        "tests/integration/test_brand_transfer_observations.py",
+        "docs/evidence/human-decisions/ODP-BRAND-TRANSFER-IMPLEMENTATION-001/"
+      ],
+      "non_dispatchable": true
+    },
+    {
+      "id": "ODP-FORMAT-CONVERSION-IMPLEMENTATION-001",
+      "title": "實作店型轉換事件、停業損失及財務模擬",
+      "owner": "Antigravity6",
+      "reviewer": "Codex",
+      "status": "blocked",
+      "depends_on": [
+        "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001"
+      ],
+      "repository": "alfloop-dev/odayplus",
+      "owned_paths": [
+        "modules/site_economics/",
+        "modules/sitescore/",
+        "shared/infrastructure/persistence/",
+        "infra/db/migrations/",
+        "tests/integration/test_format_conversion.py",
+        "docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-IMPLEMENTATION-001/"
+      ],
+      "non_dispatchable": true
+    },
+    {
+      "id": "ODP-NET002-LEASE-IMPLEMENTATION-001",
+      "title": "將真實租約與候選檔期接入雙求解器硬限制",
+      "owner": "Antigravity7",
+      "reviewer": "Codex",
+      "status": "blocked",
+      "depends_on": [
+        "ODP-NET002-LEASE-CONTRACT-PREP-001"
+      ],
+      "repository": "alfloop-dev/odayplus",
+      "owned_paths": [
+        "modules/netplan/",
+        "solver/netplan/",
+        "shared/infrastructure/persistence/",
+        "infra/db/migrations/",
+        "tests/solver/test_lease_admissibility.py",
+        "docs/evidence/human-decisions/ODP-NET002-LEASE-IMPLEMENTATION-001/"
+      ],
+      "non_dispatchable": true
+    },
+    {
+      "id": "DPF-CAPTURE-RETENTION-RUNNER-001",
+      "title": "補齊既有真實擷取到受治理 raw retention 的唯一操作入口",
+      "owner": "Antigravity5",
+      "reviewer": "Codex",
+      "status": "in_progress",
+      "depends_on": [
+        "DPF-ACQUISITION-RETENTION-BRIDGE-001",
+        "DPF-SITE-CONTEXT-REAL-COMPONENTS-001"
+      ],
+      "repository": "alfloop-dev/oday-data-platform",
+      "owned_paths": [
+        "scripts/capture_public_source_evidence.py",
+        "scripts/capture_and_retain_emgi_raw.py",
+        "tests/deploy/test_capture_retention_runner.py",
+        "docs/runbooks/emgi-retained-raw-snapshots.md",
+        "docs/evidence/completion/DPF-CAPTURE-RETENTION-RUNNER-001/"
+      ],
+      "non_dispatchable": false
+    },
+    {
+      "id": "DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001",
+      "title": "執行受控真實資料擷取並保存可讀回的八域 raw 快照",
+      "owner": "Antigravity6",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "DPF-CAPTURE-RETENTION-RUNNER-001"
+      ],
+      "repository": "alfloop-dev/oday-data-platform",
+      "owned_paths": [
+        "docs/evidence/runtime/DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001/"
+      ],
+      "non_dispatchable": false
+    },
+    {
+      "id": "ODP-DEV-RELEASE-GATE-RECONCILIATION-004",
+      "title": "依已合併 foundation 重建 dev candidate 並修復 gate 實際證據承接",
+      "owner": "Antigravity7",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+        "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001"
+      ],
+      "repository": "alfloop-dev/odayplus",
+      "owned_paths": [
+        "docs/evidence/gates/RELEASE_MANIFEST.json",
+        "docs/evidence/gates/RELEASE_GATE_REGISTRY.json",
+        "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-004/"
+      ],
+      "non_dispatchable": false
+    },
+    {
+      "id": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+      "title": "驗證 staging recovery storage 並承接失效歷史依賴",
+      "owner": "Antigravity6",
+      "reviewer": "Codex",
+      "status": "review",
+      "depends_on": [],
+      "repository": "alfloop-dev/odayplus",
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1343",
+      "owned_paths": [
+        "docs/evidence/runtime/ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001/"
+      ],
+      "non_dispatchable": false
+    },
+    {
+      "id": "ODP-BRAND-CLASSIFICATION-SYNC-PRESERVATION-001",
+      "title": "修復資料同步覆寫既有品牌分類",
+      "owner": "Antigravity7",
+      "reviewer": "Codex",
+      "status": "review",
+      "depends_on": [],
+      "repository": "alfloop-dev/odayplus",
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1344",
+      "owned_paths": [
+        "apps/data_platform/store.py",
+        "apps/data_platform/tests/test_brand_classification_sync.py",
+        "docs/evidence/completion/ODP-BRAND-CLASSIFICATION-SYNC-PRESERVATION-001/"
+      ],
+      "non_dispatchable": false
+    }
+  ],
+  "live_workers": [
+    {
+      "task_id": "DPF-CAPTURE-RETENTION-RUNNER-001",
+      "provider": "antigravity",
+      "status": "running",
+      "started_at": "2026-09-19T14:19:17Z",
+      "pid_alive_at_observation": true
+    },
+    {
+      "task_id": "ODP-BRAND-CLASSIFICATION-SYNC-PRESERVATION-001",
+      "provider": "antigravity",
+      "status": "running",
+      "started_at": "2026-09-19T14:19:22Z",
+      "pid_alive_at_observation": true
+    },
+    {
+      "task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+      "provider": "antigravity",
+      "status": "running",
+      "started_at": "2026-09-19T14:23:12Z",
+      "pid_alive_at_observation": true
+    }
+  ],
+  "source": "canonical task board plus Supervisor state and read-only OS process existence check",
+  "limitations": "State is a historical observation. Running/review is not completion; source data/cloud storage was not re-read for this publication."
+}

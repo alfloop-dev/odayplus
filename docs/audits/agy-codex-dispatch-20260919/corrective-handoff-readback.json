@@ -1,0 +1,17 @@
+{
+  "observed_at": "2026-09-19T14:21:53.762541+00:00",
+  "checks": [
+    {
+      "task_id": "DPF-CAPTURE-RETENTION-RUNNER-001",
+      "task_brief": "task-briefs/dpf_capture_retention_runner_001.md",
+      "corrective_handoff_delivered": true,
+      "task_brief_location": "worker checkout .orchestrator/task-briefs/dpf_capture_retention_runner_001.md"
+    },
+    {
+      "task_id": "ODP-BRAND-CLASSIFICATION-SYNC-PRESERVATION-001",
+      "task_brief": "task-briefs/odp_brand_classification_sync_preservation_001.md",
+      "corrective_handoff_delivered": true,
+      "task_brief_location": "worker checkout .orchestrator/task-briefs/odp_brand_classification_sync_preservation_001.md"
+    }
+  ]
+}

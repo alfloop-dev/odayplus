@@ -16,6 +16,7 @@ export interface PauseSlaDialogProps {
   }) => void;
   record: AssistedIntake;
   onConflictRefresh?: () => void;
+  resourceVersion?: number | null;
 }
 
 /**
@@ -30,6 +31,7 @@ export function PauseSlaDialog({
   onSubmit,
   record,
   onConflictRefresh,
+  resourceVersion = null,
 }: PauseSlaDialogProps) {
   const [reason, setReason] = useState("");
   const [resumeTime, setResumeTime] = useState("");
@@ -46,13 +48,15 @@ export function PauseSlaDialog({
   }, []);
 
   const title = "暫停 SLA（Pause SLA）";
+  const versionAvailable = Number.isSafeInteger(resourceVersion) && Number(resourceVersion) >= 1;
+  const displayedVersion = versionAvailable ? `v${resourceVersion}` : "尚未取得";
   const formattedResumeText = resumeTime ? resumeTime.replace("T", " ") : "未設定";
   const riskSummary =
     `將收件 ${record.id} 的 SLA 暫停，預計恢復時間：${formattedResumeText}。` +
     `此操作會暫停處理時效計時。前後狀態與暫停原因將寫入 Audit 歷程。`;
 
   function handleSubmit() {
-    if (busy) return;
+    if (busy || !versionAvailable) return;
     setLocalError(null);
 
     if (!reason.trim()) {
@@ -123,7 +127,7 @@ export function PauseSlaDialog({
         >
           收件編號：<strong>{record.id}</strong> · 目前負責人：
           <strong data-testid="pause-record-owner">{record.owner || "未指派"}</strong> · 版本：
-          <span data-testid="pause-record-version">v{record.version || 1}</span>
+          <span data-testid="pause-record-version">{displayedVersion}</span>
         </div>
 
         <div>
@@ -158,13 +162,13 @@ export function PauseSlaDialog({
         {isConflict && onConflictRefresh ? (
           <div className={styles.errorPanel} data-testid="pause-conflict-panel" role="alert">
             <span className={styles.errorSummary}>
-              409 OWNER_CONFLICT — 此收件的 owner 在你開啟後已變更
+              409 — 暫停操作衝突，請重新整理 SLA 狀態與版本
             </span>
             <span className={styles.errorMeta}>
-              目前 owner：{record.owner || "未指定"} · 版本 v{record.version || 1}
+              目前 owner：{record.owner || "未指定"} · SLA 版本 {displayedVersion}
             </span>
             <span className={styles.errorNext}>
-              重新整理套用最新狀態後再送出 — 你的暫停原因與預計恢復時間已保留。
+              重新整理套用最新 SLA 狀態與版本後再送出 — 你的暫停原因與預計恢復時間已保留。
             </span>
             <button
               className={styles.secondaryButton}
@@ -173,7 +177,7 @@ export function PauseSlaDialog({
               style={{ marginTop: "6px", color: "#b3261e", borderColor: "#f3cbc7" }}
               type="button"
             >
-              重新整理並套用最新 owner／版本
+              重新整理並套用最新 SLA 狀態／版本
             </button>
           </div>
         ) : shownError ? (
@@ -217,7 +221,7 @@ export function PauseSlaDialog({
         <button
           className={styles.primaryButton}
           data-testid="pause-submit-btn"
-          disabled={busy}
+          disabled={busy || !versionAvailable}
           onClick={handleSubmit}
           type="button"
         >

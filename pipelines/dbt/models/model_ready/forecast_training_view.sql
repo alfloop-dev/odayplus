@@ -11,6 +11,7 @@ with store_days as (
     where event_time < {{ var('prediction_origin_time', 'current_timestamp') }}::timestamptz
       and observation_time <= {{ var('feature_snapshot_time', 'current_timestamp') }}::timestamptz
       and ingested_at <= {{ var('feature_snapshot_time', 'current_timestamp') }}::timestamptz
+      and transaction_status = 'succeeded'
     group by store_id, date_trunc('day', event_time)::date
 ),
 features as (
@@ -44,7 +45,7 @@ select
     {{ var('prediction_origin_time', 'current_timestamp') }}::timestamptz as prediction_origin_time,
     array['core.transactions'] as source_snapshot_ids,
     case when latest_observation_time <= {{ var('feature_snapshot_time', 'current_timestamp') }}::timestamptz then 1.0 else 0.0 end as data_quality_score,
-    1.0 as confidence,
+    null::numeric as confidence,
     latest_observation_time <= {{ var('feature_snapshot_time', 'current_timestamp') }}::timestamptz as is_training_eligible,
     latest_ingested_at <= {{ var('feature_snapshot_time', 'current_timestamp') }}::timestamptz as is_scoring_eligible,
     case

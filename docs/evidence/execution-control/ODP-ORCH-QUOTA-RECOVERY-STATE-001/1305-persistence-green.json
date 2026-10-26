@@ -1,0 +1,20 @@
+{
+  "cwd": "/tmp/codex-1305-persistence-fix",
+  "head_sha": "c9c0fb3fc6211161be0bd560caa7befb70dfba66",
+  "tracked_diff_sha256": "c8ac712c2204a54fb59d55a2397a1fd409e8f3aab87cc495bfb8f2b0d4220bbb",
+  "argv": [
+    "/tmp/pantheon-worker-worktrees/pantheon/odp-orch-quota-recovery-state-001/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-o",
+    "addopts=",
+    "-q",
+    ".orchestrator/test_runtime_state.py",
+    ".orchestrator/test_account_pool_admission.py",
+    ".orchestrator/test_supervisor.py::SuccessfulWorkerPostconditionTests"
+  ],
+  "started_at": "2026-09-12T15:34:00.709458+00:00",
+  "duration_seconds": 5.76940781500889,
+  "exit_code": 0,
+  "output": "1305-persistence-green.log"
+}

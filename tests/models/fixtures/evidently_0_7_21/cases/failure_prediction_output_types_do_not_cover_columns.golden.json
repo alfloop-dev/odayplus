@@ -1,0 +1,12 @@
+{
+  "case_id": "failure_prediction_output_types_do_not_cover_columns",
+  "description": "Declared output types do not exactly match the requested columns.",
+  "failure": {
+    "exception_message": "prediction output types must exactly match prediction columns",
+    "exception_module": "builtins",
+    "exception_type": "ValueError"
+  },
+  "kind": "prediction_drift",
+  "outcome": "raised",
+  "routing_expectation": "_normalize_output_types guard"
+}

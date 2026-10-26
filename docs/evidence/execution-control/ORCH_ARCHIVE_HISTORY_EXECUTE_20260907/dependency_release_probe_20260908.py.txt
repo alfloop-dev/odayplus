@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""Read-only dependency-release probe for ORCH-ARCHIVE-HISTORY-EXECUTE-003.
+
+Measures, against the live runtime code, which board tasks the Dispatcher
+considers canonical owner-execution work, and which tasks have their declared
+dependencies satisfied.
+
+Scenario is selected by env:
+  PROBE_SCENARIO=AFTER   -> live PANTHEON_STATUS_ROOT (post-apply on-disk truth)
+  PROBE_SCENARIO=BEFORE  -> PANTHEON_STATUS_ROOT points at a filtered copy of the
+                            archive (23 reconstructed snapshots removed) and the
+                            15 recovery placeholders are dropped from the board.
+
+Nothing in this script writes to canonical state.
+"""
+import hashlib
+import json
+import os
+import sys
+from pathlib import Path
+
+RUNTIME = Path(os.environ["PROBE_RUNTIME"]) / ".orchestrator"
+sys.path.insert(0, str(RUNTIME))
+
+import supervisor  # noqa: E402
+import task_archive  # noqa: E402
+from common import load_config  # noqa: E402
+
+SCENARIO = os.environ["PROBE_SCENARIO"]
+IDS = json.loads(Path(os.environ["PROBE_IDS"]).read_text())
+ARCHIVE_IDS = set(IDS["archive_ids"])
+BOARD_IDS = set(IDS["board_ids"])
+LIVE_BOARD = Path(os.environ["PROBE_LIVE_BOARD"])
+
+
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+config = load_config(os.environ["PROBE_CONFIG"])
+board = json.loads(LIVE_BOARD.read_text())
+tasks = [t for t in (board.get("tasks") or []) if isinstance(t, dict)]
+
+if SCENARIO == "BEFORE":
+    tasks = [t for t in tasks if str(t.get("id") or "").strip() not in BOARD_IDS]
+
+task_map = {str(t.get("id") or "").strip(): t for t in tasks if str(t.get("id") or "").strip()}
+done_statuses = supervisor.normalized_status_set(
+    supervisor.ready_dispatch_settings(config).get("dependency_done_statuses"), ["done"]
+)
+
+dispatchable = sorted(supervisor.canonical_dispatchable_task_ids(config, tasks))
+
+deps_satisfied = []
+dep_detail = {}
+for task_id, task in sorted(task_map.items()):
+    declared = [str(d).strip() for d in (task.get("depends_on") or []) if str(d).strip()]
+    if not declared:
+        continue
+    resolver = task_archive.TaskResolver(task_map)
+    ok = supervisor.dependencies_satisfied(task, task_map, done_statuses)
+    if ok:
+        deps_satisfied.append(task_id)
+    dep_detail[task_id] = {
+        "status": str(task.get("status") or ""),
+        "depends_on": declared,
+        "dependency_states": {
+            dep: {
+                "status": resolver.dependency_status(dep),
+                "source": resolver.source(dep),
+                "satisfies": resolver.dependency_satisfied(dep),
+            }
+            for dep in declared
+        },
+        "dependencies_satisfied": ok,
+    }
+
+auto_recovery = sorted(
+    task_id
+    for task_id, task in task_map.items()
+    if supervisor.blocked_task_auto_recovery_eligible(config, task, task_map)
+)
+
+archive_dir = task_archive.ARCHIVE_TASKS_DIR
+result = {
+    "scenario": SCENARIO,
+    "inputs": {
+        "status_root": str(task_archive.STATUS_ROOT),
+        "archive_tasks_dir": str(archive_dir),
+        "archive_snapshot_count": len(sorted(archive_dir.glob("*.json"))) if archive_dir.exists() else 0,
+        "reconstructed_snapshots_visible": sorted(
+            i for i in ARCHIVE_IDS if (archive_dir / f"{i}.json").exists()
+        ),
+        "board_path": str(LIVE_BOARD),
+        "board_sha256": sha256_file(LIVE_BOARD),
+        "board_revision": board.get("_status_write_revision") or board.get("status_write_revision"),
+        "board_active_tasks": len(tasks),
+        "recovery_placeholders_on_board": sorted(i for i in BOARD_IDS if i in task_map),
+        "code_checkout": os.environ["PROBE_RUNTIME"],
+        "dependency_done_statuses": sorted(done_statuses),
+    },
+    "dispatchable_ids": dispatchable,
+    "dispatchable_count": len(dispatchable),
+    "dependencies_satisfied_true": sorted(deps_satisfied),
+    "blocked_auto_recovery_eligible_true": auto_recovery,
+    "dependency_detail": dep_detail,
+}
+print(json.dumps(result, ensure_ascii=False))

@@ -7,6 +7,7 @@ schedules, and financial valuation metrics (NPV, IRR, censored payback).
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -50,16 +51,17 @@ class MachineModelSpec:
     model_name: str
     capacity_kg: float
     unit_capex: float
-    baseline_turns_per_day: float
+    baseline_turns_per_day: float | None
     max_turns_per_day: float
     base_cycle_price: float
-    water_liters_per_cycle: float = 0.0
-    electricity_kwh_per_cycle: float = 0.0
-    gas_kg_per_cycle: float = 0.0
-    detergent_cost_per_cycle: float = 0.0
-    monthly_maintenance_per_unit: float = 500.0
+    water_liters_per_cycle: float | None = 0.0
+    electricity_kwh_per_cycle: float | None = 0.0
+    gas_kg_per_cycle: float | None = 0.0
+    detergent_cost_per_cycle: float | None = 0.0
+    monthly_maintenance_per_unit: float | None = 500.0
     useful_life_months: int = 84
     residual_value_ratio: float = 0.10
+    cycle_minutes: float | None = None
 
     @property
     def residual_value_per_unit(self) -> float:
@@ -73,20 +75,21 @@ class MachineModelSpec:
             model_name=str(data["model_name"]),
             capacity_kg=float(data["capacity_kg"]),
             unit_capex=float(data["unit_capex"]),
-            baseline_turns_per_day=float(data["baseline_turns_per_day"]),
+            baseline_turns_per_day=(float(data["baseline_turns_per_day"])
+                                    if data["baseline_turns_per_day"] is not None else None),
             max_turns_per_day=float(data["max_turns_per_day"]),
             base_cycle_price=float(data["base_cycle_price"]),
-            water_liters_per_cycle=float(data.get("water_liters_per_cycle", 0.0)),
-            electricity_kwh_per_cycle=float(data.get("electricity_kwh_per_cycle", 0.0)),
-            gas_kg_per_cycle=float(data.get("gas_kg_per_cycle", 0.0)),
-            detergent_cost_per_cycle=float(data.get("detergent_cost_per_cycle", 0.0)),
-            monthly_maintenance_per_unit=float(data.get("monthly_maintenance_per_unit", 500.0)),
+            **{key: float(data.get(key, default)) if data.get(key, default) is not None else None
+               for key, default in (("water_liters_per_cycle", 0.0),
+                   ("electricity_kwh_per_cycle", 0.0), ("gas_kg_per_cycle", 0.0),
+                   ("detergent_cost_per_cycle", 0.0), ("monthly_maintenance_per_unit", 500.0))},
+            cycle_minutes=float(data["cycle_minutes"]) if data.get("cycle_minutes") is not None else None,
             useful_life_months=int(data.get("useful_life_months", 84)),
             residual_value_ratio=float(data.get("residual_value_ratio", 0.10)),
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "model_id": self.model_id,
             "machine_class": self.machine_class.value,
             "model_name": self.model_name,
@@ -103,6 +106,10 @@ class MachineModelSpec:
             "useful_life_months": self.useful_life_months,
             "residual_value_ratio": self.residual_value_ratio,
         }
+        # Retained snapshots predate explicit cycle timing.
+        if self.cycle_minutes is not None:
+            result["cycle_minutes"] = self.cycle_minutes
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,7 +128,7 @@ class MachineMixItem:
         return self.machine_model.base_cycle_price
 
     @property
-    def effective_turns_per_day(self) -> float:
+    def effective_turns_per_day(self) -> float | None:
         if self.custom_turns_per_day is not None:
             return self.custom_turns_per_day
         return self.machine_model.baseline_turns_per_day
@@ -214,6 +221,99 @@ class MachineMixSpec:
             "total_equipment_capex": self.total_equipment_capex,
             "total_residual_value": self.total_residual_value,
         }
+
+
+class CapitalAssetKind(StrEnum):
+    PAYMENT_SYSTEM = "PAYMENT_SYSTEM"
+    KIOSK = "KIOSK"
+    VENDING = "VENDING"
+    CAMERA_SYSTEM = "CAMERA_SYSTEM"
+    FURNITURE = "FURNITURE"
+
+
+@dataclass(frozen=True, slots=True)
+class CapitalAssetSpec:
+    """Explicit nonproductive equipment costs, separate from laundry demand.
+
+    Every amount and lifetime is supplied by the scenario author. This value
+    object grants no source, financial-policy or production admission. Vending
+    sales require their own evidence and model; no sales follow from this cost.
+    """
+
+    asset_id: str
+    asset_kind: CapitalAssetKind
+    version: str
+    quantity: int
+    unit_capex: float
+    useful_life_months: int
+    residual_value_ratio: float
+    monthly_fixed_operating_cost: float | None
+
+    def __post_init__(self) -> None:
+        def refuse() -> None:
+            raise ValueError("CAPITAL_ASSET_INVALID: explicit finite costs, integer counts and lifetime are required")
+
+        if any(type(value) is not str or not value.strip() for value in (self.asset_id, self.version)):
+            refuse()
+        if type(self.asset_kind) is not CapitalAssetKind:
+            refuse()
+        if type(self.quantity) is not int or self.quantity < 1:
+            refuse()
+        if type(self.useful_life_months) is not int or self.useful_life_months < 1:
+            refuse()
+        try:
+            if not math.isfinite(self.quantity) or not math.isfinite(self.useful_life_months):
+                refuse()
+            for value in (self.unit_capex, self.residual_value_ratio, *(
+                (self.monthly_fixed_operating_cost,) if self.monthly_fixed_operating_cost is not None else ()
+            )):
+                if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+                    refuse()
+            if self.residual_value_ratio > 1:
+                refuse()
+            if not all(math.isfinite(value) for value in (
+                self.total_capex, self.total_residual_value, *(
+                    (self.total_monthly_operating_cost,) if self.total_monthly_operating_cost is not None else ()
+                ),
+            )):
+                refuse()
+        except OverflowError:
+            refuse()
+
+    @property
+    def total_capex(self) -> float:
+        return self.unit_capex * self.quantity
+
+    @property
+    def total_residual_value(self) -> float:
+        return self.total_capex * self.residual_value_ratio
+
+    @property
+    def total_monthly_operating_cost(self) -> float | None:
+        if self.monthly_fixed_operating_cost is None:
+            return None
+        return self.monthly_fixed_operating_cost * self.quantity
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> CapitalAssetSpec:
+        fields = {"asset_id", "asset_kind", "version", "quantity", "unit_capex", "useful_life_months",
+                  "residual_value_ratio", "monthly_fixed_operating_cost"}
+        if not isinstance(data, Mapping) or set(data) != fields:
+            raise ValueError("CAPITAL_ASSET_INVALID: supply exactly the nonproductive asset fields")
+        if type(data["asset_kind"]) is not str:
+            raise ValueError("CAPITAL_ASSET_INVALID: declare the ancillary asset kind explicitly")
+        try:
+            kind = CapitalAssetKind(data["asset_kind"])
+        except ValueError as exc:
+            raise ValueError("CAPITAL_ASSET_INVALID: declare a supported nonproductive capital asset kind") from exc
+        return cls(**{**data, "asset_kind": kind})
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"asset_id": self.asset_id, "asset_kind": self.asset_kind.value,
+                "version": self.version, "quantity": self.quantity,
+                "unit_capex": self.unit_capex, "useful_life_months": self.useful_life_months,
+                "residual_value_ratio": self.residual_value_ratio,
+                "monthly_fixed_operating_cost": self.monthly_fixed_operating_cost}
 
 
 @dataclass(frozen=True, slots=True)
@@ -676,38 +776,38 @@ class MonthlyCashFlowItem:
             "year": self.year,
             "calendar_month": self.calendar_month,
             "is_terminal": self.is_terminal,
-            "ramp_multiplier": self.ramp_multiplier,
-            "seasonality_multiplier": self.seasonality_multiplier,
-            "total_cycles_count": self.total_cycles_count,
-            "gross_revenue": self.gross_revenue,
-            "rent_expense": self.rent_expense,
-            "utilities_expense": self.utilities_expense,
-            "maintenance_expense": self.maintenance_expense,
-            "store_operations_expense": self.store_operations_expense,
-            "total_opex": self.total_opex,
-            "ebitda": self.ebitda,
-            "equipment_depreciation": self.equipment_depreciation,
-            "fitout_amortization": self.fitout_amortization,
-            "ebit": self.ebit,
-            "interest_expense": self.interest_expense,
-            "taxable_income": self.taxable_income,
-            "tax_expense": self.tax_expense,
-            "net_income": self.net_income,
-            "loan_principal_payment": self.loan_principal_payment,
-            "total_debt_service": self.total_debt_service,
-            "remaining_loan_principal": self.remaining_loan_principal,
-            "unlevered_operating_cash_flow": self.unlevered_operating_cash_flow,
-            "levered_operating_cash_flow": self.levered_operating_cash_flow,
-            "terminal_salvage_inflow": self.terminal_salvage_inflow,
-            "terminal_deposit_return": self.terminal_deposit_return,
-            "terminal_decommissioning_outflow": self.terminal_decommissioning_outflow,
-            "terminal_loan_payoff": self.terminal_loan_payoff,
-            "net_unlevered_cash_flow": self.net_unlevered_cash_flow,
-            "net_levered_cash_flow": self.net_levered_cash_flow,
-            "cumulative_unlevered_cash_flow": self.cumulative_unlevered_cash_flow,
-            "cumulative_levered_cash_flow": self.cumulative_levered_cash_flow,
-            "cumulative_discounted_unlevered_cf": self.cumulative_discounted_unlevered_cf,
-            "cumulative_discounted_levered_cf": self.cumulative_discounted_levered_cf,
+            "ramp_multiplier": float(self.ramp_multiplier),
+            "seasonality_multiplier": float(self.seasonality_multiplier),
+            "total_cycles_count": float(self.total_cycles_count),
+            "gross_revenue": float(self.gross_revenue),
+            "rent_expense": float(self.rent_expense),
+            "utilities_expense": float(self.utilities_expense),
+            "maintenance_expense": float(self.maintenance_expense),
+            "store_operations_expense": float(self.store_operations_expense),
+            "total_opex": float(self.total_opex),
+            "ebitda": float(self.ebitda),
+            "equipment_depreciation": float(self.equipment_depreciation),
+            "fitout_amortization": float(self.fitout_amortization),
+            "ebit": float(self.ebit),
+            "interest_expense": float(self.interest_expense),
+            "taxable_income": float(self.taxable_income),
+            "tax_expense": float(self.tax_expense),
+            "net_income": float(self.net_income),
+            "loan_principal_payment": float(self.loan_principal_payment),
+            "total_debt_service": float(self.total_debt_service),
+            "remaining_loan_principal": float(self.remaining_loan_principal),
+            "unlevered_operating_cash_flow": float(self.unlevered_operating_cash_flow),
+            "levered_operating_cash_flow": float(self.levered_operating_cash_flow),
+            "terminal_salvage_inflow": float(self.terminal_salvage_inflow),
+            "terminal_deposit_return": float(self.terminal_deposit_return),
+            "terminal_decommissioning_outflow": float(self.terminal_decommissioning_outflow),
+            "terminal_loan_payoff": float(self.terminal_loan_payoff),
+            "net_unlevered_cash_flow": float(self.net_unlevered_cash_flow),
+            "net_levered_cash_flow": float(self.net_levered_cash_flow),
+            "cumulative_unlevered_cash_flow": float(self.cumulative_unlevered_cash_flow),
+            "cumulative_levered_cash_flow": float(self.cumulative_levered_cash_flow),
+            "cumulative_discounted_unlevered_cf": float(self.cumulative_discounted_unlevered_cf),
+            "cumulative_discounted_levered_cf": float(self.cumulative_discounted_levered_cf),
         }
 
 
@@ -735,7 +835,7 @@ class PaybackOutcome:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "payback_months": self.payback_months,
+            "payback_months": float(self.payback_months) if self.payback_months is not None else None,
             "is_censored": self.is_censored,
             "censoring_type": self.censoring_type.value,
             "censored_reason": self.censored_reason,
@@ -818,32 +918,32 @@ class FinancialMetricsSummary:
     def to_dict(self) -> dict[str, Any]:
         return {
             "horizon_months": self.horizon_months,
-            "annual_discount_rate": self.annual_discount_rate,
-            "total_initial_capex": self.total_initial_capex,
-            "total_initial_cash_outlay": self.total_initial_cash_outlay,
-            "equity_investment": self.equity_investment,
-            "debt_financed": self.debt_financed,
-            "unlevered_npv": self.unlevered_npv,
-            "levered_npv": self.levered_npv,
-            "unlevered_irr": self.unlevered_irr,
-            "levered_irr": self.levered_irr,
+            "annual_discount_rate": float(self.annual_discount_rate),
+            "total_initial_capex": float(self.total_initial_capex),
+            "total_initial_cash_outlay": float(self.total_initial_cash_outlay),
+            "equity_investment": float(self.equity_investment),
+            "debt_financed": float(self.debt_financed),
+            "unlevered_npv": float(self.unlevered_npv),
+            "levered_npv": float(self.levered_npv),
+            "unlevered_irr": float(self.unlevered_irr) if self.unlevered_irr is not None else None,
+            "levered_irr": float(self.levered_irr) if self.levered_irr is not None else None,
             "simple_payback": self.simple_payback.to_dict(),
             "discounted_payback": self.discounted_payback.to_dict(),
-            "average_monthly_revenue": self.average_monthly_revenue,
-            "average_monthly_ebitda": self.average_monthly_ebitda,
-            "average_ebitda_margin": self.average_ebitda_margin,
-            "average_monthly_net_income": self.average_monthly_net_income,
-            "average_net_margin": self.average_net_margin,
-            "total_cumulative_levered_cash_flow": self.total_cumulative_levered_cash_flow,
-            "total_cumulative_unlevered_cash_flow": self.total_cumulative_unlevered_cash_flow,
-            "breakeven_monthly_revenue": self.breakeven_monthly_revenue,
-            "breakeven_turns_per_day": self.breakeven_turns_per_day,
-            "breakeven_capacity_utilization": self.breakeven_capacity_utilization,
-            "min_dscr": self.min_dscr,
-            "average_dscr": self.average_dscr,
-            "roic_annualized": self.roic_annualized,
-            "cash_on_cash_return_annualized": self.cash_on_cash_return_annualized,
-            "profitability_index": self.profitability_index,
+            "average_monthly_revenue": float(self.average_monthly_revenue),
+            "average_monthly_ebitda": float(self.average_monthly_ebitda),
+            "average_ebitda_margin": float(self.average_ebitda_margin),
+            "average_monthly_net_income": float(self.average_monthly_net_income),
+            "average_net_margin": float(self.average_net_margin),
+            "total_cumulative_levered_cash_flow": float(self.total_cumulative_levered_cash_flow),
+            "total_cumulative_unlevered_cash_flow": float(self.total_cumulative_unlevered_cash_flow),
+            "breakeven_monthly_revenue": float(self.breakeven_monthly_revenue),
+            "breakeven_turns_per_day": float(self.breakeven_turns_per_day),
+            "breakeven_capacity_utilization": float(self.breakeven_capacity_utilization),
+            "min_dscr": float(self.min_dscr) if self.min_dscr is not None else None,
+            "average_dscr": float(self.average_dscr) if self.average_dscr is not None else None,
+            "roic_annualized": float(self.roic_annualized),
+            "cash_on_cash_return_annualized": float(self.cash_on_cash_return_annualized),
+            "profitability_index": float(self.profitability_index),
         }
 
 
@@ -868,7 +968,7 @@ class DecisionAssessment:
     def to_dict(self) -> dict[str, Any]:
         return {
             "recommendation": self.recommendation.value,
-            "confidence_score": self.confidence_score,
+            "confidence_score": float(self.confidence_score),
             "reasons": list(self.reasons),
             "risk_flags": list(self.risk_flags),
         }

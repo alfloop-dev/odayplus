@@ -201,9 +201,9 @@ manifest 一旦進入 staging 不得改寫。若任何 image、migration、contr
 | `candidate-built` | exact SHA、digests、unit/contract/security、SBOM、signature | 部署 dev。 |
 | `dev-verified` | dev health、integration、資料契約、provider-off readback | 建立並部署 staging。 |
 | `staging-verified` | migration、E2E、worker、scheduler、backup/restore、rollback、observability | 請求人類 production approval。 |
-| `prod-admitted` | staging receipts、Human GO、backup checkpoint、rollback owner、有效 lease | 建立 prod 0% green。 |
+| `prod-admitted` | staging receipts、Human GO、backup checkpoint、rollback owner（Human/Ops: `bjoe734@gmail.com`）、有效 lease | 建立 prod 0% green。 |
 | `prod-switched` | 0% smoke、正式 IAM/secret binding、job one-shot | 切換 100% 並開始 watch。 |
-| `release-complete` | watch window、SLO、audit/evidence manifest | 銷毀 staging 並封存 release。 |
+| `release-complete` | watch window（30 分鐘）、SLO（錯誤率 < 5% 且 p95 < 5 秒）、audit/evidence manifest | 銷毀 staging 並封存 release。 |
 
 Gate 0–6 可以保留為證據分類，但 registry 必須額外記錄 `stage`、`environment` 與 `admission_target`；不能再把七道分類是否全部完成，直接等同每一階段的 admission。
 
@@ -263,7 +263,7 @@ Gate 0–6 可以保留為證據分類，但 registry 必須額外記錄 `stage`
 - `staging-verified` 全部通過且 receipts 綁定同一 manifest digest。
 - GitHub `production` environment 已建立，required reviewer、WIF、vars 與 secret references 完整。
 - production backup checkpoint 已完成。
-- rollback owner 與 watch owner 在線。
+- rollback owner 與 watch owner 在線（由 Human/Ops：`bjoe734@gmail.com` 擔任）。
 - external sources expected enabled 仍為空；任何非空值要走獨立逐來源 activation release。
 
 ### 8.2 部署 green，維持 0% 公開流量
@@ -285,11 +285,28 @@ Gate 0–6 可以保留為證據分類，但 registry 必須額外記錄 `stage`
 3. Web 從 blue 100% 原子切到 green 100%，立即跑 E2E。
 4. 將 worker、scheduler job target 更新為 green digest。
 5. 先 one-shot 驗證，再恢復內部 scheduler triggers。
-6. 開始 watch window；blue revisions 與舊 job definitions 暫不刪除。
+6. 開始 watch window（30 分鐘）；blue revisions 與舊 job definitions 暫不刪除。
+
+**營運觀察與 SLO 參數（PROD-OPS-05）**：
+
+- **Watch Window**：30 分鐘。
+- **SLO 門檻**：錯誤率 < 5% 且 p95 延遲 < 5 秒。
+- **On-Call / Watch Owner**：Human/Ops（`bjoe734@gmail.com`）。
+- **寬鬆初始值標註**：上述 watch window 與 SLO 門檻均為寬鬆初始值，目前無本系統實測流量依據；首次 production 部署後應以實測數據重新校準並收窄，不得視為已驗證或已校準之標準，亦不得引用不存在的量測來源。
+- **人工判斷依據（非自動化閘門）**：此四項參數目前為人工監控與判斷依據，非系統自動化閘門。`product_ops/deployment/bluegreen_release.py` 具有 `rollback` 子命令，但沒有 `watch` 子命令、亦無任何門檻參數；`.github/workflows/deploy-dev.yml` 的 production blue-green 驗證步驟只檢查 `release_id` 與 traffic 結構。系統不會自動依據這些門檻進行判定或自動回退，須由 on-call 人員在 watch window 內人工監看並主動決策。
 
 ### 8.4 回滾
 
-觸發條件包括但不限於：錯誤率、P95、auth failure、資料品質、job failure、queue lag、audit 缺失或 operator 判定。
+**Rollback 觸發條件與營運原則（PROD-OPS-05）**：
+
+- **觸發條件（初始門檻）**：
+  1. 錯誤率 > 10% 持續 5 分鐘；或
+  2. p95 延遲 > 10 秒持續 5 分鐘；或
+  3. Health check 連續失敗 3 次；或
+  4. 發生 auth failure、資料品質異常、job failure、queue lag、audit 缺失或 operator 判定異常。
+- **Rollback Owner**：Human/Ops（`bjoe734@gmail.com`）。
+- **寬鬆初始值標註**：上述 rollback 門檻（錯誤率 > 10% 持續 5 分鐘、p95 > 10 秒持續 5 分鐘、health check 連續失敗 3 次）為寬鬆初始值，無本系統實測流量依據；首次 production 部署後應以實測數據收窄與校準。不得寫成已驗證或已校準標準。
+- **人工執行（非自動化閘門）**：Rollback 觸發目前為人工判斷依據而非自動化閘門。系統不會自動依門檻觸發回退，須由 rollback / on-call owner（Human/Ops：`bjoe734@gmail.com`）人工判定後，執行 `product_ops/deployment/bluegreen_release.py rollback` 進行回滾。
 
 回滾順序：
 
@@ -302,6 +319,53 @@ Gate 0–6 可以保留為證據分類，但 registry 必須額外記錄 `stage`
 7. 保留 staging 與失敗 green evidence，建立 incident/remediation task。
 
 不在緊急回滾中執行 destructive down migration。contract migration 必須延後到相容觀察期結束後的獨立任務。
+
+### 8.5 首次 release 的 recovery
+
+上面整節假設 target 上已經有一個可以切回去的已核准版本。**首次部署到某個 target
+時沒有**，而 release manifest schema v2 又無條件要求綁定上一個已核准 release，
+因此那個環境會連第一次部署都做不到。
+
+解法不是放寬要求，而是換一種等價強度的證據：manifest 改綁
+`initial_release_recovery`，且只在下列條件同時成立時成立：
+
+- build 階段對這個 target 逐一讀回 `api`、`web`、`migration`、`worker`、
+  `scheduler` 五個 Cloud Run 資源，**全部不存在**。`gcloud` 讀不到（權限、網路）
+  一律視為無法斷定而拒絕，不會被當成「不存在」；
+- 記錄綁定這次的 candidate SHA、component image digest、target environment 與
+  recovery method，因此不能被搬到另一個 release、另一個環境，或在 rebuild 後沿用；
+- 建置目標只能是 `dev` 或 `staging`。production 從未有過已核准 release 時，
+  它的首次 release 只能是 staging 封存並演練過的同一份 manifest：staging 封存的
+  紀錄可 admission 到 staging 與 production，dev 封存的只能進 dev。staging 讀回
+  的是這個 release 的 release-scoped 名稱
+  （ODP-CORE-OPS-FIRST-RELEASE-ROLLBACK-001，細節見
+  `docs/design/ODP_CORE_OPS_RELEASE_PROFILE.md` §5）；
+- staging／production 的 admission 另外讀 **production 的** Supervisor lease
+  store：production 只要曾為其他 manifest admitted 過 release，這條分支就關閉，
+  之後的 release 一律回到 §8.4 綁定 rollback target。staging 自己的 store 不會有
+  production 的紀錄，所以 staging admission 必須跨環境讀 production store，讀不到
+  就拒絕；無法分類的紀錄也一律拒絕；
+- 該 release 不得宣告任何啟用中的外部資料來源。有啟用來源就維持原本的
+  masked snapshot 與 rollback 綁定要求；
+- admission 在消費 lease 之前會**再讀一次**該環境的 target，讀回綁定 manifest
+  digest、限時 10 分鐘，由 `check_runtime_admission.py` 驗證。build 當下為空不代表
+  deploy 當下仍為空，這一步是整條分支唯一無法從 release SHA 的 tree 推導出來的
+  部分。
+
+首次 release 的 recovery 動作是明確記錄的，且**不是回滾**。dev 與 production：
+
+1. 刪除本次建立的候選 Cloud Run service 與 job；
+2. 刪除本次建立的 scheduler trigger；
+3. 維持零流量。
+
+ephemeral staging 不刪除也不切流量：失敗時 `staging_lifecycle.py hold` 保留這個
+release 專屬的 namespace 供鑑識，到 TTL 後由 `staging_lifecycle.py cleanup` 整個
+拆除。這個 namespace 只屬於這個 release，沒有其他 release 的流量依賴它。staging
+封存的紀錄同時寫明兩者：自己的 hold，以及晉升到 production 時的刪除 candidate。
+
+沒有可回滾的既有版本時，deploy 失敗路徑必須照實這樣說明，不得宣稱正在還原流量
+——那會描述一個從未存在過的版本。第二個 release 起，target 上已經有這個首次
+release，因此回到 §8.4 的一般路徑，綁定它作為 rollback target。
 
 ## 9. 第三方資料與 OSS 上線原則
 
@@ -487,7 +551,7 @@ Wave 0 中，manifest 與 admission 會接觸共同介面，必須明確指定�
 - WIF provider、deployment service account、runtime service accounts、KMS key。
 - Cloud SQL、GKE、Artifact Registry、Cloud Run、Cloud Scheduler 與 bucket 的既有或待建資源。
 - GitHub `staging`、`production` environment required reviewers 與 secrets/vars ownership。
-- production watch window 長度、SLO/rollback threshold、on-call owner。
+- production 營運治理參數（PROD-OPS-05）：watch window 30 分鐘、SLO 門檻（錯誤率 < 5% 且 p95 < 5 秒）、rollback 觸發條件（錯誤率 > 10% 持續 5 分鐘、p95 > 10 秒持續 5 分鐘、health check 連續失敗 3 次）、rollback / on-call owner（Human/Ops：`bjoe734@gmail.com`）。上述數值為人工判斷之寬鬆初始值（非自動化閘門），首次 production 部署後以實測數據收窄。
 - masked staging snapshot 的來源、遮罩責任人與保存期限。
 
 這些外部 authority 未準備好時，Auto Worker 可以完成 code、IaC、tests 與 dry-run，但不能宣稱環境已實際部署。

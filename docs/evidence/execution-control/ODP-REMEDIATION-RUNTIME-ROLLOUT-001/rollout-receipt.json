@@ -1,0 +1,112 @@
+{
+  "task_id": "ODP-REMEDIATION-RUNTIME-ROLLOUT-001",
+  "rollout_timestamp": "2026-10-03T14:49:40Z",
+  "source_repository": "alfloop-dev/odayplus",
+  "tracking_ref": "origin/dev",
+  "deployed_sha": "66665090a9a329877e1a88d80883a8eca1818f09",
+  "merged_pr_dependencies": [
+    {
+      "task_id": "ODP-ORCH-VERIFICATION-COMMAND-IDENTITY-001",
+      "pr_number": 1398,
+      "merged_commit": "9a5ef53de6955aef2b2c772b8e5f83c78222c675",
+      "status": "done"
+    },
+    {
+      "task_id": "ODP-ORCH-BLOCKER-RECOVERY-AUTHORITY-001",
+      "pr_number": 1402,
+      "merged_commit": "66665090a9a329877e1a88d80883a8eca1818f09",
+      "status": "done"
+    }
+  ],
+  "preflight": {
+    "previous_runtime_sha": "6140d0ef633cbf94522c171d9927103ab200257f",
+    "previous_supervisor_pid": 884078,
+    "previous_runtime_dir": "/home/lupin/oday-plus-supervisor-runtime-6140d0ef633c",
+    "rollback_target": "/home/lupin/oday-plus-supervisor-runtime-6140d0ef633c",
+    "config_path": "/home/lupin/odayplus/.orchestrator/config.json",
+    "config_sha256": "11d346bd1579209220a18433b30af4d5e17983955d2a966f1c9d09826ed2eec5",
+    "status_root": "/home/lupin/odayplus",
+    "runtime_link": "/home/lupin/oday-plus-supervisor-runtime-current"
+  },
+  "governance_check_receipt": {
+    "step_index": 90,
+    "command": "python3 delivery_toolchain/governance/check_orchestrator_config.py --config /home/lupin/odayplus/.orchestrator/config.json && python3 delivery_toolchain/governance/check_config_wiring.py",
+    "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-remediation-runtime-rollout-001",
+    "exit_code": 0,
+    "duration_seconds": 2.144192971,
+    "output": "Validated 3 config documents and their merged runtime views.\nAll 190 config keys are read by production code."
+  },
+  "dry_run_receipt": {
+    "step_index": 86,
+    "command": "python3 /home/lupin/oday-plus-supervisor-deploy-source-20260919/scripts/orchestrator/rollout_supervisor_runtime.py --source-root /home/lupin/oday-plus-supervisor-deploy-source-20260919 --runtime-link /home/lupin/oday-plus-supervisor-runtime-current --runtime-parent /home/lupin --status-root /home/lupin/odayplus --watchdog-pid-file /home/lupin/odayplus/.orchestrator/supervisor.pid --dry-run",
+    "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-remediation-runtime-rollout-001",
+    "exit_code": 0,
+    "duration_seconds": 0.843644176,
+    "output": "target=/home/lupin/oday-plus-supervisor-runtime-66665090a9a3 sha=66665090a9a329877e1a88d80883a8eca1818f09 branch=runtime-live-66665090a9a3\nprevious=/home/lupin/oday-plus-supervisor-runtime-6140d0ef633c\nstatus_launcher=/home/lupin/odayplus/scripts/ai-status.sh writer=/home/lupin/oday-plus-supervisor-runtime-current/scripts/ai_status.py\n"
+  },
+  "execution": {
+    "step_index": 94,
+    "primitive": "scripts/orchestrator/rollout_supervisor_runtime.py",
+    "command": "python3 /home/lupin/oday-plus-supervisor-deploy-source-20260919/scripts/orchestrator/rollout_supervisor_runtime.py --source-root /home/lupin/oday-plus-supervisor-deploy-source-20260919 --runtime-link /home/lupin/oday-plus-supervisor-runtime-current --runtime-parent /home/lupin --status-root /home/lupin/odayplus --watchdog-pid-file /home/lupin/odayplus/.orchestrator/supervisor.pid",
+    "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-remediation-runtime-rollout-001",
+    "duration_seconds": 3.811725635,
+    "target_dir": "/home/lupin/oday-plus-supervisor-runtime-66665090a9a3",
+    "target_branch": "runtime-live-66665090a9a3",
+    "status_launcher": "/home/lupin/odayplus/scripts/ai-status.sh",
+    "status_launcher_sha256": "5bc351efdc74813a0dc45d1e3bb2877a92094dee788afd05a4b295b07b32cbe8",
+    "status_writer": "/home/lupin/oday-plus-supervisor-runtime-current/scripts/ai_status.py",
+    "watchdog_restart_decision": "restart_supervisor",
+    "exit_code": 0,
+    "rollback_invoked": false,
+    "output": "target=/home/lupin/oday-plus-supervisor-runtime-66665090a9a3 sha=66665090a9a329877e1a88d80883a8eca1818f09 branch=runtime-live-66665090a9a3\nprevious=/home/lupin/oday-plus-supervisor-runtime-6140d0ef633c\nstatus_launcher=/home/lupin/odayplus/scripts/ai-status.sh writer=/home/lupin/oday-plus-supervisor-runtime-current/scripts/ai_status.py\nwatchdog decision=restart_supervisor reason=missing_pid pid=None new_pid=1466298\nrollout complete: /home/lupin/oday-plus-supervisor-runtime-current -> /home/lupin/oday-plus-supervisor-runtime-66665090a9a3\n"
+  },
+  "post_rollout": {
+    "new_supervisor_pid": 1466298,
+    "supervisor_cwd": "/home/lupin/oday-plus-supervisor-runtime-66665090a9a3",
+    "supervisor_cmdline": "python3 -u .orchestrator/supervisor.py --verbose",
+    "heartbeat_status": "fresh",
+    "supervisor_healthy": true
+  },
+  "health_probes": {
+    "step_104_canonical_probe": {
+      "step_index": 104,
+      "command": "python3 /home/lupin/oday-plus-supervisor-runtime-current/scripts/supervisor_runtime_health.py --repo /home/lupin/odayplus --config-path /home/lupin/odayplus/.orchestrator/config.json --json",
+      "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-remediation-runtime-rollout-001",
+      "executed_at": "2026-10-03T14:50:02.776870Z",
+      "exit_code": 0,
+      "duration_seconds": 0.222389977,
+      "healthy": true
+    },
+    "step_106_runtime_freshness_probe": {
+      "step_index": 106,
+      "command": "python3 /home/lupin/oday-plus-supervisor-runtime-current/scripts/supervisor_runtime_health.py --repo /home/lupin/oday-plus-supervisor-runtime-current --config-path /home/lupin/odayplus/.orchestrator/config.json --check-git-freshness --git-upstream origin/dev --json",
+      "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-remediation-runtime-rollout-001",
+      "executed_at": "2026-10-03T14:50:05.804979Z",
+      "exit_code": 1,
+      "duration_seconds": 0.120189254,
+      "healthy": false,
+      "git_freshness_ok": true,
+      "failure_cause": "Path-resolution artifact: relative state/dashboard paths resolved under the runtime worktree instead of canonical status root."
+    }
+  },
+  "focused_regression_tests": {
+    "step_index": 108,
+    "command": "uv run --frozen --python 3.12 pytest -q .orchestrator/test_verification_evidence.py .orchestrator/test_blocker_recovery_authority.py .orchestrator/test_task_dependency_gate.py .orchestrator/test_supervisor.py::AutomaticRecoveryTests",
+    "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-remediation-runtime-rollout-001",
+    "executed_source_sha": "66665090a9a329877e1a88d80883a8eca1818f09",
+    "exit_code": 0,
+    "duration_seconds": 12.168618779,
+    "result": "passed (100%)"
+  },
+  "boundary_enforcement": {
+    "local_supervisor_only": true,
+    "gcp_product_deploy_authorized": false,
+    "migration_authorized": false,
+    "model_promotion_authorized": false,
+    "source_enablement_authorized": false,
+    "iam_modification_authorized": false,
+    "signed_lease_modification_authorized": false,
+    "human_gate_bypass_authorized": false,
+    "non_dispatchable_holds_preserved": true
+  }
+}

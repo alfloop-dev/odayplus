@@ -6,12 +6,14 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
+from modules.heatzone.v3.absorption import AbsorptionResult
 from packages.oday_data_contracts_client.models.machine_capacity import MachineCapacityRecord
 from packages.oday_data_contracts_client.models.store_coverage import StoreDayCoverage
 from packages.oday_data_product_contracts_client.models.market_cell_profile import (
     ProductComponentRef,
     ReadinessLevel,
 )
+from shared.domain.models import HeatZoneScore
 
 CONTRACT_ID = "odayplus.heatzone-v3.v1"
 CONTRACT_VERSION = "1.0.0"
@@ -112,10 +114,10 @@ class HeatZoneV3Input:
     domain_freshness: dict[str, str] = field(default_factory=dict)
     has_coverage_gaps: bool = False
     readiness_reasons: list[str] = field(default_factory=list)
-    coverage_ratio: float = 1.0
+    coverage_ratio: float | None = None
     is_quarantined: bool = False
     support_level: str = "supported"
-    confidence: float = 1.0
+    confidence: float | None = None
 
     # Spatial and Temporal coordinates
     centroid_lat: float | None = None
@@ -128,6 +130,14 @@ class HeatZoneV3Input:
     as_of_time: datetime = field(default_factory=lambda: datetime.now(UTC))
     component_manifest_refs: list[ProductComponentRef] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    # Measured absorption (ODP-FR-HZ-004)
+    #
+    # How much of this zone's demand our own stores are already taking, computed
+    # from realised revenue by `compute_absorbed_demand`. `None` means it was not
+    # measured -- which is not the same as nothing being absorbed, and the score
+    # result says so rather than letting the two look alike.
+    absorption: AbsorptionResult | None = None
 
 
 @dataclass(frozen=True)
@@ -147,7 +157,7 @@ class HeatZoneV3ScoreResult:
     listing_availability_score: float
     housing_density_score: float
     demographic_vitality_score: float
-    confidence: float
+    confidence: float | None
     state: HeatZoneV3State
     abstained: bool
     abstain_reasons: tuple[str, ...]
@@ -163,8 +173,42 @@ class HeatZoneV3ScoreResult:
     county: str = ""
     district: str = ""
     admin_code: str = ""
+    absorption_measured: bool = False
+    absorption_ratio: float | None = None
+    absorption_basis_source_ids: tuple[str, ...] = ()
+    absorption_excluded_store_ids: tuple[str, ...] = ()
+    absorption_excluded_reasons: dict[str, str] = field(default_factory=dict)
+
+    def to_canonical_score(self) -> HeatZoneScore:
+        """Canonical :class:`HeatZoneScore` for this evaluated cell.
+
+        HeatZone v3 is the live producer of the canonical heatzone measurement,
+        so the serializations below resolve confidence through this model
+        rather than reading the raw attribute. A result reloaded from a
+        pre-cutover payload therefore reports ``legacy_unknown`` instead of
+        republishing a substituted 1.00 as measured.
+        """
+        return HeatZoneScore(
+            heatzone_score_id=self.heat_zone_id,
+            geo_cell_id=self.h3_index,
+            # heat_score is NOT one of the six columns this cutover made
+            # nullable, and HeatZoneScore still declares it non-optional, so an
+            # abstained (None) score lands on the model's 0.0 default. Nothing
+            # reads heat_score off this projection -- it exists to resolve the
+            # confidence columns -- but the substitution is stated rather than
+            # hidden, because it is the same shape this task removes elsewhere.
+            heat_score=self.score if self.score is not None else 0.0,
+            priority_rank=self.priority_rank,
+            unmet_demand_score=self.unmet_demand_score,
+            format_fit_score=self.format_fit_score,
+            cannibalization_risk_score=self.cannibalization_risk_score,
+            rent_feasibility_score=self.rent_feasibility_score,
+            heatzone_state=self.state.value,
+            confidence=self.confidence,
+        )
 
     def to_dict(self) -> dict[str, Any]:
+        canonical = self.to_canonical_score()
         return {
             "heat_zone_id": self.heat_zone_id,
             "h3_index": self.h3_index,
@@ -179,7 +223,8 @@ class HeatZoneV3ScoreResult:
             "listing_availability_score": self.listing_availability_score,
             "housing_density_score": self.housing_density_score,
             "demographic_vitality_score": self.demographic_vitality_score,
-            "confidence": self.confidence,
+            "confidence": canonical.effective_confidence,
+            "confidence_provenance": canonical.effective_confidence_provenance,
             "state": self.state.value,
             "abstained": self.abstained,
             "abstain_reasons": list(self.abstain_reasons),
@@ -195,9 +240,15 @@ class HeatZoneV3ScoreResult:
             "county": self.county,
             "district": self.district,
             "admin_code": self.admin_code,
+            "absorption_measured": self.absorption_measured,
+            "absorption_ratio": self.absorption_ratio,
+            "absorption_basis_source_ids": list(self.absorption_basis_source_ids),
+            "absorption_excluded_store_ids": list(self.absorption_excluded_store_ids),
+            "absorption_excluded_reasons": dict(self.absorption_excluded_reasons),
         }
 
     def to_map_feature(self) -> dict[str, Any]:
+        canonical = self.to_canonical_score()
         return {
             "type": "Feature",
             "id": self.heat_zone_id,
@@ -212,7 +263,8 @@ class HeatZoneV3ScoreResult:
                 "cannibalization_risk": self.cannibalization_risk_score,
                 "rent_feasibility": self.rent_feasibility_score,
                 "listing_availability": self.listing_availability_score,
-                "confidence": self.confidence,
+                "confidence": canonical.effective_confidence,
+                "confidence_provenance": canonical.effective_confidence_provenance,
                 "status": self.state.value,
                 "abstained": self.abstained,
                 "is_shadow": self.is_shadow,
@@ -222,6 +274,9 @@ class HeatZoneV3ScoreResult:
                 "district": self.district,
                 "warnings": list(self.warnings),
                 "reasons": list(self.reasons),
+                "absorption_measured": self.absorption_measured,
+                "absorption_ratio": self.absorption_ratio,
+                "absorption_excluded_store_ids": list(self.absorption_excluded_store_ids),
             },
         }
 
@@ -249,7 +304,7 @@ class HeatZoneV3ScoreResult:
             listing_availability_score=float(data.get("listing_availability_score", 0.0)),
             housing_density_score=float(data.get("housing_density_score", 0.0)),
             demographic_vitality_score=float(data.get("demographic_vitality_score", 0.0)),
-            confidence=float(data.get("confidence", 1.0)),
+            confidence=float(data["confidence"]) if data.get("confidence") is not None else None,
             state=HeatZoneV3State(data.get("state", HeatZoneV3State.UNTOUCHED)),
             abstained=bool(data.get("abstained", False)),
             abstain_reasons=tuple(str(r) for r in data.get("abstain_reasons", ())),
@@ -265,6 +320,21 @@ class HeatZoneV3ScoreResult:
             county=str(data.get("county", "")),
             district=str(data.get("district", "")),
             admin_code=str(data.get("admin_code", "")),
+            absorption_measured=bool(data.get("absorption_measured", False)),
+            absorption_ratio=(
+                float(data["absorption_ratio"])
+                if data.get("absorption_ratio") is not None
+                else None
+            ),
+            absorption_basis_source_ids=tuple(
+                str(s) for s in data.get("absorption_basis_source_ids", ())
+            ),
+            absorption_excluded_store_ids=tuple(
+                str(s) for s in data.get("absorption_excluded_store_ids", ())
+            ),
+            absorption_excluded_reasons=dict(
+                data.get("absorption_excluded_reasons", {})
+            ),
         )
 
 

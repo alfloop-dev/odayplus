@@ -1,0 +1,75 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+______ test_clear_during_adapter_delivery_cannot_relabel_preclear_worker _______
+
+    def test_clear_during_adapter_delivery_cannot_relabel_preclear_worker():
+        config, state = fixture()
+        pause = state["provider_guardrails"]["dispatch_pauses"].pop("codex")
+        cooldown = state["account_pool_runtime"].pop("pool_a")
+        request = DeliveryRequest(agent_id="codex2", provider="codex2", delivery_mode="codex", message="fixture", task_id="fixture-task", reason="review_ready_dispatch")
+        result = DeliveryResult(ok=True, adapter="codex", mode="codex", target="fixture", auto_delivered=True, manual_confirmation_required=False, run_id="started-before-clear")
+    
+        def deliver(_request):
+            # The adapter has started the worker. A concurrent clear completes
+            # before deliver() returns and the parent records the worker.
+            state["provider_guardrails"]["dispatch_pauses"]["codex"] = pause
+            state["account_pool_runtime"]["pool_a"] = cooldown
+            assert supervisor.clear_provider_dispatch_pause(config, state, "codex")
+            return result
+    
+        with (
+            mock.patch.object(supervisor, "build_adapter") as adapter,
+            mock.patch.object(supervisor, "datetime", Clock),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-09-11T04:00:00Z"),
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-a"),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "record_worker_runtime_measurement"),
+            mock.patch.object(supervisor, "save_runtime_state"),
+        ):
+            adapter.return_value.deliver.side_effect = deliver
+            ok, run_id, _ = supervisor.start_worker_for_request(config, state, {}, request, queue_event_id="event", attempt_count=1, event_id_for_log="event")
+            assert ok
+            worker = state["workers"][run_id]
+            worker.update(status="completed", runner_status="completed", exit_code=0)
+>           assert not supervisor.record_account_pool_canary_success(config, state, worker)
+E           AssertionError: assert not True
+E            +  where True = <function _entrypoint.<locals>._sync_scope_guard at 0x76307e139300>({'paths': {'activity_log': '/tmp/review-auth-canary-omu6ddv9/activity.jsonl'}, 'account_pools': {'pool_a': {'max_concu...ex': {'delivery_mode': 'codex', 'quota_group': 'codex'}, 'codex2': {'delivery_mode': 'codex', 'quota_group': 'codex'}}}, {'workers': {'started-before-clear': {'run_id': 'started-before-clear', 'provider': 'codex2', 'agent_id': 'codex2', 'l...a': {'state': 'healthy', 'effective_concurrency': 2, 'generation': 3, 'last_failure_at': '2026-09-11T01:00:00Z', ...}}}, {'run_id': 'started-before-clear', 'provider': 'codex2', 'agent_id': 'codex2', 'logical_agent_id': 'codex2', ...})
+E            +    where <function _entrypoint.<locals>._sync_scope_guard at 0x76307e139300> = supervisor.record_account_pool_canary_success
+
+.orchestrator/test_review_auth_canary_lifecycle.py:186: AssertionError
+____________ test_dispatch_auth_snapshot_precedes_adapter_delivery _____________
+
+    def test_dispatch_auth_snapshot_precedes_adapter_delivery():
+        config, state = fixture()
+        request = DeliveryRequest(agent_id="codex", provider="codex", delivery_mode="codex", message="fixture", task_id="fixture-task", reason="review_ready_dispatch")
+        result = DeliveryResult(ok=True, adapter="codex", mode="codex", target="fixture", auto_delivered=True, manual_confirmation_required=False, run_id="auth-a-worker")
+        identity = ["auth-a"]
+    
+        def deliver(_request):
+            assert identity[0] == "auth-a"  # the adapter launches with A
+            identity[0] = "auth-b"  # credentials rotate before the parent resumes
+            return result
+    
+        with (
+            mock.patch.object(supervisor, "build_adapter") as adapter,
+            mock.patch.object(supervisor, "datetime", Clock),
+            mock.patch.object(supervisor, "provider_auth_identity_hash", side_effect=lambda *_args, **_kwargs: identity[0]),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "record_worker_runtime_measurement"),
+            mock.patch.object(supervisor, "save_runtime_state"),
+        ):
+            adapter.return_value.deliver.side_effect = deliver
+            ok, run_id, _ = supervisor.start_worker_for_request(config, state, {}, request, queue_event_id="event", attempt_count=1, event_id_for_log="event")
+            assert ok
+>           assert state["workers"][run_id]["auth_identity_hash"] == "auth-a"
+E           AssertionError: assert 'auth-b' == 'auth-a'
+E             
+E             - auth-a
+E             ?      ^
+E             + auth-b
+E             ?      ^
+
+.orchestrator/test_review_auth_canary_lifecycle.py:212: AssertionError
+=========================== short test summary info ============================
+FAILED .orchestrator/test_review_auth_canary_lifecycle.py::test_clear_during_adapter_delivery_cannot_relabel_preclear_worker
+FAILED .orchestrator/test_review_auth_canary_lifecycle.py::test_dispatch_auth_snapshot_precedes_adapter_delivery

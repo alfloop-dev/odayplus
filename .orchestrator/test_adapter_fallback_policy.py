@@ -12,6 +12,8 @@ THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
+import common
+import provider_permissions
 from adapters.base import DeliveryRequest
 from adapters.claude_cli import ClaudeCLIAdapter
 from adapters.codex import CodexAdapter
@@ -411,6 +413,127 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         command = spawn.call_args.args[0]
         self.assertNotIn("--model", command)
         self.assertNotIn("--effort", command)
+
+
+
+class ClaudeAuthProbeRefreshTests(unittest.TestCase):
+    """The dispatch probe must not log Claude out when only the access token lapsed."""
+
+    def _write_credentials(self, home: Path, **oauth: object) -> Path:
+        credentials_path = home / ".claude" / ".credentials.json"
+        credentials_path.parent.mkdir(parents=True)
+        credentials_path.write_text(json.dumps({"claudeAiOauth": oauth}), encoding="utf-8")
+        return credentials_path
+
+    def _probe(self, home: Path) -> tuple[object, dict, mock.Mock, mock.Mock]:
+        config = {
+            "paths": {"claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json"},
+            "providers": {
+                "claude": {
+                    "allow_inbox_fallback": False,
+                    "runtime": {"cli": "claude", "home": str(home)},
+                }
+            }
+        }
+        status = mock.Mock(returncode=0, stdout=json.dumps({"loggedIn": True}))
+        with (
+            mock.patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": "", "CLAUDE_CONFIG_DIR": ""}, clear=False),
+            mock.patch("adapters.claude_cli.configured_provider_binary", return_value="/usr/bin/claude"),
+            mock.patch.object(provider_permissions, "configured_provider_binary", return_value="/usr/bin/claude"),
+            mock.patch.object(
+                provider_permissions,
+                "cli_probe",
+                return_value={"ok": True, "verdict": "ran", "returncode": 0, "error": None},
+            ),
+            mock.patch.object(common, "run_command", return_value=status),
+            mock.patch.object(common.urllib.request, "urlopen") as urlopen,
+            mock.patch.object(common, "write_json") as write_json,
+        ):
+            capability = ClaudeCLIAdapter(config=config, provider_capabilities={}).capability("claude")
+            report = provider_permissions._claude_provider_report(
+                config,
+                provider_id="claude",
+                claude_path=None,
+                claude_version=None,
+                claude_local={},
+                claude_permissions={},
+                workspace_settings={},
+                claude_applied=False,
+            )
+        return capability, report, urlopen, write_json
+
+    def test_expired_access_token_with_valid_refresh_token_is_dispatchable_offline(self) -> None:
+        now_ms = int(common.time.time() * 1000)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            credentials_path = self._write_credentials(
+                home,
+                accessToken="sk-ant-oat01-old",
+                refreshToken="old-refresh",
+                expiresAt=now_ms - 60_000,
+                refreshTokenExpiresAt=now_ms + 86_400_000,
+            )
+            before = credentials_path.read_bytes()
+
+            capability, report, urlopen, write_json = self._probe(home)
+
+            self.assertTrue(capability.can_auto_deliver)
+            self.assertEqual(capability.verified, "verified")
+            self.assertTrue(report["auth_ready"])
+            self.assertTrue(report["supports_auto_approve"])
+            urlopen.assert_not_called()
+            write_json.assert_not_called()
+            self.assertEqual(credentials_path.read_bytes(), before)
+
+    def test_expired_or_missing_refresh_token_is_not_authenticated(self) -> None:
+        now_ms = int(common.time.time() * 1000)
+        for refresh_fields in (
+            {},
+            {"refreshToken": "old-refresh", "refreshTokenExpiresAt": now_ms - 60_000},
+        ):
+            with self.subTest(refresh_fields=refresh_fields), tempfile.TemporaryDirectory() as tmpdir:
+                home = Path(tmpdir)
+                self._write_credentials(
+                    home,
+                    accessToken="sk-ant-oat01-old",
+                    expiresAt=now_ms - 60_000,
+                    **refresh_fields,
+                )
+
+                capability, report, urlopen, write_json = self._probe(home)
+
+                self.assertFalse(capability.can_auto_deliver)
+                self.assertEqual(
+                    capability.notes,
+                    "Claude CLI is installed but not authenticated; inbox fallback is disabled for this provider.",
+                )
+                self.assertFalse(report["auth_ready"])
+                self.assertFalse(report["supports_auto_approve"])
+                urlopen.assert_not_called()
+                write_json.assert_not_called()
+
+    def test_logged_in_status_without_stored_credentials_is_not_authenticated(self) -> None:
+        for credentials in (None, {"mcpOAuth": {}}):
+            with self.subTest(credentials=credentials), tempfile.TemporaryDirectory() as tmpdir:
+                home = Path(tmpdir)
+                credentials_path = home / ".claude" / ".credentials.json"
+                if credentials is not None:
+                    credentials_path.parent.mkdir(parents=True)
+                    credentials_path.write_text(json.dumps(credentials), encoding="utf-8")
+
+                capability, report, urlopen, write_json = self._probe(home)
+
+                self.assertFalse(capability.can_auto_deliver)
+                self.assertEqual(
+                    capability.notes,
+                    "Claude CLI is installed but not authenticated; inbox fallback is disabled for this provider.",
+                )
+                self.assertFalse(report["auth_ready"])
+                self.assertFalse(report["supports_auto_approve"])
+                urlopen.assert_not_called()
+                write_json.assert_not_called()
+                if credentials is None:
+                    self.assertFalse(credentials_path.exists())
 
 
 if __name__ == "__main__":

@@ -1,0 +1,602 @@
+from __future__ import annotations
+
+from datetime import UTC, date, datetime, timedelta
+
+import pytest
+
+from modules.forecastops import (
+    Alert,
+    AlertDisposition,
+    AlertLevel,
+    FeedbackType,
+    ForecastAlertPolicyError,
+    ForecastFeedback,
+    ForecastOpsError,
+    StoreDayObservation,
+    backfill_alert_precision,
+    calculate_alert_precision_metrics,
+    default_forecast_alert_policy,
+)
+from shared.governance import InMemoryDecisionPolicyRepository
+
+TENANT_ID = "tenant-precision-test"
+
+
+def _make_alert(
+    *,
+    alert_id: str = "alert-001",
+    store_id: str = "store-001",
+    alert_level: AlertLevel = AlertLevel.RED,
+    opened_at: datetime = datetime(2026, 6, 1, 9, 0, tzinfo=UTC),
+    disposition: str | AlertDisposition | None = None,
+    deterioration_confirmed_at: datetime | None = None,
+) -> Alert:
+    return Alert(
+        alert_id=alert_id,
+        tenant_id=TENANT_ID,
+        store_id=store_id,
+        alert_level=alert_level,
+        alert_reason_code="sitescore_gap",
+        evidence_json={"sitescore_gap_ratio": -0.40},
+        opened_at=opened_at,
+        policy_id="four-light-policy",
+        policy_version="four-light-policy-v1",
+        policy_version_id=f"four-light-policy-v1:{TENANT_ID}",
+        disposition=disposition,
+        deterioration_confirmed_at=deterioration_confirmed_at,
+    )
+
+
+def test_alert_disposition_enum_parsing() -> None:
+    assert AlertDisposition.from_str("TRUE_POSITIVE") is AlertDisposition.TRUE_POSITIVE
+    assert AlertDisposition.from_str("true_positive") is AlertDisposition.TRUE_POSITIVE
+    assert AlertDisposition.from_str("FALSE_POSITIVE") is AlertDisposition.FALSE_POSITIVE
+    assert AlertDisposition.from_str("KNOWN_CONTEXT") is AlertDisposition.KNOWN_CONTEXT
+    assert AlertDisposition.from_str("Known Context") is AlertDisposition.KNOWN_CONTEXT
+    assert AlertDisposition.from_str("UNRESOLVED") is AlertDisposition.UNRESOLVED
+
+    with pytest.raises(ForecastOpsError, match="Invalid alert disposition"):
+        AlertDisposition.from_str("UNKNOWN_DISPOSITION")
+
+
+def test_alert_lead_time_days_property() -> None:
+    opened = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
+    confirmed = datetime(2026, 6, 8, 9, 0, tzinfo=UTC)
+
+    # 1. TRUE_POSITIVE with confirmed deterioration: lead time is exactly 7 days
+    tp_alert = _make_alert(
+        disposition=AlertDisposition.TRUE_POSITIVE,
+        deterioration_confirmed_at=confirmed,
+        opened_at=opened,
+    )
+    assert tp_alert.lead_time_days == 7
+
+    # 2. FALSE_POSITIVE: lead time is None
+    fp_alert = _make_alert(
+        disposition=AlertDisposition.FALSE_POSITIVE,
+        deterioration_confirmed_at=confirmed,
+        opened_at=opened,
+    )
+    assert fp_alert.lead_time_days is None
+
+    # 3. KNOWN_CONTEXT: lead time is None
+    kc_alert = _make_alert(
+        disposition=AlertDisposition.KNOWN_CONTEXT,
+        deterioration_confirmed_at=confirmed,
+        opened_at=opened,
+    )
+    assert kc_alert.lead_time_days is None
+
+    # 4. UNRESOLVED: lead time is None
+    un_alert = _make_alert(
+        disposition=AlertDisposition.UNRESOLVED,
+        deterioration_confirmed_at=confirmed,
+        opened_at=opened,
+    )
+    assert un_alert.lead_time_days is None
+
+    # 5. Missing deterioration_confirmed_at: lead time is None
+    no_det_alert = _make_alert(
+        disposition=AlertDisposition.TRUE_POSITIVE,
+        deterioration_confirmed_at=None,
+        opened_at=opened,
+    )
+    assert no_det_alert.lead_time_days is None
+
+    # 6. to_dict serialization includes lead_time_days
+    alert_dict = tp_alert.to_dict()
+    assert alert_dict["disposition"] == "TRUE_POSITIVE"
+    assert alert_dict["deterioration_confirmed_at"] == "2026-06-08T09:00:00+00:00"
+    assert alert_dict["lead_time_days"] == 7
+
+
+def test_calculate_alert_precision_metrics_excludes_known_context_and_unresolved() -> None:
+    """ODP-FR-FCT-006:
+    Precision = TP / (TP + FP)
+    Denominator strictly excludes KNOWN_CONTEXT and UNRESOLVED.
+    """
+    opened = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
+
+    alerts = [
+        # 3 TRUE_POSITIVE (lead times: 3, 7, 10 days)
+        _make_alert(
+            alert_id="tp-1",
+            disposition=AlertDisposition.TRUE_POSITIVE,
+            deterioration_confirmed_at=opened + timedelta(days=3),
+            opened_at=opened,
+        ),
+        _make_alert(
+            alert_id="tp-2",
+            disposition=AlertDisposition.TRUE_POSITIVE,
+            deterioration_confirmed_at=opened + timedelta(days=7),
+            opened_at=opened,
+        ),
+        _make_alert(
+            alert_id="tp-3",
+            disposition=AlertDisposition.TRUE_POSITIVE,
+            deterioration_confirmed_at=opened + timedelta(days=10),
+            opened_at=opened,
+        ),
+        # 1 FALSE_POSITIVE
+        _make_alert(alert_id="fp-1", disposition=AlertDisposition.FALSE_POSITIVE, opened_at=opened),
+        # 2 KNOWN_CONTEXT (e.g. remodeling - excluded from denominator)
+        _make_alert(alert_id="kc-1", disposition=AlertDisposition.KNOWN_CONTEXT, opened_at=opened),
+        _make_alert(alert_id="kc-2", disposition=AlertDisposition.KNOWN_CONTEXT, opened_at=opened),
+        # 2 UNRESOLVED (not mature yet - excluded from denominator)
+        _make_alert(alert_id="un-1", disposition=AlertDisposition.UNRESOLVED, opened_at=opened),
+        _make_alert(alert_id="un-2", disposition=None, opened_at=opened),
+    ]
+
+    metrics = calculate_alert_precision_metrics(alerts)
+
+    assert metrics["total_alerts"] == 8
+    assert metrics["true_positive_count"] == 3
+    assert metrics["false_positive_count"] == 1
+    assert metrics["known_context_count"] == 2
+    assert metrics["unresolved_count"] == 2
+    # Denominator: 3 TP + 1 FP = 4 (KNOWN_CONTEXT & UNRESOLVED excluded!)
+    assert metrics["evaluated_alert_count"] == 4
+    # Precision: 3 / 4 = 0.75
+    assert metrics["precision"] == 0.75
+
+    # Lead time stats over [3, 7, 10]
+    assert metrics["lead_time_sample_count"] == 3
+    assert metrics["mean_lead_time_days"] == 6.67
+    assert metrics["min_lead_time_days"] == 3
+    assert metrics["max_lead_time_days"] == 10
+
+
+def test_calculate_alert_precision_empty_and_zero_division() -> None:
+    empty_metrics = calculate_alert_precision_metrics([])
+    assert empty_metrics["total_alerts"] == 0
+    assert empty_metrics["evaluated_alert_count"] == 0
+    assert empty_metrics["precision"] is None
+    assert empty_metrics["mean_lead_time_days"] is None
+
+    only_kc = calculate_alert_precision_metrics([
+        _make_alert(disposition=AlertDisposition.KNOWN_CONTEXT)
+    ])
+    assert only_kc["total_alerts"] == 1
+    assert only_kc["evaluated_alert_count"] == 0
+    assert only_kc["precision"] is None
+
+
+def test_backfill_alert_precision_logic() -> None:
+    """ODP-FR-FCT-006:
+    Deterioration confirmed at policy threshold.
+    Remodeling annotations become KNOWN_CONTEXT.
+    Un-breached completed windows become FALSE_POSITIVE.
+    Short windows remain UNRESOLVED.
+    """
+    opened = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
+    policy_repo = InMemoryDecisionPolicyRepository([default_forecast_alert_policy(TENANT_ID)])
+
+    alerts = [
+        # Store 1: Will deteriorate on June 8 (7 days lead time)
+        _make_alert(alert_id="a-store-1", store_id="store-1", alert_level=AlertLevel.RED, opened_at=opened),
+        # Store 2: Covered by CONTEXT_ANNOTATION (remodeling June 5-15) -> KNOWN_CONTEXT
+        _make_alert(alert_id="a-store-2", store_id="store-2", alert_level=AlertLevel.RED, opened_at=opened),
+        # Store 3: 30 days of clean observations, never deteriorated -> FALSE_POSITIVE
+        _make_alert(alert_id="a-store-3", store_id="store-3", alert_level=AlertLevel.RED, opened_at=opened),
+        # Store 4: Only 5 days of observations, no deterioration yet -> UNRESOLVED
+        _make_alert(alert_id="a-store-4", store_id="store-4", alert_level=AlertLevel.RED, opened_at=opened),
+    ]
+
+    observations = [
+        # Store 1: Mild at first, breaches RED threshold (gap <= -0.35) on June 8 (actual=60k vs 100k baseline = -0.40)
+        StoreDayObservation(store_id="store-1", business_date=date(2026, 6, 1), actual_revenue=90_000.0, site_score_baseline_p50=100_000.0),
+        StoreDayObservation(store_id="store-1", business_date=date(2026, 6, 5), actual_revenue=80_000.0, site_score_baseline_p50=100_000.0),
+        StoreDayObservation(store_id="store-1", business_date=date(2026, 6, 8), actual_revenue=60_000.0, site_score_baseline_p50=100_000.0),
+
+        # Store 2: Also drops to 50k, but has renovation annotation
+        StoreDayObservation(store_id="store-2", business_date=date(2026, 6, 8), actual_revenue=50_000.0, site_score_baseline_p50=100_000.0),
+
+        # Store 3: Healthy revenue for 30 days
+        *(
+            StoreDayObservation(store_id="store-3", business_date=date(2026, 6, d), actual_revenue=95_000.0, site_score_baseline_p50=100_000.0)
+            for d in range(1, 31)
+        ),
+
+        # Store 4: Only 5 days, healthy
+        *(
+            StoreDayObservation(store_id="store-4", business_date=date(2026, 6, d), actual_revenue=95_000.0, site_score_baseline_p50=100_000.0)
+            for d in range(1, 6)
+        ),
+    ]
+
+    feedbacks = [
+        ForecastFeedback.create(
+            tenant_id=TENANT_ID,
+            store_id="store-2",
+            feedback_type=FeedbackType.CONTEXT_ANNOTATION,
+            target_date_start=date(2026, 6, 5),
+            target_date_end=date(2026, 6, 15),
+            reason="Store remodeling and renovation",
+            created_by="ops-lead",
+        )
+    ]
+
+    updated_alerts, metrics = backfill_alert_precision(
+        alerts,
+        observations=observations,
+        feedbacks=feedbacks,
+        policy_repository=policy_repo,
+        evaluation_horizon_days=28,
+        actor="test_runner",
+    )
+
+    alert_map = {a.alert_id: a for a in updated_alerts}
+
+    # Store 1: TRUE_POSITIVE with 7 days lead time
+    a1 = alert_map["a-store-1"]
+    assert a1.disposition == "TRUE_POSITIVE"
+    assert a1.deterioration_confirmed_at == datetime(2026, 6, 8, 9, 0, tzinfo=UTC)
+    assert a1.lead_time_days == 7
+
+    # Store 2: KNOWN_CONTEXT due to renovation annotation
+    a2 = alert_map["a-store-2"]
+    assert a2.disposition == "KNOWN_CONTEXT"
+    assert a2.deterioration_confirmed_at is None
+    assert a2.lead_time_days is None
+
+    # Store 3: FALSE_POSITIVE (30 days completed without deterioration)
+    a3 = alert_map["a-store-3"]
+    assert a3.disposition == "FALSE_POSITIVE"
+    assert a3.deterioration_confirmed_at is None
+    assert a3.lead_time_days is None
+
+    # Store 4: UNRESOLVED (only 5 days observed, window of 28 days not reached)
+    a4 = alert_map["a-store-4"]
+    assert a4.disposition == "UNRESOLVED"
+    assert a4.deterioration_confirmed_at is None
+    assert a4.lead_time_days is None
+
+    # Metrics summary
+    assert metrics["total_alerts"] == 4
+    assert metrics["true_positive_count"] == 1
+    assert metrics["false_positive_count"] == 1
+    assert metrics["known_context_count"] == 1
+    assert metrics["unresolved_count"] == 1
+    assert metrics["evaluated_alert_count"] == 2
+    assert metrics["precision"] == 0.5
+    assert metrics["mean_lead_time_days"] == 7.0
+
+
+def test_backfill_does_not_reuse_opening_signal_as_deterioration() -> None:
+    """The opening-day breach is the trigger, not a post-alert outcome."""
+    opened = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
+    policy_repo = InMemoryDecisionPolicyRepository([default_forecast_alert_policy(TENANT_ID)])
+    alert = _make_alert(
+        alert_id="a-trigger-only",
+        store_id="store-trigger-only",
+        alert_level=AlertLevel.RED,
+        opened_at=opened,
+    )
+    observations = [
+        StoreDayObservation(
+            store_id="store-trigger-only",
+            business_date=date(2026, 6, 1),
+            actual_revenue=50_000.0,
+            site_score_baseline_p50=100_000.0,
+        ),
+        *(
+            StoreDayObservation(
+                store_id="store-trigger-only",
+                business_date=date(2026, 6, day),
+                actual_revenue=95_000.0,
+                site_score_baseline_p50=100_000.0,
+            )
+            for day in range(2, 30)
+        ),
+    ]
+
+    updated, metrics = backfill_alert_precision(
+        [alert],
+        observations=observations,
+        policy_repository=policy_repo,
+        evaluation_horizon_days=28,
+    )
+
+    assert updated[0].disposition == AlertDisposition.FALSE_POSITIVE.value
+    assert updated[0].deterioration_confirmed_at is None
+    assert metrics["true_positive_count"] == 0
+    assert metrics["false_positive_count"] == 1
+
+
+def test_backfill_alert_precision_horizon_constraint() -> None:
+    """Review defect 1: Deterioration occurring after evaluation_horizon_days (e.g. day 500)
+    must NOT count as TRUE_POSITIVE or inflate lead_time. Within the 28-day window it was healthy.
+    """
+    opened = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
+    policy_repo = InMemoryDecisionPolicyRepository([default_forecast_alert_policy(TENANT_ID)])
+    alert = _make_alert(alert_id="a-horizon-test", store_id="store-horizon", alert_level=AlertLevel.RED, opened_at=opened)
+
+    # 28 days of healthy observations in window [June 1 .. June 29]
+    observations = [
+        StoreDayObservation(
+            store_id="store-horizon",
+            business_date=date(2026, 6, d),
+            actual_revenue=95_000.0,
+            site_score_baseline_p50=100_000.0,
+        )
+        for d in range(1, 30)
+    ]
+    # Deterioration occurs 500 days later (far outside 28-day horizon)
+    observations.append(
+        StoreDayObservation(
+            store_id="store-horizon",
+            business_date=date(2026, 6, 1) + timedelta(days=500),
+            actual_revenue=40_000.0,
+            site_score_baseline_p50=100_000.0,
+        )
+    )
+
+    updated_alerts, metrics = backfill_alert_precision(
+        [alert],
+        observations=observations,
+        policy_repository=policy_repo,
+        evaluation_horizon_days=28,
+    )
+    res = updated_alerts[0]
+    assert res.disposition == "FALSE_POSITIVE"
+    assert res.deterioration_confirmed_at is None
+    assert res.lead_time_days is None
+    assert metrics["true_positive_count"] == 0
+    assert metrics["false_positive_count"] == 1
+    assert metrics["precision"] == 0.0
+
+
+def test_backfill_alert_precision_policy_repository_fail_closed() -> None:
+    """Review defect 2: policy_repository is required; policy_repository is None must raise
+    ForecastAlertPolicyError fail-closed per ODP-SD-AMD-001 §3.3.
+    """
+    opened = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
+    alert = _make_alert(alert_id="a-fail-closed", store_id="store-fc", alert_level=AlertLevel.RED, opened_at=opened)
+    observations = [
+        StoreDayObservation(
+            store_id="store-fc",
+            business_date=date(2026, 6, 1),
+            actual_revenue=50_000.0,
+            site_score_baseline_p50=100_000.0,
+        )
+    ]
+
+    with pytest.raises(ForecastAlertPolicyError, match="policy_repository is required"):
+        backfill_alert_precision(
+            [alert],
+            observations=observations,
+            policy_repository=None,
+        )
+
+
+def test_backfill_alert_precision_missing_baseline_unresolved() -> None:
+    """Review defect 3: Missing baseline data (baseline=None) must NOT be treated as gap=0.0 / healthy,
+    which would incorrectly mark collapsed stores as FALSE_POSITIVE. It must remain UNRESOLVED.
+    """
+    opened = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
+    policy_repo = InMemoryDecisionPolicyRepository([default_forecast_alert_policy(TENANT_ID)])
+    alert = _make_alert(alert_id="a-missing-base", store_id="store-mb", alert_level=AlertLevel.RED, opened_at=opened)
+
+    # 30 days of observations where revenue collapsed to 1.0, but baseline is None (data gap)
+    observations = [
+        StoreDayObservation(
+            store_id="store-mb",
+            business_date=date(2026, 6, d),
+            actual_revenue=1.0,
+            site_score_baseline_p50=None,
+        )
+        for d in range(1, 31)
+    ]
+
+    updated_alerts, metrics = backfill_alert_precision(
+        [alert],
+        observations=observations,
+        policy_repository=policy_repo,
+        evaluation_horizon_days=28,
+    )
+    res = updated_alerts[0]
+    # Cannot evaluate without baseline data -> UNRESOLVED (not FALSE_POSITIVE)
+    assert res.disposition == "UNRESOLVED"
+    assert res.deterioration_confirmed_at is None
+    assert metrics["unresolved_count"] == 1
+    assert metrics["false_positive_count"] == 0
+    assert metrics["evaluated_alert_count"] == 0
+    assert metrics["precision"] is None
+
+
+def test_backfill_alert_precision_minimum_observations_check() -> None:
+    """Review defect 4: Window elapsed but insufficient observations (< min_observations)
+    must remain UNRESOLVED instead of falsely declaring FALSE_POSITIVE on a single observation.
+    """
+    opened = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
+    policy_repo = InMemoryDecisionPolicyRepository([default_forecast_alert_policy(TENANT_ID)])
+    alert = _make_alert(alert_id="a-min-obs", store_id="store-mo", alert_level=AlertLevel.RED, opened_at=opened)
+
+    # Only 1 observation on day 28 (window has elapsed, but observation count = 1 < 14)
+    observations = [
+        StoreDayObservation(
+            store_id="store-mo",
+            business_date=date(2026, 6, 29),
+            actual_revenue=95_000.0,
+            site_score_baseline_p50=100_000.0,
+        )
+    ]
+
+    updated_alerts, metrics = backfill_alert_precision(
+        [alert],
+        observations=observations,
+        policy_repository=policy_repo,
+        evaluation_horizon_days=28,
+        min_observations=14,
+    )
+    res = updated_alerts[0]
+    assert res.disposition == "UNRESOLVED"
+    assert metrics["unresolved_count"] == 1
+    assert metrics["false_positive_count"] == 0
+
+    # When 15 observations are present, sufficient observations threshold is met -> FALSE_POSITIVE
+    observations_sufficient = [
+        StoreDayObservation(
+            store_id="store-mo",
+            business_date=date(2026, 6, d),
+            actual_revenue=95_000.0,
+            site_score_baseline_p50=100_000.0,
+        )
+        for d in range(1, 16)
+    ]
+    # Set as_of to horizon end
+    updated_alerts_suff, metrics_suff = backfill_alert_precision(
+        [alert],
+        observations=observations_sufficient,
+        policy_repository=policy_repo,
+        evaluation_horizon_days=28,
+        min_observations=14,
+        as_of=datetime(2026, 6, 30, 0, 0, tzinfo=UTC),
+    )
+    res_suff = updated_alerts_suff[0]
+    assert res_suff.disposition == "FALSE_POSITIVE"
+    assert metrics_suff["false_positive_count"] == 1
+
+
+def test_backfill_preserves_manual_disposition() -> None:
+    """A human adjudication must not be replaced by a later batch run."""
+    opened = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
+    policy_repo = InMemoryDecisionPolicyRepository([default_forecast_alert_policy(TENANT_ID)])
+    manually_disposed = _make_alert(
+        alert_id="a-manual-disposition",
+        store_id="store-manual-disposition",
+        opened_at=opened,
+    ).close_with_disposition(
+        disposition=AlertDisposition.KNOWN_CONTEXT,
+        actor="ops-manager",
+        now=datetime(2026, 6, 2, 10, 0, tzinfo=UTC),
+        note="Store remodeling was already known to operations.",
+    )
+    observations = [
+        StoreDayObservation(
+            store_id="store-manual-disposition",
+            business_date=date(2026, 6, day),
+            actual_revenue=95_000.0,
+            site_score_baseline_p50=100_000.0,
+        )
+        for day in range(1, 31)
+    ]
+
+    updated, metrics = backfill_alert_precision(
+        [manually_disposed],
+        observations=observations,
+        policy_repository=policy_repo,
+        evaluation_horizon_days=28,
+        now=datetime(2026, 7, 1, tzinfo=UTC),
+    )
+
+    assert updated == [manually_disposed]
+    assert updated[0].disposition_set_by == "ops-manager"
+    assert metrics["known_context_count"] == 1
+    assert metrics["false_positive_count"] == 0
+
+
+def test_backfill_is_idempotent_and_does_not_clear_confirmation_without_new_evidence() -> None:
+    """A second run must retain the first run's disposition and lead-time evidence."""
+    opened = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
+    policy_repo = InMemoryDecisionPolicyRepository([default_forecast_alert_policy(TENANT_ID)])
+    alert = _make_alert(alert_id="a-rerun", store_id="store-rerun", opened_at=opened)
+    observations = [
+        StoreDayObservation(
+            store_id="store-rerun",
+            business_date=date(2026, 6, 8),
+            actual_revenue=60_000.0,
+            site_score_baseline_p50=100_000.0,
+        )
+    ]
+
+    first, _ = backfill_alert_precision(
+        [alert],
+        observations=observations,
+        policy_repository=policy_repo,
+        now=datetime(2026, 6, 9, tzinfo=UTC),
+    )
+    second, second_metrics = backfill_alert_precision(
+        first,
+        observations=(),
+        policy_repository=policy_repo,
+        now=datetime(2026, 7, 1, tzinfo=UTC),
+    )
+
+    assert second == first
+    assert second[0].disposition == AlertDisposition.TRUE_POSITIVE.value
+    assert second[0].deterioration_confirmed_at == datetime(
+        2026, 6, 8, 9, 0, tzinfo=UTC
+    )
+    assert second[0].lead_time_days == 7
+    assert second_metrics["true_positive_count"] == 1
+
+
+def test_backfill_preserves_existing_confirmation_on_unresolved_alert() -> None:
+    """Missing new observations cannot erase a previously recorded confirmation."""
+    opened = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
+    confirmed = datetime(2026, 6, 8, 9, 0, tzinfo=UTC)
+    policy_repo = InMemoryDecisionPolicyRepository([default_forecast_alert_policy(TENANT_ID)])
+    alert = _make_alert(
+        alert_id="a-existing-confirmation",
+        store_id="store-existing-confirmation",
+        opened_at=opened,
+        disposition=AlertDisposition.UNRESOLVED,
+        deterioration_confirmed_at=confirmed,
+    )
+
+    updated, _ = backfill_alert_precision(
+        [alert],
+        observations=(),
+        policy_repository=policy_repo,
+        now=datetime(2026, 6, 9, tzinfo=UTC),
+    )
+
+    assert updated[0].disposition == AlertDisposition.UNRESOLVED.value
+    assert updated[0].deterioration_confirmed_at == confirmed
+
+
+def test_alert_mapping_round_trip_and_green_metrics_exclusion() -> None:
+    """Serialized alerts are accepted by backfill and GREEN is not an alert metric."""
+    opened = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
+    policy_repo = InMemoryDecisionPolicyRepository([default_forecast_alert_policy(TENANT_ID)])
+    green = _make_alert(alert_id="green", alert_level=AlertLevel.GREEN, opened_at=opened)
+    alert = _make_alert(alert_id="mapped", store_id="store-mapped", opened_at=opened)
+    observations = [
+        StoreDayObservation(
+            store_id="store-mapped",
+            business_date=date(2026, 6, 8),
+            actual_revenue=60_000.0,
+            site_score_baseline_p50=100_000.0,
+        )
+    ]
+
+    updated, metrics = backfill_alert_precision(
+        [alert.to_dict()],
+        observations=observations,
+        policy_repository=policy_repo,
+    )
+
+    assert updated[0].disposition == AlertDisposition.TRUE_POSITIVE.value
+    assert metrics["total_alerts"] == 1
+    assert calculate_alert_precision_metrics([green, updated[0]])["total_alerts"] == 1

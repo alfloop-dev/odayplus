@@ -39,6 +39,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from task_archive import archive_task_path, normalize_task_id, task_status  # noqa: E402
+
 from delivery_toolchain.release.check_runtime_admission import (  # noqa: E402
     registry_admission_errors,
 )
@@ -87,12 +89,16 @@ def dependency_errors(
     if not isinstance(tasks, list):
         return ["status document has no tasks list"]
 
+    # Key on the identity the Supervisor itself resolves. `normalize_task_id`
+    # only strips whitespace, so `odp-a` and `ODP-A` are different tasks at
+    # dispatch time; folding case here would let the issuer authorise a
+    # release against a dependency the dispatcher can never resolve.
     index = {
-        str(task.get("id")).upper(): task
+        normalize_task_id(task.get("id")): task
         for task in tasks
         if isinstance(task, dict) and task.get("id")
     }
-    task = index.get(task_id.upper())
+    task = index.get(normalize_task_id(task_id))
     if task is None:
         return [f"task {task_id} is not present in the Supervisor status document"]
 
@@ -124,21 +130,36 @@ def dependency_errors(
 def _dependency_state(
     index: dict[str, Any], dependency_id: str, archive_dir: Path | None
 ) -> str | None:
-    task = index.get(dependency_id.upper())
+    task = index.get(normalize_task_id(dependency_id))
     if isinstance(task, dict):
         return str(task.get("status"))
     if archive_dir is None:
         return None
-    path = archive_dir / f"{dependency_id.lower()}.json"
-    if not path.exists():
-        return None
+    # Name the snapshot with the archiver's own rule instead of a second
+    # guess at it. `archive_task_path` keeps the task id verbatim, so the
+    # files on disk are upper-case; lower-casing the name here missed every
+    # one of them on a case-sensitive filesystem, and a miss is reported as
+    # "cannot be resolved" -- a finished prerequisite blocked its own release
+    # while `scripts/orchestrator/check_task_dependency_resolvability.py`
+    # called the very same graph fully resolvable.
+    path = archive_dir / archive_task_path(dependency_id).name
     try:
         archived = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
+        # A missing or malformed snapshot must not satisfy a dependency.
         return None
     if not isinstance(archived, dict):
         return None
-    return str(archived.get("status"))
+    # The archive envelope carries the terminal state in `terminal_status`
+    # and preserves the task under `task`. It has no top-level `status`, so
+    # reading one resolved every archived dependency to the string "None".
+    snapshot = archived.get("task")
+    if isinstance(snapshot, dict):
+        status = task_status(snapshot)
+        if status:
+            return status
+    terminal_status = str(archived.get("terminal_status") or "").strip().lower()
+    return terminal_status or None
 
 
 def issuance_errors(
@@ -199,6 +220,9 @@ def issue_release_lease(
     archive_dir: Path | None = None,
     issued_at: datetime | None = None,
     root: Path = ROOT,
+    request_fingerprint: str | None = None,
+    approval_id: str | None = None,
+    approval_nonce_digest: str | None = None,
 ) -> dict[str, Any]:
     """Mint and durably record one lease, or raise `LeaseIssuanceError`.
 
@@ -236,6 +260,9 @@ def issue_release_lease(
         private_key=private_key,
         ttl_seconds=ttl_seconds,
         issued_at=issued_at,
+        request_fingerprint=request_fingerprint,
+        approval_id=approval_id,
+        approval_nonce_digest=approval_nonce_digest,
     )
     state_store.record_issued(lease, issued_by=ISSUER_NAME)
     return lease
@@ -249,7 +276,12 @@ def _load_json(path: Path, label: str) -> tuple[Any, list[str]]:
 
 
 def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--state-dir", type=Path, default=DEFAULT_STATE_DIR)
+    parser.add_argument(
+        "--state-dir",
+        type=str,
+        default=str(DEFAULT_STATE_DIR),
+        help="Supervisor lease state directory or gs://bucket/prefix.",
+    )
     parser.add_argument(
         "--private-key-file",
         type=Path,

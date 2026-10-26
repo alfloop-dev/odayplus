@@ -15,16 +15,24 @@ import copy
 import hashlib
 import json
 import re
-from datetime import datetime
+import subprocess
+import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-SUPPORTED_SCHEMA_VERSIONS = (1,)
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+SUPPORTED_SCHEMA_VERSIONS = (1, 2)
+CURRENT_SCHEMA_VERSION = 2
 SHA256_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 IMAGE_DIGEST_PATTERN = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 RELEASE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$")
+RELEASE_STATUSES = frozenset({"ready", "blocked"})
 
-REQUIRED_FIELDS = (
+REQUIRED_FIELDS_V1 = (
     "schema_version",
     "release_id",
     "candidate_sha",
@@ -40,11 +48,734 @@ REQUIRED_FIELDS = (
     "manifest_digest",
 )
 
+REQUIRED_FIELDS_V2 = REQUIRED_FIELDS_V1 + (
+    "rollback_release",
+)
+
+REQUIRED_FIELDS = REQUIRED_FIELDS_V1
+SNAPSHOT_FIELDS = (
+    "id",
+    "uri",
+    "object_generation",
+    "content_sha256",
+    "data_contract_digest",
+    "masked",
+)
+
+# ---------------------------------------------------------------------------
+# Sources-off data-plane posture
+# ---------------------------------------------------------------------------
+#
+# EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN §3/§9/§14 describe the standing
+# posture of this product: all sixteen data sources stay disabled, no provider
+# credential exists, and public egress stays default-deny until a per-source
+# activation receipt is approved.  A release in that posture has no masked
+# snapshot to bind because there is no ingested third-party data to mask -- but
+# "no snapshot" must not become "no evidence".  ``sources_off_attestation`` is
+# the data-plane evidence such a release carries instead, and it is only worth
+# anything because it is *derived and bound* rather than declared:
+#
+# * it enumerates every source in :data:`EXTERNAL_SOURCE_INVENTORY`, so it
+#   cannot be satisfied by a bare boolean or a short list;
+# * ``binding_digest`` covers this candidate SHA, these component image
+#   digests, and this source-policy digest, so an attestation cannot be lifted
+#   from another release, replayed after a rebuild, or kept across a policy
+#   change; and
+# * nothing in the release path accepts a hand-supplied ``binding_digest`` --
+#   the build phase computes it from the deployment posture it read at the
+#   release SHA.
+SOURCES_OFF_PROVIDER_MODE = "disabled"
+SOURCES_OFF_EGRESS_POSTURE = "default-deny"
+SOURCE_STATUS_DISABLED = "disabled"
+SOURCE_EGRESS_DENIED = "denied"
+
+#: The sixteen internal and external sources the rollout plan holds closed.
+#: This mirrors the ODP-DEV-ROLLOUT-001 provider-off audit inventory; it is the
+#: schema-side spelling of that same set, not a second source registry.
+EXTERNAL_SOURCE_INVENTORY = (
+    "store_master_snapshot",
+    "machine_master_snapshot",
+    "machine_cycle_event",
+    "machine_status_event",
+    "transaction_event",
+    "price_schedule_snapshot",
+    "maintenance_work_order_event",
+    "customer_service_case_event",
+    "poi_snapshot",
+    "geocode_result_snapshot",
+    "admin_boundary_snapshot",
+    "listing_raw_snapshot",
+    "competitor_store_snapshot",
+    "demographics_snapshot",
+    "weather_daily_snapshot",
+    "store_opening_authority_snapshot",
+)
+EXPECTED_EXTERNAL_SOURCE_COUNT = len(EXTERNAL_SOURCE_INVENTORY)
+
+#: Source-id words that name a *kind* of record rather than a source, so they
+#: identify nothing on their own. They are dropped before a source id is
+#: matched against a deployment environment variable name.
+GENERIC_SOURCE_ID_TOKENS = frozenset(
+    {"snapshot", "event", "raw", "result", "daily", "store"}
+)
+
+#: Name endings that make a deployment variable a *credential*, and the ones
+#: that make it an *endpoint*.
+#:
+#: The release toolchain deliberately holds no provider inventory. Naming the
+#: provider credentials here would restate ``modules/external_data`` inside
+#: ``delivery_toolchain/release/``, which the external-data boundary
+#: (``odayplus.legacy-external-data-disposition.v2``) forbids: that inventory is
+#: the frozen registry's to hold, and only the registry, the deployment wiring
+#: and the test suites are declared to carry it. So this module recognises
+#: *shapes* — a source id's own words plus generic security nouns — and never
+#: a provider. Anything attributed to a source that matches neither shape is
+#: read as a credential, because an unrecognised secret must not be the reason
+#: a sources-off release is admitted.
+#: ``AUTH_STATUS`` sits in the credential list on purpose: it gates a
+#: credential, so it is checked before the plainer ``STATUS`` posture flag.
+CREDENTIAL_ENV_SUFFIXES = (
+    "API_KEY",
+    "TOKEN",
+    "SECRET",
+    "ATTESTATION",
+    "AUTH_STATUS",
+    "CREDENTIAL",
+    "PASSWORD",
+)
+ENDPOINT_ENV_SUFFIXES = ("URL", "URI", "ENDPOINT", "HOST")
+
+#: A source's posture flag. It carries no secret and grants no egress: it is
+#: the deployment saying out loud whether the source is on. Reading it as a
+#: credential would make the committed provider-off workflow undeployable,
+#: which is the very coupling this task exists to remove.
+STATUS_ENV_SUFFIXES = ("STATUS", "MODE", "ENABLED")
+
+
+def source_id_env_tokens(source_id: str) -> frozenset[str]:
+    """回傳足以指認這個 source 的字詞（大寫）。
+
+    ``competitor_store_snapshot`` 會收斂成 ``{"COMPETITOR"}``；``store`` 這種
+    多個 source 共用的字被丟掉，否則 ``store_opening_authority_snapshot`` 的
+    變數會被誤算到 ``competitor_store_snapshot`` 頭上。若一個 source id 全部
+    由通用字組成，就退回整組字詞，寧可比對得更嚴格也不要比對不到。
+    """
+
+    words = [part for part in source_id.split("_") if part]
+    discriminating = [word for word in words if word not in GENERIC_SOURCE_ID_TOKENS]
+    return frozenset(word.upper() for word in (discriminating or words))
+
+
+def env_var_belongs_to_source(env_var: str, source_id: str) -> bool:
+    """判斷一個 deployment 環境變數名稱是否屬於這個 source。
+
+    只看名稱的字詞組成，不看 provider 是誰：一個變數會算到 ``poi_snapshot``
+    頭上，是因為它的名稱帶了 ``POI`` 這個字，不是因為這裡記得哪一家 provider
+    用什麼變數名。這也是這個模組能通過 external-data boundary 的原因。
+    """
+
+    return source_id_env_tokens(source_id) <= frozenset(env_var.upper().split("_"))
+
+
+def classify_source_env_var(env_var: str) -> str:
+    """把屬於某個 source 的環境變數分成 ``credential``、``endpoint`` 或 ``status``。
+
+    順序有意義：``AUTH_STATUS`` 先被判成 credential，才輪到一般的 ``STATUS``
+    被判成 posture flag。認不出來的字尾一律算 credential——看不懂的秘密不該
+    成為 sources-off release 被放行的理由。
+    """
+
+    name = env_var.upper()
+    if any(name.endswith(suffix) for suffix in CREDENTIAL_ENV_SUFFIXES):
+        return "credential"
+    if any(name.endswith(suffix) for suffix in ENDPOINT_ENV_SUFFIXES):
+        return "endpoint"
+    if any(name.endswith(suffix) for suffix in STATUS_ENV_SUFFIXES):
+        return "status"
+    return "credential"
+
+
+SOURCE_POSTURE_FIELDS = ("source_id", "status", "credentials_present", "public_egress")
+SOURCES_OFF_ATTESTATION_FIELDS = (
+    "provider_mode",
+    "egress_posture",
+    "total_sources_audited",
+    "all_sources_disabled",
+    "zero_credentials_present",
+    "sources_inventory",
+    "egress_evidence",
+    "binding_digest",
+)
+
+
+
+# The posture inventory is not allowed to turn the absence of an endpoint
+# variable into a security verdict. A sources-off release must carry proof
+# that the *single* Runtime Release path actually binds Cloud Run to the
+# fail-closed VPC/firewall contract. These values are deliberately boring and
+# secret-free; the digest is over the checked-in IaC/deploy entrypoint files.
+SOURCES_OFF_EGRESS_EVIDENCE_FIELDS = (
+    "kind",
+    "cloud_run_egress",
+    "firewall_egress",
+    "workflow_vpc_binding",
+    "deploy_entrypoint_vpc_binding",
+    "runtime_probe_wiring",
+    "runtime_probe",
+    "runtime_probe_receipt",
+    "resolved_cloud_run_egress",
+    "runtime_probe_receipt_content_digest",
+    "provider_credentials_runtime",
+    "proof_source",
+    "contract_digest",
+)
+SOURCES_OFF_EGRESS_EVIDENCE_KIND = "runtime-release-egress-contract"
+SOURCES_OFF_CLOUD_RUN_EGRESS = "ALL_TRAFFIC"
+SOURCES_OFF_FIREWALL_EGRESS = "default-deny"
+SOURCES_OFF_PROVIDER_CREDENTIALS = "absent"
+SOURCES_OFF_RUNTIME_PROBE = "public_egress_denied"
+SOURCES_OFF_RUNTIME_PROBE_RECEIPT = ".odp_data/deployment/public-egress-probe.json"
+SOURCES_OFF_RUNTIME_PROBE_RESULT = "passed"
+SOURCES_OFF_RUNTIME_PROBE_REASON = "public_canary_denied"
+
+# These are the checked-in contract inputs for the one Runtime Release path.
+# Their digest makes the otherwise secret-free posture receipt specific to the
+# workflow, deploy entrypoint, and firewall/IaC that will consume it.
+SOURCES_OFF_EGRESS_CONTRACT_FILES = (
+    ".github/workflows/deploy-dev.yml",
+    "product_ops/deployment/deploy_cloud_run_waji.sh",
+    "infra/terraform/cloud_run.tf",
+    "infra/terraform/network.tf",
+    "product_ops/deployment/staging_lifecycle.py",
+    "product_ops/deployment/cloud_run_job_entrypoint.py",
+)
+
+RUNTIME_FOUNDATION_MODULE_FILES = (
+    "infra/terraform/modules/runtime_foundation/main.tf",
+    "infra/terraform/modules/runtime_foundation/variables.tf",
+    "infra/terraform/modules/runtime_foundation/network.tf",
+    "infra/terraform/modules/runtime_foundation/outputs.tf",
+    "infra/terraform/modules/runtime_foundation/kms.tf",
+    "infra/terraform/modules/runtime_foundation/database.tf",
+)
+
+
+# ---------------------------------------------------------------------------
+# Initial-release recovery admission
+# ---------------------------------------------------------------------------
+#
+# Schema v2 requires every release to bind the previous approved release, so a
+# rollback target is never a thing anyone has to find under pressure. That
+# requirement is unconditional, and on the *first* release into a target it is
+# unsatisfiable: there is no previous approved release to bind, so the build
+# phase can never write a handoff and the environment can never receive its
+# first deploy. The only ways out of that deadlock are all worse than the
+# deadlock -- fabricate a rollback manifest, relax the requirement for every
+# release, or add a second admission path that skips it.
+#
+# ``initial_release_recovery`` is the one narrow branch that resolves it, and it
+# is admissible only because it is *derived and bound* in the same way
+# ``sources_off_attestation`` is:
+#
+# * it carries a readback of the deploy target proving there is nothing there
+#   to roll back to -- every Cloud Run service and job this release deploys,
+#   observed absent, not declared absent;
+# * ``binding_digest`` covers this candidate SHA, these component image
+#   digests, this target environment, and this recovery method, so the record
+#   cannot be lifted onto another release, replayed after a rebuild, or
+#   re-pointed at another environment;
+# * ``recovery_method`` states what recovery actually is for a first release in
+#   the environment it is admitted into -- delete the candidate and hold zero
+#   traffic for dev and production, hold the release-scoped namespace for
+#   forensics in ephemeral staging (:data:`INITIAL_RELEASE_ENVIRONMENT_RECOVERY`).
+#   A first release has no earlier version, so a record that promised a
+#   rollback would be promising something that does not exist; and
+# * it is sealed only for :data:`INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS` (dev,
+#   and staging as the leg of production's first release), admitted only along
+#   :data:`INITIAL_RELEASE_ADMISSIBLE_ENVIRONMENTS`, and refused for any release
+#   that expects an enabled external source, which keeps the unchanged
+#   rollback/snapshot requirements; and
+# * every admission re-reads *its own* target, bound to the manifest digest and
+#   held to a freshness window (:func:`initial_release_verification_errors`),
+#   and staging/production admission is refused once production has admitted
+#   any other release (:func:`initial_release_lineage_errors`).
+#
+# Nothing here weakens the *second* release: once the target holds a release,
+# the readback observes it (and, for production, the lease history records
+# it), this branch refuses, and the ordinary ``rollback_release`` binding is
+# the only way through.
+INITIAL_RELEASE_RECOVERY_KIND = "initial-release-recovery"
+
+#: What recovery means when there is no earlier release. Deleting the candidate
+#: and holding zero traffic is the whole of it; naming it here keeps the record
+#: from implying a rollback target that has never existed.
+INITIAL_RELEASE_RECOVERY_METHOD = "delete-candidate-zero-traffic"
+INITIAL_RELEASE_RECOVERY_ACTIONS = (
+    "delete-candidate-cloud-run-services",
+    "delete-candidate-cloud-run-jobs",
+    "delete-candidate-scheduler-triggers",
+    "hold-zero-traffic",
+)
+
+#: Ephemeral staging does not delete a failed first release: the deploy
+#: workflow's failure step runs ``staging_lifecycle.py hold``, which retains the
+#: release-scoped namespace for forensic inspection until its TTL, and the
+#: namespace is destroyed later by ``staging_lifecycle.py cleanup``. Nothing is
+#: deleted and no traffic is moved at failure time; the namespace is created for
+#: this release alone, so no other release's traffic depends on it. Naming the
+#: hold here keeps a staging record from promising a cleanup staging does not
+#: perform.
+INITIAL_RELEASE_STAGING_RECOVERY_METHOD = "forensic-hold-release-scoped-namespace"
+INITIAL_RELEASE_STAGING_RECOVERY_ACTIONS = (
+    "hold-release-scoped-namespace-for-forensics",
+    "cleanup-release-scoped-namespace-after-ttl",
+)
+
+#: What a first-release failure actually does, per environment it is admitted
+#: into. Dev and production run ``deploy_cloud_run_waji.sh``'s
+#: ``initial-release-cleanup`` (delete the candidate, keep zero traffic);
+#: staging runs the forensic hold above.
+INITIAL_RELEASE_ENVIRONMENT_RECOVERY = {
+    "dev": (INITIAL_RELEASE_RECOVERY_METHOD, INITIAL_RELEASE_RECOVERY_ACTIONS),
+    "staging": (
+        INITIAL_RELEASE_STAGING_RECOVERY_METHOD,
+        INITIAL_RELEASE_STAGING_RECOVERY_ACTIONS,
+    ),
+    "production": (INITIAL_RELEASE_RECOVERY_METHOD, INITIAL_RELEASE_RECOVERY_ACTIONS),
+}
+
+#: A record sealed for one environment but admissible into another states the
+#: other environment's recovery here, sealed under the binding digest, so the
+#: manifest production admits says what production's recovery is rather than
+#: staging's.
+INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD = "promotion_recovery"
+
+#: The build targets that may *seal* an initial-release record
+#: (ODP-CORE-OPS-FIRST-RELEASE-ROLLBACK-001). Production is never one: it only
+#: receives the manifest staging sealed and rehearsed, so production is reached
+#: through :data:`INITIAL_RELEASE_ADMISSIBLE_ENVIRONMENTS` instead.
+INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS = ("dev", "staging")
+
+#: Where a record sealed for a build target may be admitted. Staging shares one
+#: manifest with production (the staging digest is the production digest), so a
+#: staging-sealed first release is the staging leg of production's first
+#: release. Derived from the sealed ``target_environment`` rather than written
+#: into the record, so the binding digest already covers it.
+INITIAL_RELEASE_ADMISSIBLE_ENVIRONMENTS = {
+    "dev": ("dev",),
+    "staging": ("staging", "production"),
+}
+
+#: The environments whose first-release admission also has to clear the
+#: durable lineage check: production must never have consumed a lease for any
+#: other manifest. Dev keeps its unchanged live-readback semantics.
+INITIAL_RELEASE_LINEAGE_ENVIRONMENTS = ("staging", "production")
+INITIAL_RELEASE_LINEAGE_TARGET = "production"
+
+#: What a lineage record has to say before it may be skipped as unrelated.
+#: Mirrors ``release_lease.LEASE_STATES`` (anti-drift test in tests/release); a
+#: record outside these values is not "some other environment's lease", it is
+#: a record nobody can classify, and a first release is refused over it.
+INITIAL_RELEASE_LINEAGE_LEASE_STATES = ("issued", "consumed", "revoked")
+INITIAL_RELEASE_LINEAGE_KNOWN_ENVIRONMENTS = ("dev", "staging", "production")
+
+#: An admission readback older than this is not a statement about the target
+#: the deploy is about to touch. The probe and the verifier run back to back in
+#: one admission job, so the window only has to cover that job.
+INITIAL_RELEASE_ADMISSION_READBACK_MAX_AGE_SECONDS = 600
+INITIAL_RELEASE_VERIFICATION_KIND = "initial-release-recovery-verification"
+INITIAL_RELEASE_VERIFICATION_FIELDS = (
+    "schema_version",
+    "kind",
+    "environment",
+    "observed_at",
+    "release_id",
+    "candidate_sha",
+    "manifest_digest",
+    "target_environment",
+    "recovery_method",
+    "recovery_actions",
+    "rollback_target_available",
+    "binding_digest",
+    "verified_absent",
+    "absence_readback",
+)
+
+#: Every deploy target whose absence has to be observed before "this
+#: environment has no existing approved release" is a statement about the
+#: environment rather than about the two services someone happened to check.
+#: ``migration`` is listed separately from ``worker`` even though they share an
+#: image: they are distinct Cloud Run resources, and a leftover migration job
+#: is exactly the kind of prior state that makes a target not empty.
+INITIAL_RELEASE_TARGET_INVENTORY = (
+    ("api", "cloud-run-service"),
+    ("web", "cloud-run-service"),
+    ("migration", "cloud-run-job"),
+    ("scheduler", "cloud-run-job"),
+    ("worker", "cloud-run-job"),
+)
+INITIAL_RELEASE_READBACK_KIND = "runtime-release-target-absence-readback"
+
+#: The exact readback the record must have been produced by. Spelling it here
+#: rather than accepting any plausible-looking string keeps ``probe_command`` a
+#: contract with one implementation instead of a free-text provenance claim.
+INITIAL_RELEASE_PROBE_COMMAND = (
+    "gcloud run services list --format=value(metadata.name); "
+    "gcloud run jobs list --format=value(metadata.name)"
+)
+INITIAL_RELEASE_READBACK_FIELDS = (
+    "kind",
+    "target_environment",
+    "project",
+    "region",
+    "probe_command",
+    "targets",
+)
+INITIAL_RELEASE_TARGET_FIELDS = (
+    "component",
+    "resource_kind",
+    "resource_name",
+    "exists",
+    "serving_traffic",
+)
+
+# Cloud Run Job names are release-scoped so a prior release can remain
+# inspectable while the next candidate is prepared. Keep this naming rule in
+# the release toolchain as well as the deploy entrypoint: the initial-release
+# probe must inspect the names the deploy will actually create.
+RELEASE_JOB_NAME_MAX_LENGTH = 63
+RELEASE_JOB_NAME_SHA_LENGTH = 12
+
+#: Ephemeral staging does not deploy to long-lived names: every release gets
+#: its own ``stg-<slug>-<hash>`` namespace, and its Jobs carry no SHA suffix.
+#: Mirrors ``staging_lifecycle.get_ephemeral_resource_names`` and the
+#: ``ephemeral_staging`` Terraform module (anti-drift test in tests/release).
+STAGING_RELEASE_TARGET_SUFFIXES = {
+    "api": "api",
+    "web": "web",
+    "migration": "migration",
+    "scheduler": "scheduler",
+    "worker": "worker",
+}
+INITIAL_RELEASE_RECOVERY_FIELDS = (
+    "kind",
+    "target_environment",
+    "recovery_method",
+    "recovery_actions",
+    "rollback_target_available",
+    "prior_release_absent",
+    "absence_readback",
+    "binding_digest",
+)
+
+# ---------------------------------------------------------------------------
+# Release profile (ODP-DEV-ADMIN-RELEASE-READINESS-001)
+# ---------------------------------------------------------------------------
+#
+# A release profile is the *acceptance scope* the live gate holds a release to.
+# ``full`` is the complete product contract, including approved production
+# model aliases, and is what every manifest without ``release_profile`` means:
+# existing manifests and their digests are untouched.  ``dev-admin`` is the
+# narrower dev-only scope that accepts a release whose core administration
+# (real login/session, PostgreSQL, RBAC, tenant isolation, audit) is healthy
+# while trained models are still absent and remain refused.
+#
+# ``core-ops`` (ODP-CORE-OPS-RELEASE-PROFILE-001) is the same "models absent
+# and refused" scope for core operations, admissible to dev, staging and
+# production, without dev-admin's dev-only password journey.
+#
+# The profile is part of the canonical payload, so ``manifest_digest`` -- and
+# through it the Supervisor lease -- binds it.  The deploy phase reads it from
+# the admitted manifest; there is deliberately no deploy-time input that could
+# switch an already built full release into the narrower scope.
+RELEASE_PROFILE_FULL = "full"
+RELEASE_PROFILE_DEV_ADMIN = "dev-admin"
+RELEASE_PROFILE_CORE_OPS = "core-ops"
+RELEASE_PROFILES = (RELEASE_PROFILE_FULL, RELEASE_PROFILE_DEV_ADMIN, RELEASE_PROFILE_CORE_OPS)
+#: The build targets a narrowed profile may be sealed for (its
+#: ``target_environment``).  ``full`` is not listed because it is admissible
+#: everywhere and is never spelled explicitly.  ``core-ops`` is never sealed for
+#: production: production admits only the staging-sealed manifest (below).
+RELEASE_PROFILE_ENVIRONMENTS: dict[str, frozenset[str]] = {
+    RELEASE_PROFILE_DEV_ADMIN: frozenset({"dev"}),
+    RELEASE_PROFILE_CORE_OPS: frozenset({"dev", "staging"}),
+}
+#: Where a manifest sealed for ``(profile, target_environment)`` may be
+#: admitted, when that is more than the sealed target itself.  A core-ops
+#: manifest rehearsed in staging is promoted to production *as the same sealed
+#: manifest*: production runs exactly the image digests staging ran, and the
+#: production lease is issued against the very digest the staging lease was.
+#: That is stronger than ``full``, whose manifest binds no environment at all.
+RELEASE_PROFILE_PROMOTIONS: dict[tuple[str, str], frozenset[str]] = {
+    (RELEASE_PROFILE_CORE_OPS, "staging"): frozenset({"staging", "production"}),
+}
+RELEASE_PROFILE_FIELDS = ("name", "target_environment", "model_readiness")
+#: A narrowed profile records, inside the digest, that it claims nothing about
+#: model readiness, so the manifest can never be quoted as model evidence.
+RELEASE_PROFILE_MODEL_READINESS_NOT_CLAIMED = "not_claimed"
+
+
+def build_release_profile(name: str, *, target_environment: str) -> dict[str, Any] | None:
+    """Return the manifest ``release_profile`` value, or None for ``full``.
+
+    Raises ``ValueError`` for an unknown profile or one that may not be
+    admitted into *target_environment*, so a build refuses before it seals a
+    manifest nobody could deploy.
+    """
+
+    if name == RELEASE_PROFILE_FULL:
+        return None
+    if name not in RELEASE_PROFILE_ENVIRONMENTS:
+        raise ValueError(
+            f"unknown release profile {name!r}; expected one of {list(RELEASE_PROFILES)}"
+        )
+    allowed = RELEASE_PROFILE_ENVIRONMENTS[name]
+    if target_environment not in allowed:
+        promoted_from = sorted(
+            target
+            for target in allowed
+            if target_environment in release_profile_admissible_environments(name, target)
+        )
+        hint = (
+            f"; {target_environment!r} admits only the manifest sealed for "
+            f"{promoted_from} (the same digests that were rehearsed there)"
+            if promoted_from
+            else ""
+        )
+        raise ValueError(
+            f"release profile {name!r} may only target {sorted(allowed)}, "
+            f"not {target_environment!r}{hint}"
+        )
+    return {
+        "name": name,
+        "target_environment": target_environment,
+        "model_readiness": RELEASE_PROFILE_MODEL_READINESS_NOT_CLAIMED,
+    }
+
+
+def release_profile_admissible_environments(
+    name: str, target_environment: str | None = None
+) -> frozenset[str]:
+    """Return where a narrowed profile may be admitted.
+
+    With *target_environment* this is the admission set of a manifest sealed
+    for that target; without it, the union over every target the profile may
+    be sealed for (what the runtime, gate and Web mirrors pin).  Unknown
+    profiles and targets admit nowhere.
+    """
+
+    targets = RELEASE_PROFILE_ENVIRONMENTS.get(name, frozenset())
+    if target_environment is not None:
+        if target_environment not in targets:
+            return frozenset()
+        return RELEASE_PROFILE_PROMOTIONS.get(
+            (name, target_environment), frozenset({target_environment})
+        )
+    admissible: set[str] = set()
+    for target in targets:
+        admissible |= release_profile_admissible_environments(name, target)
+    return frozenset(admissible)
+
+
+def manifest_release_profile(manifest: Any) -> str:
+    """Return the profile name a manifest is bound to (``full`` when absent).
+
+    Callers must have validated the manifest first; this does not re-validate.
+    """
+
+    if not isinstance(manifest, dict) or manifest.get("release_profile") is None:
+        return RELEASE_PROFILE_FULL
+    profile = manifest["release_profile"]
+    return str(profile.get("name") or "") if isinstance(profile, dict) else ""
+
+
+def release_profile_errors(
+    manifest: Any, *, environment: str | None = None
+) -> list[str]:
+    """Return why ``manifest.release_profile`` is malformed or not admissible.
+
+    ``environment`` is the deploy target.  It is optional so a stored manifest
+    can still be audited on its own terms, but every deploy-time caller passes
+    it: a ``dev-admin`` manifest must never reach staging or production, and a
+    ``core-ops`` manifest reaches production only as the staging-sealed one.
+    """
+
+    if not isinstance(manifest, dict) or "release_profile" not in manifest:
+        return []
+    profile = manifest["release_profile"]
+    label = "manifest.release_profile"
+    if not isinstance(profile, dict):
+        return [f"{label} must be an object"]
+    errors: list[str] = []
+    keys = set(profile)
+    if keys != set(RELEASE_PROFILE_FIELDS):
+        errors.append(
+            f"{label} must carry exactly {list(RELEASE_PROFILE_FIELDS)}; "
+            f"got {sorted(keys)}"
+        )
+    name = profile.get("name")
+    if name == RELEASE_PROFILE_FULL:
+        # One spelling per scope keeps one digest per scope.
+        errors.append(
+            f"{label} must be omitted for the full profile, not spelled explicitly"
+        )
+        return errors
+    if name not in RELEASE_PROFILE_ENVIRONMENTS:
+        errors.append(
+            f"{label}.name must be one of {list(RELEASE_PROFILES)}, got {name!r}"
+        )
+        return errors
+    allowed = RELEASE_PROFILE_ENVIRONMENTS[name]
+    target = profile.get("target_environment")
+    if target not in allowed:
+        errors.append(
+            f"{label}.target_environment must be one of {sorted(allowed)} for "
+            f"profile {name!r}, got {target!r}"
+        )
+    if profile.get("model_readiness") != RELEASE_PROFILE_MODEL_READINESS_NOT_CLAIMED:
+        errors.append(
+            f"{label}.model_readiness must be "
+            f"{RELEASE_PROFILE_MODEL_READINESS_NOT_CLAIMED!r} for profile {name!r}"
+        )
+    if environment is not None and environment not in (
+        release_profile_admissible_environments(name, target)
+        if isinstance(target, str)
+        else frozenset()
+    ):
+        errors.append(
+            f"{label} binds profile {name!r} to {target!r}; it cannot be "
+            f"admitted into {environment!r}"
+        )
+    return errors
+
 
 def is_exact_sha(value: Any) -> bool:
     """Return whether *value* is a lowercase 40-character git SHA."""
 
     return isinstance(value, str) and bool(re.fullmatch(r"[0-9a-f]{40}", value))
+
+
+def ensure_candidate_commit(candidate_sha: str, *, root: Path = ROOT) -> bool:
+    """Ensure candidate commit object and its tree/blobs are present locally.
+
+    In a shallow or fresh depth-1 clone (e.g. Runtime Release build runner),
+    a predecessor/rollback candidate commit may not be in the local object store.
+    This helper attempts to fetch the exact candidate SHA from git remotes.
+    Returns True if the commit object is available locally, False otherwise.
+    """
+    if not is_exact_sha(candidate_sha):
+        return False
+
+    try:
+        res = subprocess.run(
+            ["git", "cat-file", "-e", f"{candidate_sha}^{{commit}}"],
+            cwd=root,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if res.returncode == 0:
+            return True
+    except Exception:
+        return False
+
+    remotes: list[str] = []
+    try:
+        out = (
+            subprocess.check_output(
+                ["git", "remote"],
+                cwd=root,
+                stderr=subprocess.DEVNULL,
+            )
+            .decode("utf-8")
+            .strip()
+            .split()
+        )
+        remotes = [r.strip() for r in out if r.strip()]
+    except Exception:
+        remotes = []
+
+    if "origin" in remotes:
+        remotes.remove("origin")
+        remotes.insert(0, "origin")
+    elif not remotes:
+        remotes = ["origin"]
+
+    for remote in remotes:
+        for fetch_cmd in (
+            ["git", "fetch", "--depth=1", remote, candidate_sha],
+            ["git", "fetch", remote, candidate_sha],
+        ):
+            try:
+                fetch_res = subprocess.run(
+                    fetch_cmd,
+                    cwd=root,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+                if fetch_res.returncode == 0:
+                    check_res = subprocess.run(
+                        ["git", "cat-file", "-e", f"{candidate_sha}^{{commit}}"],
+                        cwd=root,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                    )
+                    if check_res.returncode == 0:
+                        return True
+            except Exception:
+                pass
+
+    return False
+
+
+def release_candidate_job_name(base_name: Any, candidate_sha: Any) -> str:
+    """Return the Cloud Run Job name used for one immutable release candidate.
+
+    The deploy script uses the same ``<base>-r-<sha12>`` convention. Cloud Run
+    caps resource names at 63 characters, so a long configured base is trimmed
+    before the release suffix is appended. Refusing malformed inputs here is
+    important: a probe that silently invents a different name can admit a
+    target the deploy will not actually use.
+    """
+
+    if not isinstance(base_name, str) or not base_name.strip():
+        raise ValueError("Cloud Run Job base name must be a non-empty string")
+    if not is_exact_sha(candidate_sha):
+        raise ValueError("candidate_sha must be a 40-character lowercase git SHA")
+    base = base_name.strip()
+    suffix = f"-r-{candidate_sha[:RELEASE_JOB_NAME_SHA_LENGTH]}"
+    prefix_length = RELEASE_JOB_NAME_MAX_LENGTH - len(suffix)
+    return f"{base[:prefix_length]}{suffix}"
+
+
+def staging_release_target_names(release_id: Any) -> dict[str, str]:
+    """Return the release-scoped staging Cloud Run names one release deploys.
+
+    The initial-release readback of an ephemeral staging target has to probe
+    the names ``staging_lifecycle.py create`` will actually create, not the
+    long-lived names dev and production use; a readback of names nobody deploys
+    to proves nothing.
+    """
+
+    if not isinstance(release_id, str) or not release_id.strip():
+        raise ValueError("staging release_id must be a non-empty string")
+    clean = re.sub(r"[^a-z0-9-]", "-", release_id.lower()).strip("-")
+    release_hash = hashlib.sha256(release_id.encode("utf-8")).hexdigest()[:8]
+    name_prefix = f"stg-{clean[:24]}-{release_hash}"
+    return {
+        component: f"{name_prefix}-{suffix}"
+        for component, suffix in STAGING_RELEASE_TARGET_SUFFIXES.items()
+    }
+
+
+def initial_release_admissible_environments(target_environment: Any) -> tuple[str, ...]:
+    """Return where a record sealed for *target_environment* may be admitted."""
+
+    if not isinstance(target_environment, str):
+        return ()
+    return INITIAL_RELEASE_ADMISSIBLE_ENVIRONMENTS.get(target_environment, ())
 
 
 def is_sha256_digest(value: Any) -> bool:
@@ -105,11 +836,1086 @@ def is_valid_timestamp(value: Any) -> bool:
     return parsed.tzinfo is not None
 
 
+def _snapshot_errors(snapshot: Any, *, label: str) -> list[str]:
+    """Validate a snapshot pointer that is embedded in a release identity."""
+
+    if not isinstance(snapshot, dict):
+        return [f"{label} must be an object"]
+
+    errors: list[str] = []
+    for field in SNAPSHOT_FIELDS:
+        if field not in snapshot:
+            errors.append(f"{label} missing required field: {field}")
+    if "id" in snapshot and (
+        not isinstance(snapshot["id"], str) or not snapshot["id"].strip()
+    ):
+        errors.append(f"{label}.id must be a non-empty string")
+    if "uri" in snapshot and (
+        not isinstance(snapshot["uri"], str) or not snapshot["uri"].strip()
+    ):
+        errors.append(f"{label}.uri must be a non-empty string")
+    if "object_generation" in snapshot:
+        generation = snapshot["object_generation"]
+        valid_generation = (
+            isinstance(generation, int)
+            and not isinstance(generation, bool)
+            and generation >= 0
+        ) or (
+            isinstance(generation, str) and bool(re.fullmatch(r"[0-9]+", generation))
+        )
+        if not valid_generation:
+            errors.append(f"{label}.object_generation must be a non-negative integer")
+    if "content_sha256" in snapshot and not is_sha256_digest(
+        snapshot["content_sha256"]
+    ):
+        errors.append(
+            f"{label}.content_sha256 must be a sha256:<64 lowercase hex> digest"
+        )
+    if "data_contract_digest" in snapshot and not is_sha256_digest(
+        snapshot["data_contract_digest"]
+    ):
+        errors.append(
+            f"{label}.data_contract_digest must be a sha256:<64 lowercase hex> digest"
+        )
+    if "masked" in snapshot and snapshot["masked"] is not True:
+        errors.append(f"{label}.masked must be True")
+    return errors
+
+
+def _component_image_map(components: Any) -> dict[str, str]:
+    """Return ``{component: image}`` for binding, ignoring shared-image metadata."""
+
+    images: dict[str, str] = {}
+    if not isinstance(components, dict):
+        return images
+    for name, component in components.items():
+        if isinstance(component, dict):
+            image = component.get("image")
+        else:
+            image = component
+        if isinstance(name, str) and isinstance(image, str):
+            images[name] = image
+    return images
+
+
+def sources_off_posture_payload(attestation: Any) -> dict[str, Any]:
+    """Return the posture subset that ``binding_digest`` commits to."""
+
+    if not isinstance(attestation, dict):
+        return {}
+    inventory = attestation.get("sources_inventory")
+    normalised_inventory: list[dict[str, Any]] = []
+    if isinstance(inventory, list):
+        for entry in inventory:
+            if not isinstance(entry, dict):
+                continue
+            normalised_inventory.append(
+                {field: entry.get(field) for field in SOURCE_POSTURE_FIELDS}
+            )
+        normalised_inventory.sort(key=lambda entry: str(entry.get("source_id")))
+    evidence = attestation.get("egress_evidence")
+    normalised_evidence = (
+        {field: evidence.get(field) for field in SOURCES_OFF_EGRESS_EVIDENCE_FIELDS}
+        if isinstance(evidence, dict)
+        else {}
+    )
+    return {
+        "provider_mode": attestation.get("provider_mode"),
+        "egress_posture": attestation.get("egress_posture"),
+        "total_sources_audited": attestation.get("total_sources_audited"),
+        "all_sources_disabled": attestation.get("all_sources_disabled"),
+        "zero_credentials_present": attestation.get("zero_credentials_present"),
+        "sources_inventory": normalised_inventory,
+        "egress_evidence": normalised_evidence,
+    }
+
+
+def compute_sources_off_binding_digest(
+    *,
+    candidate_sha: Any,
+    components: Any,
+    source_policy_digest: Any,
+    posture: dict[str, Any],
+) -> str:
+    """Bind a sources-off posture to one candidate, one image set, one policy.
+
+    Without this the attestation would be a free-floating claim: copyable to the
+    next candidate, still "valid" after the images were rebuilt, and unaffected
+    by a source-policy change.  Binding it to all three is what makes the
+    posture evidence about *this* release.
+    """
+
+    payload = {
+        "candidate_sha": candidate_sha,
+        "component_images": _component_image_map(components),
+        "source_policy_digest": source_policy_digest,
+        "external_sources_expected_enabled": [],
+        "posture": posture,
+    }
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def build_sources_off_attestation(
+    *,
+    candidate_sha: str,
+    components: dict[str, Any],
+    source_policy_digest: str,
+    provider_mode: str,
+    sources_inventory: list[dict[str, Any]],
+    egress_evidence: dict[str, Any] | None = None,
+    root: Path = ROOT,
+) -> dict[str, Any]:
+    """Seal an observed sources-off posture into a bound attestation.
+
+    The caller supplies what it *observed*; it does not get to supply the
+    verdict fields or the digest.  ``all_sources_disabled``,
+    ``zero_credentials_present`` and ``egress_posture`` are derived from the
+    inventory here, so an attestation cannot claim a clean posture over a dirty
+    inventory -- :func:`sources_off_attestation_errors` re-derives them and
+    rejects the manifest if they disagree.
+    """
+
+    inventory = [
+        {field: entry.get(field) for field in SOURCE_POSTURE_FIELDS}
+        for entry in sources_inventory
+    ]
+    inventory.sort(key=lambda entry: str(entry.get("source_id")))
+    if egress_evidence is None:
+        egress_evidence = build_sources_off_egress_evidence(
+            root=root,
+            candidate_sha=candidate_sha,
+        )
+    attestation: dict[str, Any] = {
+        "provider_mode": provider_mode,
+        "egress_posture": _derived_egress_posture(inventory),
+        "total_sources_audited": len(inventory),
+        "all_sources_disabled": _derived_all_disabled(inventory),
+        "zero_credentials_present": _derived_zero_credentials(inventory),
+        "sources_inventory": inventory,
+        "egress_evidence": copy.deepcopy(egress_evidence),
+    }
+    attestation["binding_digest"] = compute_sources_off_binding_digest(
+        candidate_sha=candidate_sha,
+        components=components,
+        source_policy_digest=source_policy_digest,
+        posture=sources_off_posture_payload(attestation),
+    )
+    return attestation
+
+
+def _derived_all_disabled(inventory: list[dict[str, Any]]) -> bool:
+    return bool(inventory) and all(
+        entry.get("status") == SOURCE_STATUS_DISABLED for entry in inventory
+    )
+
+
+def _derived_zero_credentials(inventory: list[dict[str, Any]]) -> bool:
+    return all(entry.get("credentials_present") is False for entry in inventory)
+
+
+def _derived_egress_posture(inventory: list[dict[str, Any]]) -> str:
+    if inventory and all(
+        entry.get("public_egress") == SOURCE_EGRESS_DENIED for entry in inventory
+    ):
+        return SOURCES_OFF_EGRESS_POSTURE
+    return "provider-egress-allowed"
+
+
+def sources_off_attestation_errors(
+    attestation: Any,
+    *,
+    candidate_sha: Any = None,
+    components: Any = None,
+    source_policy_digest: Any = None,
+    label: str = "manifest.sources_off_attestation",
+    root: Path = ROOT,
+) -> list[str]:
+    """Return why *attestation* is not admissible sources-off data-plane evidence.
+
+    Every branch here is a fail-closed condition named by the rollout plan: a
+    provider mode that is not ``disabled``, a source that is not disabled, a
+    provider credential that exists, egress that is not default-deny, or a
+    binding that does not belong to this release.
+    """
+
+    if not isinstance(attestation, dict):
+        return [f"{label} must be an object"]
+
+    errors: list[str] = []
+    for field in SOURCES_OFF_ATTESTATION_FIELDS:
+        if field not in attestation:
+            errors.append(f"{label} missing required field: {field}")
+
+    provider_mode = attestation.get("provider_mode")
+    if provider_mode != SOURCES_OFF_PROVIDER_MODE:
+        errors.append(
+            f"{label}.provider_mode must be {SOURCES_OFF_PROVIDER_MODE!r}; "
+            f"got {provider_mode!r}"
+        )
+
+    inventory = attestation.get("sources_inventory")
+    if not isinstance(inventory, list):
+        errors.append(f"{label}.sources_inventory must be a list")
+        inventory = []
+    else:
+        observed_ids: list[str] = []
+        for index, entry in enumerate(inventory):
+            entry_label = f"{label}.sources_inventory[{index}]"
+            if not isinstance(entry, dict):
+                errors.append(f"{entry_label} must be an object")
+                continue
+            source_id = entry.get("source_id")
+            if isinstance(source_id, str):
+                observed_ids.append(source_id)
+            else:
+                errors.append(f"{entry_label}.source_id must be a string")
+            if entry.get("status") != SOURCE_STATUS_DISABLED:
+                errors.append(
+                    f"{entry_label}.status must be {SOURCE_STATUS_DISABLED!r} for a "
+                    f"sources-off release; got {entry.get('status')!r}"
+                )
+            if entry.get("credentials_present") is not False:
+                errors.append(
+                    f"{entry_label}.credentials_present must be False; a sources-off "
+                    "release must carry no provider credential"
+                )
+            if entry.get("public_egress") != SOURCE_EGRESS_DENIED:
+                errors.append(
+                    f"{entry_label}.public_egress must be {SOURCE_EGRESS_DENIED!r}; "
+                    "a sources-off release must keep public egress default-deny"
+                )
+        missing = sorted(set(EXTERNAL_SOURCE_INVENTORY) - set(observed_ids))
+        unexpected = sorted(set(observed_ids) - set(EXTERNAL_SOURCE_INVENTORY))
+        duplicated = sorted({sid for sid in observed_ids if observed_ids.count(sid) > 1})
+        if missing:
+            errors.append(
+                f"{label}.sources_inventory does not audit every source; missing: "
+                + ", ".join(missing)
+            )
+        if unexpected:
+            errors.append(
+                f"{label}.sources_inventory audits sources that are not in the "
+                "canonical inventory: " + ", ".join(unexpected)
+            )
+        if duplicated:
+            errors.append(
+                f"{label}.sources_inventory repeats sources: " + ", ".join(duplicated)
+            )
+
+    normalised = sources_off_posture_payload(attestation)["sources_inventory"]
+    if attestation.get("total_sources_audited") != EXPECTED_EXTERNAL_SOURCE_COUNT:
+        errors.append(
+            f"{label}.total_sources_audited must be {EXPECTED_EXTERNAL_SOURCE_COUNT}; "
+            f"got {attestation.get('total_sources_audited')!r}"
+        )
+    if attestation.get("all_sources_disabled") is not _derived_all_disabled(normalised):
+        errors.append(
+            f"{label}.all_sources_disabled does not match its own sources_inventory"
+        )
+    if attestation.get("zero_credentials_present") is not _derived_zero_credentials(
+        normalised
+    ):
+        errors.append(
+            f"{label}.zero_credentials_present does not match its own sources_inventory"
+        )
+    derived_egress = _derived_egress_posture(normalised)
+    if attestation.get("egress_posture") != derived_egress:
+        errors.append(
+            f"{label}.egress_posture does not match its own sources_inventory"
+        )
+    elif derived_egress != SOURCES_OFF_EGRESS_POSTURE:
+        errors.append(
+            f"{label}.egress_posture must be {SOURCES_OFF_EGRESS_POSTURE!r} for a "
+            f"sources-off release; got {derived_egress!r}"
+        )
+
+    evidence = attestation.get("egress_evidence")
+    if not isinstance(evidence, dict):
+        errors.append(f"{label}.egress_evidence must be an object")
+        evidence = {}
+    for field in SOURCES_OFF_EGRESS_EVIDENCE_FIELDS:
+        if field not in evidence:
+            errors.append(f"{label}.egress_evidence missing required field: {field}")
+    expected_evidence = None
+    try:
+        expected_evidence = build_sources_off_egress_evidence(
+            root=root,
+            candidate_sha=candidate_sha,
+        )
+    except Exception as exc:
+        errors.append(
+            f"{label}.egress_evidence cannot be verified for candidate {candidate_sha}: {exc}"
+        )
+    if expected_evidence is not None:
+        for field in SOURCES_OFF_EGRESS_EVIDENCE_FIELDS:
+            if evidence.get(field) != expected_evidence.get(field):
+                errors.append(
+                    f"{label}.egress_evidence.{field} is not the checked-in Runtime "
+                    "Release egress contract"
+                )
+    if evidence.get("resolved_cloud_run_egress") != evidence.get("cloud_run_egress"):
+        errors.append(
+            f"{label}.egress_evidence.resolved_cloud_run_egress must match the "
+            "resolved Cloud Run egress bound by the workflow"
+        )
+    if evidence.get("runtime_probe_receipt_content_digest") != compute_sources_off_probe_receipt_content_digest(
+        resolved_cloud_run_egress=evidence.get("resolved_cloud_run_egress"),
+    ):
+        errors.append(
+            f"{label}.egress_evidence.runtime_probe_receipt_content_digest must "
+            "bind the expected probe receipt content"
+        )
+    errors.extend(_sources_off_egress_contract_errors(root=root, candidate_sha=candidate_sha))
+
+    recorded_binding = attestation.get("binding_digest")
+    if not is_sha256_digest(recorded_binding):
+        errors.append(f"{label}.binding_digest must be a sha256:<64 lowercase hex> digest")
+    elif candidate_sha is not None or components is not None:
+        expected_binding = compute_sources_off_binding_digest(
+            candidate_sha=candidate_sha,
+            components=components,
+            source_policy_digest=source_policy_digest,
+            posture=sources_off_posture_payload(attestation),
+        )
+        if recorded_binding != expected_binding:
+            errors.append(
+                f"{label}.binding_digest is not bound to this release's candidate "
+                "SHA, component image digests, and source_policy_digest"
+            )
+    return errors
+
+
+def initial_release_readback_payload(readback: Any) -> dict[str, Any]:
+    """Return the readback subset ``binding_digest`` commits to.
+
+    Only the named fields travel into the digest, so this is also the reason
+    :func:`initial_release_readback_errors` refuses an unknown key: a field the
+    digest does not cover is a field the binding does not protect.
+    """
+
+    if not isinstance(readback, dict):
+        return {}
+    targets = readback.get("targets")
+    normalised_targets: list[dict[str, Any]] = []
+    if isinstance(targets, list):
+        for entry in targets:
+            if not isinstance(entry, dict):
+                continue
+            normalised_targets.append(
+                {field: entry.get(field) for field in INITIAL_RELEASE_TARGET_FIELDS}
+            )
+        normalised_targets.sort(key=lambda entry: str(entry.get("component")))
+    return {
+        "kind": readback.get("kind"),
+        "target_environment": readback.get("target_environment"),
+        "project": readback.get("project"),
+        "region": readback.get("region"),
+        "probe_command": readback.get("probe_command"),
+        "targets": normalised_targets,
+    }
+
+
+def compute_initial_release_binding_digest(
+    *,
+    candidate_sha: Any,
+    components: Any,
+    target_environment: Any,
+    recovery_method: Any,
+    readback: Any,
+    promotion_recovery: Any = None,
+) -> str:
+    """Bind an initial-release admission to one candidate, image set, and target.
+
+    An unbound version of this record would be the most useful forgery in the
+    pipeline: "this environment has nothing to roll back to" is true exactly
+    once per environment, and a copyable claim of it would admit every later
+    release without a rollback binding.  Binding it to the candidate SHA, the
+    component image digests, the target environment, and the recovery method is
+    what keeps it a statement about *this* release into *this* target.
+
+    ``promotion_recovery`` is bound only when the record carries one (a staging
+    seal), so a dev record's digest is unchanged.
+    """
+
+    payload = {
+        "candidate_sha": candidate_sha,
+        "component_images": _component_image_map(components),
+        "target_environment": target_environment,
+        "recovery_method": recovery_method,
+        "absence_readback": initial_release_readback_payload(readback),
+    }
+    if promotion_recovery is not None:
+        payload[INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD] = promotion_recovery
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _derived_prior_release_absent(readback: Any) -> bool:
+    """Return whether the readback observed an empty target, end to end."""
+
+    targets = initial_release_readback_payload(readback).get("targets") or []
+    observed = {str(entry.get("component")) for entry in targets}
+    if observed != {name for name, _kind in INITIAL_RELEASE_TARGET_INVENTORY}:
+        return False
+    return all(
+        entry.get("exists") is False and entry.get("serving_traffic") is False
+        for entry in targets
+    )
+
+
+def build_initial_release_recovery(
+    *,
+    candidate_sha: str,
+    components: dict[str, Any],
+    target_environment: str,
+    absence_readback: dict[str, Any],
+) -> dict[str, Any]:
+    """Seal an observed empty deploy target into a bound initial-release record.
+
+    The caller supplies what it *read back* from the target and nothing else.
+    ``prior_release_absent``, ``rollback_target_available``, the recovery method
+    and its actions are derived here, and the digest is computed here, so a
+    record cannot claim an empty target over a readback that found one --
+    :func:`initial_release_recovery_errors` re-derives all of it and refuses the
+    manifest if the two disagree.
+    """
+
+    readback = copy.deepcopy(absence_readback)
+    recovery_method, recovery_actions = _sealed_recovery(target_environment)
+    recovery: dict[str, Any] = {
+        "kind": INITIAL_RELEASE_RECOVERY_KIND,
+        "target_environment": target_environment,
+        "recovery_method": recovery_method,
+        "recovery_actions": list(recovery_actions),
+        # Stated rather than implied. A first release has no earlier version, so
+        # the honest recovery is to remove the candidate (or, in ephemeral
+        # staging, hold its own namespace); recording "no rollback target" is
+        # what stops an operator reading this manifest as an offer to roll back.
+        "rollback_target_available": False,
+        "prior_release_absent": _derived_prior_release_absent(readback),
+        "absence_readback": readback,
+    }
+    promotion_recovery = expected_promotion_recovery(target_environment)
+    if promotion_recovery is not None:
+        recovery[INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD] = promotion_recovery
+    recovery["binding_digest"] = compute_initial_release_binding_digest(
+        candidate_sha=candidate_sha,
+        components=components,
+        target_environment=target_environment,
+        recovery_method=recovery_method,
+        readback=readback,
+        promotion_recovery=promotion_recovery,
+    )
+    return recovery
+
+
+def _sealed_recovery(target_environment: Any) -> tuple[str, tuple[str, ...]]:
+    """Return the recovery a record sealed for *target_environment* must state.
+
+    An environment that may not seal at all falls back to the dev/production
+    method; the record is refused for its target anyway.
+    """
+
+    if target_environment in INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS:
+        return INITIAL_RELEASE_ENVIRONMENT_RECOVERY[target_environment]
+    return INITIAL_RELEASE_RECOVERY_METHOD, INITIAL_RELEASE_RECOVERY_ACTIONS
+
+
+def expected_promotion_recovery(target_environment: Any) -> dict[str, Any] | None:
+    """Return the sealed recovery for the one environment a record is promoted into.
+
+    ``None`` for a record admissible only where it was sealed (dev).
+    """
+
+    promoted = [
+        environment
+        for environment in initial_release_admissible_environments(target_environment)
+        if environment != target_environment
+    ]
+    if not promoted:
+        return None
+    (environment,) = promoted
+    method, actions = INITIAL_RELEASE_ENVIRONMENT_RECOVERY[environment]
+    return {
+        "environment": environment,
+        "recovery_method": method,
+        "recovery_actions": list(actions),
+    }
+
+
+def initial_release_admission_recovery(
+    recovery: Any, environment: Any
+) -> tuple[Any, Any] | None:
+    """Return the ``(recovery_method, recovery_actions)`` *recovery* states for
+    an admission into *environment*, or ``None`` when it states none.
+
+    The sealed target's recovery is the record's own; a promotion target's is
+    its ``promotion_recovery``. Nothing here is derived from code, so an
+    admission receipt is checked against what the admitted manifest says.
+    """
+
+    if not isinstance(recovery, dict):
+        return None
+    if environment == recovery.get("target_environment"):
+        return recovery.get("recovery_method"), recovery.get("recovery_actions")
+    promotion = recovery.get(INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD)
+    if isinstance(promotion, dict) and promotion.get("environment") == environment:
+        return promotion.get("recovery_method"), promotion.get("recovery_actions")
+    return None
+
+
+def initial_release_readback_errors(
+    readback: Any,
+    *,
+    target_environment: Any = None,
+    candidate_sha: Any = None,
+    release_id: Any = None,
+    label: str = "manifest.initial_release_recovery.absence_readback",
+) -> list[str]:
+    """Return why *readback* does not prove the deploy target is empty.
+
+    ``release_id`` matters only for an ephemeral staging readback, whose
+    targets are the release-scoped names this release creates.
+    """
+
+    if not isinstance(readback, dict):
+        return [f"{label} must be an object"]
+
+    errors: list[str] = []
+    for field in INITIAL_RELEASE_READBACK_FIELDS:
+        if field not in readback:
+            errors.append(f"{label} missing required field: {field}")
+    unknown = sorted(set(readback) - set(INITIAL_RELEASE_READBACK_FIELDS))
+    if unknown:
+        errors.append(
+            f"{label} carries fields the binding digest does not cover: "
+            + ", ".join(unknown)
+        )
+
+    if readback.get("kind") != INITIAL_RELEASE_READBACK_KIND:
+        errors.append(
+            f"{label}.kind must be {INITIAL_RELEASE_READBACK_KIND!r}; "
+            f"got {readback.get('kind')!r}"
+        )
+    readback_environment = readback.get("target_environment")
+    if target_environment is not None and readback_environment != target_environment:
+        errors.append(
+            f"{label}.target_environment is {readback_environment!r}, but the record "
+            f"admits {target_environment!r}; the readback must be of the target being "
+            "deployed"
+        )
+    for field in ("project", "region"):
+        value = readback.get(field)
+        if not isinstance(value, str) or not value.strip():
+            errors.append(
+                f"{label}.{field} must name the deploy target that was read back"
+            )
+    probe_command = readback.get("probe_command")
+    if probe_command != INITIAL_RELEASE_PROBE_COMMAND:
+        errors.append(
+            f"{label}.probe_command must be {INITIAL_RELEASE_PROBE_COMMAND!r}; a "
+            "readback that cannot name the command that observed the target is a "
+            "declaration, not evidence"
+        )
+
+    targets = readback.get("targets")
+    expected_targets = dict(INITIAL_RELEASE_TARGET_INVENTORY)
+    if not isinstance(targets, list):
+        errors.append(f"{label}.targets must be a list")
+        return errors
+
+    staging_names: dict[str, str] | None = None
+    if readback_environment == "staging" and release_id is not None:
+        try:
+            staging_names = staging_release_target_names(release_id)
+        except ValueError as exc:
+            errors.append(f"{label} cannot resolve staging target names: {exc}")
+
+    observed: list[str] = []
+    for index, entry in enumerate(targets):
+        entry_label = f"{label}.targets[{index}]"
+        if not isinstance(entry, dict):
+            errors.append(f"{entry_label} must be an object")
+            continue
+        entry_unknown = sorted(set(entry) - set(INITIAL_RELEASE_TARGET_FIELDS))
+        if entry_unknown:
+            errors.append(
+                f"{entry_label} carries fields the binding digest does not cover: "
+                + ", ".join(entry_unknown)
+            )
+        component = entry.get("component")
+        if isinstance(component, str):
+            observed.append(component)
+        else:
+            errors.append(f"{entry_label}.component must be a string")
+        if isinstance(component, str) and component in expected_targets:
+            if entry.get("resource_kind") != expected_targets[component]:
+                errors.append(
+                    f"{entry_label}.resource_kind must be "
+                    f"{expected_targets[component]!r} for {component!r}"
+                )
+        resource_name = entry.get("resource_name")
+        if not isinstance(resource_name, str) or not resource_name.strip():
+            errors.append(
+                f"{entry_label}.resource_name must name the resource that was probed"
+            )
+        elif readback_environment == "staging":
+            # Ephemeral staging Jobs are release-scoped by their namespace, not
+            # by a SHA suffix; the name has to be the one this release creates.
+            if (
+                staging_names is not None
+                and isinstance(component, str)
+                and component in staging_names
+                and resource_name != staging_names[component]
+            ):
+                errors.append(
+                    f"{entry_label}.resource_name must be the release-scoped staging "
+                    f"name {staging_names[component]!r}; a readback of another "
+                    "namespace says nothing about the one this release deploys"
+                )
+        elif (
+            candidate_sha is not None
+            and entry.get("resource_kind") == "cloud-run-job"
+            and is_exact_sha(candidate_sha)
+            and not resource_name.endswith(
+                f"-r-{candidate_sha[:RELEASE_JOB_NAME_SHA_LENGTH]}"
+            )
+        ):
+            errors.append(
+                f"{entry_label}.resource_name must be the SHA-suffixed candidate Job "
+                f"name ending in -r-{candidate_sha[:RELEASE_JOB_NAME_SHA_LENGTH]}; "
+                "a base Job name does not identify the resource this release creates"
+            )
+        if entry.get("exists") is not False:
+            errors.append(
+                f"{entry_label}.exists must be False; {component!r} already exists in "
+                "the target, so this environment has a release and the ordinary "
+                "rollback binding applies"
+            )
+        if entry.get("serving_traffic") is not False:
+            errors.append(
+                f"{entry_label}.serving_traffic must be False; {component!r} is "
+                "serving traffic, so this is not an initial release"
+            )
+
+    missing = sorted(set(expected_targets) - set(observed))
+    unexpected = sorted(set(observed) - set(expected_targets))
+    duplicated = sorted({name for name in observed if observed.count(name) > 1})
+    if missing:
+        errors.append(
+            f"{label}.targets does not read back every deploy target; missing: "
+            + ", ".join(missing)
+        )
+    if unexpected:
+        errors.append(
+            f"{label}.targets reads back resources that are not deploy targets: "
+            + ", ".join(unexpected)
+        )
+    if duplicated:
+        errors.append(f"{label}.targets repeats targets: " + ", ".join(duplicated))
+    return errors
+
+
+def initial_release_recovery_errors(
+    recovery: Any,
+    *,
+    candidate_sha: Any = None,
+    components: Any = None,
+    environment: Any = None,
+    release_id: Any = None,
+    label: str = "manifest.initial_release_recovery",
+) -> list[str]:
+    """Return why *recovery* is not an admissible initial-release admission.
+
+    ``environment`` is the target a deploy is actually about to run against.
+    When it is supplied it must be on the sealed target's admission path
+    (:data:`INITIAL_RELEASE_ADMISSIBLE_ENVIRONMENTS`); omitting it validates the
+    record on its own terms, which is what auditing a stored manifest needs.
+    A record that is structurally valid here is still not an admission: the
+    admission-time readback (:func:`initial_release_verification_errors`) and,
+    for staging/production, the durable lineage check have to pass as well.
+    """
+
+    if not isinstance(recovery, dict):
+        return [f"{label} must be an object"]
+
+    errors: list[str] = []
+    for field in INITIAL_RELEASE_RECOVERY_FIELDS:
+        if field not in recovery:
+            errors.append(f"{label} missing required field: {field}")
+    unknown = sorted(
+        set(recovery)
+        - set(INITIAL_RELEASE_RECOVERY_FIELDS)
+        - {INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD}
+    )
+    if unknown:
+        errors.append(
+            f"{label} carries fields the binding digest does not cover: "
+            + ", ".join(unknown)
+        )
+
+    if recovery.get("kind") != INITIAL_RELEASE_RECOVERY_KIND:
+        errors.append(
+            f"{label}.kind must be {INITIAL_RELEASE_RECOVERY_KIND!r}; "
+            f"got {recovery.get('kind')!r}"
+        )
+
+    target_environment = recovery.get("target_environment")
+    if target_environment not in INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS:
+        errors.append(
+            f"{label}.target_environment must be one of "
+            f"{list(INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS)}; got "
+            f"{target_environment!r}. Production is never sealed as a first-release "
+            "build target; it only receives the manifest staging sealed and rehearsed"
+        )
+    admissible = initial_release_admissible_environments(target_environment)
+    if environment is not None and environment not in admissible:
+        errors.append(
+            f"{label}.target_environment is {target_environment!r}, but this deploy "
+            f"targets {environment!r}; a record sealed for {target_environment!r} is "
+            f"admissible only into {list(admissible)}"
+        )
+
+    expected_method, expected_actions = _sealed_recovery(target_environment)
+    recovery_method = recovery.get("recovery_method")
+    if recovery_method != expected_method:
+        errors.append(
+            f"{label}.recovery_method must be {expected_method!r} for a record sealed "
+            f"for {target_environment!r}; got {recovery_method!r}. There is no "
+            "earlier release to roll back to, and the record has to state what this "
+            "environment's failure path actually does"
+        )
+    if recovery.get("recovery_actions") != list(expected_actions):
+        errors.append(
+            f"{label}.recovery_actions must be {list(expected_actions)}; the recovery "
+            "a first release can perform is not open to redefinition by the manifest"
+        )
+    expected_promotion = expected_promotion_recovery(target_environment)
+    promotion = recovery.get(INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD)
+    if expected_promotion is None and INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD in recovery:
+        errors.append(
+            f"{label}.{INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD} is not allowed for a "
+            f"record sealed for {target_environment!r}; it is admissible nowhere else"
+        )
+    elif expected_promotion is not None and promotion != expected_promotion:
+        errors.append(
+            f"{label}.{INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD} must be "
+            f"{expected_promotion!r}; a record promoted into "
+            f"{expected_promotion['environment']!r} has to state that environment's "
+            "own recovery"
+        )
+    if recovery.get("rollback_target_available") is not False:
+        errors.append(
+            f"{label}.rollback_target_available must be False; an initial release has "
+            "no approved predecessor, and recording otherwise would promise a rollback "
+            "to a version that does not exist"
+        )
+
+    readback = recovery.get("absence_readback")
+    errors.extend(
+        initial_release_readback_errors(
+            readback,
+            target_environment=target_environment,
+            candidate_sha=candidate_sha,
+            release_id=release_id,
+            label=f"{label}.absence_readback",
+        )
+    )
+    derived_absent = _derived_prior_release_absent(readback)
+    if recovery.get("prior_release_absent") is not derived_absent:
+        errors.append(
+            f"{label}.prior_release_absent does not match its own absence_readback"
+        )
+    elif derived_absent is not True:
+        errors.append(
+            f"{label}.prior_release_absent must be True; the readback did not observe "
+            "an empty deploy target, so this release must bind a rollback release"
+        )
+
+    recorded_binding = recovery.get("binding_digest")
+    if not is_sha256_digest(recorded_binding):
+        errors.append(
+            f"{label}.binding_digest must be a sha256:<64 lowercase hex> digest"
+        )
+    elif candidate_sha is not None or components is not None:
+        expected_binding = compute_initial_release_binding_digest(
+            candidate_sha=candidate_sha,
+            components=components,
+            target_environment=target_environment,
+            recovery_method=recovery_method,
+            readback=readback,
+            promotion_recovery=promotion,
+        )
+        if recorded_binding != expected_binding:
+            errors.append(
+                f"{label}.binding_digest is not bound to this release's candidate SHA, "
+                "component image digests, target environment, and recovery method"
+            )
+    return errors
+
+
+def _parse_observed_at(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(UTC)
+
+
+def initial_release_verification_errors(
+    receipt: Any,
+    *,
+    manifest: Any,
+    environment: str,
+    now: datetime,
+    max_age_seconds: int = INITIAL_RELEASE_ADMISSION_READBACK_MAX_AGE_SECONDS,
+    label: str = "initial-release admission readback",
+) -> list[str]:
+    """Return why *receipt* does not prove the admission target is empty *now*.
+
+    The sealed readback is build-time truth about the build target. Admission
+    needs deploy-time truth about the target the lease is about to be spent
+    on, which for a staging-sealed manifest promoted into production is a
+    target the build never read. This receipt is that readback: taken by the
+    admission environment's own identity, bound to the admitted manifest
+    digest, and only good for :data:`INITIAL_RELEASE_ADMISSION_READBACK_MAX_AGE_SECONDS`.
+    Missing, stale, future-dated, mis-targeted, or mis-bound receipts and a
+    target that is no longer empty are all refused before the lease is spent.
+    """
+
+    if receipt is None:
+        return [
+            f"{label} is missing; a first release is admitted only against a "
+            "readback of the target taken during this admission"
+        ]
+    if not isinstance(receipt, dict):
+        return [f"{label} must be a JSON object"]
+    if not isinstance(manifest, dict):
+        return [f"{label} cannot be checked without the admitted manifest"]
+    recovery = manifest.get("initial_release_recovery")
+    if not isinstance(recovery, dict):
+        return [f"{label} was supplied for a manifest with no initial_release_recovery"]
+
+    errors: list[str] = []
+    for field in INITIAL_RELEASE_VERIFICATION_FIELDS:
+        if field not in receipt:
+            errors.append(f"{label} missing required field: {field}")
+    unknown = sorted(set(receipt) - set(INITIAL_RELEASE_VERIFICATION_FIELDS))
+    if unknown:
+        errors.append(f"{label} carries unexpected fields: " + ", ".join(unknown))
+    if receipt.get("schema_version") != 1:
+        errors.append(f"{label}.schema_version must be 1")
+    if receipt.get("kind") != INITIAL_RELEASE_VERIFICATION_KIND:
+        errors.append(
+            f"{label}.kind must be {INITIAL_RELEASE_VERIFICATION_KIND!r}; "
+            f"got {receipt.get('kind')!r}"
+        )
+    admissible = initial_release_admissible_environments(recovery.get("target_environment"))
+    if environment not in admissible:
+        errors.append(
+            f"{label} cannot admit a record sealed for "
+            f"{recovery.get('target_environment')!r} into {environment!r}; it is "
+            f"admissible only into {list(admissible)}"
+        )
+    if receipt.get("environment") != environment:
+        errors.append(
+            f"{label}.environment is {receipt.get('environment')!r}, but this "
+            f"admission targets {environment!r}; a readback of another environment "
+            "says nothing about this one"
+        )
+    for field in ("manifest_digest", "candidate_sha", "release_id"):
+        if receipt.get(field) != manifest.get(field):
+            errors.append(
+                f"{label}.{field} does not match the admitted manifest; the readback "
+                "was not taken for this release"
+            )
+    for field in ("target_environment", "binding_digest"):
+        if receipt.get(field) != recovery.get(field):
+            errors.append(
+                f"{label}.{field} does not match manifest.initial_release_recovery"
+            )
+    # The recovery this admission commits to is the one the manifest states
+    # for *this* environment, not the sealed target's.
+    stated = initial_release_admission_recovery(recovery, environment)
+    if stated is None:
+        errors.append(
+            f"{label}: manifest.initial_release_recovery states no recovery for "
+            f"{environment!r}"
+        )
+    else:
+        stated_method, stated_actions = stated
+        if receipt.get("recovery_method") != stated_method:
+            errors.append(
+                f"{label}.recovery_method does not match the recovery "
+                f"manifest.initial_release_recovery states for {environment!r}"
+            )
+        if receipt.get("recovery_actions") != stated_actions:
+            errors.append(
+                f"{label}.recovery_actions does not match the recovery "
+                f"manifest.initial_release_recovery states for {environment!r}"
+            )
+    if receipt.get("rollback_target_available") is not False:
+        errors.append(f"{label}.rollback_target_available must be False")
+    if receipt.get("verified_absent") is not True:
+        errors.append(f"{label}.verified_absent must be True")
+
+    observed_at = _parse_observed_at(receipt.get("observed_at"))
+    check_time = now.astimezone(UTC)
+    if observed_at is None:
+        errors.append(
+            f"{label}.observed_at must be a timezone-aware ISO-8601 timestamp; a "
+            "readback that cannot say when it looked cannot be held to a freshness "
+            "window"
+        )
+    elif observed_at > check_time:
+        errors.append(
+            f"{label}.observed_at {receipt.get('observed_at')!r} is in the future"
+        )
+    elif (check_time - observed_at).total_seconds() > max_age_seconds:
+        errors.append(
+            f"{label} is stale: observed at {receipt.get('observed_at')!r}, more than "
+            f"{max_age_seconds} seconds before admission; read the target again"
+        )
+
+    readback = receipt.get("absence_readback")
+    errors.extend(
+        initial_release_readback_errors(
+            readback,
+            target_environment=environment,
+            candidate_sha=manifest.get("candidate_sha"),
+            release_id=manifest.get("release_id"),
+            label=f"{label}.absence_readback",
+        )
+    )
+    if environment == recovery.get("target_environment") and (
+        initial_release_readback_payload(readback)
+        != initial_release_readback_payload(recovery.get("absence_readback"))
+    ):
+        errors.append(
+            f"{label}.absence_readback does not match the readback sealed into the "
+            "manifest; the admitted readback must be this target's current state"
+        )
+    return errors
+
+
+def initial_release_lineage_errors(
+    lease_records: Any,
+    *,
+    environment: str,
+    manifest_digest: Any,
+    lineage_target_store: bool = False,
+) -> list[str]:
+    """Return why the durable lease history says this is not a first release.
+
+    *lease_records* must be the lineage target's (production's) lease store:
+    production's own store for a production admission, and for a staging
+    admission the same production store read across environments -- staging's
+    own store never holds a production admission, so it cannot answer this.
+
+    Live absence can be manufactured by deleting services; the Supervisor's
+    lease store cannot. Once any production lease has been consumed for a
+    different manifest, production has admitted a release, and every later
+    release -- into staging or production, which share one manifest -- must
+    bind it as ``rollback_release``. A consumed lease for *this* manifest is a
+    retry of the same first release and does not count against it.
+
+    A record is skipped as unrelated only after it has been classified: a known
+    state, a known lease environment, matching lease ids, and -- for a
+    production record -- a well-formed manifest digest. Anything else is
+    refused rather than read as "production never admitted anything". With
+    ``lineage_target_store`` every record must also be a production lease; a
+    store holding anything else is not the production store.
+    """
+
+    if environment not in INITIAL_RELEASE_LINEAGE_ENVIRONMENTS:
+        return []
+    if not isinstance(lease_records, list):
+        return [
+            "durable lease history is unreadable; cannot prove "
+            f"{INITIAL_RELEASE_LINEAGE_TARGET} has never admitted a release"
+        ]
+    errors: list[str] = []
+    for index, record in enumerate(lease_records):
+        problem = _lineage_record_problem(record)
+        if problem is None and lineage_target_store:
+            lease_environment = record["lease"]["target_environment"]
+            if lease_environment != INITIAL_RELEASE_LINEAGE_TARGET:
+                problem = (
+                    f"is a {lease_environment!r} lease, so the store read as "
+                    f"{INITIAL_RELEASE_LINEAGE_TARGET}'s lineage is not "
+                    f"{INITIAL_RELEASE_LINEAGE_TARGET}'s lease store"
+                )
+        if problem is not None:
+            errors.append(
+                f"durable lease record #{index} {problem}; refusing an "
+                "initial-release admission rather than guessing"
+            )
+            continue
+        lease = record["lease"]
+        if lease["target_environment"] != INITIAL_RELEASE_LINEAGE_TARGET:
+            continue
+        if record["state"] != "consumed":
+            continue
+        if lease["manifest_digest"] == manifest_digest:
+            continue
+        errors.append(
+            f"{INITIAL_RELEASE_LINEAGE_TARGET} already admitted release "
+            f"{lease.get('release_id')!r} (lease {lease.get('lease_id')!r}, manifest "
+            f"{lease.get('manifest_digest')!r}); an initial-release record is usable "
+            "once per lineage, so this release must bind that release as "
+            "rollback_release"
+        )
+    return errors
+
+
+def _lineage_record_problem(record: Any) -> str | None:
+    """Return why *record* cannot be classified, or ``None`` when it can."""
+
+    if not isinstance(record, dict):
+        return "is not an object"
+    lease = record.get("lease")
+    if not isinstance(lease, dict):
+        return "carries no lease object"
+    state = record.get("state")
+    if state not in INITIAL_RELEASE_LINEAGE_LEASE_STATES:
+        return (
+            f"has state {state!r}, not one of "
+            f"{list(INITIAL_RELEASE_LINEAGE_LEASE_STATES)}"
+        )
+    lease_id = lease.get("lease_id")
+    if not isinstance(lease_id, str) or not lease_id or record.get("lease_id") != lease_id:
+        return "does not carry one lease id on both the record and its lease"
+    lease_environment = lease.get("target_environment")
+    if lease_environment not in INITIAL_RELEASE_LINEAGE_KNOWN_ENVIRONMENTS:
+        return (
+            f"targets {lease_environment!r}, not one of "
+            f"{list(INITIAL_RELEASE_LINEAGE_KNOWN_ENVIRONMENTS)}"
+        )
+    if lease_environment == INITIAL_RELEASE_LINEAGE_TARGET and not is_sha256_digest(
+        lease.get("manifest_digest")
+    ):
+        return (
+            f"is a {INITIAL_RELEASE_LINEAGE_TARGET} lease without a sha256 manifest "
+            "digest, so whether it admitted this manifest is unknown"
+        )
+    return None
+
+
 def validate_manifest(
     manifest: Any,
     *,
     expected_candidate_sha: str | None = None,
     expected_digest: str | None = None,
+    root: Path = ROOT,
 ) -> list[str]:
     """Return all manifest integrity errors; an empty list means valid.
 
@@ -122,15 +1928,73 @@ def validate_manifest(
     if not isinstance(manifest, dict):
         return ["manifest must be a JSON object"]
 
-    for field in REQUIRED_FIELDS:
-        if field not in manifest:
-            errors.append(f"manifest missing required field: {field}")
-
     version = manifest.get("schema_version")
     if isinstance(version, bool) or version not in SUPPORTED_SCHEMA_VERSIONS:
         errors.append(
             f"manifest.schema_version must be one of {list(SUPPORTED_SCHEMA_VERSIONS)}, "
             f"got: {version!r}"
+        )
+        required_fields = REQUIRED_FIELDS_V1
+    elif version == 2:
+        # `rollback_release` is required of every v2 release except the one that
+        # provably has no predecessor to bind. That release carries
+        # `initial_release_recovery` instead, and every other v2 requirement --
+        # data-plane evidence, immutable references, digest binding -- still
+        # applies to it unchanged.
+        required_fields = (
+            REQUIRED_FIELDS_V1
+            if manifest.get("initial_release_recovery") is not None
+            else REQUIRED_FIELDS_V2
+        )
+    else:
+        required_fields = REQUIRED_FIELDS_V1
+
+    for field in required_fields:
+        if field not in manifest:
+            errors.append(f"manifest missing required field: {field}")
+
+    # Schema v2 requires *data-plane evidence*, and there are exactly two kinds.
+    # A release that expects enabled external sources binds the approved masked
+    # snapshot; a sources-off release binds a derived provider-off posture. The
+    # two are mutually exclusive on purpose: carrying both is how a sources-off
+    # claim would be used to talk past a snapshot binding that already exists.
+    sources_enabled = manifest.get("external_sources_expected_enabled")
+    attestation = manifest.get("sources_off_attestation")
+    has_snapshot = manifest.get("data_snapshot") is not None
+    if version == 2:
+        if isinstance(sources_enabled, list) and sources_enabled:
+            if not has_snapshot:
+                errors.append(
+                    "manifest missing required field: data_snapshot; a release that "
+                    "expects enabled external sources must bind the approved masked "
+                    "snapshot"
+                )
+            if attestation is not None:
+                errors.append(
+                    "manifest.sources_off_attestation must not appear on a manifest "
+                    "whose external_sources_expected_enabled is non-empty"
+                )
+        elif has_snapshot and attestation is not None:
+            errors.append(
+                "manifest.sources_off_attestation must not accompany "
+                "manifest.data_snapshot; a sources-off posture may not override an "
+                "existing snapshot binding"
+            )
+        elif not has_snapshot and attestation is None:
+            errors.append(
+                "manifest missing required field: data_snapshot; a sources-off "
+                "release must instead bind manifest.sources_off_attestation"
+            )
+
+    if attestation is not None:
+        errors.extend(
+            sources_off_attestation_errors(
+                attestation,
+                candidate_sha=manifest.get("candidate_sha"),
+                components=manifest.get("components"),
+                source_policy_digest=manifest.get("source_policy_digest"),
+                root=root,
+            )
         )
 
     release_id = manifest.get("release_id")
@@ -148,9 +2012,18 @@ def validate_manifest(
             "the manifest is for a different candidate"
         )
 
+    # A candidate that never produced an image has no honest component list.
+    # Forcing one here is what makes a manifest quote a *previous* candidate's
+    # digests, so an empty component set is representable -- but only on a
+    # manifest that records why, and never on an admissible one.
     components = manifest.get("components")
-    if not isinstance(components, dict) or not components:
-        errors.append("manifest.components must be a non-empty object")
+    if not isinstance(components, dict):
+        errors.append("manifest.components must be an object")
+    elif not components and manifest.get("release_status") != "blocked":
+        errors.append(
+            "manifest.components must be a non-empty object unless the manifest "
+            "records release_status='blocked'"
+        )
     elif not all(isinstance(name, str) and name.strip() for name in components):
         errors.append("manifest.components names must be non-empty strings")
     else:
@@ -184,12 +2057,149 @@ def validate_manifest(
         ):
             errors.append(f"manifest.{field} must be a list of non-empty strings")
 
+    release_status = manifest.get("release_status")
+    if release_status is not None and release_status not in RELEASE_STATUSES:
+        errors.append(
+            f"manifest.release_status must be one of {sorted(RELEASE_STATUSES)}, "
+            f"got: {release_status!r}"
+        )
+    if release_status == "blocked":
+        blockers = manifest.get("blockers")
+        if not isinstance(blockers, list) or not blockers:
+            errors.append("blocked manifest must include a non-empty blockers list")
+
     if not is_valid_timestamp(manifest.get("created_at")):
         errors.append("manifest.created_at must be an RFC3339 timestamp with timezone")
     if not isinstance(manifest.get("created_by_workflow"), str) or not manifest.get(
         "created_by_workflow"
     ).strip():
         errors.append("manifest.created_by_workflow must be a non-empty workflow reference")
+
+    # Validate data_snapshot if present. Schema v2 makes this field required;
+    # v1 keeps it optional so historical manifests remain auditable.
+    data_snapshot = manifest.get("data_snapshot")
+    if data_snapshot is not None:
+        errors.extend(_snapshot_errors(data_snapshot, label="manifest.data_snapshot"))
+        if (
+            isinstance(data_snapshot, dict)
+            and is_sha256_digest(data_snapshot.get("data_contract_digest"))
+            and is_sha256_digest(manifest.get("data_contract_digest"))
+            and data_snapshot["data_contract_digest"] != manifest["data_contract_digest"]
+        ):
+            errors.append(
+                "manifest.data_snapshot.data_contract_digest does not match "
+                "manifest.data_contract_digest"
+            )
+
+    # Validate initial_release_recovery if present. It is the alternative to a
+    # rollback binding, never an addition to one: a release that has a
+    # predecessor to bind has no first-release admission to make.
+    initial_release_recovery = manifest.get("initial_release_recovery")
+    if initial_release_recovery is not None:
+        if version != 2:
+            errors.append(
+                "manifest.initial_release_recovery requires schema_version 2; a v1 "
+                "manifest carries no bound initial-release admission"
+            )
+        if manifest.get("rollback_release") is not None:
+            errors.append(
+                "manifest.initial_release_recovery must not accompany "
+                "manifest.rollback_release; a release with an approved predecessor "
+                "binds that predecessor and makes no initial-release claim"
+            )
+        if isinstance(sources_enabled, list) and sources_enabled:
+            errors.append(
+                "manifest.initial_release_recovery must not appear on a manifest "
+                "whose external_sources_expected_enabled is non-empty; a release that "
+                "expects enabled external sources keeps the rollback and masked "
+                "snapshot requirements"
+            )
+        errors.extend(
+            initial_release_recovery_errors(
+                initial_release_recovery,
+                candidate_sha=manifest.get("candidate_sha"),
+                components=manifest.get("components"),
+                release_id=manifest.get("release_id"),
+            )
+        )
+
+    # Validate rollback_release if present
+    rollback_release = manifest.get("rollback_release")
+    if rollback_release is not None:
+        if not isinstance(rollback_release, dict):
+            errors.append("manifest.rollback_release must be an object")
+        else:
+            for rb_field in ("release_id", "candidate_sha", "manifest_digest", "components"):
+                if rb_field not in rollback_release:
+                    errors.append(f"manifest.rollback_release missing required field: {rb_field}")
+            rb_release_id = rollback_release.get("release_id")
+            if not isinstance(rb_release_id, str) or not RELEASE_ID_PATTERN.fullmatch(rb_release_id):
+                errors.append("manifest.rollback_release.release_id must be a stable release identifier")
+            rb_candidate_sha = rollback_release.get("candidate_sha")
+            if not is_exact_sha(rb_candidate_sha):
+                errors.append("manifest.rollback_release.candidate_sha must be an exact 40-character lowercase git SHA")
+            elif rb_candidate_sha == candidate_sha:
+                errors.append("manifest.rollback_release.candidate_sha must not match current candidate_sha; rollback must be a distinct release candidate")
+            rb_digest = rollback_release.get("manifest_digest")
+            if not is_sha256_digest(rb_digest):
+                errors.append("manifest.rollback_release.manifest_digest must be a sha256:<64 lowercase hex> digest")
+
+            rb_components = rollback_release.get("components")
+            if not isinstance(rb_components, dict) or not rb_components:
+                errors.append("manifest.rollback_release.components must be a non-empty object")
+            else:
+                for req_comp in ("api", "web"):
+                    if req_comp not in rb_components:
+                        errors.append(f"manifest.rollback_release.components missing required component: {req_comp!r}")
+                for name, comp in rb_components.items():
+                    label = f"manifest.rollback_release.components[{name!r}]"
+                    if isinstance(comp, dict):
+                        img = comp.get("image")
+                    elif isinstance(comp, str):
+                        img = comp
+                    else:
+                        errors.append(f"{label} must be an object or string reference")
+                        continue
+                    if not isinstance(img, str) or not IMAGE_DIGEST_PATTERN.fullmatch(img):
+                        errors.append(f"{label}.image must be an immutable image reference with @sha256 digest")
+
+            snapshot_key = next(
+                (
+                    key
+                    for key in ("data_snapshot", "snapshot_pointer", "snapshot")
+                    if key in rollback_release
+                ),
+                None,
+            )
+            if snapshot_key is not None:
+                errors.extend(
+                    _snapshot_errors(
+                        rollback_release[snapshot_key],
+                        label="manifest.rollback_release.data_snapshot",
+                    )
+                )
+            else:
+                # A rollback target that ran sources-off has no snapshot pointer
+                # to carry forward, so it carries the binding digest of the
+                # posture it was admitted on instead. A bare "it was sources
+                # off" flag would be forgeable and is not accepted.
+                rb_attestation = rollback_release.get("sources_off_attestation")
+                if rb_attestation is None:
+                    errors.append(
+                        "manifest.rollback_release missing required data_snapshot "
+                        "pointer or sources_off_attestation binding"
+                    )
+                elif not isinstance(rb_attestation, dict):
+                    errors.append(
+                        "manifest.rollback_release.sources_off_attestation must be an object"
+                    )
+                elif not is_sha256_digest(rb_attestation.get("binding_digest")):
+                    errors.append(
+                        "manifest.rollback_release.sources_off_attestation.binding_digest "
+                        "must be a sha256:<64 lowercase hex> digest"
+                    )
+
+    errors.extend(release_profile_errors(manifest))
 
     recorded_digest = manifest.get("manifest_digest")
     if not is_sha256_digest(recorded_digest):
@@ -208,11 +2218,251 @@ def validate_manifest(
     return errors
 
 
+def validate_release_admission(
+    manifest: Any,
+    *,
+    environment: str | None = None,
+    root: Path = ROOT,
+) -> list[str]:
+    """Return why a structurally valid manifest cannot be deployed.
+
+    A blocked manifest is intentionally still hashable and reviewable: it is
+    the immutable record of what was observed and why release stopped.  It is
+    not, however, a deployable artifact.  Keeping this predicate separate from
+    ``validate_manifest`` lets auditors inspect a blocked candidate without
+    accidentally treating it as a successful release.
+
+    ``environment`` is the target a deploy is about to run against.  It matters
+    only for a manifest admitted through ``initial_release_recovery``: that
+    admission was granted by reading back one specific empty target, so it may
+    not be replayed against a different one.  Auditing a stored manifest omits
+    it and gets the record validated on its own terms.
+    """
+
+    errors = validate_manifest(manifest, root=root)
+    if not isinstance(manifest, dict):
+        return errors
+    if environment is not None:
+        errors.extend(
+            error
+            for error in release_profile_errors(manifest, environment=environment)
+            if error not in errors
+        )
+    # Manifests created before the status field was introduced remain
+    # admissible when they contain the required immutable references.  New
+    # manifests must explicitly move to ``ready`` before deployment; a
+    # recorded ``blocked`` state can never be promoted implicitly.
+    release_status = manifest.get("release_status", "ready")
+    if release_status != "ready":
+        errors.append(
+            "release admission requires manifest.release_status='ready'; "
+            f"got {release_status!r}"
+        )
+    # ``validate_manifest`` lets a blocked manifest carry no components. That
+    # relaxation must not travel into admission: a release with nothing to
+    # deploy is not a release, whatever its recorded status says.
+    components = manifest.get("components")
+    if not isinstance(components, dict) or not components:
+        errors.append(
+            "release admission requires at least one immutable component image "
+            "in manifest.components"
+        )
+    for field in ("sbom_refs", "signature_refs"):
+        refs = manifest.get(field)
+        if not isinstance(refs, list) or not refs:
+            errors.append(f"release admission requires non-empty manifest.{field}")
+
+    # Staging and production admission require data-plane evidence bound to this
+    # release. Which evidence is required follows from the declared source
+    # posture, and neither branch is optional.
+    sources_enabled = manifest.get("external_sources_expected_enabled")
+    attestation = manifest.get("sources_off_attestation")
+    if isinstance(sources_enabled, list) and sources_enabled:
+        if manifest.get("data_snapshot") is None:
+            errors.append(
+                "release admission with enabled external sources requires "
+                "manifest.data_snapshot with masked=true and verified content sha256"
+            )
+    elif manifest.get("data_snapshot") is None and attestation is None:
+        errors.append(
+            "release admission requires manifest.data_snapshot with masked=true and "
+            "verified content sha256, or manifest.sources_off_attestation bound to "
+            "this candidate for a sources-off release"
+        )
+
+    # Anti-downgrade. Once a release has been admitted on a masked snapshot, the
+    # next release cannot escape snapshot verification by declaring itself
+    # sources-off: the rollback binding still names the snapshot the previous
+    # release was admitted on, and a posture attestation does not supersede it.
+    rollback_release = manifest.get("rollback_release")
+    if attestation is not None and isinstance(rollback_release, dict):
+        if any(
+            key in rollback_release
+            for key in ("data_snapshot", "snapshot_pointer", "snapshot")
+        ):
+            errors.append(
+                "release admission refuses manifest.sources_off_attestation on a "
+                "release whose rollback_release still binds a data_snapshot; a "
+                "sources-off posture may not override an existing snapshot binding"
+            )
+    # Every release binds the version it can fall back to. The single exception
+    # is a release into a target that provably holds no approved release, which
+    # binds an initial-release admission instead -- see
+    # ``INITIAL_RELEASE_RECOVERY_KIND``. There is no third option and no way to
+    # carry both.
+    rollback_release = manifest.get("rollback_release")
+    initial_release_recovery = manifest.get("initial_release_recovery")
+    if rollback_release is None and initial_release_recovery is None:
+        errors.append(
+            "release admission requires manifest.rollback_release with verified candidate sha and components"
+        )
+    elif rollback_release is not None and initial_release_recovery is not None:
+        errors.append(
+            "release admission refuses a manifest carrying both "
+            "manifest.rollback_release and manifest.initial_release_recovery; the "
+            "two are alternatives, and a release with a predecessor binds it"
+        )
+    elif initial_release_recovery is not None:
+        errors.extend(
+            error
+            for error in initial_release_recovery_errors(
+                initial_release_recovery,
+                candidate_sha=manifest.get("candidate_sha"),
+                components=components,
+                environment=environment,
+                release_id=manifest.get("release_id"),
+            )
+            if error not in errors
+        )
+    return errors
+
+
+#: ODP-PROD-IMAGE-PROMOTION-001：只有這些 admission 環境會把 manifest 的 image
+#: 以相同 digest 複製到自己的 Artifact Registry 再部署。production 只收 staging
+#: 封存的 manifest，而 staging 的 image 在 staging 專案；production runtime 不得
+#: 依賴那個專案（2026-10-24 負責人決策）。dev 與 staging 部署 manifest 原樣記錄
+#: 的 image，不經過這條路。
+IMAGE_PROMOTION_ENVIRONMENTS = ("production",)
+
+#: ``<region>-docker.pkg.dev/<project>/<repository>``：一個 Artifact Registry docker
+#: repository。workflow 由 ``GCP_REGION``／``GCP_PROJECT_ID``／``GCP_AR_REPO`` 組出
+#: 目標環境自己的這個值；變數沒有解析時（``-docker.pkg.dev//``）不符合，一律拒絕。
+ARTIFACT_REGISTRY_REPOSITORY_PATTERN = re.compile(
+    r"^[a-z0-9]+(?:-[a-z0-9]+)*-docker\.pkg\.dev"
+    r"/[a-z][a-z0-9-]{4,28}[a-z0-9]"
+    r"/[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+)
+_IMAGE_NAME = r"[a-z0-9]+(?:[._-]+[a-z0-9]+)*"
+_ARTIFACT_REGISTRY_IMAGE_PATTERN = re.compile(
+    rf"^(?P<repository>[^/@\s]+/[^/@\s]+/[^/@\s]+)"
+    rf"/(?P<name>{_IMAGE_NAME}(?:/{_IMAGE_NAME})*)"
+    r"@(?P<digest>sha256:[0-9a-f]{64})$"
+)
+
+
+def promoted_image_ref(image: Any, registry: Any) -> str | None:
+    """Return *image* -- same image name, same digest -- under *registry*.
+
+    This is the one place the promoted reference is derived: the promotion step
+    copies to it and admission accepts it.  Only the repository root
+    (``<region>-docker.pkg.dev/<project>/<repository>``) is replaced; the image
+    name after it and the ``sha256`` digest are carried over verbatim.  ``None``
+    when *registry* is not an Artifact Registry repository or *image* is not an
+    Artifact Registry ``@sha256`` reference, so a caller cannot derive a
+    promoted reference from something it cannot parse.
+    """
+
+    if not isinstance(registry, str) or not ARTIFACT_REGISTRY_REPOSITORY_PATTERN.fullmatch(
+        registry
+    ):
+        return None
+    match = (
+        _ARTIFACT_REGISTRY_IMAGE_PATTERN.fullmatch(image) if isinstance(image, str) else None
+    )
+    if match is None or not ARTIFACT_REGISTRY_REPOSITORY_PATTERN.fullmatch(
+        match["repository"]
+    ):
+        return None
+    return f"{registry}/{match['name']}@{match['digest']}"
+
+
+def component_binding_errors(
+    manifest: Any, images: dict[str, str], *, target_registry: str | None = None
+) -> list[str]:
+    """Return why *images* are not the artifacts this manifest identifies.
+
+    A lease authorises deploying *a release*, not *any image*.  The Runtime
+    Release deploy phase receives its image references as workflow inputs, so
+    without this check a valid lease would admit an arbitrary digest that the
+    build phase never produced, signed, or recorded an SBOM for.  Binding the
+    handoff back to ``manifest.components`` is what makes "build once, deploy
+    that exact artifact" an enforced property rather than a convention.
+
+    *target_registry* is the admission environment's own Artifact Registry
+    repository, given only where the image is promoted before it is deployed
+    (``IMAGE_PROMOTION_ENVIRONMENTS``).  It admits one more reference per
+    component: the recorded image's ``promoted_image_ref`` -- same image name,
+    same digest, in that registry.  Any other registry, image name or digest is
+    still refused, and the manifest itself (and the digest a lease names) is
+    unchanged.
+    """
+
+    if not isinstance(manifest, dict):
+        return ["manifest must be a JSON object"]
+    components = manifest.get("components")
+    if not isinstance(components, dict) or not components:
+        return ["manifest.components must be a non-empty object"]
+    if target_registry is not None and not (
+        isinstance(target_registry, str)
+        and ARTIFACT_REGISTRY_REPOSITORY_PATTERN.fullmatch(target_registry)
+    ):
+        return [
+            f"target registry {target_registry!r} is not an Artifact Registry "
+            "repository <region>-docker.pkg.dev/<project>/<repository>"
+        ]
+
+    errors: list[str] = []
+    for name in sorted(images):
+        image = images[name]
+        if not isinstance(image, str) or not IMAGE_DIGEST_PATTERN.fullmatch(image):
+            errors.append(
+                f"handoff image for {name!r} must be an immutable @sha256 reference"
+            )
+            continue
+        component = components.get(name)
+        if not isinstance(component, dict):
+            errors.append(
+                f"manifest has no component {name!r}; this release never built that artifact"
+            )
+            continue
+        recorded = component.get("image")
+        if recorded == image:
+            continue
+        if target_registry is not None and image == promoted_image_ref(
+            recorded, target_registry
+        ):
+            continue
+        if target_registry is not None:
+            errors.append(
+                f"handoff image for {name!r} is neither the image recorded by the "
+                "manifest nor that image (same name and digest) in the target "
+                f"environment's registry {target_registry}; the deploy would run an "
+                "artifact this release did not build"
+            )
+        else:
+            errors.append(
+                f"handoff image for {name!r} is not the image recorded by the manifest; "
+                "the deploy would run an artifact this release did not build"
+            )
+    return errors
+
+
 def load_manifest(
     path: Path,
     *,
     expected_candidate_sha: str | None = None,
     expected_digest: str | None = None,
+    root: Path = ROOT,
 ) -> tuple[dict[str, Any] | None, list[str]]:
     """Load and validate one manifest, returning errors instead of guessing."""
 
@@ -226,15 +2476,878 @@ def load_manifest(
         payload,
         expected_candidate_sha=expected_candidate_sha,
         expected_digest=expected_digest,
+        root=root,
     )
     return (payload if isinstance(payload, dict) else None), errors
 
 
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def compute_file_set_digest(paths: Any, *, root: Path = ROOT) -> str:
+    """Compute deterministic SHA-256 digest over a sequence of file paths."""
+    h = hashlib.sha256()
+    for p in sorted(paths):
+        path_obj = Path(p)
+        if path_obj.is_file():
+            rel_path = path_obj.relative_to(root).as_posix().encode("utf-8")
+            h.update(rel_path)
+            h.update(b"\x00")
+            h.update(path_obj.read_bytes())
+            h.update(b"\x00")
+    return "sha256:" + h.hexdigest()
+
+
+def _wired_env_value(workflow_text: str, name: str) -> str | None:
+    """回傳 workflow 實際接到 runtime 的 env 值；未接線時回傳 ``None``。
+
+    只認 YAML 的 ``NAME: value`` 形式，因此註解裡提到變數名稱不會被誤判成接線。
+    """
+
+    pattern = re.compile(rf"^[ \t]*{re.escape(name)}:[ \t]*(.*?)[ \t]*$", re.MULTILINE)
+    values = [match.group(1).strip().strip('"').strip("'") for match in pattern.finditer(workflow_text)]
+    wired = [value for value in values if value]
+    if not wired:
+        return None
+    return wired[0]
+
+
+def _wired_env_names(workflow_text: str) -> tuple[str, ...]:
+    """回傳 workflow 真正接到 runtime 的環境變數名稱（去重、排序）。
+
+    和 :func:`_wired_env_value` 同一個判準：只認 ``NAME: value`` 且值非空，所以
+    註解裡提到的變數名稱不算接線。列舉名稱而不是逐一查已知清單，release
+    toolchain 才不需要自己記住任何 provider 的變數叫什麼。
+    """
+
+    pattern = re.compile(r"^[ \t]*([A-Z][A-Z0-9_]*):[ \t]*(.*?)[ \t]*$", re.MULTILINE)
+    names = {
+        match.group(1)
+        for match in pattern.finditer(workflow_text)
+        if match.group(2).strip().strip('"').strip("'")
+    }
+    return tuple(sorted(names))
+
+
+def resolve_sources_off_egress_contract_files(
+    root: Path = ROOT,
+    candidate_sha: str | None = None,
+) -> tuple[str, ...]:
+    """Resolve the active sources-off contract files for candidate or worktree."""
+    network_content = ""
+    if candidate_sha is not None:
+        if is_exact_sha(candidate_sha):
+            ensure_candidate_commit(candidate_sha, root=root)
+            try:
+                network_content = subprocess.check_output(
+                    ["git", "show", f"{candidate_sha}:infra/terraform/network.tf"],
+                    cwd=root,
+                    stderr=subprocess.PIPE,
+                ).decode("utf-8")
+            except subprocess.CalledProcessError:
+                network_content = ""
+    else:
+        network_path = root / "infra/terraform/network.tf"
+        if network_path.is_file():
+            try:
+                network_content = network_path.read_text(encoding="utf-8")
+            except OSError:
+                network_content = ""
+
+    if 'module "runtime_foundation"' in network_content:
+        return SOURCES_OFF_EGRESS_CONTRACT_FILES + RUNTIME_FOUNDATION_MODULE_FILES
+    return SOURCES_OFF_EGRESS_CONTRACT_FILES
+
+
+def read_sources_off_contract_file(
+    relative: str, *, root: Path = ROOT, candidate_sha: str | None = None,
+) -> str:
+    """Read contract posture from one exact candidate, or explicit worktree mode."""
+    contract_files = resolve_sources_off_egress_contract_files(root=root, candidate_sha=candidate_sha)
+    if relative not in contract_files:
+        raise ValueError(f"not a sources-off contract file: {relative}")
+    if candidate_sha is None:
+        return (root / relative).read_text(encoding="utf-8")
+    if not is_exact_sha(candidate_sha):
+        raise ValueError(f"candidate_sha {candidate_sha!r} is not an exact 40-character SHA")
+    ensure_candidate_commit(candidate_sha, root=root)
+    try:
+        return subprocess.check_output(
+            ["git", "show", f"{candidate_sha}:{relative}"],
+            cwd=root, stderr=subprocess.PIPE,
+        ).decode("utf-8")
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"failed to read {relative} at candidate {candidate_sha}: "
+            + exc.stderr.decode("utf-8", errors="replace").strip()
+        ) from exc
+
+
+def compute_sources_off_egress_contract_digest(
+    root: Path = ROOT,
+    candidate_sha: str | None = None,
+) -> str:
+    """Hash the checked-in Runtime Release egress contract inputs."""
+    contract_files = resolve_sources_off_egress_contract_files(root=root, candidate_sha=candidate_sha)
+    if candidate_sha is not None:
+        if not is_exact_sha(candidate_sha):
+            raise ValueError(
+                f"candidate_sha {candidate_sha!r} is not an exact 40-character SHA"
+            )
+        ensure_candidate_commit(candidate_sha, root=root)
+        h = hashlib.sha256()
+        for rel in sorted(contract_files):
+            try:
+                content = subprocess.check_output(
+                    ["git", "show", f"{candidate_sha}:{rel}"],
+                    cwd=root,
+                    stderr=subprocess.PIPE,
+                )
+            except subprocess.CalledProcessError as exc:
+                raise RuntimeError(
+                    f"failed to read {rel} at candidate {candidate_sha}: {exc.stderr.decode('utf-8', errors='replace').strip()}"
+                ) from exc
+            h.update(rel.encode("utf-8"))
+            h.update(b"\x00")
+            h.update(content)
+            h.update(b"\x00")
+        return "sha256:" + h.hexdigest()
+
+    return compute_file_set_digest(
+        (root / relative_path for relative_path in contract_files),
+        root=root,
+    )
+
+
+def build_sources_off_egress_evidence(
+    *,
+    workflow_vpc_binding: bool = True,
+    deploy_entrypoint_vpc_binding: bool = True,
+    runtime_probe_wiring: bool = True,
+    resolved_cloud_run_egress: str = SOURCES_OFF_CLOUD_RUN_EGRESS,
+    provider_credentials_runtime: str = SOURCES_OFF_PROVIDER_CREDENTIALS,
+    root: Path = ROOT,
+    candidate_sha: str | None = None,
+) -> dict[str, Any]:
+    """Derive the secret-free proof attached to a sources-off attestation.
+
+    The workflow reader supplies the two binding observations and the builder
+    supplies the contract digest.  The manifest validator independently checks
+    the same checked-in inputs, so these fields are evidence, not a caller's
+    free-form override.
+    """
+
+    resolved_egress = str(resolved_cloud_run_egress).strip()
+    receipt_digest = compute_sources_off_probe_receipt_content_digest(
+        resolved_cloud_run_egress=resolved_egress,
+    )
+    contract_files = resolve_sources_off_egress_contract_files(root=root, candidate_sha=candidate_sha)
+    return {
+        "kind": SOURCES_OFF_EGRESS_EVIDENCE_KIND,
+        "cloud_run_egress": (
+            SOURCES_OFF_CLOUD_RUN_EGRESS if workflow_vpc_binding else "unbound"
+        ),
+        "firewall_egress": (
+            SOURCES_OFF_FIREWALL_EGRESS
+            if deploy_entrypoint_vpc_binding
+            else "unverified"
+        ),
+        "workflow_vpc_binding": "verified" if workflow_vpc_binding else "unbound",
+        "deploy_entrypoint_vpc_binding": (
+            "verified" if deploy_entrypoint_vpc_binding else "unbound"
+        ),
+        "runtime_probe_wiring": "verified" if runtime_probe_wiring else "unbound",
+        "runtime_probe": SOURCES_OFF_RUNTIME_PROBE,
+        "runtime_probe_receipt": SOURCES_OFF_RUNTIME_PROBE_RECEIPT,
+        "resolved_cloud_run_egress": resolved_egress,
+        "runtime_probe_receipt_content_digest": receipt_digest,
+        "provider_credentials_runtime": provider_credentials_runtime,
+        "proof_source": list(contract_files),
+        "contract_digest": compute_sources_off_egress_contract_digest(
+            root=root, candidate_sha=candidate_sha
+        ),
+    }
+
+
+def compute_sources_off_probe_receipt_content_digest(
+    *,
+    resolved_cloud_run_egress: str = SOURCES_OFF_CLOUD_RUN_EGRESS,
+    result: str = SOURCES_OFF_RUNTIME_PROBE_RESULT,
+    reason: str = SOURCES_OFF_RUNTIME_PROBE_REASON,
+) -> str:
+    """Hash the semantic, secret-free fields emitted by the live probe.
+
+    Execution names and timestamps are intentionally excluded because they are
+    run-scoped. The digest still binds the result, denial reason, and the
+    egress value actually read back from the candidate job.
+    """
+
+    payload = {
+        "expected": "denied",
+        "reason": reason,
+        "receipt_kind": "public_egress_probe",
+        "result": result,
+        "vpc_egress": resolved_cloud_run_egress,
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def validate_sources_off_probe_receipt(
+    receipt: Any,
+    *,
+    expected_candidate_sha: Any = None,
+    expected_manifest_digest: Any = None,
+    expected_egress: str = SOURCES_OFF_CLOUD_RUN_EGRESS,
+) -> list[str]:
+    """Validate the secret-free receipt emitted by the live egress probe.
+
+    The manifest carries the expected semantic digest because the probe runs
+    after admission.  This verifier checks the *actual* candidate-job
+    readback and receipt body before the deployment can remain successful;
+    timestamps and Cloud Run execution names are deliberately not part of the
+    semantic digest because they are run-scoped.
+    """
+
+    label = "sources-off egress probe receipt"
+    if not isinstance(receipt, dict):
+        return [f"{label} must be an object"]
+
+    required = (
+        "schema_version",
+        "receipt_kind",
+        "secret_values_redacted",
+        "candidate_sha",
+        "manifest_digest",
+        "job",
+        "probe_url",
+        "expected",
+        "vpc_egress",
+        "result",
+        "reason",
+        "execution",
+        "recorded_at",
+        "receipt_content_digest",
+    )
+    errors = [f"{label} missing required field: {field}" for field in required if field not in receipt]
+
+    if receipt.get("schema_version") != 1:
+        errors.append(f"{label}.schema_version must be 1")
+    if receipt.get("receipt_kind") != "public_egress_probe":
+        errors.append(f"{label}.receipt_kind must be 'public_egress_probe'")
+    if receipt.get("secret_values_redacted") is not True:
+        errors.append(f"{label}.secret_values_redacted must be True")
+
+    candidate_sha = receipt.get("candidate_sha")
+    if not is_exact_sha(candidate_sha):
+        errors.append(f"{label}.candidate_sha must be an exact 40-character lowercase git SHA")
+    if expected_candidate_sha is not None and candidate_sha != expected_candidate_sha:
+        errors.append(f"{label}.candidate_sha does not match the deployed candidate SHA")
+
+    manifest_digest = receipt.get("manifest_digest")
+    if not is_sha256_digest(manifest_digest):
+        errors.append(f"{label}.manifest_digest must be a sha256:<64 lowercase hex> digest")
+    if expected_manifest_digest is not None and manifest_digest != expected_manifest_digest:
+        errors.append(f"{label}.manifest_digest does not match the admitted manifest digest")
+
+    if not isinstance(receipt.get("job"), str) or not receipt["job"].strip():
+        errors.append(f"{label}.job must be a non-empty string")
+    if receipt.get("probe_url") != "https://example.com/":
+        errors.append(f"{label}.probe_url must be the fixed public deny canary")
+    if receipt.get("expected") != "denied":
+        errors.append(f"{label}.expected must be 'denied'")
+    if receipt.get("vpc_egress") != expected_egress:
+        errors.append(
+            f"{label}.vpc_egress must be {expected_egress!r}; "
+            f"got {receipt.get('vpc_egress')!r}"
+        )
+    if receipt.get("result") != SOURCES_OFF_RUNTIME_PROBE_RESULT:
+        errors.append(f"{label}.result must be {SOURCES_OFF_RUNTIME_PROBE_RESULT!r}")
+    if receipt.get("reason") != SOURCES_OFF_RUNTIME_PROBE_REASON:
+        errors.append(f"{label}.reason must be {SOURCES_OFF_RUNTIME_PROBE_REASON!r}")
+    if receipt.get("execution") != "succeeded":
+        errors.append(f"{label}.execution must be 'succeeded'")
+    if not is_valid_timestamp(receipt.get("recorded_at")):
+        errors.append(f"{label}.recorded_at must be an RFC3339 timestamp with timezone")
+
+    recorded_content_digest = receipt.get("receipt_content_digest")
+    if not is_sha256_digest(recorded_content_digest):
+        errors.append(
+            f"{label}.receipt_content_digest must be a sha256:<64 lowercase hex> digest"
+        )
+    else:
+        expected_content_digest = compute_sources_off_probe_receipt_content_digest(
+            resolved_cloud_run_egress=receipt.get("vpc_egress"),
+            result=receipt.get("result"),
+            reason=receipt.get("reason"),
+        )
+        if recorded_content_digest != expected_content_digest:
+            errors.append(
+                f"{label}.receipt_content_digest does not match the receipt's semantic content"
+            )
+    return errors
+
+
+def _sources_off_egress_contract_errors(
+    root: Path = ROOT,
+    candidate_sha: str | None = None,
+) -> list[str]:
+    """Check the concrete VPC/firewall contract behind a posture receipt."""
+
+    errors: list[str] = []
+    file_contents: dict[str, str] = {}
+    contract_files = resolve_sources_off_egress_contract_files(root=root, candidate_sha=candidate_sha)
+    if candidate_sha is not None:
+        if not is_exact_sha(candidate_sha):
+            return [
+                f"candidate_sha {candidate_sha!r} is not an exact 40-character SHA"
+            ]
+        ensure_candidate_commit(candidate_sha, root=root)
+        for relative in contract_files:
+            try:
+                content = subprocess.check_output(
+                    ["git", "show", f"{candidate_sha}:{relative}"],
+                    cwd=root,
+                    stderr=subprocess.PIPE,
+                ).decode("utf-8")
+                file_contents[relative] = content
+            except subprocess.CalledProcessError as exc:
+                return [
+                    f"sources-off egress contract file {relative} cannot be read for candidate {candidate_sha}: {exc.stderr.decode('utf-8', errors='replace').strip()}"
+                ]
+            except UnicodeDecodeError as exc:
+                return [
+                    f"sources-off egress contract file {relative} is not valid UTF-8 for candidate {candidate_sha}: {exc}"
+                ]
+        # Check for unbound runtime_foundation module inputs in candidate
+        try:
+            tree_output = subprocess.check_output(
+                ["git", "ls-tree", "-r", "--name-only", candidate_sha, "infra/terraform/modules/runtime_foundation"],
+                cwd=root,
+                stderr=subprocess.PIPE,
+            ).decode("utf-8")
+            candidate_module_files = [
+                f.strip() for f in tree_output.splitlines()
+                if f.strip().endswith(".tf") or f.strip().endswith(".tf.json")
+            ]
+            extra_candidate_inputs = sorted(
+                f for f in candidate_module_files if f not in file_contents
+            )
+            if extra_candidate_inputs:
+                errors.append("unbound runtime_foundation inputs: " + ", ".join(extra_candidate_inputs))
+        except subprocess.CalledProcessError:
+            pass
+    else:
+        paths = {relative: root / relative for relative in contract_files}
+        missing = [relative for relative, path in paths.items() if not path.is_file()]
+        if missing:
+            return [
+                "sources-off egress contract is incomplete; missing: " + ", ".join(missing)
+            ]
+        for relative, path in paths.items():
+            file_contents[relative] = path.read_text(encoding="utf-8")
+
+        module_dir = root / "infra/terraform/modules/runtime_foundation"
+        if module_dir.is_dir():
+            extra_inputs = sorted(
+                path.relative_to(root).as_posix()
+                for path in module_dir.glob("*.tf*")
+                if (path.suffix == ".tf" or path.name.endswith(".tf.json"))
+                and path.relative_to(root).as_posix() not in paths
+            )
+            if extra_inputs:
+                errors.append("unbound runtime_foundation inputs: " + ", ".join(extra_inputs))
+
+    workflow = file_contents[".github/workflows/deploy-dev.yml"]
+    if "ODP_EXTERNAL_PROVIDER_MODE: disabled" not in workflow:
+        errors.append("deploy workflow does not fix ODP_EXTERNAL_PROVIDER_MODE to disabled")
+    if "ODP_CLOUD_RUN_VPC_CONNECTOR:" not in workflow:
+        errors.append("deploy workflow does not bind ODP_CLOUD_RUN_VPC_CONNECTOR")
+    if "ODP_CLOUD_RUN_VPC_EGRESS:" not in workflow:
+        errors.append("deploy workflow does not bind ODP_CLOUD_RUN_VPC_EGRESS")
+    if (
+        f"PUBLIC_EGRESS_PROBE_REPORT: {SOURCES_OFF_RUNTIME_PROBE_RECEIPT}"
+        not in workflow
+    ):
+        errors.append("deploy workflow does not retain the public egress probe receipt")
+
+    # Re-derive credential, endpoint and status observations independently of
+    # the submitted inventory. A matching digest cannot make a clean inventory
+    # truthful when the exact candidate wires provider access.
+    for env_var in _wired_env_names(workflow):
+        if not any(env_var_belongs_to_source(env_var, sid) for sid in EXTERNAL_SOURCE_INVENTORY):
+            continue
+        kind = classify_source_env_var(env_var)
+        if kind == "credential":
+            errors.append(f"deploy workflow wires provider credential {env_var}")
+        elif kind == "endpoint":
+            errors.append(f"deploy workflow wires provider endpoint {env_var}")
+        elif kind == "status" and _wired_env_value(workflow, env_var) != SOURCE_STATUS_DISABLED:
+            errors.append(f"deploy workflow does not disable source status {env_var}")
+
+    deploy = file_contents["product_ops/deployment/deploy_cloud_run_waji.sh"]
+    if '"--vpc-connector=${ODP_CLOUD_RUN_VPC_CONNECTOR}"' not in deploy:
+        errors.append("deploy entrypoint does not pass the VPC connector to Cloud Run")
+    if '"--vpc-egress=${ODP_CLOUD_RUN_VPC_EGRESS}"' not in deploy:
+        errors.append("deploy entrypoint does not pass the VPC egress mode to Cloud Run")
+    if "sources-off deploy requires ALL_TRAFFIC VPC egress" not in deploy:
+        errors.append("deploy entrypoint does not fail closed on non-ALL_TRAFFIC sources-off egress")
+
+    probe_wired = "public-egress-probe" in deploy
+    receipt_wired = "public-egress-probe.json" in deploy
+    if not probe_wired:
+        errors.append("deploy entrypoint does not execute the public egress deny probe")
+    if not receipt_wired:
+        errors.append("deploy entrypoint does not write the public egress probe receipt")
+    probe_call = "  run_public_egress_probe\n"
+    if probe_call not in deploy:
+        errors.append("deploy entrypoint does not call the public egress deny probe")
+    if probe_wired and "promote_service_traffic" in deploy and probe_call in deploy:
+        probe_pos = deploy.index(probe_call)
+        promote_pos = deploy.index("promote_service_traffic")
+        if probe_pos > promote_pos:
+            errors.append("public egress deny probe must run before service traffic promotion")
+
+    lifecycle = file_contents["product_ops/deployment/staging_lifecycle.py"]
+    if "public_egress_denied_probe" not in lifecycle:
+        errors.append("staging lifecycle does not retain the public egress deny probe stage")
+
+    probe_entrypoint = file_contents["product_ops/deployment/cloud_run_job_entrypoint.py"]
+    if "def run_public_egress_probe" not in probe_entrypoint:
+        errors.append("Cloud Run Job entrypoint does not expose the public egress deny probe")
+
+    cloud_run = file_contents["infra/terraform/cloud_run.tf"]
+    if 'egress = "ALL_TRAFFIC"' not in cloud_run:
+        errors.append("cloud_run.tf does not enforce ALL_TRAFFIC VPC egress")
+
+    network = file_contents["infra/terraform/network.tf"]
+    foundation_network = None
+    if 'module "runtime_foundation"' in network:
+        foundation_call = re.search(
+            r'^module\s+"runtime_foundation"\s*\{(?P<body>.*?)^\}',
+            network,
+            re.MULTILINE | re.DOTALL,
+        )
+        if foundation_call is None or not re.search(
+            r'^\s*source\s*=\s*"\./modules/runtime_foundation"\s*$',
+            foundation_call.group("body"),
+            re.MULTILINE,
+        ):
+            errors.append("network.tf must instantiate the local runtime_foundation module")
+        elif re.search(
+            r'^\s*(count|for_each)\s*=', foundation_call.group("body"), re.MULTILINE
+        ):
+            errors.append("runtime_foundation must be unconditional (no count or for_each)")
+        if "google_compute_router" in network:
+            errors.append("network.tf must not define a Cloud NAT router")
+        if re.search(r'resource\s+"google_compute_firewall"', network):
+            errors.append("network.tf must keep firewall resources in runtime_foundation")
+
+        foundation_network = file_contents.get("infra/terraform/modules/runtime_foundation/network.tf")
+
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    try:
+        from infra.terraform.validate_contract import validate_egress_contract
+    except ImportError as exc:  # pragma: no cover - repository packaging failure
+        errors.append(f"cannot load Terraform egress contract verifier: {exc}")
+    else:
+        if foundation_network is not None:
+            errors.extend(
+                validate_egress_contract(
+                    foundation_network,
+                    source_name="modules/runtime_foundation/network.tf",
+                )
+            )
+        else:
+            errors.extend(validate_egress_contract(network))
+    return errors
+
+
+def compute_migration_digest(root: Path = ROOT) -> str:
+    """Compute deterministic SHA-256 digest over infra/db/migrations SQL files."""
+    migrations_dir = root / "infra/db/migrations"
+    return compute_file_set_digest(migrations_dir.glob("*.sql"), root=root)
+
+
+def compute_data_contract_digest(root: Path = ROOT) -> str:
+    """Compute deterministic SHA-256 digest over docs/data contract files."""
+    data_dir = root / "docs/data"
+    return compute_file_set_digest(data_dir.glob("*"), root=root)
+
+
+def compute_source_policy_digest(root: Path = ROOT) -> str:
+    """Compute deterministic SHA-256 digest over security/license policies."""
+    policy_files = [
+        root / "docs/security/license_policy.json",
+        root / "docs/security/license_exemptions.json",
+        root / "docs/security/release_bindings.json",
+    ]
+    return compute_file_set_digest(policy_files, root=root)
+
+
+def build_release_manifest(
+    *,
+    release_id: str,
+    candidate_sha: str,
+    components: dict[str, dict[str, str]],
+    sbom_refs: list[str],
+    signature_refs: list[str],
+    created_at: str,
+    created_by_workflow: str,
+    data_snapshot: dict[str, Any] | None = None,
+    sources_off_attestation: dict[str, Any] | None = None,
+    rollback_release: dict[str, Any] | None = None,
+    initial_release_recovery: dict[str, Any] | None = None,
+    external_sources_expected_enabled: list[str] | None = None,
+    release_status: str | None = None,
+    release_profile: dict[str, Any] | None = None,
+    schema_version: int = CURRENT_SCHEMA_VERSION,
+    root: Path = ROOT,
+) -> dict[str, Any]:
+    """Build and self-seal a canonical release manifest dictionary.
+
+    ``release_status`` is omitted by default so an existing manifest digest is
+    unchanged by this parameter's introduction.  A build phase that has already
+    published signed images and an SBOM passes ``"ready"`` explicitly; nothing
+    may promote a manifest to ``ready`` implicitly.
+    """
+    manifest: dict[str, Any] = {
+        "schema_version": schema_version,
+        "release_id": release_id,
+        "candidate_sha": candidate_sha,
+        "components": components,
+        "migration_digest": compute_migration_digest(root=root),
+        "data_contract_digest": compute_data_contract_digest(root=root),
+        "source_policy_digest": compute_source_policy_digest(root=root),
+        "external_sources_expected_enabled": external_sources_expected_enabled or [],
+        "sbom_refs": sbom_refs,
+        "signature_refs": signature_refs,
+        "created_at": created_at,
+        "created_by_workflow": created_by_workflow,
+    }
+    if data_snapshot is not None:
+        manifest["data_snapshot"] = data_snapshot
+    if sources_off_attestation is not None:
+        manifest["sources_off_attestation"] = sources_off_attestation
+    if rollback_release is not None:
+        manifest["rollback_release"] = rollback_release
+    if initial_release_recovery is not None:
+        manifest["initial_release_recovery"] = initial_release_recovery
+    if release_status is not None:
+        manifest["release_status"] = release_status
+    # Omitted for the full profile, so every existing digest is unchanged.
+    if release_profile is not None:
+        manifest["release_profile"] = release_profile
+    manifest["manifest_digest"] = compute_manifest_digest(manifest)
+    return manifest
+
+
+def extract_rollback_release_binding(
+    prev_manifest: dict[str, Any], *, root: Path = ROOT,
+) -> dict[str, Any]:
+    """Extract verifiable rollback binding from an approved previous manifest."""
+    admission_errors = validate_release_admission(prev_manifest, root=root)
+    if admission_errors:
+        raise ValueError(
+            "Cannot extract rollback binding from a non-admissible manifest: "
+            + "; ".join(admission_errors)
+        )
+    components = prev_manifest.get("components", {})
+    rb_components = {}
+    for name, comp in components.items():
+        if isinstance(comp, dict):
+            item = {"image": comp.get("image", "")}
+            if "shares_image_with" in comp:
+                item["shares_image_with"] = comp["shares_image_with"]
+            rb_components[name] = item
+        else:
+            rb_components[name] = {"image": str(comp)}
+
+    prev_snapshot = (
+        prev_manifest.get("data_snapshot")
+        or prev_manifest.get("snapshot_pointer")
+        or prev_manifest.get("snapshot")
+    )
+    binding: dict[str, Any] = {
+        "release_id": prev_manifest["release_id"],
+        "candidate_sha": prev_manifest["candidate_sha"],
+        "manifest_digest": prev_manifest["manifest_digest"],
+        "components": rb_components,
+    }
+    if isinstance(prev_snapshot, dict):
+        binding["data_snapshot"] = copy.deepcopy(prev_snapshot)
+    else:
+        prev_attestation = prev_manifest.get("sources_off_attestation")
+        if not isinstance(prev_attestation, dict):
+            raise ValueError(
+                "Cannot extract rollback binding from manifest without data_snapshot"
+            )
+        # Carry only the binding digest forward. The rollback pointer records
+        # *which* posture the previous release was admitted on; it is not a
+        # second place to re-state the posture itself.
+        binding["sources_off_attestation"] = {
+            "binding_digest": prev_attestation.get("binding_digest"),
+        }
+
+    return binding
+
+
+def validate_rollback_manifest(
+    prev_manifest: Any,
+    *,
+    current_candidate_sha: str | None = None,
+    current_release_id: str | None = None,
+    root: Path = ROOT,
+) -> list[str]:
+    """Validate an entire admissible previous manifest before extracting it."""
+    if not isinstance(prev_manifest, dict):
+        return ["rollback manifest must be a JSON object"]
+
+    errors = validate_manifest(prev_manifest, root=root)
+    errors.extend(
+        err
+        for err in validate_release_admission(prev_manifest, root=root)
+        if err not in errors
+    )
+
+    candidate_sha = prev_manifest.get("candidate_sha")
+    if current_candidate_sha and candidate_sha == current_candidate_sha:
+        errors.append(
+            "rollback candidate_sha must not match current candidate_sha; "
+            "rollback target must be a distinct release candidate"
+        )
+
+    release_id = prev_manifest.get("release_id")
+    if current_release_id and release_id == current_release_id:
+        errors.append(
+            "rollback release_id must not match current release_id; "
+            "rollback target must be a distinct release"
+        )
+
+    snap = prev_manifest.get("data_snapshot")
+    if not isinstance(snap, dict) or not snap:
+        # A sources-off predecessor is legitimate rollback evidence, but only
+        # through the same bound attestation admission required of it. A legacy
+        # manifest that simply never had a snapshot is not.
+        if not isinstance(prev_manifest.get("sources_off_attestation"), dict):
+            errors.append(
+                "rollback manifest missing required data_snapshot and "
+                "sources_off_attestation; cannot use a legacy or evidence-less "
+                "manifest as rollback evidence"
+            )
+    return errors
+
+
 __all__ = [
+    "CURRENT_SCHEMA_VERSION",
+    "EXPECTED_EXTERNAL_SOURCE_COUNT",
+    "CREDENTIAL_ENV_SUFFIXES",
+    "ENDPOINT_ENV_SUFFIXES",
+    "STATUS_ENV_SUFFIXES",
+    "GENERIC_SOURCE_ID_TOKENS",
+    "classify_source_env_var",
+    "env_var_belongs_to_source",
+    "source_id_env_tokens",
+    "EXTERNAL_SOURCE_INVENTORY",
+    "RELEASE_ID_PATTERN",
+    "RELEASE_PROFILE_CORE_OPS",
+    "RELEASE_PROFILE_DEV_ADMIN",
+    "RELEASE_PROFILE_ENVIRONMENTS",
+    "RELEASE_PROFILE_FIELDS",
+    "RELEASE_PROFILE_FULL",
+    "RELEASE_PROFILE_MODEL_READINESS_NOT_CLAIMED",
+    "RELEASE_PROFILE_PROMOTIONS",
+    "RELEASE_PROFILES",
+    "RELEASE_STATUSES",
+    "REQUIRED_FIELDS",
+    "REQUIRED_FIELDS_V1",
+    "REQUIRED_FIELDS_V2",
+    "SNAPSHOT_FIELDS",
+    "SOURCES_OFF_ATTESTATION_FIELDS",
+    "SOURCES_OFF_EGRESS_CONTRACT_FILES",
+    "RUNTIME_FOUNDATION_MODULE_FILES",
+    "resolve_sources_off_egress_contract_files",
+    "SOURCES_OFF_EGRESS_EVIDENCE_FIELDS",
+    "SOURCES_OFF_EGRESS_EVIDENCE_KIND",
+    "SOURCES_OFF_EGRESS_POSTURE",
+    "SOURCES_OFF_CLOUD_RUN_EGRESS",
+    "SOURCES_OFF_FIREWALL_EGRESS",
+    "SOURCES_OFF_PROVIDER_CREDENTIALS",
+    "SOURCES_OFF_RUNTIME_PROBE",
+    "SOURCES_OFF_RUNTIME_PROBE_RECEIPT",
+    "SOURCES_OFF_RUNTIME_PROBE_RESULT",
+    "SOURCES_OFF_RUNTIME_PROBE_REASON",
+    "SOURCES_OFF_PROVIDER_MODE",
+    "SOURCE_EGRESS_DENIED",
+    "SOURCE_POSTURE_FIELDS",
+    "SOURCE_STATUS_DISABLED",
+    "ROOT",
     "SUPPORTED_SCHEMA_VERSIONS",
+    "build_release_manifest",
+    "build_release_profile",
+    "manifest_release_profile",
+    "release_profile_admissible_environments",
+    "release_profile_errors",
+    "build_sources_off_egress_evidence",
+    "build_sources_off_attestation",
+    "ARTIFACT_REGISTRY_REPOSITORY_PATTERN",
+    "IMAGE_PROMOTION_ENVIRONMENTS",
+    "component_binding_errors",
+    "promoted_image_ref",
+    "compute_data_contract_digest",
+    "compute_file_set_digest",
     "compute_manifest_digest",
+    "compute_migration_digest",
+    "compute_source_policy_digest",
+    "compute_sources_off_egress_contract_digest",
+    "compute_sources_off_probe_receipt_content_digest",
+    "compute_sources_off_binding_digest",
+    "ensure_candidate_commit",
+    "extract_rollback_release_binding",
+    "INITIAL_RELEASE_ADMISSIBLE_ENVIRONMENTS",
+    "INITIAL_RELEASE_ADMISSION_READBACK_MAX_AGE_SECONDS",
+    "INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS",
+    "INITIAL_RELEASE_ENVIRONMENT_RECOVERY",
+    "INITIAL_RELEASE_LINEAGE_ENVIRONMENTS",
+    "INITIAL_RELEASE_LINEAGE_KNOWN_ENVIRONMENTS",
+    "INITIAL_RELEASE_LINEAGE_LEASE_STATES",
+    "INITIAL_RELEASE_LINEAGE_TARGET",
+    "INITIAL_RELEASE_PROMOTION_RECOVERY_FIELD",
+    "INITIAL_RELEASE_STAGING_RECOVERY_ACTIONS",
+    "INITIAL_RELEASE_STAGING_RECOVERY_METHOD",
+    "INITIAL_RELEASE_VERIFICATION_FIELDS",
+    "INITIAL_RELEASE_VERIFICATION_KIND",
+    "STAGING_RELEASE_TARGET_SUFFIXES",
+    "INITIAL_RELEASE_PROBE_COMMAND",
+    "INITIAL_RELEASE_READBACK_FIELDS",
+    "INITIAL_RELEASE_READBACK_KIND",
+    "INITIAL_RELEASE_RECOVERY_ACTIONS",
+    "INITIAL_RELEASE_RECOVERY_FIELDS",
+    "INITIAL_RELEASE_RECOVERY_KIND",
+    "INITIAL_RELEASE_RECOVERY_METHOD",
+    "INITIAL_RELEASE_TARGET_FIELDS",
+    "INITIAL_RELEASE_TARGET_INVENTORY",
+    "build_initial_release_recovery",
+    "compute_initial_release_binding_digest",
+    "initial_release_admissible_environments",
+    "initial_release_admission_recovery",
+    "expected_promotion_recovery",
+    "initial_release_lineage_errors",
+    "initial_release_readback_errors",
+    "initial_release_readback_payload",
+    "initial_release_recovery_errors",
+    "initial_release_verification_errors",
+    "staging_release_target_names",
     "is_exact_sha",
     "is_sha256_digest",
     "load_manifest",
+    "sources_off_attestation_errors",
+    "sources_off_posture_payload",
+    "validate_sources_off_probe_receipt",
     "validate_manifest",
+    "validate_release_admission",
+    "validate_rollback_manifest",
 ]
+
+
+def _print_manifest_summary(manifest: dict[str, Any]) -> None:
+    print(f"  Release ID:      {manifest['release_id']}")
+    print(f"  Candidate SHA:   {manifest['candidate_sha']}")
+    print(f"  Manifest digest: {manifest['manifest_digest']}")
+    print(f"  Release status:  {manifest.get('release_status', 'ready')}")
+    print(f"  Components:      {len(manifest.get('components', {}))}")
+    if not manifest.get("components"):
+        print("    - (none: no candidate image is bound to this manifest)")
+    for name, comp in (manifest.get("components") or {}).items():
+        print(f"    - {name}: {comp['image']}")
+    if "data_snapshot" in manifest and isinstance(manifest["data_snapshot"], dict):
+        snap = manifest["data_snapshot"]
+        print(f"  Data Snapshot:   {snap.get('id')} ({snap.get('uri')}) [masked={snap.get('masked')}]")
+    if "rollback_release" in manifest and isinstance(manifest["rollback_release"], dict):
+        rb = manifest["rollback_release"]
+        print(f"  Rollback Target: {rb.get('release_id')} ({rb.get('candidate_sha')})")
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Validate a release manifest and refuse to bless a non-admissible one.
+
+    The default mode answers the question an auditor actually has -- "may this
+    manifest be deployed?" -- not merely "is this file well formed?".  A
+    manifest that parses cleanly but records ``release_status='blocked'`` is a
+    NO-GO, so it must exit non-zero and must never print a success verdict;
+    otherwise this command becomes the same kind of fake green light the
+    release gates exist to eliminate.  Pure structural checking is still
+    available, but only when it is asked for explicitly.
+    """
+
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Validate an ODay Plus release manifest and its admission status.",
+    )
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=ROOT / "docs/evidence/gates/RELEASE_MANIFEST.json",
+        help="Path to release manifest JSON",
+    )
+    parser.add_argument("--expected-sha", type=str, default=None, help="Expected candidate SHA")
+    parser.add_argument("--expected-digest", type=str, default=None, help="Expected manifest digest")
+    parser.add_argument(
+        "--structure-only",
+        action="store_true",
+        help=(
+            "Check schema and digest self-consistency only, without deciding "
+            "release admission. Never reports a deployable verdict."
+        ),
+    )
+    args = parser.parse_args(argv)
+
+    manifest, errors = load_manifest(
+        args.manifest,
+        expected_candidate_sha=args.expected_sha,
+        expected_digest=args.expected_digest,
+    )
+    if errors:
+        print(f"INVALID: {len(errors)} structural error(s) in release manifest {args.manifest}:")
+        for err in errors:
+            print(f"  - {err}")
+        return 1
+
+    assert manifest is not None  # load_manifest reports an error when it is None
+
+    if args.structure_only:
+        print(f"STRUCTURE-OK: {args.manifest} is schema valid and digest self-consistent.")
+        print("  Release admission was NOT evaluated (--structure-only).")
+        _print_manifest_summary(manifest)
+        return 0
+
+    admission_errors = validate_release_admission(manifest)
+    if admission_errors:
+        print(f"BLOCKED: release manifest {args.manifest} is NOT admissible for deployment.")
+        _print_manifest_summary(manifest)
+        print(f"  Admission refused for {len(admission_errors)} reason(s):")
+        for err in admission_errors:
+            print(f"    - {err}")
+        blockers = manifest.get("blockers")
+        if isinstance(blockers, list) and blockers:
+            print(f"  Recorded blockers ({len(blockers)}):")
+            for blocker in blockers:
+                if isinstance(blocker, dict):
+                    print(
+                        f"    - [{blocker.get('severity', '?')}] "
+                        f"{blocker.get('id', '?')}: {blocker.get('reason', '')}"
+                    )
+                else:
+                    print(f"    - {blocker}")
+        return 1
+
+    print(f"ADMISSIBLE: release manifest {args.manifest} may be deployed.")
+    _print_manifest_summary(manifest)
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())

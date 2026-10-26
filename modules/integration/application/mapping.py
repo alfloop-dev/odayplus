@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass, fields
+from dataclasses import dataclass, fields
 from datetime import UTC, date, datetime, time
 from typing import Any
 
@@ -11,6 +11,7 @@ from modules.integration.application.identity_resolution import (
     source_key_from_payload,
 )
 from shared.domain import AddressLocation, Listing, Machine, Store, Transaction
+from shared.domain.models import canonical_measurement_dict
 
 ENTITY_TYPES = {
     "address": AddressLocation,
@@ -70,7 +71,7 @@ class MappingResult:
     warnings: tuple[str, ...] = ()
 
     def canonical_dict(self) -> dict[str, Any]:
-        return asdict(self.canonical)
+        return canonical_measurement_dict(self.canonical)
 
 
 def _lookup(payload: Mapping[str, Any], canonical_field: str) -> tuple[str, Any] | None:
@@ -116,15 +117,19 @@ def _parse_time(value: Any) -> time:
 
 
 def _coerce(field_type: Any, value: Any) -> Any:
-    if value in (None, ""):
-        return value
     type_text = str(field_type)
-    if field_type is bool or type_text == "bool":
+    if value in (None, ""):
+        if type_text == "str" and value == "":
+            return ""
+        if value is None or "None" in type_text or "Optional" in type_text:
+            return None
+        return value
+    if field_type is bool or type_text == "bool" or "bool" in type_text:
         return _parse_bool(value)
-    if field_type is int or type_text == "int":
-        return int(value)
-    if field_type is float or type_text == "float":
+    if field_type is float or type_text == "float" or "float" in type_text:
         return float(value)
+    if field_type is int or type_text == "int" or ("int" in type_text and "datetime" not in type_text):
+        return int(value)
     if "datetime" in type_text:
         return _parse_datetime(value)
     if "date" in type_text and "datetime" not in type_text:
@@ -132,6 +137,7 @@ def _coerce(field_type: Any, value: Any) -> Any:
     if "time" in type_text and "datetime" not in type_text:
         return _parse_time(value)
     return value
+
 
 
 class SourceToCanonicalMapper:

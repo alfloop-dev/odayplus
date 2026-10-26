@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, time
 from typing import Any
 from uuid import uuid4
+
+from shared.governance.vocabularies import EvidenceLevel
 
 
 @dataclass(frozen=True)
@@ -37,14 +39,16 @@ class AddressLocation:
     district: str = ""
     village: str = ""
     road: str = ""
-    latitude: float = 0.0
-    longitude: float = 0.0
+    latitude: float | None = None
+    longitude: float | None = None
     geocode_precision: str = "manual"  # rooftop/street/district/manual
-    geocode_confidence: float = 0.0  # 0 to 1
+    geocode_confidence: float | None = None  # 0 to 1
     h3_res_8: str = ""
     h3_res_9: str = ""
     h3_res_10: str = ""
     manual_override_flag: bool = False
+    tenant_id: str = ""
+    revision: int = 1
 
 
 @dataclass(frozen=True)
@@ -142,7 +146,15 @@ class MachineStatusEvent:
 
 @dataclass(frozen=True)
 class WorkOrder:
-    """Maintenance and repair work orders."""
+    """Maintenance and repair work orders.
+
+    Notes on root_cause (ODP-FR-FCT-004 disposition):
+        `root_cause` is RESERVED (unproduced). In the current release, no automated
+        root-cause deduction or attribution engine produces this field. It is retained
+        as an optional manual/field maintenance annotation (e.g. from ops work orders)
+        and reserved for future automated root-cause pipelines.
+        Owner: ForecastOps / Platform Ops. Target Milestone: Wave 5+.
+    """
     work_order_id: str = field(default_factory=lambda: str(uuid4()))
     store_id: str = ""
     machine_id: str | None = None
@@ -153,6 +165,8 @@ class WorkOrder:
     status: str = "open"  # open/in_progress/resolved/cancelled
     severity: str = "medium"  # low/medium/high/critical
     cost_amount: float = 0.0
+    # RESERVED (unproduced): no automated root-cause writer exists in the
+    # current release. Owner: ForecastOps / Platform Ops; Target: Wave 5+.
     root_cause: str | None = None
 
 
@@ -186,8 +200,126 @@ class GeoCell:
     service_area_id: str | None = None
 
 
+# ---------------------------------------------------------------------------
+# Canonical measurement semantics (ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001)
+# ---------------------------------------------------------------------------
+
+LEGACY_MEASUREMENT_SCHEMA_VERSION = "v1"
+CURRENT_MEASUREMENT_SCHEMA_VERSION = "v2"
+
+MEASUREMENT_MEASURED = "measured"
+MEASUREMENT_UNMEASURED = "unmeasured"
+MEASUREMENT_LEGACY_UNKNOWN = "legacy_unknown"
+
+
+class MeasuredColumnSemantics:
+    """Absence-preserving semantics for a canonical measured column.
+
+    Before the cutover these columns were ``NOT NULL DEFAULT 1.00``, so a
+    stored ``1.0`` is ambiguous: it is either a real perfect measurement or a
+    substituted default standing in for "nobody measured this". Rows written
+    after the cutover carry ``measurement_schema_version = "v2"`` and are
+    trusted at face value; ``"v1"`` rows holding exactly ``1.0`` resolve to
+    ``legacy_unknown`` and hand callers ``None``.
+
+    ``__setstate__`` is load-bearing rather than cosmetic. The durable
+    repositories persist these aggregates as pickles through
+    :class:`~shared.infrastructure.persistence.document_store.SqliteDocumentStore`,
+    not as columns, so a payload written before the cutover has no
+    ``measurement_schema_version`` key in its state at all. Plain attribute
+    lookup would fall through to the *new* class default (``"v2"``) and
+    relabel a legacy substituted value as ``measured`` -- the exact masking
+    this cutover exists to remove. Restoring the absent key as ``"v1"`` is
+    what makes the marker survive reload, and ``dataclasses.replace`` then
+    carries it through mutation because it reads the instance value.
+    """
+
+    # Declared for type checkers only. These are plain annotations on a
+    # non-dataclass base, so ``@dataclass`` on the concrete models does not
+    # pick them up as fields.
+    measurement_schema_version: str
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        restored = dict(state)
+        restored.setdefault(
+            "measurement_schema_version", LEGACY_MEASUREMENT_SCHEMA_VERSION
+        )
+        self.__dict__.update(restored)
+
+    def _resolve_provenance(self, value: float | None, status: str | None) -> str:
+        if status is not None:
+            return status
+        if value is None:
+            return MEASUREMENT_UNMEASURED
+        if (
+            self.measurement_schema_version == LEGACY_MEASUREMENT_SCHEMA_VERSION
+            and value == 1.0
+        ):
+            return MEASUREMENT_LEGACY_UNKNOWN
+        return MEASUREMENT_MEASURED
+
+    @staticmethod
+    def _resolve_value(value: float | None, provenance: str) -> float | None:
+        if provenance in (MEASUREMENT_UNMEASURED, MEASUREMENT_LEGACY_UNKNOWN):
+            return None
+        return value
+
+
+class ConfidenceMeasurement(MeasuredColumnSemantics):
+    """Canonical models whose measured column is ``confidence``."""
+
+    confidence: float | None
+    confidence_status: str | None
+
+    @property
+    def effective_confidence_provenance(self) -> str:
+        return self._resolve_provenance(self.confidence, self.confidence_status)
+
+    @property
+    def effective_confidence(self) -> float | None:
+        return self._resolve_value(
+            self.confidence, self.effective_confidence_provenance
+        )
+
+
+class QualityScoreMeasurement(MeasuredColumnSemantics):
+    """Canonical models whose measured column is ``quality_score``."""
+
+    quality_score: float | None
+    quality_score_status: str | None
+
+    @property
+    def effective_quality_score_provenance(self) -> str:
+        return self._resolve_provenance(self.quality_score, self.quality_score_status)
+
+    @property
+    def effective_quality_score(self) -> float | None:
+        return self._resolve_value(
+            self.quality_score, self.effective_quality_score_provenance
+        )
+
+
+def canonical_measurement_dict(model: Any) -> dict[str, Any]:
+    """``dataclasses.asdict`` with measured columns resolved through provenance.
+
+    Serializing a canonical aggregate straight from its raw column republishes
+    a pre-cutover substituted ``1.0`` as though it had been measured. Callers
+    get the effective value plus an explicit ``*_provenance`` key instead, so
+    the absence marker survives the crossing into plain dicts (canonical
+    snapshot payloads, mapper output, downstream JSON).
+    """
+    payload = asdict(model)
+    if isinstance(model, ConfidenceMeasurement):
+        payload["confidence"] = model.effective_confidence
+        payload["confidence_provenance"] = model.effective_confidence_provenance
+    if isinstance(model, QualityScoreMeasurement):
+        payload["quality_score"] = model.effective_quality_score
+        payload["quality_score_provenance"] = model.effective_quality_score_provenance
+    return payload
+
+
 @dataclass(frozen=True)
-class Poi:
+class Poi(ConfidenceMeasurement):
     """Point of interest data."""
     poi_id: str = field(default_factory=lambda: str(uuid4()))
     source_poi_id: str = ""
@@ -197,12 +329,14 @@ class Poi:
     address_id: str = ""
     geo_cell_id: str = ""
     status: str = "active"  # active/closed/unknown
-    confidence: float = 1.0
+    confidence: float | None = None
     snapshot_id: str = ""
+    measurement_schema_version: str = CURRENT_MEASUREMENT_SCHEMA_VERSION
+    confidence_status: str | None = None
 
 
 @dataclass(frozen=True)
-class CompetitorStore:
+class CompetitorStore(ConfidenceMeasurement):
     """Competitor laundry location."""
     competitor_store_id: str = field(default_factory=lambda: str(uuid4()))
     brand_name: str = ""
@@ -212,12 +346,16 @@ class CompetitorStore:
     estimated_capacity: float = 0.0
     distance_to_nearest_oday_m: float = 0.0
     status: str = "active"  # active/closed/unknown
-    confidence: float = 1.0
+    confidence: float | None = None
     last_verified_at: datetime | None = None
+    measurement_schema_version: str = CURRENT_MEASUREMENT_SCHEMA_VERSION
+    snapshot_id: str = ""
+    source_competitor_id: str = ""
+    confidence_status: str | None = None
 
 
 @dataclass(frozen=True)
-class Listing:
+class Listing(ConfidenceMeasurement):
     """Real estate listing (merges source properties)."""
     listing_id: str = field(default_factory=lambda: str(uuid4()))
     source_listing_id: str = ""
@@ -237,8 +375,10 @@ class Listing:
     utility_gas_flag: bool = False
     available_from: date | None = None
     snapshot_id: str = ""
-    confidence: float = 1.0
+    confidence: float | None = None
     tenant_id: str = ""
+    measurement_schema_version: str = CURRENT_MEASUREMENT_SCHEMA_VERSION
+    confidence_status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -280,7 +420,7 @@ class PredictionRun:
 
 
 @dataclass(frozen=True)
-class Prediction:
+class Prediction(ConfidenceMeasurement):
     """Specific prediction output (forecast/value/probabilities)."""
     prediction_id: str = field(default_factory=lambda: str(uuid4()))
     prediction_run_id: str = ""
@@ -292,7 +432,9 @@ class Prediction:
     p90_value: float = 0.0
     unit: str = ""
     explanation_json: dict[str, Any] = field(default_factory=dict)
-    confidence: float = 1.0
+    confidence: float | None = None
+    measurement_schema_version: str = CURRENT_MEASUREMENT_SCHEMA_VERSION
+    confidence_status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -322,7 +464,7 @@ class Approval:
 
 
 @dataclass(frozen=True)
-class HeatZoneScore:
+class HeatZoneScore(ConfidenceMeasurement):
     """HeatZone Radar geographic evaluation score."""
     heatzone_score_id: str = field(default_factory=lambda: str(uuid4()))
     geo_cell_id: str = ""
@@ -334,7 +476,9 @@ class HeatZoneScore:
     cannibalization_risk_score: float = 0.0
     rent_feasibility_score: float = 0.0
     heatzone_state: str = "untouched"  # untouched/partially_absorbed/saturated/under_realized/still_expandable
-    confidence: float = 1.0
+    confidence: float | None = None
+    measurement_schema_version: str = CURRENT_MEASUREMENT_SCHEMA_VERSION
+    confidence_status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -388,6 +532,8 @@ class Alert:
     opened_at: datetime = field(default_factory=datetime.now)
     closed_at: datetime | None = None
     status: str = "open"  # open/acknowledged/in_progress/resolved/dismissed
+    disposition: str | None = None
+    deterioration_confirmed_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -416,7 +562,17 @@ class InterventionOutcome:
     incremental_revenue: float = 0.0
     incremental_gross_margin: float = 0.0
     method: str = "synthetic"  # before_after/did/synthetic/uplift/manual
-    evidence_level: str = "medium"  # low/medium/high/causal_candidate
+    # ADR-0004: the ML-05 ladder (L0..L5). None means unrated, and there is no
+    # default -- the previous "medium" stored an unassessed outcome as
+    # medium-strength evidence. `causal_candidate` was a dead value: nothing
+    # produced or tested for it, and the concept it named is carried by
+    # CAUSAL_MIN_EVIDENCE = L3 in shared/governance/evidence.py.
+    #
+    # Typed as the ladder rather than `str | None`: a plain string is what let
+    # "medium" and "pending" sit in this field looking like evidence claims, and
+    # this record is the persistence shape, so whatever lands here is what a
+    # reader downstream will believe.
+    evidence_level: EvidenceLevel | None = None
     side_effect_json: dict[str, Any] = field(default_factory=dict)
     label_maturity_time: datetime = field(default_factory=datetime.now)
 
@@ -484,7 +640,7 @@ class AuditEvent:
 
 
 @dataclass(frozen=True)
-class DataSnapshot:
+class DataSnapshot(QualityScoreMeasurement):
     """Point-in-time snapshot references."""
     snapshot_id: str = field(default_factory=lambda: str(uuid4()))
     snapshot_type: str = "raw"  # raw/canonical/model_ready/training
@@ -493,5 +649,33 @@ class DataSnapshot:
     storage_uri: str = ""
     schema_version: str = ""
     row_count: int = 0
-    quality_score: float = 1.0
+    quality_score: float | None = None
     created_by_run_id: str = ""
+    # ``schema_version`` above describes the *dataset* layout and is chosen by
+    # the producing pipeline; it says nothing about how ``quality_score`` was
+    # obtained. Measurement provenance therefore hangs off its own marker, so
+    # a pipeline legitimately emitting a "v1" dataset with a genuinely
+    # measured 1.0 is not misread as a legacy substituted default.
+    measurement_schema_version: str = CURRENT_MEASUREMENT_SCHEMA_VERSION
+    quality_score_status: str | None = None
+
+
+@dataclass(frozen=True)
+class ManualCorrection:
+    """Manual correction record with audit and rollback lineage (ODP-INT-006)."""
+    correction_id: str = field(default_factory=lambda: str(uuid4()))
+    entity_type: str = "address_location"
+    entity_id: str = ""
+    tenant_id: str = ""
+    field_name: str = ""
+    old_value: Any = None
+    new_value: Any = None
+    reason: str = ""
+    actor_id: str = ""
+    occurred_at: datetime = field(default_factory=datetime.now)
+    source_revision: int = 1
+    applied_revision: int = 2
+    status: str = "applied"  # applied / rolled_back
+    correlation_id: str = ""
+    decision_card_hash: str = ""
+    audit_event_id: str = ""

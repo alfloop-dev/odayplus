@@ -1,0 +1,86 @@
+{
+  "kind": "heatzone-label-backfill-intake-packet",
+  "task_id": "ODP-PLAN-HEATZONE-LABEL-BACKFILL-001",
+  "gap_id": "GAP-P1-001-DATA",
+  "phase": "P1 Human Data Gate",
+  "class": "human_gate",
+  "generated_at": "2026-08-03",
+  "depends_on": ["ODP-PLAN-HEATZONE-OUTCOME-001"],
+  "target_artifacts": [
+    "docs/evidence/models/heatzone/human-data-gate/intake_packet.md",
+    "docs/evidence/models/heatzone/human-data-gate/DATA_HANDBACK.json",
+    "docs/evidence/models/heatzone/human-data-gate/AUTHORITATIVE_READBACK_SPEC.json"
+  ],
+  "current_status": {
+    "verdict": "FAIL_CLOSED",
+    "is_governed_disabled": true,
+    "reason_code": "DATA_CONTRACT_NOT_MATURE",
+    "observed_labels": 0,
+    "eligible_labels": 0,
+    "activation_threshold": 200,
+    "shortfall": 200,
+    "auto_seeded": false,
+    "benchmark_evaluated": false,
+    "observed_ndcg": null,
+    "baseline_ndcg": 0.5,
+    "observed_survey_rate": null,
+    "baseline_survey_rate": 0.3,
+    "population_ranking_outperformed": false,
+    "top_k_survey_rate_improved": false,
+    "contract_version": "heatzone-training-view-v2",
+    "relation": "model_ready.heatzone_training_view",
+    "inventory_version": "pg16-production-model-inventory-2026-07-25-v1",
+    "inventory_observed_at": "2026-07-25T15:20:00Z",
+    "inventory_sha256": "3f1c8ec4baa1e2f06f5c4e93e82a6258315012b46aacfd3f3e578221aa8b5f44",
+    "source_receipt": "docs/evidence/models/ODP-PLAN-HEATZONE-OUTCOME-001/GATE1_BENCHMARK_RECEIPT.json"
+  },
+  "acceptance_criteria": {
+    "min_eligible_mature_labels": 200,
+    "requires_join_keys": true,
+    "requires_dataset_hash": true,
+    "requires_named_owner": true,
+    "requires_freshness_cutoff": true,
+    "requires_lineage": true,
+    "business_gates": {
+      "ndcg_must_exceed_population_density_baseline": true,
+      "top_k_field_survey_rate_must_improve": true
+    },
+    "forbidden_data_types": [
+      "synthetic",
+      "mock",
+      "auto_seeded",
+      "simulated",
+      "fixture",
+      "duplicate",
+      "immature",
+      "ai_authored"
+    ]
+  },
+  "governance_invariants": [
+    "At least 200 eligible mature real labels required in model_ready.heatzone_training_view",
+    "Model ranking must outperform population density ranking baseline (NDCG > baseline)",
+    "Model ranking must improve Top-K field site survey efficiency rate",
+    "No synthetic, mock, auto-seeded, or simulated labels allowed",
+    "Fail-closed governed-disabled binding enforced when inventory or benchmark criteria fail",
+    "Gate 1 receipt must bind immutably to the PG16 model-ready inventory receipt lineage"
+  ],
+  "data_source": {
+    "cloud_sql_instance": "alfaloop-data-project:asia-east1:oday-dev-sql",
+    "database_version": "POSTGRES_16",
+    "connection_secret": "oday-plus-dev-api-database-url-pg16:latest",
+    "target_view": "model_ready.heatzone_training_view"
+  },
+  "ai_boundary": {
+    "permitted": [
+      "prepare templates",
+      "validate schema",
+      "verify returned receipts",
+      "hold governed-disabled while evidence is absent"
+    ],
+    "forbidden": [
+      "generate labels",
+      "sign off on behalf of the data owner",
+      "treat fixture or repository JSON as authority"
+    ]
+  }
+}

@@ -1,0 +1,33 @@
+# AVM artifact rollback and historical provenance
+
+The deployed model artifact schema is separate from the domain input schema. New `ValuationInput` and `NormalizedMargin` records remain `valuation-view-v2`. Existing records without an instance version serialize as `valuation-view-v1`, including nested margins after legacy quality disposition and historical cases processed through `_migrate_legacy_case`. Stored records retain `valuation-view-v1` across read-induced quality migrations and subsequent reads. The report retains its own recorded model feature version.
+
+Production composition, readiness schema selection and `AVMProductionExecutor.from_environment` now select the same artifact schema. `ODP_AVM_ARTIFACT_SCHEMA_VERSION` defaults to `valuation-view-v1`, matching the existing approved artifact contract. A deployment with an approved v2 artifact can explicitly select `valuation-view-v2`. Unknown values fail closed. This setting does not grant model approval or Finance cutover approval.
+
+Operational depreciation rollback still requires the existing valid, unexpired v0 receipt. The `ODP_AVM_DEPRECIATION_VERSION_PIN` and `ODP_AVM_DEPRECIATION_ROLLBACK_RECEIPT_JSON` inputs retain their existing checks; choosing an artifact schema does not bypass them.
+
+Regression coverage loads registered real LightGBM artifacts and runs the real lifelines predictor for both artifact schemas. It then drives production app bootstrap and HTTP valuation against an isolated PostgreSQL bundle with a test-only approved v0 receipt, and exercises the service's environment fallback. The test confirms that artifact/report provenance can be v1 while fresh domain input and normalized margin remain v2. The governed-disabled service override exists only inside the test fixture.
+
+SQLite and PostgreSQL durable legacy fixtures omit both quality status and feature version fields from the serialized historical input, as actual pre-upgrade objects do. They verify that read-induced migration in `DurableAVMRepository` preserves `valuation-view-v1` on both SQLite and PostgreSQL, and verify current report, report history, HTTP GET/history, both quality-disposition paths and persisted raw storage. The original regression failures and subsequent test receipts are retained in the local handoff; final verification receipts and source hashes accompany this document.
+
+This change does not activate a live service or deploy a model. Existing approval, cutover and independent PR review gates remain in force.
+
+Final verification: **76 passed** (2 real artifact variants and 74 remaining AVM/domain/durable/API composition cases). Source commit: `b50bca51e62c58cf183d3a11076f1bb5a04d7817`. Exact commands and original exit codes are in `bounded-continuation-verification.json`.
+
+
+## Operator rollback composition
+
+Production bootstrap now supplies the same deployment depreciation pin and rollback receipt to the Operator router and its tenant-scoped NetworkRebalanceService. Its AVMService retains receipt validation and canonical tenant persistence. Two real artifact/bootstrap cases verify original-cost writes through both APIs restore v0 even without Finance cutover evidence, refuse expired/mismatched/malformed receipts, preserve existing v1 reports, and isolate tenants. Original failing and passing receipts are retained in operator-rollback-verification.json and sibling logs. Existing AVM/Operator/history/governance regression: 93 passed; real artifact tests: 2 passed; boundary 1157 and ruff passed.
+
+## Exact integer-month validation follow-up
+
+The pending fractional-life repair converted strings through binary floating point. This accepted `1.0000000000000000001` as one month and changed `9007199254740993`. The correction parses integer text directly and compares numeric values with their exact integer conversion, preserving integral Decimal/Fraction input compatibility. Invalid fractional values fail at mapping, dataclass, rehydrated calculation, raw service and batch boundaries without creating cases or reports.
+
+The initial regressions failed before the correction. Final AVM tests: 51 passed; durable AVM/API and Operator integration: 35 passed, 3 live-environment cases deselected. Existing artifact rollback and nested legacy provenance tests are included. Original commands, exit codes and exact final source hashes accompany this evidence. This contributor patch requires owner submission and independent review of its resulting remote head.
+
+
+## HTTP boolean useful-life boundary
+
+The HTTP request model previously coerced JSON `true` to integer `1` before domain validation. An actual `POST /api/v1/avm/cases` regression with complete original-cost inputs reproduced HTTP 201 and a persisted one-month case. The request field now rejects booleans in a before validator, returning 422 before any case or report is stored. Other supported Pydantic input handling remains intact.
+
+Twelve real HTTP cases cover booleans, fractional values including exact fractional text, nonpositive values, valid integer/numeric/string inputs, large integer text, and missing/null inputs. The original red run has one failing boolean case and eleven passing controls; all twelve pass after the repair. Broader AVM/domain/artifact/rollback/history/API/Operator verification: **100 passed, 3 live-environment cases deselected**. Ruff and the 1158-file code boundary check passed. Original command/exit-code receipts and exact source hashes are in `1295-http-bool-*.json` and their sibling logs. This is contributor verification; the resulting PR head returns to the normal Supervisor owner and independent Codex2 auto-review flow.

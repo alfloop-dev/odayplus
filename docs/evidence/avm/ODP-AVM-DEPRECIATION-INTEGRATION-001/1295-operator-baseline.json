@@ -1,0 +1,24 @@
+{
+  "cwd": "/tmp/codex-1295-operator-fix",
+  "head_sha": "423776af0f8ca5c43353219b89f54062f3bee22b",
+  "tracked_diff_sha256": "0e18ecb25f42706f9b5965bf2c9fd393d3dafccf73d4040be403b08dd346dea7",
+  "argv": [
+    "/tmp/pantheon-worker-worktrees/pantheon/odp-avm-depreciation-integration-001/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-o",
+    "addopts=",
+    "-q",
+    "--tb=short",
+    "modules/avm/tests",
+    "tests/integration/test_operator_canonical_wiring.py",
+    "tests/integration/test_avm_valuation.py",
+    "tests/governance/test_avm001_disposition.py",
+    "-k",
+    "not reloads_and_executes_real_oss_artifacts"
+  ],
+  "started_at": "2026-09-12T15:54:55.843571+00:00",
+  "duration_seconds": 124.59973295696545,
+  "exit_code": 0,
+  "output": "1295-operator-baseline.log"
+}

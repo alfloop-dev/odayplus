@@ -1,0 +1,62 @@
+{
+  "at": "2026-09-27T14:10:28.917567+00:00",
+  "project": "odayplus-runtime-20260825",
+  "secret": "oday-plus-dev-api-database-url-pg16",
+  "complete": true,
+  "database_mutations": false,
+  "connection_target": {
+    "host": null,
+    "port": null,
+    "database": "oday_plus",
+    "cloud_sql_socket": "/cloudsql/odayplus-runtime-20260825:asia-east1:oday-dev-sql"
+  },
+  "transport": "loopback Cloud SQL Auth Proxy to the exact secret socket instance",
+  "database_identity": {
+    "database": "oday_plus",
+    "schema": "public",
+    "server_address": null,
+    "transaction_read_only": "on",
+    "search_path": "\"$user\", public"
+  },
+  "relevant_tables": [
+    {
+      "schemaname": "public",
+      "tablename": "alembic_version"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "event_logs"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "runs"
+    }
+  ],
+  "version_tables": [
+    {
+      "schema": "public",
+      "table": "alembic_version",
+      "revisions": [
+        "29b539ebc72a"
+      ]
+    }
+  ],
+  "application_tenants_table": null,
+  "non_system_schemas": [
+    "public"
+  ],
+  "extensions": [
+    {
+      "extname": "plpgsql",
+      "extversion": "1.0"
+    },
+    {
+      "extname": "postgis",
+      "extversion": "3.6.0"
+    }
+  ],
+  "migration_privileges": {
+    "can_create_schema": true,
+    "can_create_public_table": true
+  }
+}

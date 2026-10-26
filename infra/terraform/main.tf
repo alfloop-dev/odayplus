@@ -30,8 +30,23 @@ provider "google-beta" {
 }
 
 locals {
-  is_prod     = var.environment == "prod"
-  name_prefix = "oday-${var.environment}"
+  is_prod      = var.environment == "prod"
+  oidc_enabled = var.auth_mode == "oidc"
+  name_prefix  = "oday-${var.environment}"
+
+  # ODP_AUTH_ISSUER / ODP_AUTH_JWKS_URI / ODP_AUTH_AUDIENCES verify two kinds of
+  # token: end-user OIDC tokens and the Cloud Run service-identity token the
+  # deploy smoke stage mints. Only the first is optional. The API verifier is
+  # still single-issuer, so these keep resolving to the OIDC issuer while OIDC
+  # is on and fall back to the service-identity issuer when it is off; the
+  # service audience list is carried in both modes.
+  auth_issuer            = local.oidc_enabled ? var.oidc_issuer : var.service_auth_issuer
+  auth_jwks_uri          = local.oidc_enabled ? var.oidc_jwks_uri : var.service_auth_jwks_uri
+  service_auth_audiences = length(var.service_auth_audiences) > 0 ? var.service_auth_audiences : var.oidc_audiences
+  auth_audiences = sort(tolist(setunion(
+    local.service_auth_audiences,
+    local.oidc_enabled ? var.oidc_audiences : toset([]),
+  )))
   labels = merge(
     {
       app         = "oday-plus"
@@ -45,6 +60,8 @@ locals {
     "cloudkms.googleapis.com",
     "compute.googleapis.com",
     "iam.googleapis.com",
+    "iamcredentials.googleapis.com",
+    "monitoring.googleapis.com",
     "pubsub.googleapis.com",
     "run.googleapis.com",
     "secretmanager.googleapis.com",
@@ -72,11 +89,22 @@ locals {
     "ODAY_LOG_FORMAT",
     "ODAY_RELEASE_SHA",
     "ODP_AUDIT_WORM_SINK_URI",
+    "ODP_AUDIT_WORM_WRITER_SERVICE_ACCOUNT",
+    "ODP_AUDIT_WORM_RECOVERY_SERVICE_ACCOUNT",
     "ODP_AUTH_AUDIENCES",
     "ODP_AUTH_ISSUER",
+    "ODP_AUTH_LOCAL_AUDIENCES",
+    "ODP_AUTH_LOCAL_ISSUER",
     "ODP_AUTH_JWKS_CACHE_TTL_SECONDS",
     "ODP_AUTH_JWKS_URI",
     "ODP_AUTH_LEEWAY_SECONDS",
+    "ODP_AUTH_MODE",
+    "ODP_AUTH_OIDC_AUDIENCES",
+    "ODP_AUTH_OIDC_ISSUER",
+    "ODP_AUTH_OIDC_JWKS_URI",
+    "ODP_AUTH_SERVICE_AUDIENCES",
+    "ODP_AUTH_SERVICE_ISSUER",
+    "ODP_AUTH_SERVICE_JWKS_URI",
     "ODP_DEPLOY_ENV",
     "ODP_EXTERNAL_PROVIDER_MODE",
     "ODP_JOBS_DLQ_TOPIC",
@@ -93,6 +121,7 @@ locals {
   managed_runtime_secret_env_names = toset([
     "ODAY_DATABASE_URL",
     "ODP_INTAKE_CURSOR_SIGNING_KEY",
+    "ODP_IDENTITY_TOKEN_SIGNING_KEY",
   ])
   managed_web_secret_env_names = toset([
     "ODP_WEB_SESSION_SECRET",
@@ -110,48 +139,76 @@ locals {
     local.managed_runtime_secret_env_names,
     local.external_runtime_secret_env_names,
   )
-  web_plain_env = {
-    ODAY_RELEASE_SHA                     = var.release_sha
-    ODP_API_BASE_URL                     = google_cloud_run_v2_service.api.uri
-    ODP_API_SERVICE_AUDIENCE             = google_cloud_run_v2_service.api.uri
-    ODP_DATA_BINDING_MODE                = "live"
-    ODP_DEPLOY_ENV                       = var.environment
-    ODP_PRODUCT_MODE                     = (local.is_prod || var.live_data_enabled) ? "production" : "poc"
-    ODP_REQUIRE_LIVE_DATA                = tostring(local.is_prod || var.live_data_enabled)
-    ODP_WEB_ALLOW_LEGACY_TRUSTED_HEADERS = "false"
-    ODP_WEB_BASE_URL                     = var.web_base_url
-    ODP_WEB_OIDC_CLIENT_ID               = var.web_oidc_client_id
-    ODP_WEB_OIDC_ISSUER                  = var.oidc_issuer
-    ODP_WEB_OIDC_SCOPES                  = var.web_oidc_scopes
-  }
-  web_oidc_secret_refs = var.web_oidc_client_secret_ref == null ? {} : {
+  web_plain_env = merge(
+    {
+      ODAY_RELEASE_SHA                     = var.release_sha
+      ODP_API_BASE_URL                     = google_cloud_run_v2_service.api.uri
+      ODP_API_SERVICE_AUDIENCE             = google_cloud_run_v2_service.api.uri
+      ODP_AUTH_MODE                        = var.auth_mode
+      ODP_AUTH_OIDC_ENABLED                = tostring(local.oidc_enabled)
+      ODP_AUTH_LOCAL_ISSUER                = "urn:odp:identity:local"
+      ODP_AUTH_LOCAL_AUDIENCES             = join(",", local.service_auth_audiences)
+      ODP_AUTH_AUDIENCES                   = join(",", local.service_auth_audiences)
+      ODP_DATA_BINDING_MODE                = "live"
+      ODP_DEPLOY_ENV                       = var.environment
+      ODP_PRODUCT_MODE                     = (local.is_prod || var.live_data_enabled) ? "production" : "poc"
+      ODP_REQUIRE_LIVE_DATA                = tostring(local.is_prod || var.live_data_enabled)
+      ODP_WEB_ALLOW_LEGACY_TRUSTED_HEADERS = "false"
+      ODP_WEB_BASE_URL                     = var.web_base_url
+    },
+    local.oidc_enabled ? {
+      ODP_WEB_OIDC_CLIENT_ID = var.web_oidc_client_id
+      ODP_WEB_OIDC_ISSUER    = var.oidc_issuer
+      ODP_WEB_OIDC_SCOPES    = var.web_oidc_scopes
+    } : {},
+  )
+  web_oidc_secret_refs = local.oidc_enabled && var.web_oidc_client_secret_ref != null ? {
     ODP_WEB_OIDC_CLIENT_SECRET = var.web_oidc_client_secret_ref
-  }
+  } : {}
+  identity_token_secret_refs = var.identity_token_signing_key_ref != null ? {
+    ODP_IDENTITY_TOKEN_SIGNING_KEY = var.identity_token_signing_key_ref
+  } : {}
 
   fixed_runtime_env = {
-    APP_ENV                         = var.environment
-    MLFLOW_TRACKING_URI             = var.mlflow_tracking_uri
-    ODAY_ENV                        = var.environment
-    ODAY_LOG_FORMAT                 = "json"
-    ODAY_RELEASE_SHA                = var.release_sha
-    ODP_AUTH_AUDIENCES              = join(",", var.oidc_audiences)
-    ODP_AUTH_ISSUER                 = var.oidc_issuer
-    ODP_AUTH_JWKS_CACHE_TTL_SECONDS = tostring(var.oidc_jwks_cache_ttl_seconds)
-    ODP_AUTH_JWKS_URI               = var.oidc_jwks_uri
-    ODP_AUTH_LEEWAY_SECONDS         = tostring(var.oidc_leeway_seconds)
-    ODP_DEPLOY_ENV                  = var.environment
-    ODP_EXTERNAL_PROVIDER_MODE      = "fixture"
-    ODP_OBJECT_STORE                = "gcs"
-    ODP_PERSISTENCE                 = "postgresql"
-    ODP_PRODUCT_MODE                = (local.is_prod || var.live_data_enabled) ? "live" : "development"
-    ODP_REQUIRE_LIVE_DATA           = tostring(local.is_prod || var.live_data_enabled)
-    ODP_RESIDENCY_APPROVED_BUCKETS  = join(",", [google_storage_bucket.source_snapshots.name, google_storage_bucket.artifacts.name, module.audit_evidence.bucket_name])
-    ODP_AUDIT_WORM_SINK_URI         = module.audit_evidence.worm_sink_uri
-    ODP_SOURCE_SNAPSHOT_BUCKET      = google_storage_bucket.source_snapshots.name
-    ODP_MODEL_ARTIFACT_BUCKET       = google_storage_bucket.artifacts.name
-    ODP_JOBS_TOPIC                  = google_pubsub_topic.jobs.id
-    ODP_JOBS_SUBSCRIPTION           = google_pubsub_subscription.jobs.name
-    ODP_JOBS_DLQ_TOPIC              = google_pubsub_topic.dead_letter.id
+    APP_ENV                                 = var.environment
+    MLFLOW_TRACKING_URI                     = var.mlflow_tracking_uri
+    ODAY_ENV                                = var.environment
+    ODAY_LOG_FORMAT                         = "json"
+    ODAY_RELEASE_SHA                        = var.release_sha
+    ODP_AUTH_LEEWAY_SECONDS                 = tostring(var.oidc_leeway_seconds)
+    ODP_AUTH_LOCAL_ISSUER                   = "urn:odp:identity:local"
+    ODP_AUTH_LOCAL_AUDIENCES                = join(",", local.service_auth_audiences)
+    ODP_AUTH_MODE                           = var.auth_mode
+    ODP_DEPLOY_ENV                          = var.environment
+    ODP_EXTERNAL_PROVIDER_MODE              = "fixture"
+    ODP_OBJECT_STORE                        = "gcs"
+    ODP_PERSISTENCE                         = "postgresql"
+    ODP_PRODUCT_MODE                        = (local.is_prod || var.live_data_enabled) ? "live" : "development"
+    ODP_REQUIRE_LIVE_DATA                   = tostring(local.is_prod || var.live_data_enabled)
+    ODP_RESIDENCY_APPROVED_BUCKETS          = join(",", [google_storage_bucket.source_snapshots.name, google_storage_bucket.artifacts.name, module.audit_evidence.bucket_name])
+    ODP_AUDIT_WORM_SINK_URI                 = module.audit_evidence.worm_sink_uri
+    ODP_AUDIT_WORM_WRITER_SERVICE_ACCOUNT   = module.audit_evidence.writer_service_account
+    ODP_AUDIT_WORM_RECOVERY_SERVICE_ACCOUNT = module.audit_evidence.recovery_reader_service_account
+    ODP_SOURCE_SNAPSHOT_BUCKET              = google_storage_bucket.source_snapshots.name
+    ODP_MODEL_ARTIFACT_BUCKET               = google_storage_bucket.artifacts.name
+    ODP_JOBS_TOPIC                          = google_pubsub_topic.jobs.id
+    ODP_JOBS_SUBSCRIPTION                   = google_pubsub_subscription.jobs.name
+    ODP_JOBS_DLQ_TOPIC                      = google_pubsub_topic.dead_letter.id
+    ODP_AUTH_AUDIENCES                      = join(",", local.auth_audiences)
+    ODP_AUTH_ISSUER                         = local.auth_issuer
+    ODP_AUTH_JWKS_CACHE_TTL_SECONDS         = tostring(var.oidc_jwks_cache_ttl_seconds)
+    ODP_AUTH_JWKS_URI                       = local.auth_jwks_uri
+    # True service/OIDC runtime env separation (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
+    # The separated vars let config_from_env resolve each issuer path without
+    # guessing from the legacy globals; the legacy ODP_AUTH_ISSUER / _JWKS_URI /
+    # _AUDIENCES above stay as migration aliases so pre-contract deployments
+    # keep working, and the auth boundary's fallback chain stays exercised.
+    ODP_AUTH_OIDC_AUDIENCES    = local.oidc_enabled ? join(",", var.oidc_audiences) : ""
+    ODP_AUTH_OIDC_ISSUER       = local.oidc_enabled ? var.oidc_issuer : ""
+    ODP_AUTH_OIDC_JWKS_URI     = local.oidc_enabled ? var.oidc_jwks_uri : ""
+    ODP_AUTH_SERVICE_AUDIENCES = join(",", local.service_auth_audiences)
+    ODP_AUTH_SERVICE_ISSUER    = var.service_auth_issuer
+    ODP_AUTH_SERVICE_JWKS_URI  = var.service_auth_jwks_uri
   }
 
   runtime_plain_env = merge(
@@ -183,16 +240,21 @@ locals {
       var.release_sha,
       var.database_name,
       var.database_user,
-      var.oidc_issuer,
-      var.oidc_jwks_uri,
+      var.mlflow_tracking_uri,
       var.web_base_url,
+      local.auth_issuer,
+      local.auth_jwks_uri,
+      var.monitoring_api_uptime_host,
+    ],
+    local.auth_audiences,
+    local.oidc_enabled ? [
       var.web_oidc_client_id,
       var.web_oidc_scopes,
-      var.mlflow_tracking_uri,
-    ],
-    tolist(var.oidc_audiences),
+    ] : [],
     tolist(var.api_invoker_members),
     tolist(var.web_invoker_members),
+    tolist(var.monitoring_notification_emails),
+    tolist(var.monitoring_notification_channel_ids),
     values(var.model_runtime_config),
     flatten([
       for ref in values(var.model_secret_refs) :
@@ -203,10 +265,14 @@ locals {
       for ref in values(var.runtime_additional_secret_refs) :
       [ref.secret_id, ref.version]
     ]),
-    var.web_oidc_client_secret_ref == null ? [] : [
+    (local.oidc_enabled && var.web_oidc_client_secret_ref != null) ? [
       var.web_oidc_client_secret_ref.secret_id,
       var.web_oidc_client_secret_ref.version,
-    ],
+    ] : [],
+    var.identity_token_signing_key_ref != null ? [
+      var.identity_token_signing_key_ref.secret_id,
+      var.identity_token_signing_key_ref.version,
+    ] : [],
   )
 }
 

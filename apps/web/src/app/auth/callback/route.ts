@@ -5,11 +5,20 @@ import {
   oidcTransactionCookieName,
   oidcTransactionCookieOptions,
   readOidcTransaction,
-  sealWebSession,
+  sealWebSessionReference,
   webSessionCookieName,
   webSessionCookieOptions,
 } from "../../../lib/auth/session";
-import { resolveWebBaseUrl } from "../../../lib/auth/runtime";
+import {
+  isOidcEnabled,
+  resolveAuthMode,
+  resolveWebBaseUrl,
+} from "../../../lib/auth/runtime";
+import { getDefaultIdentityStore } from "../../../lib/auth/identityStore";
+import {
+  DEFAULT_SESSION_IDLE_TIMEOUT_MS,
+  getDefaultSessionStore,
+} from "../../../lib/auth/sessionStore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,7 +30,7 @@ function clearTransaction(response: NextResponse): void {
   });
 }
 
-function callbackFailure(code: string): NextResponse {
+function callbackFailure(code: string, status = 401): NextResponse {
   const response = NextResponse.json(
     {
       error: {
@@ -29,13 +38,55 @@ function callbackFailure(code: string): NextResponse {
         summary: "OIDC authentication could not be completed.",
       },
     },
-    { status: 401, headers: { "cache-control": "no-store" } },
+    { status, headers: { "cache-control": "no-store" } },
   );
   clearTransaction(response);
   return response;
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  // 1. Fail closed if auth mode is invalid, local, or OIDC is incomplete (Contract §3.2, T14)
+  let authMode: "local" | "oidc";
+  try {
+    authMode = resolveAuthMode(process.env);
+  } catch {
+    return NextResponse.json(
+      {
+        error: {
+          code: "WEB_AUTH_NOT_CONFIGURED",
+          summary: "Web authentication configuration is invalid.",
+        },
+      },
+      { status: 503, headers: { "cache-control": "no-store" } },
+    );
+  }
+
+  if (authMode === "local") {
+    return NextResponse.json(
+      {
+        error: {
+          code: "WEB_AUTH_PROVIDER_DISABLED",
+          summary: "OIDC authentication provider is disabled.",
+        },
+      },
+      { status: 503, headers: { "cache-control": "no-store" } },
+    );
+  }
+
+  try {
+    isOidcEnabled(process.env);
+  } catch {
+    return NextResponse.json(
+      {
+        error: {
+          code: "WEB_AUTH_NOT_CONFIGURED",
+          summary: "OIDC authentication configuration is incomplete.",
+        },
+      },
+      { status: 503, headers: { "cache-control": "no-store" } },
+    );
+  }
+
   if (request.nextUrl.searchParams.has("error")) {
     return callbackFailure("OIDC_PROVIDER_ERROR");
   }
@@ -55,6 +106,46 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       returnedState: state,
       transaction,
     });
+    const identityStore = getDefaultIdentityStore();
+    const sessionStore = getDefaultSessionStore(process.env);
+    if (
+      !identityStore ||
+      !sessionStore ||
+      !identityStore.findAccountByFederatedIdentity ||
+      !session.subject ||
+      !session.accessToken
+    ) {
+      return callbackFailure("OIDC_CALLBACK_REJECTED");
+    }
+    const account = await identityStore.findAccountByFederatedIdentity(
+      process.env.ODP_WEB_OIDC_ISSUER?.trim() || "",
+      session.subject,
+    );
+    if (!account || account.status !== "active") {
+      // OIDC never provisions an account. A missing federation link is
+      // intentionally indistinguishable from other callback failures here.
+      return callbackFailure("OIDC_CALLBACK_REJECTED");
+    }
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const sid = crypto.randomUUID();
+    await sessionStore.createSession({
+      sessionId: sid,
+      accountId: account.accountId,
+      provider: "oidc",
+      accessToken: session.accessToken,
+      subject: account.username,
+      tenantId: account.tenantId,
+      idleTimeoutMs: DEFAULT_SESSION_IDLE_TIMEOUT_MS,
+      absoluteLifetimeMs: Math.max(1, (session.expiresAt - nowSeconds) * 1000),
+    });
+    const serverSession = {
+      ...session,
+      sid,
+      accountId: account.accountId,
+      tenantId: account.tenantId,
+      subject: account.username,
+      provider: "oidc" as const,
+    };
     const returnUrl = new URL(
       transaction.returnTo,
       resolveWebBaseUrl(request.nextUrl.origin),
@@ -62,12 +153,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const response = NextResponse.redirect(returnUrl);
     response.cookies.set(
       webSessionCookieName,
-      await sealWebSession(session),
+      await sealWebSessionReference(serverSession),
       {
         ...webSessionCookieOptions,
         maxAge: Math.max(
           1,
-          session.expiresAt - Math.floor(Date.now() / 1000),
+          serverSession.expiresAt - nowSeconds,
         ),
       },
     );
@@ -78,4 +169,3 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return callbackFailure("OIDC_CALLBACK_REJECTED");
   }
 }
-

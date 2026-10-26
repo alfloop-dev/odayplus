@@ -1,0 +1,430 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NetPlanLeaseContractDraft",
+  "description": "Minimal lease contract data schema and specification for NetPlan hard-constraint evaluation (ODP-FR-NET-002, Decision D18, Work Package WP-32A).",
+  "metadata": {
+    "task_id": "ODP-NET002-LEASE-CONTRACT-PREP-001",
+    "requirement_id": "ODP-FR-NET-002",
+    "constraint_class": "LEASE",
+    "version": "1.0.0-draft",
+    "created_at": "2026-09-08T16:11:05Z",
+    "inspected_source_sha": "9048161e058becff5a53593a773d3c42238213fb",
+    "author": "Antigravity2",
+    "reviewer": "Codex",
+    "status": "DRAFT_ENGINEERING_PREPARATION",
+    "data_classification": "SPECIFICATION_PUBLIC_INTERNAL"
+  },
+  "definitions": {
+    "StoreLeaseContract": {
+      "type": "object",
+      "description": "Authoritative contract snapshot for an existing operating retail store.",
+      "required": [
+        "store_id",
+        "lease_contract_id",
+        "lease_start_date",
+        "lease_expiry_date",
+        "monthly_rent",
+        "deposit_amount",
+        "break_clause_allowed",
+        "break_notice_months",
+        "renewal_option_flag",
+        "landlord_consent_status",
+        "alteration_permitted",
+        "source_system",
+        "source_snapshot_id"
+      ],
+      "properties": {
+        "store_id": {
+          "type": "string",
+          "pattern": "^STR-[A-Z0-9_-]+$",
+          "description": "Canonical store identifier matching core.stores.store_id."
+        },
+        "lease_contract_id": {
+          "type": "string",
+          "description": "De-identified or masked contract reference from CLM / ERP system."
+        },
+        "lease_start_date": {
+          "type": "string",
+          "format": "date",
+          "description": "Effective start date of current lease term (YYYY-MM-DD)."
+        },
+        "lease_expiry_date": {
+          "type": "string",
+          "format": "date",
+          "description": "Contractual expiry date of current lease term (YYYY-MM-DD)."
+        },
+        "monthly_rent": {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Base monthly contractual rent in TWD."
+        },
+        "deposit_amount": {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Security deposit held by landlord in TWD."
+        },
+        "break_clause_allowed": {
+          "type": "boolean",
+          "description": "Whether the lease agreement permits unilateral early termination before natural expiry."
+        },
+        "break_notice_months": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Mandatory advance written notice period in months required for early termination."
+        },
+        "early_termination_penalty": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0.0,
+          "description": "Measured penalty / liquidated damages incurred upon early termination in TWD. Null indicates unmeasured / missing data (distinct from 0.0 measured zero penalty)."
+        },
+        "restoration_cost_estimate": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0.0,
+          "description": "Estimated site restoration / demolition / reinstatement expense in TWD. Null indicates unmeasured."
+        },
+        "renewal_option_flag": {
+          "type": "boolean",
+          "description": "Whether tenant holds contractual unilateral right of first refusal or lease renewal option."
+        },
+        "renewal_notice_deadline_days": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Days prior to lease_expiry_date by which renewal notice must be served."
+        },
+        "rent_escalation_cap_rate": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Contractual maximum percentage rent increase upon renewal (e.g. 0.05 for 5%)."
+        },
+        "landlord_consent_status": {
+          "type": "string",
+          "enum": [
+            "APPROVED",
+            "PENDING",
+            "REJECTED",
+            "UNKNOWN"
+          ],
+          "description": "Formal consent status from landlord regarding store modifications, lease extension, or assignment."
+        },
+        "alteration_permitted": {
+          "type": "boolean",
+          "description": "Whether lease agreement and landlord permit structural / store-format improvements and major fitout."
+        },
+        "source_system": {
+          "type": "string",
+          "enum": [
+            "ERP_SAP",
+            "CLM_DOCTRACK",
+            "MANUAL_VERIFIED_EXPORT",
+            "MOCK_FIXTURE"
+          ],
+          "description": "Authoritative enterprise source system providing the snapshot."
+        },
+        "source_snapshot_id": {
+          "type": "string",
+          "description": "Durable lineage tracking identifier (e.g. SNAP-LEASE-20260908-001)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "CandidateSiteLeaseTerms": {
+      "type": "object",
+      "description": "Authoritative commercial lease terms snapshot for a candidate expansion site.",
+      "required": [
+        "candidate_site_id",
+        "listing_id",
+        "available_from",
+        "target_lease_term_years",
+        "expected_monthly_rent",
+        "security_deposit",
+        "fitout_grace_days",
+        "zoning_commercial_permitted",
+        "source_feed_id",
+        "source_snapshot_id"
+      ],
+      "properties": {
+        "candidate_site_id": {
+          "type": "string",
+          "pattern": "^CND-[A-Z0-9_-]+$",
+          "description": "Canonical candidate site identifier matching expansion domain models."
+        },
+        "listing_id": {
+          "type": "string",
+          "description": "Underlying listing record identifier matching expansion.listings."
+        },
+        "available_from": {
+          "type": "string",
+          "format": "date",
+          "description": "Earliest date the site can be handed over to tenant for fitout / occupancy (YYYY-MM-DD)."
+        },
+        "available_to": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date",
+          "description": "Latest listing availability window end date before offer expiration (YYYY-MM-DD)."
+        },
+        "signing_deadline": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date",
+          "description": "Contractual deadline by which lease agreement must be executed with landlord (YYYY-MM-DD). Null indicates unmeasured / unbounded."
+        },
+        "target_lease_term_years": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Contractual commitment term in years requested by landlord or proposed in scenario."
+        },
+        "expected_monthly_rent": {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Quoted base monthly rent in TWD."
+        },
+        "security_deposit": {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Required security deposit in TWD (typically 2-3 months rent)."
+        },
+        "fitout_grace_days": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Rent-free fitout grace period in days granted prior to rent commencement."
+        },
+        "zoning_commercial_permitted": {
+          "type": "boolean",
+          "description": "Whether urban zoning regulations and building license permit retail / commercial operations."
+        },
+        "source_feed_id": {
+          "type": "string",
+          "enum": [
+            "PARTNER_FEED_EXPANSION",
+            "ASSISTED_INTAKE_VERIFIED",
+            "MOCK_FIXTURE"
+          ],
+          "description": "Data ingestion pipeline or provider registry identifier."
+        },
+        "source_snapshot_id": {
+          "type": "string",
+          "description": "Durable lineage tracking identifier (e.g. SNAP-LISTING-20260908-001)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "LeaseAdmissibilityResult": {
+      "type": "object",
+      "description": "Outcome of evaluating lease feasibility for a network planning action.",
+      "required": [
+        "entity_id",
+        "action",
+        "status",
+        "fail_closed_triggered",
+        "reason",
+        "evidence_snapshot_id"
+      ],
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "description": "Store ID or Candidate Site ID being evaluated."
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "OPEN",
+            "KEEP",
+            "IMPROVE",
+            "MOVE",
+            "EXIT"
+          ],
+          "description": "Network planning action option under assessment."
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "FEASIBLE",
+            "INFEASIBLE_WINDOW",
+            "INFEASIBLE_LANDLORD",
+            "PENALTY_REQUIRED",
+            "UNMEASURED"
+          ],
+          "description": "Classification of lease feasibility."
+        },
+        "fail_closed_triggered": {
+          "type": "boolean",
+          "description": "True if action option is rejected due to missing / unmeasured lease contract data."
+        },
+        "adjusted_budget_cost": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Calculated total budget cost including measured early termination penalties, restoration, or double-rent overlap. Null if unmeasured."
+        },
+        "overlap_window_days": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Calculated overlapping lease duration in days for MOVE action (source lease exit vs candidate handover)."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Auditable diagnostic explanation justifying status and cost calculation."
+        },
+        "evidence_snapshot_id": {
+          "type": "string",
+          "description": "Snapshot reference binding input contract states."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "sample_fixtures": {
+    "existing_stores": [
+      {
+        "store_id": "STR-TPE-001",
+        "lease_contract_id": "CNT-2022-TPE001-RED",
+        "lease_start_date": "2022-01-01",
+        "lease_expiry_date": "2027-12-31",
+        "monthly_rent": 120000.0,
+        "deposit_amount": 360000.0,
+        "break_clause_allowed": true,
+        "break_notice_months": 3,
+        "early_termination_penalty": 240000.0,
+        "restoration_cost_estimate": 150000.0,
+        "renewal_option_flag": true,
+        "renewal_notice_deadline_days": 90,
+        "rent_escalation_cap_rate": 0.05,
+        "landlord_consent_status": "APPROVED",
+        "alteration_permitted": true,
+        "source_system": "ERP_SAP",
+        "source_snapshot_id": "SNAP-FIXTURE-20260908-01"
+      },
+      {
+        "store_id": "STR-KHH-002",
+        "lease_contract_id": "CNT-2021-KHH002-RED",
+        "lease_start_date": "2021-06-01",
+        "lease_expiry_date": "2026-09-30",
+        "monthly_rent": 85000.0,
+        "deposit_amount": 255000.0,
+        "break_clause_allowed": true,
+        "break_notice_months": 1,
+        "early_termination_penalty": 0.0,
+        "restoration_cost_estimate": 0.0,
+        "renewal_option_flag": false,
+        "renewal_notice_deadline_days": 30,
+        "rent_escalation_cap_rate": null,
+        "landlord_consent_status": "APPROVED",
+        "alteration_permitted": false,
+        "source_system": "CLM_DOCTRACK",
+        "source_snapshot_id": "SNAP-FIXTURE-20260908-01"
+      },
+      {
+        "store_id": "STR-TXG-003",
+        "lease_contract_id": "CNT-2024-TXG003-RED",
+        "lease_start_date": "2024-03-01",
+        "lease_expiry_date": "2029-02-28",
+        "monthly_rent": 95000.0,
+        "deposit_amount": 285000.0,
+        "break_clause_allowed": false,
+        "break_notice_months": 6,
+        "early_termination_penalty": null,
+        "restoration_cost_estimate": null,
+        "renewal_option_flag": true,
+        "renewal_notice_deadline_days": 180,
+        "rent_escalation_cap_rate": 0.03,
+        "landlord_consent_status": "REJECTED",
+        "alteration_permitted": false,
+        "source_system": "MANUAL_VERIFIED_EXPORT",
+        "source_snapshot_id": "SNAP-FIXTURE-20260908-01"
+      }
+    ],
+    "candidate_sites": [
+      {
+        "candidate_site_id": "CND-TPE-NORTH-01",
+        "listing_id": "LST-591-8849201",
+        "available_from": "2026-11-01",
+        "available_to": "2027-04-30",
+        "signing_deadline": "2026-10-15",
+        "target_lease_term_years": 5,
+        "expected_monthly_rent": 135000.0,
+        "security_deposit": 405000.0,
+        "fitout_grace_days": 45,
+        "zoning_commercial_permitted": true,
+        "source_feed_id": "ASSISTED_INTAKE_VERIFIED",
+        "source_snapshot_id": "SNAP-FIXTURE-20260908-02"
+      },
+      {
+        "candidate_site_id": "CND-TXG-CENTRAL-02",
+        "listing_id": "LST-PARTNER-772109",
+        "available_from": "2027-01-01",
+        "available_to": "2027-06-30",
+        "signing_deadline": "2026-12-01",
+        "target_lease_term_years": 3,
+        "expected_monthly_rent": 90000.0,
+        "security_deposit": 270000.0,
+        "fitout_grace_days": 30,
+        "zoning_commercial_permitted": true,
+        "source_feed_id": "PARTNER_FEED_EXPANSION",
+        "source_snapshot_id": "SNAP-FIXTURE-20260908-02"
+      }
+    ],
+    "admissibility_evaluations": [
+      {
+        "entity_id": "CND-TPE-NORTH-01",
+        "action": "OPEN",
+        "status": "FEASIBLE",
+        "fail_closed_triggered": false,
+        "adjusted_budget_cost": 405000.0,
+        "overlap_window_days": null,
+        "reason": "Site available_from (2026-11-01) and signing_deadline (2026-10-15) are within Q4 planning horizon; commercial zoning verified.",
+        "evidence_snapshot_id": "SNAP-FIXTURE-20260908-02"
+      },
+      {
+        "entity_id": "STR-KHH-002",
+        "action": "EXIT",
+        "status": "FEASIBLE",
+        "fail_closed_triggered": false,
+        "adjusted_budget_cost": 0.0,
+        "overlap_window_days": null,
+        "reason": "Lease naturally expires 2026-09-30; measured zero early termination penalty and zero restoration cost verified by landlord agreement.",
+        "evidence_snapshot_id": "SNAP-FIXTURE-20260908-01"
+      },
+      {
+        "entity_id": "STR-TXG-003",
+        "action": "EXIT",
+        "status": "UNMEASURED",
+        "fail_closed_triggered": true,
+        "adjusted_budget_cost": null,
+        "overlap_window_days": null,
+        "reason": "Break clause is prohibited (break_clause_allowed=false) and early_termination_penalty is unmeasured (null); fail-closed rejection.",
+        "evidence_snapshot_id": "SNAP-FIXTURE-20260908-01"
+      },
+      {
+        "entity_id": "STR-TPE-001 -> CND-TPE-NORTH-01",
+        "action": "MOVE",
+        "status": "PENALTY_REQUIRED",
+        "fail_closed_triggered": false,
+        "adjusted_budget_cost": 645000.0,
+        "overlap_window_days": 45,
+        "reason": "Dual-side move feasible: source early termination penalty TWD 240,000 + restoration TWD 150,000 + candidate deposit TWD 405,000 + overlap double rent (45 days) TWD 180,000 less grace offset.",
+        "evidence_snapshot_id": "SNAP-FIXTURE-20260908-COMBINED"
+      }
+    ]
+  }
+}

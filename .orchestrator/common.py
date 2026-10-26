@@ -26,6 +26,7 @@ try:  # PyYAML is optional; yaml_dump falls back to JSON without it.
 except ImportError:  # pragma: no cover - exercised only without PyYAML
     yaml = None
 
+import verification_evidence
 from jsonschema import Draft202012Validator
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -349,15 +350,26 @@ def load_config(
             or os.environ.get(LEGACY_CONFIG_PATH_ENV_VAR)
             or ""
         ).strip() or None
-    config_file = resolve_path(selected_path) if selected_path else DEFAULT_CONFIG_PATH
+    if selected_path:
+        config_file = resolve_path(selected_path)
+    else:
+        status_root = authoritative_status_root()
+        if status_root is not None:
+            config_file = status_root / ".orchestrator" / "config.json"
+        else:
+            config_file = DEFAULT_CONFIG_PATH
     if config_file is None:
         raise RuntimeError("Unable to resolve orchestrator config path")
     config = load_config_document(config_file)
     selected_overlays: tuple[str | Path, ...]
     if overlay_paths is not None:
         selected_overlays = tuple(overlay_paths)
-    elif config_file == DEFAULT_CONFIG_PATH:
-        selected_overlays = (LOCAL_CONFIG_PATH,)
+    elif config_file == DEFAULT_CONFIG_PATH or (
+        authoritative_status_root() is not None
+        and config_file == authoritative_status_root() / ".orchestrator" / "config.json"
+    ):
+        local_path = config_file.with_name("config.local.json")
+        selected_overlays = (local_path,)
     else:
         selected_overlays = ()
     applied = [config_file]
@@ -367,7 +379,11 @@ def load_config(
             continue
         config = deep_merge(config, load_config_document(overlay_path))
         applied.append(overlay_path)
-    return validate_config(config, source=" + ".join(str(path) for path in applied))
+    validated = validate_config(config, source=" + ".join(str(path) for path in applied))
+    status_root = authoritative_status_root()
+    if status_root is not None and (selected_path is None or not Path(selected_path).is_absolute()):
+        return anchor_config_paths(validated, status_root)
+    return validated
 
 
 def config_path(config: dict[str, Any], key: str, default: str | None = None) -> Path:
@@ -615,6 +631,27 @@ def claude_oauth_token_expired(oauth: dict[str, Any], *, skew_seconds: int = 300
     return expires_at_ms <= int(time.time() * 1000) + (skew_seconds * 1000)
 
 
+def claude_oauth_refreshable(oauth: dict[str, Any], *, skew_seconds: int = 300) -> bool:
+    """Whether the stored refresh token can still mint a new access token.
+
+    Access tokens live for hours; the refresh token outlives many of them. A
+    readiness probe that must not touch the network or rewrite credentials
+    uses this to tell "access token lapsed, next run refreshes it" apart from
+    "logged out". Credentials without `refreshTokenExpiresAt` predate that
+    field and are treated as not expired, matching `expiresAt` handling.
+    """
+    if not str(oauth.get("refreshToken") or "").strip():
+        return False
+    expires_at = oauth.get("refreshTokenExpiresAt")
+    if expires_at in (None, ""):
+        return True
+    try:
+        expires_at_ms = int(expires_at)
+    except (TypeError, ValueError):
+        return False
+    return expires_at_ms > int(time.time() * 1000) + (skew_seconds * 1000)
+
+
 def claude_oauth_token_from_env(env: dict[str, str] | None = None) -> str | None:
     source = env or os.environ
     token = str(source.get("CLAUDE_CODE_OAUTH_TOKEN") or "").strip()
@@ -747,12 +784,14 @@ def claude_auth_ready(binary: str | None, *, env: dict[str, str] | None = None, 
         return False
     loaded = load_claude_oauth_tokens(env)
     if not loaded:
-        return True
+        # `loggedIn` alone is not proof of credentials; the probe stays offline
+        # and reports not-ready, while delivery keeps letting the CLI decide.
+        return refresh_if_needed
     _, oauth, _ = loaded
     if not claude_oauth_token_expired(oauth):
         return True
     if not refresh_if_needed:
-        return False
+        return claude_oauth_refreshable(oauth)
     refreshed = refresh_claude_oauth_tokens(env)
     return bool(refreshed and not claude_oauth_token_expired(refreshed, skew_seconds=0))
 
@@ -768,7 +807,7 @@ def claude_auth_ready(binary: str | None, *, env: dict[str, str] | None = None, 
 # binary not found") and which would pause a healthy lane for 900s. Requiring a
 # known CLI name *and* the literal "CLI" keeps it to the wrappers' own wording,
 # mirroring how AGY_QUOTA_SIGNATURE_PATTERN insists on agy's full signature.
-PROVIDER_CLI_NAMES = ("codex", "claude", "antigravity", "copilot", "github", "gemini")
+PROVIDER_CLI_NAMES = ("codex", "claude", "antigravity", "copilot", "github", "gemini", "pi")
 PROVIDER_LAUNCHER_MISSING_PATTERN = re.compile(
     r"^(?P<cli>" + "|".join(PROVIDER_CLI_NAMES) + r")\s+CLI\s*(?:\([^)]*\)\s*)?binary not found\b",
     re.IGNORECASE,
@@ -783,6 +822,7 @@ PROVIDER_CLI_FAMILY = {
     "gemini": "antigravity",
     "copilot": "copilot",
     "github": "copilot",
+    "pi": "pi",
 }
 
 
@@ -997,6 +1037,172 @@ def agent_config_for(config: dict[str, Any], agent_id: str) -> dict[str, Any]:
         merged.setdefault("display_name", agent_id)
         return merged
     return {"id": normalized, "display_name": agent_id, "provider": normalized, "adapter": "file_inbox"}
+
+
+REOPEN_REASON_REVIEW_FINDING = "review_finding"
+REOPEN_REASON_STALE_REVIEW_SHA = "stale_review_sha"
+REOPEN_REASON_WORKTREE_LEASE_MISMATCH = "worktree_lease_mismatch"
+REOPEN_REASON_CONTROL_PLANE_RECOVERY = "control_plane_recovery"
+REOPEN_REASON_OWNER_RESUME = "owner_resume"
+
+REOPEN_CATEGORY_SUBSTANTIVE_REVIEW = "substantive_review"
+REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY = "control_plane_recovery"
+REOPEN_CATEGORY_OWNER_RESUME = "owner_resume"
+
+CONTROL_PLANE_RECOVERY_REASONS = frozenset({
+    REOPEN_REASON_STALE_REVIEW_SHA,
+    "stale_review",
+    "stale_sha",
+    "head_mismatch",
+    "stale_head",
+    REOPEN_REASON_WORKTREE_LEASE_MISMATCH,
+    "lease_mismatch",
+    "worktree_lease_conflict",
+    "lease_conflict",
+    "lease_expired",
+    "worktree_conflict",
+    REOPEN_REASON_CONTROL_PLANE_RECOVERY,
+    "control_plane",
+    "recovery",
+    "ci_repair",
+    "repair_unsubmitted",
+    "unsealed_handoff",
+    "infra_recovery",
+    "infrastructure_recovery",
+})
+
+SUBSTANTIVE_REVIEW_REASONS = frozenset({
+    REOPEN_REASON_REVIEW_FINDING,
+    "substantive_finding",
+    "reviewer_finding",
+    "changes_requested",
+    "code_defect",
+    "review_rejection",
+    "finding",
+    "rejection",
+})
+
+
+def is_control_plane_recovery_reason(reason: str | None) -> bool:
+    if not reason:
+        return False
+    normalized = str(reason).lower().strip().replace("-", "_").replace(" ", "_")
+    if normalized in CONTROL_PLANE_RECOVERY_REASONS:
+        return True
+    tokens = set(normalized.split("_"))
+    if tokens & {
+        "stale_review_sha",
+        "worktree_lease_mismatch",
+        "control_plane_recovery",
+        "ci_repair",
+        "unsealed_handoff",
+        "infra_recovery",
+        "infrastructure_recovery",
+    }:
+        return True
+    if {"stale", "sha"} <= tokens or {"stale", "review"} <= tokens or {"head", "mismatch"} <= tokens:
+        return True
+    if (
+        {"lease", "mismatch"} <= tokens
+        or {"lease", "conflict"} <= tokens
+        or {"lease", "expired"} <= tokens
+        or {"worktree", "lease"} <= tokens
+    ):
+        return True
+    if {"control", "plane"} <= tokens or {"infra", "recovery"} <= tokens:
+        return True
+    if normalized in {"lease", "stale", "recovery", "unsealed"}:
+        return True
+    return False
+
+
+def classify_reopen_reason(
+    raw_reason: str | None,
+    actor: str,
+    owner: str | None,
+    reviewer: str | None,
+    message: str = "",
+) -> tuple[str, str, bool]:
+    """Classify a reopen action into (normalized_reason, category, is_churn).
+
+    A control-plane recovery can only be declared through an explicit ``raw_reason``
+    (``ai-status.sh reopen <task> <message> --reason=<reason>``).  ``message`` is kept
+    for the audit record but is never parsed for classification -- inferring intent from
+    prose misclassified reopens in both directions, so the reason enum is the only
+    trusted signal.  ``raw_reason`` must match one of CONTROL_PLANE_RECOVERY_REASONS
+    verbatim (modulo case/dash/space normalization) to declare a recovery; free-form text
+    that merely mentions one of those identifiers, and anything unrecognized, is treated
+    as a substantive review finding so the churn failover stays armed.
+
+    Returns:
+        normalized_reason: Canonical reason identifier.
+        category: High-level category (substantive_review, control_plane_recovery, owner_resume).
+        is_churn: True if this reopen counts towards review churn / owner rotation threshold.
+    """
+    norm_actor = normalize_agent_id(actor)
+    norm_owner = normalize_agent_id(owner) if owner else ""
+    norm_reviewer = normalize_agent_id(reviewer) if reviewer else ""
+
+    if raw_reason:
+        normalized = str(raw_reason).lower().strip().replace("-", "_").replace(" ", "_")
+        # Declaring a recovery requires one of the documented identifiers verbatim.
+        # Fuzzy-matching tokens here would re-open the same hole the message-prose
+        # inference had: a free-form reason such as "defect in head mismatch handling"
+        # would be read as a recovery and disarm the churn failover.
+        if normalized in CONTROL_PLANE_RECOVERY_REASONS:
+            tokens = set(normalized.split("_"))
+            if "stale" in tokens or "head" in tokens or "sha" in tokens:
+                reason = REOPEN_REASON_STALE_REVIEW_SHA
+            elif "lease" in tokens or "worktree" in tokens:
+                reason = REOPEN_REASON_WORKTREE_LEASE_MISMATCH
+            else:
+                reason = REOPEN_REASON_CONTROL_PLANE_RECOVERY
+            return reason, REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY, False
+        elif normalized in SUBSTANTIVE_REVIEW_REASONS:
+            is_churn = bool(norm_actor and norm_reviewer and norm_actor == norm_reviewer and norm_owner and norm_owner != norm_reviewer)
+            return REOPEN_REASON_REVIEW_FINDING, REOPEN_CATEGORY_SUBSTANTIVE_REVIEW, is_churn
+        else:
+            is_churn = bool(norm_actor and norm_reviewer and norm_actor == norm_reviewer and norm_owner and norm_owner != norm_reviewer)
+            return normalized, REOPEN_CATEGORY_SUBSTANTIVE_REVIEW, is_churn
+
+    # No structured reason was supplied.  The free-form message is deliberately NOT
+    # inspected here: reviewer prose routinely quotes control-plane vocabulary (e.g.
+    # "the lease mismatch branch never fires", or a review body relayed verbatim by
+    # github_bus), so keyword matching silently downgraded real findings to recovery
+    # and switched the churn failover safety net off.  It was equally unreliable in
+    # the other direction -- genuine recovery notes that did not happen to use the
+    # exact phrasing were still counted as churn.  Declaring a control-plane recovery
+    # therefore requires an explicit --reason; without one we fall back to the actor's
+    # role and fail safe by counting a reviewer reopen as churn.
+    if norm_actor and norm_owner and norm_actor == norm_owner and norm_owner != norm_reviewer:
+        return REOPEN_REASON_OWNER_RESUME, REOPEN_CATEGORY_OWNER_RESUME, False
+    elif norm_actor and norm_reviewer and norm_actor == norm_reviewer and norm_owner and norm_owner != norm_reviewer:
+        return REOPEN_REASON_REVIEW_FINDING, REOPEN_CATEGORY_SUBSTANTIVE_REVIEW, True
+    elif norm_actor and norm_owner and norm_actor == norm_owner:
+        return REOPEN_REASON_OWNER_RESUME, REOPEN_CATEGORY_OWNER_RESUME, False
+    else:
+        return REOPEN_REASON_REVIEW_FINDING, REOPEN_CATEGORY_SUBSTANTIVE_REVIEW, False
+
+
+def substantive_review_reopen_count(snapshot: dict[str, Any]) -> int:
+    """Return the count of substantive reviewer findings (excluding control-plane recovery)."""
+    if "review_reopen_count" in snapshot and snapshot.get("review_reopen_count") is not None:
+        try:
+            return max(0, int(snapshot.get("review_reopen_count", 0) or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    history = snapshot.get("review_reopen_history")
+    if isinstance(history, list) and history:
+        churn_entries = [
+            item for item in history
+            if isinstance(item, dict)
+            and item.get("is_churn", True)
+            and str(item.get("category", "")).lower() != "control_plane_recovery"
+            and not is_control_plane_recovery_reason(item.get("reason"))
+        ]
+        return len(churn_entries)
+    return 0
 
 
 def render_template(path: Path, variables: dict[str, Any]) -> str:
@@ -1275,7 +1481,7 @@ def summarize_failure_reason(reason: str | None, provider: str | None = None, *,
         or "unknown variant" in lowered
     ):
         return {"kind": "provider_config", "summary": "Provider config invalid", "detail": raw[: max(420, limit)]}
-    if "rate limit" in lowered or "rate limited" in lowered or "capacity" in lowered or "quota exceeded" in lowered:
+    if "rate limit" in lowered or "rate limited" in lowered or "capacity" in lowered or "quota exceeded" in lowered or "quota_exhausted" in lowered or "free tier quota exceeded" in lowered:
         return {"kind": "capacity", "summary": "Capacity / rate limit failure", "detail": raw[: max(420, limit)]}
     if "unauthorized" in lowered or "authentication" in lowered or "invalid api key" in lowered:
         return {"kind": "auth", "summary": "Authentication failure", "detail": raw[: max(420, limit)]}
@@ -1666,7 +1872,35 @@ def generate_task_brief_content(
     body.extend(["", "## Acceptance"])
     body.extend([f"- {item}" for item in acceptance] or ["- none"])
     body.extend(["", "## Verification"])
-    body.extend([f"- `{item}`" for item in verification] or ["- none"])
+    if verification:
+        verification_audits = verification_evidence.audit_commands(verification)
+        for audit in verification_audits:
+            if audit.ok:
+                body.append(f"- `{audit.command}`")
+            else:
+                body.append(
+                    f"- `{audit.command}` — REJECTED ({', '.join(audit.violations)}): "
+                    + "; ".join(audit.details)
+                )
+        body.extend(
+            [
+                "",
+                "### Verification Evidence Policy",
+                "- Run each command so its own exit code survives: no pipe without `set -o pipefail`,",
+                "  no `|| true`, no `; echo ...` tail, no `set +e`, no backgrounding.",
+                "- Record a receipt binding head SHA, exact command, real exit code, duration, and test selection.",
+                "- A run killed by a signal or timeout is `interrupted`, never a pass, and is repeated with the",
+                "  same selection rather than escalated to a wider suite.",
+                "- Re-running an already-measured head SHA and selection needs an explicit retry reason.",
+            ]
+        )
+        rejected = [audit for audit in verification_audits if not audit.ok]
+        if rejected:
+            body.append(
+                f"- {len(rejected)} declared command(s) above are rejected by the policy and must be fixed before use."
+            )
+    else:
+        body.append("- none")
     body.extend(["", "## Recent Task Activity"])
     if recent:
         body.extend(
@@ -1852,6 +2086,23 @@ def write_approval_evidence(
         },
     )
     return relpath(path)
+
+
+def write_verification_receipt(config: dict[str, Any], *, receipt: dict[str, Any]) -> str | None:
+    """Persist a verification receipt into the existing evidence directory.
+
+    Verification evidence reuses the supervisor's one receipt store rather than
+    introducing a parallel results location, so a reader who already knows
+    where failure and approval evidence lives finds this next to it. The store
+    layout lives in ``verification_evidence`` so the finalize gate in
+    ``delivery_toolchain`` reads exactly what this writes.
+    """
+    return relpath(verification_evidence.write_receipt(evidence_dir(config), receipt))
+
+
+def load_verification_receipts(config: dict[str, Any], *, task_id: str | None = None) -> list[dict[str, Any]]:
+    """Return previously recorded verification receipts, oldest first."""
+    return verification_evidence.load_receipts(evidence_dir(config), task_id=task_id)
 
 
 def to_bool(value: Any) -> bool:

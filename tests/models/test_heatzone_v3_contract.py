@@ -1,6 +1,16 @@
 from __future__ import annotations
 
-from modules.heatzone.domain.scoring import HeatZoneFeatureInput
+from dataclasses import replace
+from datetime import UTC, datetime
+
+from modules.external_data.geo import GeoFeatureSnapshot
+from modules.heatzone.domain.scoring import (
+    HEATZONE_FEATURE_VERSION,
+    HeatZoneFeatureInput,
+    HeatZoneState,
+    score_heatzones,
+    to_heatzone_model_row,
+)
 from modules.heatzone.v3 import (
     CONTRACT_ID,
     CONTRACT_VERSION,
@@ -73,6 +83,8 @@ from packages.oday_data_product_contracts_client.models.market_cell_profile impo
     PeriodGrain as MarketCellPeriodGrain,
 )
 
+SNAPSHOT_TIME = datetime(2026, 6, 27, 8, 0, tzinfo=UTC)
+
 
 def _sample_source_support() -> SourceSupportSummary:
     return SourceSupportSummary(
@@ -97,6 +109,8 @@ def _sample_market_cell_profile(
     overall_readiness: ReadinessLevel = ReadinessLevel.ready,
     domain_coverage: dict[str, str] | None = None,
     has_gaps: bool = False,
+    rent_confidence_pct: float | None = 90.0,
+    demographics_uncertainty_pct: float | None = 5.0,
 ) -> MarketCellProfile:
     return MarketCellProfile(
         cell_id=f"cell:{h3_index}",
@@ -113,7 +127,7 @@ def _sample_market_cell_profile(
             total_population=total_population,
             household_count=household_count,
             daytime_population_ratio=daytime_ratio,
-            uncertainty_pct=5.0,
+            uncertainty_pct=demographics_uncertainty_pct,
         ),
         competitors=MarketCellCompetitors(
             total_competitors=active_competitors,
@@ -129,7 +143,7 @@ def _sample_market_cell_profile(
             median_rent_per_ping=median_rent,
             mean_rent_per_ping=median_rent + 100.0,
             sample_count=sample_count,
-            confidence_pct=90.0,
+            confidence_pct=rent_confidence_pct,
         ),
         mobility=MarketCellMobility(
             activity_population=total_population * 0.8,
@@ -293,6 +307,8 @@ def test_heatzone_v3_sensitivity_to_own_store_cannibalization() -> None:
         active_listing_count=5,
         own_store_count=0,
         own_store_machine_capacity=0.0,
+        coverage_ratio=1.0,
+        confidence=1.0,
     )
 
     low_cannibalization = score_heatzone_v3_feature(base_input)
@@ -308,6 +324,8 @@ def test_heatzone_v3_sensitivity_to_own_store_cannibalization() -> None:
         active_listing_count=5,
         own_store_count=3,
         own_store_machine_capacity=30.0,
+        coverage_ratio=1.0,
+        confidence=1.0,
     )
 
     high_cannibalization = score_heatzone_v3_feature(high_cann_input)
@@ -325,6 +343,8 @@ def test_heatzone_v3_sensitivity_to_rent_and_listing_availability() -> None:
         household_count=2000.0,
         median_rent_per_ping=1500.0,
         active_listing_count=8,
+        coverage_ratio=1.0,
+        confidence=1.0,
     )
     high_rent_input = HeatZoneV3Input(
         h3_index="884a1072b7fffff",
@@ -332,6 +352,8 @@ def test_heatzone_v3_sensitivity_to_rent_and_listing_availability() -> None:
         household_count=2000.0,
         median_rent_per_ping=4800.0,
         active_listing_count=1,
+        coverage_ratio=1.0,
+        confidence=1.0,
     )
 
     res_low = score_heatzone_v3_feature(low_rent_input)
@@ -438,18 +460,180 @@ def test_heatzone_v3_abstains_when_critical_domain_quarantined_or_missing() -> N
     assert any(AbstainReasonCode.MISSING_REQUIRED_DOMAINS.value in r for r in res.abstain_reasons)
 
 
-def test_heatzone_v3_abstains_when_data_confidence_unacceptably_low() -> None:
+def test_heatzone_v3_abstains_when_coverage_ratio_is_none() -> None:
+    """Fail-closed: unmeasured coverage (None) must reach abstention gate with INSUFFICIENT_COVERAGE."""
     inp = HeatZoneV3Input(
         h3_index="884a1072b7fffff",
         population=5000.0,
-        confidence=0.15,
+        coverage_ratio=None,
+        confidence=1.0,
     )
 
     res = score_heatzone_v3_feature(inp)
 
     assert res.abstained is True
     assert res.score is None
+    assert res.state is HeatZoneV3State.ABSTAINED
+    assert AbstainReasonCode.INSUFFICIENT_COVERAGE.value in res.abstain_reasons
+    assert res.input_dimensions["coverage_ratio"] is None
+
+
+def test_heatzone_v3_abstains_when_confidence_is_none() -> None:
+    """Fail-closed: unmeasured confidence (None) must reach abstention gate with DATA_QUALITY_UNACCEPTABLE."""
+    inp = HeatZoneV3Input(
+        h3_index="884a1072b7fffff",
+        population=5000.0,
+        coverage_ratio=1.0,
+        confidence=None,
+    )
+
+    res = score_heatzone_v3_feature(inp)
+
+    assert res.abstained is True
+    assert res.score is None
+    assert res.state is HeatZoneV3State.ABSTAINED
     assert AbstainReasonCode.DATA_QUALITY_UNACCEPTABLE.value in res.abstain_reasons
+
+
+def test_heatzone_v3_abstains_when_both_coverage_and_confidence_are_unmeasured() -> None:
+    """Fail-closed: default constructed HeatZoneV3Input (no coverage or confidence) abstains."""
+    inp = HeatZoneV3Input(
+        h3_index="884a1072b7fffff",
+        population=5000.0,
+    )
+
+    res = score_heatzone_v3_feature(inp)
+
+    assert res.abstained is True
+    assert res.score is None
+    assert res.state is HeatZoneV3State.ABSTAINED
+    assert AbstainReasonCode.INSUFFICIENT_COVERAGE.value in res.abstain_reasons
+    assert AbstainReasonCode.DATA_QUALITY_UNACCEPTABLE.value in res.abstain_reasons
+
+
+def test_heatzone_v2_suppresses_when_confidence_or_quality_unmeasured() -> None:
+    """Fail-closed in v2: missing confidence/quality defaults to None and suppresses."""
+    inp_none = HeatZoneFeatureInput(
+        h3_index="884a1072b7fffff",
+        poi_count=10,
+    )
+    scores = score_heatzones([inp_none])
+    assert len(scores) == 1
+    assert scores[0].confidence == 0.0
+    assert scores[0].state is HeatZoneState.SUPPRESSED_LOW_CONFIDENCE
+    assert "low_confidence" in scores[0].warnings
+
+
+def test_heatzone_v2_suppresses_when_only_average_confidence_is_measured() -> None:
+    """One measured side is not a measured composite: data quality stays unknown."""
+    inp = HeatZoneFeatureInput(
+        h3_index="884a1072b7fffff",
+        poi_count=10,
+        competitor_count=2,
+        average_confidence=0.9,
+        data_quality_score=None,
+    )
+
+    score = score_heatzones([inp])[0]
+
+    assert score.confidence == 0.0
+    assert score.state is HeatZoneState.SUPPRESSED_LOW_CONFIDENCE
+    assert "low_confidence" in score.warnings
+
+
+def test_heatzone_v2_suppresses_when_only_data_quality_is_measured() -> None:
+    """Mirror of the above: a measured data quality does not stand in for confidence."""
+    inp = HeatZoneFeatureInput(
+        h3_index="884a1072b7fffff",
+        poi_count=10,
+        competitor_count=2,
+        average_confidence=None,
+        data_quality_score=0.9,
+    )
+
+    score = score_heatzones([inp])[0]
+
+    assert score.confidence == 0.0
+    assert score.state is HeatZoneState.SUPPRESSED_LOW_CONFIDENCE
+    assert "low_confidence" in score.warnings
+
+
+def test_heatzone_v2_unmeasured_quality_never_outranks_measured_quality() -> None:
+    """Absence must never buy a higher confidence than an actual measurement."""
+    measured = HeatZoneFeatureInput(
+        h3_index="884a1072b7fffff",
+        poi_count=10,
+        competitor_count=2,
+        average_confidence=0.9,
+        data_quality_score=0.9,
+    )
+    partially_measured = HeatZoneFeatureInput(
+        h3_index="884a1072b1fffff",
+        poi_count=10,
+        competitor_count=2,
+        average_confidence=0.9,
+        data_quality_score=None,
+    )
+
+    by_h3 = {score.h3_index: score for score in score_heatzones([measured, partially_measured])}
+
+    assert by_h3["884a1072b7fffff"].confidence == 0.81
+    assert by_h3["884a1072b7fffff"].state is not HeatZoneState.SUPPRESSED_LOW_CONFIDENCE
+    assert by_h3["884a1072b1fffff"].confidence < by_h3["884a1072b7fffff"].confidence
+
+
+def test_heatzone_v2_from_mapping_leaves_absent_quality_unmeasured() -> None:
+    """from_mapping is the realistic ingress: an absent quality key stays None."""
+    without_quality = HeatZoneFeatureInput.from_mapping(
+        {"h3_index": "884a1072b7fffff", "poi_count": 10, "average_confidence": 0.9}
+    )
+    with_quality = HeatZoneFeatureInput.from_mapping(
+        {
+            "h3_index": "884a1072b7fffff",
+            "poi_count": 10,
+            "average_confidence": 0.9,
+            "data_quality_score": 0.9,
+        }
+    )
+
+    assert without_quality.average_confidence == 0.9
+    assert without_quality.data_quality_score is None
+    assert with_quality.data_quality_score == 0.9
+
+    assert score_heatzones([without_quality])[0].confidence == 0.0
+    assert score_heatzones([with_quality])[0].confidence == 0.81
+
+
+def test_heatzone_v2_geo_snapshot_conversion_carries_competitor_capacity() -> None:
+    """competitor_capacity is measured per cell by the geo pipeline and must survive."""
+    snapshot = GeoFeatureSnapshot(
+        h3_index="884a1072b7fffff",
+        h3_resolution=9,
+        feature_snapshot_time=SNAPSHOT_TIME,
+        view_version="geo-grid-view-v1",
+        poi_count=30,
+        competitor_count=2,
+        competitor_capacity=200.0,
+        average_confidence=0.9,
+        source_snapshot_ids=("geo-1",),
+    )
+
+    feature = HeatZoneFeatureInput.from_geo_feature_snapshot(
+        snapshot, data_quality_score=0.9
+    )
+    assert feature.competitor_capacity == 200.0
+
+    saturated = score_heatzones([feature])[0]
+    uncontested = score_heatzones(
+        [
+            HeatZoneFeatureInput.from_geo_feature_snapshot(
+                replace(snapshot, competitor_capacity=0.0), data_quality_score=0.9
+            )
+        ]
+    )[0]
+
+    assert saturated.unmet_demand_score < uncontested.unmet_demand_score
+    assert saturated.score < uncontested.score
 
 
 # -----------------------------------------------------------------------------
@@ -546,6 +730,11 @@ def test_adapt_catchment_profile_document() -> None:
             status=DomainStatus.available,
             median_rent_per_ping=2500.0,
             sample_count=15,
+            # Stated because the adapter derives confidence from observations
+            # only. Without a measured figure the profile abstains, which is
+            # covered separately by
+            # test_adapt_catchment_profile_without_measured_confidence_abstains.
+            confidence_pct=90.0,
         ),
         mobility=CatchmentMobility(
             status=DomainStatus.available,
@@ -581,6 +770,214 @@ def test_adapt_catchment_profile_document() -> None:
     assert res.district == "Zhongshan"
 
 
+def _catchment_profile_with(
+    *,
+    rent_confidence_pct: float | None = None,
+    demographics_uncertainty_pct: float | None = None,
+    demographics_status: DomainStatus = DomainStatus.available,
+) -> CatchmentProfile:
+    """A ready, fully covered catchment profile with configurable quality signals."""
+    return CatchmentProfile(
+        profile_id="prof-quality-001",
+        period_grain=CatchmentPeriodGrain.MONTHLY,
+        period_key="2026-08",
+        origin=CatchmentOrigin(
+            origin_id="orig-001",
+            origin_h3="884a1072b7fffff",
+            latitude=25.04,
+            longitude=121.56,
+            origin_geom={"type": "Point", "coordinates": [121.56, 25.04]},
+            county="Taipei",
+            district="Zhongshan",
+        ),
+        boundary=CatchmentBoundary(
+            catchment_id="boundary-001",
+            travel_mode=TravelMode.motorcycle,
+            cutoff_seconds=600,
+            routing_engine="valhalla",
+            graph_version="2026.08",
+            h3_cells=["884a1072b7fffff"],
+            h3_resolution=9,
+            total_cells_count=1,
+            geom={"type": "Polygon", "coordinates": [[[121.5, 25.0], [121.6, 25.0], [121.6, 25.1], [121.5, 25.0]]]},
+        ),
+        demographics=CatchmentDemographics(
+            status=demographics_status,
+            total_population=8500.0,
+            household_count=3200.0,
+            daytime_population_ratio=1.5,
+            uncertainty_pct=demographics_uncertainty_pct,
+        ),
+        competitors=CatchmentCompetitors(
+            status=DomainStatus.available,
+            active_competitors=3,
+            total_capacity=50.0,
+        ),
+        rent=CatchmentRent(
+            status=DomainStatus.available,
+            median_rent_per_ping=2500.0,
+            sample_count=15,
+            confidence_pct=rent_confidence_pct,
+        ),
+        mobility=CatchmentMobility(
+            status=DomainStatus.available,
+            activity_population=7000.0,
+            resident_population=5000.0,
+        ),
+        traffic=CatchmentTrafficAccess(status=DomainStatus.available),
+        coverage=CatchmentCoverage(
+            overall_readiness=CatchmentReadinessLevel.ready,
+            domain_coverage={"DEMOGRAPHICS": "complete", "COMPETITOR": "complete", "RENT": "complete"},
+            has_gaps=False,
+        ),
+        source_support=_sample_source_support(),
+    )
+
+
+def test_adapt_catchment_profile_without_measured_confidence_abstains() -> None:
+    """A catchment that measured no confidence must reach the abstention gate.
+
+    Every domain is available and coverage is complete, so nothing else in this
+    profile fails closed. Seeding confidence at 1.0 scores it as fully trusted
+    and puts the ``confidence < 0.25`` gate out of reach through this ingress,
+    exactly as it was out of reach through ``from_market_cell_profile``.
+    """
+    unmeasured = from_catchment_profile(_catchment_profile_with())
+    assert unmeasured.confidence is None
+
+    unmeasured_result = score_heatzone_v3_feature(unmeasured)
+    assert unmeasured_result.abstained is True
+    assert unmeasured_result.score is None
+    assert (
+        AbstainReasonCode.DATA_QUALITY_UNACCEPTABLE.value
+        in unmeasured_result.abstain_reasons
+    )
+
+
+def test_adapt_catchment_profile_derives_confidence_from_observations() -> None:
+    """Measured quality signals drive confidence; the weakest one wins."""
+    from_rent = from_catchment_profile(
+        _catchment_profile_with(rent_confidence_pct=90.0)
+    )
+    assert from_rent.confidence == 90.0 / 100.0
+    assert score_heatzone_v3_feature(from_rent).abstained is False
+
+    from_demographics = from_catchment_profile(
+        _catchment_profile_with(demographics_uncertainty_pct=95.0)
+    )
+    assert round(from_demographics.confidence, 4) == 0.05
+    demographics_result = score_heatzone_v3_feature(from_demographics)
+    assert demographics_result.abstained is True
+    assert (
+        AbstainReasonCode.DATA_QUALITY_UNACCEPTABLE.value
+        in demographics_result.abstain_reasons
+    )
+
+    weakest_wins = from_catchment_profile(
+        _catchment_profile_with(rent_confidence_pct=90.0, demographics_uncertainty_pct=40.0)
+    )
+    assert round(weakest_wins.confidence, 4) == 0.6
+
+
+def test_adapt_catchment_profile_unavailable_domain_only_discounts() -> None:
+    """An unavailable domain discounts an observed figure, never invents one."""
+    discounted = from_catchment_profile(
+        _catchment_profile_with(
+            rent_confidence_pct=90.0,
+            demographics_status=DomainStatus.unavailable,
+        )
+    )
+    assert round(discounted.confidence, 4) == round(0.9 * 0.8, 4)
+
+    still_unmeasured = from_catchment_profile(
+        _catchment_profile_with(demographics_status=DomainStatus.unavailable)
+    )
+    assert still_unmeasured.confidence is None
+
+
+def test_shadow_synthetic_baseline_carries_v3_measured_quality() -> None:
+    """The synthesized v2 baseline must reflect what the v3 input measured.
+
+    v3 composes quality as ``confidence * coverage_ratio``; the v2 baseline
+    composes it as ``average_confidence * data_quality_score``. If shadow mode
+    only carries confidence across, every synthesized baseline fails closed at
+    confidence 0.0 regardless of the input, and every comparison is against a
+    uniformly suppressed baseline.
+    """
+    measured = HeatZoneV3Input(
+        h3_index="884a1072b7fffff",
+        h3_resolution=9,
+        poi_count=30,
+        active_competitor_count=2,
+        competitor_capacity=40.0,
+        median_rent_per_ping=2400.0,
+        active_listing_count=6,
+        own_store_count=1,
+        confidence=0.9,
+        coverage_ratio=0.9,
+        county="Taipei",
+        district="Zhongshan",
+    )
+    unmeasured = replace(measured, confidence=None, coverage_ratio=None)
+
+    runner = HeatZoneV3ShadowRunner()
+
+    measured_comparison = runner.evaluate_inputs([measured]).comparisons[0]
+    assert measured_comparison.baseline_state != HeatZoneState.SUPPRESSED_LOW_CONFIDENCE.value
+    assert measured_comparison.baseline_score is not None
+
+    unmeasured_comparison = runner.evaluate_inputs([unmeasured]).comparisons[0]
+    assert unmeasured_comparison.baseline_state == HeatZoneState.SUPPRESSED_LOW_CONFIDENCE.value
+
+
+def test_heatzone_model_row_carries_measured_geocode_confidence() -> None:
+    """A training-view row's measured confidence must reach the model row.
+
+    ``average_geocode_confidence`` is the column name in both the model-ready
+    training view and the emitted model row, so ingress has to recognise it.
+    Dropping it used to be invisible because the field defaulted to a perfect
+    1.0; with the default removed it would instead feed a null into inference.
+    """
+    row = {
+        "tenant_id": "tenant-live-001",
+        "h3_index": "884a1072b7fffff",
+        "h3_resolution": 9,
+        "cell_latitude": 25.033,
+        "cell_longitude": 121.565,
+        "average_geocode_confidence": 0.98,
+        "prior_opened_store_count": 1,
+        "prior_28d_cell_net_revenue": 80_000.0,
+        "prior_90d_cell_net_revenue": 250_000.0,
+        "prior_28d_transaction_count": 12,
+        "prior_90d_transaction_count": 40,
+        "prior_90d_transaction_days": 24,
+        "poi_count": 4,
+        "source_snapshot_ids": ["poi-live"],
+        "feature_snapshot_time": SNAPSHOT_TIME.isoformat(),
+        "view_version": HEATZONE_FEATURE_VERSION,
+    }
+
+    assert to_heatzone_model_row(row)["average_geocode_confidence"] == 0.98
+
+
+def test_heatzone_model_row_refuses_unmeasured_geocode_confidence() -> None:
+    """The dataclass branch must refuse a null the mapping branch already refuses."""
+    unmeasured = HeatZoneFeatureInput(
+        h3_index="884a1072b7fffff",
+        tenant_id="tenant-live-001",
+        view_version=HEATZONE_FEATURE_VERSION,
+        source_snapshot_ids=("poi-live",),
+    )
+    assert unmeasured.average_confidence is None
+
+    try:
+        to_heatzone_model_row(unmeasured)
+    except ValueError as exc:
+        assert "not a complete" in str(exc)
+    else:  # pragma: no cover - the assertion below reports the failure
+        raise AssertionError("expected an unmeasured model row to be refused")
+
+
 def test_adapt_legacy_feature_input_bridge() -> None:
     """Bridge legacy v1 HeatZoneFeatureInput into HeatZoneV3Input cleanly."""
     legacy = HeatZoneFeatureInput(
@@ -592,21 +989,143 @@ def test_adapt_legacy_feature_input_bridge() -> None:
         median_listing_rent=2200.0,
         active_listing_count=5,
         existing_store_count=1,
+        average_confidence=0.85,
         admin_city="Taipei",
         admin_district="Neihu",
     )
 
-    v3_inp = from_legacy_feature_input(legacy, population_override=4500.0)
+    v3_inp = from_legacy_feature_input(
+        legacy,
+        population_override=4500.0,
+        coverage_ratio=1.0,
+    )
 
     assert v3_inp.h3_index == "884a1072b7fffff"
     assert v3_inp.population == 4500.0
     assert v3_inp.poi_count == 12
     assert v3_inp.county == "Taipei"
     assert v3_inp.district == "Neihu"
+    assert v3_inp.coverage_ratio == 1.0
+    assert v3_inp.confidence == 0.85
 
     res = score_heatzone_v3_feature(v3_inp)
     assert res.score is not None
     assert res.abstained is False
+
+
+def test_from_market_cell_profile_missing_confidence_abstains() -> None:
+    """When market cell profile has neither rent confidence nor demographics uncertainty, confidence is None and evaluation abstains."""
+    cell = _sample_market_cell_profile(
+        h3_index="884a1072b7fffff",
+        rent_confidence_pct=None,
+        demographics_uncertainty_pct=None,
+    )
+
+    v3_inp = from_market_cell_profile(cell)
+    assert v3_inp.confidence is None
+
+    res = score_heatzone_v3_feature(v3_inp)
+    assert res.abstained is True
+    assert res.score is None
+    assert AbstainReasonCode.DATA_QUALITY_UNACCEPTABLE.value in res.abstain_reasons
+
+
+def test_from_market_cell_profile_confidence_from_single_and_multiple_signals() -> None:
+    """Validate confidence derivation when one or both observation signals are present."""
+    # Only rent confidence present (80%)
+    cell1 = _sample_market_cell_profile(
+        h3_index="884a1072b7fffff",
+        rent_confidence_pct=80.0,
+        demographics_uncertainty_pct=None,
+    )
+    v3_inp1 = from_market_cell_profile(cell1)
+    assert v3_inp1.confidence == 0.80
+
+    # Only demographics uncertainty present (15% -> 85% confidence)
+    cell2 = _sample_market_cell_profile(
+        h3_index="884a1072b7fffff",
+        rent_confidence_pct=None,
+        demographics_uncertainty_pct=15.0,
+    )
+    v3_inp2 = from_market_cell_profile(cell2)
+    assert v3_inp2.confidence == 0.85
+
+    # Both present: takes min (e.g., min(0.90, 0.80) == 0.80)
+    cell3 = _sample_market_cell_profile(
+        h3_index="884a1072b7fffff",
+        rent_confidence_pct=90.0,
+        demographics_uncertainty_pct=20.0,
+    )
+    v3_inp3 = from_market_cell_profile(cell3)
+    assert v3_inp3.confidence == 0.80
+
+
+def test_from_legacy_feature_input_missing_coverage_ratio_abstains() -> None:
+    """A legacy feature with measured confidence but unmeasured coverage defaults to coverage_ratio=None and abstains with INSUFFICIENT_COVERAGE."""
+    legacy = HeatZoneFeatureInput(
+        h3_index="884a1072b7fffff",
+        h3_resolution=9,
+        poi_count=10,
+        competitor_count=2,
+        average_confidence=0.90,
+    )
+
+    v3_inp = from_legacy_feature_input(legacy)
+    assert v3_inp.coverage_ratio is None
+    assert v3_inp.confidence == 0.90
+
+    res = score_heatzone_v3_feature(v3_inp)
+    assert res.abstained is True
+    assert res.score is None
+    assert AbstainReasonCode.INSUFFICIENT_COVERAGE.value in res.abstain_reasons
+    assert AbstainReasonCode.DATA_QUALITY_UNACCEPTABLE.value not in res.abstain_reasons
+
+
+def test_from_legacy_feature_input_missing_confidence_abstains() -> None:
+    """A legacy feature with explicit coverage but unmeasured confidence defaults to confidence=None and abstains with DATA_QUALITY_UNACCEPTABLE."""
+    legacy = HeatZoneFeatureInput(
+        h3_index="884a1072b7fffff",
+        h3_resolution=9,
+        poi_count=10,
+        competitor_count=2,
+        average_confidence=None,
+    )
+
+    v3_inp = from_legacy_feature_input(legacy, coverage_ratio=1.0)
+    assert v3_inp.coverage_ratio == 1.0
+    assert v3_inp.confidence is None
+
+    res = score_heatzone_v3_feature(v3_inp)
+    assert res.abstained is True
+    assert res.score is None
+    assert AbstainReasonCode.DATA_QUALITY_UNACCEPTABLE.value in res.abstain_reasons
+    assert AbstainReasonCode.INSUFFICIENT_COVERAGE.value not in res.abstain_reasons
+
+
+def test_from_legacy_feature_input_all_missing_abstains_with_both_reasons() -> None:
+    """A legacy mapping with neither confidence nor coverage ratio produces both abstention reasons."""
+    data = {"h3_index": "884a1072b7fffff", "poi_count": 10}
+    v3_inp = from_legacy_feature_input(data)
+    assert v3_inp.coverage_ratio is None
+    assert v3_inp.confidence is None
+
+    res = score_heatzone_v3_feature(v3_inp)
+    assert res.abstained is True
+    assert res.score is None
+    assert AbstainReasonCode.INSUFFICIENT_COVERAGE.value in res.abstain_reasons
+    assert AbstainReasonCode.DATA_QUALITY_UNACCEPTABLE.value in res.abstain_reasons
+
+
+def test_from_legacy_feature_input_mapping_coverage_ratio() -> None:
+    """A legacy mapping can specify coverage_ratio in dict or via keyword argument."""
+    data = {"h3_index": "884a1072b7fffff", "average_confidence": 0.88, "coverage_ratio": 0.95}
+    v3_inp = from_legacy_feature_input(data)
+    assert v3_inp.coverage_ratio == 0.95
+    assert v3_inp.confidence == 0.88
+
+    res = score_heatzone_v3_feature(v3_inp)
+    assert res.abstained is False
+    assert res.score is not None
 
 
 def test_manifest_document_linkage() -> None:
@@ -626,6 +1145,8 @@ def test_manifest_document_linkage() -> None:
         population=5000.0,
         household_count=2000.0,
         poi_count=10,
+        coverage_ratio=1.0,
+        confidence=1.0,
     )
 
     runner = HeatZoneV3ShadowRunner()
@@ -651,6 +1172,8 @@ def test_shadow_runner_generates_side_by_side_comparison_with_baseline() -> None
         median_rent_per_ping=1800.0,
         active_listing_count=7,
         own_store_count=0,
+        coverage_ratio=1.0,
+        confidence=1.0,
     )
     inp2 = HeatZoneV3Input(
         h3_index="884a1072b1fffff",
@@ -662,6 +1185,8 @@ def test_shadow_runner_generates_side_by_side_comparison_with_baseline() -> None
         median_rent_per_ping=3500.0,
         active_listing_count=2,
         own_store_count=1,
+        coverage_ratio=1.0,
+        confidence=1.0,
     )
 
     runner = HeatZoneV3ShadowRunner()
@@ -705,6 +1230,8 @@ def test_heatzone_v3_score_result_round_trips() -> None:
         active_competitor_count=1,
         median_rent_per_ping=2000.0,
         active_listing_count=4,
+        coverage_ratio=1.0,
+        confidence=1.0,
         county="Taipei",
         district="Xinyi",
     )
@@ -726,7 +1253,12 @@ def test_heatzone_v3_score_result_round_trips() -> None:
 
 
 def test_heatzone_v3_batch_result_round_trips() -> None:
-    inp = HeatZoneV3Input(h3_index="884a1072b7fffff", population=5000.0)
+    inp = HeatZoneV3Input(
+        h3_index="884a1072b7fffff",
+        population=5000.0,
+        coverage_ratio=1.0,
+        confidence=1.0,
+    )
     runner = HeatZoneV3ShadowRunner()
     batch = runner.evaluate_inputs([inp])
 
@@ -744,10 +1276,10 @@ def test_heatzone_v3_batch_result_round_trips() -> None:
 def test_heatzone_v3_deterministic_ranking_order() -> None:
     """Verify features are deterministically ranked by score descending with abstained at the end."""
     inps = [
-        HeatZoneV3Input(h3_index="cell_low", population=1500.0, poi_count=2, active_competitor_count=4, competitor_capacity=50.0),
-        HeatZoneV3Input(h3_index="cell_abstained", population=8000.0, overall_readiness=ReadinessLevel.blocked),
-        HeatZoneV3Input(h3_index="cell_high", population=9000.0, poi_count=25, active_competitor_count=1, competitor_capacity=10.0),
-        HeatZoneV3Input(h3_index="cell_mid", population=5000.0, poi_count=10, active_competitor_count=2, competitor_capacity=20.0),
+        HeatZoneV3Input(h3_index="cell_low", population=1500.0, poi_count=2, active_competitor_count=4, competitor_capacity=50.0, coverage_ratio=1.0, confidence=1.0),
+        HeatZoneV3Input(h3_index="cell_abstained", population=8000.0, overall_readiness=ReadinessLevel.blocked, coverage_ratio=1.0, confidence=1.0),
+        HeatZoneV3Input(h3_index="cell_high", population=9000.0, poi_count=25, active_competitor_count=1, competitor_capacity=10.0, coverage_ratio=1.0, confidence=1.0),
+        HeatZoneV3Input(h3_index="cell_mid", population=5000.0, poi_count=10, active_competitor_count=2, competitor_capacity=20.0, coverage_ratio=1.0, confidence=1.0),
     ]
 
     results = score_heatzones_v3(inps)
@@ -783,6 +1315,8 @@ def test_heatzone_v3_abstains_when_critical_domain_empty_even_if_ready_and_no_ga
         overall_readiness=ReadinessLevel.ready,
         has_coverage_gaps=False,
         domain_coverage={"DEMOGRAPHICS": "empty", "COMPETITOR": "complete", "RENT": "complete"},
+        coverage_ratio=1.0,
+        confidence=1.0,
     )
     res = score_heatzone_v3_feature(inp)
     assert res.abstained is True
@@ -792,9 +1326,9 @@ def test_heatzone_v3_abstains_when_critical_domain_empty_even_if_ready_and_no_ga
 
 def test_heatzone_v3_rent_feasibility_monotonic_without_rent_data() -> None:
     """C1: rent_feasibility must be monotonic when effective_rent <= 0 (0 listings=0.0 <= 1 listing=0.08 <= 5 listings=0.40)."""
-    inp_0 = HeatZoneV3Input(h3_index="884a1072b7fffff", population=5000.0, median_rent_per_ping=0.0, active_listing_count=0)
-    inp_1 = HeatZoneV3Input(h3_index="884a1072b7fffff", population=5000.0, median_rent_per_ping=0.0, active_listing_count=1)
-    inp_5 = HeatZoneV3Input(h3_index="884a1072b7fffff", population=5000.0, median_rent_per_ping=0.0, active_listing_count=5)
+    inp_0 = HeatZoneV3Input(h3_index="884a1072b7fffff", population=5000.0, median_rent_per_ping=0.0, active_listing_count=0, coverage_ratio=1.0, confidence=1.0)
+    inp_1 = HeatZoneV3Input(h3_index="884a1072b7fffff", population=5000.0, median_rent_per_ping=0.0, active_listing_count=1, coverage_ratio=1.0, confidence=1.0)
+    inp_5 = HeatZoneV3Input(h3_index="884a1072b7fffff", population=5000.0, median_rent_per_ping=0.0, active_listing_count=5, coverage_ratio=1.0, confidence=1.0)
 
     res_0 = score_heatzone_v3_feature(inp_0)
     res_1 = score_heatzone_v3_feature(inp_1)
@@ -817,6 +1351,8 @@ def test_heatzone_v3_saturated_state_when_competitor_saturated_and_zero_own_stor
         competitor_capacity=60.0,
         own_store_count=0,
         own_store_machine_capacity=0.0,
+        coverage_ratio=1.0,
+        confidence=1.0,
     )
     res = score_heatzone_v3_feature(inp)
     assert res.state is HeatZoneV3State.SATURATED
@@ -952,6 +1488,11 @@ def test_heatzone_v3_r3_readiness_usable_with_gaps_is_supported() -> None:
             status=DomainStatus.available,
             median_rent_per_ping=2500.0,
             sample_count=15,
+            # Stated because the adapter derives confidence from observations
+            # only. Without a measured figure the profile abstains, which is
+            # covered separately by
+            # test_adapt_catchment_profile_without_measured_confidence_abstains.
+            confidence_pct=90.0,
         ),
         mobility=CatchmentMobility(
             status=DomainStatus.available,

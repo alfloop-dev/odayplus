@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -7,6 +8,8 @@ from typing import Any
 import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
+
+from tests.integration._model_publish_flag_fixture import enable_model_publish
 
 pytest.importorskip(
     "lightgbm",
@@ -52,7 +55,9 @@ from modules.sitescore.application.reporting import SiteScoreReportService
 from modules.sitescore.domain import SITESCORE_FEATURE_VERSION, score_sites
 from product_ops.modeling.contracts import MODEL_SPECS
 
-NOW = datetime(2026, 7, 24, 10, 0, tzinfo=UTC)
+# 生產端以牆鐘檢查 feature snapshot 不得超過 SITESCORE_FEATURE_MAX_AGE（90 天），
+# 固定日期會在 90 天後讓整批測試變紅，所以改成相對牆鐘的時間點。
+NOW = datetime.now(UTC).replace(microsecond=0) - timedelta(hours=1)
 SITESCORE_MODEL_NAME = PRODUCTION_MODEL_CONTRACTS["sitescore"].model_name or ""
 
 
@@ -100,6 +105,8 @@ def _registered_runtime(
     *,
     stage: ModelStage = ModelStage.PRODUCTION,
     approved: bool = True,
+    repository: Any | None = None,
+    aliases: frozenset[ModelAlias] | None = None,
 ) -> tuple[MlflowProductionModelRuntime, Path]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     rows = _training_rows()
@@ -120,7 +127,7 @@ def _registered_runtime(
     artifact_path.write_bytes(trained.estimator.to_artifact_bytes())
     tracking_uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
     adapter = MlflowRegistryAdapter(
-        InMemoryLearningHubRepository(),
+        repository if repository is not None else InMemoryLearningHubRepository(),
         tracking_uri=tracking_uri,
         experiment_name="production-model-runtime-tests",
     )
@@ -134,7 +141,7 @@ def _registered_runtime(
             label_version="sitescore-mature-revenue-v3",
             metrics={"mae": 9_000.0, "p80_coverage": 0.82},
             stage=stage,
-            aliases=frozenset({ModelAlias.PRODUCTION}),
+            aliases=frozenset({ModelAlias.PRODUCTION}) if aliases is None else aliases,
             run_id="training-sitescore-20260724",
             git_sha="4d5e5e0",
             approved_by="model-risk-reviewer" if approved else None,
@@ -155,6 +162,132 @@ def _registered_runtime(
         ),
         artifact_path,
     )
+
+
+def _registered_governed_runtime(
+    tmp_path: Path,
+    repository: Any,
+) -> tuple[MlflowProductionModelRuntime, Path]:
+    """Actual artifact + actual release records, using only synthetic local data.
+
+    This acceptance fixture never enables the governed-disabled service or
+    provides a production business approval. The injected registry must be the
+    score worker's actual same-engine durable repository.
+    """
+    from models.shared_ml import MetricThreshold
+    from modules.learninghub import LearningHubService, ReleaseType
+    from shared.audit.worm import LocalAppendOnlyWormSink
+    from shared.governance import default_model_performance_drift_policy
+    from shared.infrastructure.persistence import DurableArtifactStore, DurableAuditLog
+    from tests.integration._learninghub_fixtures import model_card
+
+    runtime, artifact = _registered_runtime(
+        tmp_path,
+        stage=ModelStage.DEV,
+        approved=False,
+        repository=repository,
+        aliases=frozenset(),
+    )
+    adapter = MlflowRegistryAdapter(
+        repository, tracking_uri=runtime.tracking_uri, client=runtime.client
+    )
+    service = LearningHubService(
+        repository=repository,
+        registry=adapter,
+        audit_log=DurableAuditLog(
+            repository._store.engine,
+            worm_sink=LocalAppendOnlyWormSink(tmp_path / "synthetic-model-release-worm"),
+        ),
+        artifact_store=DurableArtifactStore(repository._store),
+        runtime_mode="test",
+    )
+    enable_model_publish(service, tenant_id='tenant-a')
+    model = repository.get_model_version(SITESCORE_MODEL_NAME, "2026.07.24")
+    rows = _training_rows()
+    service.register_dataset_snapshot(
+        [
+            {
+                "view_name": "candidate_site_view",
+                "view_version": SITESCORE_FEATURE_VERSION,
+                "entity_id": f"synthetic-sitescore-training-{index}",
+                "feature_snapshot_time": NOW.isoformat(),
+                "prediction_origin_time": NOW.isoformat(),
+                "source_snapshot_ids": [f"synthetic-sitescore-source-{index}"],
+                "data_quality_score": 1.0,
+                "confidence": 1.0,
+                "features": row,
+                "labels": {
+                    "realized_90d_net_revenue": 180_000.0
+                    + row["prior_90d_cell_net_revenue"] * 0.9
+                    + row["prior_90d_cell_transaction_count"] * 1500.0
+                    - row["prior_90d_cell_store_count"] * 20000.0
+                },
+                "label_maturity_time": NOW.isoformat(),
+            }
+            for index, row in enumerate(rows)
+        ],
+        dataset_snapshot_id=model.dataset_snapshot_id,
+    )
+    policy = default_model_performance_drift_policy()
+    metrics = {"normalized_mae": 0.11, "p80_coverage": 0.82}
+    baseline = {"normalized_mae": 0.15, "p80_coverage": 0.78}
+    thresholds = (
+        MetricThreshold("normalized_mae", max_value=0.25),
+        MetricThreshold("p80_coverage", min_value=0.70),
+    )
+    validation = service.validate_candidate(
+        model_name=model.model_name,
+        model_version=model.version,
+        dataset_snapshot_id=model.dataset_snapshot_id,
+        metrics=metrics,
+        baseline_metrics=baseline,
+        thresholds=thresholds,
+        calibration_summary={"p80_coverage": 0.82},
+        decision_policy=policy,
+    )
+    service.evaluate_backtest(
+        model_name=model.model_name,
+        model_version=model.version,
+        dataset_snapshot_id=model.dataset_snapshot_id,
+        code_version=model.git_sha,
+        metrics=metrics,
+        baseline_metrics=baseline,
+        thresholds=thresholds,
+        decision_policy=policy,
+        calibration_summary={"p80_coverage": 0.82},
+    )
+    card = replace(
+        model_card(
+            model.version,
+            model.dataset_snapshot_id,
+            validation.validation_run_id,
+            model_name=model.model_name,
+        ),
+        intended_use="Synthetic local SiteScore acceptance fixture",
+        not_intended_use="Production scoring or business approval",
+        feature_set_id="synthetic-sitescore-features",
+        label_set_id="synthetic-sitescore-labels",
+        algorithm="lightgbm_regressor",
+        metrics_summary=metrics,
+    )
+    service.register_model_version(model_version=model, model_card=card, validation_run=validation)
+    service.request_release(
+        model_name=model.model_name,
+        version=model.version,
+        release_type=ReleaseType.FULL,
+        reason="synthetic local acceptance fixture",
+        approval_id="synthetic-local-approval",
+        rollback_target=model.version,
+        monitoring_window="48h",
+        success_criteria=("local test inference succeeds",),
+        fail_criteria=("local test regression",),
+        requested_by="ml-owner",
+        approved_by="reviewer-a",
+        correlation_id="synthetic-local-release",
+        expected_release_revision=repository.get_release_revision(model.model_name),
+        idempotency_key="synthetic-local-governed-release",
+    )
+    return runtime, artifact
 
 
 def test_real_lightgbm_artifact_reload_and_sitescore_inference(tmp_path: Path) -> None:
@@ -198,24 +331,49 @@ def test_production_sitescore_route_rejects_metadata_without_runtime() -> None:
             None,
         )
     assert exc_info.value.status_code == 503
-    assert exc_info.value.detail["code"] == "PRODUCTION_MODEL_REGISTRY_UNAVAILABLE"
+    assert exc_info.value.detail["code"] == "SITESCORE_EXECUTION_CONTEXT_REQUIRED"
 
 
-def test_production_sitescore_route_executes_registered_artifact(tmp_path: Path) -> None:
+def test_production_sitescore_route_executes_registered_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     runtime, _ = _registered_runtime(tmp_path)
-    router = create_sitescore_router(
+    execution = SiteScoreReportService(
         model_runtime=runtime,
         require_production_model=True,
+    ).score_candidates_with_execution(
+        [_live_sitescore_row()],
+        prediction_origin_time=NOW,
+        scored_at=NOW,
     )
-    payload = _route_endpoint(router, "/sitescore/score-jobs")(
-        SiteScoreScoreJobPayload(features=[_live_sitescore_row()]),
-        _request(),
-        None,
-    )
-
+    payload = {
+        "model_binding": execution.model_inference.to_audit_metadata(),
+        "reports": [report.to_dict() for report in execution.reports],
+    }
     assert payload["model_binding"]["model_engine"] == "lightgbm.LGBMRegressor"
     assert payload["model_binding"]["model_approved_by"] == "model-risk-reviewer"
     assert payload["reports"][0]["model_version"] == f"{SITESCORE_MODEL_NAME}:2026.07.24"
+
+    # A working artifact does not give this generic endpoint the parent,
+    # persisted request, leased job, and fenced worker publication authority.
+    inline_calls = []
+
+    def reject_inline(**kwargs):
+        inline_calls.append(kwargs)
+        pytest.fail("generic production route bypassed the execution request owner")
+
+    monkeypatch.setattr(runtime, "infer", reject_inline)
+    router = create_sitescore_router(model_runtime=runtime, require_production_model=True)
+    with pytest.raises(HTTPException) as denied:
+        _route_endpoint(router, "/sitescore/score-jobs")(
+            SiteScoreScoreJobPayload(features=[_live_sitescore_row()]),
+            _request(),
+            None,
+        )
+    assert denied.value.status_code == 503
+    assert denied.value.detail["code"] == "SITESCORE_EXECUTION_CONTEXT_REQUIRED"
+    assert inline_calls == []
 
 
 def test_production_runtime_fails_closed_without_registry_configuration(

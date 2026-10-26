@@ -1,6 +1,11 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
-import { readWebSession, webSessionCookieName } from "./session";
+import {
+  readWebSession,
+  sealWebSessionReference,
+  webSessionCookieName,
+  webSessionCookieOptions,
+} from "./session";
 import {
   allowLegacyTrustedHeaders,
   isProductionWebRuntime,
@@ -14,6 +19,7 @@ const FORWARDED_REQUEST_HEADERS = [
   "accept",
   "accept-language",
   "content-type",
+  "if-actor-match",
   "if-match",
   "idempotency-key",
   "x-correlation-id",
@@ -36,6 +42,9 @@ const FORWARDED_RESPONSE_HEADERS = [
   "retry-after",
   "www-authenticate",
   "x-correlation-id",
+  "x-avm-export-id",
+  "x-content-sha256",
+  "x-content-type-options",
 ] as const;
 
 const UPSTREAM_TIMEOUT_MS = 10_000;
@@ -128,6 +137,7 @@ export async function proxyApiRequest(
   try {
     session = await readWebSession(
       request.cookies.get(webSessionCookieName)?.value,
+      { environment },
     );
   } catch {
     if (production) {
@@ -228,11 +238,25 @@ export async function proxyApiRequest(
         responseHeaders.set(name, value);
       }
     }
-    return new Response(response.body, {
+    const proxiedResponse = new NextResponse(response.body, {
       status: response.status,
       statusText: response.statusText,
       headers: responseHeaders,
     });
+    if (session?.legacyUpgrade) {
+      proxiedResponse.cookies.set(
+        webSessionCookieName,
+        await sealWebSessionReference(session),
+        {
+          ...webSessionCookieOptions,
+          maxAge: Math.max(
+            1,
+            session.expiresAt - Math.floor(Date.now() / 1000),
+          ),
+        },
+      );
+    }
+    return proxiedResponse;
   } catch {
     if (upstreamSignal.aborted) {
       return authError(

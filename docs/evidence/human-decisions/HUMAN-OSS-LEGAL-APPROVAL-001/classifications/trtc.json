@@ -1,0 +1,152 @@
+{
+  "authority_context": {
+    "adapter_version": "1.0.0",
+    "source_terms_sha256": "4ad4170b3d4513c33592774209a0b7659796d8f92a45444e24ba6072a659659b"
+  },
+  "authority_reference": {
+    "issued_by": "蔡尚志 (負責人)",
+    "reference": "HUMAN-OSS-LEGAL-APPROVAL-001 source-data approval receipt sha256:2119dc6f74335d3a1884e0a0dfda6db61171df0542c46371c1719c26204d83c7 (alfloop-dev/odayplus#1418, authored by ajoe734)",
+    "scope": "raw field classification of source lane 'trtc', accepted as reviewed in classification-review.md"
+  },
+  "classification_digest": "4204354e4f578b3208b913c0b41dab9e17e35ce72d3e1a652dce137a9cfc3a9e",
+  "contract_id": "emgi.mobility-observation.v1",
+  "fields": {
+    "blob_id": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "business_date": {
+      "basis": "站對站逐時彙總人次（TRTC_STATION_OD_TERMS：OGDL 1.0、營運者發布前已彙總）",
+      "classification": "PUBLIC"
+    },
+    "contract_id": {
+      "basis": "站對站逐時彙總人次（TRTC_STATION_OD_TERMS：OGDL 1.0、營運者發布前已彙總）",
+      "classification": "PUBLIC"
+    },
+    "coverage_id": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "coverage_state": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "dataset_version_id": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "destination_unit": {
+      "basis": "站對站逐時彙總人次（TRTC_STATION_OD_TERMS：OGDL 1.0、營運者發布前已彙總）",
+      "classification": "PUBLIC"
+    },
+    "feed_id": {
+      "basis": "站對站逐時彙總人次（TRTC_STATION_OD_TERMS：OGDL 1.0、營運者發布前已彙總）",
+      "classification": "PUBLIC"
+    },
+    "flow_count": {
+      "basis": "站對站逐時彙總人次（TRTC_STATION_OD_TERMS：OGDL 1.0、營運者發布前已彙總）",
+      "classification": "PUBLIC"
+    },
+    "measure": {
+      "basis": "站對站逐時彙總人次（TRTC_STATION_OD_TERMS：OGDL 1.0、營運者發布前已彙總）",
+      "classification": "PUBLIC"
+    },
+    "metadata": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "modality": {
+      "basis": "站對站逐時彙總人次（TRTC_STATION_OD_TERMS：OGDL 1.0、營運者發布前已彙總）",
+      "classification": "PUBLIC"
+    },
+    "negative_evidence_valid": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "observation_id": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "origin_unit": {
+      "basis": "站對站逐時彙總人次（TRTC_STATION_OD_TERMS：OGDL 1.0、營運者發布前已彙總）",
+      "classification": "PUBLIC"
+    },
+    "provenance": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "provider_id": {
+      "basis": "站對站逐時彙總人次（TRTC_STATION_OD_TERMS：OGDL 1.0、營運者發布前已彙總）",
+      "classification": "PUBLIC"
+    },
+    "record_id": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "scope_principal_id": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "time_contract": {
+      "basis": "站對站逐時彙總人次（TRTC_STATION_OD_TERMS：OGDL 1.0、營運者發布前已彙總）",
+      "classification": "PUBLIC"
+    },
+    "unit": {
+      "basis": "站對站逐時彙總人次（TRTC_STATION_OD_TERMS：OGDL 1.0、營運者發布前已彙總）",
+      "classification": "PUBLIC"
+    }
+  },
+  "provider_id": "provider.mobility",
+  "raw_source_fields": {
+    "entry_station_id": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；站間逐時彙總人次",
+      "classification": "PUBLIC"
+    },
+    "exit_station_id": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；站間逐時彙總人次",
+      "classification": "PUBLIC"
+    },
+    "hourly_entry_exit_flow": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；站間逐時彙總人次",
+      "classification": "PUBLIC"
+    },
+    "transaction_date": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；站間逐時彙總人次",
+      "classification": "PUBLIC"
+    },
+    "transaction_hour": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；站間逐時彙總人次",
+      "classification": "PUBLIC"
+    },
+    "人次": {
+      "basis": "臺北捷運各站分時進出量 CSV 表頭（trtc_station_od.STATION_OD_HEADER）；營運者已彙總、無個別旅客；政府資料開放授權條款第1版",
+      "classification": "PUBLIC"
+    },
+    "出站": {
+      "basis": "臺北捷運各站分時進出量 CSV 表頭（trtc_station_od.STATION_OD_HEADER）；營運者已彙總、無個別旅客；政府資料開放授權條款第1版",
+      "classification": "PUBLIC"
+    },
+    "日期": {
+      "basis": "臺北捷運各站分時進出量 CSV 表頭（trtc_station_od.STATION_OD_HEADER）；營運者已彙總、無個別旅客；政府資料開放授權條款第1版",
+      "classification": "PUBLIC"
+    },
+    "時段": {
+      "basis": "臺北捷運各站分時進出量 CSV 表頭（trtc_station_od.STATION_OD_HEADER）；營運者已彙總、無個別旅客；政府資料開放授權條款第1版",
+      "classification": "PUBLIC"
+    },
+    "進站": {
+      "basis": "臺北捷運各站分時進出量 CSV 表頭（trtc_station_od.STATION_OD_HEADER）；營運者已彙總、無個別旅客；政府資料開放授權條款第1版",
+      "classification": "PUBLIC"
+    }
+  },
+  "schema": "emgi.raw-field-classification.v1",
+  "schema_sha256": "9e79d5e487d49a246d93f0075bbcd396eb184de7ddeb4deff818e87f89276328",
+  "source": "trtc",
+  "source_version_binding": {
+    "classification_policy": "AUTHORITY_ARTIFACT_WITH_SOURCE_TERMS",
+    "drafted_against": "origin/dev 24c40ae75e5759a47a21566f4dccfa15d5d38386",
+    "drafted_at": "2026-10-06",
+    "policy_source_id": "mobility",
+    "record_model": "ObservedFlowRecord"
+  }
+}

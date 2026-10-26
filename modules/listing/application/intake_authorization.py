@@ -5,6 +5,7 @@ Enforces the role/action/resource/scope/state/field/risk matrix from docs/design
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 from fastapi import HTTPException
@@ -19,11 +20,15 @@ from shared.auth import (
     Principal,
     ResourceDescriptor,
     Role,
+    TenantAccessWaiver,
+    TenantAccessWaiverRegistry,
+    check_tenant_isolation,
 )
 
 _SCOPE_AXIS_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("brand", ("brand_id", "brandId")),
     ("region", ("region_id", "regionId")),
+    ("store", ("store_id", "storeId")),
     ("assigned_area", ("assigned_area_id", "assignedAreaId")),
     ("heat_zone", ("heat_zone_id", "heatZoneId")),
 )
@@ -39,6 +44,69 @@ def _resource_scope_value(resource: dict[str, Any], keys: tuple[str, ...]) -> An
     return None
 
 
+def collection_filters_in_scope(principal: Principal, filters: dict[str, Any]) -> bool:
+    """Return whether every filter a read collection request supplies is in scope.
+
+    A read query is not an object envelope: an axis the caller did not filter on
+    is not missing evidence, because every returned record is still projected
+    against the complete principal scope.  Each supplied axis must be allowed.
+    Object targets and creates keep the complete-envelope check of
+    :func:`intake_resource_in_scope`.
+    """
+
+    checks = {
+        "brand": principal.scope.permits_brand,
+        "region": principal.scope.permits_region,
+        "store": principal.scope.permits_store,
+        "assigned_area": principal.scope.permits_assigned_area,
+        "heat_zone": principal.scope.permits_heat_zone,
+    }
+    for axis, keys in _SCOPE_AXIS_KEYS:
+        value = _resource_scope_value(filters, keys)
+        if value is not None and not checks[axis](value):
+            return False
+    return True
+
+
+def collection_rows_are_scope_projected(principal: Principal) -> bool:
+    """Return whether collection routes project every returned row for ``principal``.
+
+    Only the verified operator read grant is paired with a per-row projection
+    against its complete scope (before counts and pagination).  Any other caller
+    receives the service rows for the declared filters unprojected, so its
+    collection filters must still form a complete scope envelope.
+    """
+
+    return principal.has_role(Role.OPERATOR_VIEWER)
+
+
+# A collection request addresses a query scope, not an object.  It is audited
+# and waiver-matched under its own resource type so that a waiver written for a
+# single listing can never silently authorize an entire cross-tenant collection.
+COLLECTION_RESOURCE_TYPE = "listing_collection"
+
+
+def _target_resource_tenant(resource: dict[str, Any]) -> str | None:
+    """Return the tenant the target resource itself declares, else ``None``.
+
+    Only the accessed object is consulted.  The caller's own tenant is never
+    consulted here, so a target resource that carries no tenant (an intake
+    payload, a scope-only envelope, an object missing ``tenantId``) resolves to
+    ``None`` and is denied by the shared guard.
+    """
+    value = _resource_scope_value(resource, ("tenant_id", "tenantId"))
+    if isinstance(value, str):
+        value = value.strip()
+    return value or None
+
+
+def _declared_query_scope_tenant(tenant_id: str | None) -> str | None:
+    """Return the explicitly declared tenant query scope of a collection request."""
+    if isinstance(tenant_id, str) and tenant_id.strip():
+        return tenant_id.strip()
+    return None
+
+
 def intake_resource_in_scope(principal: Principal, resource: dict[str, Any]) -> bool:
     """Return whether every non-empty principal intake scope contains resource.
 
@@ -50,6 +118,7 @@ def intake_resource_in_scope(principal: Principal, resource: dict[str, Any]) -> 
     checks = {
         "brand": principal.scope.permits_brand,
         "region": principal.scope.permits_region,
+        "store": principal.scope.permits_store,
         "assigned_area": principal.scope.permits_assigned_area,
         "heat_zone": principal.scope.permits_heat_zone,
     }
@@ -73,8 +142,30 @@ def authorize_intake_action(
     operator_role_id: str | None = None,
     audit_log: Any = None,
     correlation_id: str | None = None,
+    waiver: TenantAccessWaiver | str | None = None,
+    waiver_registry: TenantAccessWaiverRegistry | None = None,
+    tenant_id: str | None = None,
+    collection_scope: dict[str, Any] | None = None,
 ) -> None:
-    """Enforce deny-by-default assisted intake authorization and segregation."""
+    """Enforce deny-by-default assisted intake authorization and segregation.
+
+    Tenant evidence comes from exactly one of two mutually exclusive sources,
+    which are never allowed to substitute for one another:
+
+    ``resource``
+        The envelope of a single target object.  Its tenant is read from the
+        object itself; ``tenant_id`` is *not* a fallback for it.  A target that
+        declares no tenant fails closed even when the caller supplies its own
+        tenant, so a tenant-less object can never be authorized as though it
+        belonged to the principal.
+    ``tenant_id`` (with ``resource=None``)
+        The declared query scope of a collection request, which has no object
+        envelope to read a tenant from.  A missing query scope fails closed.
+
+    ``collection_scope`` carries the brand/region/area/heat-zone filters of a
+    collection request so those axes are still enforced without dressing the
+    filters up as a target resource.
+    """
     def map_action_to_enum(action_str: str) -> Action:
         mapping = {
             "view": Action.VIEW,
@@ -94,22 +185,28 @@ def authorize_intake_action(
         }
         return mapping.get(action_str, Action.UPDATE)
 
-    def _raise_and_audit(status_code: int, detail: str) -> None:
-        if audit_log is not None:
-            resource_id = None
-            res_type = "listing"
-            tenant_id = None
-            if resource is not None:
-                resource_id = resource.get("id") or resource.get("listingId") or resource.get("listing_id")
-                if "url" in resource or "parsedFields" in resource:
-                    res_type = "intake"
-                tenant_id = resource.get("tenantId") or resource.get("tenant_id")
+    # Resolve the request shape once, before any decision or audit record, so
+    # that the allow path, the deny path, and the audit trail can never disagree
+    # about which tenant was actually evaluated.
+    is_collection_request = resource is None
+    if is_collection_request:
+        target_tenant = _declared_query_scope_tenant(tenant_id)
+        res_type = COLLECTION_RESOURCE_TYPE
+        res_id = None
+        scope_subject = collection_scope
+    else:
+        target_tenant = _target_resource_tenant(resource)
+        res_type = "intake" if ("url" in resource or "parsedFields" in resource) else "listing"
+        res_id = resource.get("id") or resource.get("listingId") or resource.get("listing_id")
+        scope_subject = resource
 
+    def _raise_and_audit(status_code: int, detail: str, *, decision: Decision | None = None) -> None:
+        if audit_log is not None:
             action_enum = map_action_to_enum(action)
             desc = ResourceDescriptor(
                 type=res_type,
-                resource_id=resource_id,
-                tenant_id=tenant_id or principal.tenant_id,
+                resource_id=res_id,
+                tenant_id=target_tenant,
             )
             access = AccessRequest(
                 principal=principal,
@@ -120,11 +217,11 @@ def authorize_intake_action(
                     attributes={"correlation_id": correlation_id or "unknown"}
                 ),
             )
-            decision = Decision.deny(
+            dec = decision or Decision.deny(
                 reason=detail,
                 policy_id="intake_authorization",
             )
-            event = build_security_event(access, decision)
+            event = build_security_event(access, dec)
             audit_log.record(event)
         raise HTTPException(status_code=status_code, detail=detail)
 
@@ -132,15 +229,45 @@ def authorize_intake_action(
     if not principal.authenticated:
         _raise_and_audit(status_code=401, detail="AUTHENTICATION_REQUIRED")
 
-    # 2. Tenant Isolation
-    if resource is not None:
-        resource_tenant = _resource_scope_value(resource, ("tenant_id", "tenantId"))
-        if resource_tenant and principal.tenant_id != resource_tenant:
-            _raise_and_audit(status_code=403, detail="TENANT_SCOPE_DENIED")
+    # 2. Tenant Isolation (shared fail-closed guard)
+    effective_waiver = waiver or (
+        resource.get("waiver")
+        if isinstance(resource, dict)
+        and isinstance(resource.get("waiver"), (TenantAccessWaiver, str))
+        else None
+    )
+
+    if principal.has_role(Role.OPERATOR_VIEWER) and target_tenant != principal.tenant_id:
+        _raise_and_audit(status_code=403, detail="TENANT_SCOPE_DENIED")
+
+    tenant_decision = check_tenant_isolation(
+        principal=principal,
+        resource_tenant_id=target_tenant,
+        resource_type=res_type,
+        resource_id=res_id,
+        waiver=effective_waiver,
+        waiver_registry=waiver_registry,
+    )
+    if not tenant_decision.allowed:
+        _raise_and_audit(status_code=403, detail="TENANT_SCOPE_DENIED", decision=tenant_decision)
 
     # 3. Brand/Region/Area/HeatZone scope
-    if resource is not None:
-        if not intake_resource_in_scope(principal, resource):
+    #
+    # Read collection requests from a caller whose returned records are each
+    # projected against the full scope are checked against the filters they
+    # declare.  Every other subject -- unprojected collection reads, target
+    # objects and creates (which must land inside every restricted axis) -- is
+    # checked as a complete envelope.  Either way the principal's own
+    # restrictions must contain the subject.
+    if scope_subject is not None:
+        in_scope = (
+            collection_filters_in_scope(principal, scope_subject)
+            if is_collection_request
+            and action == "view"
+            and collection_rows_are_scope_projected(principal)
+            else intake_resource_in_scope(principal, scope_subject)
+        )
+        if not in_scope:
             _raise_and_audit(status_code=403, detail="SCOPE_DENIED")
 
     # 4. Role mapping and matrix rules
@@ -174,8 +301,12 @@ def authorize_intake_action(
         "privacyOfficer",
     )
 
-    # Deny platform admin from accessing business data
-    if is_admin and not (is_manager or is_staff or is_steward):
+    # An explicit verified read grant composes with administration, but only
+    # for VIEW. A caller-selected persona can never manufacture this grant.
+    is_operator_viewer = principal.has_role(Role.OPERATOR_VIEWER)
+    if is_admin and not (
+        is_manager or is_staff or is_steward or (action == "view" and is_operator_viewer)
+    ):
         _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
     def _is_owner(owner: Any, submitter: Any) -> bool:
@@ -194,7 +325,7 @@ def authorize_intake_action(
             if not _is_owner(owner, submitter):
                 _raise_and_audit(status_code=403, detail="OWNERSHIP_REQUIRED")
         # Ensure allowed roles
-        if not (is_staff or is_manager or is_steward or is_governance or is_privacy):
+        if not (is_staff or is_manager or is_steward or is_governance or is_privacy or is_operator_viewer):
             _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
     elif action in ("submit_url", "submit_csv"):
@@ -308,6 +439,30 @@ def authorize_intake_action(
         # Default deny-by-default for unknown actions
         _raise_and_audit(status_code=403, detail="ROLE_DENIED")
 
+    # Mandatory immutable audit recording for all authorized intake actions
+    if audit_log is not None:
+        action_enum = map_action_to_enum(action)
+        desc = ResourceDescriptor(
+            type=res_type,
+            resource_id=res_id,
+            tenant_id=target_tenant,
+        )
+        access = AccessRequest(
+            principal=principal,
+            action=action_enum,
+            resource=desc,
+            environment=Environment(
+                source_ip=None,
+                attributes={"correlation_id": correlation_id or "unknown"},
+            ),
+        )
+        decision = (
+            tenant_decision
+            if "cross_tenant_waiver" in tenant_decision.obligations
+            else Decision.allow("authorized")
+        )
+        audit_log.record(build_security_event(access, decision))
+
 
 
 
@@ -341,7 +496,7 @@ def mask_listing(principal: Principal, listing: dict[str, Any]) -> dict[str, Any
 def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
     """Mask fields based on principal clearance and field classification."""
     clearance = principal.scope.clearance if principal.authenticated else DataClassification.PUBLIC
-    if clearance >= DataClassification.RESTRICTED:
+    if clearance >= DataClassification.HIGHLY_RESTRICTED:
         return intake
 
     masked = intake.copy()
@@ -421,4 +576,60 @@ def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
             masked["originalUrl_masked"] = True
             masked["originalUrl_mask_reason_code"] = "FIELD_MASKED"
 
+    return masked
+
+
+def mask_batch_intake_job(principal: Principal, job: dict[str, Any]) -> dict[str, Any]:
+    """Apply intake field policy to raw batch rows and unstructured errors.
+
+    Unknown import columns and free-form diagnostics have no classification
+    contract, so they stay restricted. Mask copies only: job payloads can alias
+    the in-memory queue's authoritative record.
+    """
+    clearance = principal.scope.clearance if principal.authenticated else DataClassification.PUBLIC
+    if clearance >= DataClassification.RESTRICTED:
+        return job
+    masked = deepcopy(job)
+    masked["error_message"] = None
+    aliases = {
+        "address_raw": "address", "addressRaw": "address", "address": "address",
+        "rent_per_month": "rent", "rentPerMonth": "rent", "rent": "rent",
+        "area_ping": "areaPing", "areaPing": "areaPing", "floor": "floor",
+        "coordinates": "coordinates", "rawSnapshot": "rawSnapshot",
+        "brokerCompany": "brokerCompany", "contactEmail": "contactEmail",
+        "contactPhone": "contactPhone", "brokerEmail": "brokerEmail",
+        "privateNotes": "privateNotes",
+    }
+    payload = masked.get("payload")
+    if not isinstance(payload, dict):
+        return masked
+    for field, value in list(payload.items()):
+        if field in ("items", "rows") and isinstance(value, list):
+            rows = []
+            for row in value:
+                if not isinstance(row, dict):
+                    rows.append(None)
+                    continue
+                clean = {}
+                for key, raw in row.items():
+                    if key == "item_id":
+                        clean[key] = raw
+                    elif key in aliases:
+                        canonical = aliases[key]
+                        view = mask_intake(
+                            principal, {"parsedFields": {canonical: {"sourceValue": raw}}}
+                        )
+                        clean[key] = view["parsedFields"][canonical].get("sourceValue")
+                    else:
+                        clean[key] = None
+                rows.append(clean)
+            payload[field] = rows
+        elif field not in ("tenant_id", "submitter", "actor_role_id", "receipt", "summary"):
+            payload[field] = None
+    receipt = payload.get("receipt")
+    if isinstance(receipt, dict):
+        for item in receipt.get("items", []):
+            if isinstance(item, dict) and isinstance(item.get("error"), dict):
+                item["error"]["message"] = "Item processing failed; details are restricted"
+                item["error"]["details"] = None
     return masked

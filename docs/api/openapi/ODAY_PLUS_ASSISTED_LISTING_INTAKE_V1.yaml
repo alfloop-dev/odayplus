@@ -635,12 +635,19 @@ components:
         reason: {type: string, minLength: 3}
         override_retry_budget: {type: boolean, default: false}
         risk_acknowledged: {type: boolean, default: false}
+    JobStatus:
+      type: string
+      enum: [QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED, PARTIAL]
+    JobDeliveryState:
+      type: string
+      enum: [RETRYING, DEAD_LETTER]
     JobReceipt:
       type: object
       required: [job_id, status, checkpoint, attempt, version, correlation_id]
       properties:
         job_id: {type: string, format: uuid}
-        status: {type: string, enum: [QUEUED, RUNNING, RETRYING, SUCCEEDED, FAILED, CANCELLED, DEAD_LETTER]}
+        status: {$ref: '#/components/schemas/JobStatus'}
+        delivery_state: {anyOf: [{$ref: '#/components/schemas/JobDeliveryState'}, {type: 'null'}]}
         checkpoint: {type: string}
         attempt: {type: integer}
         version: {type: integer}

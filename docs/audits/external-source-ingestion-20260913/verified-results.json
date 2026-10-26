@@ -1,0 +1,44 @@
+{
+  "local_live": [
+    {
+      "source": "mof",
+      "mode": "LIVE_LOCAL_INTEGRATION",
+      "parsed_record_count": 100,
+      "quarantined_count": 0,
+      "release_ready": false,
+      "upstream_completeness": "partial_national_page",
+      "captured_at": "2026-09-13T13:04:31.810248+00:00",
+      "raw_objects": [
+        {
+          "uri": "file:///home/lupin/odayplus/support/handoffs/public-source-ingestion-20260913/mof-dagster-tls-fixed/raw/fb7230a884b02e2a2200a9d47b716a9af3cdab4153da009a0d5ad94a400185be.bin",
+          "sha256": "fb7230a884b02e2a2200a9d47b716a9af3cdab4153da009a0d5ad94a400185be",
+          "bytes": 46275
+        }
+      ]
+    },
+    {
+      "source": "ris",
+      "mode": "LIVE_LOCAL_INTEGRATION",
+      "parsed_record_count": 31,
+      "quarantined_count": 0,
+      "release_ready": false,
+      "upstream_completeness": "all_pages_of_requested_scope",
+      "captured_at": "2026-09-13T13:02:16.426346+00:00",
+      "raw_objects": [
+        {
+          "uri": "file:///home/lupin/odayplus/support/handoffs/public-source-ingestion-20260913/ris-dagster/raw/55b5d57436f7fb8714d7bc2a978a0d6e67c898189337f4d703a6449e1252dcb8.bin",
+          "sha256": "55b5d57436f7fb8714d7bc2a978a0d6e67c898189337f4d703a6449e1252dcb8",
+          "bytes": 155505
+        }
+      ]
+    }
+  ],
+  "tests": {
+    "passed": 150,
+    "exit_code": 0,
+    "scope": "unreviewed implementation worktree only",
+    "log": "/home/lupin/odayplus/support/handoffs/public-source-ingestion-20260913/pytest-final.txt"
+  },
+  "product_patch_merged": false,
+  "product_deployed": false
+}

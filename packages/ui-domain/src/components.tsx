@@ -1,7 +1,9 @@
 import type { CSSProperties, ReactNode } from "react";
 import {
+  CAUSAL_MIN_EVIDENCE,
   dataStatusTone,
   fourLightTone,
+  meetsCausalThreshold,
   type AdLiftReportCardContract,
   type AuditMeta,
   type CandidateSiteCardContract,
@@ -133,7 +135,6 @@ const decisionAuditSteps: readonly DecisionAuditStep[] = [
   "Human decision submitted",
   "Execution started",
   "Outcome observed",
-  "Feedback written to label registry",
 ];
 
 function cx(...classes: Array<string | false | undefined>): string {
@@ -407,13 +408,13 @@ function ComparableStoreTable({ stores }: { stores: readonly ComparableStore[] }
 export function HeatZoneScoreCard({ score, dataQuality, audit, onOpen, "data-testid": testId = "heat-zone-score-card" }: HeatZoneScoreCardProps) {
   const title = [score.admin_city, score.admin_district].filter(Boolean).join(" / ") || score.heat_zone_id;
   return (
-    <DomainCard title={title} eyebrow={`HeatZone ${score.heat_zone_id}`} badge={<StatusBadge label={score.state} tone={score.confidence >= 0.75 ? "green" : score.confidence >= 0.5 ? "yellow" : "orange"} />} testId={testId}>
+    <DomainCard title={title} eyebrow={`HeatZone ${score.heat_zone_id}`} badge={<StatusBadge label={score.state} tone={score.confidence == null ? "gray" : score.confidence >= 0.75 ? "green" : score.confidence >= 0.5 ? "yellow" : "orange"} />} testId={testId}>
       <FieldGrid>
         <Field label="H3 index" value={score.h3_index} />
         <Field label="H3 resolution" value={score.h3_resolution} />
         <Field label="Heat zone score" value={formatNumber(score.score)} />
         <Field label="Priority rank" value={score.priority_rank} />
-        <Field label="Confidence" value={formatPercent(score.confidence)} />
+        <Field label="Confidence" value={score.confidence != null ? formatPercent(score.confidence) : "未評估"} />
         <Field label="Last scored" value={score.last_scored_at} />
       </FieldGrid>
       <Section title="Score breakdown">
@@ -629,8 +630,21 @@ export function RootCauseEvidenceCard({ evidence, "data-testid": testId = "root-
 }
 
 export function InterventionTimeline({ timeline, "data-testid": testId = "intervention-timeline" }: InterventionTimelineProps) {
+  const level = timeline.evidenceLevel;
+  // Tones split on CAUSAL_MIN_EVIDENCE rather than on an independent banding,
+  // so the badge cannot read "acceptable" for a rung the causal gate rejects.
+  // Gray is unrated, which is not the bottom of the ladder but off it entirely
+  // (ADR-0004 D3) — the operator's next step is to assess, not to strengthen.
+  const tone = level === null
+    ? "gray"
+    : !meetsCausalThreshold(level)
+      ? "orange"
+      : level === CAUSAL_MIN_EVIDENCE
+        ? "yellow"
+        : "green";
+  const badgeLabel = level ? `Evidence ${level}` : "Evidence Unrated";
   return (
-    <DomainCard title={timeline.interventionType} eyebrow={`Intervention ${timeline.interventionId} · ${entityLabel(timeline.store)}`} badge={<StatusBadge label={`Evidence ${timeline.evidenceLevel}`} tone={timeline.evidenceLevel === "high" ? "green" : timeline.evidenceLevel === "medium" ? "yellow" : "orange"} />} testId={testId}>
+    <DomainCard title={timeline.interventionType} eyebrow={`Intervention ${timeline.interventionId} · ${entityLabel(timeline.store)}`} badge={<StatusBadge label={badgeLabel} tone={tone} />} testId={testId}>
       <FieldGrid>
         <Field label="Eligibility" value={timeline.eligibilityStatus} />
         <Field label="Conflict" value={timeline.conflictStatus} />
@@ -684,7 +698,10 @@ export function AdLiftReportCard({ report, "data-testid": testId = "ad-lift-repo
         <Field label="Treatment stores" value={report.treatmentStores.length} />
         <Field label="Control stores" value={report.controlStores.length} />
         <Field label="Pre-trend" value={report.preTrendStatus} />
-        <Field label="Evidence level" value={report.evidenceLevel} />
+        {/* Field hides a null value, which would drop the row entirely and
+            leave "unrated" indistinguishable from "not shown". ODP-BR-AD-004
+            requires the unrated case to read as INSUFFICIENT_EVIDENCE. */}
+        <Field label="Evidence level" value={report.evidenceLevel ?? "INSUFFICIENT_EVIDENCE"} />
       </FieldGrid>
       <Section title="Lift intervals">
         <IntervalBand label="Incremental revenue" interval={report.incrementalRevenue} />

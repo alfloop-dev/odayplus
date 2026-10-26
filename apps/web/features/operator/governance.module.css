@@ -2,8 +2,6 @@
   display: grid;
   gap: 14px;
   width: 100%;
-  max-width: 1560px;
-  margin: 0 auto;
   color: #1c2333;
 }
 
@@ -15,7 +13,7 @@
   padding: 0;
 }
 
-.header h2,
+.header h1,
 .header p,
 .queueHeader h3,
 .viewHeader h3,
@@ -27,7 +25,14 @@
   margin: 0;
 }
 
-.header h2 {
+.headerTitle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+}
+
+.header h1 {
   font-size: 18px;
   line-height: 1.3;
   letter-spacing: 0;
@@ -107,7 +112,6 @@
   grid-template-columns: 400px minmax(0, 1fr);
   gap: 14px;
   align-items: start;
-  min-height: 520px;
 }
 
 .queuePanel,
@@ -215,7 +219,7 @@
 
 .sla {
   color: #96610b;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10.5px;
 }
 
@@ -226,7 +230,7 @@
 
 .approvalId {
   color: #6e7891;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -417,7 +421,7 @@
   margin: 2px 0 0;
   overflow-wrap: anywhere;
   color: #334155;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10.5px;
 }
 
@@ -449,7 +453,7 @@
 
 .referenceRow span:last-child {
   margin-left: auto;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
 }
 
 .decisionBox {
@@ -717,10 +721,13 @@
 
 .decisionList {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
 }
 
 .decisionCard {
+  min-width: 0;
+  overflow-wrap: anywhere;
   border: 1px solid #e3e8f0;
   border-radius: 11px;
   background: #ffffff;
@@ -734,6 +741,19 @@
   flex-wrap: wrap;
 }
 
+.decisionCard header > *,
+.decisionCard footer > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Canonical IDs are evidence, so wrap them rather than ellipsizing them. */
+.decisionCard .approvalId {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
 .decisionCard header strong {
   color: #1c2333;
   font-size: 12px;
@@ -742,7 +762,7 @@
 .decisionCard time {
   margin-left: auto;
   color: #6b7590;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10.5px;
 }
 
@@ -754,6 +774,7 @@
 }
 
 .decisionCompare section {
+  min-width: 0;
   border: 1px solid #eef1f6;
   border-radius: 8px;
   background: #f8fafd;
@@ -810,7 +831,7 @@
 .decisionCard code,
 .auditEvent code {
   color: #3a4362;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: inherit;
 }
 
@@ -837,7 +858,7 @@
 
 .auditRow > time {
   color: #6b7590;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10.5px;
 }
 
@@ -877,7 +898,7 @@
 
 .auditEntity {
   color: #2e3a97;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 11px;
   white-space: nowrap;
 }
@@ -1010,7 +1031,6 @@
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
-  transition: background 0.2s;
   text-align: center;
 }
 
@@ -1236,10 +1256,6 @@
 }
 
 @media (max-width: 1100px) {
-  .approvalGrid {
-    grid-template-columns: 340px minmax(0, 1fr);
-  }
-
   .evidencePackageGrid {
     grid-template-columns: 400px minmax(0, 1fr);
   }
@@ -1380,4 +1396,262 @@
     left: 12px;
     max-width: none;
   }
+}
+
+.commentsPanel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #e3e8f0;
+  border-radius: 10px;
+  background: #fbfcff;
+  padding: 13px 14px;
+}
+
+.commentsHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #e4e9f2;
+  padding-bottom: 8px;
+}
+
+.commentsHeader h4 {
+  margin: 0;
+  color: #1c2333;
+  font-size: 13px;
+}
+
+.commentsHeader p {
+  margin: 3px 0 0;
+  color: #6b7590;
+  font-size: 10.5px;
+}
+
+.commentsHeader > span {
+  color: #59667c;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.commentsForm,
+.commentEditForm {
+  display: grid;
+  gap: 7px;
+}
+
+.commentsForm label {
+  color: #39465d;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.commentsForm textarea,
+.commentEditForm textarea {
+  width: 100%;
+  border: 1px solid #ccd4e3;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #1c2333;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 8px 9px;
+  resize: vertical;
+}
+
+.commentsForm textarea:focus,
+.commentEditForm textarea:focus {
+  border-color: #6a76c8;
+  outline: 3px solid rgba(46, 58, 151, 0.12);
+}
+
+.commentsForm > button,
+.commentActions button,
+.commentEditButton {
+  border: 1px solid #b9c4ee;
+  border-radius: 6px;
+  background: #f1f4fd;
+  color: #2e3a97;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  justify-self: start;
+  padding: 6px 10px;
+}
+
+.commentsForm > button:disabled,
+.commentActions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.commentsReadOnly,
+.commentsEmpty {
+  margin: 0;
+  color: #6b7590;
+  font-size: 11px;
+}
+
+.commentsEmpty {
+  border: 1px dashed #cbd4e4;
+  border-radius: 7px;
+  background: #ffffff;
+  padding: 11px;
+  text-align: center;
+}
+
+.commentsError {
+  margin: 0;
+  border-radius: 6px;
+  background: #fff1f1;
+  color: #a32929;
+  font-size: 11px;
+  padding: 7px 9px;
+}
+
+.commentsList {
+  display: grid;
+  gap: 8px;
+}
+
+.commentRow {
+  display: grid;
+  gap: 5px;
+  border-left: 3px solid #c9d1f3;
+  background: #ffffff;
+  padding: 8px 10px;
+}
+
+.commentMeta {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 7px;
+  color: #6b7590;
+  font-size: 10px;
+}
+
+.commentMeta strong {
+  color: #39465d;
+  font-size: 11px;
+}
+
+.commentText {
+  margin: 0;
+  color: #1c2333;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.commentActions {
+  display: flex;
+  gap: 6px;
+}
+
+.commentEditButton {
+  background: transparent;
+  font-size: 10px;
+  padding: 3px 7px;
+}
+
+.exportFields { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+
+/* VDC-003: history metadata on the white export panel. */
+.exportPanel .historyTimeBy { color: #5a6478; }
+
+/* Original R7 / Package 10 default approvals: archived govVals(ap) + ap markup.
+ * Scope every override to this surface; other Govern tabs retain their layout.
+ * Small-screen stacking keeps the existing no-document-overflow requirement;
+ * the archived 390px reference itself overflows and is not copied as a defect.
+ */
+.approvalView { gap: 0; }
+.approvalView .header { margin-bottom: 10px; }
+.approvalView .headerTitle { gap: 12px; flex-wrap: wrap; }
+.approvalView .header p { margin-top: 0; }
+.approvalView .tabs { margin-bottom: 14px; }
+.approvalView .tabCount { padding: 0 6px; }
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.approvalGrid .queueList { grid-template-columns: minmax(0, 1fr); min-width: 0; }
+.approvalGrid .queueItem { display: block; min-width: 0; max-width: 100%; box-sizing: border-box; }
+.approvalGrid .queueTopline,
+.approvalGrid .queueFooter { flex-wrap: wrap; }
+.approvalGrid .queueTopline .approvalId,
+.approvalGrid .queueFooter > span,
+.approvalGrid .queueItem strong { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.approvalGrid .queueTopline .approvalId { overflow: visible; text-overflow: clip; white-space: normal; }
+.approvalGrid .queueItem strong { display: block; margin-top: 6px; }
+.approvalGrid .queueFooter { gap: 8px; margin-top: 4px; }
+.approvalGrid .badge,
+.approvalGrid .moduleBadge {
+  flex: none;
+  border: 0;
+  padding: 1px 8px;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: normal;
+}
+.approvalGrid .badge { background: #eef1f5; color: #5a6472; }
+.approvalGrid .badgeGood { background: #e5f3ea; color: #1e7f4f; }
+.approvalGrid .badgeWarn { background: #fbf1dd; color: #96610b; }
+.approvalGrid .badgeDanger { background: #fbe9e7; color: #b3261e; }
+.approvalGrid .moduleStore { background: #eceffb; color: #2e3a97; }
+.approvalGrid .moduleGovern { background: #eef1f5; color: #5a6472; }
+
+.approvalGrid .detailPanel { display: block; }
+.approvalGrid .detailHeader { align-items: center; flex-wrap: wrap; gap: 8px; }
+.approvalGrid .detailHeader .approvalId { font-size: 11px; white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+.approvalGrid .detailHeader .badge,
+.approvalGrid .detailHeader .moduleBadge { padding: 2px 9px; font-size: 10.5px; }
+.approvalGrid .detailHeader > .badge { margin-left: auto; }
+.approvalGrid .detailTitle { margin: 8px 0 0; }
+.approvalGrid .detailMeta { margin-top: 12px; }
+.approvalGrid .detailMeta dd { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+.approvalGrid .detailMeta .sla { color: #96610b; }
+.approvalGrid .evidenceBlock { display: block; margin-top: 12px; }
+.approvalGrid .evidenceBlock h4 { margin: 0 0 6px; font-weight: 700; }
+.approvalGrid .evidenceChip,
+.approvalGrid .emptyChip { border: 0; }
+.approvalGrid .evidenceChip:hover,
+.approvalGrid .evidenceChip:focus-visible { outline: 2px solid #12909f; outline-offset: 2px; }
+.approvalGrid .evidenceDetail { margin-top: 8px; }
+.approvalGrid .referenceRow { display: block; margin-top: 8px; color: #6d4fa3; font-weight: 600; overflow-wrap: anywhere; }
+.approvalGrid .decisionBox { display: block; margin-top: 14px; border-color: #eef1f6; }
+.approvalGrid .decisionBox label { display: block; margin-bottom: 5px; }
+.approvalGrid .decisionBox textarea {
+  display: block;
+  box-sizing: border-box;
+  min-height: 0;
+  border-color: #d6dce8;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  line-height: normal;
+}
+.approvalGrid .reasonRow { display: block; font-size: 11px; }
+.approvalGrid .reasonRow strong { display: block; margin-top: 5px; }
+.approvalGrid .actions { margin-top: 10px; }
+.approvalGrid .actions button { border-radius: 9px; }
+.approvalGrid .actions button:nth-child(2) { border-color: #e4c88a; color: #96610b; }
+.approvalGrid .actions button:nth-child(3) { border-color: #e7b7b2; color: #b3261e; }
+.approvalGrid .readOnlyNotice { margin-top: 10px; }
+.approvalGrid .decidedNotice { margin-top: 12px; border-color: #eef1f6; border-radius: 9px; background: #f8fafd; color: #3a4362; font-size: 11.5px; line-height: 1.6; }
+.approvalGrid .decidedNotice p { color: inherit; }
+.approvalGrid .lastAction { margin-top: 8px; }
+
+@media (max-width: 600px) {
+  .approvalView .headerTitle { gap: 2px 12px; }
 }

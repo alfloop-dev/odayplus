@@ -4,7 +4,7 @@ import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { AssistedIntake, AssignmentReceipt, SlaReceipt } from "@oday-plus/openapi-client";
 import { AssignmentSlaSummary, computeSlaState, SLA_STATE_MAP } from "../AssignmentSlaSummary";
-import { TransferIntakeDialog, DEFAULT_TRANSFER_TARGETS } from "../TransferIntakeDialog";
+import { TransferIntakeDialog, transferTargetKey } from "../TransferIntakeDialog";
 import { PauseSlaDialog } from "../PauseSlaDialog";
 import { IntakeProcessingDetail } from "../IntakeProcessingDetail";
 import type { IntakeApiError } from "../intakeClient";
@@ -56,6 +56,12 @@ const conflictError: IntakeApiError = {
   occurredAt: "2026-07-21T05:00:00Z",
   retryable: true,
 };
+
+const TEST_TRANSFER_TARGETS = [
+  { id: "10000000-0000-4000-8000-000000000001", name: "Synthetic reviewer", role: "expansion-manager" },
+  { id: "10000000-0000-4000-8000-000000000002", name: "Synthetic steward", role: "data-steward" },
+];
+const STEWARD_TARGET_KEY = transferTargetKey(TEST_TRANSFER_TARGETS[1]!);
 
 describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INTAKE-UX-ASSIGN-001)", () => {
   describe("AssignmentSlaSummary Component & SLA Logic", () => {
@@ -116,6 +122,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
 
       const html = renderToString(
         <TransferIntakeDialog
+          targetOptions={TEST_TRANSFER_TARGETS}
           busy={false}
           error={null}
           onClose={onClose}
@@ -134,8 +141,8 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       expect(html).not.toContain('data-testid="pause-reason-input"');
       expect(html).not.toContain('data-testid="pause-resume-time-input"');
 
-      expect(DEFAULT_TRANSFER_TARGETS.length).toBeGreaterThan(0);
-      expect(DEFAULT_TRANSFER_TARGETS[0].id).toBe("actor-mgr");
+      expect(html).not.toContain("actor-mgr");
+      expect(html).toContain("請選擇轉交對象");
     });
 
     it("preserves transfer draft inputs across a 409 OWNER_CONFLICT refresh and exposes current owner/version upon completion", () => {
@@ -148,6 +155,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
 
       const htmlConflict = renderToString(
         <TransferIntakeDialog
+          targetOptions={TEST_TRANSFER_TARGETS}
           busy={false}
           error={conflictError}
           onClose={vi.fn()}
@@ -157,7 +165,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
         />
       );
 
-      expect(htmlConflict).toContain("409 OWNER_CONFLICT");
+      expect(htmlConflict).toContain("409 —");
       expect(htmlConflict).toContain('data-testid="transfer-conflict-panel"');
       expect(htmlConflict).toContain('data-testid="transfer-conflict-refresh-btn"');
       expect(htmlConflict).toContain("INTAKE-TEST-ASG-001");
@@ -171,6 +179,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
 
       const htmlRefreshed = renderToString(
         <TransferIntakeDialog
+          targetOptions={TEST_TRANSFER_TARGETS}
           busy={false}
           error={null} // Error cleared by handleConflictRefresh
           onClose={vi.fn()}
@@ -201,7 +210,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       // Simulate full client transfer workflow with refreshed version v4
       const refreshedVersion = 4;
       const payload = {
-        target_owner_subject_id: "actor-steward",
+        target_owner_subject_id: TEST_TRANSFER_TARGETS[1]!.id,
         target_owner_role: "data-steward",
         handoff_note: "Transferred after 409 conflict refresh",
       };
@@ -257,7 +266,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
         />
       );
 
-      expect(htmlConflict).toContain("409 OWNER_CONFLICT");
+      expect(htmlConflict).toContain("409 —");
       expect(htmlConflict).toContain('data-testid="pause-conflict-panel"');
       expect(htmlConflict).toContain('data-testid="pause-conflict-refresh-btn"');
 
@@ -518,6 +527,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
 
       return (
         <TransferIntakeDialog
+          targetOptions={TEST_TRANSFER_TARGETS}
           busy={false}
           error={error}
           onClose={() => {}}
@@ -529,6 +539,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
             onSubmitSpy(payload, { ifMatch: `W/"${record.version}"` });
           }}
           record={record}
+          resourceVersion={record.version}
         />
       );
     }
@@ -560,6 +571,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
             onSubmitSpy(payload, { ifMatch: `W/"${record.version}"` });
           }}
           record={record}
+          resourceVersion={record.version}
         />
       );
     }
@@ -591,11 +603,11 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       const handoffTextarea = container.querySelector('[data-testid="transfer-handoff-note"]') as HTMLTextAreaElement;
       const riskCheckbox = container.querySelector('[data-testid="transfer-risk-ack"]') as HTMLInputElement;
 
-      setInputValue(targetSelect, "actor-steward");
+      setInputValue(targetSelect, STEWARD_TARGET_KEY);
       setInputValue(handoffTextarea, "Preserved draft handoff note across 409 refresh");
       setInputValue(riskCheckbox, true);
 
-      expect(targetSelect.value).toBe("actor-steward");
+      expect(targetSelect.value).toBe(STEWARD_TARGET_KEY);
       expect(handoffTextarea.value).toBe("Preserved draft handoff note across 409 refresh");
       expect(riskCheckbox.checked).toBe(true);
 
@@ -608,7 +620,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       expect(container.querySelector('[data-testid="transfer-record-version"]')?.textContent).toBe("v4");
       expect(container.querySelector('[data-testid="transfer-record-owner"]')?.textContent).toBe("周育安（資料管理員）");
 
-      expect((container.querySelector('[data-testid="transfer-target-select"]') as HTMLSelectElement).value).toBe("actor-steward");
+      expect((container.querySelector('[data-testid="transfer-target-select"]') as HTMLSelectElement).value).toBe(STEWARD_TARGET_KEY);
       expect((container.querySelector('[data-testid="transfer-handoff-note"]') as HTMLTextAreaElement).value).toBe("Preserved draft handoff note across 409 refresh");
       expect((container.querySelector('[data-testid="transfer-risk-ack"]') as HTMLInputElement).checked).toBe(true);
 
@@ -620,7 +632,7 @@ describe("Assignment, SLA, Transfer, Pause, Escalation & Conflict Suite (ODP-INT
       expect(onSubmitSpy).toHaveBeenCalledTimes(1);
       expect(onSubmitSpy).toHaveBeenCalledWith(
         {
-          target_owner_subject_id: "actor-steward",
+          target_owner_subject_id: TEST_TRANSFER_TARGETS[1]!.id,
           target_owner_role: "data-steward",
           handoff_note: "Preserved draft handoff note across 409 refresh",
           riskSummary: expect.any(String),

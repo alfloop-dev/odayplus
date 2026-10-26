@@ -27,6 +27,7 @@ from modules.forecastops import (
     ForecastInput,
     ForecastOpsService,
     StoreDayObservation,
+    default_forecast_alert_policy,
 )
 from modules.learninghub.infrastructure import (
     EvidentlyDriftMonitor,
@@ -35,6 +36,7 @@ from modules.learninghub.infrastructure import (
 )
 from pipelines.orchestration import DagsterTrainingOrchestrator
 from pipelines.quality import GreatExpectationsGate, QualityCheck
+from shared.governance import InMemoryDecisionPolicyRepository
 from solver.evolutionary import (
     EvolutionaryPortfolioOption,
     solve_portfolio_frontier,
@@ -199,7 +201,7 @@ def test_governed_training_registry_and_monitoring_flow_uses_real_oss(
         drift_share_threshold=0.5,
         snapshot_id="drift-oss-e2e",
     )
-    assert drift.engine == "evidently"
+    assert drift.engine == "native_drift"
     assert drift.drift_detected is True
     assert drift.to_dict()["report"]["metrics"]
 
@@ -220,6 +222,12 @@ def _forecast_input() -> ForecastInput:
         store_id="store-forecast-e2e",
         observations=observations,
         prediction_origin_time=datetime(2026, 7, 20, 9, 0, tzinfo=UTC),
+    )
+
+
+def _forecast_policy_repository() -> InMemoryDecisionPolicyRepository:
+    return InMemoryDecisionPolicyRepository(
+        [default_forecast_alert_policy(_forecast_input().tenant_id)]
     )
 
 
@@ -252,6 +260,7 @@ def test_forecast_survival_search_and_optimization_flow_uses_real_oss() -> None:
     forecast = ForecastOpsService(
         engine="statsforecast",
         model_name="seasonal_naive",
+        policy_repository=_forecast_policy_repository(),
     ).forecast([_forecast_input()]).forecasts[0]
     assert forecast.engine_name == "statsforecast"
     assert forecast.model_metadata["library"] == "statsforecast"
@@ -386,7 +395,7 @@ def test_forecast_api_uses_deployment_selected_statsforecast(
     }
 
     response = TestClient(
-        create_app(),
+        create_app(forecastops_policy_repository=_forecast_policy_repository()),
         headers=FORECASTOPS_HEADERS,
     ).post(
         "/api/v1/forecastops/forecast-jobs",

@@ -5,7 +5,8 @@ import type { AssistedIntake, IntakeInboxPage, IntakeInboxQuery } from "@oday-pl
 import type { OperatorRoleId } from "../../navigation";
 import { getOperatorRole } from "../../navigation";
 import styles from "./intake.module.css";
-import { AddListingFromUrlDialog } from "./AddListingFromUrlDialog";
+import { AddListingFromUrlDialog, type IntakeHeatZoneOptions } from "./AddListingFromUrlDialog";
+import { StateMatrix } from "./StateMatrix";
 import {
   matchLabel,
   matchTone,
@@ -16,7 +17,8 @@ import {
 } from "./intakeTypes";
 import { canPerform, canView, isReadOnly, NO_ACCESS_NOTE, READ_ONLY_NOTE } from "./intakePermissions";
 import { type IntakeApiError } from "./intakeClient";
-import { useIntakeInboxQuery, type SavedViewType } from "./useIntakeInboxQuery";
+import { useIntakeInboxQuery, type IntakeInboxFilterState, type SavedViewType } from "./useIntakeInboxQuery";
+import { INBOX_FILTER_KEYS, toIntakeInboxQuery } from "./inboxUrlState";
 
 export function ListingInboxIntakeView({
   activeRoleId,
@@ -26,12 +28,17 @@ export function ListingInboxIntakeView({
   actionError,
   busy,
   selectedHeatZoneId,
+  heatZoneOptions,
   onAddSubmit,
   onOpenDetail,
   onRetryLoad,
   onRetryIntake,
   pageData,
   onQueryChange,
+  queryFilters,
+  onFilterChange,
+  addDialogRequested = false,
+  onAddDialogClosed,
 }: {
   activeRoleId: OperatorRoleId;
   records: AssistedIntake[];
@@ -40,14 +47,21 @@ export function ListingInboxIntakeView({
   actionError?: IntakeApiError | null;
   busy: boolean;
   selectedHeatZoneId?: string;
+  heatZoneOptions?: IntakeHeatZoneOptions;
   onAddSubmit: (input: { url: string; heatZoneId: string }) => Promise<void>;
   onOpenDetail: (intakeId: string) => void;
   onRetryLoad?: () => void;
   onRetryIntake?: (intakeId: string) => void;
   pageData?: IntakeInboxPage;
   onQueryChange?: (query: IntakeInboxQuery) => void;
+  queryFilters?: IntakeInboxFilterState;
+  onFilterChange?: (next: IntakeInboxFilterState) => void;
+  /** URL asked for the add dialog (`dialog=add`, e.g. from Find Areas). */
+  addDialogRequested?: boolean;
+  onAddDialogClosed?: () => void;
 }) {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [isStateMatrixOpen, setIsStateMatrixOpen] = useState(false);
 
   const role = getOperatorRole(activeRoleId);
   const submitterLabel = `${role.label}`;
@@ -56,29 +70,44 @@ export function ListingInboxIntakeView({
   const canSubmit = canPerform("submit", activeRoleId);
   const canRetry = canPerform("retry", activeRoleId);
 
+  useEffect(() => { setIsStateMatrixOpen(false); }, [activeRoleId]);
+
+  useEffect(() => {
+    if (addDialogRequested && canSubmit) setIsAddDialogOpen(true);
+  }, [addDialogRequested, canSubmit]);
+
+  const closeAddDialog = () => {
+    setIsAddDialogOpen(false);
+    onAddDialogClosed?.();
+  };
+
   const {
     filters,
     updateFilters,
     resetFilters,
     toggleSort,
-  } = useIntakeInboxQuery();
+  } = useIntakeInboxQuery(queryFilters && onFilterChange ? { filters: queryFilters, onChange: onFilterChange } : undefined);
   useEffect(() => {
-    onQueryChange?.({ ...filters, selectedHeatZoneId: selectedHeatZoneId || filters.heatZoneId || undefined });
+    onQueryChange?.(toIntakeInboxQuery(filters, selectedHeatZoneId));
   }, [filters, onQueryChange, selectedHeatZoneId]);
   const paginatedRecords = records;
   const totalRecords = pageData?.total ?? records.length;
   const pageCount = Math.max(1, Math.ceil(totalRecords / filters.pageSize));
-  const counts = pageData?.counts ?? { needsReview: 0, awaitingEntry: 0, processing: 0, blocked: 0, ready: 0 };
+  const counts = pageData?.counts;
+  const effectiveHeatZoneId = filters.heatZoneId ?? selectedHeatZoneId ?? "";
+  const hasActiveFilters = INBOX_FILTER_KEYS.some((key) =>
+    key === "savedView" ? filters.savedView !== "all"
+      : key === "heatZoneId" ? Boolean(effectiveHeatZoneId) : filters[key] !== "");
 
-  const savedViewTabs: { id: SavedViewType; label: string; count: number }[] = useMemo(
+  const savedViewTabs: { id: SavedViewType; label: string; count: number | null }[] = useMemo(
     () => [
-      { id: "all", label: "全部物件", count: records.length },
-      { id: "needsReview", label: "需覆核", count: counts.needsReview },
-      { id: "awaitingEntry", label: "待補錄", count: counts.awaitingEntry },
-      { id: "processing", label: "處理中", count: counts.processing },
-      { id: "blocked", label: "隔離／失敗", count: counts.blocked },
+      { id: "all", label: "全部物件", count: !hasActiveFilters ? pageData?.total ?? null : null },
+      { id: "needsReview", label: "需覆核", count: counts?.needsReview ?? null },
+      { id: "awaitingEntry", label: "待補錄", count: counts?.awaitingEntry ?? null },
+      { id: "processing", label: "處理中", count: counts?.processing ?? null },
+      { id: "blocked", label: "隔離／失敗", count: counts?.blocked ?? null },
     ],
-    [records.length, counts],
+    [hasActiveFilters, pageData?.total, counts],
   );
 
   if (!permitted) {
@@ -106,7 +135,16 @@ export function ListingInboxIntakeView({
           <span className={styles.screenBadge}>UX-SCR-EXP-003</span>
         </div>
 
-        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+        <div className={styles.inboxPaginationControls}>
+          <button
+            aria-haspopup="dialog"
+            className={styles.secondaryButton}
+            data-testid="intake-state-matrix-trigger"
+            onClick={() => setIsStateMatrixOpen(true)}
+            type="button"
+          >
+            收件狀態矩陣
+          </button>
           <div aria-label="檢視模式切換" className={styles.chip} data-testid="intake-view-mode-toggle">
             <button
               className={filters.viewMode === "list" ? styles.primaryButton : styles.secondaryButton}
@@ -155,15 +193,16 @@ export function ListingInboxIntakeView({
             type="button"
             style={{ fontSize: "0.85rem", padding: "0.3rem 0.75rem" }}
           >
-            {tab.label} ({tab.count})
+            {tab.label}{tab.count === null ? "" : ` (${tab.count})`}
           </button>
         ))}
       </div>
 
       {/* Filter Bar */}
-      <div className={styles.grid2} style={{ margin: "0.5rem 0", gap: "0.5rem" }}>
+      <div className={styles.inboxFilterBar}>
         <input
-          className={styles.input}
+          aria-label="搜尋收件 URL、編號、來源或送件人"
+          className={[styles.input, styles.inboxFilterSearch].join(" ")}
           data-testid="intake-search-input"
           onChange={(e) => updateFilters({ search: e.target.value })}
           placeholder="搜尋 URL / ID / 來源 / 送件人…"
@@ -171,7 +210,7 @@ export function ListingInboxIntakeView({
           value={filters.search}
         />
 
-        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+        <div className={styles.inboxFilterControls}>
           <select
             aria-label="依收件方式篩選"
             className={styles.select}
@@ -218,6 +257,77 @@ export function ListingInboxIntakeView({
             <option value="POSSIBLE_MATCH">疑似重複 (POSSIBLE_MATCH)</option>
             <option value="QUARANTINED">隔離 (QUARANTINED)</option>
           </select>
+
+          {([
+            ["sourceId", "來源 ID", "intake-filter-source"],
+            ["submittedBy", "送件者 ID", "intake-filter-submitted-by"],
+            ["ownerId", "負責人 ID", "intake-filter-owner"],
+            ["heatZoneId", "HeatZone ID", "intake-filter-heat-zone"],
+            ["assignedAreaId", "負責區域 ID", "intake-filter-area"],
+          ] as const).map(([key, label, testId]) => (
+            <label className={styles.inboxFilterField} key={key}>
+              <span>{label}</span>
+              <input className={styles.input} data-testid={testId} type="text"
+                value={key === "heatZoneId" ? effectiveHeatZoneId : filters[key]} placeholder="不限"
+                onChange={(event) => updateFilters({ [key]: event.target.value })} />
+            </label>
+          ))}
+
+          <label className={styles.inboxFilterField}>
+            <span>指派狀態</span>
+            <select className={styles.select} data-testid="intake-filter-assignment"
+              value={filters.assignmentStatus} onChange={(event) => updateFilters({ assignmentStatus: event.target.value as IntakeInboxFilterState["assignmentStatus"] })}>
+              <option value="">不限</option>
+              <option value="UNASSIGNED">尚未指派</option>
+              <option value="ASSIGNED">已指派</option>
+              <option value="CLAIMED">已認領</option>
+              <option value="TRANSFERRED">已轉交</option>
+              <option value="ESCALATED">已升級處理</option>
+              <option value="COMPLETED">已完成</option>
+            </select>
+          </label>
+
+          <label className={styles.inboxFilterField}>
+            <span>SLA 狀態</span>
+            <select className={styles.select} data-testid="intake-filter-sla"
+              value={filters.slaState} onChange={(event) => updateFilters({ slaState: event.target.value })}>
+              <option value="">不限</option>
+              <option value="ON_TRACK">進度內</option>
+              <option value="DUE_SOON">即將到期</option>
+              <option value="OVERDUE">已逾期</option>
+              <option value="BREACHED">已違反 SLA</option>
+              <option value="PAUSED">已暫停</option>
+              <option value="COMPLETED">已完成</option>
+            </select>
+          </label>
+
+          {([
+            ["observedFrom", "最近觀察起始", "intake-filter-observed-from"],
+            ["observedTo", "最近觀察截止", "intake-filter-observed-to"],
+            ["updatedFrom", "更新起始", "intake-filter-updated-from"],
+            ["updatedTo", "更新截止", "intake-filter-updated-to"],
+          ] as const).map(([key, label, testId]) => (
+            <label className={styles.inboxFilterField} key={key}>
+              <span>{label}（本地時間）</span>
+              <input className={styles.input} data-testid={testId} type="datetime-local" step="0.001"
+                value={localFilterTime(filters[key])}
+                onChange={(event) => updateFilters({ [key]: filterTimeIso(event.target.value) })} />
+            </label>
+          ))}
+
+          {([
+            ["masked", "欄位遮蔽", "intake-filter-masked", "有遮蔽", "無遮蔽"],
+            ["restricted", "受限資料", "intake-filter-restricted", "受限制", "未受限制"],
+            ["retryable", "重試狀態", "intake-filter-retryable", "可重試", "不可重試"],
+          ] as const).map(([key, label, testId, yes, no]) => (
+            <label className={styles.inboxFilterField} key={key}>
+              <span>{label}</span>
+              <select className={styles.select} data-testid={testId} value={filters[key]}
+                onChange={(event) => updateFilters({ [key]: event.target.value as "" | "true" | "false" })}>
+                <option value="">不限</option><option value="true">{yes}</option><option value="false">{no}</option>
+              </select>
+            </label>
+          ))}
 
           <button
             className={styles.secondaryButton}
@@ -307,15 +417,19 @@ export function ListingInboxIntakeView({
                 處理階段 {filters.sortBy === "stage" ? (filters.sortOrder === "asc" ? "▲" : "▼") : ""}
               </button>
               <span>比對結果</span>
-              <span>送件人 / 擁有者</span>
-              <button
-                className={styles.secondaryButton}
-                onClick={() => toggleSort("updatedAt")}
-                type="button"
-                style={{ padding: 0, border: "none", background: "none" }}
-              >
-                動作 / 更新 {filters.sortBy === "updatedAt" ? (filters.sortOrder === "asc" ? "▲" : "▼") : ""}
-              </button>
+              <div className={`${styles.rowMeta} ${styles.inboxRowMetadata}`}>
+                <span>送件人／負責人／時程</span>
+                {([
+                  ["submittedAt", "送件時間"], ["lastObservedAt", "最近觀察"], ["dueAt", "到期時間"], ["updatedAt", "更新時間"],
+                ] as const).map(([key, label]) => (
+                  <button className={styles.secondaryButton} key={key} type="button"
+                    data-testid={`intake-sort-${key}`} onClick={() => toggleSort(key)}
+                    style={{ padding: 0, border: "none", background: "none" }}>
+                    {label} {filters.sortBy === key ? (filters.sortOrder === "asc" ? "▲" : "▼") : ""}
+                  </button>
+                ))}
+              </div>
+              <span>動作</span>
             </div>
 
             {/* Table Rows */}
@@ -330,15 +444,14 @@ export function ListingInboxIntakeView({
                   data-active={isSelected ? "true" : undefined}
                   data-testid={`intake-inbox-row-${record.id}`}
                   onClick={() => onOpenDetail(record.id)}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") onOpenDetail(record.id);
-                  }}
                 >
-                  <span className={styles.rowId}>{record.id}</span>
-                  <span className={styles.srcChip}>{record.sourceId}</span>
-                  <span className={styles.rowUrl} title={`原始 URL: ${record.canonicalUrl}`}>
+                  <button type="button" className={styles.rowId} aria-label={`開啟收件 ${record.id}`}
+                    data-testid={`intake-row-open-${record.id}`}
+                    style={{ background: "none", border: 0, padding: 0, textAlign: "left", cursor: "pointer" }}
+                    onClick={(event) => { event.stopPropagation(); onOpenDetail(record.id); }}
+                  >{record.id}</button>
+                  <span className={styles.srcChip}>{record.sourceId ?? "尚未提供"}</span>
+                  <span className={styles.rowUrl} title={`正規化 URL: ${record.canonicalUrl}`}>
                     {shortUrl(record.canonicalUrl)}
                   </span>
                   <span
@@ -361,11 +474,30 @@ export function ListingInboxIntakeView({
                       "-"
                     )}
                   </span>
-                  <span className={styles.rowMeta}>
-                    {record.intakeMethod ?? "URL"} · 送件 {record.submitter} · 指派 {record.owner || "未認領"}<br />
-                    SLA {record.slaState ?? "未提供"} · 更新 {record.auditEvents?.at(-1)?.occurredAt ?? record.capturedAt ?? "待處理"}<br />
-                    {record.rawSnapshot ? "證據已擷取" : "證據待補"} · {record.stage === "QUARANTINED" ? "已隔離" : record.failure ? (record.failure.retryable ? "可重試" : "不可重試") : "未隔離"}
-                  </span>
+                  <div className={`${styles.rowMeta} ${styles.inboxRowMetadata}`}>
+                    <div className={styles.inboxMetadataGroup}>
+                      <span>收件方式 {record.intakeMethod ?? "尚未提供"}</span>
+                      <span data-testid={`intake-row-owner-${record.id}`}>負責人 {record.ownerSubjectId ?? "尚未提供"}</span>
+                      <span>指派 {record.assignmentStatus ?? "尚未提供"}</span>
+                    </div>
+                    <div className={styles.inboxMetadataGroup}>
+                      <span>SLA {record.slaState ?? "尚未提供"}</span>
+                      <span data-testid={`intake-row-due-${record.id}`}>到期 {record.dueAt ?? "尚未提供"}</span>
+                      <span>區域 {record.assignedAreaId ?? "尚未提供"}</span>
+                    </div>
+                    <div className={styles.inboxMetadataGroup}>
+                      <span data-testid={`intake-row-submitted-by-${record.id}`}>送件者 {record.submittedBy ?? "尚未提供"}</span>
+                      <span data-testid={`intake-row-submitted-at-${record.id}`}>送件時間 {record.submittedAt ?? "尚未提供"}</span>
+                      <span data-testid={`intake-row-observed-${record.id}`}>最近觀察 {record.lastObservedAt ?? "尚未提供"}</span>
+                      <span data-testid={`intake-row-updated-${record.id}`}>更新 {record.updatedAt ?? "尚未提供"}</span>
+                    </div>
+                    <div className={styles.inboxMetadataGroup}>
+                      <span data-testid={`intake-row-masking-${record.id}`}>{record.masked === true ? "欄位已遮蔽" : record.masked === false ? "欄位未遮蔽" : "遮蔽狀態尚未提供"}</span>
+                      <span data-testid={`intake-row-restriction-${record.id}`}>{record.restricted === true ? "資料受限制" : record.restricted === false ? "資料未受限制" : "資料限制尚未提供"}</span>
+                      <span>{record.failure?.retryable === true ? "可重試" : record.failure?.retryable === false ? "不可重試" : "重試狀態尚未提供"}</span>
+                      <span>{record.failure?.nextAction ?? (record.stage === "NEEDS_REVIEW" ? "待人工覆核" : rowActionLabel(record))}</span>
+                    </div>
+                  </div>
                   <button
                     className={styles.primaryButton}
                     data-testid={`intake-row-action-${record.id}`}
@@ -408,7 +540,7 @@ export function ListingInboxIntakeView({
             共 {totalRecords} 筆收件紀錄（第 {filters.page} / {pageCount} 頁）
           </span>
 
-          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+          <div className={styles.inboxPaginationControls}>
             <select
               aria-label="每頁筆數"
               className={styles.select}
@@ -419,6 +551,7 @@ export function ListingInboxIntakeView({
               <option value="10">每頁 10 筆</option>
               <option value="20">每頁 20 筆</option>
               <option value="50">每頁 50 筆</option>
+              {![10, 20, 50].includes(filters.pageSize) ? <option value={filters.pageSize}>每頁 {filters.pageSize} 筆</option> : null}
             </select>
 
             <button
@@ -444,18 +577,23 @@ export function ListingInboxIntakeView({
         </div>
       ) : null}
 
+      {isStateMatrixOpen ? <StateMatrix onClose={() => setIsStateMatrixOpen(false)} /> : null}
+
       {/* Add Dialog */}
       {isAddDialogOpen ? (
         <AddListingFromUrlDialog
           busy={busy}
           defaultHeatZoneId={selectedHeatZoneId}
+          heatZoneOptions={heatZoneOptions}
           error={actionError ?? null}
-          onClose={() => setIsAddDialogOpen(false)}
+          onClose={closeAddDialog}
           onOpenExisting={(intakeId) => {
             setIsAddDialogOpen(false);
             onOpenDetail(intakeId);
           }}
           onSubmit={async (input) => {
+            // The submit handler moves the URL on (dialog=detail on success),
+            // so only the local open state is cleared here.
             await onAddSubmit(input);
             setIsAddDialogOpen(false);
           }}
@@ -464,4 +602,18 @@ export function ListingInboxIntakeView({
       ) : null}
     </section>
   );
+}
+
+function localFilterTime(value: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  const pad = (part: number, width = 2) => String(part).padStart(width, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
+}
+
+function filterTimeIso(value: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : "";
 }

@@ -32,6 +32,7 @@ from modules.sitescore.runtime import (
     sitescore_production_required,
 )
 from shared.domain import Prediction, PredictionRun, SiteScoreRun
+from shared.domain.models import MEASUREMENT_UNMEASURED
 
 
 @dataclass(frozen=True)
@@ -94,6 +95,27 @@ class SiteScoreReportService:
         prediction_origin_time: datetime | None = None,
         scored_at: datetime | None = None,
     ) -> SiteScoreExecution:
+        execution = self.infer_candidates(
+            features,
+            prediction_origin_time=prediction_origin_time,
+            scored_at=scored_at,
+        )
+        return self.persist_execution(
+            execution, prediction_origin_time=prediction_origin_time,
+        )
+
+    def infer_candidates(
+        self,
+        features: Iterable[SiteScoreFeatureInput | Mapping[str, Any]],
+        *,
+        prediction_origin_time: datetime | None = None,
+        scored_at: datetime | None = None,
+    ) -> SiteScoreExecution:
+        """Compute an execution without writing reports or prediction lineage.
+
+        Durable job handlers can run external inference outside their SQL
+        transaction, then persist only after rechecking lease and authority.
+        """
         feature_rows = list(features)
         inference: ModelInferenceResult | None = None
         if self.require_production_model:
@@ -145,10 +167,30 @@ class SiteScoreReportService:
                 prediction_origin_time=prediction_origin_time,
                 scored_at=scored_at,
             )
+        return SiteScoreExecution(reports=tuple(reports), model_inference=inference)
+
+    def persist_execution(
+        self,
+        execution: SiteScoreExecution,
+        *,
+        prediction_origin_time: datetime | None = None,
+        prediction_run_id: str | None = None,
+    ) -> SiteScoreExecution:
+        """Persist a computed execution inside the caller's transaction.
+
+        This method does not claim job ownership. A job caller must first lock
+        and validate its canonical checkpoint and active delivery fence.
+        """
+        inference = execution.model_inference
+        if self.require_production_model and inference is None:
+            raise ModelOutputContractError(
+                "SiteScore production persistence requires an admitted model execution"
+            )
         saved_reports = self._persist_reports(
-            reports,
+            execution.reports,
             prediction_origin_time=prediction_origin_time,
             model_version_id=(inference.binding.model_id if inference else SITESCORE_MODEL_VERSION),
+            prediction_run_id=prediction_run_id,
         )
         return SiteScoreExecution(
             reports=tuple(saved_reports),
@@ -161,11 +203,12 @@ class SiteScoreReportService:
         *,
         prediction_origin_time: datetime | None,
         model_version_id: str,
+        prediction_run_id: str | None = None,
     ) -> list[SiteScoreReport]:
         saved_reports = [self.repository.save_report(report) for report in reports]
 
         if saved_reports:
-            run_id = f"pred-run-sitescore-{uuid4()}"
+            run_id = prediction_run_id or f"pred-run-sitescore-{uuid4()}"
             origin = prediction_origin_time or datetime.now(UTC)
             run = PredictionRun(
                 prediction_run_id=run_id,
@@ -209,7 +252,16 @@ class SiteScoreReportService:
                     p50_value=report.m12.p50,
                     p90_value=report.m12.p90,
                     unit="TWD",
-                    confidence=report.confidence,
+                    # An abstaining report scores with a numeric 0.0 but was
+                    # never measured; persisting that as the canonical
+                    # confidence would be indistinguishable from a measured
+                    # zero, so absence crosses this boundary as NULL.
+                    confidence=(
+                        None
+                        if report.confidence_status == MEASUREMENT_UNMEASURED
+                        else report.confidence
+                    ),
+                    confidence_status=report.confidence_status,
                 )
                 self.repository.save_prediction(prediction)
 

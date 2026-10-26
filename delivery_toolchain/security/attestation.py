@@ -69,7 +69,7 @@ def generate_attestation(root: Path = ROOT) -> dict[str, Any]:
         exemptions_path=root / "docs/security/license_exemptions.json",
     )
 
-    sbom_path = root / "docs/evidence/completion/ODP-PGAP-SUPPLY-001/sbom.json"
+    sbom_path = root / "docs/evidence/sbom.json"
     sbom_sha256 = sha256_file(sbom_path)
 
     evidence_hashes = {
@@ -185,7 +185,7 @@ def verify_attestation(attestation: dict[str, Any], root: Path = ROOT) -> tuple[
 
     expected_sbom = evidence.get("sbom_sha256")
     if expected_sbom:
-        actual_sbom = sha256_file(root / "docs/evidence/completion/ODP-PGAP-SUPPLY-001/sbom.json")
+        actual_sbom = sha256_file(root / "docs/evidence/sbom.json")
         if actual_sbom != expected_sbom:
             errors.append(f"Hash drift on sbom_sha256: expected {expected_sbom}, got {actual_sbom}")
     else:

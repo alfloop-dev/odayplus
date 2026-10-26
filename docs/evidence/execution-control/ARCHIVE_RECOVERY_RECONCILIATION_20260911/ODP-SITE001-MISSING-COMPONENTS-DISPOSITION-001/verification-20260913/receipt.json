@@ -1,0 +1,118 @@
+{
+  "task_id": "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+  "actor": "Codex contributor",
+  "repository": "alfloop-dev/odayplus",
+  "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-site001-missing-components-disposition-001",
+  "measured_head_sha": "9623de0f9942577b886d56d276818be8a1b5998b",
+  "measured_head_tree": "2a8479a3a1468e92d2dd4e0e58df94912eec9ffa",
+  "revision_semantics": "The parent HEAD identifies repository ancestry. Changed evidence is bound by actual worktree input hashes, not claimed committed at HEAD.",
+  "input_files": {
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/README.md": {
+      "sha256": "5eb84a9ecb3e688bdb9ac2974722f6384900449e1d84918db405ce785e9553f7",
+      "bytes": 17407
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/acceptance-reconciliation.json": {
+      "sha256": "a1b2c201e90d7e1f0f4d96952822497e2505536c9c6e0c3e97c3776e01c00d38",
+      "bytes": 69329
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/capture_verification.py": {
+      "sha256": "726027bc93236d902b4a14f684b4824023293aaf8b1f7a0ae4e798de32b42e1a",
+      "bytes": 8268
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/dependency-input-snapshot.json": {
+      "sha256": "09396deb2205c38a506af2d05cfdeb331666a315d7f1b3ac5a2f19e2a4279191",
+      "bytes": 18723
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/evidence-manifest.json": {
+      "sha256": "12be2a8b93c8852bdc67d5c20200dc12c568a654a915ac57b4c8d89d203021a7",
+      "bytes": 70968
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/historical-receipts/unverified-owner-claims-9623de0f.json": {
+      "sha256": "af8b0a2a4fa8a2bde4973be27b834162c6c2c200686c18ba8725611b6f14c230",
+      "bytes": 13503
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/original-evidence.json": {
+      "sha256": "fcf30ffa6f34f88bdcf96dc5420854ac76e0c34b9ccd2f9672b551dc4ed98c86",
+      "bytes": 22847
+    },
+    "/home/lupin/odayplus/support/handoffs/archive-recovery-dispatch-20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/original-evidence.json": {
+      "sha256": "fcf30ffa6f34f88bdcf96dc5420854ac76e0c34b9ccd2f9672b551dc4ed98c86",
+      "bytes": 22847
+    }
+  },
+  "retry_reason": "Required narrow capture after correcting unretained or mixed-revision raw receipts; no historical product suites rerun.",
+  "commands": [
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check",
+        "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
+        "--",
+        "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001"
+      ],
+      "started_at": "2026-09-13T04:15:48.457229+00:00",
+      "completed_at": "2026-09-13T04:15:48.472847+00:00",
+      "duration_seconds": 0.015579742,
+      "duration_source": "time.monotonic_ns around subprocess.run",
+      "exit_code": 0,
+      "stdout": {
+        "raw_result_ref": "verification-20260913/command-1.stdout.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stderr": {
+        "raw_result_ref": "verification-20260913/command-1.stderr.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    {
+      "argv": [
+        "/usr/bin/python3",
+        "/tmp/pantheon-worker-worktrees/pantheon/odp-site001-missing-components-disposition-001/docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/capture_verification.py",
+        "--check"
+      ],
+      "started_at": "2026-09-13T04:15:48.474075+00:00",
+      "completed_at": "2026-09-13T04:15:48.558262+00:00",
+      "duration_seconds": 0.084156647,
+      "duration_source": "time.monotonic_ns around subprocess.run",
+      "exit_code": 0,
+      "stdout": {
+        "raw_result_ref": "verification-20260913/command-2.stdout.txt",
+        "sha256": "6343c3f739e78d13848051e904846cbdf9c535f5c030ff07cd0ace2d2bfa1507",
+        "bytes": 2617
+      },
+      "stderr": {
+        "raw_result_ref": "verification-20260913/command-2.stderr.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    {
+      "argv": [
+        "cmp",
+        "-s",
+        "/tmp/pantheon-worker-worktrees/pantheon/odp-site001-missing-components-disposition-001/docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/original-evidence.json",
+        "/home/lupin/odayplus/support/handoffs/archive-recovery-dispatch-20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/original-evidence.json"
+      ],
+      "started_at": "2026-09-13T04:15:48.559005+00:00",
+      "completed_at": "2026-09-13T04:15:48.564783+00:00",
+      "duration_seconds": 0.005758487,
+      "duration_source": "time.monotonic_ns around subprocess.run",
+      "exit_code": 0,
+      "stdout": {
+        "raw_result_ref": "verification-20260913/command-3.stdout.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stderr": {
+        "raw_result_ref": "verification-20260913/command-3.stderr.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    }
+  ],
+  "inputs_unchanged_after_execution": true,
+  "all_commands_succeeded": true
+}

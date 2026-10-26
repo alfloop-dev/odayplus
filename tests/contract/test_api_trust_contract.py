@@ -1,0 +1,2563 @@
+"""Contract tests for API Trust, Multi-Issuer Boundary, and Authorization Audit.
+
+Task: ODP-WEB-LOCAL-AUTH-API-TRUST-001
+Contract: ODP-WEB-PASSWORD-FIRST-AUTH-CONTRACT-001 §4, §5, §8, §10 (T16-T21)
+
+Test Matrix:
+- T16: API 拒絕瀏覽器自帶 x-subject-id / x-roles / x-tenant-id (production 模式下一律不採信)
+- T17: 多 issuer 驗證器：local / oidc / service 三類 token 各自正確組裝 Principal
+- T18: 未 link 的 OIDC (iss, sub) 一律拒絕 (401 + federated_identity_not_linked 稽核事件)
+- T19: provider 未設定或驗證失敗 fail closed
+- T20: RBAC allow 與 deny 都產生稽核事件 (兩種 outcome 都有事件與 correlation_id)
+- T21: 撤銷傳播：高風險動作即時檢查 sid (撤銷後第一個寫入請求即 401)
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import time
+from typing import Any
+from unittest.mock import patch
+from uuid import uuid4
+
+import pytest
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.testclient import TestClient
+
+from apps.api.oday_api.security.dependencies import (
+    OPERATOR_CONSOLE_RESOURCE,
+    principal_from_headers,
+    require_operator_permission,
+    require_permission,
+    reset_bound_persistence,
+    reset_default_boundary,
+)
+from modules.opsboard.auth import (
+    AUTHENTICATION_EVENT_TYPE,
+    AuthBoundaryConfig,
+    AuthenticationBoundary,
+    AuthFailureReason,
+    Credentials,
+)
+from modules.opsboard.auth.jwt import SigningKey, encode_compact_jwt
+from shared.audit import InMemoryAuditLog
+from shared.auth import (
+    Action,
+    AuthorizationEngine,
+    DataClassification,
+    Role,
+    Scope,
+)
+from shared.identity import (
+    Account,
+    InMemoryIdentityStore,
+    InMemorySessionRepository,
+    RevocationReason,
+    SessionConfig,
+    SessionService,
+)
+
+# --- Test Helpers ---
+
+LOCAL_SECRET = b"test-local-signing-key-secret-32b-long!"
+OIDC_SECRET = b"test-oidc-signing-key-secret-32b-long!!"
+SERVICE_SECRET = b"test-service-signing-key-secret-32b-long"
+
+LOCAL_KEY = SigningKey(kid="local-k1", algorithm="HS256", secret=LOCAL_SECRET)
+OIDC_KEY = SigningKey(kid="oidc-k1", algorithm="HS256", secret=OIDC_SECRET)
+SERVICE_KEY = SigningKey(kid="service-k1", algorithm="HS256", secret=SERVICE_SECRET)
+
+LOCAL_ISSUER = "urn:odp:identity:local"
+OIDC_ISSUER = "https://accounts.google.com"
+SERVICE_ISSUER = "urn:odp:service:cron"
+AUDIENCE = "oday-api"
+
+
+def make_jwt(
+    key: SigningKey,
+    *,
+    iss: str,
+    sub: str,
+    aud: str = AUDIENCE,
+    exp_offset: int = 3600,
+    extra_claims: dict[str, Any] | None = None,
+) -> str:
+    now = int(time.time())
+    payload: dict[str, Any] = {
+        "iss": iss,
+        "sub": sub,
+        "aud": aud,
+        "iat": now,
+        "nbf": now - 10,
+        "exp": now + exp_offset,
+    }
+    if extra_claims:
+        payload.update(extra_claims)
+    return encode_compact_jwt(payload, key)
+
+
+def make_local_jwt(
+    *,
+    sub: str,
+    sid: str,
+    tenant_id: str,
+    exp_offset: int = 3600,
+    extra_claims: dict[str, Any] | None = None,
+) -> str:
+    """Local access token carrying every Contract §4.3 required claim.
+
+    §4.3 requires sub, sid, iat, exp and tenant_id; tests that probe a missing
+    required claim build their payload explicitly instead of using this helper.
+    """
+    claims: dict[str, Any] = {"sid": sid, "tenant_id": tenant_id}
+    if extra_claims:
+        claims.update(extra_claims)
+    return make_jwt(
+        LOCAL_KEY,
+        iss=LOCAL_ISSUER,
+        sub=sub,
+        exp_offset=exp_offset,
+        extra_claims=claims,
+    )
+
+
+@pytest.fixture
+def identity_store() -> InMemoryIdentityStore:
+    return InMemoryIdentityStore()
+
+
+@pytest.fixture
+def session_service() -> SessionService:
+    repo = InMemorySessionRepository()
+    config = SessionConfig()
+    return SessionService(repository=repo, config=config)
+
+
+@pytest.fixture
+def boundary_config(
+    identity_store: InMemoryIdentityStore, session_service: SessionService
+) -> AuthBoundaryConfig:
+    return AuthBoundaryConfig(
+        audiences=frozenset([AUDIENCE]),
+        local_issuer=LOCAL_ISSUER,
+        local_signing_keys={"local-k1": LOCAL_KEY},
+        local_audiences=frozenset([AUDIENCE]),
+        oidc_issuer=OIDC_ISSUER,
+        oidc_signing_keys={"oidc-k1": OIDC_KEY},
+        oidc_audiences=frozenset([AUDIENCE]),
+        service_issuer=SERVICE_ISSUER,
+        service_signing_keys={"service-k1": SERVICE_KEY},
+        service_audiences=frozenset([AUDIENCE]),
+        principal_mappings={
+            "service-cron-sa": {
+                "roles": ["platform_admin"],
+                "scope": {"tenant_id": "00000000-0000-0000-0000-000000000001"},
+            }
+        },
+        identity_store=identity_store,
+        session_service=session_service,
+    )
+
+
+@pytest.fixture
+def boundary(boundary_config: AuthBoundaryConfig) -> AuthenticationBoundary:
+    return AuthenticationBoundary(boundary_config)
+
+
+@pytest.fixture(autouse=True)
+def clean_boundary_state():
+    reset_bound_persistence()
+    yield
+    reset_bound_persistence()
+
+
+# --- T16: Production Mode Rejects Spoofable Browser Headers ---
+
+
+def test_t16_production_browser_headers_rejected(boundary: AuthenticationBoundary):
+    """T16: When ODP_PRODUCT_MODE=production, API never falls back to header trust."""
+    headers = {
+        "x-subject-id": "spoofed-user-id",
+        "x-roles": "platform_admin",
+        "x-tenant-id": "00000000-0000-0000-0000-000000000001",
+    }
+
+    # 1. With boundary active in production mode -> 401 NO_CREDENTIALS
+    with patch.dict(os.environ, {"ODP_PRODUCT_MODE": "production"}):
+        with pytest.raises(HTTPException) as exc_info:
+            principal_from_headers(headers, boundary=boundary)
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == AuthFailureReason.NO_CREDENTIALS.value
+
+    # 2. Even when no boundary is configured in production mode -> 401 NO_CREDENTIALS (fail-closed)
+    with patch.dict(os.environ, {"ODP_PRODUCT_MODE": "production"}):
+        reset_default_boundary()
+        with pytest.raises(HTTPException) as exc_info:
+            principal_from_headers(headers, boundary=None)
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == AuthFailureReason.NO_CREDENTIALS.value
+
+    # 3. In non-production mode without boundary -> legacy header trust remains available for dev/unit tests
+    with patch.dict(os.environ, {"ODP_PRODUCT_MODE": "development"}):
+        reset_default_boundary()
+        principal = principal_from_headers(headers, boundary=None)
+        assert principal.subject_id == "spoofed-user-id"
+        assert Role.PLATFORM_ADMIN in principal.roles
+
+
+# --- T17: Multi-Issuer Verification & Principal Assembly ---
+
+
+def test_t17_multi_issuer_local_token(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+    session_service: SessionService,
+):
+    """T17 (Local): Local JWT verifies signature and authoritative roles/scope come from IdentityStore."""
+    account_id = uuid4()
+    tenant_id = uuid4()
+    account = Account(
+        account_id=account_id,
+        tenant_id=tenant_id,
+        username="local_admin",
+        email="local_admin@example.com",
+        status="active",
+    )
+    identity_store.save_account(account)
+    identity_store.set_account_roles(account_id, [Role.PLATFORM_ADMIN])
+    custom_scope = Scope(
+        tenant_id=str(tenant_id),
+        brand_ids=frozenset(["brand-1"]),
+        clearance=DataClassification.RESTRICTED,
+    )
+    identity_store.set_account_scope(account_id, custom_scope)
+
+    session = session_service.create_session(
+        account_id=account_id,
+        provider="local_password",
+    )
+
+    # Token claims might try to self-assert extra roles (which must be ignored per contract §4.4)
+    token = make_local_jwt(
+        sub=str(account_id),
+        sid=str(session.session_id),
+        tenant_id=str(tenant_id),
+        extra_claims={"roles": ["operations_manager"]},  # Must be ignored!
+    )
+
+    outcome = boundary.authenticate(Credentials(bearer_token=token))
+    assert outcome.authenticated is True
+    assert outcome.token_type == "local"
+    principal = outcome.principal
+    assert principal.subject_id == str(account_id)
+    assert principal.tenant_id == str(tenant_id)
+    # Roles and scope loaded from identity_store, not token claims
+    assert principal.roles == frozenset([Role.PLATFORM_ADMIN])
+    assert Role.OPERATIONS_MANAGER not in principal.roles
+    assert principal.scope.brand_ids == frozenset(["brand-1"])
+    assert principal.attributes.get("provider") == "local_password"
+    assert principal.attributes.get("sid") == str(session.session_id)
+
+
+def test_t17_multi_issuer_oidc_token(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+):
+    """T17 (OIDC): OIDC JWT resolves account via federated identity link, roles/scope from IdentityStore."""
+    account_id = uuid4()
+    tenant_id = uuid4()
+    account = Account(
+        account_id=account_id,
+        tenant_id=tenant_id,
+        username="federated_user",
+        email="federated@example.com",
+        status="active",
+    )
+    identity_store.save_account(account)
+    identity_store.set_account_roles(account_id, [Role.OPERATIONS_MANAGER])
+    identity_store.link_federated_identity(account_id, OIDC_ISSUER, "google-sub-98765")
+
+    token = make_jwt(
+        OIDC_KEY,
+        iss=OIDC_ISSUER,
+        sub="google-sub-98765",
+        extra_claims={"email": "federated@example.com", "email_verified": True},
+    )
+
+    outcome = boundary.authenticate(Credentials(bearer_token=token))
+    assert outcome.authenticated is True
+    assert outcome.token_type == "oidc"
+    principal = outcome.principal
+    assert principal.subject_id == str(account_id)
+    assert principal.roles == frozenset([Role.OPERATIONS_MANAGER])
+    assert principal.attributes.get("provider") == "oidc"
+
+
+def test_t17_multi_issuer_service_token(boundary: AuthenticationBoundary):
+    """T17 (Service): Service token maps roles and scope via ODP_AUTH_PRINCIPAL_MAP."""
+    token = make_jwt(
+        SERVICE_KEY,
+        iss=SERVICE_ISSUER,
+        sub="service-cron-sa",
+    )
+
+    outcome = boundary.authenticate(Credentials(bearer_token=token))
+    assert outcome.authenticated is True
+    assert outcome.token_type == "service"
+    principal = outcome.principal
+    assert principal.subject_id == "service-cron-sa"
+    assert principal.roles == frozenset([Role.PLATFORM_ADMIN])
+    assert principal.tenant_id == "00000000-0000-0000-0000-000000000001"
+
+
+# --- T18: Unlinked OIDC Identity Fails Closed ---
+
+
+def test_t18_unlinked_oidc_identity_rejected(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+):
+    """T18: Unlinked OIDC (iss, sub) is rejected with 401 and federated_identity_not_linked audit event."""
+    token = make_jwt(
+        OIDC_KEY,
+        iss=OIDC_ISSUER,
+        sub="unlinked-google-user-000",
+        extra_claims={"email": "unlinked@example.com"},
+    )
+
+    outcome = boundary.authenticate(Credentials(bearer_token=token, correlation_id="cid-t18"))
+    assert outcome.authenticated is False
+    assert outcome.reason == AuthFailureReason.FEDERATED_IDENTITY_NOT_LINKED
+
+    # Verify audit event
+    audit_events = boundary.audit_log.list_events(correlation_id="cid-t18")
+    assert len(audit_events) == 1
+    event = audit_events[0]
+    assert event.event_type == "security.authentication"
+    assert event.outcome == "failure"
+    assert event.metadata.get("reason") == "federated_identity_not_linked"
+    assert event.resource == "auth/oidc"
+
+
+# --- T19: Fail-Closed on Incomplete Config and Invalid Credentials ---
+
+
+def test_t19_fail_closed_on_incomplete_config():
+    """T19: Boundary with partial config fails closed without crashing or downgrading."""
+    config = AuthBoundaryConfig(
+        issuer=LOCAL_ISSUER,
+        audiences=frozenset([AUDIENCE]),
+        # No signing keys, no JWKS URI -> unconfigured
+    )
+    boundary = AuthenticationBoundary(config)
+    outcome = boundary.authenticate(Credentials(bearer_token="some.fake.token"))
+    assert outcome.authenticated is False
+    assert outcome.reason == AuthFailureReason.BOUNDARY_NOT_CONFIGURED
+
+
+def test_t19_fail_closed_on_bad_signature_or_expired(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+):
+    """T19: Bad signature, expired token, and unrecognized issuer fail closed."""
+    # Bad signature (same kid as local key, but signed with wrong secret)
+    bad_sig_key = SigningKey(
+        kid="local-k1",
+        algorithm="HS256",
+        secret=b"wrong-signing-secret-32-chars-long!",
+    )
+    bad_sig_token = make_jwt(
+        bad_sig_key,
+        iss=LOCAL_ISSUER,
+        sub=str(uuid4()),
+    )
+    outcome = boundary.authenticate(Credentials(bearer_token=bad_sig_token))
+    assert outcome.authenticated is False
+    assert outcome.reason == AuthFailureReason.BAD_SIGNATURE
+
+    # Expired token
+    expired_token = make_jwt(
+        LOCAL_KEY,
+        iss=LOCAL_ISSUER,
+        sub=str(uuid4()),
+        exp_offset=-100,
+    )
+    outcome = boundary.authenticate(Credentials(bearer_token=expired_token))
+    assert outcome.authenticated is False
+    assert outcome.reason == AuthFailureReason.TOKEN_EXPIRED
+
+    # Unrecognized issuer
+    unrecognized_token = make_jwt(
+        LOCAL_KEY,
+        iss="https://attacker-idp.example.com",
+        sub=str(uuid4()),
+    )
+    outcome = boundary.authenticate(Credentials(bearer_token=unrecognized_token))
+    assert outcome.authenticated is False
+    assert outcome.reason == AuthFailureReason.ISSUER_MISMATCH
+
+
+# --- T20: RBAC Allow & Deny Audit Logging ---
+
+
+def test_t20_rbac_allow_and_deny_audit_logging(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+    session_service: SessionService,
+):
+    """T20: Both RBAC allow and deny decisions generate security.authorization audit events."""
+    engine = AuthorizationEngine(audit_log=InMemoryAuditLog())
+    app = FastAPI()
+
+    @app.get(
+        "/api/operator/view",
+        dependencies=[
+            Depends(
+                require_operator_permission(
+                    resource_type=OPERATOR_CONSOLE_RESOURCE,
+                    action=Action.VIEW,
+                    engine=engine,
+                    boundary=boundary,
+                )
+            )
+        ],
+    )
+    def view_route():
+        return {"status": "ok"}
+
+    @app.post(
+        "/api/operator/execute",
+        dependencies=[
+            Depends(
+                require_operator_permission(
+                    resource_type=OPERATOR_CONSOLE_RESOURCE,
+                    action=Action.EXECUTE,
+                    engine=engine,
+                    boundary=boundary,
+                )
+            )
+        ],
+    )
+    def execute_route():
+        return {"status": "executed"}
+
+    client = TestClient(app)
+
+    # Setup user with AUDITOR role (allows VIEW on operator_console, denies EXECUTE)
+    account_id = uuid4()
+    tenant_id = uuid4()
+    account = Account(
+        account_id=account_id,
+        tenant_id=tenant_id,
+        username="auditor_user",
+        email="auditor@example.com",
+        status="active",
+    )
+    identity_store.save_account(account)
+    identity_store.set_account_roles(account_id, [Role.AUDITOR])
+    identity_store.set_account_scope(account_id, Scope(tenant_id=str(tenant_id)))
+
+    # Session is required for local tokens when session_service is wired
+    session = session_service.create_session(
+        account_id=account_id, provider="local_password"
+    )
+
+    token = make_local_jwt(
+        sub=str(account_id),
+        sid=str(session.session_id),
+        tenant_id=str(tenant_id),
+    )
+
+    # 1. Allowed request (VIEW) -> 200 + audit outcome=allow
+    resp_allow = client.get(
+        "/api/operator/view",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "x-correlation-id": "cid-allow-t20",
+        },
+    )
+    assert resp_allow.status_code == 200
+
+    allow_events = engine.audit_log.list_events(correlation_id="cid-allow-t20")
+    assert len(allow_events) == 1
+    assert allow_events[0].outcome == "allow"
+    assert allow_events[0].action == "view"
+    assert allow_events[0].actor == str(account_id)
+
+    # 2. Denied request (EXECUTE) -> 403 + audit outcome=deny
+    resp_deny = client.post(
+        "/api/operator/execute",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "x-correlation-id": "cid-deny-t20",
+        },
+    )
+    assert resp_deny.status_code == 403
+
+    deny_events = engine.audit_log.list_events(correlation_id="cid-deny-t20")
+    assert len(deny_events) == 1
+    assert deny_events[0].outcome == "deny"
+    assert deny_events[0].action == "execute"
+    assert deny_events[0].actor == str(account_id)
+
+
+# --- T21: High-Risk Action Session Revocation Propagation ---
+
+
+def test_t21_high_risk_session_revocation_propagation(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+    session_service: SessionService,
+):
+    """T21: High-risk write/approve action immediately checks sid; revocation causes immediate 401."""
+    engine = AuthorizationEngine(audit_log=InMemoryAuditLog())
+    app = FastAPI()
+
+    @app.post(
+        "/api/operator/approve",
+        dependencies=[
+            Depends(
+                require_permission(
+                    resource_type="intervention",
+                    action=Action.APPROVE,
+                    engine=engine,
+                    boundary=boundary,
+                    session_service=session_service,
+                )
+            )
+        ],
+    )
+    def approve_action():
+        return {"status": "approved"}
+
+    client = TestClient(app)
+
+    # User with OPERATIONS_MANAGER role (grants intervention APPROVE)
+    account_id = uuid4()
+    tenant_id = uuid4()
+    account = Account(
+        account_id=account_id,
+        tenant_id=tenant_id,
+        username="ops_mgr",
+        email="ops_mgr@example.com",
+        status="active",
+    )
+    identity_store.save_account(account)
+    identity_store.set_account_roles(account_id, [Role.OPERATIONS_MANAGER])
+    identity_store.set_account_scope(account_id, Scope(tenant_id=str(tenant_id)))
+
+    # Create active session
+    session = session_service.create_session(
+        account_id=account_id,
+        provider="local_password",
+    )
+
+    token = make_local_jwt(
+        sub=str(account_id),
+        sid=str(session.session_id),
+        tenant_id=str(tenant_id),
+    )
+
+    # 1. Before revocation: High-risk action succeeds (200)
+    resp1 = client.post(
+        "/api/operator/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp1.status_code == 200
+    assert resp1.json() == {"status": "approved"}
+
+    # 2. Revoke session (e.g. security admin revocation or logout)
+    session_service.revoke_session(session.session_id, RevocationReason.ADMIN_REVOKE)
+
+    # 3. Immediate next high-risk request with same token fails with 401 session_revoked
+    resp2 = client.post(
+        "/api/operator/approve",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "x-correlation-id": "cid-revoked-t21",
+        },
+    )
+    assert resp2.status_code == 401
+    assert resp2.json()["detail"] == AuthFailureReason.SESSION_REVOKED.value
+
+
+# --- T19b: Local Token Without Required sid Fails Closed ---
+
+
+def test_t19b_local_token_without_sid_rejected(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+):
+    """T19b: Local token without the required sid claim is rejected."""
+    account_id = uuid4()
+    tenant_id = uuid4()
+    account = Account(
+        account_id=account_id,
+        tenant_id=tenant_id,
+        username="no_sid_user",
+        email="nosid@example.com",
+        status="active",
+    )
+    identity_store.save_account(account)
+    identity_store.set_account_roles(account_id, [Role.OPERATIONS_MANAGER])
+
+    # Token is signed correctly but omits the sid claim
+    token = make_jwt(
+        LOCAL_KEY,
+        iss=LOCAL_ISSUER,
+        sub=str(account_id),
+        extra_claims={"tenant_id": str(tenant_id)},
+    )
+
+    outcome = boundary.authenticate(Credentials(bearer_token=token))
+    assert outcome.authenticated is False
+    assert outcome.reason == AuthFailureReason.MISSING_REQUIRED_CLAIM
+    assert outcome.token_type == "local"
+
+
+# --- T19c: Malformed UUID Subject Fails Closed ---
+
+
+def test_t19c_malformed_uuid_subject_fails_closed(
+    boundary: AuthenticationBoundary,
+    session_service: SessionService,
+):
+    """T19c: Local token with a non-UUID subject returns 401 instead of raising ValueError."""
+    # Create a session for the token (sid required)
+    dummy_account_id = uuid4()
+    session = session_service.create_session(
+        account_id=dummy_account_id,
+        provider="local_password",
+    )
+
+    # Token with a non-UUID subject like "not-a-uuid"
+    token = make_local_jwt(
+        sub="not-a-valid-uuid",
+        sid=str(session.session_id),
+        tenant_id=str(uuid4()),
+    )
+
+    outcome = boundary.authenticate(Credentials(bearer_token=token))
+    assert outcome.authenticated is False
+    assert outcome.reason == AuthFailureReason.MALFORMED_TOKEN
+    assert outcome.token_type == "local"
+
+
+# --- T21b: Boundary Without a Session Verifier Fails Closed ---
+
+
+def test_t21b_boundary_without_session_service_fails_closed(
+    identity_store: InMemoryIdentityStore,
+):
+    """T21b: A local token is denied when no server-side session verifier is wired.
+
+    Contract §5.4 makes server-side session trust mandatory for local tokens.
+    A boundary built without a session_service cannot establish that the sid
+    still maps to a live session, so it must deny rather than accept the
+    token's own sid claim. Previously it skipped sid verification entirely,
+    which let a signed token carry an arbitrary sid.
+    """
+    engine = AuthorizationEngine(audit_log=InMemoryAuditLog())
+
+    account_id = uuid4()
+    tenant_id = uuid4()
+    account = Account(
+        account_id=account_id,
+        tenant_id=tenant_id,
+        username="ops_no_verifier",
+        email="ops_noverifier@example.com",
+        status="active",
+    )
+    identity_store.save_account(account)
+    identity_store.set_account_roles(account_id, [Role.OPERATIONS_MANAGER])
+    identity_store.set_account_scope(account_id, Scope(tenant_id=str(tenant_id)))
+
+    from modules.opsboard.auth.config import AuthBoundaryConfig as _Config
+
+    no_session_boundary = AuthenticationBoundary(
+        _Config(
+            audiences=frozenset([AUDIENCE]),
+            local_issuer=LOCAL_ISSUER,
+            local_signing_keys={"local-k1": LOCAL_KEY},
+            local_audiences=frozenset([AUDIENCE]),
+            identity_store=identity_store,
+            session_service=None,  # No server-side session verifier
+        )
+    )
+
+    app = FastAPI()
+
+    @app.post(
+        "/api/operator/approve",
+        dependencies=[
+            Depends(
+                require_permission(
+                    resource_type="intervention",
+                    action=Action.APPROVE,
+                    engine=engine,
+                    boundary=no_session_boundary,
+                )
+            )
+        ],
+    )
+    def approve_action():
+        return {"status": "approved"}
+
+    client = TestClient(app)
+
+    # An arbitrary, never-issued sid must not be taken at face value.
+    token = make_local_jwt(
+        sub=str(account_id),
+        sid=str(uuid4()),
+        tenant_id=str(tenant_id),
+    )
+
+    outcome = no_session_boundary.authenticate(Credentials(bearer_token=token))
+    assert outcome.authenticated is False
+    assert outcome.reason == AuthFailureReason.BOUNDARY_NOT_CONFIGURED
+
+    resp = client.post(
+        "/api/operator/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == AuthFailureReason.BOUNDARY_NOT_CONFIGURED.value
+
+
+# --- Regression: Defect #1 PersistenceBundle Carries Identity/Session Stores ---
+
+
+def test_regression_persistence_bundle_carries_identity_stores():
+    """Defect #1: PersistenceBundle must expose identity_store and session_service.
+
+    Previously the PersistenceBundle never carried identity or session stores,
+    so default_boundary() constructed empty InMemory doubles that could never
+    resolve persisted accounts or sessions.
+    """
+    from shared.infrastructure.persistence import build_persistence
+
+    bundle = build_persistence(mode="memory")
+    assert bundle.identity_store is not None, (
+        "PersistenceBundle.identity_store must not be None"
+    )
+    assert bundle.session_service is not None, (
+        "PersistenceBundle.session_service must not be None"
+    )
+    # Verify the identity store implements the required protocol
+    assert hasattr(bundle.identity_store, "find_account_by_id")
+    assert hasattr(bundle.identity_store, "get_account_roles")
+    # Verify the session service implements validate_session
+    assert hasattr(bundle.session_service, "validate_session")
+    assert hasattr(bundle.session_service, "create_session")
+
+
+# --- Regression: Defect #2 Cross-Identity Session Binding ---
+
+
+def test_regression_cross_identity_session_binding_rejected(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+    session_service: SessionService,
+):
+    """Defect #2: sub=A with active sid(B) must fail closed.
+
+    Previously the boundary validated that sid was active but never checked
+    that session.account_id matched the token sub. This allowed a token with
+    sub=A to authenticate using any active session belonging to account B.
+    """
+    # Create two accounts
+    account_a_id = uuid4()
+    account_b_id = uuid4()
+    tenant_id = uuid4()
+
+    account_a = Account(
+        account_id=account_a_id,
+        tenant_id=tenant_id,
+        username="user_a",
+        email="user_a@example.com",
+        status="active",
+    )
+    account_b = Account(
+        account_id=account_b_id,
+        tenant_id=tenant_id,
+        username="user_b",
+        email="user_b@example.com",
+        status="active",
+    )
+    identity_store.save_account(account_a)
+    identity_store.save_account(account_b)
+    identity_store.set_account_roles(account_a_id, [Role.OPERATIONS_MANAGER])
+    identity_store.set_account_roles(account_b_id, [Role.OPERATIONS_MANAGER])
+
+    # Create session for account B
+    session_b = session_service.create_session(
+        account_id=account_b_id,
+        provider="local_password",
+    )
+
+    # Token has sub=A but sid=session_B (cross-identity attack)
+    token = make_local_jwt(
+        sub=str(account_a_id),
+        sid=str(session_b.session_id),
+        tenant_id=str(tenant_id),
+    )
+
+    outcome = boundary.authenticate(Credentials(bearer_token=token))
+    assert outcome.authenticated is False, (
+        "Cross-identity session binding must be rejected: "
+        "sub=A should not authenticate with sid belonging to account B"
+    )
+    assert outcome.reason == AuthFailureReason.SESSION_NOT_FOUND
+
+
+def test_regression_wrong_provider_session_rejected(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+    session_service: SessionService,
+):
+    """Defect #2 variant: A local token using an OIDC session must be rejected."""
+    account_id = uuid4()
+    tenant_id = uuid4()
+    account = Account(
+        account_id=account_id,
+        tenant_id=tenant_id,
+        username="provider_mismatch",
+        email="pmismatch@example.com",
+        status="active",
+    )
+    identity_store.save_account(account)
+    identity_store.set_account_roles(account_id, [Role.OPERATIONS_MANAGER])
+
+    # Create session with provider='oidc' (not 'local_password')
+    session = session_service.create_session(
+        account_id=account_id,
+        provider="oidc",
+    )
+
+    # Local token referencing an OIDC session
+    token = make_local_jwt(
+        sub=str(account_id),
+        sid=str(session.session_id),
+        tenant_id=str(tenant_id),
+    )
+
+    outcome = boundary.authenticate(Credentials(bearer_token=token))
+    assert outcome.authenticated is False, (
+        "Local token must not use a session with provider='oidc'"
+    )
+    assert outcome.reason == AuthFailureReason.SESSION_NOT_FOUND
+
+
+# --- Regression: Defect #3 Required iat Claim ---
+
+
+def test_regression_missing_iat_fails_closed(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+    session_service: SessionService,
+):
+    """Defect #3: A token missing the iat claim must fail closed.
+
+    Previously iat was optional and never required. A token without iat was
+    accepted. Now iat is required on all token types.
+    """
+    account_id = uuid4()
+    tenant_id = uuid4()
+    account = Account(
+        account_id=account_id,
+        tenant_id=tenant_id,
+        username="no_iat_user",
+        email="noiat@example.com",
+        status="active",
+    )
+    identity_store.save_account(account)
+    identity_store.set_account_roles(account_id, [Role.OPERATIONS_MANAGER])
+
+    session = session_service.create_session(
+        account_id=account_id,
+        provider="local_password",
+    )
+
+    # Build a JWT without iat by directly constructing the payload
+    now = int(time.time())
+    payload: dict[str, Any] = {
+        "iss": LOCAL_ISSUER,
+        "sub": str(account_id),
+        "aud": AUDIENCE,
+        "nbf": now - 10,
+        "exp": now + 3600,
+        "sid": str(session.session_id),
+        "tenant_id": str(tenant_id),
+        # iat intentionally omitted
+    }
+    token = encode_compact_jwt(payload, LOCAL_KEY)
+
+    outcome = boundary.authenticate(Credentials(bearer_token=token))
+    assert outcome.authenticated is False, (
+        "A token missing the required iat claim must fail closed"
+    )
+    assert outcome.reason == AuthFailureReason.MALFORMED_TOKEN
+
+
+
+# --- Regression: Contract §4.3 required tenant_id claim ---
+
+
+def test_regression_local_token_without_tenant_id_rejected(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+    session_service: SessionService,
+):
+    """§4.3 lists tenant_id as a required claim on local access tokens.
+
+    Previously a correctly signed token that omitted tenant_id still
+    authenticated, and the tenant was silently taken from the account row —
+    so the token never had to state which tenant it was issued for.
+    """
+    account_id = uuid4()
+    tenant_id = uuid4()
+    identity_store.save_account(
+        Account(
+            account_id=account_id,
+            tenant_id=tenant_id,
+            username="no_tenant_claim",
+            email="no_tenant@example.com",
+            status="active",
+        )
+    )
+    identity_store.set_account_roles(account_id, [Role.OPERATIONS_MANAGER])
+    session = session_service.create_session(
+        account_id=account_id, provider="local_password"
+    )
+
+    token = make_jwt(
+        LOCAL_KEY,
+        iss=LOCAL_ISSUER,
+        sub=str(account_id),
+        extra_claims={"sid": str(session.session_id)},  # tenant_id omitted
+    )
+
+    outcome = boundary.authenticate(Credentials(bearer_token=token))
+    assert outcome.authenticated is False
+    assert outcome.reason == AuthFailureReason.MISSING_REQUIRED_CLAIM
+    assert outcome.token_type == "local"
+
+
+def test_regression_local_token_tenant_claim_must_match_account(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+    session_service: SessionService,
+):
+    """A tenant_id claim disagreeing with the account row fails closed."""
+    account_id = uuid4()
+    tenant_id = uuid4()
+    identity_store.save_account(
+        Account(
+            account_id=account_id,
+            tenant_id=tenant_id,
+            username="tenant_mismatch",
+            email="tenant_mismatch@example.com",
+            status="active",
+        )
+    )
+    identity_store.set_account_roles(account_id, [Role.OPERATIONS_MANAGER])
+    session = session_service.create_session(
+        account_id=account_id, provider="local_password"
+    )
+
+    token = make_local_jwt(
+        sub=str(account_id),
+        sid=str(session.session_id),
+        tenant_id=str(uuid4()),  # a tenant the account does not belong to
+    )
+
+    outcome = boundary.authenticate(Credentials(bearer_token=token))
+    assert outcome.authenticated is False
+    assert outcome.reason == AuthFailureReason.TENANT_MISMATCH
+
+
+def test_regression_authoritative_tenant_comes_from_account_not_token(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+    session_service: SessionService,
+):
+    """The account row stays authoritative for tenant even once the claim matches."""
+    account_id = uuid4()
+    tenant_id = uuid4()
+    identity_store.save_account(
+        Account(
+            account_id=account_id,
+            tenant_id=tenant_id,
+            username="tenant_ok",
+            email="tenant_ok@example.com",
+            status="active",
+        )
+    )
+    identity_store.set_account_roles(account_id, [Role.AUDITOR])
+    identity_store.set_account_scope(account_id, Scope(tenant_id=str(tenant_id)))
+    session = session_service.create_session(
+        account_id=account_id, provider="local_password"
+    )
+
+    token = make_local_jwt(
+        sub=str(account_id),
+        sid=str(session.session_id),
+        tenant_id=str(tenant_id),
+    )
+
+    outcome = boundary.authenticate(Credentials(bearer_token=token))
+    assert outcome.authenticated is True
+    assert outcome.principal.tenant_id == str(tenant_id)
+    assert outcome.principal.attributes["tenant_id"] == str(tenant_id)
+
+
+# --- Regression: create_app binds its persistence bundle to the boundary ---
+
+
+def test_regression_bound_persistence_backs_the_default_boundary(monkeypatch):
+    """The boundary must read the same stores the app writes through.
+
+    Previously ``default_boundary()`` called ``build_persistence()`` itself, so
+    a session created through the app's bundle was invisible to the boundary
+    and every local token was rejected (or, worse, revocations were never
+    seen). ``create_app`` now binds its bundle.
+    """
+    from apps.api.oday_api.security.dependencies import (
+        bind_persistence,
+        default_boundary,
+    )
+    from shared.infrastructure.persistence import build_persistence
+
+    monkeypatch.setenv("ODP_AUTH_LOCAL_ISSUER", LOCAL_ISSUER)
+    monkeypatch.setenv("ODP_AUTH_LOCAL_HS256_KEYS", f"local-k1:{LOCAL_SECRET.decode()}")
+    monkeypatch.setenv("ODP_AUTH_AUDIENCES", AUDIENCE)
+
+    bundle = build_persistence(mode="memory")
+    bind_persistence(bundle)
+
+    account_id = uuid4()
+    tenant_id = uuid4()
+    bundle.identity_store.save_account(
+        Account(
+            account_id=account_id,
+            tenant_id=tenant_id,
+            username="bundle_user",
+            email="bundle_user@example.com",
+            status="active",
+        )
+    )
+    bundle.identity_store.set_account_roles(account_id, [Role.AUDITOR])
+    session = bundle.session_service.create_session(
+        account_id=account_id, provider="local_password"
+    )
+
+    active_boundary = default_boundary()
+    assert active_boundary is not None
+
+    token = make_local_jwt(
+        sub=str(account_id),
+        sid=str(session.session_id),
+        tenant_id=str(tenant_id),
+    )
+    principal = principal_from_headers({"authorization": f"Bearer {token}"})
+    assert principal.authenticated is True
+    assert principal.subject_id == str(account_id)
+
+    # A revocation written through the app's bundle is seen by the boundary.
+    bundle.session_service.revoke_session(
+        session.session_id, RevocationReason.ADMIN_REVOKE
+    )
+    with pytest.raises(HTTPException) as excinfo:
+        principal_from_headers({"authorization": f"Bearer {token}"})
+    assert excinfo.value.status_code == 401
+    assert excinfo.value.detail == AuthFailureReason.SESSION_REVOKED.value
+
+
+# --- Regression: the running app's audit sink backs the auth boundary ---
+
+
+def test_regression_create_app_binds_its_audit_sink_to_the_boundary(monkeypatch):
+    """``security.authentication`` events must reach the app's durable sink.
+
+    ``default_boundary()`` used to construct ``AuthenticationBoundary(config)``
+    with no sink, so the boundary kept a private ``InMemoryAuditLog`` while
+    every router recorded through ``bundle.audit_log``. Authentication
+    successes and failures were therefore written where nothing could read
+    them: the contract's authentication audit requirement was satisfied in
+    form only.
+    """
+    from apps.api.oday_api.security.dependencies import (
+        bind_audit_log,
+        bind_persistence,
+        default_boundary,
+    )
+    from shared.infrastructure.persistence import build_persistence
+
+    monkeypatch.setenv("ODP_AUTH_LOCAL_ISSUER", LOCAL_ISSUER)
+    monkeypatch.setenv("ODP_AUTH_LOCAL_HS256_KEYS", f"local-k1:{LOCAL_SECRET.decode()}")
+    monkeypatch.setenv("ODP_AUTH_AUDIENCES", AUDIENCE)
+
+    bundle = build_persistence(mode="memory")
+    bind_persistence(bundle)
+    # create_app resolves one effective sink and hands it to every router; it
+    # binds that same object to the boundary.
+    bind_audit_log(bundle.audit_log)
+
+    active_boundary = default_boundary()
+    assert active_boundary is not None
+    assert active_boundary.audit_log is bundle.audit_log
+
+    # A real failed authentication lands in the app's sink, not a private one.
+    with pytest.raises(HTTPException) as excinfo:
+        principal_from_headers(
+            {"authorization": "Bearer not-a-jwt", "x-correlation-id": "cid-auth-sink"}
+        )
+    assert excinfo.value.status_code == 401
+
+    events = bundle.audit_log.list_events(correlation_id="cid-auth-sink")
+    assert [event.event_type for event in events] == [AUTHENTICATION_EVENT_TYPE]
+    assert events[0].outcome == "failure"
+
+
+def test_regression_create_app_wires_the_boundary_audit_sink_end_to_end(monkeypatch):
+    """The same assertion, made through ``create_app`` rather than its parts."""
+    from apps.api.oday_api.main import create_app
+    from apps.api.oday_api.security.dependencies import default_boundary
+    from shared.infrastructure.persistence import build_persistence
+
+    monkeypatch.setenv("ODP_AUTH_LOCAL_ISSUER", LOCAL_ISSUER)
+    monkeypatch.setenv("ODP_AUTH_LOCAL_HS256_KEYS", f"local-k1:{LOCAL_SECRET.decode()}")
+    monkeypatch.setenv("ODP_AUTH_AUDIENCES", AUDIENCE)
+
+    bundle = build_persistence(mode="memory")
+    app = create_app(persistence=bundle)
+
+    active_boundary = default_boundary()
+    assert active_boundary is not None
+    assert active_boundary.audit_log is app.state.audit_log
+
+
+def test_regression_default_boundary_falls_back_to_the_bundle_audit_log(monkeypatch):
+    """Without an explicit sink the boundary still uses the bundle's, never a private log."""
+    from apps.api.oday_api.security.dependencies import (
+        bind_persistence,
+        default_boundary,
+    )
+    from shared.infrastructure.persistence import build_persistence
+
+    monkeypatch.setenv("ODP_AUTH_LOCAL_ISSUER", LOCAL_ISSUER)
+    monkeypatch.setenv("ODP_AUTH_LOCAL_HS256_KEYS", f"local-k1:{LOCAL_SECRET.decode()}")
+    monkeypatch.setenv("ODP_AUTH_AUDIENCES", AUDIENCE)
+
+    bundle = build_persistence(mode="memory")
+    bind_persistence(bundle)
+
+    active_boundary = default_boundary()
+    assert active_boundary is not None
+    assert active_boundary.audit_log is bundle.audit_log
+
+
+# --- Regression: an allow that cannot be audited is not granted ---
+
+
+class _FailingAuditLog:
+    """Audit sink whose ``record`` always fails."""
+
+    def __init__(self) -> None:
+        self.attempts = 0
+
+    def record(self, event):
+        self.attempts += 1
+        raise RuntimeError("audit sink unavailable")
+
+    def list_events(self, **_kwargs):
+        return []
+
+
+class _CapturingDeadLetter:
+    def __init__(self) -> None:
+        self.events: list[Any] = []
+
+    def record(self, event):
+        self.events.append(event)
+        return event
+
+
+def _operator_view_client(engine, boundary) -> TestClient:
+    app = FastAPI()
+
+    @app.get(
+        "/api/operator/view",
+        dependencies=[
+            Depends(
+                require_operator_permission(
+                    resource_type=OPERATOR_CONSOLE_RESOURCE,
+                    action=Action.VIEW,
+                    engine=engine,
+                    boundary=boundary,
+                )
+            )
+        ],
+    )
+    def view_route():
+        return {"status": "ok"}
+
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def _seed_auditor(identity_store, session_service) -> str:
+    account_id = uuid4()
+    tenant_id = uuid4()
+    identity_store.save_account(
+        Account(
+            account_id=account_id,
+            tenant_id=tenant_id,
+            username="allow_audit_user",
+            email="allow_audit@example.com",
+            status="active",
+        )
+    )
+    identity_store.set_account_roles(account_id, [Role.AUDITOR])
+    identity_store.set_account_scope(account_id, Scope(tenant_id=str(tenant_id)))
+    session = session_service.create_session(account_id=account_id, provider="local_password")
+    return make_local_jwt(
+        sub=str(account_id),
+        sid=str(session.session_id),
+        tenant_id=str(tenant_id),
+    )
+
+
+def test_regression_allow_audit_sink_failure_is_dead_lettered(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+    session_service: SessionService,
+):
+    """A failing primary sink must not produce an unaudited allow.
+
+    The guard used to log the exception and grant access anyway, so a sink
+    outage silently turned every permitted request into a grant with no
+    auditable event behind it. The event is now dead-lettered instead.
+    """
+    from apps.api.oday_api.security.dependencies import (
+        reset_audit_dead_letter,
+        set_audit_dead_letter,
+    )
+
+    failing = _FailingAuditLog()
+    dead_letter = _CapturingDeadLetter()
+    engine = AuthorizationEngine(audit_log=failing)
+    token = _seed_auditor(identity_store, session_service)
+
+    set_audit_dead_letter(dead_letter)
+    try:
+        client = _operator_view_client(engine, boundary)
+        resp = client.get(
+            "/api/operator/view",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "x-correlation-id": "cid-allow-dead-letter",
+            },
+        )
+    finally:
+        reset_audit_dead_letter()
+
+    assert resp.status_code == 200
+    assert failing.attempts == 1
+    assert len(dead_letter.events) == 1
+    assert dead_letter.events[0].outcome == "allow"
+    assert dead_letter.events[0].correlation_id == "cid-allow-dead-letter"
+
+
+def test_regression_allow_fails_closed_when_audit_is_unrecoverable(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+    session_service: SessionService,
+):
+    """With both the sink and the dead-letter gone, the allow is refused, not granted."""
+    from apps.api.oday_api.security.dependencies import (
+        AUDIT_UNAVAILABLE_DETAIL,
+        reset_audit_dead_letter,
+        set_audit_dead_letter,
+    )
+
+    engine = AuthorizationEngine(audit_log=_FailingAuditLog())
+    token = _seed_auditor(identity_store, session_service)
+
+    set_audit_dead_letter(_FailingAuditLog())
+    try:
+        client = _operator_view_client(engine, boundary)
+        resp = client.get(
+            "/api/operator/view",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    finally:
+        reset_audit_dead_letter()
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == AUDIT_UNAVAILABLE_DETAIL
+
+
+def test_regression_require_permission_allow_fails_closed_without_audit(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+    session_service: SessionService,
+):
+    """The same rule applies to the plain ``require_permission`` guard."""
+    from apps.api.oday_api.security.dependencies import (
+        AUDIT_UNAVAILABLE_DETAIL,
+        reset_audit_dead_letter,
+        set_audit_dead_letter,
+    )
+
+    engine = AuthorizationEngine(audit_log=_FailingAuditLog())
+    token = _seed_auditor(identity_store, session_service)
+
+    app = FastAPI()
+
+    @app.get(
+        "/api/listing",
+        dependencies=[
+            Depends(
+                require_permission(
+                    "listing",
+                    Action.VIEW,
+                    engine=engine,
+                    boundary=boundary,
+                    data_classification=DataClassification.INTERNAL,
+                )
+            )
+        ],
+    )
+    def listing_route():
+        return {"status": "ok"}
+
+    set_audit_dead_letter(_FailingAuditLog())
+    try:
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get("/api/listing", headers={"Authorization": f"Bearer {token}"})
+    finally:
+        reset_audit_dead_letter()
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == AUDIT_UNAVAILABLE_DETAIL
+
+
+def test_regression_rbac_denial_survives_an_unavailable_audit_sink(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+    session_service: SessionService,
+):
+    """A failing sink must not turn a decided 403 into a 500.
+
+    ``require_operator_permission`` already routed its denials through the
+    best-effort recorder; ``require_permission`` recorded its RBAC denial
+    inline, so the same sink outage surfaced there as an unhandled error and
+    the caller was told nothing had been decided.
+    """
+    engine = AuthorizationEngine(audit_log=_FailingAuditLog())
+    token = _seed_auditor(identity_store, session_service)
+
+    app = FastAPI()
+
+    @app.post(
+        "/api/listing",
+        dependencies=[
+            Depends(
+                require_permission(
+                    "listing",
+                    Action.DELETE,
+                    engine=engine,
+                    boundary=boundary,
+                    data_classification=DataClassification.INTERNAL,
+                )
+            )
+        ],
+    )
+    def delete_route():
+        return {"status": "deleted"}
+
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.post("/api/listing", headers={"Authorization": f"Bearer {token}"})
+
+    assert resp.status_code == 403
+
+
+def test_regression_default_dead_letter_logs_the_event(caplog):
+    """The default dead-letter emits the full canonical event as one ERROR line."""
+    import json
+    import logging
+
+    from apps.api.oday_api.security.dependencies import LoggingAuditDeadLetter
+    from shared.audit.events import AuditEvent
+
+    event = AuditEvent(
+        event_type="security.authorization",
+        actor="actor-1",
+        action="view",
+        resource="operator_console",
+        outcome="allow",
+        correlation_id="cid-dead-letter-log",
+    )
+    with caplog.at_level(logging.ERROR):
+        LoggingAuditDeadLetter().record(event)
+
+    records = [r for r in caplog.records if LoggingAuditDeadLetter.marker in r.getMessage()]
+    assert len(records) == 1
+    payload = json.loads(records[0].getMessage().split(" ", 1)[1])
+    assert payload["correlation_id"] == "cid-dead-letter-log"
+    assert payload["outcome"] == "allow"
+
+
+# --- Regression: ODP_AUTH_MODE is the authoritative OIDC gate ---
+
+
+def test_regression_local_mode_discards_complete_oidc_inputs():
+    """mode=local + complete OIDC inputs must not report OIDC as configured."""
+    from modules.opsboard.auth.config import config_from_env
+
+    env = {
+        "ODP_AUTH_MODE": "local",
+        "ODP_AUTH_OIDC_ENABLED": "false",
+        "ODP_AUTH_OIDC_ISSUER": OIDC_ISSUER,
+        "ODP_AUTH_OIDC_AUDIENCES": AUDIENCE,
+        "ODP_AUTH_OIDC_JWKS_URI": "https://accounts.google.com/jwks",
+    }
+    config = config_from_env(env)
+
+    assert config.oidc_enabled is False
+    assert config.oidc_issuer is None
+    assert config.oidc_jwks_uri is None
+    assert config.oidc_audiences == frozenset()
+    assert config.is_configured is False
+
+
+def test_regression_local_mode_rejects_an_oidc_token(
+    identity_store: InMemoryIdentityStore, session_service: SessionService
+):
+    """An OIDC token is refused when the deployment selected password-first.
+
+    The boundary previously verified and trusted it: only the deploy path read
+    ODP_AUTH_MODE, so an environment that turned OIDC off while leaving its
+    issuer/JWKS values behind kept accepting OIDC-issued identities.
+    """
+    from modules.opsboard.auth.config import config_from_env
+
+    env = {
+        "ODP_AUTH_MODE": "local",
+        "ODP_AUTH_LOCAL_ISSUER": LOCAL_ISSUER,
+        "ODP_AUTH_LOCAL_HS256_KEYS": f"local-k1:{LOCAL_SECRET.decode()}",
+        "ODP_AUTH_AUDIENCES": AUDIENCE,
+        "ODP_AUTH_OIDC_ISSUER": OIDC_ISSUER,
+        "ODP_AUTH_OIDC_AUDIENCES": AUDIENCE,
+    }
+    config = config_from_env(
+        env, identity_store=identity_store, session_service=session_service
+    )
+    # The local provider still works, so this is a gate on OIDC, not an outage.
+    assert config.is_configured is True
+
+    gated = AuthenticationBoundary(config)
+    oidc_token = make_jwt(OIDC_KEY, iss=OIDC_ISSUER, sub="google-user-1")
+    outcome = gated.authenticate(Credentials(bearer_token=oidc_token))
+
+    assert outcome.authenticated is False
+    assert outcome.reason is AuthFailureReason.ISSUER_MISMATCH
+
+
+def test_regression_conflicting_mode_and_flag_disable_oidc():
+    """A self-contradicting configuration narrows trust instead of picking a winner."""
+    from modules.opsboard.auth.config import config_from_env
+
+    env = {
+        "ODP_AUTH_MODE": "oidc",
+        "ODP_AUTH_OIDC_ENABLED": "false",
+        "ODP_AUTH_OIDC_ISSUER": OIDC_ISSUER,
+        "ODP_AUTH_OIDC_AUDIENCES": AUDIENCE,
+        "ODP_AUTH_OIDC_JWKS_URI": "https://accounts.google.com/jwks",
+    }
+    config = config_from_env(env)
+
+    assert config.oidc_enabled is False
+    assert config.oidc_issuer is None
+
+
+def test_regression_oidc_mode_still_accepts_oidc_inputs(
+    identity_store: InMemoryIdentityStore, session_service: SessionService
+):
+    """The gate keeps OIDC working when the deployment actually selected it."""
+    from modules.opsboard.auth.config import config_from_env
+
+    env = {
+        "ODP_AUTH_MODE": "oidc",
+        "ODP_AUTH_OIDC_ISSUER": OIDC_ISSUER,
+        "ODP_AUTH_OIDC_AUDIENCES": AUDIENCE,
+        "ODP_AUTH_OIDC_JWKS_URI": "https://accounts.google.com/jwks",
+    }
+    config = config_from_env(
+        env, identity_store=identity_store, session_service=session_service
+    )
+
+    assert config.oidc_enabled is True
+    assert config.oidc_issuer == OIDC_ISSUER
+    assert config.is_configured is True
+
+
+def test_regression_unset_mode_keeps_pre_contract_oidc_deployments_working(
+    identity_store: InMemoryIdentityStore, session_service: SessionService
+):
+    """No explicit mode + a configured API OIDC issuer stays on OIDC.
+
+    The API process never receives ODP_WEB_OIDC_ISSUER, so the deployment
+    resolver's pre-contract signal is read from ODP_AUTH_OIDC_ISSUER here. A
+    deployment that configured OIDC before ODP_AUTH_MODE existed must not lose
+    its provider to this gate.
+    """
+    from modules.opsboard.auth.config import config_from_env
+
+    env = {
+        "ODP_AUTH_OIDC_ISSUER": OIDC_ISSUER,
+        "ODP_AUTH_OIDC_AUDIENCES": AUDIENCE,
+        "ODP_AUTH_OIDC_JWKS_URI": "https://accounts.google.com/jwks",
+    }
+    config = config_from_env(
+        env, identity_store=identity_store, session_service=session_service
+    )
+
+    assert config.oidc_enabled is True
+    assert config.oidc_issuer == OIDC_ISSUER
+
+
+def test_regression_placeholder_oidc_issuer_does_not_enable_the_provider():
+    """A placeholder issuer is not a configuration, on either side of the release."""
+    from modules.opsboard.auth.config import config_from_env
+
+    config = config_from_env({"ODP_AUTH_OIDC_ISSUER": "placeholder"})
+
+    assert config.oidc_enabled is False
+    assert config.oidc_issuer is None
+
+
+# --- Regression: Terraform deployment-shape auth bypass (reopen #5) ---
+
+
+def test_regression_terraform_deploy_shape_oidc_token_requires_identity_link(
+    identity_store: InMemoryIdentityStore, session_service: SessionService
+):
+    """An unlinked OIDC token must be rejected in the actual Terraform deploy shape.
+
+    Terraform sends only global ODP_AUTH_ISSUER / ODP_AUTH_JWKS_URI /
+    ODP_AUTH_AUDIENCES plus ODP_AUTH_MODE to the API runtime — it never sends
+    the OIDC-specific ODP_AUTH_OIDC_ISSUER / ODP_AUTH_OIDC_JWKS_URI /
+    ODP_AUTH_OIDC_AUDIENCES variables.
+
+    Before the fix, oidc_issuer was None (because ODP_AUTH_OIDC_ISSUER was
+    absent), service_issuer fell back to ODP_AUTH_ISSUER (the OIDC provider),
+    and a token from the OIDC provider matched is_service instead of is_oidc.
+    The service path called principal_from_claims which trusts token-embedded
+    roles and never performs find_account_by_federated_identity, allowing an
+    attacker to present an unlinked signed token with arbitrary roles.
+
+    This test reproduces the exact Terraform env shape and asserts the token
+    goes through the OIDC path (requiring identity store linkage).
+    """
+    from dataclasses import replace as dc_replace
+
+    from modules.opsboard.auth.config import config_from_env
+
+    # Exact env shape from infra/terraform/main.tf:153-177 — only globals.
+    terraform_env = {
+        "ODP_AUTH_MODE": "oidc",
+        "ODP_AUTH_ISSUER": OIDC_ISSUER,
+        "ODP_AUTH_AUDIENCES": AUDIENCE,
+        "ODP_AUTH_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+        "ODP_AUTH_LEEWAY_SECONDS": "120",
+        "ODP_AUTH_JWKS_CACHE_TTL_SECONDS": "300",
+        # Crucially: NO ODP_AUTH_OIDC_ISSUER, NO ODP_AUTH_OIDC_JWKS_URI,
+        # NO ODP_AUTH_OIDC_AUDIENCES — this is the real deployed shape.
+    }
+    config = config_from_env(
+        terraform_env, identity_store=identity_store, session_service=session_service
+    )
+
+    # The OIDC path must claim the global issuer.
+    assert config.oidc_enabled is True
+    assert config.oidc_issuer == OIDC_ISSUER
+    assert config.oidc_audiences == frozenset([AUDIENCE])
+    # Service path must NOT shadow the OIDC provider.
+    assert config.service_issuer is None
+    assert config.is_configured is True
+
+    # In real deployment the OIDC path resolves keys from the JWKS URI, which
+    # isn't available in a unit test. Supply the test signing key via
+    # dataclasses.replace so the boundary can verify the token signature and
+    # reach the identity store lookup — the part this test is about.
+    config = dc_replace(config, oidc_signing_keys={"oidc-k1": OIDC_KEY})
+
+    boundary = AuthenticationBoundary(config)
+
+    # An attacker presents a properly signed token with the OIDC provider's
+    # issuer, an unlinked subject, and self-assigned platform_admin roles.
+    attacker_token = make_jwt(
+        OIDC_KEY,
+        iss=OIDC_ISSUER,
+        sub="unlinked-attacker-sub",
+        extra_claims={
+            "roles": ["platform_admin"],
+            "tenant_id": "attacker-tenant",
+            "email": "attacker@example.com",
+        },
+    )
+
+    outcome = boundary.authenticate(
+        Credentials(bearer_token=attacker_token, correlation_id="cid-deploy-shape")
+    )
+
+    # The token must be rejected because the OIDC identity is not linked in the
+    # identity store — it must NOT be accepted as a service identity with the
+    # attacker's self-declared roles.
+    assert outcome.authenticated is False
+    assert outcome.reason == AuthFailureReason.FEDERATED_IDENTITY_NOT_LINKED
+    assert outcome.token_type == "oidc"
+
+
+def test_regression_terraform_deploy_shape_linked_oidc_token_accepted(
+    identity_store: InMemoryIdentityStore, session_service: SessionService
+):
+    """A properly linked OIDC identity is accepted in the Terraform deploy shape.
+
+    Companion to the rejection test: when the OIDC identity IS linked to an
+    account in the identity store, the token must be accepted and the principal
+    must carry the account's authoritative roles (not the token's claims).
+    """
+    from dataclasses import replace as dc_replace
+
+    from modules.opsboard.auth.config import config_from_env
+
+    terraform_env = {
+        "ODP_AUTH_MODE": "oidc",
+        "ODP_AUTH_ISSUER": OIDC_ISSUER,
+        "ODP_AUTH_AUDIENCES": AUDIENCE,
+        "ODP_AUTH_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+    }
+    config = config_from_env(
+        terraform_env, identity_store=identity_store, session_service=session_service
+    )
+    config = dc_replace(config, oidc_signing_keys={"oidc-k1": OIDC_KEY})
+
+    # Link a legitimate user identity.
+    account_id = uuid4()
+    tenant_id = uuid4()
+    identity_store.save_account(
+        Account(
+            account_id=account_id,
+            email="legit-user@example.com",
+            username="legit-user",
+            tenant_id=tenant_id,
+        )
+    )
+    identity_store.link_federated_identity(
+        account_id=account_id, issuer=OIDC_ISSUER, subject="google-user-legit"
+    )
+    identity_store.set_account_roles(account_id, frozenset([Role.SITE_REVIEWER]))
+
+    boundary = AuthenticationBoundary(config)
+
+    legit_token = make_jwt(
+        OIDC_KEY,
+        iss=OIDC_ISSUER,
+        sub="google-user-legit",
+        extra_claims={
+            # Token claims self-declare platform_admin — but the authoritative
+            # store says only operator.
+            "roles": ["platform_admin"],
+            "email": "legit-user@example.com",
+        },
+    )
+
+    outcome = boundary.authenticate(Credentials(bearer_token=legit_token))
+
+    assert outcome.authenticated is True
+    assert outcome.token_type == "oidc"
+    principal = outcome.principal
+    assert principal.subject_id == str(account_id)
+    # Roles come from the identity store, NOT the token claims.
+    assert principal.roles == frozenset([Role.SITE_REVIEWER])
+    assert Role.PLATFORM_ADMIN not in principal.roles
+
+
+def test_regression_terraform_deploy_shape_service_token_still_works(
+    identity_store: InMemoryIdentityStore, session_service: SessionService
+):
+    """A service token with a distinct issuer still works in the Terraform shape.
+
+    When ODP_AUTH_SERVICE_ISSUER is explicitly set (different from the OIDC
+    provider), the service path remains available for Cloud Run service-to-service
+    auth even with ODP_AUTH_MODE=oidc.
+    """
+    from modules.opsboard.auth.config import config_from_env
+
+    terraform_env = {
+        "ODP_AUTH_MODE": "oidc",
+        "ODP_AUTH_ISSUER": OIDC_ISSUER,
+        "ODP_AUTH_AUDIENCES": AUDIENCE,
+        "ODP_AUTH_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+        "ODP_AUTH_SERVICE_ISSUER": SERVICE_ISSUER,
+        "ODP_AUTH_HS256_KEYS": f"service-k1:{SERVICE_SECRET.decode()}",
+        "ODP_AUTH_PRINCIPAL_MAP": '{"service-cron-sa": {"roles": ["platform_admin"], "scope": {"tenant_id": "00000000-0000-0000-0000-000000000001"}}}',
+    }
+    config = config_from_env(
+        terraform_env, identity_store=identity_store, session_service=session_service
+    )
+
+    assert config.oidc_enabled is True
+    assert config.oidc_issuer == OIDC_ISSUER
+    assert config.service_issuer == SERVICE_ISSUER
+    assert config.service_issuer != config.oidc_issuer
+
+    boundary = AuthenticationBoundary(config)
+
+    service_token = make_jwt(
+        SERVICE_KEY,
+        iss=SERVICE_ISSUER,
+        sub="service-cron-sa",
+    )
+
+    outcome = boundary.authenticate(Credentials(bearer_token=service_token))
+    assert outcome.authenticated is True
+    assert outcome.token_type == "service"
+    assert outcome.principal.subject_id == "service-cron-sa"
+
+
+# --------------------------------------------------------------------------
+# Collision / deployment-shape regressions (ODP-WEB-LOCAL-AUTH-API-TRUST-001)
+#
+# These cover the four deployment shapes a runtime can boot into:
+# A) true separation: both ODP_AUTH_SERVICE_* and ODP_AUTH_OIDC_* explicit
+# B) true separation, OIDC off: ODP_AUTH_MODE=local, OIDC vars empty
+# C) legacy alias only: no separated vars, only ODP_AUTH_*
+# D) shared issuer: service and OIDC issuers identical (GCP accounts.google.com)
+# --------------------------------------------------------------------------
+
+
+class TestDeploymentShapeCollisionRegressions:
+    """Regression tests for service/OIDC issuer collision under each deployment shape."""
+
+    def _make_stores(self):
+        """Build minimal identity/session stores for the tests."""
+        identity_store = InMemoryIdentityStore()
+        session_repo = InMemorySessionRepository()
+        session_service = SessionService(repository=session_repo, config=SessionConfig())
+        return identity_store, session_service
+
+    def test_shape_a_true_separation_routes_deterministically(self):
+        """Shape A: both service and OIDC vars explicit, different issuers.
+
+        The boundary must route tokens to the correct verifier without falling
+        back to legacy globals, preventing the reopen #5 defect where an OIDC
+        token matched the service path because both shared ODP_AUTH_ISSUER.
+        """
+        from modules.opsboard.auth.config import config_from_env
+
+        identity_store, session_service = self._make_stores()
+
+        env = {
+            "ODP_AUTH_MODE": "oidc",
+            # Legacy migration aliases (Terraform still injects these)
+            "ODP_AUTH_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+            "ODP_AUTH_HS256_KEYS": f"service-k1:{SERVICE_SECRET.decode()}",
+            # True separated vars
+            "ODP_AUTH_SERVICE_ISSUER": SERVICE_ISSUER,
+            "ODP_AUTH_SERVICE_JWKS_URI": "",
+            "ODP_AUTH_SERVICE_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_OIDC_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_OIDC_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+            "ODP_AUTH_OIDC_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_PRINCIPAL_MAP": (
+                '{"service-cron-sa": {"roles": ["platform_admin"],'
+                ' "scope": {"tenant_id": "00000000-0000-0000-0000-000000000001"}}}'
+            ),
+        }
+        config = config_from_env(env, identity_store=identity_store, session_service=session_service)
+
+        # Verify separated resolution
+        assert config.oidc_enabled is True
+        assert config.oidc_issuer == OIDC_ISSUER
+        assert config.service_issuer == SERVICE_ISSUER
+        assert config.service_issuer != config.oidc_issuer
+
+        boundary = AuthenticationBoundary(config)
+
+        # Service token → service path
+        service_token = make_jwt(SERVICE_KEY, iss=SERVICE_ISSUER, sub="service-cron-sa")
+        outcome = boundary.authenticate(Credentials(bearer_token=service_token))
+        assert outcome.authenticated is True
+        assert outcome.token_type == "service"
+        assert outcome.principal.subject_id == "service-cron-sa"
+
+        # OIDC token with unlinked identity → fails with federated_identity_not_linked
+        oidc_token = make_jwt(OIDC_KEY, iss=OIDC_ISSUER, sub="unlinked-oidc-sub")
+        # Must supply OIDC key resolution
+        config_with_oidc_key = AuthBoundaryConfig(
+            oidc_enabled=True,
+            oidc_issuer=OIDC_ISSUER,
+            oidc_signing_keys={"oidc-k1": OIDC_KEY},
+            oidc_audiences=frozenset([AUDIENCE]),
+            service_issuer=SERVICE_ISSUER,
+            service_signing_keys={"service-k1": SERVICE_KEY},
+            service_audiences=frozenset([AUDIENCE]),
+            identity_store=identity_store,
+            session_service=session_service,
+        )
+        boundary2 = AuthenticationBoundary(config_with_oidc_key)
+        outcome2 = boundary2.authenticate(Credentials(bearer_token=oidc_token))
+        assert outcome2.authenticated is False
+        assert outcome2.reason == AuthFailureReason.FEDERATED_IDENTITY_NOT_LINKED
+        assert outcome2.token_type == "oidc"
+
+    def test_shape_b_local_mode_rejects_oidc_tokens_even_with_separated_vars(self):
+        """Shape B: ODP_AUTH_MODE=local with empty OIDC vars.
+
+        A deployment that switched from OIDC to local must not accept OIDC
+        tokens, even if the separated OIDC vars are present but empty.
+        """
+        from modules.opsboard.auth.config import config_from_env
+
+        identity_store, session_service = self._make_stores()
+
+        env = {
+            "ODP_AUTH_MODE": "local",
+            "ODP_AUTH_ISSUER": "https://accounts.google.com",
+            "ODP_AUTH_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+            "ODP_AUTH_HS256_KEYS": f"service-k1:{SERVICE_SECRET.decode()}",
+            # Separated vars: OIDC is empty (Terraform gated by local.oidc_enabled)
+            "ODP_AUTH_SERVICE_ISSUER": "https://accounts.google.com",
+            "ODP_AUTH_SERVICE_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+            "ODP_AUTH_SERVICE_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_OIDC_ISSUER": "",
+            "ODP_AUTH_OIDC_JWKS_URI": "",
+            "ODP_AUTH_OIDC_AUDIENCES": "",
+            "ODP_IDENTITY_TOKEN_SIGNING_KEY": LOCAL_SECRET.decode(),
+        }
+        config = config_from_env(env, identity_store=identity_store, session_service=session_service)
+
+        assert config.oidc_enabled is False
+        assert config.oidc_issuer is None
+
+        boundary = AuthenticationBoundary(config)
+
+        # OIDC token → must be rejected (issuer_mismatch, not routed to OIDC)
+        oidc_token = make_jwt(OIDC_KEY, iss=OIDC_ISSUER, sub="oidc-user")
+        outcome = boundary.authenticate(Credentials(bearer_token=oidc_token))
+        # It hits the service/legacy path (same issuer) but fails because the
+        # key kid doesn't match, or the principal mapping doesn't exist.
+        # Either way, it must NOT succeed as an OIDC-authenticated principal.
+        if outcome.authenticated:
+            # If it happened to match via service path (same issuer), verify
+            # it is treated as service, never as oidc.
+            assert outcome.token_type != "oidc"
+        else:
+            # Expected: the token is rejected.
+            assert outcome.reason is not None
+
+    def test_shape_c_legacy_alias_only_keeps_fallback_working(self):
+        """Shape C: no separated vars at all (pre-contract deployment).
+
+        A deployment that only has ODP_AUTH_ISSUER / _JWKS_URI / _AUDIENCES
+        (no ODP_AUTH_SERVICE_* or ODP_AUTH_OIDC_*) must keep working through
+        the fallback chain in config_from_env.
+        """
+        from modules.opsboard.auth.config import config_from_env
+
+        identity_store, session_service = self._make_stores()
+
+        env = {
+            "ODP_AUTH_MODE": "oidc",
+            "ODP_AUTH_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+            "ODP_AUTH_HS256_KEYS": f"service-k1:{SERVICE_SECRET.decode()}",
+            "ODP_AUTH_OIDC_ISSUER": OIDC_ISSUER,
+        }
+        config = config_from_env(env, identity_store=identity_store, session_service=session_service)
+
+        # OIDC must resolve through the fallback
+        assert config.oidc_enabled is True
+        assert config.oidc_issuer == OIDC_ISSUER
+        # Service issuer must NOT fall back to the global when OIDC is enabled
+        # (reopen #5 fix): that would make both issuers identical and route
+        # OIDC tokens through the service path.
+        assert config.service_issuer is None
+
+    def test_shape_d_shared_issuer_oidc_token_hits_oidc_path(self):
+        """Shape D: service and OIDC issuers are identical (GCP accounts.google.com).
+
+        When both use the same issuer URL (issuer collision), the boundary
+        disambiguates by checking ODP_AUTH_PRINCIPAL_MAP: a token whose sub is
+        declared in the principal map routes to the service path; an
+        undeclared sub routes to OIDC identity-store lookup.  The linked OIDC
+        user's sub is not in the principal map, so it must take the OIDC path.
+        """
+        identity_store, session_service = self._make_stores()
+
+        # Register a linked OIDC account
+        account_id = uuid4()
+        tenant_id = uuid4()
+        from shared.auth import Scope
+
+        identity_store.save_account(Account(
+            account_id=account_id,
+            username="oidc-shared-user",
+            email="oidc-shared@example.com",
+            tenant_id=tenant_id,
+        ))
+        identity_store.link_federated_identity(account_id, OIDC_ISSUER, "oidc-sub-shared")
+        identity_store.set_account_roles(account_id, frozenset([Role.OPERATIONS_MANAGER]))
+        identity_store.set_account_scope(account_id, Scope(tenant_id=str(tenant_id)))
+
+        config = AuthBoundaryConfig(
+            oidc_enabled=True,
+            oidc_issuer=OIDC_ISSUER,
+            oidc_signing_keys={"oidc-k1": OIDC_KEY},
+            oidc_audiences=frozenset([AUDIENCE]),
+            # Shared issuer: service_issuer == oidc_issuer
+            service_issuer=OIDC_ISSUER,
+            service_signing_keys={"oidc-k1": OIDC_KEY},
+            service_audiences=frozenset([AUDIENCE]),
+            identity_store=identity_store,
+            session_service=session_service,
+            # No principal_mappings: oidc-sub-shared is NOT a declared
+            # service identity, so the collision branch routes to OIDC.
+        )
+        boundary = AuthenticationBoundary(config)
+
+        token = make_jwt(OIDC_KEY, iss=OIDC_ISSUER, sub="oidc-sub-shared")
+        outcome = boundary.authenticate(Credentials(bearer_token=token))
+
+        # The token must be routed through the OIDC path (identity-store
+        # lookup) because the sub is not declared in the principal map.
+        assert outcome.authenticated is True
+        assert outcome.token_type == "oidc"
+        assert outcome.principal.subject_id == str(account_id)
+        assert outcome.principal.roles == frozenset([Role.OPERATIONS_MANAGER])
+
+    def test_shape_d_shared_issuer_local_mode_rejects_oidc(self):
+        """Shape D variant: shared issuer but ODP_AUTH_MODE=local.
+
+        When the issuers are identical AND mode=local, the oidc path is
+        disabled, so the token must NOT be verified as OIDC.
+        """
+        from modules.opsboard.auth.config import config_from_env
+
+        identity_store, session_service = self._make_stores()
+
+        env = {
+            "ODP_AUTH_MODE": "local",
+            "ODP_AUTH_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_HS256_KEYS": f"oidc-k1:{OIDC_SECRET.decode()}",
+            "ODP_AUTH_SERVICE_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_SERVICE_AUDIENCES": AUDIENCE,
+            "ODP_IDENTITY_TOKEN_SIGNING_KEY": LOCAL_SECRET.decode(),
+        }
+        config = config_from_env(env, identity_store=identity_store, session_service=session_service)
+
+        assert config.oidc_enabled is False
+        assert config.oidc_issuer is None
+
+        boundary = AuthenticationBoundary(config)
+
+        # With shared issuer and mode=local, the token hits service/legacy path
+        token = make_jwt(OIDC_KEY, iss=OIDC_ISSUER, sub="service-sa")
+        outcome = boundary.authenticate(Credentials(bearer_token=token))
+
+        # Must NOT be classified as "oidc"
+        assert outcome.token_type != "oidc"
+        # ...and must not be authenticated either: `service-sa` has no
+        # ODP_AUTH_PRINCIPAL_MAP entry, so there is no authoritative
+        # role/scope source for it (contract §4.4).
+        assert outcome.authenticated is False
+        assert outcome.reason is AuthFailureReason.UNKNOWN_SERVICE
+
+    def test_shape_d_local_mode_rejects_unlinked_token_with_escalated_claims(self):
+        """Shape D, the deployed local-mode shape: an undeclared signed token
+        carrying `roles`/`tenant_id` must be rejected outright.
+
+        Regression for ODP-WEB-LOCAL-AUTH-API-TRUST-001. Under the real
+        Terraform shape both ODP_AUTH_ISSUER and ODP_AUTH_SERVICE_ISSUER are
+        https://accounts.google.com. With ODP_AUTH_MODE=local the OIDC path is
+        disabled, so the token fell through to the service/legacy path, whose
+        no-mapping branch trusted the token's own claims: sub=attacker with
+        roles=["platform_admin"] and tenant_id="attacker-tenant"
+        authenticated as a platform admin.
+
+        The boundary must now fail closed and leak neither role nor tenant.
+        """
+        from modules.opsboard.auth.config import config_from_env
+
+        identity_store, session_service = self._make_stores()
+
+        env = {
+            "ODP_AUTH_MODE": "local",
+            "ODP_AUTH_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_SERVICE_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_HS256_KEYS": f"oidc-k1:{OIDC_SECRET.decode()}",
+            "ODP_IDENTITY_TOKEN_SIGNING_KEY": LOCAL_SECRET.decode(),
+            # Deliberately no ODP_AUTH_PRINCIPAL_MAP entry for "attacker".
+        }
+        config = config_from_env(
+            env, identity_store=identity_store, session_service=session_service
+        )
+        assert config.oidc_enabled is False
+        assert config.service_issuer == OIDC_ISSUER
+
+        boundary = AuthenticationBoundary(config)
+        token = make_jwt(
+            OIDC_KEY,
+            iss=OIDC_ISSUER,
+            sub="attacker",
+            extra_claims={
+                "roles": ["platform_admin"],
+                "tenant_id": "attacker-tenant",
+            },
+        )
+        outcome = boundary.authenticate(Credentials(bearer_token=token))
+
+        assert outcome.authenticated is False
+        assert outcome.reason is AuthFailureReason.UNKNOWN_SERVICE
+        assert outcome.principal.roles == frozenset()
+        assert outcome.principal.scope.tenant_id is None
+        assert outcome.principal.subject_id != "attacker"
+
+    def test_shape_d_local_mode_declared_service_identity_still_authenticates(self):
+        """The same shape must keep declared service identities working.
+
+        Guards the fix against over-correcting: ODP_OPERATOR_SMOKE_BEARER_TOKEN
+        and service-to-service callers are declared in ODP_AUTH_PRINCIPAL_MAP
+        and must still authenticate with exactly the declared roles/scope
+        (contract §4.4 / §8.4).
+        """
+        from modules.opsboard.auth.config import config_from_env
+
+        identity_store, session_service = self._make_stores()
+
+        env = {
+            "ODP_AUTH_MODE": "local",
+            "ODP_AUTH_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_SERVICE_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_HS256_KEYS": f"oidc-k1:{OIDC_SECRET.decode()}",
+            "ODP_IDENTITY_TOKEN_SIGNING_KEY": LOCAL_SECRET.decode(),
+            "ODP_AUTH_PRINCIPAL_MAP": (
+                '{"service-cron-sa": {"roles": ["platform_admin"],'
+                ' "scope": {"tenant_id": "00000000-0000-0000-0000-000000000001"}}}'
+            ),
+        }
+        config = config_from_env(
+            env, identity_store=identity_store, session_service=session_service
+        )
+        boundary = AuthenticationBoundary(config)
+
+        # The declared service account keeps working...
+        token = make_jwt(
+            OIDC_KEY,
+            iss=OIDC_ISSUER,
+            sub="service-cron-sa",
+            # ...and its self-asserted claims are still ignored.
+            extra_claims={"roles": ["site_reviewer"], "tenant_id": "attacker-tenant"},
+        )
+        outcome = boundary.authenticate(Credentials(bearer_token=token))
+
+        assert outcome.authenticated is True
+        assert outcome.token_type == "service"
+        assert outcome.principal.subject_id == "service-cron-sa"
+        assert outcome.principal.roles == frozenset([Role.PLATFORM_ADMIN])
+        assert outcome.principal.tenant_id == "00000000-0000-0000-0000-000000000001"
+
+    def test_separated_env_takes_priority_over_legacy_fallback(self):
+        """When both ODP_AUTH_SERVICE_ISSUER and ODP_AUTH_ISSUER are set,
+        the service path uses the explicit separated var, not the legacy alias.
+        """
+        from modules.opsboard.auth.config import config_from_env
+
+        identity_store, session_service = self._make_stores()
+
+        env = {
+            "ODP_AUTH_MODE": "oidc",
+            "ODP_AUTH_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+            "ODP_AUTH_HS256_KEYS": f"service-k1:{SERVICE_SECRET.decode()}",
+            "ODP_AUTH_SERVICE_ISSUER": SERVICE_ISSUER,
+            "ODP_AUTH_SERVICE_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_OIDC_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_OIDC_AUDIENCES": AUDIENCE,
+        }
+        config = config_from_env(env, identity_store=identity_store, session_service=session_service)
+
+        # service_issuer should be the explicit value, not the legacy fallback
+        assert config.service_issuer == SERVICE_ISSUER
+        assert config.service_issuer != OIDC_ISSUER
+        # OIDC should use its explicit value
+        assert config.oidc_issuer == OIDC_ISSUER
+
+    # -- Shape D collision with service tokens (reopen #8 regressions) -------
+
+    def test_shape_d_shared_issuer_service_token_routes_to_service_path(self):
+        """Shape D: service token with shared issuer routes to service path.
+
+        Reopen #8 regression: when ODP_AUTH_SERVICE_ISSUER ==
+        ODP_AUTH_OIDC_ISSUER (both https://accounts.google.com as in the
+        Terraform default), a service token whose sub is declared in
+        ODP_AUTH_PRINCIPAL_MAP must route to the service path, not the OIDC
+        identity-store lookup.  The previous code always routed to OIDC first,
+        causing federated_identity_not_linked for legitimate service accounts.
+        """
+        identity_store, session_service = self._make_stores()
+
+        # The collision scenario: both issuers are the same
+        shared_issuer = OIDC_ISSUER  # "https://accounts.google.com"
+
+        principal_map = {
+            "service-cron-sa": {
+                "roles": ["platform_admin"],
+                "scope": {"tenant_id": "00000000-0000-0000-0000-000000000001"},
+            },
+        }
+
+        config = AuthBoundaryConfig(
+            oidc_enabled=True,
+            oidc_issuer=shared_issuer,
+            oidc_signing_keys={"oidc-k1": OIDC_KEY},
+            oidc_audiences=frozenset([AUDIENCE]),
+            # Shared issuer: service_issuer == oidc_issuer
+            service_issuer=shared_issuer,
+            service_signing_keys={"oidc-k1": OIDC_KEY},
+            service_audiences=frozenset([AUDIENCE]),
+            identity_store=identity_store,
+            session_service=session_service,
+            principal_mapping_declared=True,
+            principal_mappings=principal_map,
+        )
+        boundary = AuthenticationBoundary(config)
+
+        # Service token: sub is declared in principal map
+        service_token = make_jwt(
+            OIDC_KEY, iss=shared_issuer, sub="service-cron-sa"
+        )
+        outcome = boundary.authenticate(Credentials(bearer_token=service_token))
+
+        # Must succeed via the service path, NOT the OIDC path
+        assert outcome.authenticated is True, (
+            f"Expected authenticated=True but got reason={outcome.reason}"
+        )
+        assert outcome.token_type == "service"
+        assert outcome.principal.subject_id == "service-cron-sa"
+        assert outcome.principal.roles == frozenset([Role.PLATFORM_ADMIN])
+        assert outcome.principal.tenant_id == "00000000-0000-0000-0000-000000000001"
+
+    def test_shape_d_terraform_env_service_token_collision_regression(self):
+        """Terraform-shaped env with issuer collision: service-to-service auth works.
+
+        Reopen #8 end-to-end regression using config_from_env with the exact
+        Terraform deployment shape where:
+        - ODP_AUTH_MODE=oidc
+        - ODP_AUTH_SERVICE_ISSUER=https://accounts.google.com (Terraform default)
+        - ODP_AUTH_OIDC_ISSUER=https://accounts.google.com (Google as OIDC IdP)
+        - ODP_AUTH_PRINCIPAL_MAP contains the service account's sub
+
+        This exercises the config_from_env → AuthBoundaryConfig → boundary
+        routing chain for the ODP_OPERATOR_SMOKE_BEARER_TOKEN scenario.
+        """
+        from modules.opsboard.auth.config import config_from_env
+
+        identity_store, session_service = self._make_stores()
+
+        # Exact Terraform-shaped environment: both issuers collide
+        terraform_collision_env = {
+            "ODP_AUTH_MODE": "oidc",
+            "ODP_AUTH_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+            "ODP_AUTH_HS256_KEYS": f"oidc-k1:{OIDC_SECRET.decode()}",
+            # Separated vars — both point to accounts.google.com
+            "ODP_AUTH_SERVICE_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_SERVICE_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+            "ODP_AUTH_SERVICE_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_OIDC_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_OIDC_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+            "ODP_AUTH_OIDC_AUDIENCES": AUDIENCE,
+            # The service account is declared in the principal map
+            "ODP_AUTH_PRINCIPAL_MAP": (
+                '{"service-smoke-sa@project.iam.gserviceaccount.com":'
+                ' {"roles": ["platform_admin"],'
+                ' "scope": {"tenant_id": "00000000-0000-0000-0000-000000000001"}}}'
+            ),
+        }
+        config = config_from_env(
+            terraform_collision_env,
+            identity_store=identity_store,
+            session_service=session_service,
+        )
+
+        # Verify the collision exists in the resolved config
+        assert config.oidc_enabled is True
+        assert config.oidc_issuer == OIDC_ISSUER
+        assert config.service_issuer == OIDC_ISSUER
+        assert config.service_issuer == config.oidc_issuer  # collision!
+
+        boundary = AuthenticationBoundary(config)
+
+        # Service token from the deployment smoke stage
+        service_token = make_jwt(
+            OIDC_KEY,
+            iss=OIDC_ISSUER,
+            sub="service-smoke-sa@project.iam.gserviceaccount.com",
+        )
+        outcome = boundary.authenticate(Credentials(bearer_token=service_token))
+
+        # Must succeed: the sub is in principal_map → service path
+        assert outcome.authenticated is True, (
+            f"Expected authenticated=True but got reason={outcome.reason}; "
+            f"token_type={outcome.token_type}"
+        )
+        assert outcome.token_type == "service"
+        assert outcome.principal.subject_id == (
+            "service-smoke-sa@project.iam.gserviceaccount.com"
+        )
+        assert outcome.principal.roles == frozenset([Role.PLATFORM_ADMIN])
+
+    def test_shape_d_shared_issuer_unknown_sub_falls_to_oidc_and_rejects(self):
+        """Shape D: unknown sub under issuer collision falls through to OIDC.
+
+        A token whose sub is NOT declared in ODP_AUTH_PRINCIPAL_MAP and NOT
+        linked in the identity store must be rejected, not silently promoted
+        to a service principal.  This is the fail-closed guarantee.
+        """
+        identity_store, session_service = self._make_stores()
+
+        shared_issuer = OIDC_ISSUER
+
+        config = AuthBoundaryConfig(
+            oidc_enabled=True,
+            oidc_issuer=shared_issuer,
+            oidc_signing_keys={"oidc-k1": OIDC_KEY},
+            oidc_audiences=frozenset([AUDIENCE]),
+            service_issuer=shared_issuer,
+            service_signing_keys={"oidc-k1": OIDC_KEY},
+            service_audiences=frozenset([AUDIENCE]),
+            identity_store=identity_store,
+            session_service=session_service,
+            # principal_mappings is empty: no declared service identities
+            principal_mapping_declared=True,
+            principal_mappings={},
+        )
+        boundary = AuthenticationBoundary(config)
+
+        # Token from an unknown subject (not in principal map, not linked)
+        token = make_jwt(OIDC_KEY, iss=shared_issuer, sub="unknown-identity")
+        outcome = boundary.authenticate(Credentials(bearer_token=token))
+
+        # Must be rejected via OIDC path: federated_identity_not_linked
+        assert outcome.authenticated is False
+        assert outcome.reason == AuthFailureReason.FEDERATED_IDENTITY_NOT_LINKED
+        assert outcome.token_type == "oidc"
+
+    # -- Shape D collision: numeric-sub service accounts (reopen #9) ---------
+    #
+    # `gcloud auth print-identity-token --impersonate-service-account=... \
+    #  --include-email` (product_ops/deployment/deploy_cloud_run_waji.sh, the
+    # ODP_OPERATOR_SMOKE_BEARER_TOKEN path) mints a Google ID token whose
+    # `sub` is an opaque *numeric* unique id and whose service-account e-mail
+    # travels in `email` with `email_verified: true`.  Operators declare that
+    # identity in ODP_AUTH_PRINCIPAL_MAP by e-mail, so routing on `sub` alone
+    # sent the smoke token to the OIDC identity store and rejected it as
+    # federated_identity_not_linked.
+
+    SMOKE_SUB = "103957201948573920184"
+    SMOKE_EMAIL = "odp-smoke@oday-plus-dev.iam.gserviceaccount.com"
+    SMOKE_TENANT = "00000000-0000-0000-0000-000000000001"
+
+    def _collision_config(self, principal_mappings):
+        """Shared-issuer (service_issuer == oidc_issuer) boundary config."""
+        identity_store, session_service = self._make_stores()
+        return AuthBoundaryConfig(
+            oidc_enabled=True,
+            oidc_issuer=OIDC_ISSUER,
+            oidc_signing_keys={"oidc-k1": OIDC_KEY},
+            oidc_audiences=frozenset([AUDIENCE]),
+            service_issuer=OIDC_ISSUER,
+            service_signing_keys={"oidc-k1": OIDC_KEY},
+            service_audiences=frozenset([AUDIENCE]),
+            identity_store=identity_store,
+            session_service=session_service,
+            principal_mapping_declared=True,
+            principal_mappings=principal_mappings,
+        )
+
+    def _smoke_map(self, roles=("platform_admin",)):
+        return {
+            self.SMOKE_EMAIL: {
+                "roles": list(roles),
+                "scope": {"tenant_id": self.SMOKE_TENANT},
+            }
+        }
+
+    def test_shape_d_numeric_sub_service_token_maps_by_verified_email(self):
+        """Numeric `sub` + verified e-mail resolves through the principal map.
+
+        The deployment smoke token's `sub` is not a principal-map key, so the
+        boundary must fall through to the service verifier, which looks the
+        caller up by its verified e-mail and grants the *declared* roles.
+        """
+        boundary = AuthenticationBoundary(self._collision_config(self._smoke_map()))
+
+        token = make_jwt(
+            OIDC_KEY,
+            iss=OIDC_ISSUER,
+            sub=self.SMOKE_SUB,
+            extra_claims={"email": self.SMOKE_EMAIL, "email_verified": True},
+        )
+        outcome = boundary.authenticate(Credentials(bearer_token=token))
+
+        assert outcome.authenticated is True, (
+            f"Expected authenticated=True but got reason={outcome.reason}; "
+            f"token_type={outcome.token_type}"
+        )
+        assert outcome.token_type == "service"
+        # Identity stays the token subject; only roles/scope come from the map.
+        assert outcome.principal.subject_id == self.SMOKE_SUB
+        assert outcome.principal.roles == frozenset([Role.PLATFORM_ADMIN])
+        assert outcome.principal.tenant_id == self.SMOKE_TENANT
+
+    def test_shape_d_numeric_sub_unverified_email_is_never_a_lookup_key(self):
+        """`email_verified` absent/false: the e-mail is not an identity fact.
+
+        Without the verification flag the e-mail claim is attacker-chosen, so
+        the map lookup must not happen and the token falls through to the OIDC
+        identity store, where it is unlinked and rejected.
+        """
+        boundary = AuthenticationBoundary(self._collision_config(self._smoke_map()))
+
+        for email_verified in (None, False, "true"):
+            claims: dict[str, Any] = {"email": self.SMOKE_EMAIL}
+            if email_verified is not None:
+                claims["email_verified"] = email_verified
+            token = make_jwt(
+                OIDC_KEY, iss=OIDC_ISSUER, sub=self.SMOKE_SUB, extra_claims=claims
+            )
+            outcome = boundary.authenticate(Credentials(bearer_token=token))
+
+            assert outcome.authenticated is False, (
+                f"email_verified={email_verified!r} must not authenticate"
+            )
+            assert outcome.reason == AuthFailureReason.FEDERATED_IDENTITY_NOT_LINKED
+            assert outcome.token_type == "oidc"
+
+    def test_shape_d_verified_email_outside_the_map_is_rejected(self):
+        """A verified e-mail that is not declared grants nothing."""
+        boundary = AuthenticationBoundary(self._collision_config(self._smoke_map()))
+
+        token = make_jwt(
+            OIDC_KEY,
+            iss=OIDC_ISSUER,
+            sub=self.SMOKE_SUB,
+            extra_claims={
+                "email": "attacker@example.com",
+                "email_verified": True,
+            },
+        )
+        outcome = boundary.authenticate(Credentials(bearer_token=token))
+
+        assert outcome.authenticated is False
+        assert outcome.reason == AuthFailureReason.FEDERATED_IDENTITY_NOT_LINKED
+        assert outcome.token_type == "oidc"
+
+    def test_shape_d_verified_email_lookup_ignores_token_roles_and_tenant(self):
+        """The map is the sole role/scope source for the e-mail-matched caller."""
+        boundary = AuthenticationBoundary(
+            self._collision_config(self._smoke_map(roles=("site_reviewer",)))
+        )
+
+        token = make_jwt(
+            OIDC_KEY,
+            iss=OIDC_ISSUER,
+            sub=self.SMOKE_SUB,
+            extra_claims={
+                "email": self.SMOKE_EMAIL,
+                "email_verified": True,
+                # Forged authorization claims: must be ignored entirely.
+                "roles": ["platform_admin"],
+                "tenant_id": "attacker-tenant",
+                "scope": {"tenant_id": "attacker-tenant"},
+            },
+        )
+        outcome = boundary.authenticate(Credentials(bearer_token=token))
+
+        assert outcome.authenticated is True
+        assert outcome.principal.roles == frozenset([Role.SITE_REVIEWER])
+        assert Role.PLATFORM_ADMIN not in outcome.principal.roles
+        assert outcome.principal.tenant_id == self.SMOKE_TENANT
+
+    def test_shape_d_verified_email_is_consulted_only_after_verification(self):
+        """Signature, audience and lifetime gate the e-mail lookup.
+
+        Each token below carries the declared verified e-mail and would map to
+        platform_admin if the map were consulted first; every one of them must
+        still fail closed.
+        """
+        config = self._collision_config(self._smoke_map())
+        boundary = AuthenticationBoundary(config)
+        declared = {"email": self.SMOKE_EMAIL, "email_verified": True}
+
+        # 1) Signature forged with a key the boundary does not trust for this
+        #    issuer (the OIDC kid is reused so key resolution still succeeds).
+        forged_key = SigningKey(
+            kid="oidc-k1", algorithm="HS256", secret=b"attacker-signing-key-32-bytes-long!!"
+        )
+        forged = make_jwt(
+            forged_key, iss=OIDC_ISSUER, sub=self.SMOKE_SUB, extra_claims=declared
+        )
+        forged_outcome = boundary.authenticate(Credentials(bearer_token=forged))
+        assert forged_outcome.authenticated is False
+        assert forged_outcome.reason == AuthFailureReason.BAD_SIGNATURE
+
+        # 2) Audience outside both the service and the OIDC audience sets.
+        wrong_audience = make_jwt(
+            OIDC_KEY,
+            iss=OIDC_ISSUER,
+            sub=self.SMOKE_SUB,
+            aud="some-other-service",
+            extra_claims=declared,
+        )
+        audience_outcome = boundary.authenticate(Credentials(bearer_token=wrong_audience))
+        assert audience_outcome.authenticated is False
+        assert audience_outcome.reason == AuthFailureReason.AUDIENCE_MISMATCH
+
+        # 3) Expired token.
+        expired = make_jwt(
+            OIDC_KEY,
+            iss=OIDC_ISSUER,
+            sub=self.SMOKE_SUB,
+            exp_offset=-3600,
+            extra_claims=declared,
+        )
+        expired_outcome = boundary.authenticate(Credentials(bearer_token=expired))
+        assert expired_outcome.authenticated is False
+        assert expired_outcome.reason == AuthFailureReason.TOKEN_EXPIRED
+
+    def test_shape_d_terraform_env_smoke_token_numeric_sub_regression(self):
+        """End-to-end deployment shape for ODP_OPERATOR_SMOKE_BEARER_TOKEN.
+
+        Terraform-shaped env (auth_mode=oidc, ODP_AUTH_SERVICE_ISSUER ==
+        ODP_AUTH_OIDC_ISSUER == https://accounts.google.com) plus a principal
+        map keyed by the smoke service account's e-mail, exercised with the
+        exact token shape `gcloud auth print-identity-token --include-email`
+        mints: numeric `sub`, verified `email`.
+        """
+        from modules.opsboard.auth.config import config_from_env
+
+        identity_store, session_service = self._make_stores()
+
+        terraform_env = {
+            "ODP_AUTH_MODE": "oidc",
+            "ODP_AUTH_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+            "ODP_AUTH_HS256_KEYS": f"oidc-k1:{OIDC_SECRET.decode()}",
+            "ODP_AUTH_SERVICE_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_SERVICE_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+            "ODP_AUTH_SERVICE_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_OIDC_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_OIDC_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+            "ODP_AUTH_OIDC_AUDIENCES": AUDIENCE,
+            # Declared by service-account e-mail, as the deploy guide instructs.
+            "ODP_AUTH_PRINCIPAL_MAP": json.dumps(
+                {
+                    self.SMOKE_EMAIL: {
+                        "roles": ["platform_admin"],
+                        "scope": {"tenant_id": self.SMOKE_TENANT},
+                    }
+                }
+            ),
+        }
+        config = config_from_env(
+            terraform_env,
+            identity_store=identity_store,
+            session_service=session_service,
+        )
+        assert config.service_issuer == config.oidc_issuer  # collision!
+
+        boundary = AuthenticationBoundary(config)
+        smoke_token = make_jwt(
+            OIDC_KEY,
+            iss=OIDC_ISSUER,
+            sub=self.SMOKE_SUB,
+            extra_claims={"email": self.SMOKE_EMAIL, "email_verified": True},
+        )
+        outcome = boundary.authenticate(Credentials(bearer_token=smoke_token))
+
+        assert outcome.authenticated is True, (
+            f"Expected authenticated=True but got reason={outcome.reason}; "
+            f"token_type={outcome.token_type}"
+        )
+        assert outcome.token_type == "service"
+        assert outcome.principal.subject_id == self.SMOKE_SUB
+        assert outcome.principal.roles == frozenset([Role.PLATFORM_ADMIN])
+        assert outcome.principal.tenant_id == self.SMOKE_TENANT
+
+    def test_shape_d_linked_oidc_user_still_uses_the_identity_store(self):
+        """The e-mail probe must not divert linked human users.
+
+        Per ADR-0003 the principal map is service-identity-only; a linked OIDC
+        account keeps resolving its roles from the identity store.
+        """
+        identity_store, session_service = self._make_stores()
+        account_id = uuid4()
+        tenant_id = uuid4()
+        identity_store.save_account(
+            Account(
+                account_id=account_id,
+                username="oidc-human",
+                email="oidc-human@example.com",
+                tenant_id=tenant_id,
+            )
+        )
+        identity_store.link_federated_identity(account_id, OIDC_ISSUER, "oidc-sub-human")
+        identity_store.set_account_roles(account_id, frozenset([Role.OPERATIONS_MANAGER]))
+        identity_store.set_account_scope(account_id, Scope(tenant_id=str(tenant_id)))
+
+        config = AuthBoundaryConfig(
+            oidc_enabled=True,
+            oidc_issuer=OIDC_ISSUER,
+            oidc_signing_keys={"oidc-k1": OIDC_KEY},
+            oidc_audiences=frozenset([AUDIENCE]),
+            service_issuer=OIDC_ISSUER,
+            service_signing_keys={"oidc-k1": OIDC_KEY},
+            service_audiences=frozenset([AUDIENCE]),
+            identity_store=identity_store,
+            session_service=session_service,
+            principal_mapping_declared=True,
+            principal_mappings=self._smoke_map(),
+        )
+        boundary = AuthenticationBoundary(config)
+
+        token = make_jwt(
+            OIDC_KEY,
+            iss=OIDC_ISSUER,
+            sub="oidc-sub-human",
+            extra_claims={
+                "email": "oidc-human@example.com",
+                "email_verified": True,
+            },
+        )
+        outcome = boundary.authenticate(Credentials(bearer_token=token))
+
+        assert outcome.authenticated is True
+        assert outcome.token_type == "oidc"
+        assert outcome.principal.subject_id == str(account_id)
+        assert outcome.principal.roles == frozenset([Role.OPERATIONS_MANAGER])

@@ -1,0 +1,4369 @@
+{
+  "DPF-EMGI-LIVE-ROLLOUT-001": {
+    "ci": {
+      "source": "gh api repos/alfloop-dev/oday-data-platform/commits/71ecbe0d982f3f93c976fa0104a82903d2a071cf/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "71ecbe0d982f3f93c976fa0104a82903d2a071cf",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "source-suite",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T14:24:06Z"
+          },
+          {
+            "name": "closeout-audit",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T14:21:30Z"
+          },
+          {
+            "name": "consumer-readback",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T14:20:27Z"
+          },
+          {
+            "name": "producer-compatibility",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T14:20:33Z"
+          },
+          {
+            "name": "contract-bundles",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T14:21:48Z"
+          },
+          {
+            "name": "emgi-task-manifest",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T14:20:30Z"
+          },
+          {
+            "name": "Build and smoke test images",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T14:21:51Z"
+          }
+        ]
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/oday-data-platform/commits/71ecbe0d982f3f93c976fa0104a82903d2a071cf/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "71ecbe0d982f3f93c976fa0104a82903d2a071cf",
+        "state": "success",
+        "updated_at": "2026-08-25T14:24:40Z",
+        "description": "Approved by assigned reviewer Codex2",
+        "approver_named_in_gate": "Codex2",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "approval",
+        "ci"
+      ],
+      "withheld": [
+        "acceptance",
+        "runtime"
+      ],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": true,
+        "external_enablement": true,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "A5（unmet_per_own_receipt）：條款要求「部署與 rollback receipts 綁定 digest」；部署那一半有收據，rollback 那一半沒有。同一份 live-rollout-receipt.json 的 acceptance[4].bound_to_digest=true 與其 digest_binding.missing_receipts 自相矛盾，本盤點採 binding 區塊的具體量測而非摘要旗標。",
+        "盤點觀察：該任務自身的 live-rollout-receipt.json 明列 missing_receipts=[\"rollback_receipt\"]，與 acceptance『部署與 rollback receipts 綁定 digest』直接衝突。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": false
+    }
+  },
+  "ODP-AVM-DEPRECIATION-CONTRACT-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-AVM-DEPRECIATION-CONTRACT-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 4,
+        "by_status": {
+          "met_by_delivered_artifact": 1,
+          "met_by_test_in_green_ci": 3
+        },
+        "confidence": "high"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/aacc6ca19c12e6e9e17a350dbafe76c25e4b3bca/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "aacc6ca19c12e6e9e17a350dbafe76c25e4b3bca",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T09:47:39Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T10:20:13Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T09:59:19Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T09:46:30Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T09:49:32Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T09:46:42Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T09:46:31Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge 739cbab19a171ef8d40e0f68f2b428f6b726bac0 (merge-commit, #1148); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "739cbab19a171ef8d40e0f68f2b428f6b726bac0",
+          "merged_at": "2026-09-04T11:45:27+00:00",
+          "merge_pr": "#1148",
+          "subject": "Merge pull request #1148 from alfloop-dev/task/ODP-AVM-DEPRECIATION-CONTRACT-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/aacc6ca19c12e6e9e17a350dbafe76c25e4b3bca/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "aacc6ca19c12e6e9e17a350dbafe76c25e4b3bca",
+        "state": "success",
+        "updated_at": "2026-09-04T12:10:24Z",
+        "description": "Approved by assigned reviewer Antigravity6",
+        "approver_named_in_gate": "Antigravity6",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "逐條 acceptance 皆已定位到既有證據；僅餘證據強度限制（未取 job log、未重跑測試）。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-CANONICAL-LEGACY-LINEAGE-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-CANONICAL-LEGACY-LINEAGE-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 4,
+        "by_status": {
+          "met_by_delivered_artifact": 4
+        },
+        "confidence": "high"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/4ffa3122e47029d5143762413ae165d5b8d3c500/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "4ffa3122e47029d5143762413ae165d5b8d3c500",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T14:53:35Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T14:57:44Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T15:12:38Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T14:55:17Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T14:52:36Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T14:52:28Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T14:52:28Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge 865ff82e817cc56ffff0187f33cd6d3e8718958b (merge-commit, #1150); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "865ff82e817cc56ffff0187f33cd6d3e8718958b",
+          "merged_at": "2026-09-03T15:13:24+00:00",
+          "merge_pr": "#1150",
+          "subject": "Merge pull request #1150 from alfloop-dev/task/ODP-CANONICAL-LEGACY-LINEAGE-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/4ffa3122e47029d5143762413ae165d5b8d3c500/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "4ffa3122e47029d5143762413ae165d5b8d3c500",
+        "state": "success",
+        "updated_at": "2026-09-03T15:11:43Z",
+        "description": "Approved by assigned reviewer Antigravity",
+        "approver_named_in_gate": "Antigravity",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "盤點觀察：Acceptance『缺席率只用可辨識 source payload 或 snapshot 計算』屬文件內容正確性，本次只驗證存在性，未重算數值。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-DEV-ROLLOUT-001": {
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/83944bb50c56a5071c992edb28e96eae3155f4c0/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "83944bb50c56a5071c992edb28e96eae3155f4c0",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T17:00:04Z"
+          },
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T16:54:36Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T17:11:29Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T16:53:20Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T16:53:23Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T16:53:21Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T16:55:12Z"
+          }
+        ]
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/83944bb50c56a5071c992edb28e96eae3155f4c0/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "83944bb50c56a5071c992edb28e96eae3155f4c0",
+        "state": "success",
+        "updated_at": "2026-08-25T17:06:40Z",
+        "description": "Approved by assigned reviewer Codex",
+        "approver_named_in_gate": "Codex",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "approval",
+        "ci"
+      ],
+      "withheld": [
+        "acceptance",
+        "runtime"
+      ],
+      "acceptance_class": {
+        "code_or_docs": false,
+        "runtime_deployment": true,
+        "external_enablement": true,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 1,
+      "merged_inventory_gaps": [
+        "A2（unmet_per_own_receipt）：條款要求「所有 components 符合 release manifest digests」。收據比對的兩邊都是同一組佔位字串，因此 digest_match=true 不構成真實 digest 一致性證據。",
+        "A3（not_evidenced）：PASSED 是摘要旗標，其依據的原始報告不在可查範圍，無法獨立核對。",
+        "A4（partially_met）：此 16 項與 data platform 側的 16 個第三方 provider（cwa、tdx、market_events、mof_business、osm、moi_rental、ris_population、nlsc_boundary、overture、foursquare、brand_locators、tgos、google_places_verifier、listings、mobility、survey）是不同母體。兩份收據都寫「16 sources disabled」不代表驗的是同一份清單。",
+        "A5（unmet_per_own_receipt）：SHA 與 manifest 綁定成立，image digest 綁定不成立，故條款整體未達成。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-DEV-STAGED-GATE-RECONCILIATION-001": {
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/40bb02462ec742cfb615214c1873f15a40b2c602/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "40bb02462ec742cfb615214c1873f15a40b2c602",
+        "total": 7,
+        "conclusions": {
+          "skipped": 3,
+          "success": 4
+        },
+        "checks": [
+          {
+            "name": "performance-gate",
+            "conclusion": "skipped",
+            "completed_at": "2026-09-04T09:11:54Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "skipped",
+            "completed_at": "2026-09-04T09:11:54Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "skipped",
+            "completed_at": "2026-09-04T09:11:54Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T09:11:54Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T09:15:06Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T09:11:55Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T09:11:59Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge efdfea1a0c31c3c9ebcb2acfe1eb61dc4fa2bff6 (merge-commit, #1193); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "efdfea1a0c31c3c9ebcb2acfe1eb61dc4fa2bff6",
+          "merged_at": "2026-09-04T09:20:44+00:00",
+          "merge_pr": "#1193",
+          "subject": "Merge pull request #1193 from alfloop-dev/task/ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/40bb02462ec742cfb615214c1873f15a40b2c602/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "40bb02462ec742cfb615214c1873f15a40b2c602",
+        "state": "success",
+        "updated_at": "2026-09-04T09:20:32Z",
+        "description": "Approved by assigned reviewer Claude2",
+        "approver_named_in_gate": "Claude2",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [
+        "acceptance"
+      ],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "medium",
+      "skipped_checks_at_head": 3,
+      "process_constraint_unverifiable_criteria": 3,
+      "partially_met_criteria": 1,
+      "merged_inventory_gaps": [
+        "第 4 輪更正：A3-A6 的唯一測試檔 tests/e2e/test_release_gate_registry.py 在精確 head 40bb0246 上未被任何成功 check 執行。該 head 的 product job（tests/ 的唯一收集者）conclusion=skipped，product-e2e-gate 亦 skipped 且其固定清單不含本檔，orchestrator job 結構上不收集 tests/e2e/。前輪把這四條綁到 orchestrator check 屬錯誤綁定。",
+        "第 4 輪更正：A7（第三方來源保持 disabled、無 credentials、default deny egress）在本候選 PR 的完整 diff 內查無任何對應程式或測試——該 PR 只有 2 檔 +129/-6，且無 sources／egress／credential 字樣。既有契約 deploy-dev.yml 可 pinned 引用，但 live posture（實際 disabled 狀態、credentials 投影、egress 是否 default deny）無既有 runtime receipt。此為後續 rollout scope 的缺口，不倒灌成本 code/gate 任務未完成。",
+        "盤點觀察：Acceptance 第一條『等待 ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001 合併後才選定 candidate』的時序未在本盤點驗證。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-DRIFT-DEP-REMOVE-002": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-DRIFT-DEP-REMOVE-002].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 9,
+        "by_status": {
+          "met_by_test_in_green_ci": 4,
+          "met_by_delivered_artifact": 1,
+          "met_by_receipt": 2,
+          "process_constraint_unverifiable": 2
+        },
+        "confidence": "medium"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/6d438486c8645e476fcf86b5f675a5ca20592b9d/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "6d438486c8645e476fcf86b5f675a5ca20592b9d",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-06T04:57:25Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-06T05:01:41Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-06T05:20:31Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-06T04:56:15Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-06T04:56:17Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-06T04:56:17Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-06T04:59:45Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge 66244b30c2615dcad8373e03fff096e298d21e98 (merge-commit, #1222); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "66244b30c2615dcad8373e03fff096e298d21e98",
+          "merged_at": "2026-09-06T05:31:37+00:00",
+          "merge_pr": "#1222",
+          "subject": "Merge pull request #1222 from alfloop-dev/task/ODP-DRIFT-DEP-REMOVE-002",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/6d438486c8645e476fcf86b5f675a5ca20592b9d/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "6d438486c8645e476fcf86b5f675a5ca20592b9d",
+        "state": "success",
+        "updated_at": "2026-09-06T05:31:36Z",
+        "description": "Approved by assigned reviewer Antigravity4",
+        "approver_named_in_gate": "Antigravity4",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "medium",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 2,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "盤點觀察：宣告 artifact tests/models/evidently_baseline_support.py 在 merge commit 與其第一父皆不存在；該 artifact 條目與實際交付不符（疑為改名或未建立）。",
+        "盤點觀察：Acceptance 第 7 條明文本 task 不能代替 PR1188 的 approval/merge，該部分本質上在此任務範圍外。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-EPHEMERAL-STAGING-IAC-001": {
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/ee6eddb6951aea752b857183a484ebc22ddf7772/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "ee6eddb6951aea752b857183a484ebc22ddf7772",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-08-24T19:37:57Z"
+          },
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-08-24T19:21:27Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-08-24T19:26:05Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-08-24T19:20:12Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-08-24T19:20:10Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-08-24T19:21:19Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-08-24T19:22:24Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge 82ed6a05cf67c6c0e43f6f5b4219882251a87c42 (merge-commit, #1002); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "82ed6a05cf67c6c0e43f6f5b4219882251a87c42",
+          "merged_at": "2026-08-24T19:40:25+00:00",
+          "merge_pr": "#1002",
+          "subject": "Merge pull request #1002 from alfloop-dev/task/ODP-EPHEMERAL-STAGING-IAC-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/ee6eddb6951aea752b857183a484ebc22ddf7772/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "ee6eddb6951aea752b857183a484ebc22ddf7772",
+        "state": "success",
+        "updated_at": "2026-08-24T19:36:58Z",
+        "description": "Approved by assigned reviewer Codex2",
+        "approver_named_in_gate": "Codex2",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [
+        "acceptance"
+      ],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "medium",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 1,
+      "merged_inventory_gaps": [
+        "A1（partially_met）：Terraform 模組與其契約測試存在且 CI 綠。若條款的「可重跑建立」被解讀為需要真實 terraform apply 的 runtime 收據，本 PR 未帶任何 docs/evidence/ 收據。",
+        "盤點觀察：候選 PR 未帶任何 docs/evidence/ 收據；acceptance『可重跑建立』若被解讀為需要真實 apply，則缺 runtime 證據。",
+        "第 4 輪更正：A2 的測試檔 infra/terraform/tests/test_ephemeral_staging.py 已交付，但 infra/ 不在該 head 的 pyproject testpaths，也不被該 head 七個 workflow 中任何一支引用，CI 從未執行它。該 head 的 product check 雖為 success，但它不收集這個路徑，前輪的綁定不成立。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 7,
+        "by_status": {
+          "met_by_receipt": 1,
+          "met_by_test_in_green_ci": 5,
+          "met_by_delivered_artifact": 1
+        },
+        "confidence": "high"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/f24003a7e18a48c441252ea67beb16d7285c4614/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "f24003a7e18a48c441252ea67beb16d7285c4614",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-02T13:35:47Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-02T13:54:15Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-02T13:40:35Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-02T13:34:38Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-02T13:34:38Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-02T13:37:01Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-02T13:34:37Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge dd7013df830cdabe33d1b09e093dd728318d50f5 (merge-commit, #1135); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "dd7013df830cdabe33d1b09e093dd728318d50f5",
+          "merged_at": "2026-09-02T13:56:05+00:00",
+          "merge_pr": "#1135",
+          "subject": "Merge pull request #1135 from alfloop-dev/task/ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/f24003a7e18a48c441252ea67beb16d7285c4614/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "f24003a7e18a48c441252ea67beb16d7285c4614",
+        "state": "success",
+        "updated_at": "2026-09-02T13:55:14Z",
+        "description": "Approved by assigned reviewer Claude",
+        "approver_named_in_gate": "Claude",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "盤點觀察：Commit trailer 記 Reviewer: Codex，但 task-review-gate 與 brief 皆為 Claude；屬 trailer 過時，不影響核准事實。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001": {
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/5edcf009640ae31dde160b1ce4c9123ac2c31a2f/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "5edcf009640ae31dde160b1ce4c9123ac2c31a2f",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T16:05:44Z"
+          },
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T15:49:08Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T15:55:23Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T15:47:35Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T15:49:48Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T15:47:35Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T15:47:37Z"
+          }
+        ]
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/5edcf009640ae31dde160b1ce4c9123ac2c31a2f/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "5edcf009640ae31dde160b1ce4c9123ac2c31a2f",
+        "state": "success",
+        "updated_at": "2026-08-25T16:00:33Z",
+        "description": "Approved by assigned reviewer Antigravity2",
+        "approver_named_in_gate": "Antigravity2",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "approval",
+        "ci"
+      ],
+      "withheld": [
+        "acceptance",
+        "runtime"
+      ],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": true,
+        "human_authority": true
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 2,
+      "merged_inventory_gaps": [
+        "A2（partially_met）：WIF/IAM 與 dev、staging 變數的 reference 完整且只記 reference；production 側的變數與 IAM 尚未存在，故此條款只對 dev/staging 成立。",
+        "A3（partially_met）：更正先前盤點：GitHub 側的 production environment 確實存在（id 20574639394）且其 required_reviewers 保護有效，這一半是達成的。未達成的是 production 的 GCP 基礎設施、環境變數與五項具名人類決定，因此整體條款仍未完成。",
+        "盤點觀察（第 1 輪判斷已更正）：GitHub 側的 production environment 與其 required_reviewers 保護確實存在；未達成的是 production 的 GCP 資源、環境變數與五項具名人類決定。fail-closed 行為正確，但 acceptance 未全數完成。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 4,
+        "by_status": {
+          "met_by_test_in_green_ci": 4
+        },
+        "confidence": "high"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/0585dd49976ebf269248067d4adfd56e278157ae/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "0585dd49976ebf269248067d4adfd56e278157ae",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T15:00:13Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T15:27:38Z"
+          },
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T14:56:34Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T14:58:20Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T14:55:27Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T14:55:27Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T14:55:26Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge eed8d51bb8a18c677baa25ab30a536cc576ae5fe (merge-commit, #1170); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "eed8d51bb8a18c677baa25ab30a536cc576ae5fe",
+          "merged_at": "2026-09-05T15:43:25+00:00",
+          "merge_pr": "#1170",
+          "subject": "Merge pull request #1170 from alfloop-dev/task/ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/0585dd49976ebf269248067d4adfd56e278157ae/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "0585dd49976ebf269248067d4adfd56e278157ae",
+        "state": "success",
+        "updated_at": "2026-09-05T15:43:12Z",
+        "description": "Approved by assigned reviewer Claude",
+        "approver_named_in_gate": "Claude",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "盤點觀察：Acceptance『Operator approval 的 production-entry 測試通過』屬測試語意，本盤點未重跑測試，僅依精確 head 的 7/7 CI success。",
+        "第 4 輪補查（結論不變）：A2／A4 的測試檔帶 requires_live_env 標記，被 product job 主 step 的 marker 運算式排除，但由同 job 的資料庫 step 與具名 PostgreSQL 16 step 跑回來，已補上 step 層綁定。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-INT-MANUAL-CORRECTION-AUDIT-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-INT-MANUAL-CORRECTION-AUDIT-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 4,
+        "by_status": {
+          "met_by_test_in_green_ci": 4
+        },
+        "confidence": "high"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/0b3e1987d426200928cc5ec62dfd8de4f8d81358/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "0b3e1987d426200928cc5ec62dfd8de4f8d81358",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T00:54:32Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T01:15:35Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T00:59:05Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T00:53:27Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T00:53:24Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T00:56:18Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T00:53:24Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge f02960fa81c2beeef88dd213e86ec96c8380b2d8 (merge-commit, #1175); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "f02960fa81c2beeef88dd213e86ec96c8380b2d8",
+          "merged_at": "2026-09-05T03:33:41+00:00",
+          "merge_pr": "#1175",
+          "subject": "Merge pull request #1175 from alfloop-dev/task/ODP-INT-MANUAL-CORRECTION-AUDIT-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/0b3e1987d426200928cc5ec62dfd8de4f8d81358/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "0b3e1987d426200928cc5ec62dfd8de4f8d81358",
+        "state": "success",
+        "updated_at": "2026-09-05T03:33:39Z",
+        "description": "Approved by assigned reviewer Codex2",
+        "approver_named_in_gate": "Codex2",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "逐條 acceptance 皆已定位到既有證據；僅餘證據強度限制（未取 job log、未重跑測試）。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-INT001-CDC-DISPOSITION-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-INT001-CDC-DISPOSITION-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 4,
+        "by_status": {
+          "met_by_delivered_artifact": 2,
+          "met_by_test_in_green_ci": 2
+        },
+        "confidence": "high"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/39289e4207b29d2c7adea071f42901f9f0b5ae20/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "39289e4207b29d2c7adea071f42901f9f0b5ae20",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T20:09:20Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T19:53:27Z"
+          },
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T19:48:42Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T19:47:36Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T19:50:46Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T19:47:35Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T19:47:36Z"
+          }
+        ]
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/39289e4207b29d2c7adea071f42901f9f0b5ae20/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "39289e4207b29d2c7adea071f42901f9f0b5ae20",
+        "state": "success",
+        "updated_at": "2026-09-03T20:07:47Z",
+        "description": "Approved by assigned reviewer Antigravity7",
+        "approver_named_in_gate": "Antigravity7",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci"
+      ],
+      "withheld": [
+        "runtime"
+      ],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": true
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "盤點觀察：需求本身仍 OPEN 待人類裁決；這是需求狀態而非任務缺陷，但下游不得據此視為 INT-001 已實作。",
+        "第 4 輪更正（結論不變）：A4 兩個測試檔分屬不同 job 的收集範圍，原本只綁 orchestrator check；已補上收集 tests/integration/ 的 product check，兩者於該 head 皆為 success。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-JOB-PARTIAL-DISPOSITION-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-JOB-PARTIAL-DISPOSITION-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 4,
+        "by_status": {
+          "met_by_test_in_green_ci": 2,
+          "met_by_delivered_artifact": 2
+        },
+        "confidence": "high"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/f8caf62e11643f9cbe59ea6b958faeab746fcac2/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "f8caf62e11643f9cbe59ea6b958faeab746fcac2",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T12:31:49Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T12:36:41Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T12:51:24Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T12:30:20Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T12:30:19Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T12:33:20Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T12:30:15Z"
+          }
+        ]
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/f8caf62e11643f9cbe59ea6b958faeab746fcac2/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "f8caf62e11643f9cbe59ea6b958faeab746fcac2",
+        "state": "success",
+        "updated_at": "2026-09-04T12:50:50Z",
+        "description": "Approved by assigned reviewer Claude",
+        "approver_named_in_gate": "Claude",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci"
+      ],
+      "withheld": [
+        "runtime"
+      ],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": true
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "盤點觀察：候選 PR head commit 無 LLM-Agent/Task-ID/Reviewer trailer（head 為 base advance merge commit）；owner/reviewer 以 task-review-gate 與 brief 為準。",
+        "盤點觀察：handback HB-SHARED001-PARTIAL-001 尚待 Human/Ops 簽署。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-LH-PREDICTION-DRIFT-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-LH-PREDICTION-DRIFT-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 4,
+        "by_status": {
+          "met_by_test_in_green_ci": 4
+        },
+        "confidence": "high"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/a7f7b7d9d174b45f937d1fb0d12e2c962c97adad/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "a7f7b7d9d174b45f937d1fb0d12e2c962c97adad",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T12:29:28Z"
+          },
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T12:24:47Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T12:42:45Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T12:23:38Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T12:26:26Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T12:23:37Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T12:23:42Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge 0cbc5330f6a076344d2dff32370dedae5b82da4a (merge-commit, #1154); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "0cbc5330f6a076344d2dff32370dedae5b82da4a",
+          "merged_at": "2026-09-03T12:43:20+00:00",
+          "merge_pr": "#1154",
+          "subject": "Merge pull request #1154 from alfloop-dev/task/ODP-LH-PREDICTION-DRIFT-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/a7f7b7d9d174b45f937d1fb0d12e2c962c97adad/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "a7f7b7d9d174b45f937d1fb0d12e2c962c97adad",
+        "state": "success",
+        "updated_at": "2026-09-03T12:39:31Z",
+        "description": "Approved by assigned reviewer Antigravity3",
+        "approver_named_in_gate": "Antigravity3",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "逐條 acceptance 皆已定位到既有證據；僅餘證據強度限制（未取 job log、未重跑測試）。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-LH003-BACKTEST-RELEASE-GATE-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-LH003-BACKTEST-RELEASE-GATE-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 4,
+        "by_status": {
+          "met_by_test_in_green_ci": 4
+        },
+        "confidence": "high"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/ce7a3fadd758ca19b5ebbc632e3d8aa523003f65/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "ce7a3fadd758ca19b5ebbc632e3d8aa523003f65",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T21:28:15Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T21:12:59Z"
+          },
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T21:08:39Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T21:07:26Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T21:07:33Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T21:09:59Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T21:07:25Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge d3e344353ad4280962ce25078c067f14c9a6df10 (merge-commit, #1165); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "d3e344353ad4280962ce25078c067f14c9a6df10",
+          "merged_at": "2026-09-03T21:28:18+00:00",
+          "merge_pr": "#1165",
+          "subject": "Merge pull request #1165 from alfloop-dev/task/ODP-LH003-BACKTEST-RELEASE-GATE-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/ce7a3fadd758ca19b5ebbc632e3d8aa523003f65/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "ce7a3fadd758ca19b5ebbc632e3d8aa523003f65",
+        "state": "success",
+        "updated_at": "2026-09-03T21:26:50Z",
+        "description": "Approved by assigned reviewer Antigravity3",
+        "approver_named_in_gate": "Antigravity3",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "逐條 acceptance 皆已定位到既有證據；僅餘證據強度限制（未取 job log、未重跑測試）。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-MEASUREMENT-CROSSLAYER-GATE-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-MEASUREMENT-CROSSLAYER-GATE-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 4,
+        "by_status": {
+          "met_by_test_in_green_ci": 4
+        },
+        "confidence": "medium"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/aaa9aaee9380d50ae49544e03ea0a9bdaf8e86a2/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "aaa9aaee9380d50ae49544e03ea0a9bdaf8e86a2",
+        "total": 7,
+        "conclusions": {
+          "skipped": 3,
+          "success": 4
+        },
+        "checks": [
+          {
+            "name": "product",
+            "conclusion": "skipped",
+            "completed_at": "2026-09-03T12:20:13Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "skipped",
+            "completed_at": "2026-09-03T12:20:13Z"
+          },
+          {
+            "name": "performance-gate",
+            "conclusion": "skipped",
+            "completed_at": "2026-09-03T12:20:13Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T12:20:15Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T12:20:13Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T12:23:05Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T12:20:08Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge 8479567d66d9d08d0aa4a27d9f0a901ab092f2ae (merge-commit, #1153); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "8479567d66d9d08d0aa4a27d9f0a901ab092f2ae",
+          "merged_at": "2026-09-03T12:29:15+00:00",
+          "merge_pr": "#1153",
+          "subject": "Merge pull request #1153 from alfloop-dev/task/ODP-MEASUREMENT-CROSSLAYER-GATE-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/aaa9aaee9380d50ae49544e03ea0a9bdaf8e86a2/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "aaa9aaee9380d50ae49544e03ea0a9bdaf8e86a2",
+        "state": "success",
+        "updated_at": "2026-09-03T12:28:23Z",
+        "description": "Approved by assigned reviewer Antigravity4",
+        "approver_named_in_gate": "Antigravity4",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "medium",
+      "skipped_checks_at_head": 3,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "盤點觀察：精確 head 有 3 個 check conclusion=skipped，product 層測試未在該 head 實跑。",
+        "第 4 輪更正（結論不變）：A1-A4 的 delivery_toolchain/governance/test_check_measurement_defaults.py 原被標為 delivered_file，已正規化為 test_file，並補上 orchestrator job 收集 delivery_toolchain/ 的依據。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 4,
+        "by_status": {
+          "met_by_delivered_artifact": 2,
+          "met_by_test_in_green_ci": 2
+        },
+        "confidence": "high"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/f2d1bd88ec2dc89148dd3d7346a01de0e921432b/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "f2d1bd88ec2dc89148dd3d7346a01de0e921432b",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T17:31:05Z"
+          },
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T17:27:22Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T17:47:27Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T17:25:46Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T17:28:13Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T17:26:08Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T17:25:35Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge 830a8ebf919cd3f9dc3d53fc13c4f76e65eeff6e (merge-commit, #1169); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "830a8ebf919cd3f9dc3d53fc13c4f76e65eeff6e",
+          "merged_at": "2026-09-03T17:48:49+00:00",
+          "merge_pr": "#1169",
+          "subject": "Merge pull request #1169 from alfloop-dev/task/ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/f2d1bd88ec2dc89148dd3d7346a01de0e921432b/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "f2d1bd88ec2dc89148dd3d7346a01de0e921432b",
+        "state": "success",
+        "updated_at": "2026-09-03T17:44:08Z",
+        "description": "Approved by assigned reviewer Antigravity4",
+        "approver_named_in_gate": "Antigravity4",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "盤點觀察：Acceptance『找不到權威決策時 task 轉 blocked waiting Human/Ops』的負向行為未在本盤點重跑驗證。",
+        "第 4 輪更正（結論不變）：A3-A4 的 delivery_toolchain/governance/test_check_requirement_members.py 同上 kind 正規化與收集依據。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-MODELREADY-QUALITY-NULLABLE-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-MODELREADY-QUALITY-NULLABLE-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 4,
+        "by_status": {
+          "met_by_test_in_green_ci": 4
+        },
+        "confidence": "high"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/a2a8d9c235e88820572b30700d5f5cc9b31bb0af/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "a2a8d9c235e88820572b30700d5f5cc9b31bb0af",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T19:34:07Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T19:38:50Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T19:54:11Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T19:33:02Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T19:33:01Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T19:36:01Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T19:33:03Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge 10d47d17a7b3ca8d3c655afaaf02b931c3fb7e0f (merge-commit, #1168); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "10d47d17a7b3ca8d3c655afaaf02b931c3fb7e0f",
+          "merged_at": "2026-09-03T19:54:30+00:00",
+          "merge_pr": "#1168",
+          "subject": "Merge pull request #1168 from alfloop-dev/task/ODP-MODELREADY-QUALITY-NULLABLE-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/a2a8d9c235e88820572b30700d5f5cc9b31bb0af/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "a2a8d9c235e88820572b30700d5f5cc9b31bb0af",
+        "state": "success",
+        "updated_at": "2026-09-03T19:52:25Z",
+        "description": "Approved by assigned reviewer Antigravity5",
+        "approver_named_in_gate": "Antigravity5",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "逐條 acceptance 皆已定位到既有證據；僅餘證據強度限制（未取 job log、未重跑測試）。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-NET002-LEASE-DISPOSITION-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-NET002-LEASE-DISPOSITION-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 4,
+        "by_status": {
+          "met_by_test_in_green_ci": 3,
+          "met_by_delivered_artifact": 1
+        },
+        "confidence": "high"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/3bd82e8a401d463ef8301671620d45fc93b6127b/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "3bd82e8a401d463ef8301671620d45fc93b6127b",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T10:35:59Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T10:53:44Z"
+          },
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T10:37:03Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T10:39:10Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T12:05:42Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T10:36:05Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T10:36:02Z"
+          }
+        ]
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/3bd82e8a401d463ef8301671620d45fc93b6127b/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "3bd82e8a401d463ef8301671620d45fc93b6127b",
+        "state": "success",
+        "updated_at": "2026-09-04T12:12:18Z",
+        "description": "Approved by assigned reviewer Antigravity6",
+        "approver_named_in_gate": "Antigravity6",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci"
+      ],
+      "withheld": [
+        "runtime"
+      ],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": true
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "盤點觀察：同需求的 SEQUENCING member 為 DECIDED，decider 欄位為泛稱機構『Human/Ops (Architecture Board)』而非具名人員；此為既知的 decider 泛稱漏洞，reviewer 需自行裁定是否接受。",
+        "盤點觀察：候選 PR head commit 無 task trailer（head 為 merge commit）。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-NETPLAN-DISCLOSURE-UI-E2E-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-NETPLAN-DISCLOSURE-UI-E2E-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 4,
+        "by_status": {
+          "met_by_test_in_green_ci": 4
+        },
+        "confidence": "high"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/c71599aa116e1bd5a73bf0be005b34163bd0405e/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "c71599aa116e1bd5a73bf0be005b34163bd0405e",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T04:59:59Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T04:44:58Z"
+          },
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T04:32:40Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T04:31:36Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T04:34:18Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T04:31:34Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T04:31:38Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge 1edb2f834cbf38ccd489cd999802098076e891b7 (merge-commit, #1174); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "1edb2f834cbf38ccd489cd999802098076e891b7",
+          "merged_at": "2026-09-04T05:00:06+00:00",
+          "merge_pr": "#1174",
+          "subject": "Merge pull request #1174 from alfloop-dev/task/ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/c71599aa116e1bd5a73bf0be005b34163bd0405e/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "c71599aa116e1bd5a73bf0be005b34163bd0405e",
+        "state": "success",
+        "updated_at": "2026-09-04T04:57:57Z",
+        "description": "Approved by assigned reviewer Antigravity",
+        "approver_named_in_gate": "Antigravity",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "盤點觀察：E2E 的 DOM 層行為只有 CI 結論可依；本盤點依規定未重跑測試。",
+        "第 4 輪更正（結論不變）：A4 的三個測試檔原本一律綁 product-e2e-gate。該 job 不做路徑式收集，只跑寫死的 playwright spec 清單與 PYTEST_NODE_IDS；已拆綁為 spec.ts→product-e2e-gate、兩個 pytest 檔→product。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-OPS002-DECISION-COMMENTS-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-OPS002-DECISION-COMMENTS-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 4,
+        "by_status": {
+          "met_by_test_in_green_ci": 4
+        },
+        "confidence": "high"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/54e8c8f37d9de6f3e60f423dd22a8ffb7f3a76f0/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "54e8c8f37d9de6f3e60f423dd22a8ffb7f3a76f0",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T13:46:58Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T14:06:45Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T13:51:11Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T13:45:47Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T13:48:47Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T13:45:52Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T13:45:50Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge c1371572af637ab1598370a495a126a4cddfba65 (merge-commit, #1158); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "c1371572af637ab1598370a495a126a4cddfba65",
+          "merged_at": "2026-09-03T14:09:21+00:00",
+          "merge_pr": "#1158",
+          "subject": "Merge pull request #1158 from alfloop-dev/task/ODP-OPS002-DECISION-COMMENTS-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/54e8c8f37d9de6f3e60f423dd22a8ffb7f3a76f0/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "54e8c8f37d9de6f3e60f423dd22a8ffb7f3a76f0",
+        "state": "success",
+        "updated_at": "2026-09-03T14:04:50Z",
+        "description": "Approved by assigned reviewer Antigravity3",
+        "approver_named_in_gate": "Antigravity3",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "盤點觀察：身分不一致：task-review-gate 記核准者 Antigravity3、commit trailer 記 LLM-Agent Codex2 / Reviewer Antigravity3，但 task brief（2026-09-03 產生）記 owner Antigravity2 / reviewer Codex。推定為核准後 reviewer 輪替導致 brief 覆寫，需 reviewer 裁定以何者為準。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-PRICE006-BANDIT-GATED-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-PRICE006-BANDIT-GATED-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 4,
+        "by_status": {
+          "met_by_test_in_green_ci": 4
+        },
+        "confidence": "high"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/282a88fb882cce53c88ef8ac3369ea0676c3d20d/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "282a88fb882cce53c88ef8ac3369ea0676c3d20d",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T02:26:33Z"
+          },
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T02:17:18Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T02:49:48Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T02:16:07Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T02:16:03Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T02:16:06Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T02:19:06Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge 470f495d957edc38d330a624cf4d56618cbfb4e2 (merge-commit, #1179); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "470f495d957edc38d330a624cf4d56618cbfb4e2",
+          "merged_at": "2026-09-04T02:50:10+00:00",
+          "merge_pr": "#1179",
+          "subject": "Merge pull request #1179 from alfloop-dev/task/ODP-PRICE006-BANDIT-GATED-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/282a88fb882cce53c88ef8ac3369ea0676c3d20d/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "282a88fb882cce53c88ef8ac3369ea0676c3d20d",
+        "state": "success",
+        "updated_at": "2026-09-04T02:42:26Z",
+        "description": "Approved by assigned reviewer Antigravity2",
+        "approver_named_in_gate": "Antigravity2",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "盤點觀察：commit trailer 的 Reviewer 記 Claude2，與 gate 的 Antigravity2 不同；以 gate 為準。",
+        "第 4 輪補查（結論不變）：A3／A4 的測試檔同樣帶 requires_live_env 標記，由 product job 的資料庫 step 與具名 PostgreSQL 16 step 執行，已補上 step 層綁定。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 1,
+        "by_status": {
+          "met_by_receipt": 1
+        },
+        "confidence": "high"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/bdd277568d930757243583336a577a2492b67ca6/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "bdd277568d930757243583336a577a2492b67ca6",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-01T14:26:34Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-01T14:16:18Z"
+          },
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-01T14:11:47Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-01T14:10:27Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-01T14:10:29Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-01T14:10:28Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-01T14:12:52Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge 640e35415aa33d5d53af21a8a527431b8f751cea (merge-commit, #1109); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "640e35415aa33d5d53af21a8a527431b8f751cea",
+          "merged_at": "2026-09-01T14:29:30+00:00",
+          "merge_pr": "#1109",
+          "subject": "Merge pull request #1109 from alfloop-dev/task/ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/bdd277568d930757243583336a577a2492b67ca6/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "bdd277568d930757243583336a577a2492b67ca6",
+        "state": "success",
+        "updated_at": "2026-09-01T14:24:32Z",
+        "description": "Approved by assigned reviewer Antigravity3",
+        "approver_named_in_gate": "Antigravity3",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "盤點觀察：Acceptance 提到『既有 Runtime Release deploy phase 只接受 immutable digest 與 signed Supervisor lease』屬既有機制不變性，本盤點未重驗。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-RELEASE-GATE-FIXTURE-STAGING-002": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-RELEASE-GATE-FIXTURE-STAGING-002].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 6,
+        "by_status": {
+          "met_by_test_in_green_ci": 3,
+          "process_constraint_unverifiable": 2,
+          "met_by_delivered_artifact": 1
+        },
+        "confidence": "medium"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/a9e7853f9ed910303eb6b7fa1d81c1e1b46c5787/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "a9e7853f9ed910303eb6b7fa1d81c1e1b46c5787",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-06T01:01:49Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-06T01:20:24Z"
+          },
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-06T00:57:22Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-06T00:59:16Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-06T00:56:16Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-06T00:56:18Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-06T00:56:15Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge 17393dd447e9b25978a83641cabf7cd77951f24a (merge-commit, #1212); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "17393dd447e9b25978a83641cabf7cd77951f24a",
+          "merged_at": "2026-09-06T01:29:43+00:00",
+          "merge_pr": "#1212",
+          "subject": "Merge pull request #1212 from alfloop-dev/task/ODP-RELEASE-GATE-FIXTURE-STAGING-002",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/a9e7853f9ed910303eb6b7fa1d81c1e1b46c5787/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "a9e7853f9ed910303eb6b7fa1d81c1e1b46c5787",
+        "state": "success",
+        "updated_at": "2026-09-06T01:58:14Z",
+        "description": "Approved by assigned reviewer Codex",
+        "approver_named_in_gate": "Codex",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "medium",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 2,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "盤點觀察：Acceptance 提及前身 ODP-RELEASE-GATE-FIXTURE-STAGING-001 因 mutates_canonical 設定錯誤而只有唯讀檢查並被 supersede；該前身不在本 38 項清單內，映射時勿混用。",
+        "第 4 輪更正（結論不變）：A1-A3 的 tests/e2e/test_release_gate_registry.py 原綁 product-e2e-gate。該 job 的 make 前置目標只執行 check_release_gate_registry.py 這支檢查器本身，不執行同名 pytest 檔；已改綁真正收集它的 product check（該 head success）。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 1,
+        "by_status": {
+          "met_by_receipt": 1
+        },
+        "confidence": "high"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/74078faecfdd6238909e5157271604074f7eaf96/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "74078faecfdd6238909e5157271604074f7eaf96",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-08-26T19:46:45Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-08-26T20:02:08Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-08-26T19:51:02Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-08-26T19:43:44Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-08-26T19:45:44Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-08-26T19:44:59Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-08-26T19:43:34Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge fe698e88d91678b18cfd5356a9c10be08dfa5186 (merge-commit, #1030); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "fe698e88d91678b18cfd5356a9c10be08dfa5186",
+          "merged_at": "2026-08-26T20:02:36+00:00",
+          "merge_pr": "#1030",
+          "subject": "Merge pull request #1030 from alfloop-dev/task/ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/74078faecfdd6238909e5157271604074f7eaf96/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "74078faecfdd6238909e5157271604074f7eaf96",
+        "state": "success",
+        "updated_at": "2026-08-26T19:59:36Z",
+        "description": "Approved by assigned reviewer Codex",
+        "approver_named_in_gate": "Codex",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "盤點觀察：Acceptance 綁定的 workflow run 33003734045 本身未在本盤點回查（唯讀 run 查詢未執行）。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 7,
+        "by_status": {
+          "met_by_delivered_artifact": 1,
+          "met_by_test_in_green_ci": 6
+        },
+        "confidence": "high"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/55de004a8559442ed4ba9cedf800e692bb0b1116/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "55de004a8559442ed4ba9cedf800e692bb0b1116",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-08-27T14:58:30Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-08-27T15:15:43Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-08-27T15:04:29Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-08-27T14:58:51Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-08-27T14:56:47Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-08-27T14:56:44Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-08-27T14:56:46Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge d41b9328137cef1eceeb5990e8e0bb5963414682 (merge-commit, #1050); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "d41b9328137cef1eceeb5990e8e0bb5963414682",
+          "merged_at": "2026-08-27T15:15:45+00:00",
+          "merge_pr": "#1050",
+          "subject": "Merge pull request #1050 from alfloop-dev/task/ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/55de004a8559442ed4ba9cedf800e692bb0b1116/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "55de004a8559442ed4ba9cedf800e692bb0b1116",
+        "state": "success",
+        "updated_at": "2026-08-27T15:15:22Z",
+        "description": "Approved by assigned reviewer Codex2",
+        "approver_named_in_gate": "Codex2",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "盤點觀察：候選 PR head commit 無 task trailer（head 為 merge commit）。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-REQ-DISPOSITION-GOVERNANCE-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-REQ-DISPOSITION-GOVERNANCE-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 4,
+        "by_status": {
+          "met_by_test_in_green_ci": 3,
+          "met_by_delivered_artifact": 1
+        },
+        "confidence": "high"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/7c889b2117803b8fe419f32e7ace84d1ce38b5e4/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "7c889b2117803b8fe419f32e7ace84d1ce38b5e4",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T12:42:44Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T12:46:41Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T13:01:45Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T12:41:20Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T12:41:26Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T12:41:20Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T12:43:57Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge 61ef9183d7c8ea2af4b5d7d625b1513dc683212f (merge-commit, #1146); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "61ef9183d7c8ea2af4b5d7d625b1513dc683212f",
+          "merged_at": "2026-09-03T13:03:52+00:00",
+          "merge_pr": "#1146",
+          "subject": "Merge pull request #1146 from alfloop-dev/task/ODP-REQ-DISPOSITION-GOVERNANCE-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/7c889b2117803b8fe419f32e7ace84d1ce38b5e4/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "7c889b2117803b8fe419f32e7ace84d1ce38b5e4",
+        "state": "success",
+        "updated_at": "2026-09-03T12:54:31Z",
+        "description": "Approved by assigned reviewer Codex2",
+        "approver_named_in_gate": "Codex2",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "盤點觀察：Acceptance『負向測試證明 checker 會拒絕 AI 自簽與過期 waiver』依 CI 結論，未重跑。",
+        "第 4 輪更正（結論不變）：A1／A2／A4 的 delivery_toolchain/governance/test_check_requirement_members.py 同上 kind 正規化與收集依據。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-ROLE-PROVIDER-CODEX-REVIEW-001": {
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/c1a382416e4423e22f3bf5dfe86a37d93597e583/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "c1a382416e4423e22f3bf5dfe86a37d93597e583",
+        "total": 7,
+        "conclusions": {
+          "skipped": 3,
+          "success": 4
+        },
+        "checks": [
+          {
+            "name": "product",
+            "conclusion": "skipped",
+            "completed_at": "2026-09-06T05:31:54Z"
+          },
+          {
+            "name": "performance-gate",
+            "conclusion": "skipped",
+            "completed_at": "2026-09-06T05:31:54Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "skipped",
+            "completed_at": "2026-09-06T05:31:54Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-06T05:31:53Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-06T05:35:33Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-06T05:31:58Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-06T05:31:57Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge 64f3b2399442e8cd7531284d1e7a3e33bcc3ca9a (merge-commit, #1221); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "64f3b2399442e8cd7531284d1e7a3e33bcc3ca9a",
+          "merged_at": "2026-09-06T05:47:40+00:00",
+          "merge_pr": "#1221",
+          "subject": "Merge pull request #1221 from alfloop-dev/task/ODP-ROLE-PROVIDER-CODEX-REVIEW-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/c1a382416e4423e22f3bf5dfe86a37d93597e583/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "c1a382416e4423e22f3bf5dfe86a37d93597e583",
+        "state": "success",
+        "updated_at": "2026-09-06T05:47:35Z",
+        "description": "Approved by assigned reviewer Codex",
+        "approver_named_in_gate": "Codex",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [
+        "acceptance"
+      ],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "medium",
+      "skipped_checks_at_head": 3,
+      "process_constraint_unverifiable_criteria": 3,
+      "partially_met_criteria": 1,
+      "merged_inventory_gaps": [
+        "盤點觀察：精確 head 有 3 個 check conclusion=skipped。",
+        "盤點觀察：commit trailer 無 Verified 欄位。",
+        "盤點觀察：Acceptance 要求的 live config 生效屬後續操作；code 合併不等於 live orchestrator config 已改（live config 為顯式覆蓋，程式預設值不會自動生效）。",
+        "第 4 輪更正：A7 原本只有一個 orchestrator ci_check、未具名任何測試，屬以綠色 job 泛稱代替條款證據。本輪已在 .orchestrator/test_role_provider_policy.py 內逐項定位條款點名的 negative tests；但該條款另含『只跑影響範圍 focused tests 一次、不重跑無關完整 suite、不以 mock 生成的 command 當 live 執行證據』這一段執行過程約束，交付物與唯讀記錄無法獨立驗證，故整條為 partially_met。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 11,
+        "by_status": {
+          "process_constraint_unverifiable": 3,
+          "met_by_test_in_green_ci": 7,
+          "met_by_delivered_artifact": 1
+        },
+        "confidence": "medium"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/8a7fe4b01270d5f5d95cd6996424612250bef372/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "8a7fe4b01270d5f5d95cd6996424612250bef372",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T05:14:10Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T05:18:54Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T05:32:36Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T05:15:22Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T05:13:04Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T05:12:32Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T05:12:27Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge 74530caf5bbf8ee3802df658e21a3ffdfca56f25 (merge-commit, #1206); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "74530caf5bbf8ee3802df658e21a3ffdfca56f25",
+          "merged_at": "2026-09-05T05:35:24+00:00",
+          "merge_pr": "#1206",
+          "subject": "Merge pull request #1206 from alfloop-dev/task/ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/8a7fe4b01270d5f5d95cd6996424612250bef372/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "8a7fe4b01270d5f5d95cd6996424612250bef372",
+        "state": "success",
+        "updated_at": "2026-09-05T05:35:21Z",
+        "description": "Approved by assigned reviewer Codex",
+        "approver_named_in_gate": "Codex",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "medium",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 3,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "逐條 acceptance 皆已定位到既有證據；僅餘證據強度限制（未取 job log、未重跑測試）。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-RUNTIME-RELEASE-SINGLE-PATH-001": {
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/5f80756b84852f935625e502eca9fc038a6bbc9a/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "5f80756b84852f935625e502eca9fc038a6bbc9a",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T15:11:12Z"
+          },
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T14:55:39Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T15:02:45Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T14:53:36Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T14:53:39Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T14:55:52Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-08-25T14:53:34Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge 5ae1e5cee8ef6b5047fa72f2426d2a1f42d9f9ce (merge-commit, #1010); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "5ae1e5cee8ef6b5047fa72f2426d2a1f42d9f9ce",
+          "merged_at": "2026-08-25T15:14:21+00:00",
+          "merge_pr": "#1010",
+          "subject": "Merge pull request #1010 from alfloop-dev/task/ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/5f80756b84852f935625e502eca9fc038a6bbc9a/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "5f80756b84852f935625e502eca9fc038a6bbc9a",
+        "state": "success",
+        "updated_at": "2026-08-25T15:07:55Z",
+        "description": "Approved by assigned reviewer Claude",
+        "approver_named_in_gate": "Claude",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [
+        "acceptance"
+      ],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "medium",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 1,
+      "merged_inventory_gaps": [
+        "A4（partially_met）：各階段 admission 與 protected environments 的宣告由測試覆蓋；實際 protected environment 生效狀態屬 runtime，由 ODP-GITHUB-GCP-ENV-BOOTSTRAP-001 的 github-environments-audit.json 另行佐證，不在本 PR。",
+        "盤點觀察：Acceptance『依序支援 dev/ephemeral staging/prod blue-green』與『不存在第二套 proof/deploy 狀態機』為 repo 級不變量，本盤點未做全域重驗。",
+        "盤點觀察：brief 的 Status 停在 review（非 review_approved），但 task-review-gate 已 success 且有 5 份其他 brief 記其為 done。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001": {
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/fada677569265ed258649b841e5a67fe7bb5dd80/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "fada677569265ed258649b841e5a67fe7bb5dd80",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-08-27T17:31:33Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-08-27T17:19:33Z"
+          },
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-08-27T17:13:48Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-08-27T17:14:48Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-08-27T17:12:22Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-08-27T17:12:28Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-08-27T17:13:37Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge 462c8cd4ff2569cec0f2c383d9e601c5bdbec715 (merge-commit, #1041); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "462c8cd4ff2569cec0f2c383d9e601c5bdbec715",
+          "merged_at": "2026-08-27T17:31:44+00:00",
+          "merge_pr": "#1041",
+          "subject": "Merge pull request #1041 from alfloop-dev/task/ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/fada677569265ed258649b841e5a67fe7bb5dd80/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "fada677569265ed258649b841e5a67fe7bb5dd80",
+        "state": "success",
+        "updated_at": "2026-08-27T17:30:51Z",
+        "description": "Approved by assigned reviewer Antigravity3",
+        "approver_named_in_gate": "Antigravity3",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [
+        "acceptance"
+      ],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "medium",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 1,
+      "partially_met_criteria": 1,
+      "merged_inventory_gaps": [
+        "A5（partially_met）：「可由同一狀態機產生 secret-free receipts」的能力由測試覆蓋；本 PR 未帶任何已產生的 staging receipt 檔。",
+        "第 4 輪更正（結論不變）：A3 同時引用 infra/terraform/tests/test_ephemeral_staging.py 與 tests/ops/test_ephemeral_staging_lifecycle.py。前者不被任何 CI job 收集，已在證據列標明；本條款的 CI 執行證明只來自後者。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 4,
+        "by_status": {
+          "met_by_test_in_green_ci": 2,
+          "met_by_delivered_artifact": 2
+        },
+        "confidence": "high"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/ffe02988a1b4def412090c6b422e6efb26081d9f/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "ffe02988a1b4def412090c6b422e6efb26081d9f",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T16:06:21Z"
+          },
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T16:01:30Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T16:18:24Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T16:00:21Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T16:03:02Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T16:00:20Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T16:00:20Z"
+          }
+        ]
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/ffe02988a1b4def412090c6b422e6efb26081d9f/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "ffe02988a1b4def412090c6b422e6efb26081d9f",
+        "state": "success",
+        "updated_at": "2026-09-03T16:22:20Z",
+        "description": "Approved by assigned reviewer Codex",
+        "approver_named_in_gate": "Codex",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci"
+      ],
+      "withheld": [
+        "runtime"
+      ],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": true
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "盤點觀察：兩個需求 member 待人類裁決；候選 PR head commit 無 task trailer。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-SITESCORE-QUALITY-NULLABLE-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-SITESCORE-QUALITY-NULLABLE-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 4,
+        "by_status": {
+          "met_by_test_in_green_ci": 4
+        },
+        "confidence": "high"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/7b3536c88359e59355d3e8253acd732ad11efa84/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "7b3536c88359e59355d3e8253acd732ad11efa84",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T17:49:51Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T18:04:19Z"
+          },
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T17:44:14Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T17:43:10Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T17:43:09Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T17:43:07Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T17:46:06Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge 901b4348ade4fb8cbf5c40ef429c7b49980257cc (merge-commit, #1171); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "901b4348ade4fb8cbf5c40ef429c7b49980257cc",
+          "merged_at": "2026-09-03T18:04:38+00:00",
+          "merge_pr": "#1171",
+          "subject": "Merge pull request #1171 from alfloop-dev/task/ODP-SITESCORE-QUALITY-NULLABLE-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/7b3536c88359e59355d3e8253acd732ad11efa84/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "7b3536c88359e59355d3e8253acd732ad11efa84",
+        "state": "success",
+        "updated_at": "2026-09-03T18:00:27Z",
+        "description": "Approved by assigned reviewer Antigravity4",
+        "approver_named_in_gate": "Antigravity4",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "逐條 acceptance 皆已定位到既有證據；僅餘證據強度限制（未取 job log、未重跑測試）。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-SPEC-SOURCE-PROVENANCE-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-SPEC-SOURCE-PROVENANCE-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 4,
+        "by_status": {
+          "met_by_delivered_artifact": 4
+        },
+        "confidence": "high"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/fd4947321d4bcbefb54ccf53799d0f12e04e8b96/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "fd4947321d4bcbefb54ccf53799d0f12e04e8b96",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T11:55:37Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T12:00:32Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T12:14:39Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T11:54:22Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T11:54:20Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T11:54:20Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-03T11:56:48Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge b7f9d465ddd71ecdd3dc01a8869e6e6cb485b54d (merge-commit, #1147); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "b7f9d465ddd71ecdd3dc01a8869e6e6cb485b54d",
+          "merged_at": "2026-09-03T14:39:46+00:00",
+          "merge_pr": "#1147",
+          "subject": "Merge pull request #1147 from alfloop-dev/task/ODP-SPEC-SOURCE-PROVENANCE-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/fd4947321d4bcbefb54ccf53799d0f12e04e8b96/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "fd4947321d4bcbefb54ccf53799d0f12e04e8b96",
+        "state": "success",
+        "updated_at": "2026-09-03T14:38:09Z",
+        "description": "Approved by assigned reviewer Antigravity",
+        "approver_named_in_gate": "Antigravity",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "盤點觀察：身分不一致：task-review-gate 核准者 Antigravity、commit trailer 記 LLM-Agent Codex2 / Reviewer Antigravity5，brief 記 owner Antigravity2 / reviewer Codex。三來源不一致，需 reviewer 依 gate 時間戳裁定。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 10,
+        "by_status": {
+          "met_by_delivered_artifact": 2,
+          "process_constraint_unverifiable": 3,
+          "met_by_test_in_green_ci": 5
+        },
+        "confidence": "medium"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/a5e6a2f7074b6c5e679cbf7f0c6d03f9e6141a5a/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "a5e6a2f7074b6c5e679cbf7f0c6d03f9e6141a5a",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T15:17:18Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T15:34:06Z"
+          },
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T15:13:07Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T15:11:43Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T15:11:44Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T15:15:00Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-05T15:11:46Z"
+          }
+        ]
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/a5e6a2f7074b6c5e679cbf7f0c6d03f9e6141a5a/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "a5e6a2f7074b6c5e679cbf7f0c6d03f9e6141a5a",
+        "state": "success",
+        "updated_at": "2026-09-05T15:39:52Z",
+        "description": "Approved by assigned reviewer Claude2",
+        "approver_named_in_gate": "Claude2",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci"
+      ],
+      "withheld": [
+        "runtime"
+      ],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": true
+      },
+      "merged_inventory_confidence": "medium",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 3,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "盤點觀察：實際 GCP 資源／IAM／vars 屬後續 staging rollout（ODP-EPHEMERAL-STAGING-ROLLOUT-001），依 task brief code 完成不等於 runtime 完成，已於 recommendation_scope 揭露。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 4,
+        "by_status": {
+          "met_by_test_in_green_ci": 4
+        },
+        "confidence": "high"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/b678c18f2055b02adb70f1788951be4269589012/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "b678c18f2055b02adb70f1788951be4269589012",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T12:02:23Z"
+          },
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T12:07:15Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T12:52:09Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T12:01:11Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T12:01:13Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T12:01:09Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-04T12:04:08Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge 541eb1fe2d6b426155dc401089bf0588ef82b345 (merge-commit, #1164); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "541eb1fe2d6b426155dc401089bf0588ef82b345",
+          "merged_at": "2026-09-04T13:08:45+00:00",
+          "merge_pr": "#1164",
+          "subject": "Merge pull request #1164 from alfloop-dev/task/ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/b678c18f2055b02adb70f1788951be4269589012/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "b678c18f2055b02adb70f1788951be4269589012",
+        "state": "success",
+        "updated_at": "2026-09-04T13:08:32Z",
+        "description": "Approved by assigned reviewer Antigravity5",
+        "approver_named_in_gate": "Antigravity5",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "盤點觀察：候選 PR head commit 無 task trailer（head 為 merge commit）。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002": {
+    "ci": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/69422d71e8d5ac572ade58562c0aeca28d123648/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "69422d71e8d5ac572ade58562c0aeca28d123648",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "product-e2e-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-01T08:38:11Z"
+          },
+          {
+            "name": "product",
+            "conclusion": "success",
+            "completed_at": "2026-09-01T08:49:57Z"
+          },
+          {
+            "name": "performance-gate",
+            "conclusion": "success",
+            "completed_at": "2026-09-01T08:33:27Z"
+          },
+          {
+            "name": "boundary",
+            "conclusion": "success",
+            "completed_at": "2026-09-01T08:32:22Z"
+          },
+          {
+            "name": "classify",
+            "conclusion": "success",
+            "completed_at": "2026-09-01T08:32:20Z"
+          },
+          {
+            "name": "change-scope",
+            "conclusion": "success",
+            "completed_at": "2026-09-01T08:32:19Z"
+          },
+          {
+            "name": "orchestrator",
+            "conclusion": "success",
+            "completed_at": "2026-09-01T08:34:29Z"
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "source": "acceptance_class(runtime_deployment=false, external_enablement=false, human_authority=false) @ docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715); find_merge_evidence on origin/dev 19167c10b8c6978fb4aea934bc6a668dc926b74e -> merge 2377168c2cc07cd2470dd8f43de0486fe8d8fc08 (merge-commit, #1096); live runtime oday-plus-supervisor-runtime-19167c10b8c6",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "acceptance_class": {
+          "code_or_docs": true,
+          "runtime_deployment": false,
+          "external_enablement": false,
+          "human_authority": false
+        },
+        "local_merge": {
+          "merge_commit": "2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
+          "merged_at": "2026-09-01T08:51:28+00:00",
+          "merge_pr": "#1096",
+          "subject": "Merge pull request #1096 from alfloop-dev/task/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+          "delivery_form": "merge-commit"
+        },
+        "meaning": "本任務驗收不含 runtime 部署；交付碼在 pinned ref 與 live runtime 內。"
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/odayplus/commits/69422d71e8d5ac572ade58562c0aeca28d123648/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "69422d71e8d5ac572ade58562c0aeca28d123648",
+        "state": "success",
+        "updated_at": "2026-09-01T08:45:28Z",
+        "description": "Approved by assigned reviewer Codex2",
+        "approver_named_in_gate": "Codex2",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "approval",
+        "ci",
+        "runtime"
+      ],
+      "withheld": [
+        "acceptance"
+      ],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": false,
+        "human_authority": false
+      },
+      "merged_inventory_confidence": "medium",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 1,
+      "partially_met_criteria": 1,
+      "merged_inventory_gaps": [
+        "A3（partially_met）：更正先前盤點：不是「查無對應收據」。收據涵蓋此條款的測試矩陣，但同一份收據明確聲明未接觸真實 OIDC provider，因此此條款在測試層達成、在 live provider 層是收據自陳的界線。",
+        "第 4 輪更正（結論不變）：A1 的 apps/web/tests/login-route.test.ts 是 vitest，原綁 product-e2e-gate；實際由 product job 的 Run Node workspace checks step（make node-check → npm run test --workspaces）執行，已改綁。"
+      ],
+      "candidate_mapping_verdict": "consistent",
+      "local_merge_verified_on_pinned_ref": true
+    }
+  },
+  "XR-EXT-OSS-FINAL-AUDIT-001": {
+    "acceptance": {
+      "source": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json#entries[task_id=XR-EXT-OSS-FINAL-AUDIT-001].acceptance_evidence_map (sha256 f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "criteria_total": 5,
+        "by_status": {
+          "met_by_receipt": 5
+        },
+        "confidence": "high"
+      }
+    },
+    "ci": {
+      "source": "gh api repos/alfloop-dev/oday-data-platform/commits/b1824c979aca008da10aed01fbc0c0a269c581dc/check-runs",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "b1824c979aca008da10aed01fbc0c0a269c581dc",
+        "total": 7,
+        "conclusions": {
+          "success": 7
+        },
+        "checks": [
+          {
+            "name": "source-suite",
+            "conclusion": "success",
+            "completed_at": "2026-08-24T05:54:06Z"
+          },
+          {
+            "name": "closeout-audit",
+            "conclusion": "success",
+            "completed_at": "2026-08-24T05:51:52Z"
+          },
+          {
+            "name": "producer-compatibility",
+            "conclusion": "success",
+            "completed_at": "2026-08-24T05:51:08Z"
+          },
+          {
+            "name": "consumer-readback",
+            "conclusion": "success",
+            "completed_at": "2026-08-24T05:51:02Z"
+          },
+          {
+            "name": "contract-bundles",
+            "conclusion": "success",
+            "completed_at": "2026-08-24T05:52:26Z"
+          },
+          {
+            "name": "emgi-task-manifest",
+            "conclusion": "success",
+            "completed_at": "2026-08-24T05:51:01Z"
+          },
+          {
+            "name": "Build and smoke test images",
+            "conclusion": "success",
+            "completed_at": "2026-08-24T05:52:23Z"
+          }
+        ]
+      }
+    },
+    "approval": {
+      "source": "gh api repos/alfloop-dev/oday-data-platform/commits/b1824c979aca008da10aed01fbc0c0a269c581dc/status (context=task-review-gate)",
+      "verified_at": "2026-09-07T15:14:37Z",
+      "verifier": "Claude",
+      "detail": {
+        "head_sha": "b1824c979aca008da10aed01fbc0c0a269c581dc",
+        "state": "success",
+        "updated_at": "2026-08-24T05:54:45Z",
+        "description": "Approved by assigned reviewer Codex",
+        "approver_named_in_gate": "Codex",
+        "approver_differs_from_owner": true
+      }
+    },
+    "_disclosure": {
+      "attested": [
+        "acceptance",
+        "approval",
+        "ci"
+      ],
+      "withheld": [
+        "runtime"
+      ],
+      "acceptance_class": {
+        "code_or_docs": true,
+        "runtime_deployment": false,
+        "external_enablement": true,
+        "human_authority": true
+      },
+      "merged_inventory_confidence": "high",
+      "skipped_checks_at_head": 0,
+      "process_constraint_unverifiable_criteria": 0,
+      "partially_met_criteria": 0,
+      "merged_inventory_gaps": [
+        "盤點觀察（第 1 輪判斷已細化）：這兩條 acceptance 都由 closeout-audit-manifest.json 與 technical-gap-closure-matrix.json 直接記載——四項法律議題逐項 ITEMIZED_PENDING_LEGAL_GATE，依賴狀態記為 UNBLOCKED_BY_TECHNICAL_AUDIT。尚未存在的是法律決定本身（需具名 Legal／Security／Risk 人員），本盤點不補造。",
+        "盤點觀察：跨 repo，merge commit 不在 odayplus 本地歷史，只有 GitHub 唯讀證據。"
+      ],
+      "candidate_mapping_verdict": "mismatch",
+      "local_merge_verified_on_pinned_ref": false
+    }
+  }
+}

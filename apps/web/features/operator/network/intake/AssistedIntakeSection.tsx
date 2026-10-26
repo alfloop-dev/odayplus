@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { parseUrlState, serializeUrlState } from "./urlState";
+import { parseInboxUrlState, serializeInboxUrlState, toIntakeInboxQuery, type IntakeInboxFilterState } from "./inboxUrlState";
 import type {
   AssistedIntake,
   AssignmentReceipt,
@@ -17,6 +18,7 @@ import type {
 import type { OperatorRoleId } from "../../navigation";
 import { getOperatorRole } from "../../navigation";
 import styles from "./intake.module.css";
+import type { IntakeHeatZoneOptions } from "./AddListingFromUrlDialog";
 import { ListingInboxIntakeView } from "./ListingInboxIntakeView";
 import { IntakeDecisionDialog } from "./IntakeDecisionDialog";
 import { IntakeProcessingDetail } from "./IntakeProcessingDetail";
@@ -26,7 +28,7 @@ import type {
   PromotionReviewInput,
 } from "./PromotionReviewPanel";
 import type { ScoreReplayInput } from "./SiteScoreJobStatus";
-import { TransferIntakeDialog } from "./TransferIntakeDialog";
+import { TransferIntakeDialog, type TransferTargetOption } from "./TransferIntakeDialog";
 import { PauseSlaDialog } from "./PauseSlaDialog";
 import {
   buildIntakeClient,
@@ -35,6 +37,7 @@ import {
   newIdempotencyKey,
   newIntakeActionIdempotencyKey,
   newCorrelationId,
+  toIntakeApiError,
   type IntakeApiError,
 } from "./intakeClient";
 import { canPerform, canView } from "./intakePermissions";
@@ -62,6 +65,7 @@ export function AssistedIntakeSection({
   initialDialog,
   initialSelectedId,
   selectedHeatZoneId,
+  heatZoneOptions,
   targetListings = [],
 }: {
   activeRoleId: OperatorRoleId;
@@ -69,6 +73,7 @@ export function AssistedIntakeSection({
   initialDialog?: IntakeUrlState["dialog"];
   initialSelectedId?: string;
   selectedHeatZoneId?: string;
+  heatZoneOptions?: IntakeHeatZoneOptions;
   targetListings?: TargetListingData[];
 }) {
   const router = useRouter();
@@ -108,33 +113,40 @@ export function AssistedIntakeSection({
   const urlState = useMemo(() => parseUrlState(searchParams), [searchParams]);
   const durableRouteSelectedId = useMemo(() => {
     const match = /^\/intake\/([^/]+)$/.exec(pathname);
-    return match ? decodeURIComponent(match[1]) : undefined;
+    if (!match) return undefined;
+    try { return decodeURIComponent(match[1]); } catch { return null; }
   }, [pathname]);
 
-  const selectedId =
-    urlState.selectedId ??
-    initialSelectedId ??
-    durableRouteSelectedId ??
-    null;
+  const selectedId = durableRouteSelectedId !== undefined
+    ? durableRouteSelectedId
+    : (searchParams.has("selected") ? urlState.selectedId : initialSelectedId) ?? null;
   const dialog =
-    urlState.dialog ??
-    initialDialog ??
-    (durableRouteSelectedId ? "detail" : null);
+    (searchParams.has("dialog") ? urlState.dialog : initialDialog) ??
+    (durableRouteSelectedId !== undefined ? "detail" : null);
   const fixFieldKey = urlState.fixFieldKey;
   const decisionKind = urlState.decisionKind as any;
   const asgKind = urlState.decisionKind === "transfer" ? "transfer" : urlState.decisionKind === "pause" ? "pause" : null;
 
   const [records, setRecords] = useState<AssistedIntake[]>([]);
   const [pageData, setPageData] = useState<IntakeInboxPage | undefined>();
-  const [inboxQuery, setInboxQuery] = useState<IntakeInboxQuery>({ page: 1, pageSize: 10, sortBy: "updatedAt", sortOrder: "desc" });
+  const queryString = searchParams.toString();
+  const inboxFilters = useMemo(() => ({ ...parseInboxUrlState(new URLSearchParams(queryString)),
+    selectedIntakeId: selectedId }), [queryString, selectedId]);
+  const inboxQuery: IntakeInboxQuery = useMemo(() => toIntakeInboxQuery(inboxFilters, selectedHeatZoneId), [inboxFilters, selectedHeatZoneId]);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [loadError, setLoadError] = useState<IntakeApiError | null>(null);
   const [detailLoadState, setDetailLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
-  const [busy, setBusy] = useState(false);
+  const [otherCommandBusy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<IntakeApiError | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [assignmentReceipts, setAssignmentReceipts] = useState<Record<string, AssignmentReceipt>>({});
   const [slaReceipts, setSlaReceipts] = useState<Record<string, SlaReceipt>>({});
+  const [transferTargets, setTransferTargets] = useState<{
+    client: ReturnType<typeof buildIntakeClient>;
+    assignmentId: string | null; version: number | null;
+    options: TransferTargetOption[]; loading: boolean; error: string | null;
+  }>({ client: null, assignmentId: null, version: null, options: [], loading: false, error: null });
+  const [transferTargetsRefresh, setTransferTargetsRefresh] = useState(0);
 
   // ---- Candidate promotion saga (ODP-INTAKE-UX-PROMOTION-001) -------------
   // Receipts are keyed by intake id and only ever set from server responses:
@@ -150,37 +162,80 @@ export function AssistedIntakeSection({
     state: "idle" | "loading" | "ready";
   }>({ intakeId: null, state: "idle" });
 
+  const navigationParams = useRef(new URLSearchParams(queryString));
+  const observedQuery = useRef(queryString);
+  if (observedQuery.current !== queryString) {
+    observedQuery.current = queryString;
+    navigationParams.current = new URLSearchParams(queryString);
+  }
   const updateUrlState = useCallback((
     updates: Partial<typeof urlState>,
     historyMode: "push" | "replace" = "replace",
   ) => {
+    const live = parseUrlState(navigationParams.current);
     const nextState = {
-      filters: urlState.filters,
-      sort: urlState.sort,
-      view: urlState.view,
-      selectedId,
-      dialog,
-      activeSection: urlState.activeSection,
-      fixFieldKey: urlState.fixFieldKey,
-      decisionKind: urlState.decisionKind,
-      receiptId: urlState.receiptId,
-      compareTask: urlState.compareTask,
+      ...live,
+      selectedId: durableRouteSelectedId !== undefined ? durableRouteSelectedId
+        : navigationParams.current.has("selected") ? live.selectedId : selectedId,
+      dialog: navigationParams.current.has("dialog") ? live.dialog : dialog,
       ...updates,
     };
-    const newParams = serializeUrlState(nextState, searchParams);
-    router[historyMode](`${pathname}?${newParams.toString()}`);
-  }, [urlState, selectedId, dialog, searchParams, pathname, router]);
+    const newParams = serializeUrlState(nextState, navigationParams.current);
+    navigationParams.current = newParams;
+    const hash = window.location.hash.startsWith("#intake/") ? "" : window.location.hash;
+    router[historyMode](`${pathname}?${newParams.toString()}${hash}`, { scroll: false });
+  }, [selectedId, dialog, pathname, router, durableRouteSelectedId]);
+  const updateInboxFilters = useCallback((next: IntakeInboxFilterState) => {
+    const params = serializeInboxUrlState(next, navigationParams.current);
+    navigationParams.current = params;
+    router.push(`${pathname}?${params.toString()}${window.location.hash}`, { scroll: false });
+  }, [pathname, router]);
 
   const role = getOperatorRole(activeRoleId);
   const client = useMemo(
     () => buildIntakeClient(activeRoleId, sessionSubjectId),
     [activeRoleId, sessionSubjectId],
   );
+  const activeClient = useRef(client);
+  activeClient.current = client;
+  // Object identity is an intent epoch: A -> B -> A creates a fresh scope.
+  // A list omission or failed direct GET must not discard this exact draft.
+  const decisionScope = useMemo(() => ({
+    client, activeRoleId, activeSubjectId, selectedId, decisionKind, dialog,
+    idempotencyKey: null as string | null,
+  }), [client, activeRoleId, activeSubjectId, selectedId, decisionKind, dialog]);
+  const currentDecisionScope = useRef<typeof decisionScope | null>(decisionScope);
+  currentDecisionScope.current = decisionScope;
+  useEffect(() => {
+    currentDecisionScope.current = decisionScope;
+    return () => {
+      if (currentDecisionScope.current === decisionScope) currentDecisionScope.current = null;
+    };
+  }, [decisionScope]);
+  const [decisionDraft, setDecisionDraft] = useState<{
+    scope: typeof decisionScope; reason: string; riskAcknowledged: boolean;
+  } | null>(null);
+  const [pendingDecision, setPendingDecision] = useState<typeof decisionScope | null>(null);
+  const [decisionError, setDecisionError] = useState<{
+    scope: typeof decisionScope; error: IntakeApiError;
+  } | null>(null);
+  const busy = otherCommandBusy || pendingDecision === decisionScope;
+  const currentDecisionDraft = decisionDraft?.scope === decisionScope
+    ? decisionDraft : { reason: "", riskAcknowledged: false };
+  const commandContext = JSON.stringify([selectedId, dialog, asgKind]);
+  const activeCommandContext = useRef({ value: commandContext, generation: 0 });
+  if (activeCommandContext.current.value !== commandContext) {
+    activeCommandContext.current = { value: commandContext, generation: activeCommandContext.current.generation + 1 };
+  }
+  const resourceIntents = useRef(new Map<string, {
+    key: string; correlationId: string; version: number; conflict: boolean;
+  }>());
+  const resourceCommandPending = useRef(false);
+  const refreshGeneration = useRef(0);
   // Every submit attempt reuses one key so a network retry cannot double-create.
   const submitKeyRef = useRef<string | null>(null);
   const correctionKeyRef = useRef<string | null>(null);
   const assistedEntryKeyRef = useRef<string | null>(null);
-  const decisionKeyRef = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     // A role without listing:VIEW would get a guaranteed 403. That is a
@@ -192,7 +247,9 @@ export function AssistedIntakeSection({
       return;
     }
     setLoadState("loading");
-    const result = await intakeApi.list(client, { ...inboxQuery, selectedHeatZoneId });
+    const generation = ++refreshGeneration.current;
+    const result = await intakeApi.list(client, inboxQuery);
+    if (generation !== refreshGeneration.current || client !== activeClient.current) return;
     if (result.ok) {
       setRecords((current) => {
         if (dialog !== "detail" || !selectedId) return result.value.items;
@@ -216,28 +273,29 @@ export function AssistedIntakeSection({
     client,
     dialog,
     inboxQuery,
-    selectedHeatZoneId,
     selectedId,
   ]);
 
   useEffect(() => {
     void refresh();
+    return () => { refreshGeneration.current += 1; };
   }, [refresh]);
 
   // Durable deep link: #intake/<id> opens the detail dialog on load, so an
   // operator can leave and come back to the record (design §4 requirement).
   useEffect(() => {
     function openFromHash() {
-      const match = /^#intake\/(.+)$/.exec(window.location.hash);
+      if (durableRouteSelectedId !== undefined || navigationParams.current.has("selected")) return;
+      const match = /^#intake\/([^/]+)$/.exec(window.location.hash);
       if (match) {
-        updateUrlState({ dialog: "detail", selectedId: match[1] });
-        window.history.replaceState(null, "", window.location.pathname + window.location.search);
+        try { updateUrlState({ dialog: "detail", selectedId: decodeURIComponent(match[1]) }); }
+        catch { /* A malformed legacy identifier must not select another record. */ }
       }
     }
     openFromHash();
     window.addEventListener("hashchange", openFromHash);
     return () => window.removeEventListener("hashchange", openFromHash);
-  }, [updateUrlState]);
+  }, [updateUrlState, durableRouteSelectedId]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -248,9 +306,9 @@ export function AssistedIntakeSection({
   useEffect(() => {
     correctionKeyRef.current = null;
     assistedEntryKeyRef.current = null;
-    decisionKeyRef.current = null;
     setPromotionError(null);
     setPromotionReplayed(false);
+    setActionError(null);
   }, [selectedId]);
 
   const selected = records.find((record) => record.id === selectedId) ?? null;
@@ -258,7 +316,7 @@ export function AssistedIntakeSection({
   // A durable detail link may point to a record outside the current inbox
   // page. Resolve that record directly instead of depending on list pagination.
   useEffect(() => {
-    if (dialog !== "detail" || !selectedId) {
+    if (!["detail", "fix", "decide", "assignmentSla"].includes(dialog ?? "") || !selectedId) {
       setDetailLoadState("idle");
       return undefined;
     }
@@ -360,7 +418,7 @@ export function AssistedIntakeSection({
   }, [selected, gateKey, gateSnapshots]);
 
   function closeDialog() {
-    if (durableRouteSelectedId) {
+    if (durableRouteSelectedId !== undefined) {
       router.replace(buildInboxReturnHref({
         ...urlState,
         selectedId,
@@ -376,7 +434,6 @@ export function AssistedIntakeSection({
     submitKeyRef.current = null;
     correctionKeyRef.current = null;
     assistedEntryKeyRef.current = null;
-    decisionKeyRef.current = null;
   }
 
   function openDetail(intakeId: string) {
@@ -386,6 +443,7 @@ export function AssistedIntakeSection({
 
   /** Merge a server response back into the queue; the server is authoritative. */
   function applyRecord(record: AssistedIntake) {
+    if (client !== activeClient.current) return;
     setRecords((current) => {
       const index = current.findIndex((item) => item.id === record.id);
       if (index === -1) return [record, ...current];
@@ -407,8 +465,6 @@ export function AssistedIntakeSection({
       {
         url,
         heatZoneId: heatZoneId || null,
-        actorRoleId: activeRoleId,
-        actorName: role.label,
       },
       { idempotencyKey: submitKeyRef.current },
     );
@@ -454,8 +510,6 @@ export function AssistedIntakeSection({
         reason: reason || null,
         riskSummary,
         riskAcknowledged,
-        actorRoleId: activeRoleId,
-        actorName: role.label,
       },
       { idempotencyKey: correctionKeyRef.current },
     );
@@ -494,8 +548,6 @@ export function AssistedIntakeSection({
         reason: "人工補錄：此來源未經核准擷取，依來源頁內容補錄必要欄位",
         riskSummary,
         riskAcknowledged,
-        actorRoleId: activeRoleId,
-        actorName: role.label,
       },
       { idempotencyKey: assistedEntryKeyRef.current },
     );
@@ -521,10 +573,12 @@ export function AssistedIntakeSection({
     riskAcknowledged: boolean;
   }) {
     if (!client || !selected || !decisionKind || busy) return;
-    setBusy(true);
-    setActionError(null);
-    if (!decisionKeyRef.current) {
-      decisionKeyRef.current = newIntakeActionIdempotencyKey(selected.id, `decide-${decisionKind}`);
+    const scope = decisionScope;
+    if (currentDecisionScope.current !== scope || client !== activeClient.current) return;
+    setPendingDecision(scope);
+    setDecisionError(null);
+    if (!scope.idempotencyKey) {
+      scope.idempotencyKey = newIntakeActionIdempotencyKey(selected.id, `decide-${decisionKind}`);
     }
     const result = await intakeApi.decide(
       client,
@@ -534,19 +588,20 @@ export function AssistedIntakeSection({
         reason,
         riskSummary,
         riskAcknowledged,
-        actorRoleId: activeRoleId,
-        actorName: role.label,
       },
-      { idempotencyKey: decisionKeyRef.current },
+      { idempotencyKey: scope.idempotencyKey },
     );
-    setBusy(false);
+    // Abandoned principal/intent results cannot clear a newer dialog or draft.
+    if (currentDecisionScope.current !== scope || client !== activeClient.current) return;
+    setPendingDecision(null);
 
     if (!result.ok) {
       // Keep the dialog open and the reason typed — no optimistic close.
-      setActionError(result.error);
+      setDecisionError({ scope, error: result.error });
       return;
     }
-    decisionKeyRef.current = null;
+    scope.idempotencyKey = null;
+    setDecisionDraft(null);
     applyRecord(result.value);
     updateUrlState({ dialog: "detail", decisionKind: null });
     setToast(`決策已寫入 — ${result.value.stage} · 已記錄於 Audit Trail`);
@@ -584,233 +639,117 @@ export function AssistedIntakeSection({
     void refresh();
   }
 
+  async function runResourceCommand<T extends AssignmentReceipt | SlaReceipt>(input: {
+    kind: "assignment" | "sla";
+    action: string;
+    authority: { id: string; version: number };
+    payload: object;
+    send: (options: { idempotencyKey: string; correlationId: string; ifMatch: string }) => Promise<T>;
+    successMessage: string;
+    closeDialog?: boolean;
+  }) {
+    if (!client || !selected || busy || resourceCommandPending.current) return;
+    const intakeId = selected.id;
+    const contextGeneration = activeCommandContext.current.generation;
+    const isCurrent = () => client === activeClient.current && contextGeneration === activeCommandContext.current.generation;
+    const signature = JSON.stringify([
+      operatorSubjectId(activeRoleId, sessionSubjectId), activeRoleId, intakeId,
+      input.kind, input.authority.id, input.action, input.payload,
+    ]);
+    let intent = resourceIntents.current.get(signature);
+    // Unknown outcomes keep the original If-Match even if a subsequent read
+    // has advanced: that read alone does not prove which command committed.
+    // Only a confirmed conflict plus a new resource version starts a new try.
+    if (!intent || (intent.conflict && intent.version !== input.authority.version)) {
+      intent = { key: newIntakeActionIdempotencyKey(intakeId, input.action),
+        correlationId: newCorrelationId(), version: input.authority.version, conflict: false };
+      resourceIntents.current.set(signature, intent);
+    }
+    resourceCommandPending.current = true;
+    setBusy(true);
+    setActionError(null);
+    try {
+      const receipt = await input.send({ idempotencyKey: intent.key,
+        correlationId: intent.correlationId, ifMatch: `W/"${intent.version}"` });
+      const receiptId = receipt && (input.kind === "assignment"
+        ? (receipt as AssignmentReceipt).assignment_id : (receipt as SlaReceipt).sla_instance_id);
+      if (receiptId !== input.authority.id || validResourceVersion(receipt?.version) === null) {
+        if (isCurrent()) setActionError({ status: 0, code: "ODP-INTAKE-ACK-MISMATCH",
+          summary: "回覆收據與本次操作資源不符，操作結果尚未確認。",
+          nextAction: "請保留輸入並查詢狀態，或使用同一 Idempotency-Key 重試。",
+          occurredAt: new Date().toISOString(), correlationId: intent.correlationId, retryable: true });
+        return;
+      }
+      resourceIntents.current.delete(signature);
+      if (!isCurrent()) return;
+      if (input.kind === "assignment") {
+        setAssignmentReceipts((previous) => ({ ...previous, [intakeId]: receipt as AssignmentReceipt }));
+      } else {
+        setSlaReceipts((previous) => ({ ...previous, [intakeId]: receipt as SlaReceipt }));
+      }
+      setToast(input.successMessage);
+      const getResult = await intakeApi.get(client, intakeId);
+      if (!isCurrent()) return;
+      if (getResult.ok) applyRecord(getResult.value);
+      if (input.closeDialog) updateUrlState({ dialog: "detail" });
+      void refresh();
+    } catch (error: unknown) {
+      const mapped = toIntakeApiError(error);
+      if (mapped.status === 409) intent.conflict = true;
+      if (isCurrent()) setActionError(mapped.status === 409 ? {
+        ...mapped, nextAction: "請重新整理資源狀態與版本；已輸入的內容會保留。",
+      } : mapped);
+    } finally {
+      resourceCommandPending.current = false;
+      setBusy(false);
+    }
+  }
+
   async function handleClaim() {
     if (!client || !selected || busy) return;
     const authority = guardAssignmentResource(selected, assignmentReceipts[selected.id]);
     const subjectId = operatorSubjectId(activeRoleId, sessionSubjectId);
-    if (!authority.ok) {
-      setActionError(authority.error);
-      return;
-    }
-    if (
-      !isClaimableAssignmentStatus(selected.assignmentStatus) ||
-      !canPerform("correct", activeRoleId) ||
-      !subjectId
-    ) return;
-    setBusy(true);
-    setActionError(null);
-
-    const key = newIntakeActionIdempotencyKey(selected.id, "claim-asg");
-    const correlationId = newCorrelationId();
-
-    try {
-      const receipt = await client.claimAssignment(
-        authority.id,
-        { reason: "Claiming existing assignment" },
-        { idempotencyKey: key, correlationId, ifMatch: `W/"${authority.version}"` },
-      );
-
-      setToast(`已成功認領收件！指派 ID: ${receipt.assignment_id}`);
-      if (receipt) {
-        setAssignmentReceipts((prev) => ({ ...prev, [selected.id]: receipt }));
-      }
-
-      const getResult = await intakeApi.get(client, selected.id);
-      if (getResult.ok) {
-        applyRecord(getResult.value);
-      }
-      void refresh();
-    } catch (err: any) {
-      setActionError({
-        code: err.code || "CLAIM_ERROR",
-        summary: err.message || "認領收件時發生錯誤",
-        occurredAt: err.occurredAt || "UNAVAILABLE",
-        nextAction: "請稍後再試",
-        status: err.status,
-        retryable: false,
-        correlationId: err.correlationId,
-      });
-    } finally {
-      setBusy(false);
-    }
+    if (!authority.ok) { setActionError(authority.error); return; }
+    if (!isClaimableAssignmentStatus(selected.assignmentStatus) ||
+        !canPerform("correct", activeRoleId) || !subjectId) return;
+    const payload = { reason: "Claiming existing assignment" };
+    await runResourceCommand({ kind: "assignment", action: "claim-asg", authority, payload,
+      send: (options) => client.claimAssignment(authority.id, payload, options),
+      successMessage: `已成功認領收件！指派 ID: ${authority.id}` });
   }
 
   async function handleTransferSubmit(payload: {
-    target_owner_subject_id: string;
-    target_owner_role: string;
-    handoff_note: string;
+    target_owner_subject_id: string; target_owner_role: string; handoff_note: string;
   }) {
     if (!client || !selected || busy) return;
-    setBusy(true);
-    setActionError(null);
-
     const authority = guardAssignmentResource(selected, assignmentReceipts[selected.id]);
-    if (!authority.ok) {
-      setActionError(authority.error);
-      setBusy(false);
-      return;
-    }
-
-    const key = newIntakeActionIdempotencyKey(selected.id, "transfer-asg");
-    const correlationId = newCorrelationId();
-
-    try {
-      const receipt = await client.transferAssignment(
-        authority.id,
-        {
-          target_owner_subject_id: payload.target_owner_subject_id,
-          target_owner_role: payload.target_owner_role,
-          handoff_note: payload.handoff_note,
-          reason: payload.handoff_note,
-        },
-        {
-          idempotencyKey: key,
-          correlationId,
-          ifMatch: `W/"${authority.version}"`,
-        }
-      );
-
-      setToast(`已成功轉交收件！`);
-      if (receipt) {
-        setAssignmentReceipts((prev) => ({ ...prev, [selected.id]: receipt }));
-      }
-
-      const getResult = await intakeApi.get(client, selected.id);
-      if (getResult.ok) {
-        applyRecord(getResult.value);
-      }
-      updateUrlState({ dialog: "detail" });
-      void refresh();
-    } catch (err: any) {
-      setActionError({
-        code: err.code || "TRANSFER_ERROR",
-        summary: err.message || "轉交收件時發生錯誤",
-        occurredAt: new Date().toISOString(),
-        nextAction: "請檢查對象角色或狀態",
-        status: err.status,
-        retryable: false,
-        correlationId: err.correlationId,
-      });
-    } finally {
-      setBusy(false);
-    }
+    if (!authority.ok) { setActionError(authority.error); return; }
+    const body = { target_owner_subject_id: payload.target_owner_subject_id,
+      target_owner_role: payload.target_owner_role, handoff_note: payload.handoff_note, reason: payload.handoff_note };
+    await runResourceCommand({ kind: "assignment", action: "transfer-asg", authority, payload: body,
+      send: (options) => client.transferAssignment(authority.id, body, options),
+      successMessage: "已成功轉交收件！", closeDialog: true });
   }
 
-  async function handlePauseSubmit(payload: {
-    expected_resume_at: string;
-    reason: string;
-  }) {
+  async function handlePauseSubmit(payload: { expected_resume_at: string; reason: string }) {
     if (!client || !selected || busy) return;
-    setBusy(true);
-    setActionError(null);
-
     const authority = guardSlaResource(selected, slaReceipts[selected.id]);
-    if (!authority.ok) {
-      setActionError(authority.error);
-      setBusy(false);
-      return;
-    }
-    if (!isActiveSlaState(selected.slaState)) {
-      setBusy(false);
-      return;
-    }
-
-    const key = newIntakeActionIdempotencyKey(selected.id, "pause-sla");
-    const correlationId = newCorrelationId();
-
-    try {
-      const receipt = await client.pauseSla(
-        authority.id,
-        {
-          reason: payload.reason,
-          expected_resume_at: payload.expected_resume_at,
-        },
-        {
-          idempotencyKey: key,
-          correlationId,
-          ifMatch: `W/"${authority.version}"`,
-        }
-      );
-
-      setToast(`SLA 已暫停！`);
-      if (receipt) {
-        setSlaReceipts((prev) => ({ ...prev, [selected.id]: receipt }));
-      }
-
-      const getResult = await intakeApi.get(client, selected.id);
-      if (getResult.ok) {
-        applyRecord(getResult.value);
-      }
-      updateUrlState({ dialog: "detail" });
-      void refresh();
-    } catch (err: any) {
-      setActionError({
-        code: err.code || "PAUSE_ERROR",
-        summary: err.message || "暫停 SLA 時發生錯誤",
-        occurredAt: new Date().toISOString(),
-        nextAction: "請稍後再試",
-        status: err.status,
-        retryable: false,
-        correlationId: err.correlationId,
-      });
-    } finally {
-      setBusy(false);
-    }
+    if (!authority.ok) { setActionError(authority.error); return; }
+    if (!isActiveSlaState(selected.slaState)) return;
+    const body = { reason: payload.reason, expected_resume_at: payload.expected_resume_at };
+    await runResourceCommand({ kind: "sla", action: "pause-sla", authority, payload: body,
+      send: (options) => client.pauseSla(authority.id, body, options),
+      successMessage: "SLA 已暫停！", closeDialog: true });
   }
 
   async function handleResumeSla() {
     if (!client || !selected || busy) return;
-    setBusy(true);
-    setActionError(null);
-
     const authority = guardSlaResource(selected, slaReceipts[selected.id]);
-    if (!authority.ok) {
-      setActionError(authority.error);
-      setBusy(false);
-      return;
-    }
-    if (selected.slaState !== "PAUSED") {
-      setBusy(false);
-      return;
-    }
-
-    const key = newIntakeActionIdempotencyKey(selected.id, "resume-sla");
-    const correlationId = newCorrelationId();
-
-    try {
-      const receipt = await client.resumeSla(
-        authority.id,
-        { reason: "Manual resume SLA" },
-        {
-          idempotencyKey: key,
-          correlationId,
-          ifMatch: `W/"${authority.version}"`,
-        }
-      );
-
-      setToast(`SLA 已恢復計時！`);
-      if (receipt) {
-        setSlaReceipts((prev) => ({ ...prev, [selected.id]: receipt }));
-      }
-
-      const getResult = await intakeApi.get(client, selected.id);
-      if (getResult.ok) {
-        applyRecord(getResult.value);
-      }
-      void refresh();
-    } catch (err: any) {
-      setActionError({
-        code: err.code || "RESUME_ERROR",
-        summary: err.message || "恢復 SLA 時發生錯誤",
-        occurredAt: new Date().toISOString(),
-        nextAction: "請稍後再試",
-        status: err.status,
-        retryable: false,
-        correlationId: err.correlationId,
-      });
-    } finally {
-      setBusy(false);
-    }
+    if (!authority.ok) { setActionError(authority.error); return; }
+    if (selected.slaState !== "PAUSED") return;
+    const payload = { reason: "Manual resume SLA" };
+    await runResourceCommand({ kind: "sla", action: "resume-sla", authority, payload,
+      send: (options) => client.resumeSla(authority.id, payload, options), successMessage: "SLA 已恢復計時！" });
   }
 
   // ---- Promotion saga handlers (all four v1 calls go through intakeApi) ---
@@ -934,11 +873,23 @@ export function AssistedIntakeSection({
   }
 
   async function handleConflictRefresh() {
-    if (!client || !selected) return;
-    setActionError(null);
-    const getResult = await intakeApi.get(client, selected.id);
-    if (getResult.ok) {
-      applyRecord(getResult.value);
+    if (!client || !selected || busy) return;
+    const contextGeneration = activeCommandContext.current.generation;
+    setBusy(true);
+    try {
+      const getResult = await intakeApi.get(client, selected.id);
+      if (client !== activeClient.current || contextGeneration !== activeCommandContext.current.generation) return;
+      if (getResult.ok) {
+        applyRecord(getResult.value);
+        setActionError(null);
+        // The worker advances promotion/job receipts independently of the
+        // intake record. Refresh those authorities even if intake ID is stable.
+        await handleLookupPromotionDecision();
+      } else {
+        setActionError(getResult.error);
+      }
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -963,6 +914,28 @@ export function AssistedIntakeSection({
   const slaResourceVersion = selected
     ? authoritativeSlaVersion(selected, slaReceipts[selected.id])
     : null;
+  const transferAssignmentId = selected?.assignmentId ?? null;
+  useEffect(() => {
+    if (!client || dialog !== "assignmentSla" || asgKind !== "transfer" ||
+        !canManageAssignment || !transferAssignmentId || assignmentResourceVersion === null) return;
+    let cancelled = false;
+    const current = { client, assignmentId: transferAssignmentId, version: assignmentResourceVersion };
+    setTransferTargets({ ...current, options: [], loading: true, error: null });
+    void intakeApi.listAssignmentTransferTargets(client, transferAssignmentId).then((result) => {
+      if (cancelled || client !== activeClient.current) return;
+      if (!result.ok) {
+        setTransferTargets({ ...current, options: [], loading: false, error: result.error.summary });
+      } else if (result.value.assignment_id !== transferAssignmentId || result.value.assignment_version !== assignmentResourceVersion) {
+        setTransferTargets({ ...current, options: [], loading: false, error: "指派版本已變更，請重新整理後選擇轉交對象。" });
+      } else {
+        setTransferTargets({ ...current, loading: false, error: null, options: result.value.items.map((target) => ({
+          id: target.subject_id, name: target.display_name, role: target.owner_role,
+        })) });
+      }
+    });
+    return () => { cancelled = true; };
+  }, [client, dialog, asgKind, canManageAssignment, transferAssignmentId, assignmentResourceVersion, transferTargetsRefresh]);
+  const transferTargetsCurrent = transferTargets.client === client && transferTargets.assignmentId === transferAssignmentId && transferTargets.version === assignmentResourceVersion;
   const canClaimAssignment =
     canManageAssignment &&
     assignmentResourceVersion !== null &&
@@ -998,14 +971,20 @@ export function AssistedIntakeSection({
         busy={busy}
         loadError={loadError}
         loadState={loadState}
+        addDialogRequested={dialog === "add"}
+        onAddDialogClosed={() => {
+          if (dialog === "add") updateUrlState({ dialog: null });
+        }}
         onAddSubmit={handleSubmit}
         onOpenDetail={openDetail}
         onRetryLoad={() => void refresh()}
         onRetryIntake={(intakeId) => void handleInboxRetry(intakeId)}
-        onQueryChange={setInboxQuery}
+        queryFilters={inboxFilters}
+        onFilterChange={updateInboxFilters}
         pageData={pageData}
         records={records}
-        selectedHeatZoneId={selectedHeatZoneId}
+        selectedHeatZoneId={inboxQuery.selectedHeatZoneId}
+        heatZoneOptions={heatZoneOptions}
       /> : null}
 
       {/*
@@ -1020,7 +999,7 @@ export function AssistedIntakeSection({
         </div>
       ) : null}
 
-      {dialog === "detail" && !selected && detailLoadState === "loading" ? (
+      {detailContextOpen && !selected && detailLoadState === "loading" ? (
         <div className={styles.intakeDetailLayer}>
         <div
           aria-live="polite"
@@ -1032,7 +1011,7 @@ export function AssistedIntakeSection({
         </div></div>
       ) : null}
 
-      {dialog === "detail" && !selected && detailLoadState === "error" ? (
+      {detailContextOpen && ((!selected && detailLoadState === "error") || !selectedId) ? (
         <div className={styles.intakeDetailLayer}>
         <div
           className={styles.errorPanel}
@@ -1041,7 +1020,7 @@ export function AssistedIntakeSection({
         >
           <span className={styles.errorSummary}>
             {actionError?.code ?? "ODP-INTAKE-UNAVAILABLE"} ·{" "}
-            {actionError?.summary ?? "後端未提供此收件紀錄。"}
+            {!selectedId ? "連結未指定唯一的收件紀錄，請返回收件匣重新選取。" : actionError?.summary ?? "後端未提供此收件紀錄。"}
           </span>
           <span className={styles.errorNext}>
             {actionError?.nextAction ?? "請重新整理或返回 Listing 收件匣。"}
@@ -1052,6 +1031,8 @@ export function AssistedIntakeSection({
       {detailContextOpen && selected ? (
         <div className={styles.intakeDetailLayer} data-testid="intake-detail-layer">
         <IntakeProcessingDetail
+          activeSection={urlState.activeSection}
+          onSectionChange={(activeSection) => updateUrlState({ activeSection })}
           busy={busy}
           canCorrect={canCorrect}
           canDecide={canDecide}
@@ -1065,9 +1046,6 @@ export function AssistedIntakeSection({
           onAssistedEntrySave={handleAssistedEntry}
           onClose={closeDialog}
           onDecide={canDecide ? (kind) => {
-            decisionKeyRef.current = selected
-              ? newIntakeActionIdempotencyKey(selected.id, `decide-${kind}`)
-              : null;
             setActionError(null);
             updateUrlState({ dialog: "decide", decisionKind: kind });
           } : undefined}
@@ -1151,12 +1129,20 @@ export function AssistedIntakeSection({
       {dialog === "decide" && selected && decisionKind && canDecide ? (
         <IntakeDecisionDialog
           busy={busy}
-          error={actionError}
+          draft={currentDecisionDraft}
+          error={decisionError?.scope === decisionScope ? decisionError.error : null}
           kind={decisionKind}
+          onDraftChange={(draft) => {
+            if (currentDecisionScope.current === decisionScope && client === activeClient.current) {
+              setDecisionDraft({ scope: decisionScope, ...draft });
+            }
+          }}
           onClose={() => {
+            decisionScope.idempotencyKey = null;
+            setDecisionDraft(null);
+            setDecisionError(null);
             updateUrlState({ dialog: "detail", decisionKind: null });
             setActionError(null);
-            decisionKeyRef.current = null;
           }}
           onSubmit={handleDecide}
           record={selected}
@@ -1173,6 +1159,13 @@ export function AssistedIntakeSection({
           }}
           onSubmit={handleTransferSubmit}
           record={selected}
+          resourceVersion={assignmentResourceVersion}
+          targetOptions={transferTargetsCurrent ? transferTargets.options : []}
+          targetsLoading={!transferTargetsCurrent || transferTargets.loading}
+          targetsError={transferTargetsCurrent ? transferTargets.error : null}
+          onTargetsRefresh={() => {
+            void handleConflictRefresh().then(() => setTransferTargetsRefresh((value) => value + 1));
+          }}
           onConflictRefresh={handleConflictRefresh}
         />
       ) : null}
@@ -1187,6 +1180,7 @@ export function AssistedIntakeSection({
           }}
           onSubmit={handlePauseSubmit}
           record={selected}
+          resourceVersion={slaResourceVersion}
           onConflictRefresh={handleConflictRefresh}
         />
       ) : null}
@@ -1218,7 +1212,10 @@ export function authoritativeAssignmentVersion(
     assignmentVersion?: unknown;
     assignment_version?: unknown;
   };
-  return validResourceVersion(receipt?.version ?? raw.assignmentVersion ?? raw.assignment_version);
+  return latestResourceVersion(
+    raw.assignmentVersion ?? raw.assignment_version,
+    record.assignmentId && receipt?.assignment_id === record.assignmentId ? receipt?.version : undefined,
+  );
 }
 
 export function authoritativeSlaVersion(
@@ -1229,7 +1226,21 @@ export function authoritativeSlaVersion(
     slaVersion?: unknown;
     sla_version?: unknown;
   };
-  return validResourceVersion(receipt?.version ?? raw.slaVersion ?? raw.sla_version);
+  return latestResourceVersion(
+    raw.slaVersion ?? raw.sla_version,
+    record.slaInstanceId && receipt?.sla_instance_id === record.slaInstanceId ? receipt?.version : undefined,
+  );
+}
+
+function latestResourceVersion(recordVersion: unknown, receiptVersion: unknown): number | null {
+  // Versions increase monotonically within one resource. Keep a command
+  // receipt useful while GET catches up, but never let historical evidence
+  // override a newer snapshot obtained by conflict refresh.
+  const current = validResourceVersion(recordVersion);
+  const acknowledged = validResourceVersion(receiptVersion);
+  if (current === null) return acknowledged;
+  if (acknowledged === null) return current;
+  return Math.max(current, acknowledged);
 }
 
 type ResourceAuthority =
@@ -1283,7 +1294,7 @@ function unavailableResourceError(code: string, authority: string): IntakeApiErr
  * (ADD-006 §3.3). Fractions, strings, null and undefined are equally unusable.
  */
 export function validResourceVersion(value: unknown): number | null {
-  return typeof value === "number" && Number.isInteger(value) && value >= 1 ? value : null;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 ? value : null;
 }
 
 export function buildInboxReturnHref(

@@ -2,7 +2,7 @@
 #
 # Contract:  emgi.catchment-profile.v1 (decision_product, v1.0.0)
 # Release:   oday-data-product-contracts.v0.4.1
-# Producer:  alfloop-dev/oday-data-platform@245aa00e417b6f8450baa608e8976584e00be6fc
+# Producer:  alfloop-dev/oday-data-platform@606c35f26a47df9eae7667eaeb82f5eebf75fa22
 # Schema:    schemas/catchment-profile.schema.json
 # Digest:    a4e20c9d01a7db4680d3363f78e302bae2955aec1a63c45e486a5de310b04aee
 """Canonical contract schemas for published versioned catchment profiles (emgi.catchment-profile.v1) aggregating multi-domain observations over versioned route/catchment geometry, preserving routing provider, graph snapshot and quality flags, and returning explicit unavailable states in EMGI v0.4.1."""

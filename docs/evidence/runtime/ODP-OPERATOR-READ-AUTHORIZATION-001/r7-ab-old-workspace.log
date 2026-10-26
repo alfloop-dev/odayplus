@@ -1,0 +1,1440 @@
+
+ RUN  v4.1.10 /tmp/pantheon-worker-worktrees/pantheon/odp-operator-read-authorization-001/apps/web
+
+ ❯ features/operator/__tests__/NetworkConsoleScopedSnapshot.test.tsx (2 tests | 2 failed) 2128ms
+     × initialises from the scoped operator snapshot while legacy domain reads are denied 1088ms
+     × reports an authorized empty scoped snapshot as empty instead of a binding error 1035ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  features/operator/__tests__/NetworkConsoleScopedSnapshot.test.tsx > Network Find Areas in the production Operator Console composition > initialises from the scoped operator snapshot while legacy domain reads are denied
+TestingLibraryElementError: Unable to find an element by: [data-testid="network-panel-find-areas"]
+
+Ignored nodes: comments, script, style
+<body>
+  <div>
+    <div
+      class="_console_f0ce1a"
+      data-testid="operator-console"
+    >
+      <header
+        class="_topbar_f0ce1a"
+        data-screen-label="Top Navigation"
+      >
+        <div
+          class="_topbarInner_f0ce1a"
+          data-testid="operator-topbar-inner"
+        >
+          <div
+            aria-label="Oday Plus Operator Console"
+            class="_brandCluster_f0ce1a"
+          >
+            <span
+              class="_brandMark_f0ce1a"
+            >
+              O+
+            </span>
+            <span
+              class="_brandText_f0ce1a"
+            >
+              <strong>
+                Oday Plus
+              </strong>
+              <small>
+                Operator Console
+              </small>
+            </span>
+            <span
+              aria-label="部署環境：ENV UNSET"
+              class="_envBadge_f0ce1a _envBadge_unset_f0ce1a"
+              data-environment="unset"
+              data-testid="operator-environment-badge"
+            >
+              ENV UNSET
+            </span>
+          </div>
+          <nav
+            aria-label="Operator workspaces"
+            class="_workspaceNav_f0ce1a"
+          >
+            <button
+              aria-disabled="false"
+              class="_workspaceNavItem_f0ce1a  "
+              title="Live queue"
+              type="button"
+            >
+              <span>
+                Today
+              </span>
+              <small>
+                Live queue
+              </small>
+            </button>
+            <button
+              aria-current="page"
+              aria-disabled="false"
+              class="_workspaceNavItem_f0ce1a _workspaceNavItem_active_f0ce1a "
+              title="Network"
+              type="button"
+            >
+              <span>
+                Network
+              </span>
+              <small>
+                Network
+              </small>
+            </button>
+          </nav>
+          <div
+            class="_topActions_f0ce1a"
+          >
+            <div
+              class="_popoverAnchor_f0ce1a"
+            >
+              <div
+                class="_searchBox_f0ce1a"
+              >
+                <input
+                  aria-label="Global search"
+                  placeholder="搜尋門市、案件"
+                  value=""
+                />
+                <button
+                  aria-label="Open command palette"
+                  class="_searchShortcut_f0ce1a"
+                  data-testid="operator-command-trigger"
+                  title="Ctrl+K / ⌘K"
+                  type="button"
+                >
+                  ⌘K
+                </button>
+              </div>
+            </div>
+            <div
+              class="_popoverAnchor_f0ce1a"
+            >
+              <button
+                aria-expanded="false"
+                class="_headerAction_f0ce1a"
+                data-testid="operator-notification-button"
+                type="button"
+              >
+                通知
+                <span
+                  class="_headerCount_f0ce1a "
+                >
+                  0
+                </span>
+              </button>
+            </div>
+            <div
+              class="_popoverAnchor_f0ce1a"
+            >
+              <button
+                aria-expanded="false"
+                class="_headerAction_f0ce1a"
+                data-testid="operator-task-center-button"
+                type="button"
+              >
+                <span
+                  data-testid="operator-task-center-count"
+                >
+                  任務中心
+                  <strong
+                    class="_headerCount_f0ce1a "
+                  >
+                    0
+                  </strong>
+                </span>
+              </button>
+            </div>
+            <button
+              class="_headerAction_f0ce1a"
+              data-testid="operator-approval-count"
+              type="button"
+            >
+              待核准
+              <strong
+                class="_headerCount_f0ce1a "
+              >
+                0
+              </strong>
+            </button>
+            <div
+              class="_popoverAnchor_f0ce1a"
+            >
+              <button
+                aria-expanded="false"
+                class="_roleButton_f0ce1a"
+                title="Platform Admin"
+                type="button"
+              >
+                <span
+                  aria-hidden="true"
+                  class="_roleAvatar_f0ce1a"
+                >
+                  P
+                </span>
+                <span
+                  class="_roleLabel_f0ce1a"
+                >
+                  Platform Admin
+                </span>
+                <span
+                  aria-hidden="true"
+                  class="_roleCaret_f0ce1a"
+                >
+                  ▾
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+      <div
+        class="_pocBanner_f0ce1a"
+        data-data-status="ready"
+      >
+        <div>
+          <span
+            aria-hidden="true"
+            class="_pocBannerDot_f0ce1a"
+          />
+          <strong>
+            Live API
+          </strong>
+          <span>
+            目前顯示的是經驗證的正式營運資料。
+          </span>
+        </div>
+        <button
+          class="_pocBannerAction_f0ce1a"
+          type="button"
+        >
+          重設視角
+        </button>
+      </div>
+      <main
+        class="_shell_f0ce1a"
+      >
+        <section
+          class="_workspace_81ed4b"
+          data-screen-label="Network 展店與店網"
+          data-testid="network-find-areas-workspace"
+        >
+          <header
+            class="_header_81ed4b"
+          >
+            <div>
+              <p
+                class="_kicker_81ed4b"
+              >
+                Network
+              </p>
+              <h2>
+                展店與店網
+              </h2>
+              <p
+                class="_headerSummary_81ed4b"
+              >
+                找區域 → 掃物件 → 候選點 → SiteScore → 比較 → 審核；低效門市另走重配
+              </p>
+            </div>
+            <div
+              aria-label="Network Find Areas state"
+              class="_headerStats_81ed4b"
+            >
+              <span>
+                <strong>
+                  0
+                </strong>
+                 HeatZones
+              </span>
+              <span>
+                <strong>
+                  0
+                </strong>
+                 listings
+              </span>
+              <span>
+                <strong>
+                  0
+                </strong>
+                 candidates
+              </span>
+              <span>
+                <strong>
+                  0
+                </strong>
+                 reviews
+              </span>
+              <span>
+                <strong>
+                  0
+                </strong>
+                 rebalances
+              </span>
+              <span>
+                <strong>
+                  未評估
+                </strong>
+                 avg confidence
+              </span>
+            </div>
+          </header>
+          <nav
+            aria-label="Network tabs"
+            class="_tabs_81ed4b"
+            role="tablist"
+          >
+            <button
+              aria-controls="network-active-panel"
+              aria-current="page"
+              aria-selected="true"
+              class="_tab_81ed4b"
+              data-testid="network-tab-0"
+              role="tab"
+              type="button"
+            >
+              <span>
+                找區域
+              </span>
+              <small>
+                Find Areas
+              </small>
+            </button>
+            <button
+              aria-controls="network-active-panel"
+              aria-selected="false"
+              class="_tab_81ed4b"
+              data-testid="network-tab-1"
+              role="tab"
+              type="button"
+            >
+              <span>
+                物件雷達
+              </span>
+              <small>
+                Listing Radar
+              </small>
+            </button>
+            <button
+              aria-controls="network-active-panel"
+              aria-selected="false"
+              class="_tab_81ed4b"
+              data-testid="network-tab-2"
+              role="tab"
+              type="button"
+            >
+              <span>
+                候選點
+              </span>
+              <small>
+                Candidates
+              </small>
+            </button>
+            <button
+              aria-controls="network-active-panel"
+              aria-selected="false"
+              class="_tab_81ed4b"
+              data-testid="network-tab-3"
+              role="tab"
+              type="button"
+            >
+              <span>
+                SiteScore
+              </span>
+              <small>
+                Score Lab
+              </small>
+            </button>
+            <button
+              aria-controls="network-active-panel"
+              aria-selected="false"
+              class="_tab_81ed4b"
+              data-testid="network-tab-4"
+              role="tab"
+              type="button"
+            >
+              <span>
+                比較
+              </span>
+              <small>
+                Compare
+              </small>
+            </button>
+            <button
+              aria-controls="network-active-panel"
+              aria-selected="false"
+              class="_tab_81ed4b"
+              data-testid="network-tab-5"
+              role="tab"
+              type="button"
+            >
+              <span>
+                審核
+              </span>
+              <small>
+                Review
+              </small>
+            </button>
+            <button
+              aria-controls="network-active-panel"
+              aria-selected="false"
+              class="_tab_81ed4b"
+              data-testid="network-tab-6"
+              role="tab"
+              type="button"
+            >
+              <span>
+                低效重配
+              </span>
+              <small>
+                Rebalance
+              </small>
+            </button>
+            <button
+              aria-controls="network-active-panel"
+              aria-selected="false"
+              class="_tab_81ed4b"
+              data-testid="network-tab-7"
+              role="tab"
+              type="button"
+            >
+              <span>
+                空間治理
+              </span>
+              <small>
+                Merge & Split
+              </small>
+            </button>
+          </nav>
+          <div
+            class="_networkPanelHost_81ed4b"
+            id="network-active-panel"
+          >
+            <section
+              aria-live="assertive"
+              class="_dataUnavailableGate_f0ce1a"
+              data-status="error"
+              data-testid="operator-data-unavailable"
+              role="alert"
+            >
+              <div
+                class="_dataUnavailableBody_f0ce1a"
+              >
+                <span
+                  class="_statusBadge_f0ce1a _status_warning_f0ce1a"
+                >
+                  無法取得
+                </span>
+                <h1>
+                  營運資料暫時無法取得
+                </h1>
+                <p>
+                  營運資料暫時無法讀取。上方導覽仍可使用；系統不會以示範資料代替正式資料。
+                </p>
+                <p
+                  class="_dataUnavailableNext_f0ce1a"
+                >
+                  請按「重新載入」再試一次；若持續發生，請將下方追蹤編號提供給維運人員。
+                </p>
+                <details
+                  class="_dataUnavailableTechnical_f0ce1a"
+                  data-testid="operator-data-unavailable-technical"
+                >
+                  <summary>
+                    技術資訊
+                  </summary>
+                  <dl>
+                    <dt>
+                      錯誤代碼
+                    </dt>
+                    <dd>
+                      OPERATOR_DATA_UNAVAILABLE
+                    </dd>
+                  </dl>
+                </details>
+              </div>
+              <div
+                class="_dataUnavailableActions_f0ce1a"
+              >
+                <button
+                  class="_button_f0ce1a _button_secondary_f0ce1a _button_sm_f0ce1a"
+                  type="button"
+                >
+                  重新載入
+                </button>
+              </div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+</body>
+
+Ignored nodes: comments, script, style
+<body>
+  <div>
+    <div
+      class="_console_f0ce1a"
+      data-testid="operator-console"
+    >
+      <header
+        class="_topbar_f0ce1a"
+        data-screen-label="Top Navigation"
+      >
+        <div
+          class="_topbarInner_f0ce1a"
+          data-testid="operator-topbar-inner"
+        >
+          <div
+            aria-label="Oday Plus Operator Console"
+            class="_brandCluster_f0ce1a"
+          >
+            <span
+              class="_brandMark_f0ce1a"
+            >
+              O+
+            </span>
+            <span
+              class="_brandText_f0ce1a"
+            >
+              <strong>
+                Oday Plus
+              </strong>
+              <small>
+                Operator Console
+              </small>
+            </span>
+            <span
+              aria-label="部署環境：ENV UNSET"
+              class="_envBadge_f0ce1a _envBadge_unset_f0ce1a"
+              data-environment="unset"
+              data-testid="operator-environment-badge"
+            >
+              ENV UNSET
+            </span>
+          </div>
+          <nav
+            aria-label="Operator workspaces"
+            class="_workspaceNav_f0ce1a"
+          >
+            <button
+              aria-disabled="false"
+              class="_workspaceNavItem_f0ce1a  "
+              title="Live queue"
+              type="button"
+            >
+              <span>
+                Today
+              </span>
+              <small>
+                Live queue
+              </small>
+            </button>
+            <button
+              aria-current="page"
+              aria-disabled="false"
+              class="_workspaceNavItem_f0ce1a _workspaceNavItem_active_f0ce1a "
+              title="Network"
+              type="button"
+            >
+              <span>
+                Network
+              </span>
+              <small>
+                Network
+              </small>
+            </button>
+          </nav>
+          <div
+            class="_topActions_f0ce1a"
+          >
+            <div
+              class="_popoverAnchor_f0ce1a"
+            >
+              <div
+                class="_searchBox_f0ce1a"
+              >
+                <input
+                  aria-label="Global search"
+                  placeholder="搜尋門市、案件"
+                  value=""
+                />
+                <button
+                  aria-label="Open command palette"
+                  class="_searchShortcut_f0ce1a"
+                  data-testid="operator-command-trigger"
+                  title="Ctrl+K / ⌘K"
+                  type="button"
+                >
+                  ⌘K
+                </button>
+              </div>
+            </div>
+            <div
+              class="_popoverAnchor_f0ce1a"
+            >
+              <button
+                aria-expanded="false"
+                class="_headerAction_f0ce1a"
+                data-testid="operator-notification-button"
+                type="button"
+              >
+                通知
+                <span
+                  class="_headerCount_f0ce1a "
+                >
+                  0
+                </span>
+              </button>
+            </div>
+            <div
+              class="_popoverAnchor_f0ce1a"
+            >
+              <button
+                aria-expanded="false"
+                class="_headerAction_f0ce1a"
+                data-testid="operator-task-center-button"
+                type="button"
+              >
+                <span
+                  data-testid="operator-task-center-count"
+                >
+                  任務中心
+                  <strong
+                    class="_headerCount_f0ce1a "
+                  >
+                    0
+                  </strong>
+                </span>
+              </button>
+            </div>
+            <button
+              class="_headerAction_f0ce1a"
+              data-testid="operator-approval-count"
+              type="button"
+            >
+              待核准
+              <strong
+                class="_headerCount_f0ce1a "
+              >
+                0
+              </strong>
+            </button>
+            <div
+              class="_popoverAnchor_f0ce1a"
+            >
+              <button
+                aria-expanded="false"
+                class="_roleButton_f0ce1a"
+                title="Platform Admin"
+                type="button"
+              >
+                <span
+                  aria-hidden="true"
+                  class="_roleAvatar_f0ce1a"
+                >
+                  P
+                </span>
+                <span
+                  class="_roleLabel_f0ce1a"
+                >
+                  Platform Admin
+                </span>
+                <span
+                  aria-hidden="true"
+                  class="_roleCaret_f0ce1a"
+                >
+                  ▾
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+      <div
+        class="_pocBanner_f0ce1a"
+        data-data-status="ready"
+      >
+        <div>
+          <span
+            aria-hidden="true"
+            class="_pocBannerDot_f0ce1a"
+          />
+          <strong>
+            Live API
+          </strong>
+          <span>
+            目前顯示的是經驗證的正式營運資料。
+          </span>
+        </div>
+        <button
+          class="_pocBannerAction_f0ce1a"
+          type="button"
+        >
+          重設視角
+        </button>
+      </div>
+      <main
+        class="_shell_f0ce1a"
+      >
+        <section
+          class="_workspace_81ed4b"
+          data-screen-label="Network 展店與店網"
+          data-testid="network-find-areas-workspace"
+        >
+          <header
+            class="_header_81ed4b"
+          >
+            <div>
+              <p
+                class="_kicker_81ed4b"
+              >
+                Network
+              </p>
+              <h2>
+                展店與店網
+              </h2>
+              <p
+                class="_headerSummary_81ed4b"
+              >
+                找區域 → 掃物件 → 候選點 → SiteScore → 比較 → 審核；低效門市另走重配
+              </p>
+            </div>
+            <div
+              aria-label="Network Find Areas state"
+              class="_headerStats_81ed4b"
+            >
+              <span>
+                <strong>
+                  0
+                </strong>
+                 HeatZones
+              </span>
+              <span>
+                <strong>
+                  0
+                </strong>
+                 listings
+              </span>
+              <span>
+                <strong>
+                  0
+                </strong>
+                 candidates
+              </span>
+              <span>
+                <strong>
+                  0
+                </strong>
+                 reviews
+              </span>
+              <span>
+                <strong>
+                  0
+                </strong>
+                 rebalances
+              </span>
+              <span>
+                <strong>
+                  未評估
+                </strong>
+                 avg confidence
+              </span>
+            </div>
+          </header>
+          <nav
+            aria-label="Network tabs"
+            class="_tabs_81ed4b"
+            role="tablist"
+          >
+            <button
+              aria-controls="network-active-panel"
+              aria-current="page"
+              aria-selected="true"
+              class="_tab_81ed4b"
+              data-testid="network-tab-0"
+              role="tab"
+              type="button"
+            >
+              <span>
+                找區域
+              </span>
+              <small>
+                Find Areas
+              </small>
+            </button>
+            <button
+              aria-controls="network-active-panel"
+              aria-selected="false"
+              class="_tab_81ed4b"
+              data-testid="network-tab-1"
+              role="tab"
+              type="button"
+            >
+              <span>
+                物件雷達
+              </span>
+              <small>
+                Listing Radar
+              </small>
+            </button>
+            <button
+              aria-controls="network-active-panel"
+              aria-selected="false"
+              class="_tab_81ed4b"
+              data-testid="network-tab-2"
+              role="tab"
+              type="button"
+            >
+              <span>
+                候選點
+              </span>
+              <small>
+                Candidates
+              </small>
+            </button>
+            <button
+              aria-controls="network-active-panel"
+              aria-selected="false"
+              class="_tab_81ed4b"
+              data-testid="network-tab-3"
+              role="tab"
+              type="button"
+            >
+              <span>
+                SiteScore
+              </span>
+              <small>
+                Score Lab
+              </small>
+            </button>
+            <button
+              aria-controls="network-active-panel"
+              aria-selected="false"
+              class="_tab_81ed4b"
+              data-testid="network-tab-4"
+              role="tab"
+              type="button"
+            >
+              <span>
+                比較
+              </span>
+              <small>
+                Compare
+              </small>
+            </button>
+            <button
+              aria-controls="network-active-panel"
+              aria-selected="false"
+              class="_tab_81ed4b"
+              data-testid="network-tab-5"
+              role="tab"
+              type="button"
+            >
+              <span>
+                審核
+              </span>
+              <small>
+                Review
+              </small>
+            </button>
+            <button
+              aria-controls="network-active-panel"
+              aria-selected="false"
+              class="_tab_81ed4b"
+              data-testid="network-tab-6"
+              role="tab"
+              type="button"
+            >
+              <span>
+                低效重配
+              </span>
+              <small>
+                Rebalance
+              </small>
+            </button>
+            <button
+              aria-controls="network-active-panel"
+              aria-selected="false"
+              class="_tab_81ed4b"
+              data-testid="network-tab-7"
+              role="tab"
+              type="button"
+            >
+              <span>
+                空間治理
+              </span>
+              <small>
+                Merge & Split
+              </small>
+            </button>
+          </nav>
+          <div
+            class="_networkPanelHost_81ed4b"
+            id="network-active-panel"
+          >
+            <section
+              aria-live="assertive"
+              class="_dataUnavailableGate_f0ce1a"
+              data-status="error"
+              data-testid="operator-data-unavailable"
+              role="alert"
+            >
+              <div
+                class="_dataUnavailableBody_f0ce1a"
+              >
+                <span
+                  class="_statusBadge_f0ce1a _status_warning_f0ce1a"
+                >
+                  無法取得
+                </span>
+                <h1>
+                  營運資料暫時無法取得
+                </h1>
+                <p>
+                  營運資料暫時無法讀取。上方導覽仍可使用；系統不會以示範資料代替正式資料。
+                </p>
+                <p
+                  class="_dataUnavailableNext_f0ce1a"
+                >
+                  請按「重新載入」再試一次；若持續發生，請將下方追蹤編號提供給維運人員。
+                </p>
+                <details
+                  class="_dataUnavailableTechnical_f0ce1a"
+                  data-testid="operator-data-unavailable-technical"
+                >
+                  <summary>
+                    技術資訊
+                  </summary>
+                  <dl>
+                    <dt>
+                      錯誤代碼
+                    </dt>
+                    <dd>
+                      OPERATOR_DATA_UNAVAILABLE
+                    </dd>
+                  </dl>
+                </details>
+              </div>
+              <div
+                class="_dataUnavailableActions_f0ce1a"
+              >
+                <button
+                  class="_button_f0ce1a _button_secondary_f0ce1a _button_sm_f0ce1a"
+                  type="button"
+                >
+                  重新載入
+                </button>
+              </div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+</body>
+ ❯ waitForWrapper ../../node_modules/@testing-library/dom/dist/wait-for.js:163:27
+ ❯ ../../node_modules/@testing-library/dom/dist/query-helpers.js:86:33
+ ❯ features/operator/__tests__/NetworkConsoleScopedSnapshot.test.tsx:176:25
+    174|     render(<OperatorConsole searchParams={{ ws: "network" }} />);
+    175|
+    176|     expect(await screen.findByTestId("network-panel-find-areas")).toBe…
+       |                         ^
+    177|     // The legacy domain bindings really were requested and denied.
+    178|     await waitFor(() => expect(legacyDomainPaths.some((path) => path.e…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  features/operator/__tests__/NetworkConsoleScopedSnapshot.test.tsx > Network Find Areas in the production Operator Console composition > reports an authorized empty scoped snapshot as empty instead of a binding error
+AssertionError: expected 0 to be greater than 0
+
+Ignored nodes: comments, script, style
+<html>
+  <head />
+  <body>
+    <div>
+      <div
+        class="_console_f0ce1a"
+        data-testid="operator-console"
+      >
+        <header
+          class="_topbar_f0ce1a"
+          data-screen-label="Top Navigation"
+        >
+          <div
+            class="_topbarInner_f0ce1a"
+            data-testid="operator-topbar-inner"
+          >
+            <div
+              aria-label="Oday Plus Operator Console"
+              class="_brandCluster_f0ce1a"
+            >
+              <span
+                class="_brandMark_f0ce1a"
+              >
+                O+
+              </span>
+              <span
+                class="_brandText_f0ce1a"
+              >
+                <strong>
+                  Oday Plus
+                </strong>
+                <small>
+                  Operator Console
+                </small>
+              </span>
+              <span
+                aria-label="部署環境：ENV UNSET"
+                class="_envBadge_f0ce1a _envBadge_unset_f0ce1a"
+                data-environment="unset"
+                data-testid="operator-environment-badge"
+              >
+                ENV UNSET
+              </span>
+            </div>
+            <nav
+              aria-label="Operator workspaces"
+              class="_workspaceNav_f0ce1a"
+            >
+              <button
+                aria-disabled="false"
+                class="_workspaceNavItem_f0ce1a  "
+                title="Live queue"
+                type="button"
+              >
+                <span>
+                  Today
+                </span>
+                <small>
+                  Live queue
+                </small>
+              </button>
+              <button
+                aria-current="page"
+                aria-disabled="false"
+                class="_workspaceNavItem_f0ce1a _workspaceNavItem_active_f0ce1a "
+                title="Network"
+                type="button"
+              >
+                <span>
+                  Network
+                </span>
+                <small>
+                  Network
+                </small>
+              </button>
+            </nav>
+            <div
+              class="_topActions_f0ce1a"
+            >
+              <div
+                class="_popoverAnchor_f0ce1a"
+              >
+                <div
+                  class="_searchBox_f0ce1a"
+                >
+                  <input
+                    aria-label="Global search"
+                    placeholder="搜尋門市、案件"
+                    value=""
+                  />
+                  <button
+                    aria-label="Open command palette"
+                    class="_searchShortcut_f0ce1a"
+                    data-testid="operator-command-trigger"
+                    title="Ctrl+K / ⌘K"
+                    type="button"
+                  >
+                    ⌘K
+                  </button>
+                </div>
+              </div>
+              <div
+                class="_popoverAnchor_f0ce1a"
+              >
+                <button
+                  aria-expanded="false"
+                  class="_headerAction_f0ce1a"
+                  data-testid="operator-notification-button"
+                  type="button"
+                >
+                  通知
+                  <span
+                    class="_headerCount_f0ce1a "
+                  >
+                    0
+                  </span>
+                </button>
+              </div>
+              <div
+                class="_popoverAnchor_f0ce1a"
+              >
+                <button
+                  aria-expanded="false"
+                  class="_headerAction_f0ce1a"
+                  data-testid="operator-task-center-button"
+                  type="button"
+                >
+                  <span
+                    data-testid="operator-task-center-count"
+                  >
+                    任務中心
+                    <strong
+                      class="_headerCount_f0ce1a "
+                    >
+                      0
+                    </strong>
+                  </span>
+                </button>
+              </div>
+              <button
+                class="_headerAction_f0ce1a"
+                data-testid="operator-approval-count"
+                type="button"
+              >
+                待核准
+                <strong
+                  class="_headerCount_f0ce1a "
+                >
+                  0
+                </strong>
+              </button>
+              <div
+                class="_popoverAnchor_f0ce1a"
+              >
+                <button
+                  aria-expanded="false"
+                  class="_roleButton_f0ce1a"
+                  title="Platform Admin"
+                  type="button"
+                >
+                  <span
+                    aria-hidden="true"
+                    class="_roleAvatar_f0ce1a"
+                  >
+                    P
+                  </span>
+                  <span
+                    class="_roleLabel_f0ce1a"
+                  >
+                    Platform Admin
+                  </span>
+                  <span
+                    aria-hidden="true"
+                    class="_roleCaret_f0ce1a"
+                  >
+                    ▾
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </header>
+        <div
+          class="_pocBanner_f0ce1a"
+          data-data-status="ready"
+        >
+          <div>
+            <span
+              aria-hidden="true"
+              class="_pocBannerDot_f0ce1a"
+            />
+            <strong>
+              Live API
+            </strong>
+            <span>
+              目前顯示的是經驗證的正式營運資料。
+            </span>
+          </div>
+          <button
+            class="_pocBannerAction_f0ce1a"
+            type="button"
+          >
+            重設視角
+          </button>
+        </div>
+        <main
+          class="_shell_f0ce1a"
+        >
+          <section
+            class="_workspace_81ed4b"
+            data-screen-label="Network 展店與店網"
+            data-testid="network-find-areas-workspace"
+          >
+            <header
+              class="_header_81ed4b"
+            >
+              <div>
+                <p
+                  class="_kicker_81ed4b"
+                >
+                  Network
+                </p>
+                <h2>
+                  展店與店網
+                </h2>
+                <p
+                  class="_headerSummary_81ed4b"
+                >
+                  找區域 → 掃物件 → 候選點 → SiteScore → 比較 → 審核；低效門市另走重配
+                </p>
+              </div>
+              <div
+                aria-label="Network Find Areas state"
+                class="_headerStats_81ed4b"
+              >
+                <span>
+                  <strong>
+                    0
+                  </strong>
+                   HeatZones
+                </span>
+                <span>
+                  <strong>
+                    0
+                  </strong>
+                   listings
+                </span>
+                <span>
+                  <strong>
+                    0
+                  </strong>
+                   candidates
+                </span>
+                <span>
+                  <strong>
+                    0
+                  </strong>
+                   reviews
+                </span>
+                <span>
+                  <strong>
+                    0
+                  </strong>
+                   rebalances
+                </span>
+                <span>
+                  <strong>
+                    未評估
+                  </strong>
+                   avg confidence
+                </span>
+              </div>
+            </header>
+            <nav
+              aria-label="Network tabs"
+              class="_tabs_81ed4b"
+              role="tablist"
+            >
+              <button
+                aria-controls="network-active-panel"
+                aria-current="page"
+                aria-selected="true"
+                class="_tab_81ed4b"
+                data-testid="network-tab-0"
+                role="tab"
+                type="button"
+              >
+                <span>
+                  找區域
+                </span>
+                <small>
+                  Find Areas
+                </small>
+              </button>
+              <button
+                aria-controls="network-active-panel"
+                aria-selected="false"
+                class="_tab_81ed4b"
+                data-testid="network-tab-1"
+                role="tab"
+                type="button"
+              >
+                <span>
+                  物件雷達
+                </span>
+                <small>
+                  Listing Radar
+                </small>
+              </button>
+              <button
+                aria-controls="network-active-panel"
+                aria-selected="false"
+                class="_tab_81ed4b"
+                data-testid="network-tab-2"
+                role="tab"
+                type="button"
+              >
+                <span>
+                  候選點
+                </span>
+                <small>
+                  Candidates
+                </small>
+              </button>
+              <button
+                aria-controls="network-active-panel"
+                aria-selected="false"
+                class="_tab_81ed4b"
+                data-testid="network-tab-3"
+                role="tab"
+                type="button"
+              >
+                <span>
+                  SiteScore
+                </span>
+                <small>
+                  Score Lab
+                </small>
+              </button>
+              <button
+                aria-controls="network-active-panel"
+                aria-selected="false"
+                class="_tab_81ed4b"
+                data-testid="network-tab-4"
+                role="tab"
+                type="button"
+              >
+                <span>
+                  比較
+                </span>
+                <small>
+                  Compare
+                </small>
+              </button>
+              <button
+                aria-controls="network-active-panel"
+                aria-selected="false"
+                class="_tab_81ed4b"
+                data-testid="network-tab-5"
+                role="tab"
+                type="button"
+              >
+                <span>
+                  審核
+                </span>
+                <small>
+                  Review
+                </small>
+              </button>
+              <button
+                aria-controls="network-active-panel"
+                aria-selected="false"
+                class="_tab_81ed4b"
+                data-testid="network-tab-6"
+                role="tab"
+                type="button"
+              >
+                <span>
+                  低效重配
+                </span>
+                <small>
+                  Rebalance
+                </small>
+              </button>
+              <button
+                aria-controls="network-active-panel"
+                aria-selected="false"
+                class="_tab_81ed4b"
+                data-testid="network-tab-7"
+                role="tab"
+                type="button"
+              >
+                <span>
+                  空間治理
+                </span>
+                <small>
+                  Merge & Split
+                </small>
+              </button>
+            </nav>
+            <div
+              class="_networkPanelHost_81ed4b"
+              id="network-active-panel"
+            >
+              <section
+                aria-live="assertive"
+                class="_dataUnavailableGate_f0ce1a"
+                data-status="error"
+                data-testid="operator-data-unavailable"
+                role="alert"
+              >
+                <div
+                  class="_dataUnavailableBody_f0ce1a"
+                >
+                  <span
+                    class="_statusBadge_f0ce1a _status_warning_f0ce1a"
+                  >
+                    無法取得
+                  </span>
+                  <h1>
+                    營運資料暫時無法取得
+                  </h1>
+                  <p>
+                    營運資料暫時無法讀取。上方導覽仍可使用；系統不會以示範資料代替正式資料。
+                  </p>
+                  <p
+                    class="_dataUnavailableNext_f0ce1a"
+                  >
+                    請按「重新載入」再試一次；若持續發生，請將下方追蹤編號提供給維運人員。
+                  </p>
+                  <details
+                    class="_dataUnavailableTechnical_f0ce1a"
+                    data-testid="operator-data-unavailable-technical"
+                  >
+                    <summary>
+                      技術資訊
+                    </summary>
+                    <dl>
+                      <dt>
+                        錯誤代碼
+                      </dt>
+                      <dd>
+                        OPERATOR_DATA_UNAVAILABLE
+                      </dd>
+                    </dl>
+                  </details>
+                </div>
+                <div
+                  class="_dataUnavailableActions_f0ce1a"
+                >
+                  <button
+                    class="_button_f0ce1a _button_secondary_f0ce1a _button_sm_f0ce1a"
+                    type="button"
+                  >
+                    重新載入
+                  </button>
+                </div>
+              </section>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+  </body>
+</html>
+ ❯ features/operator/__tests__/NetworkConsoleScopedSnapshot.test.tsx:206:59
+    204|     render(<OperatorConsole searchParams={{ ws: "network" }} />);
+    205|
+    206|     await waitFor(() => expect(networkListingUrls.length).toBeGreaterT…
+       |                                                           ^
+    207|     await waitFor(() => expect(legacyDomainPaths.some((path) => path.e…
+    208|     await waitFor(() =>
+ ❯ runWithExpensiveErrorDiagnosticsDisabled ../../node_modules/@testing-library/dom/dist/config.js:47:12
+ ❯ checkCallback ../../node_modules/@testing-library/dom/dist/wait-for.js:124:77
+ ❯ Timeout.checkRealTimersCallback ../../node_modules/@testing-library/dom/dist/wait-for.js:118:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  11:03:05
+   Duration  12.08s (transform 6.22s, setup 0ms, import 7.97s, tests 2.13s, environment 1.45s)
+
+exit=1

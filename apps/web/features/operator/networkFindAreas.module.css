@@ -5,33 +5,29 @@
   color: #172033;
 }
 
+/* Package 10 S05 page header: title, summary and KPI chips on one row. */
 .header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
-  padding: 0 0 8px;
   flex-wrap: wrap;
+  margin-bottom: -4px;
 }
 
 .header h2,
 .header p,
-.panelHeader h3,
-.detailTopline h3,
-.detailTopline p,
-.detailGrid h4,
-.detailGrid p {
+.panelHeader h3 {
   margin: 0;
 }
 
 .header h2 {
   font-size: 18px;
-  line-height: 1.25;
+  font-weight: 700;
+  line-height: 1.35;
   letter-spacing: 0;
 }
 
 .headerSummary {
-  margin-top: 2px;
   color: #5a6478;
   font-size: 12px;
 }
@@ -44,32 +40,51 @@
   text-transform: uppercase;
 }
 
-.headerStats,
-.legend {
+.headerStats {
   display: flex;
   flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 0 auto;
+  padding: 0;
+  list-style: none;
+}
+
+.headerStats li {
+  display: flex;
+  align-items: baseline;
   gap: 6px;
-}
-
-.headerStats {
-  justify-content: flex-end;
-  color: #39465d;
-  font-size: 11px;
-}
-
-.headerStats span {
-  border: 1px solid #d7deea;
+  border: 1px solid #e3e8f0;
   border-radius: 9px;
   background: #ffffff;
+  color: #5a6478;
+  font-size: 11px;
   padding: 6px 12px;
 }
 
 .headerStats strong {
-  margin-right: 6px;
   color: #2e3a97;
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 16px;
-  font-weight: 700;
+  font-weight: 600;
+}
+
+.fixtureChip {
+  border: 1px solid #e3e8f0;
+  border-radius: 999px;
+  background: #f6f8fb;
+  color: #5a6478;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 8px;
+}
+
+.headerNotice {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #5a6478;
+  font-size: 11px;
 }
 
 .tabs {
@@ -312,119 +327,8 @@
   cursor: default;
 }
 
-.lensBar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: center;
-}
-
-.lensSelector {
-  display: grid;
-  grid-template-columns: repeat(9, minmax(72px, 1fr));
-  gap: 6px;
-}
-
-.lensButton {
-  display: grid;
-  gap: 2px;
-  min-height: 46px;
-  border: 1px solid #d5deea;
-  border-radius: 7px;
-  background: #ffffff;
-  color: #243044;
-  cursor: pointer;
-  font: inherit;
-  padding: 7px 8px;
-  text-align: left;
-}
-
-.lensButton:hover,
-.lensButton:focus-visible,
-.zoneMarker:focus-visible,
-.zoneRow:focus-visible,
 .detailActions button:focus-visible {
   outline: 3px solid rgba(37, 99, 235, 0.14);
-}
-
-.lensButton[aria-pressed="true"] {
-  border-color: #2563eb;
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-
-.lensButton span {
-  font-size: 13px;
-  font-weight: 900;
-  line-height: 1.1;
-}
-
-.lensButton small {
-  overflow: hidden;
-  color: #64748b;
-  font-size: 10px;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.legend {
-  max-width: 360px;
-  justify-content: flex-end;
-  color: #516176;
-  font-size: 11px;
-}
-
-.legendItem {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  white-space: nowrap;
-}
-
-.legendItem i {
-  width: 9px;
-  height: 9px;
-  border-radius: 999px;
-}
-
-.legendGood {
-  background: #10b981;
-}
-
-.legendWatch {
-  background: #f59e0b;
-}
-
-.legendRisk {
-  background: #ef4444;
-}
-
-.legendCandidate {
-  background: #7c3aed;
-}
-
-.mainGrid {
-  display: grid;
-  grid-template-columns: minmax(440px, 1.15fr) minmax(300px, 0.62fr);
-  grid-template-areas:
-    "map tray"
-    "detail detail";
-  gap: 12px;
-}
-
-.mapPanel,
-.trayPanel,
-.detailPanel {
-  min-width: 0;
-  border: 1px solid #d9e1ee;
-  border-radius: 8px;
-  background: #ffffff;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-}
-
-.mapPanel {
-  grid-area: map;
 }
 
 /*
@@ -443,17 +347,6 @@
   font-size: 13px;
 }
 
-.trayPanel {
-  grid-area: tray;
-}
-
-.detailPanel {
-  grid-area: detail;
-  display: grid;
-  gap: 12px;
-  padding: 12px;
-}
-
 .panelHeader {
   display: flex;
   align-items: center;
@@ -468,26 +361,6 @@
  * (ODP-CAP-GEOCODER-SEARCH-001). Stacked so the coordinate, the quality flags
  * and the review reason each get their own line at any width.
  */
-.geocodeReceipt {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  margin: 0 0 12px;
-  padding: 9px 11px;
-  border: 1px solid #d9e1ee;
-  border-left: 4px solid #2e3a97;
-  border-radius: 8px;
-  background: #f7f9fd;
-  font-size: 11.5px;
-  line-height: 1.6;
-  color: #3d4757;
-  word-break: break-word;
-}
-
-.geocodeReceipt strong {
-  font-size: 12.5px;
-  color: #1f2733;
-}
 
 .panelHeader h3 {
   font-size: 14px;
@@ -499,208 +372,6 @@
   font-size: 12px;
   font-weight: 800;
   text-transform: capitalize;
-}
-
-.mapCanvas {
-  position: relative;
-  min-height: 430px;
-  overflow: hidden;
-  background:
-    linear-gradient(180deg, rgba(237, 242, 247, 0.9), rgba(248, 250, 252, 0.96)),
-    #f8fafc;
-}
-
-.mapGrid {
-  position: absolute;
-  inset: 0;
-  background-image:
-    linear-gradient(rgba(148, 163, 184, 0.18) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(148, 163, 184, 0.18) 1px, transparent 1px);
-  background-size: 42px 42px;
-}
-
-.mapRoadA,
-.mapRoadB,
-.mapRoadC {
-  position: absolute;
-  pointer-events: none;
-  background: rgba(100, 116, 139, 0.14);
-  border: 1px solid rgba(100, 116, 139, 0.1);
-  border-radius: 999px;
-}
-
-.mapRoadA {
-  top: 52%;
-  left: -7%;
-  width: 112%;
-  height: 18px;
-  transform: rotate(-10deg);
-}
-
-.mapRoadB {
-  top: -12%;
-  left: 58%;
-  width: 17px;
-  height: 128%;
-  transform: rotate(18deg);
-}
-
-.mapRoadC {
-  top: 20%;
-  left: 8%;
-  width: 72%;
-  height: 12px;
-  transform: rotate(28deg);
-}
-
-.zoneMarker,
-.mapPoint {
-  position: absolute;
-  left: var(--x);
-  top: var(--y);
-  transform: translate(-50%, -50%);
-}
-
-.zoneMarker {
-  display: grid;
-  place-items: center;
-  width: var(--marker-size);
-  height: var(--marker-size);
-  border: 2px solid rgba(255, 255, 255, 0.92);
-  border-radius: 999px;
-  color: #ffffff;
-  cursor: pointer;
-  font: inherit;
-  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.2);
-  z-index: 3;
-}
-
-.zoneMarker strong,
-.zoneMarker span {
-  display: block;
-  line-height: 1;
-}
-
-.zoneMarker strong {
-  font-size: 12px;
-  font-weight: 950;
-}
-
-.zoneMarker span {
-  font-size: 11px;
-  font-weight: 850;
-}
-
-.zoneMarker[data-tone="good"] {
-  background: #0f9f76;
-}
-
-.zoneMarker[data-tone="watch"] {
-  background: #d97706;
-}
-
-.zoneMarker[data-tone="risk"] {
-  background: #dc2626;
-}
-
-.zoneMarker[aria-current="true"] {
-  box-shadow:
-    0 0 0 5px rgba(37, 99, 235, 0.18),
-    0 10px 28px rgba(15, 23, 42, 0.24);
-}
-
-.mapPoint {
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  border: 2px solid #ffffff;
-  border-radius: 999px;
-  background: #0ea5e9;
-  color: #ffffff;
-  font-size: 10px;
-  font-weight: 950;
-  line-height: 1;
-  z-index: 2;
-}
-
-.mapPointCandidate {
-  background: #7c3aed;
-}
-
-.zoneList {
-  display: grid;
-}
-
-.zoneRow {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 9px;
-  align-items: center;
-  width: 100%;
-  border: 0;
-  border-bottom: 1px solid #eef2f7;
-  background: #ffffff;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  padding: 10px 12px;
-  text-align: left;
-}
-
-.zoneRow:hover,
-.zoneRow[aria-current="true"] {
-  background: #f3f7ff;
-}
-
-.rank,
-.zoneRowScore {
-  color: #1d4ed8;
-  font-size: 12px;
-  font-weight: 950;
-}
-
-.zoneRowMain {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.zoneRowMain strong,
-.zoneRowMain small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.zoneRowMain strong {
-  color: #111827;
-  font-size: 13px;
-}
-
-.zoneRowMain small {
-  color: #64748b;
-  font-size: 11px;
-}
-
-.detailTopline {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.detailTopline h3 {
-  margin-top: 2px;
-  font-size: 20px;
-  line-height: 1.2;
-  letter-spacing: 0;
-}
-
-.detailTopline p {
-  margin-top: 3px;
-  color: #64748b;
-  font-size: 12px;
 }
 
 .detailActions {
@@ -733,314 +404,6 @@
   opacity: 0.46;
 }
 
-.metricGrid {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.metric {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-  border: 1px solid #e1e7f0;
-  border-radius: 6px;
-  background: #fafcff;
-  padding: 8px;
-}
-
-.metric span {
-  color: #66758c;
-  font-size: 11px;
-  font-weight: 850;
-  text-transform: uppercase;
-}
-
-.metric strong {
-  overflow: hidden;
-  color: #162033;
-  font-size: 13px;
-  font-weight: 900;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.metric i {
-  overflow: hidden;
-  height: 5px;
-  border-radius: 999px;
-  background: #e2e8f0;
-}
-
-.metric b {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: #2563eb;
-}
-
-.detailGrid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.detailGrid section {
-  border: 1px solid #e1e7f0;
-  border-radius: 6px;
-  background: #ffffff;
-  padding: 10px;
-}
-
-.detailGrid h4 {
-  color: #435168;
-  font-size: 12px;
-  letter-spacing: 0;
-}
-
-.detailGrid p,
-.detailGrid li {
-  color: #1f2937;
-  font-size: 13px;
-  line-height: 1.4;
-}
-
-.detailGrid ul {
-  display: grid;
-  gap: 4px;
-  margin: 6px 0 0;
-  padding-left: 17px;
-}
-
-.detailGrid p {
-  margin-top: 6px;
-}
-
-.pipelineStats {
-  display: grid;
-  gap: 7px;
-  margin: 6px 0 0;
-}
-
-.pipelineStats div {
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  gap: 8px;
-}
-
-.pipelineStats dt {
-  color: #64748b;
-  font-size: 12px;
-}
-
-.pipelineStats dd {
-  margin: 0;
-  overflow: hidden;
-  color: #172033;
-  font-size: 12px;
-  font-weight: 850;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.linkedRows {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.linkedRows span {
-  border: 1px solid #d8e0ec;
-  border-radius: 999px;
-  background: #f7fafc;
-  color: #334155;
-  font-size: 12px;
-  padding: 5px 8px;
-}
-
-.linkedRows strong {
-  color: #172033;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] {
-  grid-template-columns: 206px minmax(0, 1fr) 330px;
-  grid-template-areas:
-    "lens map detail"
-    "lens tray detail";
-  gap: 14px;
-  align-items: flex-start;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .lensBar {
-  grid-area: lens;
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 12px;
-  align-items: stretch;
-  position: sticky;
-  top: 76px;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .lensSelector,
-.tabPanel[data-screen-label="Network 找區域"] .legend {
-  border: 1px solid #e3e8f0;
-  border-radius: 12px;
-  background: #ffffff;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .lensSelector {
-  grid-template-columns: 1fr;
-  gap: 6px;
-  padding: 13px 14px;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .lensButton {
-  min-height: 40px;
-  border-radius: 8px;
-  padding: 7px 10px;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .legend {
-  display: grid;
-  gap: 7px;
-  justify-content: stretch;
-  max-width: none;
-  padding: 13px 14px;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .mainGrid {
-  display: contents;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .mapPanel {
-  grid-area: map;
-  overflow: hidden;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .trayPanel {
-  grid-area: tray;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .detailPanel {
-  grid-area: detail;
-  gap: 14px;
-  padding: 14px;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="heat-zone-map"]) {
-  grid-template-rows: minmax(430px, 1fr);
-  min-height: 430px;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="heat-zone-map-canvas"]) {
-  min-height: 430px;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .mapPanel .mapLoading {
-  min-height: 430px;
-  border: 0;
-  border-radius: 0;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="heat-zone-map"] > [aria-label="Map layer controls"]),
-.tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="map-boundary-config"]),
-.tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="map-boundary-alert"]),
-.tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="map-state-panel"]),
-.tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="map-evidence-fallback"]),
-.tabPanel[data-screen-label="Network 找區域"] .mapPanel :global([data-testid="heat-zone-map"] > [aria-label="Map legend"]) {
-  display: none;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .trayPanel .panelHeader {
-  border-bottom: 0;
-  padding: 0 0 8px;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .zoneList {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .zoneRow {
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-areas:
-    "main score"
-    "rank score";
-  align-items: stretch;
-  min-height: 74px;
-  border: 1px solid #e3e8f0;
-  border-radius: 10px;
-  padding: 10px 12px;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .zoneRow:hover,
-.tabPanel[data-screen-label="Network 找區域"] .zoneRow[aria-current="true"] {
-  border-color: #b7c6f0;
-  background: #f1f4fd;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .rank {
-  grid-area: rank;
-  align-self: flex-end;
-  color: #7a8496;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .zoneRowMain {
-  grid-area: main;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .zoneRowMain strong {
-  white-space: normal;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .zoneRowMain small {
-  white-space: normal;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .zoneRowScore {
-  grid-area: score;
-  align-self: flex-start;
-  border-radius: 999px;
-  background: #e2f4f6;
-  color: #0e7c8c;
-  padding: 4px 8px;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .detailTopline {
-  display: grid;
-  gap: 10px;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .detailActions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  justify-content: stretch;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .detailActions button {
-  min-width: 0;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .metricGrid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .detailGrid {
-  grid-template-columns: 1fr;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .linkedRows {
-  display: grid;
-  gap: 6px;
-}
-
-.tabPanel[data-screen-label="Network 找區域"] .linkedRows span {
-  border-radius: 8px;
-}
-
 .emptyState {
   display: grid;
   min-height: 220px;
@@ -1050,10 +413,14 @@
 }
 
 @media (max-width: 980px) {
-  .header,
-  .detailTopline {
+  .header {
     align-items: flex-start;
     flex-direction: column;
+    gap: 8px;
+  }
+
+  .headerStats {
+    margin-left: 0;
   }
 
   .header,
@@ -1071,11 +438,6 @@
   .headerSummary,
   .kicker {
     overflow-wrap: anywhere;
-  }
-
-  .lensBar,
-  .mainGrid {
-    grid-template-columns: 1fr;
   }
 
   .expansionStepper {
@@ -1101,26 +463,6 @@
     flex-direction: column;
   }
 
-  .mainGrid {
-    grid-template-areas:
-      "map"
-      "tray"
-      "detail";
-  }
-
-  .lensSelector {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .legend {
-    justify-content: flex-start;
-    max-width: none;
-  }
-
-  .metricGrid,
-  .detailGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 /* --- ODP-OC-FE-04: additional Network tabs (listings/candidates/sitescore/compare/review/rebalance) --- */
@@ -1167,9 +509,10 @@
   padding: 2px 6px;
 }
 
+/* auto-fill keeps a card at column width when only a few sources exist. */
 .sourceSummaryGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
   gap: 8px;
 }
 
@@ -1331,7 +674,7 @@
 
 .radarInboxHeader span {
   color: #8a93a8;
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 11px;
 }
 
@@ -1469,7 +812,7 @@
 
 .detailIdLine > span {
   color: #8a93a8;
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10.5px;
 }
 
@@ -1496,7 +839,7 @@
   border-radius: 9px;
   background: repeating-linear-gradient(45deg, #e8ecf3, #e8ecf3 8px, #eff2f8 8px, #eff2f8 16px);
   color: #8a93a8;
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10px;
 }
 
@@ -2230,6 +1573,16 @@
   font-family: 'IBM Plex Mono', monospace;
 }
 
+.avmQualityNotice {
+  font-size: 10.5px;
+  line-height: 1.45;
+  border: 1px solid #efb4ae;
+  background: #fff1ef;
+  color: #8f231d;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
 .avmReserveNote {
   font-size: 10.5px;
   color: #4a7c86;
@@ -2321,6 +1674,212 @@
   color: #5a6478 !important;
   margin: 0;
   line-height: 1.4;
+}
+
+.scenarioDisclosureRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.scenarioModelledBadge {
+  font-size: 10px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 600;
+  color: #15803d;
+  background: #dcfce7;
+  border: 1px solid #86efac;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.scenarioUnmodelledBadge {
+  font-size: 10px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 600;
+  color: #b45309;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.scenarioBlockedBadge {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: #b91c1c;
+  background: #fee2e2;
+  border: 1px solid #fca5a5;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.scenarioAckBadge {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: #c2410c;
+  background: #ffedd5;
+  border: 1px solid #fdba74;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.scenarioFullyModelledBadge {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: #15803d;
+  background: #dcfce7;
+  border: 1px solid #86efac;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.rebalanceBlockedAlert {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  border-radius: 8px;
+  color: #991b1b;
+  margin-top: 10px;
+}
+
+.rebalanceBlockedAlert strong {
+  display: block;
+  font-size: 12.5px;
+  margin-bottom: 4px;
+  color: #991b1b;
+}
+
+.rebalanceBlockedAlert p {
+  margin: 0;
+  font-size: 11.5px;
+  color: #7f1d1d;
+  line-height: 1.4;
+}
+
+.blockedIcon {
+  font-size: 16px;
+}
+
+.rebalanceAcknowledgementSection {
+  margin-top: 12px;
+  padding: 12px 14px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.acknowledgementHeader strong {
+  display: block;
+  font-size: 12px;
+  color: #92400e;
+  margin-bottom: 2px;
+}
+
+.acknowledgementHeader p {
+  margin: 0;
+  font-size: 11px;
+  color: #78350f;
+}
+
+.acknowledgementClassList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.acknowledgementClassItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #ffffff;
+  border: 1px solid #fcd34d;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.acknowledgementClassItem input[type="checkbox"] {
+  margin-top: 3px;
+  cursor: pointer;
+}
+
+.acknowledgementClassItem strong {
+  font-size: 11.5px;
+  color: #92400e;
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.acknowledgementClassItem p {
+  margin: 2px 0 0 0;
+  font-size: 11px;
+  color: #78350f;
+  line-height: 1.3;
+}
+
+.acknowledgementFieldsGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.ackFieldGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ackFieldGroup label,
+.ackFieldGroupFull label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #78350f;
+}
+
+.ackFieldGroupFull {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.inputField {
+  padding: 6px 8px;
+  border: 1px solid #d7deea;
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: inherit;
+  background: #ffffff;
+}
+
+.textareaField {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #d7deea;
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: inherit;
+  resize: vertical;
+  background: #ffffff;
+}
+
+.requiredMark {
+  color: #dc2626;
+  font-size: 10.5px;
+  margin-left: 4px;
+}
+
+.fieldError {
+  color: #dc2626;
+  font-size: 10.5px;
 }
 
 /* --- Review Decision Reason Gate Styles --- */
@@ -2521,7 +2080,7 @@
 }
 
 .revenueBar small {
-  font-family: "IBM Plex Mono", monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10px;
   color: #5a6472;
 }
@@ -2548,7 +2107,7 @@
 }
 
 .bandTile strong {
-  font-family: "IBM Plex Mono", monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 13px;
 }
 
@@ -2625,7 +2184,7 @@
   border-radius: 999px;
   background: #eef1f5;
   color: #5a6472;
-  font-family: "IBM Plex Mono", monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10.5px;
 }
 
@@ -2685,7 +2244,7 @@
 }
 
 .reviewQueueId {
-  font-family: "IBM Plex Mono", monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10px;
   color: #8a93a8;
 }
@@ -2708,7 +2267,7 @@
 
 .reviewQueueDue {
   margin-left: auto;
-  font-family: "IBM Plex Mono", monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   color: #96610b;
 }
 
@@ -2929,12 +2488,12 @@
 }
 
 .reviewDialog {
-  width: 520px;
-  max-width: 94vw;
+  width: min(520px, 100%);
+  box-sizing: border-box;
   background: #ffffff;
   border-radius: 14px;
   box-shadow: 0 24px 64px rgba(12, 18, 44, 0.3);
-  max-height: 92vh;
+  max-height: calc(100dvh - 40px);
   overflow-y: auto;
 }
 
@@ -2954,7 +2513,7 @@
   margin-left: auto;
   background: none;
   border: none;
-  color: #8a93a8;
+  color: #536079;
   font-size: 17px;
   cursor: pointer;
   line-height: 1;
@@ -3331,9 +2890,17 @@
   color: #ffffff;
 }
 
+.pipelineFilterList button:disabled {
+  color: #6e7891;
+  background: #f8fafd;
+  cursor: default;
+}
+
+.candidatePipelineNote { margin: 0; color: #6e7891; font-size: 10px; line-height: 1.5; }
+
 .pipelineFilterList button b {
   margin-left: auto;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10px;
 }
 
@@ -3402,7 +2969,7 @@
 .candidateCardHead > span:first-child,
 .candidateSnapshot {
   color: #6e7891;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10px;
 }
 
@@ -3463,23 +3030,58 @@
 }
 
 .candidateDetailPanel {
-  position: sticky;
-  top: 76px;
+  position: static;
+  padding: 14px 16px;
+  gap: 10px;
 }
+
+.candidateSourceLine { color: #6d4fa3; font-size: 10px; font-weight: 600; }
+.candidateDetailScore { border: 1px solid #d9dff5; background: #eef1fb; border-radius: 9px; padding: 8px 11px; color: #2e3a97; font-size: 12px; font-weight: 700; }
+.candidateGateContainer { overflow: hidden; border: 1px solid #e9edf4; border-radius: 10px; }
+.candidateGateHeader { display: flex; align-items: center; gap: 8px; background: #f8fafd; padding: 8px 12px; color: #6e7891; font-size: 10px; font-weight: 700; }
+.candidateGateHeader > span:last-child { margin-left: auto; color: #2e3a97; font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace); }
+.candidateDetailFacts { display: flex; flex-direction: column; gap: 5px; margin: 0; font-size: 11px; }
+.candidateDetailFacts > div { display: flex; gap: 8px; }
+.candidateDetailFacts dt { flex: none; width: 78px; color: #6e7891; }
+.candidateDetailFacts dd { min-width: 0; margin: 0; color: #3a4362; overflow-wrap: anywhere; }
+.candidateAttachmentSlot { display: flex; align-items: center; justify-content: center; height: 56px; border: 1px dashed #c9d2e0; border-radius: 8px; background: repeating-linear-gradient(45deg, #e8ecf3, #e8ecf3 8px, #eff2f8 8px, #eff2f8 16px); color: #6e7891; font-size: 9.5px; }
+.candidateWorkflowActions { display: flex; flex-direction: column; gap: 6px; }
+.candidateWorkflowActions p { overflow: visible; margin: 0; color: #6e7891; font-size: 10.5px; line-height: 1.5; white-space: normal; }
+.candidateSecondaryActions { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+.candidateSecondaryActions button { width: 100%; border: 1px solid #d6dce8; border-radius: 8px; background: #ffffff; padding: 8px 12px; color: #3a4362; font: inherit; font-size: 12px; font-weight: 600; }
+.candidateSecondaryActions button:disabled { color: #6e7891; background: #f8fafd; }
 
 .candidateDetailPanel .gateGrid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
   overflow: hidden;
-  border: 1px solid #e9edf4;
-  border-radius: 10px;
+  border: 0;
+  border-radius: 0;
   margin: 0;
 }
 
 .candidateDetailPanel .gateRowItem {
   grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  column-gap: 7px;
+  row-gap: 0;
   border-radius: 0;
   background: #ffffff;
-  padding: 6px 9px;
+  border-top: 1px solid #f1f3f8;
+  padding: 6px 12px;
+  font-size: 10.5px;
+}
+
+.candidateDetailPanel .gateRowItem > [data-gate-label] { color: #3a4362; font-weight: 700; line-height: 1.35; }
+.candidateDetailPanel .gateMark { display: flex; grid-row: 1 / 3; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 5px; margin-top: 1px; font-size: 9.5px; }
+.candidateDetailPanel .gateRowItem[data-state="ok"] .gateMark { background: #e5f3ea; }
+.candidateDetailPanel .gateRowItem[data-state="warn"] .gateMark { background: #fbf1dd; }
+.candidateDetailPanel .gateRowItem[data-state="fail"] .gateMark { background: #fbe9e7; }
+
+.candidateDetailPanel .gateRowItem[data-state="unknown"] .gateMark,
+.candidateDetailPanel .gateRowItem[data-state="recorded"] .gateMark {
+  background: #eef1f6;
+  color: #5a6478;
 }
 
 .candidateDetailPanel .gateRowItem small {
@@ -3499,7 +3101,7 @@
 
 .scoreLabToolbar > span {
   margin-left: auto;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10.5px;
 }
 
@@ -3591,7 +3193,7 @@
 
 .scoreLabPicker small {
   color: #6e7891;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 10px;
 }
 
@@ -3619,11 +3221,19 @@
   gap: 10px;
 }
 
-.scoreNumber {
+.scoreNumber,
+.scoreLabel {
   color: #1c2333;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
   font-size: 34px;
   font-weight: 650;
+}
+
+.scoreNumber {
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
+}
+
+.scoreLabel {
+  font-family: var(--operator-font-family, sans-serif);
 }
 
 .scoreNumber small {
@@ -3655,7 +3265,7 @@
 .scoreReportTitle small,
 .scoreReportTitle span {
   color: #6e7891;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 9.5px;
 }
 
@@ -3764,7 +3374,7 @@
 
 .comparePriorityList span {
   color: #6e7891;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
   font-size: 9.5px;
 }
 
@@ -3777,7 +3387,7 @@
 
 .comparePriorityList b {
   color: #2e3a97;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--operator-font-mono, "IBM Plex Mono", ui-monospace, monospace);
 }
 
 .reviewDetail,
@@ -3806,17 +3416,20 @@
   box-shadow: 0 0 0 3px rgba(46, 58, 151, 0.12);
 }
 
+.reviewDialog .reviewSyncNote { color: #536079; overflow-wrap: anywhere; }
+.reviewDialogClose:focus-visible, .reviewDialogCancel:focus-visible,
+.reviewDialogSubmit:focus-visible, .reviewAckButton:focus-visible {
+  outline: 2px solid #2e3a97;
+  outline-offset: 2px;
+}
+
 .reviewDialogFieldLabelWarn + .reviewDialogInput {
   border-color: #e4c88a;
   background: #fffdf6;
 }
 
 @media (min-width: 1160px) {
-  .tabPanel[data-screen-label="Network 找區域"] .zoneList {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-  }
 
-  .candidateDetailPanel,
   .sourceFilterPanel {
     position: sticky;
     top: 76px;
@@ -3871,16 +3484,17 @@
     grid-template-columns: 280px minmax(0, 1fr);
   }
 
-  .tabPanel[data-screen-label="Network 找區域"] {
-    grid-template-columns: 180px minmax(0, 1fr);
-    grid-template-areas:
-      "lens map"
-      "lens tray"
-      "detail detail";
+}
+
+/* R7 Candidate keeps its 180px Pipeline and 348px detail at 1024px.
+   The two-column Radar tablet rule above belongs to the Intake layout. */
+@media (min-width: 1024px) and (max-width: 1159px) {
+  .candidateWorkspace {
+    grid-template-columns: 180px minmax(0, 1fr) 348px;
   }
 
-  .tabPanel[data-screen-label="Network 找區域"] .zoneList {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+  .candidateDetailPanel {
+    grid-column: auto;
   }
 }
 
@@ -4135,53 +3749,12 @@
     margin-left: 0;
   }
 
-  .reviewDialogOverlay {
-    align-items: flex-end;
-    padding: 10px;
-  }
-
-  .reviewDialog {
-    width: 100%;
-    max-width: 100%;
-    max-height: 94vh;
-    border-radius: 12px;
-  }
-
   .workspace > *,
   .tabPanel > * {
     width: 100%;
     max-width: 100%;
   }
 
-  .tabPanel[data-screen-label="Network 找區域"] {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas:
-      "lens"
-      "map"
-      "tray"
-      "detail";
-  }
-
-  .tabPanel[data-screen-label="Network 找區域"] .lensBar {
-    position: static;
-  }
-
-  .tabPanel[data-screen-label="Network 找區域"] .lensSelector {
-    display: flex;
-    overflow-x: auto;
-  }
-
-  .tabPanel[data-screen-label="Network 找區域"] .lensButton {
-    flex: 0 0 132px;
-  }
-
-  .tabPanel[data-screen-label="Network 找區域"] .legend {
-    display: none;
-  }
-
-  .tabPanel[data-screen-label="Network 找區域"] .zoneList {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 .staleBadge {
@@ -4249,4 +3822,16 @@
   padding: 1px 4px;
   border-radius: 3px;
   font-family: monospace;
+}
+
+/* Package 10 tab count badge (S05 netTabs nShow). */
+.tabCount {
+  align-self: center;
+  border-radius: 999px;
+  background: #e8c066;
+  color: #3a2e08;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1.6;
+  padding: 0 6px;
 }

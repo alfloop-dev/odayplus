@@ -35,6 +35,8 @@ def test_simulate_scenario_contract_valid_and_invalid() -> None:
                             "current_price": 100.0,
                             "baseline_demand": 50.0,
                             "elasticity_value": -1.2,
+                            "applicable_min_price": 80.0,
+                            "applicable_max_price": 120.0,
                             "margin_floor_ratio": 0.15,
                             "max_increase_pct": 0.20,
                             "max_decrease_pct": 0.20,
@@ -104,6 +106,8 @@ def test_decision_writeback_contract_idempotency_and_fail_closed() -> None:
                     "current_price": 80.0,
                     "baseline_demand": 40.0,
                     "elasticity_value": -1.0,
+                    "applicable_min_price": 60.0,
+                    "applicable_max_price": 100.0,
                     "margin_floor_ratio": 0.15,
                     "max_increase_pct": 0.15,
                 }
@@ -114,6 +118,7 @@ def test_decision_writeback_contract_idempotency_and_fail_closed() -> None:
     # Attempt decision writeback without simulation/optimization -> fails closed (422)
     resp_fail_closed = client.post(
         f"/api/v1/priceops/plans/{plan_id}/decision-writeback",
+        headers=auth_headers(Role.PRICING_MANAGER, subject="independent-pricer"),
         json={
             "actor": "pricing-officer",
             "decision": "approved",
@@ -132,8 +137,11 @@ def test_decision_writeback_contract_idempotency_and_fail_closed() -> None:
         json={"actor": "system", "reason": "optimize"},
     )
 
+    submitted = client.post(f"/api/v1/priceops/plans/{plan_id}/submit", json={"reason": "review optimized pricing"})
+    assert submitted.status_code == status.HTTP_200_OK
+
     # 3. Perform decision writeback with Idempotency-Key
-    headers_idem = {**PRICEOPS_HEADERS, "Idempotency-Key": "wb-idem-key-888"}
+    headers_idem = {**auth_headers(Role.PRICING_MANAGER, subject="independent-pricer"), "Idempotency-Key": "wb-idem-key-888"}
     resp_wb1 = client.post(
         f"/api/v1/priceops/plans/{plan_id}/decision-writeback",
         json={
@@ -146,7 +154,7 @@ def test_decision_writeback_contract_idempotency_and_fail_closed() -> None:
     assert resp_wb1.status_code == status.HTTP_200_OK
     data1 = resp_wb1.json()
     assert data1["decision"] == "approved"
-    assert data1["actor"] == "pricing-officer"
+    assert data1["actor"] == "independent-pricer"
     assert "decision_id" in data1
 
     # Replaying decision writeback returns identical response

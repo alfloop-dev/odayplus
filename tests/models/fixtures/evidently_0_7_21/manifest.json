@@ -1,0 +1,1444 @@
+{
+  "baseline_id": "ODP-NLTK-MONITORING-BASELINE-001",
+  "case_count": 44,
+  "case_definitions": "tests/models/fixtures/evidently_0_7_21/baseline_cases.py",
+  "cases": {
+    "categorical_merged_unique_2_ztest": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-cat-2"
+      },
+      "columns": {
+        "region": {
+          "cleaned_current_n": 200,
+          "cleaned_reference_n": 200,
+          "dtype_current": "object",
+          "dtype_reference": "object",
+          "merged_unique": 2,
+          "raw_current_n": 200,
+          "raw_reference_n": 200
+        }
+      },
+      "current_row_count": 200,
+      "current_rows_sha256": "ca2ea45e6192c3ca31376e9c4dc8e3273010f49f9619a75223097a8fbb3bb7dc",
+      "description": "Two-label categorical column, unchanged.",
+      "expects_failure": false,
+      "golden_sha256": "d62524aed94dc5f3d20b6930a6783f1308417d2fea294b51128ff6d0b848abde",
+      "kind": "data_drift",
+      "raw_report_sha256": "3e14c93331b07efe2caec0c396408dbd4dc05e5132b9d84945de4aef22787f92",
+      "reference_row_count": 200,
+      "reference_rows_sha256": "ca2ea45e6192c3ca31376e9c4dc8e3273010f49f9619a75223097a8fbb3bb7dc",
+      "routing_expectation": "N<=1000, Categorical, merged unique<=2 -> z_stat_test"
+    },
+    "categorical_merged_unique_3_chisquare": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-cat-3"
+      },
+      "columns": {
+        "region": {
+          "cleaned_current_n": 200,
+          "cleaned_reference_n": 200,
+          "dtype_current": "object",
+          "dtype_reference": "object",
+          "merged_unique": 3,
+          "raw_current_n": 200,
+          "raw_reference_n": 200
+        }
+      },
+      "current_row_count": 200,
+      "current_rows_sha256": "30a4ac9ffdd3e02af72b7ec80c16236353ef671621de10ec46dad71b7e240edf",
+      "description": "Three-label categorical column, unchanged.",
+      "expects_failure": false,
+      "golden_sha256": "81d2338fa7df3d446287b76ff211e0392c80d39451c962b836fcf64bb7558b0d",
+      "kind": "data_drift",
+      "raw_report_sha256": "a76794fcc16e885a443a9031d11c3802dc05dc94e3515dbaa97b743b7027d508",
+      "reference_row_count": 200,
+      "reference_rows_sha256": "30a4ac9ffdd3e02af72b7ec80c16236353ef671621de10ec46dad71b7e240edf",
+      "routing_expectation": "N<=1000, Categorical, merged unique>2 -> chi_stat_test"
+    },
+    "categorical_new_label_chisquare": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-cat-new-label"
+      },
+      "columns": {
+        "region": {
+          "cleaned_current_n": 200,
+          "cleaned_reference_n": 200,
+          "dtype_current": "object",
+          "dtype_reference": "object",
+          "merged_unique": 3,
+          "raw_current_n": 200,
+          "raw_reference_n": 200
+        }
+      },
+      "current_row_count": 200,
+      "current_rows_sha256": "c94b794d6cb2a8104fbc34e47eab21cd2aadb35866dbbf5fd1463cb3446a7818",
+      "description": "Current window introduces a label absent from the reference window.",
+      "expects_failure": false,
+      "golden_sha256": "07bcfbe3ef598fb66f25470a983787e9d6188e1458f8ced68975fa70474b64be",
+      "kind": "data_drift",
+      "raw_report_sha256": "45f6086d65546ca2892e28a3d8547fc54e76176bded1b6751d426cec39a11203",
+      "reference_row_count": 200,
+      "reference_rows_sha256": "ca2ea45e6192c3ca31376e9c4dc8e3273010f49f9619a75223097a8fbb3bb7dc",
+      "routing_expectation": "N<=1000, Categorical, merged unique>2 -> chi_stat_test"
+    },
+    "categorical_reference_n_1001_jensenshannon": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-cat-1001"
+      },
+      "columns": {
+        "region": {
+          "cleaned_current_n": 1001,
+          "cleaned_reference_n": 1001,
+          "dtype_current": "object",
+          "dtype_reference": "object",
+          "merged_unique": 3,
+          "raw_current_n": 1001,
+          "raw_reference_n": 1001
+        }
+      },
+      "current_row_count": 1001,
+      "current_rows_sha256": "889ca2b619e5516d895f53a92a774fbb75a4fb758d79a8b7bf0713e578d2118a",
+      "description": "Categorical column above the 1000-row bound.",
+      "expects_failure": false,
+      "golden_sha256": "ce2983fc215d26f60113e841593ef76db81595b53faa299f251a8fa69c402f6a",
+      "kind": "data_drift",
+      "raw_report_sha256": "1f0dc08aa2fd491c1a5b421d67b0fbeee8ea3fbadbfb14fe58e168aad2768ed4",
+      "reference_row_count": 1001,
+      "reference_rows_sha256": "889ca2b619e5516d895f53a92a774fbb75a4fb758d79a8b7bf0713e578d2118a",
+      "routing_expectation": "N>1000, Categorical -> jensenshannon_stat_test"
+    },
+    "failure_prediction_duplicate_columns": {
+      "call_kwargs": {
+        "cohort_key": "region:north",
+        "current_snapshot_id": "snapshot-current",
+        "model_name": "revenue-model",
+        "model_version": "v1",
+        "output_types": {
+          "prediction": "numeric"
+        },
+        "policy": "DecisionPolicy(policy_version_id='nltk-monitoring-baseline-policy-v1:00000000-0000-0000-0000-000000000001', policy_label='nltk-monitoring-baseline-policy-v1', policy_id='nltk-monitoring-baseline-policy', policy_version='1.0.0', policy_kind='model_performance_drift', tenant_id='00000000-0000-0000-0000-000000000001', effective_from=datetime.datetime(2026, 9, 1, 0, 0, tzinfo=datetime.timezone.utc), parameters={'prediction_drift': {'drift_share_threshold': 0.5}}, declared_inputs=('prediction_outputs',), effective_to=None, change_reason='Pin the prediction-drift threshold for the Evidently 0.7.21 baseline', rollback_policy_version=None, approved_by='model-risk-owner', owner_role='ml-governance')",
+        "prediction_columns": [
+          "prediction",
+          "prediction"
+        ],
+        "reference_snapshot_id": "snapshot-reference"
+      },
+      "columns": {
+        "prediction": {
+          "cleaned_current_n": 10,
+          "cleaned_reference_n": 10,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 10,
+          "raw_current_n": 10,
+          "raw_reference_n": 10
+        }
+      },
+      "current_row_count": 10,
+      "current_rows_sha256": "6e1e4ad95327cfac725e6bd06cb9f2548c6a1ff55c1441b6bfd2e61bb0be92d7",
+      "description": "The same output column is requested twice.",
+      "expects_failure": true,
+      "golden_sha256": "0cc54aee49e1cace275a39fbb0210dd109851bf89878e82e7cf922cef8ebef5e",
+      "kind": "prediction_drift",
+      "raw_report_sha256": null,
+      "reference_row_count": 10,
+      "reference_rows_sha256": "6e1e4ad95327cfac725e6bd06cb9f2548c6a1ff55c1441b6bfd2e61bb0be92d7",
+      "routing_expectation": "_normalize_prediction_columns guard"
+    },
+    "failure_prediction_identical_snapshot_ids": {
+      "call_kwargs": {
+        "cohort_key": "region:north",
+        "current_snapshot_id": "snapshot-same",
+        "model_name": "revenue-model",
+        "model_version": "v1",
+        "output_types": {
+          "prediction": "numeric"
+        },
+        "policy": "DecisionPolicy(policy_version_id='nltk-monitoring-baseline-policy-v1:00000000-0000-0000-0000-000000000001', policy_label='nltk-monitoring-baseline-policy-v1', policy_id='nltk-monitoring-baseline-policy', policy_version='1.0.0', policy_kind='model_performance_drift', tenant_id='00000000-0000-0000-0000-000000000001', effective_from=datetime.datetime(2026, 9, 1, 0, 0, tzinfo=datetime.timezone.utc), parameters={'prediction_drift': {'drift_share_threshold': 0.5}}, declared_inputs=('prediction_outputs',), effective_to=None, change_reason='Pin the prediction-drift threshold for the Evidently 0.7.21 baseline', rollback_policy_version=None, approved_by='model-risk-owner', owner_role='ml-governance')",
+        "prediction_columns": [
+          "prediction"
+        ],
+        "reference_snapshot_id": "snapshot-same"
+      },
+      "columns": {
+        "prediction": {
+          "cleaned_current_n": 10,
+          "cleaned_reference_n": 10,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 10,
+          "raw_current_n": 10,
+          "raw_reference_n": 10
+        }
+      },
+      "current_row_count": 10,
+      "current_rows_sha256": "6e1e4ad95327cfac725e6bd06cb9f2548c6a1ff55c1441b6bfd2e61bb0be92d7",
+      "description": "Reference and current snapshot ids are the same value.",
+      "expects_failure": true,
+      "golden_sha256": "8dc9f0c42a72c5b953de71c308a7cb34fb6100666993ba26d7acf4d93683334b",
+      "kind": "prediction_drift",
+      "raw_report_sha256": null,
+      "reference_row_count": 10,
+      "reference_rows_sha256": "6e1e4ad95327cfac725e6bd06cb9f2548c6a1ff55c1441b6bfd2e61bb0be92d7",
+      "routing_expectation": "run_prediction snapshot guard"
+    },
+    "failure_prediction_missing_output_value": {
+      "call_kwargs": {
+        "cohort_key": "region:north",
+        "current_snapshot_id": "snapshot-current",
+        "model_name": "revenue-model",
+        "model_version": "v1",
+        "output_types": {
+          "prediction": "numeric"
+        },
+        "policy": "DecisionPolicy(policy_version_id='nltk-monitoring-baseline-policy-v1:00000000-0000-0000-0000-000000000001', policy_label='nltk-monitoring-baseline-policy-v1', policy_id='nltk-monitoring-baseline-policy', policy_version='1.0.0', policy_kind='model_performance_drift', tenant_id='00000000-0000-0000-0000-000000000001', effective_from=datetime.datetime(2026, 9, 1, 0, 0, tzinfo=datetime.timezone.utc), parameters={'prediction_drift': {'drift_share_threshold': 0.5}}, declared_inputs=('prediction_outputs',), effective_to=None, change_reason='Pin the prediction-drift threshold for the Evidently 0.7.21 baseline', rollback_policy_version=None, approved_by='model-risk-owner', owner_role='ml-governance')",
+        "prediction_columns": [
+          "prediction"
+        ],
+        "reference_snapshot_id": "snapshot-reference"
+      },
+      "columns": {
+        "prediction": {
+          "cleaned_current_n": 9,
+          "cleaned_reference_n": 10,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 10,
+          "raw_current_n": 10,
+          "raw_reference_n": 10
+        }
+      },
+      "current_row_count": 10,
+      "current_rows_sha256": "8c1776eef60417632ffe0e87e069b2d1d568b7fdf8bbc1df9bf633e6d953a897",
+      "description": "A current row has no value for the requested output column.",
+      "expects_failure": true,
+      "golden_sha256": "f246cc30a79f2ed94bcf330d76a4a0ec093535480bf3d1a14954ef5a4d7c59d3",
+      "kind": "prediction_drift",
+      "raw_report_sha256": null,
+      "reference_row_count": 10,
+      "reference_rows_sha256": "6e1e4ad95327cfac725e6bd06cb9f2548c6a1ff55c1441b6bfd2e61bb0be92d7",
+      "routing_expectation": "_validate_prediction_rows guard"
+    },
+    "failure_prediction_no_policy_and_no_threshold": {
+      "call_kwargs": {
+        "cohort_key": "region:north",
+        "current_snapshot_id": "snapshot-current",
+        "model_name": "revenue-model",
+        "model_version": "v1",
+        "output_types": {
+          "prediction": "numeric"
+        },
+        "policy": null,
+        "prediction_columns": [
+          "prediction"
+        ],
+        "reference_snapshot_id": "snapshot-reference"
+      },
+      "columns": {
+        "prediction": {
+          "cleaned_current_n": 100,
+          "cleaned_reference_n": 100,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 200,
+          "raw_current_n": 100,
+          "raw_reference_n": 100
+        }
+      },
+      "current_row_count": 100,
+      "current_rows_sha256": "b41539d37778594cd0f5116e3afc4f0ce586ba1c8998a0342c91d6b8f8ec61c5",
+      "description": "Neither a policy nor an explicit threshold is supplied.",
+      "expects_failure": true,
+      "golden_sha256": "5d213d398bd4b1d3a3d2adf0696b9ad0c696c4faaeacfb65039f4100dc83d4f8",
+      "kind": "prediction_drift",
+      "raw_report_sha256": null,
+      "reference_row_count": 100,
+      "reference_rows_sha256": "74fd93fcecea403cee85dcc343a2d75f7552ed449c722342f32c20cb47bf1810",
+      "routing_expectation": "_effective_drift_share_threshold guard"
+    },
+    "failure_prediction_non_finite_output": {
+      "call_kwargs": {
+        "cohort_key": "region:north",
+        "current_snapshot_id": "snapshot-current",
+        "model_name": "revenue-model",
+        "model_version": "v1",
+        "output_types": {
+          "prediction": "numeric"
+        },
+        "policy": "DecisionPolicy(policy_version_id='nltk-monitoring-baseline-policy-v1:00000000-0000-0000-0000-000000000001', policy_label='nltk-monitoring-baseline-policy-v1', policy_id='nltk-monitoring-baseline-policy', policy_version='1.0.0', policy_kind='model_performance_drift', tenant_id='00000000-0000-0000-0000-000000000001', effective_from=datetime.datetime(2026, 9, 1, 0, 0, tzinfo=datetime.timezone.utc), parameters={'prediction_drift': {'drift_share_threshold': 0.5}}, declared_inputs=('prediction_outputs',), effective_to=None, change_reason='Pin the prediction-drift threshold for the Evidently 0.7.21 baseline', rollback_policy_version=None, approved_by='model-risk-owner', owner_role='ml-governance')",
+        "prediction_columns": [
+          "prediction"
+        ],
+        "reference_snapshot_id": "snapshot-reference"
+      },
+      "columns": {
+        "prediction": {
+          "cleaned_current_n": 9,
+          "cleaned_reference_n": 10,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 10,
+          "raw_current_n": 10,
+          "raw_reference_n": 10
+        }
+      },
+      "current_row_count": 10,
+      "current_rows_sha256": "367d7800763347d3ac8c27b935bb515b2b678642cdd1d9d54f3e689a465a320c",
+      "description": "A numeric output carries +inf, which must be refused rather than cleaned away the way Evidently cleans feature columns.",
+      "expects_failure": true,
+      "golden_sha256": "57d9fcd0d17d73f380401c410735c6db9f42fe2dc4961542e3a882d75853e4cf",
+      "kind": "prediction_drift",
+      "raw_report_sha256": null,
+      "reference_row_count": 10,
+      "reference_rows_sha256": "6e1e4ad95327cfac725e6bd06cb9f2548c6a1ff55c1441b6bfd2e61bb0be92d7",
+      "routing_expectation": "_validate_prediction_rows guard"
+    },
+    "failure_prediction_output_types_do_not_cover_columns": {
+      "call_kwargs": {
+        "cohort_key": "region:north",
+        "current_snapshot_id": "snapshot-current",
+        "model_name": "revenue-model",
+        "model_version": "v1",
+        "output_types": {
+          "prediction": "numeric"
+        },
+        "policy": "DecisionPolicy(policy_version_id='nltk-monitoring-baseline-policy-v1:00000000-0000-0000-0000-000000000001', policy_label='nltk-monitoring-baseline-policy-v1', policy_id='nltk-monitoring-baseline-policy', policy_version='1.0.0', policy_kind='model_performance_drift', tenant_id='00000000-0000-0000-0000-000000000001', effective_from=datetime.datetime(2026, 9, 1, 0, 0, tzinfo=datetime.timezone.utc), parameters={'prediction_drift': {'drift_share_threshold': 0.5}}, declared_inputs=('prediction_outputs',), effective_to=None, change_reason='Pin the prediction-drift threshold for the Evidently 0.7.21 baseline', rollback_policy_version=None, approved_by='model-risk-owner', owner_role='ml-governance')",
+        "prediction_columns": [
+          "prediction",
+          "risk_band"
+        ],
+        "reference_snapshot_id": "snapshot-reference"
+      },
+      "columns": {
+        "prediction": {
+          "cleaned_current_n": 10,
+          "cleaned_reference_n": 10,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 10,
+          "raw_current_n": 10,
+          "raw_reference_n": 10
+        },
+        "risk_band": {
+          "cleaned_current_n": 10,
+          "cleaned_reference_n": 10,
+          "dtype_current": "object",
+          "dtype_reference": "object",
+          "merged_unique": 2,
+          "raw_current_n": 10,
+          "raw_reference_n": 10
+        }
+      },
+      "current_row_count": 10,
+      "current_rows_sha256": "e9f09b823221055018e0876273523495f523476b6be7c5ba68d39452c95bcbc2",
+      "description": "Declared output types do not exactly match the requested columns.",
+      "expects_failure": true,
+      "golden_sha256": "46f269386e53641295d00f1573978e4398ef86e7603911435e1f759e53ceb50d",
+      "kind": "prediction_drift",
+      "raw_report_sha256": null,
+      "reference_row_count": 10,
+      "reference_rows_sha256": "e9f09b823221055018e0876273523495f523476b6be7c5ba68d39452c95bcbc2",
+      "routing_expectation": "_normalize_output_types guard"
+    },
+    "failure_prediction_reference_cohort_mismatch": {
+      "call_kwargs": {
+        "cohort_key": "region:north",
+        "current_snapshot_id": "snapshot-current",
+        "model_name": "revenue-model",
+        "model_version": "v1",
+        "output_types": {
+          "prediction": "numeric"
+        },
+        "policy": "DecisionPolicy(policy_version_id='nltk-monitoring-baseline-policy-v1:00000000-0000-0000-0000-000000000001', policy_label='nltk-monitoring-baseline-policy-v1', policy_id='nltk-monitoring-baseline-policy', policy_version='1.0.0', policy_kind='model_performance_drift', tenant_id='00000000-0000-0000-0000-000000000001', effective_from=datetime.datetime(2026, 9, 1, 0, 0, tzinfo=datetime.timezone.utc), parameters={'prediction_drift': {'drift_share_threshold': 0.5}}, declared_inputs=('prediction_outputs',), effective_to=None, change_reason='Pin the prediction-drift threshold for the Evidently 0.7.21 baseline', rollback_policy_version=None, approved_by='model-risk-owner', owner_role='ml-governance')",
+        "prediction_columns": [
+          "prediction"
+        ],
+        "reference_snapshot_id": "snapshot-reference"
+      },
+      "columns": {
+        "prediction": {
+          "cleaned_current_n": 10,
+          "cleaned_reference_n": 10,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 10,
+          "raw_current_n": 10,
+          "raw_reference_n": 10
+        }
+      },
+      "current_row_count": 10,
+      "current_rows_sha256": "6e1e4ad95327cfac725e6bd06cb9f2548c6a1ff55c1441b6bfd2e61bb0be92d7",
+      "description": "A reference row belongs to a cohort other than the requested one.",
+      "expects_failure": true,
+      "golden_sha256": "1c5fd24d4d43e27b48faf7dffa4f4d545bee5c4eb488fdd1658479113f5fe2c6",
+      "kind": "prediction_drift",
+      "raw_report_sha256": null,
+      "reference_row_count": 10,
+      "reference_rows_sha256": "629db4198d303ba5cadc6280b85459dc65efb66b966033871a1141d24fd18697",
+      "routing_expectation": "_validate_prediction_rows guard"
+    },
+    "failure_prediction_requested_threshold_weakens_policy": {
+      "call_kwargs": {
+        "cohort_key": "region:north",
+        "current_snapshot_id": "snapshot-current",
+        "drift_share_threshold": 0.9,
+        "model_name": "revenue-model",
+        "model_version": "v1",
+        "output_types": {
+          "prediction": "numeric"
+        },
+        "policy": "DecisionPolicy(policy_version_id='nltk-monitoring-baseline-policy-v1:00000000-0000-0000-0000-000000000001', policy_label='nltk-monitoring-baseline-policy-v1', policy_id='nltk-monitoring-baseline-policy', policy_version='1.0.0', policy_kind='model_performance_drift', tenant_id='00000000-0000-0000-0000-000000000001', effective_from=datetime.datetime(2026, 9, 1, 0, 0, tzinfo=datetime.timezone.utc), parameters={'prediction_drift': {'drift_share_threshold': 0.5}}, declared_inputs=('prediction_outputs',), effective_to=None, change_reason='Pin the prediction-drift threshold for the Evidently 0.7.21 baseline', rollback_policy_version=None, approved_by='model-risk-owner', owner_role='ml-governance')",
+        "prediction_columns": [
+          "prediction"
+        ],
+        "reference_snapshot_id": "snapshot-reference"
+      },
+      "columns": {
+        "prediction": {
+          "cleaned_current_n": 100,
+          "cleaned_reference_n": 100,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 200,
+          "raw_current_n": 100,
+          "raw_reference_n": 100
+        }
+      },
+      "current_row_count": 100,
+      "current_rows_sha256": "b41539d37778594cd0f5116e3afc4f0ce586ba1c8998a0342c91d6b8f8ec61c5",
+      "description": "A caller-supplied threshold looser than the governed one is rejected.",
+      "expects_failure": true,
+      "golden_sha256": "ecd6a327158f1ac0a1291ad6bbf56fe1bae97389fcbe92c722d7faeb8b596910",
+      "kind": "prediction_drift",
+      "raw_report_sha256": null,
+      "reference_row_count": 100,
+      "reference_rows_sha256": "74fd93fcecea403cee85dcc343a2d75f7552ed449c722342f32c20cb47bf1810",
+      "routing_expectation": "_effective_drift_share_threshold guard"
+    },
+    "failure_run_all_values_missing": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-all-missing"
+      },
+      "columns": {
+        "demand": {
+          "cleaned_current_n": 0,
+          "cleaned_reference_n": 0,
+          "dtype_current": "object",
+          "dtype_reference": "object",
+          "merged_unique": 0,
+          "raw_current_n": 200,
+          "raw_reference_n": 200
+        }
+      },
+      "current_row_count": 200,
+      "current_rows_sha256": "529005d71a0802881d5cb738bc340438c7b217147f3d09213c60ffab1ee71d5b",
+      "description": "Every value in the only column is missing. Cleaning empties both series and Evidently 0.7.21 raises from inside the stat-test, so this is an unhandled failure of the pinned engine rather than a first-party validation error. Recorded verbatim.",
+      "expects_failure": true,
+      "golden_sha256": "db2dad996e3e415beab22c008843f674e0f646e53d7e3d7b36fd2b1ff3a44590",
+      "kind": "data_drift",
+      "raw_report_sha256": null,
+      "reference_row_count": 200,
+      "reference_rows_sha256": "529005d71a0802881d5cb738bc340438c7b217147f3d09213c60ffab1ee71d5b",
+      "routing_expectation": "cleaned N == 0; pinned Evidently 0.7.21 raises"
+    },
+    "failure_run_column_set_mismatch": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-column-mismatch"
+      },
+      "columns": {},
+      "current_row_count": 3,
+      "current_rows_sha256": "f25467eb717ad0bbed02079c84d006f07759037297d658861595e06033f84e43",
+      "description": "Reference and current carry different column sets.",
+      "expects_failure": true,
+      "golden_sha256": "219f5ed47d46f9acd31968a617b7b2ac9aae9909535adc3bb95968e253b1a72f",
+      "kind": "data_drift",
+      "raw_report_sha256": null,
+      "reference_row_count": 3,
+      "reference_rows_sha256": "0f8fb5f00f1278d42d7eaab3fd251841629be44a865a6f584384a08af55056ef",
+      "routing_expectation": "first-party guard in EvidentlyDriftMonitor.run"
+    },
+    "failure_run_empty_reference_rows": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-empty-reference"
+      },
+      "columns": {},
+      "current_row_count": 3,
+      "current_rows_sha256": "0f8fb5f00f1278d42d7eaab3fd251841629be44a865a6f584384a08af55056ef",
+      "description": "The wrapper refuses an empty reference window before Evidently is imported.",
+      "expects_failure": true,
+      "golden_sha256": "d87651d45a9795fc234e2f725dfdac3b449c1e7d5ce23e0fec6a899c37fb7690",
+      "kind": "data_drift",
+      "raw_report_sha256": null,
+      "reference_row_count": 0,
+      "reference_rows_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "routing_expectation": "first-party guard in EvidentlyDriftMonitor.run"
+    },
+    "mixed_share_below_threshold": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.6,
+        "snapshot_id": "baseline-share-below"
+      },
+      "columns": {
+        "demand": {
+          "cleaned_current_n": 200,
+          "cleaned_reference_n": 200,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 400,
+          "raw_current_n": 200,
+          "raw_reference_n": 200
+        },
+        "rent": {
+          "cleaned_current_n": 200,
+          "cleaned_reference_n": 200,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 200,
+          "raw_current_n": 200,
+          "raw_reference_n": 200
+        }
+      },
+      "current_row_count": 200,
+      "current_rows_sha256": "bf2e73ead3248dca5c5529ed81657ff1eaa183f2d13fcc0edb840e45b27b92db",
+      "description": "Identical inputs to mixed_share_meets_threshold with a stricter share threshold: the dataset verdict flips to False while the column-level drift list still names the drifted column.",
+      "expects_failure": false,
+      "golden_sha256": "8bdade5470ab934bbf20ad4faa55703069a6a1af1f9665d835f04491691bcd62",
+      "kind": "data_drift",
+      "raw_report_sha256": "8751fc27d44967b3aaab5369e705fafd040a3432a5675f9a39060c3dacaf1e70",
+      "reference_row_count": 200,
+      "reference_rows_sha256": "ab930b2fddb5c4317c3d0102ef89e7ac6b2d4c274ef9662086dd32495e6e57e8",
+      "routing_expectation": "N<=1000, Numerical, merged unique>5 -> ks_stat_test on both columns"
+    },
+    "mixed_share_meets_threshold": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-share-meets"
+      },
+      "columns": {
+        "demand": {
+          "cleaned_current_n": 200,
+          "cleaned_reference_n": 200,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 400,
+          "raw_current_n": 200,
+          "raw_reference_n": 200
+        },
+        "rent": {
+          "cleaned_current_n": 200,
+          "cleaned_reference_n": 200,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 200,
+          "raw_current_n": 200,
+          "raw_reference_n": 200
+        }
+      },
+      "current_row_count": 200,
+      "current_rows_sha256": "bf2e73ead3248dca5c5529ed81657ff1eaa183f2d13fcc0edb840e45b27b92db",
+      "description": "One of two numeric columns drifts; drift_share == drift_share_threshold.",
+      "expects_failure": false,
+      "golden_sha256": "89b68c38700d2619bfad2326ca844bed841ae24062f340baae5db72c08e195f5",
+      "kind": "data_drift",
+      "raw_report_sha256": "4a910eed382d0d4b0eca3ae1918d29df8ea644a550082c3467be89081a623f2c",
+      "reference_row_count": 200,
+      "reference_rows_sha256": "ab930b2fddb5c4317c3d0102ef89e7ac6b2d4c274ef9662086dd32495e6e57e8",
+      "routing_expectation": "N<=1000, Numerical, merged unique>5 -> ks_stat_test on both columns"
+    },
+    "numeric_constant_shifted_ztest": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-constant-shift"
+      },
+      "columns": {
+        "demand": {
+          "cleaned_current_n": 200,
+          "cleaned_reference_n": 200,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 2,
+          "raw_current_n": 200,
+          "raw_reference_n": 200
+        }
+      },
+      "current_row_count": 200,
+      "current_rows_sha256": "99b06c83e9e96d6f0fcd6c9cf8c9f0b64af67eb299f6acdce6d294ea190e6c89",
+      "description": "Zero-variance column that moves to a different constant.",
+      "expects_failure": false,
+      "golden_sha256": "449524a2b3cbbc1209940f6c220ed9c4fa83a0835ab12fb909db8628e7453a60",
+      "kind": "data_drift",
+      "raw_report_sha256": "3b5cdb9773c591c6eb758d7dbd063730a45ae75aabcfd84c73ad96125507aca7",
+      "reference_row_count": 200,
+      "reference_rows_sha256": "244b015d9fd9348037bc71dfd46bf0ec3bd8d49508ff9a4510daf9e80740ba79",
+      "routing_expectation": "N<=1000, Numerical, merged unique<=2 -> z_stat_test"
+    },
+    "numeric_constant_stable_ztest": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-constant"
+      },
+      "columns": {
+        "demand": {
+          "cleaned_current_n": 200,
+          "cleaned_reference_n": 200,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 1,
+          "raw_current_n": 200,
+          "raw_reference_n": 200
+        }
+      },
+      "current_row_count": 200,
+      "current_rows_sha256": "244b015d9fd9348037bc71dfd46bf0ec3bd8d49508ff9a4510daf9e80740ba79",
+      "description": "Zero-variance numeric column, unchanged.",
+      "expects_failure": false,
+      "golden_sha256": "f1d965b632759b7671e5b98abc02b66439c52f1d0cfc1108bfe89767cbbaaa40",
+      "kind": "data_drift",
+      "raw_report_sha256": "60c940d08944718df723b0d4688090eb3f15ea44143425b25e9c1169032e8a21",
+      "reference_row_count": 200,
+      "reference_rows_sha256": "244b015d9fd9348037bc71dfd46bf0ec3bd8d49508ff9a4510daf9e80740ba79",
+      "routing_expectation": "N<=1000, Numerical, merged unique<=2 -> z_stat_test"
+    },
+    "numeric_gaussian_drifted_ks": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-gauss-drift"
+      },
+      "columns": {
+        "demand": {
+          "cleaned_current_n": 200,
+          "cleaned_reference_n": 200,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 400,
+          "raw_current_n": 200,
+          "raw_reference_n": 200
+        }
+      },
+      "current_row_count": 200,
+      "current_rows_sha256": "567eb046619211aaeab06251a3305b7cc18faefaae2a5515cb26b47b3989bfad",
+      "description": "Seeded Gaussian sample whose current window shifts by four sigma.",
+      "expects_failure": false,
+      "golden_sha256": "6e05ca1cd2f745ce12b55c3a9a0f718bde4f3cb9738c9b5de0978522a55daf49",
+      "kind": "data_drift",
+      "raw_report_sha256": "2a630ef77c7eedd225cc128a17d6cbf3b481bd83b4edd056f4cf2a6711421419",
+      "reference_row_count": 200,
+      "reference_rows_sha256": "f9f242b339cb3b91f71836cb6d2ab74a6dc03fe163313215de215f9bf06602f4",
+      "routing_expectation": "N<=1000, Numerical, merged unique>5 -> ks_stat_test"
+    },
+    "numeric_gaussian_stable_ks": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-gauss-stable"
+      },
+      "columns": {
+        "demand": {
+          "cleaned_current_n": 200,
+          "cleaned_reference_n": 200,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 400,
+          "raw_current_n": 200,
+          "raw_reference_n": 200
+        }
+      },
+      "current_row_count": 200,
+      "current_rows_sha256": "aacf360358f148af404bfc50d6f6b3b08821b5f026f028d32bad75cef6b4f01f",
+      "description": "Seeded Gaussian sample, reference and current drawn from the same law.",
+      "expects_failure": false,
+      "golden_sha256": "7bd47558268e27459688ea336a117ca0e73948d5bdb2a26d0dd0948585af18ac",
+      "kind": "data_drift",
+      "raw_report_sha256": "412dd8902b45b064d64fc299ae0a91dc34697345c79c53ccd2dad60e638edb6f",
+      "reference_row_count": 200,
+      "reference_rows_sha256": "f9f242b339cb3b91f71836cb6d2ab74a6dc03fe163313215de215f9bf06602f4",
+      "routing_expectation": "N<=1000, Numerical, merged unique>5 -> ks_stat_test"
+    },
+    "numeric_infinity_cleaned_to_1001_wasserstein": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-inf-1001"
+      },
+      "columns": {
+        "demand": {
+          "cleaned_current_n": 1001,
+          "cleaned_reference_n": 1001,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 1001,
+          "raw_current_n": 1002,
+          "raw_reference_n": 1002
+        }
+      },
+      "current_row_count": 1002,
+      "current_rows_sha256": "a95ed432367b2ccd0853efa54cdb5c4b32c0f0d3d227401f58bc563da626e71e",
+      "description": "+inf in reference and -inf in current are replaced by NaN and dropped, so they change the routing N without entering any statistic.",
+      "expects_failure": false,
+      "golden_sha256": "ab6338fd5b2d88f9be042c8c60171add98772b9419ad625742c31999e82e9b76",
+      "kind": "data_drift",
+      "raw_report_sha256": "a5592011261fc9c9cf9a785eca656fcc0fb77d8a482b9bf715add165866e80cb",
+      "reference_row_count": 1002,
+      "reference_rows_sha256": "69772bdd052a90c27393b81f49c6dfa16ba9eb4c157f37096e052dffe2144995",
+      "routing_expectation": "cleaned N>1000, Numerical, merged unique>5 -> wasserstein_stat_test"
+    },
+    "numeric_ks_drifted": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": null
+      },
+      "columns": {
+        "demand": {
+          "cleaned_current_n": 200,
+          "cleaned_reference_n": 200,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 400,
+          "raw_current_n": 200,
+          "raw_reference_n": 200
+        }
+      },
+      "current_row_count": 200,
+      "current_rows_sha256": "707ce46547915b24277623391715cb2c86f55e60b3363dfb6be14045733f30d5",
+      "description": "Same numeric column shifted by +1000; snapshot_id omitted so the auto-generated uuid4 path is exercised.",
+      "expects_failure": false,
+      "golden_sha256": "68a8a9201223b4f07561a058e47a7e53e17e072b9b17ef960c0eb0c16aba6976",
+      "kind": "data_drift",
+      "raw_report_sha256": "14c7195734e81a353cacc88b1d29f5c0100154bebdcb070becbb086472ce9eb1",
+      "reference_row_count": 200,
+      "reference_rows_sha256": "57dbb5aacebdecb6c7c971659c50885f77107d36fd0b4613669bff11fa8462ed",
+      "routing_expectation": "N<=1000, Numerical, merged unique>5 -> ks_stat_test"
+    },
+    "numeric_ks_stable": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-numeric-ks-stable"
+      },
+      "columns": {
+        "demand": {
+          "cleaned_current_n": 200,
+          "cleaned_reference_n": 200,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 200,
+          "raw_current_n": 200,
+          "raw_reference_n": 200
+        }
+      },
+      "current_row_count": 200,
+      "current_rows_sha256": "57dbb5aacebdecb6c7c971659c50885f77107d36fd0b4613669bff11fa8462ed",
+      "description": "200 distinct numeric values, identical reference and current.",
+      "expects_failure": false,
+      "golden_sha256": "cba1cb0a8162b9aeef48a4efeb91604ceaf535ebe1cc383bf5f1453fae383b0d",
+      "kind": "data_drift",
+      "raw_report_sha256": "040e64abeb4099734bcdc6ca87f6f36a2a554f6a1c986b78b7ea1838211e6d64",
+      "reference_row_count": 200,
+      "reference_rows_sha256": "57dbb5aacebdecb6c7c971659c50885f77107d36fd0b4613669bff11fa8462ed",
+      "routing_expectation": "N<=1000, Numerical, merged unique>5 -> ks_stat_test"
+    },
+    "numeric_merged_unique_2_ztest": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-unique-2"
+      },
+      "columns": {
+        "demand": {
+          "cleaned_current_n": 200,
+          "cleaned_reference_n": 200,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 2,
+          "raw_current_n": 200,
+          "raw_reference_n": 200
+        }
+      },
+      "current_row_count": 200,
+      "current_rows_sha256": "ecf8ce2b4eececbaa080aae3f945df783383cbbcf2847efd402af973875109cc",
+      "description": "Numeric column whose reference+current union holds exactly 2 values.",
+      "expects_failure": false,
+      "golden_sha256": "60aba94697d1d2944383f94a9635918028ff5bc943a2fceef1ba926fd6f81a65",
+      "kind": "data_drift",
+      "raw_report_sha256": "60c940d08944718df723b0d4688090eb3f15ea44143425b25e9c1169032e8a21",
+      "reference_row_count": 200,
+      "reference_rows_sha256": "ecf8ce2b4eececbaa080aae3f945df783383cbbcf2847efd402af973875109cc",
+      "routing_expectation": "N<=1000, Numerical, merged unique<=2 -> z_stat_test"
+    },
+    "numeric_merged_unique_3_chisquare": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-unique-3"
+      },
+      "columns": {
+        "demand": {
+          "cleaned_current_n": 200,
+          "cleaned_reference_n": 200,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 3,
+          "raw_current_n": 200,
+          "raw_reference_n": 200
+        }
+      },
+      "current_row_count": 200,
+      "current_rows_sha256": "855cfb007d8ba64b02e625611a77c30d77f20054994b506f411a49a9076f859c",
+      "description": "Numeric column at the lower chi-square boundary (merged unique == 3).",
+      "expects_failure": false,
+      "golden_sha256": "ba17cd658c652760936d6237ef09620cd38c106143de77b09af51e55dfa57ab6",
+      "kind": "data_drift",
+      "raw_report_sha256": "0efc20cfa79d8c47b9b2e83e2f28cef7e86b0976dd8a43eb090dc1896517180c",
+      "reference_row_count": 200,
+      "reference_rows_sha256": "855cfb007d8ba64b02e625611a77c30d77f20054994b506f411a49a9076f859c",
+      "routing_expectation": "N<=1000, Numerical, 2<merged unique<=5 -> chi_stat_test"
+    },
+    "numeric_merged_unique_5_chisquare": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-unique-5"
+      },
+      "columns": {
+        "demand": {
+          "cleaned_current_n": 200,
+          "cleaned_reference_n": 200,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 5,
+          "raw_current_n": 200,
+          "raw_reference_n": 200
+        }
+      },
+      "current_row_count": 200,
+      "current_rows_sha256": "c2b6b2185950789c248391fa1376053a5b94f96e9cf26b295828604de7cb4926",
+      "description": "Numeric column at the upper chi-square boundary (merged unique == 5).",
+      "expects_failure": false,
+      "golden_sha256": "9363f45da9b2d2e808922b046df4b43818ae306b826f2d4e096eeae77ccdec55",
+      "kind": "data_drift",
+      "raw_report_sha256": "0efc20cfa79d8c47b9b2e83e2f28cef7e86b0976dd8a43eb090dc1896517180c",
+      "reference_row_count": 200,
+      "reference_rows_sha256": "c2b6b2185950789c248391fa1376053a5b94f96e9cf26b295828604de7cb4926",
+      "routing_expectation": "N<=1000, Numerical, 2<merged unique<=5 -> chi_stat_test"
+    },
+    "numeric_merged_unique_6_ks": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-unique-6"
+      },
+      "columns": {
+        "demand": {
+          "cleaned_current_n": 200,
+          "cleaned_reference_n": 200,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 6,
+          "raw_current_n": 200,
+          "raw_reference_n": 200
+        }
+      },
+      "current_row_count": 200,
+      "current_rows_sha256": "82505c63c5b3afac95f6b3d7853273836ed9ef7b80c6e3a12d900190f6597ad7",
+      "description": "One value past the chi-square boundary (merged unique == 6).",
+      "expects_failure": false,
+      "golden_sha256": "a1c7d411da835f198a634d5960091c1cf81bafb0c7e674a82528a5309069adf1",
+      "kind": "data_drift",
+      "raw_report_sha256": "040e64abeb4099734bcdc6ca87f6f36a2a554f6a1c986b78b7ea1838211e6d64",
+      "reference_row_count": 200,
+      "reference_rows_sha256": "82505c63c5b3afac95f6b3d7853273836ed9ef7b80c6e3a12d900190f6597ad7",
+      "routing_expectation": "N<=1000, Numerical, merged unique>5 -> ks_stat_test"
+    },
+    "numeric_nan_cleaned_to_1000_ks": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-nan-1000"
+      },
+      "columns": {
+        "demand": {
+          "cleaned_current_n": 1000,
+          "cleaned_reference_n": 1000,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 1000,
+          "raw_current_n": 1001,
+          "raw_reference_n": 1001
+        }
+      },
+      "current_row_count": 1001,
+      "current_rows_sha256": "07b584c356f135990cec34cb959027a469ecf3c49aabfca0e69dc4f5360a3cd3",
+      "description": "1001 raw rows with one missing value; cleaning brings N back to 1000, so the small-sample branch is selected despite the raw count.",
+      "expects_failure": false,
+      "golden_sha256": "a1abaff4138a743554d46efade0badff3b9303a792b127a4b5b1c5560eb73fa4",
+      "kind": "data_drift",
+      "raw_report_sha256": "040e64abeb4099734bcdc6ca87f6f36a2a554f6a1c986b78b7ea1838211e6d64",
+      "reference_row_count": 1001,
+      "reference_rows_sha256": "07b584c356f135990cec34cb959027a469ecf3c49aabfca0e69dc4f5360a3cd3",
+      "routing_expectation": "cleaned N<=1000, Numerical, merged unique>5 -> ks_stat_test"
+    },
+    "numeric_nan_cleaned_to_1001_wasserstein": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-nan-1001"
+      },
+      "columns": {
+        "demand": {
+          "cleaned_current_n": 1001,
+          "cleaned_reference_n": 1001,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 1001,
+          "raw_current_n": 1002,
+          "raw_reference_n": 1002
+        }
+      },
+      "current_row_count": 1002,
+      "current_rows_sha256": "1c98d7967eb57c8691fbd4e2461f90150a6ccc00bd7db6438466079a5ebfb796",
+      "description": "1002 raw rows with one missing value; cleaned N is 1001.",
+      "expects_failure": false,
+      "golden_sha256": "1c1fbaaf6dea04f0571eaca4229dd8fd2c1e22971ab34328c1fa5aee9f151f36",
+      "kind": "data_drift",
+      "raw_report_sha256": "a5592011261fc9c9cf9a785eca656fcc0fb77d8a482b9bf715add165866e80cb",
+      "reference_row_count": 1002,
+      "reference_rows_sha256": "1c98d7967eb57c8691fbd4e2461f90150a6ccc00bd7db6438466079a5ebfb796",
+      "routing_expectation": "cleaned N>1000, Numerical, merged unique>5 -> wasserstein_stat_test"
+    },
+    "numeric_reference_n_1000_ks": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-n-1000"
+      },
+      "columns": {
+        "demand": {
+          "cleaned_current_n": 1000,
+          "cleaned_reference_n": 1000,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 1000,
+          "raw_current_n": 1000,
+          "raw_reference_n": 1000
+        }
+      },
+      "current_row_count": 1000,
+      "current_rows_sha256": "90560aa78b363ea4645a6823890fd2783106050dc51ff00a6413a4110783235b",
+      "description": "Reference cleaned N is exactly 1000, the inclusive small-sample bound.",
+      "expects_failure": false,
+      "golden_sha256": "486bb55d0067de8fbfea2754a6be3ea2de1eb36f600572410f6f26903f54a8f6",
+      "kind": "data_drift",
+      "raw_report_sha256": "040e64abeb4099734bcdc6ca87f6f36a2a554f6a1c986b78b7ea1838211e6d64",
+      "reference_row_count": 1000,
+      "reference_rows_sha256": "90560aa78b363ea4645a6823890fd2783106050dc51ff00a6413a4110783235b",
+      "routing_expectation": "N<=1000, Numerical, merged unique>5 -> ks_stat_test"
+    },
+    "numeric_reference_n_1001_jensenshannon": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-n-1001-js"
+      },
+      "columns": {
+        "demand": {
+          "cleaned_current_n": 1001,
+          "cleaned_reference_n": 1001,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 4,
+          "raw_current_n": 1001,
+          "raw_reference_n": 1001
+        }
+      },
+      "current_row_count": 1001,
+      "current_rows_sha256": "de5aa1e2a114da3533b5422fe88dd70865b260384a00964190716e42da39ca3f",
+      "description": "Large sample but low cardinality (merged unique == 4).",
+      "expects_failure": false,
+      "golden_sha256": "113bee3145215adc9b5acfb6295ad1953e49fb5f10d6f3b3f3997db44f7c1668",
+      "kind": "data_drift",
+      "raw_report_sha256": "fa5b603f293bc85334f7147d141110fe157a8c29b88d42a844899d59d9f1a876",
+      "reference_row_count": 1001,
+      "reference_rows_sha256": "de5aa1e2a114da3533b5422fe88dd70865b260384a00964190716e42da39ca3f",
+      "routing_expectation": "N>1000, Numerical, merged unique<=5 -> jensenshannon_stat_test"
+    },
+    "numeric_reference_n_1001_wasserstein": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-n-1001"
+      },
+      "columns": {
+        "demand": {
+          "cleaned_current_n": 1001,
+          "cleaned_reference_n": 1001,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 1001,
+          "raw_current_n": 1001,
+          "raw_reference_n": 1001
+        }
+      },
+      "current_row_count": 1001,
+      "current_rows_sha256": "ee1a78669a9d3c1c915e7a7be16a4812b273f1d33f944d17bc1b01cb4ee4f6ab",
+      "description": "One row past the bound (cleaned N == 1001) flips the numeric branch.",
+      "expects_failure": false,
+      "golden_sha256": "b03e908038e74fe14d1ce7f8e40954fbce122f1e52ee870376e4ee52930e264c",
+      "kind": "data_drift",
+      "raw_report_sha256": "a5592011261fc9c9cf9a785eca656fcc0fb77d8a482b9bf715add165866e80cb",
+      "reference_row_count": 1001,
+      "reference_rows_sha256": "ee1a78669a9d3c1c915e7a7be16a4812b273f1d33f944d17bc1b01cb4ee4f6ab",
+      "routing_expectation": "N>1000, Numerical, merged unique>5 -> wasserstein_stat_test"
+    },
+    "prediction_categorical_new_class_drifted": {
+      "call_kwargs": {
+        "cohort_key": "region:north",
+        "current_snapshot_id": "snapshot-current",
+        "model_name": "revenue-model",
+        "model_version": "v1",
+        "output_types": {
+          "prediction": "categorical"
+        },
+        "policy": "DecisionPolicy(policy_version_id='nltk-monitoring-baseline-policy-v1:00000000-0000-0000-0000-000000000001', policy_label='nltk-monitoring-baseline-policy-v1', policy_id='nltk-monitoring-baseline-policy', policy_version='1.0.0', policy_kind='model_performance_drift', tenant_id='00000000-0000-0000-0000-000000000001', effective_from=datetime.datetime(2026, 9, 1, 0, 0, tzinfo=datetime.timezone.utc), parameters={'prediction_drift': {'drift_share_threshold': 0.5}}, declared_inputs=('prediction_outputs',), effective_to=None, change_reason='Pin the prediction-drift threshold for the Evidently 0.7.21 baseline', rollback_policy_version=None, approved_by='model-risk-owner', owner_role='ml-governance')",
+        "prediction_columns": [
+          "prediction"
+        ],
+        "reference_snapshot_id": "snapshot-reference"
+      },
+      "columns": {
+        "prediction": {
+          "cleaned_current_n": 100,
+          "cleaned_reference_n": 100,
+          "dtype_current": "object",
+          "dtype_reference": "object",
+          "merged_unique": 3,
+          "raw_current_n": 100,
+          "raw_reference_n": 100
+        }
+      },
+      "current_row_count": 100,
+      "current_rows_sha256": "82d5594e8763b296892c91ff419bdafedf1afeddb9c6aef98f308a53b378feab",
+      "description": "Current window emits a class the reference window never produced.",
+      "expects_failure": false,
+      "golden_sha256": "239f27296c1e1d7a0b75cee93a55a171a81f74e052444773f2ff37184c9b0de6",
+      "kind": "prediction_drift",
+      "raw_report_sha256": "c7017ba5f54fbd2c2ddd44414857d89f6676e2adc5affa142f86583649c11443",
+      "reference_row_count": 100,
+      "reference_rows_sha256": "e544d70c2e19e18ce3ecfeb9db9cca705cad90cdebb66d3d95fefa7fa648ef02",
+      "routing_expectation": "N<=1000, Categorical, merged unique>2 -> chi_stat_test"
+    },
+    "prediction_categorical_stable": {
+      "call_kwargs": {
+        "cohort_key": "region:north",
+        "current_snapshot_id": "snapshot-current",
+        "model_name": "revenue-model",
+        "model_version": "v1",
+        "output_types": {
+          "prediction": "categorical"
+        },
+        "policy": "DecisionPolicy(policy_version_id='nltk-monitoring-baseline-policy-v1:00000000-0000-0000-0000-000000000001', policy_label='nltk-monitoring-baseline-policy-v1', policy_id='nltk-monitoring-baseline-policy', policy_version='1.0.0', policy_kind='model_performance_drift', tenant_id='00000000-0000-0000-0000-000000000001', effective_from=datetime.datetime(2026, 9, 1, 0, 0, tzinfo=datetime.timezone.utc), parameters={'prediction_drift': {'drift_share_threshold': 0.5}}, declared_inputs=('prediction_outputs',), effective_to=None, change_reason='Pin the prediction-drift threshold for the Evidently 0.7.21 baseline', rollback_policy_version=None, approved_by='model-risk-owner', owner_role='ml-governance')",
+        "prediction_columns": [
+          "prediction"
+        ],
+        "reference_snapshot_id": "snapshot-reference"
+      },
+      "columns": {
+        "prediction": {
+          "cleaned_current_n": 100,
+          "cleaned_reference_n": 100,
+          "dtype_current": "object",
+          "dtype_reference": "object",
+          "merged_unique": 2,
+          "raw_current_n": 100,
+          "raw_reference_n": 100
+        }
+      },
+      "current_row_count": 100,
+      "current_rows_sha256": "e544d70c2e19e18ce3ecfeb9db9cca705cad90cdebb66d3d95fefa7fa648ef02",
+      "description": "Two-class categorical prediction output, unchanged.",
+      "expects_failure": false,
+      "golden_sha256": "189aad7d928665456acf6abdf34fdecc08e9765a495f72ec996d44d6036d4ceb",
+      "kind": "prediction_drift",
+      "raw_report_sha256": "3079f82d58b0169e0a13a980b49a22c4e3d020876369c0e8208862e6492d9058",
+      "reference_row_count": 100,
+      "reference_rows_sha256": "e544d70c2e19e18ce3ecfeb9db9cca705cad90cdebb66d3d95fefa7fa648ef02",
+      "routing_expectation": "N<=1000, Categorical, merged unique<=2 -> z_stat_test"
+    },
+    "prediction_inferred_output_types": {
+      "call_kwargs": {
+        "cohort_key": "region:north",
+        "current_snapshot_id": "snapshot-current",
+        "model_name": "revenue-model",
+        "model_version": "v1",
+        "output_types": null,
+        "policy": "DecisionPolicy(policy_version_id='nltk-monitoring-baseline-policy-v1:00000000-0000-0000-0000-000000000001', policy_label='nltk-monitoring-baseline-policy-v1', policy_id='nltk-monitoring-baseline-policy', policy_version='1.0.0', policy_kind='model_performance_drift', tenant_id='00000000-0000-0000-0000-000000000001', effective_from=datetime.datetime(2026, 9, 1, 0, 0, tzinfo=datetime.timezone.utc), parameters={'prediction_drift': {'drift_share_threshold': 0.5}}, declared_inputs=('prediction_outputs',), effective_to=None, change_reason='Pin the prediction-drift threshold for the Evidently 0.7.21 baseline', rollback_policy_version=None, approved_by='model-risk-owner', owner_role='ml-governance')",
+        "prediction_columns": [
+          "prediction",
+          "risk_band"
+        ],
+        "reference_snapshot_id": "snapshot-reference"
+      },
+      "columns": {
+        "prediction": {
+          "cleaned_current_n": 100,
+          "cleaned_reference_n": 100,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 100,
+          "raw_current_n": 100,
+          "raw_reference_n": 100
+        },
+        "risk_band": {
+          "cleaned_current_n": 100,
+          "cleaned_reference_n": 100,
+          "dtype_current": "object",
+          "dtype_reference": "object",
+          "merged_unique": 2,
+          "raw_current_n": 100,
+          "raw_reference_n": 100
+        }
+      },
+      "current_row_count": 100,
+      "current_rows_sha256": "c6a6ce41c1c5f2d1461f5c2ccfa0177ba7c6ba19a728164b32904b43c328011f",
+      "description": "output_types omitted; the wrapper infers them from the supplied values.",
+      "expects_failure": false,
+      "golden_sha256": "b850574140bcb6313f4f5e794eb33d7701c985487296bed87a763787a413b1d2",
+      "kind": "prediction_drift",
+      "raw_report_sha256": "428d994ef715ecd1603039b1f7045121ad209f32b87be921902d5d4bc68058e6",
+      "reference_row_count": 100,
+      "reference_rows_sha256": "c6a6ce41c1c5f2d1461f5c2ccfa0177ba7c6ba19a728164b32904b43c328011f",
+      "routing_expectation": "ks_stat_test on prediction, z_stat_test on risk_band"
+    },
+    "prediction_mixed_output_types": {
+      "call_kwargs": {
+        "cohort_key": "region:north",
+        "current_snapshot_id": "snapshot-current",
+        "model_name": "revenue-model",
+        "model_version": "v1",
+        "output_types": {
+          "prediction": "numeric",
+          "risk_band": "categorical"
+        },
+        "policy": "DecisionPolicy(policy_version_id='nltk-monitoring-baseline-policy-v1:00000000-0000-0000-0000-000000000001', policy_label='nltk-monitoring-baseline-policy-v1', policy_id='nltk-monitoring-baseline-policy', policy_version='1.0.0', policy_kind='model_performance_drift', tenant_id='00000000-0000-0000-0000-000000000001', effective_from=datetime.datetime(2026, 9, 1, 0, 0, tzinfo=datetime.timezone.utc), parameters={'prediction_drift': {'drift_share_threshold': 0.5}}, declared_inputs=('prediction_outputs',), effective_to=None, change_reason='Pin the prediction-drift threshold for the Evidently 0.7.21 baseline', rollback_policy_version=None, approved_by='model-risk-owner', owner_role='ml-governance')",
+        "prediction_columns": [
+          "prediction",
+          "risk_band"
+        ],
+        "reference_snapshot_id": "snapshot-reference"
+      },
+      "columns": {
+        "prediction": {
+          "cleaned_current_n": 100,
+          "cleaned_reference_n": 100,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 200,
+          "raw_current_n": 100,
+          "raw_reference_n": 100
+        },
+        "risk_band": {
+          "cleaned_current_n": 100,
+          "cleaned_reference_n": 100,
+          "dtype_current": "object",
+          "dtype_reference": "object",
+          "merged_unique": 2,
+          "raw_current_n": 100,
+          "raw_reference_n": 100
+        }
+      },
+      "current_row_count": 100,
+      "current_rows_sha256": "6e51081f79b0816990ff28d5b58cbd169789e5bb229ecaab872927edfb3713a5",
+      "description": "One numeric and one categorical output evaluated in the same cohort; only the numeric one drifts.",
+      "expects_failure": false,
+      "golden_sha256": "7af269f1e57e0b7b1baf232ab4e1bf96f335cf4439cac2ace2176d48853c1a88",
+      "kind": "prediction_drift",
+      "raw_report_sha256": "5cf802ffed6f82563cf94c6add2d5706ecd77d3b6fe8c0e272a9c1a41c05b650",
+      "reference_row_count": 100,
+      "reference_rows_sha256": "c6a6ce41c1c5f2d1461f5c2ccfa0177ba7c6ba19a728164b32904b43c328011f",
+      "routing_expectation": "ks_stat_test on prediction, z_stat_test on risk_band"
+    },
+    "prediction_numeric_drifted": {
+      "call_kwargs": {
+        "cohort_key": "region:north",
+        "current_snapshot_id": "snapshot-current",
+        "model_name": "revenue-model",
+        "model_version": "v1",
+        "output_types": {
+          "prediction": "numeric"
+        },
+        "policy": "DecisionPolicy(policy_version_id='nltk-monitoring-baseline-policy-v1:00000000-0000-0000-0000-000000000001', policy_label='nltk-monitoring-baseline-policy-v1', policy_id='nltk-monitoring-baseline-policy', policy_version='1.0.0', policy_kind='model_performance_drift', tenant_id='00000000-0000-0000-0000-000000000001', effective_from=datetime.datetime(2026, 9, 1, 0, 0, tzinfo=datetime.timezone.utc), parameters={'prediction_drift': {'drift_share_threshold': 0.5}}, declared_inputs=('prediction_outputs',), effective_to=None, change_reason='Pin the prediction-drift threshold for the Evidently 0.7.21 baseline', rollback_policy_version=None, approved_by='model-risk-owner', owner_role='ml-governance')",
+        "prediction_columns": [
+          "prediction"
+        ],
+        "reference_snapshot_id": "snapshot-reference"
+      },
+      "columns": {
+        "prediction": {
+          "cleaned_current_n": 100,
+          "cleaned_reference_n": 100,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 200,
+          "raw_current_n": 100,
+          "raw_reference_n": 100
+        }
+      },
+      "current_row_count": 100,
+      "current_rows_sha256": "b41539d37778594cd0f5116e3afc4f0ce586ba1c8998a0342c91d6b8f8ec61c5",
+      "description": "Numeric prediction output shifted by +1000.",
+      "expects_failure": false,
+      "golden_sha256": "35bed9241c06b83851677f368fd8ab7107c4fa06abcaaab5f8b934c92bdf2431",
+      "kind": "prediction_drift",
+      "raw_report_sha256": "a35e2108d51b012aa2678b48ea613eedfead3db4939b17944c3ab0d6559b63d6",
+      "reference_row_count": 100,
+      "reference_rows_sha256": "74fd93fcecea403cee85dcc343a2d75f7552ed449c722342f32c20cb47bf1810",
+      "routing_expectation": "N<=1000, Numerical, merged unique>5 -> ks_stat_test"
+    },
+    "prediction_numeric_stable": {
+      "call_kwargs": {
+        "cohort_key": "region:north",
+        "current_snapshot_id": "snapshot-current",
+        "model_name": "revenue-model",
+        "model_version": "v1",
+        "output_types": {
+          "prediction": "numeric"
+        },
+        "policy": "DecisionPolicy(policy_version_id='nltk-monitoring-baseline-policy-v1:00000000-0000-0000-0000-000000000001', policy_label='nltk-monitoring-baseline-policy-v1', policy_id='nltk-monitoring-baseline-policy', policy_version='1.0.0', policy_kind='model_performance_drift', tenant_id='00000000-0000-0000-0000-000000000001', effective_from=datetime.datetime(2026, 9, 1, 0, 0, tzinfo=datetime.timezone.utc), parameters={'prediction_drift': {'drift_share_threshold': 0.5}}, declared_inputs=('prediction_outputs',), effective_to=None, change_reason='Pin the prediction-drift threshold for the Evidently 0.7.21 baseline', rollback_policy_version=None, approved_by='model-risk-owner', owner_role='ml-governance')",
+        "prediction_columns": [
+          "prediction"
+        ],
+        "reference_snapshot_id": "snapshot-reference"
+      },
+      "columns": {
+        "prediction": {
+          "cleaned_current_n": 100,
+          "cleaned_reference_n": 100,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 100,
+          "raw_current_n": 100,
+          "raw_reference_n": 100
+        }
+      },
+      "current_row_count": 100,
+      "current_rows_sha256": "74fd93fcecea403cee85dcc343a2d75f7552ed449c722342f32c20cb47bf1810",
+      "description": "Numeric prediction output, identical reference and current windows.",
+      "expects_failure": false,
+      "golden_sha256": "08dbe4a0e891662b4d7dbada9192c8944802ea18dedf625e55711e8bf9bc4fb4",
+      "kind": "prediction_drift",
+      "raw_report_sha256": "38ff0ec32e2843a5f35cdeb40ed315f776a40599f0b5319f5ce075887e346e6f",
+      "reference_row_count": 100,
+      "reference_rows_sha256": "74fd93fcecea403cee85dcc343a2d75f7552ed449c722342f32c20cb47bf1810",
+      "routing_expectation": "N<=1000, Numerical, merged unique>5 -> ks_stat_test"
+    },
+    "prediction_policy_threshold_only": {
+      "call_kwargs": {
+        "cohort_key": "region:north",
+        "current_snapshot_id": "snapshot-current",
+        "model_name": "revenue-model",
+        "model_version": "v1",
+        "output_types": {
+          "confidence": "numeric",
+          "prediction": "numeric"
+        },
+        "policy": "DecisionPolicy(policy_version_id='nltk-monitoring-baseline-policy-v1:00000000-0000-0000-0000-000000000001', policy_label='nltk-monitoring-baseline-policy-v1', policy_id='nltk-monitoring-baseline-policy', policy_version='1.0.0', policy_kind='model_performance_drift', tenant_id='00000000-0000-0000-0000-000000000001', effective_from=datetime.datetime(2026, 9, 1, 0, 0, tzinfo=datetime.timezone.utc), parameters={'prediction_drift': {'drift_share_threshold': 0.8}}, declared_inputs=('prediction_outputs',), effective_to=None, change_reason='Pin the prediction-drift threshold for the Evidently 0.7.21 baseline', rollback_policy_version=None, approved_by='model-risk-owner', owner_role='ml-governance')",
+        "prediction_columns": [
+          "prediction",
+          "confidence"
+        ],
+        "reference_snapshot_id": "snapshot-reference"
+      },
+      "columns": {
+        "confidence": {
+          "cleaned_current_n": 100,
+          "cleaned_reference_n": 100,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 40,
+          "raw_current_n": 100,
+          "raw_reference_n": 100
+        },
+        "prediction": {
+          "cleaned_current_n": 100,
+          "cleaned_reference_n": 100,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 200,
+          "raw_current_n": 100,
+          "raw_reference_n": 100
+        }
+      },
+      "current_row_count": 100,
+      "current_rows_sha256": "637a609c0572268539d6d8c3cbb38dcc9ecce8012aa41f505f73605419cb5160",
+      "description": "Half of the outputs drift (share 0.5) against a governed threshold of 0.8, so the dataset verdict stays False while the drifted column is still named.",
+      "expects_failure": false,
+      "golden_sha256": "4b21397b2977750fea3b79c63204648e9296ac41d377af66bccc595fda26adb3",
+      "kind": "prediction_drift",
+      "raw_report_sha256": "f3d310bef02f053a5da8186c3e35486215d7ff9bfa065c2ad37b9b4b25e85bf8",
+      "reference_row_count": 100,
+      "reference_rows_sha256": "7a9709d407a1e05155fecfbc8225ccbf8767e41682a86802c8707f159207d3a9",
+      "routing_expectation": "ks_stat_test on prediction, ks_stat_test on confidence"
+    },
+    "prediction_requested_threshold_tightens_policy": {
+      "call_kwargs": {
+        "cohort_key": "region:north",
+        "current_snapshot_id": "snapshot-current",
+        "drift_share_threshold": 0.4,
+        "model_name": "revenue-model",
+        "model_version": "v1",
+        "output_types": {
+          "confidence": "numeric",
+          "prediction": "numeric"
+        },
+        "policy": "DecisionPolicy(policy_version_id='nltk-monitoring-baseline-policy-v1:00000000-0000-0000-0000-000000000001', policy_label='nltk-monitoring-baseline-policy-v1', policy_id='nltk-monitoring-baseline-policy', policy_version='1.0.0', policy_kind='model_performance_drift', tenant_id='00000000-0000-0000-0000-000000000001', effective_from=datetime.datetime(2026, 9, 1, 0, 0, tzinfo=datetime.timezone.utc), parameters={'prediction_drift': {'drift_share_threshold': 0.8}}, declared_inputs=('prediction_outputs',), effective_to=None, change_reason='Pin the prediction-drift threshold for the Evidently 0.7.21 baseline', rollback_policy_version=None, approved_by='model-risk-owner', owner_role='ml-governance')",
+        "prediction_columns": [
+          "prediction",
+          "confidence"
+        ],
+        "reference_snapshot_id": "snapshot-reference"
+      },
+      "columns": {
+        "confidence": {
+          "cleaned_current_n": 100,
+          "cleaned_reference_n": 100,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 40,
+          "raw_current_n": 100,
+          "raw_reference_n": 100
+        },
+        "prediction": {
+          "cleaned_current_n": 100,
+          "cleaned_reference_n": 100,
+          "dtype_current": "float64",
+          "dtype_reference": "float64",
+          "merged_unique": 200,
+          "raw_current_n": 100,
+          "raw_reference_n": 100
+        }
+      },
+      "current_row_count": 100,
+      "current_rows_sha256": "637a609c0572268539d6d8c3cbb38dcc9ecce8012aa41f505f73605419cb5160",
+      "description": "Identical inputs to prediction_policy_threshold_only, with a caller-supplied threshold stricter than the policy: 0.4 is accepted and flips the verdict to True.",
+      "expects_failure": false,
+      "golden_sha256": "71fc755b8b91fbb6255aae69d759aebc4f4299eb60b8adaf5872719ce54fe254",
+      "kind": "prediction_drift",
+      "raw_report_sha256": "e2ed4838ffeb3bec1f970a69b99f2e9c3fa87d91d40553c31a35f4673b05ff0f",
+      "reference_row_count": 100,
+      "reference_rows_sha256": "7a9709d407a1e05155fecfbc8225ccbf8767e41682a86802c8707f159207d3a9",
+      "routing_expectation": "ks_stat_test on prediction, ks_stat_test on confidence"
+    },
+    "text_absolute_drifted": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-text-abs-drift"
+      },
+      "columns": {
+        "note": {
+          "cleaned_current_n": 1001,
+          "cleaned_reference_n": 1001,
+          "dtype_current": "object",
+          "dtype_reference": "object",
+          "merged_unique": 2002,
+          "raw_current_n": 1001,
+          "raw_reference_n": 1001
+        }
+      },
+      "current_row_count": 1001,
+      "current_rows_sha256": "96bf6a7d576d2549a03401c602ccba9981396458a7b45e2720926777cb4c97e9",
+      "description": "Text column above the 1000-row bound, rewritten from a disjoint vocabulary.",
+      "expects_failure": false,
+      "golden_sha256": "611e750efdf845ea36180d066d070285b1a4649003a527176c7fd19eeed2af9e",
+      "kind": "data_drift",
+      "raw_report_sha256": "4c681de706e87f0a81a869512169fa82f80638fd871e01cfeb7a9c07e560c420",
+      "reference_row_count": 1001,
+      "reference_rows_sha256": "98c3a55bd59bf594c73e9b3161b8d76ac03e787ebe7ecbc8c3d1c58654cecab9",
+      "routing_expectation": "ColumnType.Text, N>1000 -> abs_text_content_drift_stat_test"
+    },
+    "text_percentile_drifted": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-text-perc-drift"
+      },
+      "columns": {
+        "note": {
+          "cleaned_current_n": 200,
+          "cleaned_reference_n": 200,
+          "dtype_current": "object",
+          "dtype_reference": "object",
+          "merged_unique": 400,
+          "raw_current_n": 200,
+          "raw_reference_n": 200
+        }
+      },
+      "current_row_count": 200,
+      "current_rows_sha256": "8f9580462a9a3730941ef4ac1a2a632d76a033130b09dd0b184d7a380916a12f",
+      "description": "Same text column rewritten from a disjoint vocabulary.",
+      "expects_failure": false,
+      "golden_sha256": "f9a458492e2dbe0beed05bab05379235f55d4e15110de11848633ba36881bc8b",
+      "kind": "data_drift",
+      "raw_report_sha256": "1fc5b9482a744437d218d1b58eb34d37ae698a997b1ae59841d72d7c0838b0f5",
+      "reference_row_count": 200,
+      "reference_rows_sha256": "d3aad7e8c6b0f2d2ba09398d25848b076b8d567603d79e9fc4d7afdda50f31f5",
+      "routing_expectation": "ColumnType.Text, N<=1000 -> perc_text_content_drift_stat_test"
+    },
+    "text_percentile_stable": {
+      "call_kwargs": {
+        "drift_share_threshold": 0.5,
+        "snapshot_id": "baseline-text-perc-stable"
+      },
+      "columns": {
+        "note": {
+          "cleaned_current_n": 200,
+          "cleaned_reference_n": 200,
+          "dtype_current": "object",
+          "dtype_reference": "object",
+          "merged_unique": 200,
+          "raw_current_n": 200,
+          "raw_reference_n": 200
+        }
+      },
+      "current_row_count": 200,
+      "current_rows_sha256": "d3aad7e8c6b0f2d2ba09398d25848b076b8d567603d79e9fc4d7afdda50f31f5",
+      "description": "High-cardinality free-text column that Evidently infers as ColumnType.Text; reference and current are identical.",
+      "expects_failure": false,
+      "golden_sha256": "ea851787e79dd2e896e610934da31f3130a8b68274e3762a8a1714e1026c070a",
+      "kind": "data_drift",
+      "raw_report_sha256": "f750aa11e7d8442d96946a4de402811b1669b1d22a10ebba6eafef8539bec5e0",
+      "reference_row_count": 200,
+      "reference_rows_sha256": "d3aad7e8c6b0f2d2ba09398d25848b076b8d567603d79e9fc4d7afdda50f31f5",
+      "routing_expectation": "ColumnType.Text, N<=1000 -> perc_text_content_drift_stat_test"
+    }
+  },
+  "environment": {
+    "machine": "x86_64",
+    "platform": "Linux-6.17.0-1022-gcp-x86_64-with-glibc2.39",
+    "processor_architecture": "64bit",
+    "python_compiler": "Clang 22.1.3 ",
+    "python_implementation": "CPython",
+    "python_version": "3.12.14"
+  },
+  "generated_at": "2026-09-06T02:41:59Z",
+  "generator": "tests/models/fixtures/evidently_0_7_21/generate_baseline.py",
+  "normalization": {
+    "never_normalized": [
+      "statistic / p-value / distance values",
+      "stat-test method names and thresholds",
+      "drift_detected, drifted_columns, drift_share, drifted_column_names",
+      "category labels and column names",
+      "metric ids, metric ordering and report structure",
+      "exception types and messages of validation or runtime failures",
+      "caller-supplied snapshot ids, model metadata, cohort and policy version"
+    ],
+    "normalized": [
+      "EvidentlyDriftResult.snapshot_id when the caller passed snapshot_id=None; the uuid4 form is verified against a regex and replaced by '<auto-generated-uuid4>'"
+    ]
+  },
+  "packages": {
+    "evidently": "0.7.21",
+    "nltk": "3.10.3",
+    "numpy": "2.5.1",
+    "pandas": "2.3.3",
+    "scikit-learn": "1.9.0",
+    "scipy": "1.18.0"
+  },
+  "rng_decimals": 6,
+  "rng_seed": 20260906,
+  "source_branch": "task/ODP-NLTK-MONITORING-BASELINE-001",
+  "source_sha": "62dfc845925ed1b90bf06c0cbb490a0b82ed9b3a",
+  "source_worktree_clean": false
+}

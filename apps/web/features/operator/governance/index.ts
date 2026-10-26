@@ -29,5 +29,6 @@ export type {
 
 export { ModelReleaseController } from "./ModelReleaseController";
 export type { ModelReleaseControllerProps } from "./ModelReleaseController";
+export { DecisionCommentsPanel } from "./DecisionCommentsPanel";
+export type { DecisionCommentsPanelProps } from "./DecisionCommentsPanel";
 export * from "./learningHubLoader";
-

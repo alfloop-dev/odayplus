@@ -1,0 +1,21 @@
+import base from "/tmp/pantheon-worker-worktrees/pantheon/odp-operator-read-authorization-001/playwright.config";
+const root = "/tmp/pantheon-worker-worktrees/pantheon/odp-operator-read-authorization-001";
+const servers = base.webServer as Array<any>;
+export default {
+  ...base,
+  testDir: `${root}/tests/e2e`,
+  outputDir: process.env.ORCH_SCRATCH_DIR + "/today-playwright-results",
+  workers: 1,
+  retries: 0,
+  use: { ...base.use, baseURL: "http://localhost:3217" },
+  webServer: [
+    { ...servers[0], cwd: root,
+      command: `${process.env.PANTHEON_STATUS_ROOT}/.venv/bin/python -m uvicorn apps.api.oday_api.main:app --host 127.0.0.1 --port 8217`,
+      url: "http://127.0.0.1:8217/platform/health", reuseExistingServer: false,
+    },
+    { ...servers[1], cwd: root, command: "npm run dev --workspace=@oday-plus/web -- -p 3217",
+      url: "http://localhost:3217", reuseExistingServer: false,
+      env: { ...servers[1].env, ODP_API_BASE_URL: "http://127.0.0.1:8217", NEXT_PUBLIC_API_URL: "http://127.0.0.1:8217" },
+    },
+  ],
+};

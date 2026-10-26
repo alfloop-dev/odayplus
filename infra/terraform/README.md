@@ -8,14 +8,21 @@ memory persistence.
 
 | Resource | Production contract |
 |---|---|
-| Cloud Run API | Immutable digest, exact release SHA, IAM-only invocation, Gen2, Direct VPC egress, Cloud SQL volume, `/readiness` startup probe, `/healthz` liveness probe. |
+| Cloud Run API | Immutable digest, exact release SHA, IAM-only invocation, Gen2, Direct VPC egress, Cloud SQL volume, `/readiness` startup probe, `/liveness` liveness probe. |
 | Cloud Run Web | Immutable digest, exact release SHA, OIDC session enforcement, service-to-service identity token, private API invocation, Gen2, Direct VPC egress. |
 | Cloud SQL PostgreSQL 16 | Private IP only, `REGIONAL` HA, SSD/autoresize, PITR, 30+ backups, CMEK, encrypted connections, deletion protection. |
-| Secret Manager | Terraform-generated database URL, cursor key, and Web session secret plus references to environment-owned model credentials. External provider credentials and direct external data acquisition are disabled in consumer deployment. No secret payload is accepted as a variable or exposed as an output. |
+| Secret Manager | Terraform-generated database URL, cursor key, and Web session secret plus references to the shared Web/API local identity signing key and environment-owned model credentials. External provider credentials and direct external data acquisition are disabled in consumer deployment. No secret payload is accepted as a variable or exposed as an output. |
 | Cloud Storage | Separate CMEK-encrypted, versioned artifact and source-snapshot buckets plus the WORM audit-evidence module. |
 | Pub/Sub | CMEK job topic, ordered subscription, bounded retry, DLQ topic/subscription, regional persistence. |
 | IAM | Separate API, worker, audit-writer, and audit-retention identities with resource-level grants. |
+| Cloud Monitoring | `monitoring.tf`: Web `/login` uptime check, optional API `/platform/health` uptime check (Monitoring service agent OIDC), alert policies for uptime failure, API/Web 5xx ratio, API p95 latency (3.0 s ratified budget), failed Cloud Run job executions, and Cloud SQL CPU/disk/connection saturation. Notification targets come only from variables. |
 | VPC | Custom regional subnet, Direct VPC egress, Private Service Access, default-deny egress firewall with restricted RFC1918 and Google API CIDR allow rules, no Cloud NAT, no Cloud SQL public IPv4. |
+
+Use `/liveness` for Cloud Run probes and external process checks. Google lists
+some paths ending in `z` as [reserved URL paths](https://docs.cloud.google.com/run/docs/known-issues#reserved-url-paths),
+which can return a frontend 404 before reaching the container. The API retains
+`/healthz` for existing local callers; `/health` remains the detailed health
+report and `/readiness` continues to enforce the runtime readiness contract.
 
 ## Production Fail-Closed Gates
 
@@ -32,6 +39,9 @@ A production plan fails when any of the following is true:
   local, stub, replay, sandbox, development, latest, placeholder, example, or TODO markers;
 - Cloud SQL production capacity, PITR, backup retention, private networking,
   regional HA, CMEK, or deletion protection is weakened by this module.
+- no alert notification target (`monitoring_notification_emails` or
+  `monitoring_notification_channel_ids`), no `monitoring_api_uptime_host`, or no
+  `monitoring_cloud_sql_max_connections` is supplied.
 
 The authoritative blocker is
 `terraform_data.production_contract.lifecycle.precondition`. Terraform `check`
@@ -55,22 +65,41 @@ Values, approvals, and secret payloads are owned outside Terraform:
    bucket with versioning, retention, CMEK, and tightly scoped Terraform-runner
    access.
 2. Immutable API and Web image digests built from the same exact source commit.
-3. OIDC issuer, audience list, JWKS URI, Web client registration/secret, public
-   HTTPS Web origin, API invoker members, and Web invoker members.
-4. External provider live endpoints, credentials, and Cloud NAT egress IPs are
+3. Public HTTPS Web origin (`web_base_url`), API invoker members, and Web
+   invoker members. Required in every `auth_mode`.
+4. Token verification inputs. `service_auth_issuer`, `service_auth_jwks_uri`,
+   and `service_auth_audiences` verify the Cloud Run service-identity and
+   deployment smoke tokens and apply in every `auth_mode`; the first two default
+   to Google's issuer and JWKS endpoint. `oidc_issuer`, `oidc_audiences`,
+   `oidc_jwks_uri`, and the Web client registration/secret are consumed **only
+   when `auth_mode = "oidc"`**. The default `"local"` mode deploys with
+   password-only authentication and no Google OAuth client or OIDC secret; when
+   `service_auth_audiences` is empty it falls back to `oidc_audiences` so
+   pre-contract deployments keep their existing accepted audience list.
+   `identity_token_signing_key_ref` is also required in production; its one
+   pinned Secret Manager version is mounted into both API and Web as
+   `ODP_IDENTITY_TOKEN_SIGNING_KEY`, and the API resolver uses `local-default`
+   for that plain key.
+5. External provider live endpoints, credentials, and Cloud NAT egress IPs are
    disabled in consumer-only platform snapshot deployment. Direct external
    provider acquisition is off.
-5. Model registry credentials (if MLflow does not use workload identity) and OIDC
-   client secret.
-6. Remote MLflow URI, production aliases/artifacts, AVM liquidity approval
+6. Model registry credentials (if MLflow does not use workload identity), and
+   the Web OIDC client secret when `auth_mode = "oidc"`.
+7. Remote MLflow URI, production aliases/artifacts, AVM liquidity approval
    metadata, digest, dataset snapshot, and OSS forecast engine/model.
-7. Optional MLflow credential secret IDs when the registry does not use
+8. Optional MLflow credential secret IDs when the registry does not use
    workload identity.
-8. A migration/reconciliation release job and canonical live datasets that make
+9. A migration/reconciliation release job and canonical live datasets that make
    `/readiness` return HTTP 200 before Cloud Run startup expires.
-9. DNS, managed HTTPS, and Cloud Armor policy when a custom Web origin is used.
-   The module deploys the Web BFF while leaving the API at
-   internal/load-balancer ingress.
+10. DNS, managed HTTPS, and Cloud Armor policy when a custom Web origin is used.
+    The module deploys the Web BFF while leaving the API at
+    internal/load-balancer ingress.
+11. Alert notification targets (on-call email addresses or existing
+    notification channel ids), an API host that Cloud Monitoring uptime checkers
+    can reach (the API ingress is internal/load-balancer only, so the run.app
+    host is not reachable by itself), and the Cloud SQL instance's effective
+    `max_connections`. See
+    `docs/evidence/runtime/ODP-PROD-MONITORING-ALERTING-001/README.md`.
 
 The application WORM/object-store client must use Cloud Run workload identity
 or metadata-server ADC. Do not create or inject service-account JSON keys or
@@ -121,7 +150,7 @@ uses the real `/readiness` gate:
 3. Confirm model secrets have enabled versions, MLflow production aliases
    are approved, and the canonical datasets exist.
 4. Run a fresh full plan, review it, and apply the saved plan.
-5. Verify `/healthz`, `/readiness`, exact `release_sha`, OIDC rejection/acceptance,
+5. Verify `/liveness`, `/readiness`, exact `release_sha`, OIDC rejection/acceptance,
    model lineage, Pub/Sub/DLQ, backup/PITR, and restore drill
    evidence before routing user traffic.
 

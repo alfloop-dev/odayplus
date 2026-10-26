@@ -1,0 +1,5 @@
+Using CPython 3.14.7
+Creating virtual environment at: .venv
+error: Distribution `pgserver==0.1.4 @ registry+https://pypi.org/simple` can't be installed because it doesn't have a source distribution or wheel for the current platform
+
+hint: You're using CPython 3.14 (`cp314`), but `pgserver` (v0.1.4) only has wheels with the following Python ABI tag: `cp312`

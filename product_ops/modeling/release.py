@@ -27,7 +27,7 @@ from models.shared_ml import (
     compute_content_digest,
 )
 from models.shared_ml.oss_estimators import EstimatorTrainingResult, train_oss_estimator
-from modules.avm.domain.liquidity import LiquidityTrainingRecord
+from modules.avm.domain.deal_outcome import DealOutcome
 from modules.avm.infrastructure import LifelinesLiquiditySurvivalAdapter
 from modules.learninghub import (
     LearningHubService,
@@ -39,7 +39,15 @@ from modules.learninghub import (
 )
 from pipelines.features import FeaturePipelineRunner
 from pipelines.training import TrainingPipelineRunner
+from shared.governance import (
+    MODEL_PERFORMANCE_DRIFT_POLICY_KIND,
+    MODEL_PERFORMANCE_DRIFT_POLICY_TENANT_ID,
+    DecisionPolicy,
+    DecisionPolicyRepository,
+    resolve_policy,
+)
 from shared.infrastructure.persistence.audit_log import DurableAuditLog
+from shared.infrastructure.persistence.decision_policy import SqlDecisionPolicyRepository
 from shared.infrastructure.persistence.postgresql import (
     PostgresDocumentStore,
     PostgresEngine,
@@ -78,6 +86,7 @@ class PreparedRow:
     mapping: Mapping[str, Any]
     temporal_value: datetime
     segment_value: str
+    deal_outcome: DealOutcome | None = None
 
 
 @dataclass(frozen=True)
@@ -154,13 +163,27 @@ class BoundedModelTrainingRelease:
         git_sha: str,
         actor: str,
         regression_trainer: RegressionTrainer = train_oss_estimator,
+        decision_policy_repository: DecisionPolicyRepository | None = None,
+        decision_policy: DecisionPolicy | None = None,
+        decision_policy_tenant_id: str = MODEL_PERFORMANCE_DRIFT_POLICY_TENANT_ID,
     ) -> None:
+        if decision_policy is not None and decision_policy_repository is not None:
+            raise ModelTrainingConfigurationError(
+                "provide either decision_policy or decision_policy_repository, not both"
+            )
+        if decision_policy is not None and decision_policy.policy_kind != MODEL_PERFORMANCE_DRIFT_POLICY_KIND:
+            raise ModelTrainingConfigurationError(
+                f"decision policy must be {MODEL_PERFORMANCE_DRIFT_POLICY_KIND}"
+            )
         self.source = source
         self.service = service
         self.artifact_store = artifact_store
         self.git_sha = git_sha
         self.actor = actor
         self.regression_trainer = regression_trainer
+        self.decision_policy_repository = decision_policy_repository
+        self.decision_policy = decision_policy
+        self.decision_policy_tenant_id = decision_policy_tenant_id
 
     def inventory(self, spec: ModelSpec) -> dict[str, Any]:
         inventory = self.source.inventory(spec)
@@ -189,6 +212,7 @@ class BoundedModelTrainingRelease:
     ) -> TrainingReleaseResult:
         if not version.strip():
             raise ModelTrainingConfigurationError("model version is required")
+        decision_policy = self._resolve_performance_policy()
         loaded = self.source.load(spec, bounds)
         prepared = prepare_model_rows(spec, loaded)
         if len(prepared) < spec.minimum_rows:
@@ -252,6 +276,7 @@ class BoundedModelTrainingRelease:
                 temporal=temporal,
                 temporal_artifact_sha256=temporal_record.content_digest,
                 snapshot_artifact_sha256=snapshot_record.content_digest,
+                decision_policy=decision_policy,
             )
         return self._train_survival_candidate(
             spec=spec,
@@ -262,6 +287,21 @@ class BoundedModelTrainingRelease:
             temporal=temporal,
             temporal_artifact_sha256=temporal_record.content_digest,
             snapshot_artifact_sha256=snapshot_record.content_digest,
+            decision_policy=decision_policy,
+        )
+
+    def _resolve_performance_policy(self) -> DecisionPolicy:
+        if self.decision_policy is not None:
+            return self.decision_policy
+        if self.decision_policy_repository is None:
+            raise ModelTrainingConfigurationError(
+                "production model training requires a model performance decision policy repository"
+            )
+        return resolve_policy(
+            self.decision_policy_repository,
+            policy_kind=MODEL_PERFORMANCE_DRIFT_POLICY_KIND,
+            tenant_id=self.decision_policy_tenant_id,
+            at=datetime.now(UTC),
         )
 
     def promote(
@@ -489,6 +529,7 @@ class BoundedModelTrainingRelease:
         temporal: TemporalValidationReport,
         temporal_artifact_sha256: str,
         snapshot_artifact_sha256: str,
+        decision_policy: DecisionPolicy,
     ) -> TrainingReleaseResult:
         run_id = f"training-{spec.model_name}-{version}-{snapshot_id}"
         result = TrainingPipelineRunner(
@@ -516,6 +557,7 @@ class BoundedModelTrainingRelease:
             actor=self.actor,
             run_id=run_id,
             git_sha=self.git_sha,
+            decision_policy=decision_policy,
         )
         if not result.accepted:
             failures = "; ".join(failure.message for failure in result.validation_run.failed_rules)
@@ -572,15 +614,10 @@ class BoundedModelTrainingRelease:
         temporal: TemporalValidationReport,
         temporal_artifact_sha256: str,
         snapshot_artifact_sha256: str,
+        decision_policy: DecisionPolicy,
     ) -> TrainingReleaseResult:
         survival_rows = [
-            LiquidityTrainingRecord(
-                duration_days=float(row.mapping["labels"][spec.label_name]),
-                sold=bool(row.mapping["labels"]["event_observed"]),
-                features={
-                    name: float(row.mapping["features"][name]) for name in spec.feature_columns
-                },
-            )
+            _liquidity_training_record(row, spec)
             for row in prepared
         ]
         adapter = LifelinesLiquiditySurvivalAdapter(model_version=version).fit(survival_rows)
@@ -613,6 +650,7 @@ class BoundedModelTrainingRelease:
             ),
             min_training_records=spec.minimum_rows,
             calibration_summary={"temporal_validation": True},
+            decision_policy=decision_policy,
         )
         if not validation.passed:
             raise ModelReadyDataError(f"{spec.key}: survival validation did not pass release gates")
@@ -625,6 +663,40 @@ class BoundedModelTrainingRelease:
             metadata={"validation_run_id": validation.validation_run_id},
         )
         run_id = f"training-{spec.model_name}-{version}-{snapshot_id}"
+        backtest_receipt = self.service.evaluate_backtest(
+            model_name=spec.model_name,
+            model_version=version,
+            dataset_snapshot_id=snapshot_id,
+            code_version=self.git_sha or "unversioned-dev",
+            metrics=metrics,
+            baseline_metrics=temporal.baseline_metrics,
+            thresholds=(
+                MetricThreshold(
+                    "normalized_mae",
+                    max_value=spec.max_normalized_mae,
+                ),
+                MetricThreshold("observed_event_rate", min_value=0.02),
+            ),
+            decision_policy=decision_policy,
+            calibration_summary={"temporal_validation": True},
+            requested_by=self.actor,
+        )
+        backtest_payload = {
+            "artifact_type": "backtest_report",
+            "backtest_receipt": backtest_receipt.to_dict(),
+        }
+        self.artifact_store.put_artifact(
+            model_name=spec.model_name,
+            version=version,
+            kind=ArtifactKind.BACKTEST_REPORT,
+            data=_canonical_json(backtest_payload),
+            content_type="application/json",
+            metadata={
+                "backtest_receipt_id": backtest_receipt.receipt_id,
+                "dataset_snapshot_id": snapshot_id,
+                "run_id": run_id,
+            },
+        )
         model_version = ModelVersion(
             model_name=spec.model_name,
             version=version,
@@ -722,6 +794,7 @@ def build_production_resources(
         artifact_store=artifact_store,
         runtime_mode="production",
     )
+    policy_repository = SqlDecisionPolicyRepository(engine)
     return ProductionResources(
         engine=engine,
         application=BoundedModelTrainingRelease(
@@ -730,6 +803,7 @@ def build_production_resources(
             artifact_store=artifact_store,
             git_sha=settings.git_sha,
             actor=settings.actor,
+            decision_policy_repository=policy_repository,
         ),
     )
 
@@ -760,6 +834,36 @@ def prepare_model_rows(
             ) from exc
         if not math.isfinite(label):
             raise ModelReadyDataError(f"{spec.key}: label values must be finite")
+        deal_outcome: DealOutcome | None = None
+        if spec.kind is ModelKind.SURVIVAL:
+            try:
+                deal_outcome = DealOutcome.from_mapping(
+                    {
+                        "outcome_id": raw.get("outcome_id"),
+                        "valuation_id": raw.get("valuation_id"),
+                        "store_id": raw.get("store_id"),
+                        "sold": raw.get(spec.event_column) if spec.event_column else None,
+                        "settlement_price": raw.get("settlement_price"),
+                        "settlement_date": raw.get("settlement_date"),
+                        "duration_days": raw.get(spec.label_column),
+                        "no_deal_reason_code": raw.get("no_deal_reason_code"),
+                        "deal_terms": raw.get("deal_terms", {}),
+                        "source_authority": raw.get("source_authority", ""),
+                    }
+                )
+            except (TypeError, ValueError) as exc:
+                raise ModelReadyDataError(
+                    f"{spec.key}: row is not backed by a canonical avm.deal_outcomes record"
+                ) from exc
+            # The label and event columns are consistency projections of the
+            # canonical outcome, not an independent source of truth.
+            if deal_outcome.duration_days != label or (
+                spec.event_column
+                and deal_outcome.sold != bool(raw[spec.event_column])
+            ):
+                raise ModelReadyDataError(
+                    f"{spec.key}: liquidity labels do not match canonical deal outcome"
+                )
         feature_values = {name: _feature_value(raw.get(name)) for name in spec.feature_columns}
         if any(value is None for value in feature_values.values()):
             continue
@@ -779,11 +883,13 @@ def prepare_model_rows(
             )
         if label_maturity_time > loaded.as_of_time:
             raise ModelReadyDataError(f"{spec.key}: label is not mature at training as_of_time")
-        labels: dict[str, Any] = {spec.label_name: label}
+        labels: dict[str, Any] = {
+            spec.label_name: deal_outcome.duration_days if deal_outcome else label
+        }
         if spec.event_column:
             if spec.event_column not in raw or raw[spec.event_column] is None:
                 continue
-            labels["event_observed"] = bool(raw[spec.event_column])
+            labels["event_observed"] = deal_outcome.sold if deal_outcome else bool(raw[spec.event_column])
         source_entity = str(raw.get("entity_id") or "")
         entity_id = f"{source_entity}:{temporal_value.isoformat()}"
         raw_source_ids = raw.get("source_snapshot_ids") or ()
@@ -825,6 +931,7 @@ def prepare_model_rows(
                 mapping=mapping,
                 temporal_value=temporal_value,
                 segment_value=segment_value,
+                deal_outcome=deal_outcome,
             )
         )
     if not prepared:
@@ -911,11 +1018,7 @@ def _validate_survival_temporally(
     holdout_rows: Sequence[PreparedRow],
 ) -> TemporalValidationReport:
     records = [
-        LiquidityTrainingRecord(
-            duration_days=float(row.mapping["labels"][spec.label_name]),
-            sold=bool(row.mapping["labels"]["event_observed"]),
-            features={name: float(row.mapping["features"][name]) for name in spec.feature_columns},
-        )
+        _liquidity_training_record(row, spec)
         for row in training_rows
     ]
     adapter = LifelinesLiquiditySurvivalAdapter().fit(records)
@@ -977,6 +1080,20 @@ def _validate_survival_temporally(
         baseline_metrics=baseline_metrics,
         segments=segments,
         failed_rules=tuple(failures),
+    )
+
+
+def _liquidity_training_record(row: PreparedRow, spec: ModelSpec):
+    """Project a survival training record from the canonical deal outcome."""
+    if spec.kind is not ModelKind.SURVIVAL or row.deal_outcome is None:
+        raise ModelReadyDataError(
+            f"{spec.key}: liquidity training requires a canonical deal outcome"
+        )
+    return row.deal_outcome.to_liquidity_training_record(
+        {
+            name: float(row.mapping["features"][name])
+            for name in spec.feature_columns
+        }
     )
 
 

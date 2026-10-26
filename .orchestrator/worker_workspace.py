@@ -5,9 +5,14 @@ from __future__ import annotations
 
 import re
 import shutil
+import stat
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from common import normalize_agent_id, utc_now
+from dispatch_policy import REASON_HELPER_CLAIM, REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY, REASON_REVIEW_READY, worker_logical_dispatch_agent_id
+import verification_evidence
 from runtime_state import ACTIVE_WORKER_STATUSES
 
 # Compatibility aliases remain exports while Supervisor callers migrate to the
@@ -171,6 +176,38 @@ def resolve_worker_base(
     resolved = WorkerBaseResolution(repository_id, branch, sha, f"origin/{branch}")
     cache[key] = resolved
     return resolved, None
+
+
+@_entrypoint
+def resolve_frozen_evidence_base(
+    repo_root: Path,
+    *,
+    repository_id: str,
+    default_branch: str,
+    branch: str,
+    sha: Any,
+) -> tuple[WorkerBaseResolution | None, str | None]:
+    """Resolve a canonical evidence task's fixed base without moving dev.
+
+    Require an existing task branch descended from the exact commit. This is
+    a workspace base selection only; it grants no evidence, review or release
+    approval and does not replace the candidate ancestry validator.
+    """
+    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
+        return None, "invalid_frozen_evidence_base_sha: expected full lowercase commit SHA"
+    if _git_commit_oid(repo_root, sha) != sha:
+        return None, f"frozen_evidence_base_unavailable:{sha}"
+    head = (
+        _git_commit_oid(repo_root, f"refs/heads/{branch}")
+        or _git_commit_oid(repo_root, f"refs/remotes/origin/{branch}")
+    )
+    if not head:
+        return None, f"frozen_evidence_task_branch_unavailable:{branch}"
+    rc, _ = _git_output(repo_root, "merge-base", "--is-ancestor", sha, head)
+    if rc != 0:
+        return None, f"frozen_evidence_base_not_task_ancestor:{sha}:{head}"
+    return WorkerBaseResolution(repository_id, default_branch, sha, sha), None
+
 
 @_entrypoint
 def _task_id_slug(task_id: str | None) -> str:
@@ -359,10 +396,13 @@ def _worktree_matches_repo_common_dir(repo_root: Path, path: Path) -> bool:
 
 
 @_entrypoint
-def _existing_worktree_for_branch(repo_root: Path, branch: str, *, exclude_root: bool) -> Path | None:
+def _existing_worktree_for_branch(
+    repo_root: Path, branch: str, *, exclude_root: bool, expected_path: Path | None = None
+) -> Path | None:
     resolved_repo_root = repo_root.resolve()
 
-    for record in _git_worktree_records(repo_root):
+    records = _git_worktree_records(repo_root)
+    for record in records:
         if _worktree_record_branch(record) != branch:
             continue
         path_value = record.get("worktree")
@@ -380,6 +420,31 @@ def _existing_worktree_for_branch(repo_root: Path, branch: str, *, exclude_root:
         if not _worktree_matches_repo_common_dir(repo_root, path):
             continue
         return path
+
+    if expected_path is not None:
+        try:
+            resolved_expected = expected_path.resolve()
+        except (OSError, RuntimeError, ValueError):
+            return None
+        if exclude_root and resolved_expected == resolved_repo_root:
+            return None
+        if not resolved_expected.exists() or not resolved_expected.is_dir():
+            return None
+        if not (resolved_expected / ".git").exists():
+            return None
+        if _git_output(resolved_expected, "rev-parse", "--is-inside-work-tree")[0] != 0:
+            return None
+        if not _worktree_matches_repo_common_dir(repo_root, resolved_expected):
+            return None
+        for record in records:
+            rec_path = record.get("worktree")
+            if not rec_path:
+                continue
+            try:
+                if Path(rec_path).resolve() == resolved_expected:
+                    return resolved_expected
+            except (OSError, RuntimeError, ValueError):
+                continue
     return None
 
 @_entrypoint
@@ -517,6 +582,210 @@ def _git_operation_in_progress(worktree_path: Path) -> bool:
             return True
     return False
 
+def _interrupted_merge_snapshot(worktree_path: Path) -> dict[str, bytes] | None:
+    """Read only an attached merge's recovery state; never resolve or commit it.
+
+    The logical index is used for the seal because git status can rewrite index
+    stat-cache bytes without changing the staged tree. The raw index is also
+    backed up, together with all merge control files, for exact recovery.
+    """
+    branch_rc, branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "HEAD")
+    if branch_rc or not branch or not _git_commit_oid(worktree_path, "MERGE_HEAD"):
+        return None
+    snapshot: dict[str, bytes] = {
+        "HEAD_BRANCH": branch.encode("utf-8"),
+    }
+    try:
+        for marker in ("index.lock", "rebase-merge", "rebase-apply", "sequencer", "CHERRY_PICK_HEAD", "REVERT_HEAD"):
+            rc, name = _git_output(worktree_path, "rev-parse", "--git-path", marker)
+            if rc or not name:
+                return None
+            path = Path(name) if Path(name).is_absolute() else worktree_path / name
+            if path.exists() or path.is_symlink():
+                return None
+        for marker in ("index", "MERGE_HEAD", "MERGE_MSG", "MERGE_MODE", "AUTO_MERGE", "ORIG_HEAD", "MERGE_AUTOSTASH"):
+            rc, name = _git_output(worktree_path, "rev-parse", "--git-path", marker)
+            if rc or not name:
+                return None
+            path = Path(name) if Path(name).is_absolute() else worktree_path / name
+            if path.is_symlink():
+                return None
+            if path.exists():
+                snapshot[marker] = path.read_bytes()
+        if not snapshot.get("index") or not snapshot.get("MERGE_HEAD"):
+            return None
+        if "MERGE_AUTOSTASH" in snapshot and _interrupted_merge_autostash_oid(worktree_path, snapshot) is None:
+            # `git merge --autostash` (or merge.autoStash) parks the pre-merge
+            # dirty work in a stash-like commit that only this file references,
+            # and git prunes that commit as soon as the file is gone.  A value
+            # that no longer names a commit means the parked work is already
+            # unrecoverable; refuse rather than seal a merge whose continuation
+            # would silently finish without it.
+            return None
+        proc = subprocess.run(["git", "ls-files", "--stage", "-z"], cwd=worktree_path, capture_output=True, check=False)
+        if proc.returncode:
+            return None
+        snapshot["index-entries"] = proc.stdout
+        return snapshot
+    except OSError:
+        return None
+
+
+def _interrupted_merge_autostash_oid(worktree_path: Path, snapshot: dict[str, bytes]) -> str | None:
+    """Return the commit parked by ``git merge --autostash``, or None if absent or unresolvable."""
+    raw = snapshot.get("MERGE_AUTOSTASH")
+    if raw is None:
+        return None
+    oid = raw.decode("ascii", errors="replace").strip()
+    if not re.fullmatch(r"[0-9a-fA-F]{40,64}", oid):
+        return None
+    resolved = _git_commit_oid(worktree_path, oid)
+    return resolved if resolved and resolved.lower() == oid.lower() else None
+
+
+def _interrupted_merge_worktree_fingerprint(
+    worktree_path: Path | str,
+    inspection: WorktreeInspection,
+) -> str | None:
+    """Hash the exact dirty worktree entries as Git itself tracks them.
+
+    Every entry is bound by its porcelain code and path, then by the state Git
+    records for that path: a regular file by its executable mode (100644 or
+    100755, derived from the owner execute bit exactly as Git does) and its
+    independent content hash; a symlink by its target; a plain directory by type
+    only. mtime, ctime and the index stat cache are deliberately not bound, so a
+    stat refresh cannot break a legitimate continuation.
+
+    Entries and digests are serialized into an unambiguous structured payload to
+    prevent serialization ambiguity across entries.
+
+    Returns None when the state cannot be read exactly (``git status`` failed,
+    an unreadable file was encountered, or a nested repository is present).
+    Callers must fail closed on None: neither seal nor resume a merge whose
+    working files cannot be completely preserved and restored.
+    """
+    if inspection.kind == "status_failed":
+        return None
+    path_root = Path(worktree_path)
+    entries: list[dict[str, Any]] = []
+    for code, path in inspection.entries:
+        candidate = path_root / path
+        try:
+            metadata = candidate.lstat()
+        except FileNotFoundError:
+            entries.append({
+                "code": code,
+                "path": path,
+                "type": "absent",
+            })
+            continue
+        except OSError:
+            return None
+        if stat.S_ISLNK(metadata.st_mode):
+            try:
+                target = os.readlink(candidate)
+            except OSError:
+                return None
+            target_hash = hashlib.sha256(target.encode("utf-8", errors="surrogateescape")).hexdigest()
+            entries.append({
+                "code": code,
+                "path": path,
+                "target_hash": target_hash,
+                "type": "symlink",
+            })
+        elif stat.S_ISREG(metadata.st_mode):
+            # Git keeps exactly one permission bit for a regular file and
+            # derives it from the owner execute bit; a mode change on an
+            # already-dirty file leaves the porcelain code untouched, so it
+            # has to be bound here.
+            git_mode = "100755" if metadata.st_mode & stat.S_IXUSR else "100644"
+            content_digest = hashlib.sha256()
+            try:
+                with candidate.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        content_digest.update(chunk)
+            except OSError:
+                return None
+            entries.append({
+                "code": code,
+                "content_hash": content_digest.hexdigest(),
+                "mode": git_mode,
+                "path": path,
+                "type": "regular",
+            })
+        elif stat.S_ISDIR(metadata.st_mode):
+            nested = _interrupted_merge_directory_fingerprint(candidate)
+            if nested is None:
+                return None
+            entries.append({
+                "code": code,
+                "path": path,
+                "type": "dir",
+            })
+        else:
+            entries.append({
+                "code": code,
+                "mode": f"{metadata.st_mode:o}",
+                "path": path,
+                "size": metadata.st_size,
+                "type": "special",
+            })
+
+    payload = {
+        "entries": entries,
+        "entry_count": len(entries),
+        "kind": inspection.kind,
+    }
+    payload_bytes = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8", errors="surrogatepass")
+    return hashlib.sha256(payload_bytes).hexdigest()
+
+
+def _interrupted_merge_directory_fingerprint(directory: Path) -> bytes | None:
+    """Bind a directory entry of the porcelain listing.
+
+    ``git status --untracked-files=all`` lists the files inside a plain
+    directory individually, so an ordinary directory entry carries no further
+    file state.
+
+    A nested git repository (a submodule gitlink, or an untracked checkout)
+    cannot be completely sealed, indexed, and backed up across repositories
+    by single-repository interrupted merge recovery. Return None so that
+    both seal creation and continuation fail closed.
+    """
+    try:
+        if (directory / ".git").exists():
+            return None
+    except OSError:
+        return None
+    return b"dir\0"
+
+
+def _interrupted_merge_fingerprint(
+    snapshot: dict[str, bytes],
+    worktree_path: Path | str | WorktreeInspection,
+    inspection: WorktreeInspection | None = None,
+) -> str | None:
+    """Seal an attached merge: control files, logical index and exact working files.
+
+    Returns None when the working files cannot be bound exactly; callers fail
+    closed on None.
+    """
+    if isinstance(worktree_path, WorktreeInspection):
+        inspection = worktree_path
+        wt_path = None
+    else:
+        wt_path = Path(worktree_path)
+    binding = {name: hashlib.sha256(data).hexdigest() for name, data in snapshot.items() if name != "index"}
+    if wt_path is not None and inspection is not None:
+        worktree_fingerprint = _interrupted_merge_worktree_fingerprint(wt_path, inspection)
+        if worktree_fingerprint is None:
+            return None
+        binding["worktree"] = worktree_fingerprint
+    elif inspection is not None:
+        binding["worktree"] = inspection.fingerprint
+    return hashlib.sha256(json.dumps(binding, sort_keys=True).encode()).hexdigest()
+
+
 @_entrypoint
 def _prune_worktree_lease_blocks(bucket: dict[str, Any]) -> None:
     """Forget streaks that nothing has touched for days.
@@ -547,6 +816,235 @@ def _prune_worktree_lease_blocks(bucket: dict[str, Any]) -> None:
             bucket.pop(key, None)
 
 @_entrypoint
+def compute_worktree_state_identity(
+    worktree_path: Path | str,
+    *,
+    materialized_paths: Iterable[object] | None = None,
+) -> str:
+    """Compute an auditable, secret-free identity of the worktree state."""
+    try:
+        path = Path(worktree_path).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return "unresolvable_path"
+    if not path.exists() or not path.is_dir() or not (path / ".git").exists():
+        return "missing_worktree"
+    head_sha = _git_commit_oid(path, "HEAD") or "none"
+    if _git_operation_in_progress(path):
+        return f"unresolved_git_operation:{head_sha}"
+    inspection = inspect_worktree(path, materialized_paths=materialized_paths)
+    if inspection.kind == "clean":
+        return f"clean:{head_sha}"
+    if inspection.kind == "orchestrator_seed_only":
+        return f"orchestrator_seed_only:{inspection.fingerprint}:{head_sha}"
+    return f"{inspection.kind}:{inspection.fingerprint}:{head_sha}"
+
+
+def _worker_worktree_activity_failure(worker: dict[str, Any], reason: str) -> bool:
+    """Record a non-healthy worktree probe without retaining sensitive detail."""
+    previous = worker.get("worktree_activity")
+    previous = dict(previous) if isinstance(previous, dict) else {}
+    activity = {
+        "status": "unverifiable",
+        "reason": reason,
+    }
+    if previous.get("last_activity_at"):
+        activity["last_activity_at"] = previous["last_activity_at"]
+    if previous.get("head_sha"):
+        activity["head_sha"] = previous["head_sha"]
+    if previous.get("dirty_mtime_at"):
+        activity["dirty_mtime_at"] = previous["dirty_mtime_at"]
+    if previous.get("dirty_path_count") is not None:
+        activity["dirty_path_count"] = previous["dirty_path_count"]
+    if activity == previous:
+        return False
+    worker["worktree_activity"] = activity
+    return True
+
+
+@_entrypoint
+def observe_worker_worktree_activity(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    task: dict[str, Any] | None = None,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Observe trusted task-worktree activity for the lifecycle stall guard.
+
+    This is deliberately a probe, not a lease or scheduler.  A worker's
+    Supervisor-created task worktree is trusted only when its path, branch,
+    repository common directory, and registered worktree record still agree.
+    Git status is then reduced to task-owned (blocking) entries; Supervisor
+    materialized context is excluded by the same cleanliness policy used at
+    handoff.  The worker record keeps only opaque state needed to compare the
+    next poll: timestamps, a commit SHA, a count, and reason codes.
+    """
+    now_dt = (now or datetime.now(UTC)).astimezone(UTC)
+    if str(worker.get("workspace_mode") or "") != "isolated_worktree":
+        # Legacy/file-inbox workers have no trusted worktree activity source.
+        return False
+
+    raw_path = str(worker.get("workspace_path") or "").strip()
+    if not raw_path:
+        return _worker_worktree_activity_failure(worker, "missing_worktree")
+    try:
+        worktree_path = Path(raw_path).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return _worker_worktree_activity_failure(worker, "unresolvable_worktree")
+    if not worktree_path.exists() or not worktree_path.is_dir() or not (worktree_path / ".git").exists():
+        return _worker_worktree_activity_failure(worker, "missing_worktree")
+
+    # A path in worker state is not sufficient authority by itself. Reuse the
+    # registry binding and worktree identity checks from workspace leasing so a
+    # stale/foreign checkout cannot manufacture a fresh activity timestamp.
+    try:
+        task_record = task if isinstance(task, dict) else canonical_task_record(config, worker.get("task_id"))
+        if not isinstance(task_record, dict) and worker.get("repository_id"):
+            task_record = {
+                "id": worker.get("task_id"),
+                "repository": worker.get("repository_id"),
+            }
+        repo_root, _repo_source = worker_task_repo_root(config, task_record)
+        if repo_root is None or not _worktree_matches_repo_common_dir(repo_root, worktree_path):
+            return _worker_worktree_activity_failure(worker, "untrusted_repository")
+        expected_branch = str(worker.get("workspace_branch") or "").strip()
+        if not expected_branch:
+            expected_branch = worker_task_branch(config, str(worker.get("task_id") or ""), task_record)
+        branch_rc, current_branch = _git_output(
+            worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD"
+        )
+        is_valid_review_head = False
+        if branch_rc != 0 or not current_branch or current_branch != expected_branch:
+            head_sha = _git_commit_oid(worktree_path, "HEAD")
+            if head_sha:
+                review_head = (
+                    worker.get("review_head")
+                    or worker.get("approved_head")
+                    or (task_record.get("review_submission") or {}).get("remote_sha")
+                    or task_record.get("approved_head")
+                )
+                if review_head and head_sha == review_head:
+                    is_valid_review_head = True
+            if not is_valid_review_head:
+                return _worker_worktree_activity_failure(worker, "wrong_branch")
+        registered = False
+        for record in _git_worktree_records(repo_root):
+            record_path = str(record.get("worktree") or "").strip()
+            if not record_path:
+                continue
+            try:
+                same_path = Path(record_path).resolve() == worktree_path
+            except (OSError, RuntimeError, ValueError):
+                same_path = False
+            if same_path and (_worktree_record_branch(record) == expected_branch or is_valid_review_head):
+                registered = True
+                break
+        if not registered:
+            return _worker_worktree_activity_failure(worker, "unregistered_worktree")
+        head_sha = _git_commit_oid(worktree_path, "HEAD")
+        if not head_sha:
+            return _worker_worktree_activity_failure(worker, "head_unreadable")
+        status_proc = subprocess.run(
+            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            cwd=worktree_path,
+            capture_output=True,
+            check=False,
+        )
+        if status_proc.returncode != 0:
+            return _worker_worktree_activity_failure(worker, "status_unreadable")
+        entries = _parse_porcelain_entries(status_proc.stdout)
+        materialized_paths = _worker_materialized_context_paths(state, worker)
+        blocking_entries = _blocking_dirt_entries(
+            entries,
+            worktree_path=worktree_path,
+            materialized_paths=materialized_paths,
+        )
+        dirty_mtimes: list[datetime] = []
+        for code, rel_path in blocking_entries:
+            try:
+                metadata = (worktree_path / rel_path).lstat()
+                dirty_mtime = datetime.fromtimestamp(metadata.st_mtime, tz=UTC)
+                # A future timestamp cannot prove that the worker wrote during
+                # this poll window.  Ignore it (as with a deleted/unreadable
+                # path) rather than clamping it to ``now``: clamping turns a
+                # single clock-skewed file into fresh activity on every poll.
+                if dirty_mtime <= now_dt:
+                    dirty_mtimes.append(dirty_mtime)
+            except FileNotFoundError:
+                # A deleted tracked path is expected to be absent at this
+                # point. Keep the rest of this status sample: another dirty
+                # path may still provide valid activity evidence.
+                if "D" in code:
+                    continue
+                return _worker_worktree_activity_failure(worker, "dirty_mtime_unreadable")
+            except (OSError, OverflowError, ValueError):
+                # A dirty path whose timestamp cannot be read is not evidence
+                # of activity. Do not let a partial status sample keep a worker
+                # alive.
+                return _worker_worktree_activity_failure(worker, "dirty_mtime_unreadable")
+    except Exception:
+        # Git/registry failures are diagnostic only. They must never become a
+        # healthy activity signal or break settlement of the worker itself.
+        return _worker_worktree_activity_failure(worker, "probe_failed")
+
+    previous = worker.get("worktree_activity")
+    previous = dict(previous) if isinstance(previous, dict) else {}
+    previous_head = str(previous.get("head_sha") or "")
+    previous_dirty_mtime = _parse_iso_utc(str(previous.get("dirty_mtime_at") or ""))
+    previous_activity = _parse_iso_utc(str(previous.get("last_activity_at") or ""))
+    dirty_mtime = max(dirty_mtimes) if dirty_mtimes else None
+
+    activity_candidates: list[datetime] = []
+    if previous_head and previous_head != head_sha:
+        # The commit timestamp is not authoritative for when this poll first
+        # observed the transition (it may have been authored earlier), so use
+        # the trusted observation time.
+        activity_candidates.append(now_dt)
+    if dirty_mtime is not None:
+        if previous_dirty_mtime is not None:
+            if dirty_mtime > previous_dirty_mtime:
+                activity_candidates.append(dirty_mtime)
+        else:
+            launch_at = _parse_iso_utc(str(worker.get("last_event_at") or ""))
+            if launch_at is None or dirty_mtime > launch_at.astimezone(UTC):
+                activity_candidates.append(dirty_mtime)
+    candidate = max(activity_candidates) if activity_candidates else None
+    last_activity = previous_activity
+    if candidate is not None and (last_activity is None or candidate > last_activity):
+        last_activity = candidate
+
+    activity: dict[str, Any] = {
+        "status": "verified",
+        "head_sha": head_sha,
+        "dirty_path_count": len(blocking_entries),
+    }
+    if dirty_mtime is not None:
+        activity["dirty_mtime_at"] = isoformat_utc(dirty_mtime)
+    if last_activity is not None:
+        activity["last_activity_at"] = isoformat_utc(last_activity)
+    if activity == previous:
+        return False
+    worker["worktree_activity"] = activity
+    return True
+
+
+@_entrypoint
+def is_worktree_lease_block_repaired(entry: dict[str, Any]) -> bool:
+    """Return True when a recorded lease block's worktree is verified clean and idle."""
+    if not isinstance(entry, dict):
+        return False
+    raw_path = entry.get("worktree_path")
+    if not raw_path:
+        return False
+    identity = compute_worktree_state_identity(
+        raw_path,
+        materialized_paths=entry.get("materialized_paths"),
+    )
+    return identity.startswith("clean:") or identity.startswith("orchestrator_seed_only:")
+
+
+@_entrypoint
 def _record_worktree_lease_block(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -554,6 +1052,9 @@ def _record_worktree_lease_block(
     task_id: str,
     refresh_status: str,
     message: str,
+    worktree_path: Path | str | None = None,
+    materialized_paths: Any = None,
+    worktree_state_identity: str | None = None,
 ) -> int:
     """Count consecutive lease blocks and escalate once they stop being noise.
 
@@ -576,6 +1077,24 @@ def _record_worktree_lease_block(
     entry["count"] = int(entry.get("count") or 0) + 1
     entry["last_at"] = utc_now()
     entry["message"] = message
+
+    if worktree_path is not None:
+        try:
+            wp = Path(worktree_path).resolve()
+            entry["worktree_path"] = str(wp)
+            if worktree_state_identity is None:
+                worktree_state_identity = compute_worktree_state_identity(wp, materialized_paths=materialized_paths)
+            entry["worktree_state_identity"] = worktree_state_identity
+        except (OSError, RuntimeError, ValueError):
+            entry["worktree_path"] = str(worktree_path)
+            if worktree_state_identity is not None:
+                entry["worktree_state_identity"] = worktree_state_identity
+    elif worktree_state_identity is not None:
+        entry["worktree_state_identity"] = worktree_state_identity
+
+    if materialized_paths is not None:
+        entry["materialized_paths"] = list(materialized_paths)
+
     bucket[key] = entry
 
     threshold = max(2, int(worker_runtime_settings(config).get("lease_block_escalate_after", 5)))
@@ -646,6 +1165,7 @@ def _refresh_reused_worker_worktree(
     *,
     network_timeout_seconds: float | None = None,
     materialized_paths=None,
+    required_head: str | None = None,
 ) -> tuple[bool, str]:
     """Lease a clean reused worktree against one immutable cycle base.
 
@@ -677,19 +1197,6 @@ def _refresh_reused_worker_worktree(
     ):
         return False, "wrong_worktree: path is not the expected repository worktree"
 
-    branch_rc, branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
-    if branch_rc == 0:
-        if branch != expected_branch:
-            return False, f"wrong_branch: expected {expected_branch}, found {branch}"
-    else:
-        current_head = _git_commit_oid(worktree_path, "HEAD")
-        expected_head = (
-            _git_commit_oid(repo_root, f"refs/heads/{expected_branch}")
-            or _git_commit_oid(repo_root, f"origin/{expected_branch}")
-            or _git_commit_oid(repo_root, expected_branch)
-        )
-        if not current_head or not expected_head or current_head != expected_head:
-            return False, f"wrong_branch: expected {expected_branch} ({expected_head or 'none'}), found detached HEAD at {current_head or 'none'}"
     if _git_operation_in_progress(worktree_path):
         return False, "unresolved_git_operation"
 
@@ -711,6 +1218,117 @@ def _refresh_reused_worker_worktree(
             return False, f"{_SKIPPED_DIRTY_WORKTREE}: {inspection.detail}"
 
     local_head = _git_commit_oid(worktree_path, "HEAD")
+    if not local_head:
+        return False, "unverifiable_refs: missing local HEAD"
+
+    if required_head:
+        required_head = str(required_head).strip()
+        expected_head = _git_commit_oid(repo_root, required_head)
+        if not expected_head or expected_head != required_head:
+            return False, "review_head_unavailable"
+        if local_head != expected_head:
+            review_contains_rc, _ = _git_output(
+                worktree_path, "merge-base", "--is-ancestor", local_head, expected_head
+            )
+            if review_contains_rc == 0:
+                # local_head is an ancestor of expected_head: fast-forward task branch if attached, or checkout.
+                branch_rc, current_branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
+                if branch_rc == 0 and current_branch == expected_branch:
+                    merge_proc = subprocess.run(
+                        ["git", "merge", "--ff-only", expected_head],
+                        cwd=worktree_path,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    if merge_proc.returncode != 0:
+                        details = (merge_proc.stderr or merge_proc.stdout or "").strip().splitlines()
+                        return False, f"review_head_checkout_failed: {details[0] if details else 'unknown'}"
+                else:
+                    checkout_proc = subprocess.run(
+                        ["git", "checkout", expected_head],
+                        cwd=worktree_path,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    if checkout_proc.returncode != 0:
+                        details = (checkout_proc.stderr or checkout_proc.stdout or "").strip().splitlines()
+                        return False, f"review_head_checkout_failed: {details[0] if details else 'unknown'}"
+            else:
+                # R1: Check if expected_head is an ancestor of local_head (workspace
+                # advanced past submitted source, e.g. post-merge dev fast-forward).
+                # The reviewer needs the exact submitted source, so checkout to it.
+                reverse_rc, _ = _git_output(
+                    worktree_path, "merge-base", "--is-ancestor", expected_head, local_head
+                )
+                if reverse_rc != 0:
+                    return False, f"review_head_mismatch: local={local_head}, expected={expected_head}"
+                # A backward pin must not orphan clean, committed detached work.
+                branch_rc, _ = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
+                if branch_rc != 0:
+                    # Restrict preservation to durable branch refs, not HEAD/reflog.
+                    preserved_rc, preserved_refs = _git_output(
+                        worktree_path, "for-each-ref", "--format=%(refname)",
+                        "--contains", local_head, "refs/heads/", "refs/remotes/",
+                    )
+                    if preserved_rc != 0 or not preserved_refs.strip():
+                        return False, f"review_head_mismatch: unpreserved detached work at {local_head}"
+                checkout_proc = subprocess.run(
+                    ["git", "checkout", expected_head],
+                    cwd=worktree_path,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if checkout_proc.returncode != 0:
+                    details = (checkout_proc.stderr or checkout_proc.stdout or "").strip().splitlines()
+                    return False, f"review_head_checkout_failed: {details[0] if details else 'unknown'}"
+            local_head = _git_commit_oid(worktree_path, "HEAD")
+            if local_head != expected_head:
+                return False, "review_head_fast_forward_incomplete"
+        # A reviewer must see the exact submitted commit. Once that commit has
+        # been established, the ordinary base refresh below must not advance
+        # this checkout when dev already contains it.
+        return True, f"review_head_pinned_at_{expected_head[:12]}"
+
+    # No required_head (owner or finalize lease): ensure attached to expected_branch
+    branch_rc, current_branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
+    if branch_rc == 0:
+        if current_branch != expected_branch:
+            return False, f"wrong_branch: expected {expected_branch}, found {current_branch}"
+    else:
+        # HEAD is detached (e.g. left by reviewer lease). Re-attach to expected_branch.
+        expected_head = (
+            _git_commit_oid(repo_root, f"refs/heads/{expected_branch}")
+            or _git_commit_oid(repo_root, f"origin/{expected_branch}")
+            or _git_commit_oid(repo_root, expected_branch)
+        )
+        if not expected_head:
+            return False, f"wrong_branch: expected {expected_branch}, branch ref not found in repo"
+        # Validate that the detached checkout is a legitimate saved review pin (i.e. contained in expected_head)
+        # before switching to avoid losing unreferenced committed commits (drift D).
+        if local_head != expected_head:
+            is_anc_rc, _ = _git_output(
+                worktree_path, "merge-base", "--is-ancestor", local_head, expected_head
+            )
+            if is_anc_rc != 0:
+                return False, f"wrong_branch: expected {expected_branch} ({expected_head}), found detached HEAD at {local_head} with unmerged commits"
+        checkout_proc = subprocess.run(
+            ["git", "checkout", expected_branch],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if checkout_proc.returncode != 0:
+            details = (checkout_proc.stderr or checkout_proc.stdout or "").strip().splitlines()
+            return False, f"wrong_branch: unable to checkout {expected_branch}: {details[0] if details else 'unknown'}"
+        branch_rc, current_branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
+        if branch_rc != 0 or current_branch != expected_branch:
+            return False, f"wrong_branch: expected {expected_branch}, found {current_branch or 'detached HEAD'}"
+        local_head = _git_commit_oid(worktree_path, "HEAD")
+
     # Production passes the SHA resolved once at the beginning of this cycle.
     # Symbolic refs remain accepted only for direct diagnostic/test callers.
     base_head = _git_commit_oid(worktree_path, base_sha)
@@ -773,6 +1391,34 @@ def _worker_materialized_context_paths(state: dict[str, Any], worker: dict[str, 
             paths.append(str(raw))
     return paths
 
+@_entrypoint
+def _dead_owner_continuation_eligible(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    task: dict[str, Any] | None,
+) -> bool:
+    """Allow recovery only for the dead task owner's execution worker."""
+    request = worker.get("request_snapshot")
+    raw_reason = (
+        request.get("reason")
+        if isinstance(request, dict)
+        else worker.get("reason")
+    )
+    if str(raw_reason or "").strip() not in {
+        REASON_OWNED_READY,
+        REASON_OWNED_IN_PROGRESS,
+    }:
+        return False
+    if not isinstance(task, dict):
+        return False
+    schema = config.get("schema") if isinstance(config.get("schema"), dict) else {}
+    owner = str(task.get(schema.get("assignee_field", "owner")) or "")
+    worker_agent = worker_logical_dispatch_agent_id(config, worker)
+    return bool(
+        owner
+        and worker_agent
+        and normalize_agent_id(owner) == normalize_agent_id(worker_agent)
+    )
 
 @_entrypoint
 def seal_worker_handoff(
@@ -832,6 +1478,19 @@ def seal_worker_handoff(
     submission = task.get("review_submission") if isinstance(task, dict) else None
     expected_head = str(submission.get("remote_sha") or "") if isinstance(submission, dict) else ""
     if str((task or {}).get("status") or "").lower() == "review" and expected_head and head_sha != expected_head:
+        # R1: For merged review submissions, the owner workspace was fast-forwarded
+        # to dev/merge SHA. The submitted source is immutable and already landed.
+        # Accept if the submitted source is an ancestor of the workspace HEAD.
+        is_merged_submission = (
+            isinstance(submission, dict)
+            and (submission.get("merged_at") or submission.get("merge_commit"))
+        )
+        if is_merged_submission:
+            ancestor_rc, _ = _git_output(
+                workspace_path, "merge-base", "--is-ancestor", expected_head, head_sha
+            )
+            if ancestor_rc == 0:
+                return WorkerHandoffSeal(True, inspection.kind, inspection.detail, head_sha, inspection.fingerprint)
         return WorkerHandoffSeal(
             False,
             "review_head_mismatch",
@@ -857,6 +1516,15 @@ def record_unsealed_worker_handoff(
     schema = config.get("schema") if isinstance(config.get("schema"), dict) else {}
     owner = str((task or {}).get(schema.get("assignee_field", "owner")) or "")
     bucket = state.setdefault("worker_worktrees", {}).setdefault("handoff_blocks", {})
+    existing = bucket.get(task_id)
+    rejection_count = 1
+    if (
+        isinstance(existing, dict)
+        and existing.get("head_sha") == seal.head_sha
+        and existing.get("dirt_fingerprint") == seal.dirt_fingerprint
+        and existing.get("reason") == seal.reason
+    ):
+        rejection_count = int(existing.get("rejection_count", 1)) + 1
     bucket[task_id] = {
         "task_id": task_id,
         "owner": owner,
@@ -868,6 +1536,7 @@ def record_unsealed_worker_handoff(
         "detail": seal.detail,
         "source_run_id": worker.get("run_id"),
         "sealed_at": utc_now(),
+        "rejection_count": rejection_count,
     }
 
 
@@ -897,12 +1566,21 @@ def sealed_owner_continuation_allowed(
     dirt fingerprint was recorded.  Reviewers and helper claims always remain
     fail-closed.
     """
-    if str(request.reason or "") != "owned_in_progress_dispatch":
+    if str(request.reason or "") not in {
+        REASON_OWNED_READY,
+        REASON_OWNED_IN_PROGRESS,
+    }:
         return False, "not_owner_execution"
     task_id = str(request.task_id or "")
     record = ((state.get("worker_worktrees") or {}).get("handoff_blocks") or {}).get(task_id)
     if not isinstance(record, dict):
         return False, "no_handoff_block"
+    rejection_count = int(record.get("rejection_count", 1))
+    max_rejections = int(
+        (config.get("worker_reassignment") or {}).get("after_attempts", 2)
+    )
+    if rejection_count > max_rejections:
+        return False, f"unsealed_handoff_limit_exceeded (repeated {rejection_count} times)"
     schema = config.get("schema") if isinstance(config.get("schema"), dict) else {}
     owner = str((task or {}).get(schema.get("assignee_field", "owner")) or "")
     if not owner or normalize_agent_id(owner) != normalize_agent_id(str(target_agent or "")):
@@ -916,8 +1594,25 @@ def sealed_owner_continuation_allowed(
     if recorded_path != worktree_path.resolve() or str(record.get("workspace_branch") or "") != branch:
         return False, "workspace_changed"
     inspection = inspect_worktree(worktree_path, materialized_paths=materialized_paths)
-    if inspection.kind != "owner_dirty" or inspection.fingerprint != record.get("dirt_fingerprint"):
-        return False, "dirt_changed"
+    if record.get("reason") == "interrupted_merge":
+        if inspection.kind == "status_failed":
+            return False, "merge_state_changed"
+        snapshot = _interrupted_merge_snapshot(worktree_path)
+        if snapshot is None:
+            return False, "merge_state_changed"
+        merge_fingerprint = _interrupted_merge_fingerprint(snapshot, worktree_path, inspection)
+        if merge_fingerprint is None or merge_fingerprint != record.get("dirt_fingerprint"):
+            return False, "merge_state_changed"
+    else:
+        # An ordinary dirty seal binds porcelain status and dirty file bytes
+        # only.  A cherry-pick, revert or rebase started after the seal can
+        # leave HEAD, the index and every dirty byte untouched (an empty
+        # cherry-pick does exactly that), so the fingerprint cannot see it.
+        # Only a seal that captured the merge itself may resume one.
+        if _git_operation_in_progress(worktree_path):
+            return False, "git_operation_in_progress"
+        if inspection.kind != "owner_dirty" or inspection.fingerprint != record.get("dirt_fingerprint"):
+            return False, "dirt_changed"
     head_sha = _git_commit_oid(worktree_path, "HEAD")
     if not head_sha or head_sha != record.get("head_sha"):
         return False, "head_changed"
@@ -1064,7 +1759,35 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
         body.extend(["", "## Acceptance"])
         body.extend([f"- {item}" for item in acceptance] or ["- none"])
         body.extend(["", "## Verification"])
-        body.extend([f"- `{item}`" for item in verification] or ["- none"])
+        if verification:
+            audits = verification_evidence.audit_commands(verification)
+            for audit in audits:
+                if audit.ok:
+                    body.append(f"- `{audit.command}`")
+                else:
+                    body.append(
+                        f"- `{audit.command}` — REJECTED ({', '.join(audit.violations)}): "
+                        + "; ".join(audit.details)
+                    )
+            body.extend(
+                [
+                    "",
+                    "### Verification Evidence Policy",
+                    "- Run each command so its own exit code survives: no pipe without `set -o pipefail`,",
+                    "  no `|| true`, no `; echo ...` tail, no `set +e`, no backgrounding.",
+                    "- Record a receipt binding head SHA, exact command, real exit code, duration, and test selection.",
+                    "- A run killed by a signal or timeout is `interrupted`, never a pass, and is repeated with the",
+                    "  same selection rather than escalated to a wider suite.",
+                    "- Re-running an already-measured head SHA and selection needs an explicit retry reason.",
+                ]
+            )
+            rejected = [audit for audit in audits if not audit.ok]
+            if rejected:
+                body.append(
+                    f"- {len(rejected)} declared command(s) above are rejected by the policy and must be fixed before use."
+                )
+        else:
+            body.append("- none")
         body.append("")
         return "\n".join(body)
 
@@ -1086,10 +1809,12 @@ def _generated_collaboration_guide(config: dict[str, Any]) -> str:
             "",
             "## Workspace",
             "- You run inside an isolated per-task git worktree. It is NOT a staging area.",
-            "- Confirm you are on the expected `task/<TASK-ID>` branch; use",
+            "- Confirm you are on the expected `task/<TASK-ID>` branch (or verified immutable review checkout); use",
             "  `./delivery_toolchain/git/task_start.sh \"<TASK-ID>\"` if not.",
             "- ai-status.json / current-work.md / ai-activity-log.jsonl are seeded here",
             "  (gitignored); do not edit them by hand — use the status commands.",
+            "- Do not rely on local worktree files alone to judge repository truth or configuration; verify",
+            "  against `origin/dev` (e.g. `git show origin/dev:<path>`) to avoid acting on stale files.",
             "",
             "## Commit discipline (critical — uncommitted work jams the fleet)",
             "- Commit AND push your work before you finish. A worktree left dirty blocks",
@@ -1101,13 +1826,46 @@ def _generated_collaboration_guide(config: dict[str, Any]) -> str:
             "- No interactive git (`git add -p/-i`, `git commit --interactive`, `git rebase -i`).",
             "",
             "## Status & closeout",
-            "- Update status only via `scripts/ai-status.sh` or `python3 scripts/ai_status.py`",
-            "  with your own `AI_NAME`.",
+            "- Update status only via `AI_NAME=<Name> \"$PANTHEON_STATUS_ROOT/scripts/ai-status.sh\" ...`",
+            "  (never run status scripts from isolated worktrees without $PANTHEON_STATUS_ROOT).",
             "- For `owned_finalize_dispatch` / `review_approved`, follow",
             "  .orchestrator/skills/task-closeout-finalization.md before `... done`.",
             "",
+            "## Reopening a task (`reopen`)",
+            "- `scripts/ai-status.sh reopen <task-id> \"<message>\" [--reason=<reason>]`",
+            "- `--reason` decides whether the reopen counts as **review churn**, which past",
+            "  the threshold rotates ownership away from the current owner. The message text",
+            "  is never parsed to infer this — only `--reason` is trusted.",
+            "- Counts as churn (a real defect the owner must fix):",
+            "  - `review_finding` — reviewer found a genuine implementation defect.",
+            "- Does NOT count as churn (control-plane recovery, nobody's fault):",
+            "  - `stale_review_sha` — review pinned to a head that has been superseded.",
+            "  - `worktree_lease_mismatch` — worktree/lease conflict blocked the reviewer.",
+            "  - `control_plane_recovery` — any other orchestrator-side repair or requeue.",
+            "- Omitting `--reason` falls back to the actor's role and fails safe: a reviewer",
+            "  reopen counts as churn. Always pass `--reason` when reopening for recovery,",
+            "  or the recovery is charged to the owner as if it were a review rejection.",
+            "",
         ]
     )
+
+_GITIGNORE_MAGIC = re.compile(r"([\[\]*?])")
+
+
+def _local_exclude_pattern(rel_path: str) -> str:
+    """Render one materialized path as a literal, root-anchored exclude line.
+
+    The leading ``/`` pins the pattern to the repository root and the escapes
+    keep glob metacharacters in a filename from widening it, so the entry can
+    only ever hide the exact file the supervisor just wrote and hash-verified.
+    Excluding the enclosing directory instead would also hide anything the
+    worker created there, which is dirt that must still be reported.
+    """
+    normalized = str(rel_path or "").strip().replace("\\", "/").lstrip("/")
+    if not normalized:
+        return ""
+    return "/" + _GITIGNORE_MAGIC.sub(r"\\\1", normalized)
+
 
 @_entrypoint
 def materialize_worker_context_files(
@@ -1385,6 +2143,32 @@ def materialize_worker_context_files(
                 ".orchestrator/task-briefs/",
                 ".orchestrator/reviews/",
             ]
+            # The fixed list above only covers the canonical references that
+            # every worker gets. A task's own `source_docs` land wherever the
+            # board points them -- ai-task-archive/tasks/<id>.json, for one --
+            # and the supervisor writing them is what makes the worktree
+            # untracked-dirty, so task_finalize fails closed on the
+            # orchestrator's own copy and the task can never be submitted.
+            # Only manifest entries whose paths are NOT already covered by
+            # the fixed prefix list are added. Files under .orchestrator/
+            # are covered by the existing prefixes or gitignored state and
+            # must remain visible to workspace regression tests.
+            _COVERED_PREFIXES = (
+                "AI_COLLABORATION_GUIDE.md",
+                "ai-status.json",
+                "current-work.md",
+                "ai-activity-log.jsonl",
+                ".orchestrator/",
+            )
+            for entry in manifest_entries:
+                rel = str(entry.get("relative_path") or "").strip().replace("\\", "/").lstrip("/")
+                if not rel:
+                    continue
+                if any(rel == prefix.rstrip("/") or rel.startswith(prefix) for prefix in _COVERED_PREFIXES):
+                    continue
+                pattern = _local_exclude_pattern(rel)
+                if pattern:
+                    lines_to_add.append(pattern)
             new_lines = [line for line in lines_to_add if line not in existing_exclude.splitlines()]
             if new_lines:
                 with open(exclude_path, "a", encoding="utf-8") as ef:
@@ -1442,11 +2226,8 @@ def prepare_worker_workspace(
     # fell back to a derived name and the default repository. Read the canonical
     # record instead, and keep the snapshot only as the fallback.
     task_metadata = request.metadata.get("task")
-    task_record = canonical_task_record(
-        config,
-        workspace_task_id,
-        task_metadata if isinstance(task_metadata, dict) else None,
-    )
+    canonical_record = canonical_task_record(config, workspace_task_id)
+    task_record = canonical_record or (task_metadata if isinstance(task_metadata, dict) else None)
     binding = worker_task_repository_binding(config, task_record)
     repo_root = binding.root
     repo_root_source = binding.source if binding.resolved else (binding.error or binding.source)
@@ -1480,17 +2261,37 @@ def prepare_worker_workspace(
         repo_root,
         fallback=binding.repo_id or "pantheon",
     )
-    base, base_error = resolve_worker_base(
-        repo_root,
-        repository_id=repository_id,
-        default_branch=binding.default_branch,
-        base_cache=base_cache,
-        network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
+    branch = worker_task_branch(config, workspace_task_id, task_record)
+    frozen_evidence = (
+        str(request.reason or "") in {REASON_OWNED_READY, REASON_OWNED_IN_PROGRESS, REASON_HELPER_CLAIM}
+        and isinstance(task_record, dict)
+        and "frozen_evidence_base_sha" in task_record
     )
+    if frozen_evidence:
+        if canonical_record is None:
+            base, base_error = None, "frozen_evidence_base_requires_canonical_task"
+        else:
+            base, base_error = resolve_frozen_evidence_base(
+                repo_root,
+                repository_id=repository_id,
+                default_branch=binding.default_branch,
+                branch=branch,
+                sha=canonical_record["frozen_evidence_base_sha"],
+            )
+    else:
+        # Review/approved-head pinning and ordinary tasks keep their existing
+        # registry base path. A stale request snapshot cannot pin a task base.
+        base, base_error = resolve_worker_base(
+            repo_root,
+            repository_id=repository_id,
+            default_branch=binding.default_branch,
+            base_cache=base_cache,
+            network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
+        )
     if base is None:
         message = (
             f"Cannot lease isolated worker worktree for {workspace_task_id}: "
-            f"failed to resolve fresh registry base ({base_error or 'unknown error'})."
+            f"failed to resolve worker base ({base_error or 'unknown error'})."
         )
         write_activity_log(
             config,
@@ -1507,7 +2308,6 @@ def prepare_worker_workspace(
         )
         return False, message
 
-    branch = worker_task_branch(config, workspace_task_id, task_record)
     worktree_path = worker_task_worktree_path(
         config,
         workspace_task_id,
@@ -1518,11 +2318,19 @@ def prepare_worker_workspace(
     reused = False
     base_relation = "created_from_exact_base"
     materialized_paths = _orchestrator_materialized_paths(state, request, workspace_task_id)
+    review_submission = task_record.get("review_submission") if isinstance(task_record, dict) else None
+    required_review_head = (
+        str(review_submission.get("remote_sha") or "").strip()
+        if str(request.reason or "") == REASON_REVIEW_READY and isinstance(review_submission, dict)
+        else None
+    )
 
     # A task branch has exactly one registered lease.  `reuse_existing=false`
     # never had a safe meaning for a single branch (Git cannot check it out in
     # two worktrees), so always discover and validate the existing binding.
-    existing = _existing_worktree_for_branch(repo_root, branch, exclude_root=True)
+    existing = _existing_worktree_for_branch(
+        repo_root, branch, exclude_root=True, expected_path=worktree_path
+    )
     if existing:
         worktree_path = existing
         reused = True
@@ -1534,8 +2342,17 @@ def prepare_worker_workspace(
             branch,
             network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
             materialized_paths=materialized_paths,
+            required_head=required_review_head,
         )
-        if not refresh_ok and _is_skipped_dirty_worktree(refresh_status):
+        handoff_record = ((state.get("worker_worktrees") or {}).get("handoff_blocks") or {}).get(workspace_task_id)
+        sealed_interrupted_merge = isinstance(handoff_record, dict) and handoff_record.get("reason") == "interrupted_merge"
+        # `unresolved_git_operation` becomes a continuation candidate only when
+        # the seal captured that exact merge.  An ordinary dirty seal never
+        # covered Git operation state, so for it the refresh verdict stands.
+        if not refresh_ok and (
+            _is_skipped_dirty_worktree(refresh_status)
+            or (refresh_status == "unresolved_git_operation" and sealed_interrupted_merge)
+        ):
             allowed, continuation_detail = sealed_owner_continuation_allowed(
                 config,
                 state,
@@ -1552,6 +2369,15 @@ def prepare_worker_workspace(
                 refresh_status = "sealed_owner_continuation"
                 base_relation = "sealed_owner_continuation"
                 request.metadata["worktree_continuation"] = "sealed_owner_dirt"
+                if sealed_interrupted_merge:
+                    request.metadata["worktree_continuation"] = "sealed_owner_merge"
+                    request.message = (
+                        "INTERRUPTED MERGE RECOVERY: the previous writer has exited. The exact "
+                        "index, merge metadata and dirty files were preserved and sealed for you. "
+                        "Resume this same merge before further implementation; inspect staged upstream "
+                        "changes and task-owned unstaged work separately. Preserve both histories; "
+                        "do not reset, discard, or resubmit before verification.\n\n" + request.message
+                    )
                 request.message = (
                     "CLOSEOUT CONTINUATION: your prior worker exited after leaving the exact "
                     f"task worktree dirty ({continuation_detail}). You alone may finish this "
@@ -1659,12 +2485,23 @@ def prepare_worker_workspace(
                 task_id=str(request.task_id or workspace_task_id),
                 refresh_status=refresh_status,
                 message=message,
+                worktree_path=worktree_path,
+                materialized_paths=materialized_paths,
             )
             return False, message
         _clear_worktree_lease_block(state, str(request.task_id or workspace_task_id))
         if not owner_continuation:
             clear_unsealed_worker_handoff(state, str(request.task_id or workspace_task_id))
-        if refresh_status.startswith("ff_to_"):
+        if refresh_status.startswith("review_head_pinned_at_"):
+            base_relation = "review_head_pinned"
+            request.metadata.update(
+                {
+                    "review_head_immutable": True,
+                    "review_head": required_review_head,
+                    "worktree_refresh_status": refresh_status,
+                }
+            )
+        elif refresh_status.startswith("ff_to_"):
             base_relation = "fast_forwarded"
         elif refresh_status.startswith("base_present_at_"):
             base_relation = "contains_base"
@@ -1718,7 +2555,28 @@ def prepare_worker_workspace(
             _git_ref_exists(repo_root, f"refs/heads/{branch}")
             or _git_ref_exists(repo_root, f"refs/remotes/origin/{branch}")
         )
-        created, error = _create_worker_worktree(repo_root, worktree_path, branch, base.sha)
+        creation_sha = base.sha
+        if required_review_head:
+            resolved_review_head = _git_commit_oid(repo_root, required_review_head)
+            if not resolved_review_head or resolved_review_head != required_review_head:
+                refresh_status = "review_head_unavailable"
+                message = (
+                    f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+                    "submitted review head is unavailable locally; refusing to create a "
+                    "review checkout at the cycle base."
+                )
+                _record_worktree_lease_block(
+                    config,
+                    state,
+                    task_id=str(request.task_id or workspace_task_id),
+                    refresh_status=refresh_status,
+                    message=message,
+                    worktree_path=worktree_path,
+                    materialized_paths=materialized_paths,
+                )
+                return False, message
+            creation_sha = resolved_review_head
+        created, error = _create_worker_worktree(repo_root, worktree_path, branch, creation_sha)
         if not created:
             message = error or f"Failed to create worker worktree for {workspace_task_id}."
             write_activity_log(
@@ -1735,7 +2593,7 @@ def prepare_worker_workspace(
                 },
             )
             return False, message
-        if branch_preexisted:
+        if branch_preexisted or required_review_head:
             # A branch without a currently registered checkout is still an
             # existing task branch, not a new task.  Apply the same exact-SHA
             # relation check before handing it to a worker.
@@ -1746,6 +2604,7 @@ def prepare_worker_workspace(
                 branch,
                 network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
                 materialized_paths=materialized_paths,
+                required_head=required_review_head,
             )
             if not refresh_ok:
                 message = (
@@ -1758,9 +2617,20 @@ def prepare_worker_workspace(
                     task_id=str(request.task_id or workspace_task_id),
                     refresh_status=refresh_status,
                     message=message,
+                    worktree_path=worktree_path,
+                    materialized_paths=materialized_paths,
                 )
                 return False, message
-            if refresh_status.startswith("ff_to_"):
+            if refresh_status.startswith("review_head_pinned_at_"):
+                base_relation = "review_head_pinned"
+                request.metadata.update(
+                    {
+                        "review_head_immutable": True,
+                        "review_head": required_review_head,
+                        "worktree_refresh_status": refresh_status,
+                    }
+                )
+            elif refresh_status.startswith("ff_to_"):
                 base_relation = "fast_forwarded"
             elif refresh_status.startswith("base_present_at_"):
                 base_relation = "contains_base"
@@ -1772,6 +2642,18 @@ def prepare_worker_workspace(
                         "worktree_refresh_status": refresh_status,
                     }
                 )
+
+    if frozen_evidence:
+        rc, _ = _git_output(worktree_path, "merge-base", "--is-ancestor", base.sha, "HEAD")
+        if rc != 0:
+            return False, "Cannot lease frozen evidence task: base is not an ancestor of workspace HEAD."
+        request.metadata["frozen_evidence_base_sha"] = base.sha
+        request.message = (
+            f"FROZEN EVIDENCE BASE: canonical task branch is {branch}; fixed candidate is {base.sha}. "
+            "Keep this branch's evidence-only history. Do not merge or rebase moving dev into it, "
+            "and do not create a replacement branch from dev. Independent review, required CI "
+            "and all candidate/release validators still apply.\n\n"
+        ) + request.message
 
     # The workspace is the task's own repository; the status root is not. It
     # names the fleet that owns ai-status.json, the approval queue and the
@@ -1840,7 +2722,160 @@ def worker_worktree_housekeeping_settings(config: dict[str, Any]) -> dict[str, A
         "enabled": bool(settings.get("enabled", True)),
         "tick_interval_seconds": int(settings.get("tick_interval_seconds", 600) or 0),
         "max_removals_per_tick": int(settings.get("max_removals_per_tick", 5)),
+        # How long a fully-refused reclaim may stay quiet before it is logged
+        # again. Only rate-limits the repeat: a change in the refusal mix still
+        # logs immediately.
+        "stall_log_interval_seconds": int(settings.get("stall_log_interval_seconds", 3600) or 0),
+        # A settled task's worktree is reclaimable whether or not its branch
+        # merged. Commits and refs live in the repository, not in the checkout,
+        # so removing a clean worktree destroys nothing the branch does not
+        # already hold. Requiring a merge kept 17 of 68 worktrees on the live
+        # host forever: their tasks were done, their branches never landed, and
+        # no later event could ever make them mergeable.
+        "reclaim_settled_unmerged": bool(settings.get("reclaim_settled_unmerged", True)),
+        # Signal init-reparented holders inside a settled task's worktree.
+        # Without this the pruner can name an orphan-pinned worktree but never
+        # act on it, which is how 28 pgserver instances -- the oldest twelve
+        # days old -- kept their worktrees pinned indefinitely.
+        "reap_orphan_holders": bool(settings.get("reap_orphan_holders", True)),
     }
+
+
+# `superseded` and `cancelled` are settled for reclaim purposes even though no
+# deliverable came out of them: the task will not be worked again, so nothing
+# will ever return to its worktree.
+_SETTLED_TASK_STATUSES = frozenset({"archived", "cancelled", "closed", "done", "superseded"})
+
+
+@_entrypoint
+def _worktree_task_id(worktree_path: Path) -> str:
+    """The task id a managed worktree directory name encodes.
+
+    Lease renewal appends `.lease_<ts>_<hex>`, and it appends again on each
+    subsequent renewal, so `odp-x-001.lease_A.lease_B` names one task rather
+    than three. Everything from the first marker on is provenance, not
+    identity.
+    """
+    base = worktree_path.name.split(".lease_", 1)[0]
+    return base.strip().upper()
+
+
+@_entrypoint
+def _task_board_settlement_index(config: dict[str, Any]) -> dict[str, str]:
+    """Map every task the board still carries to `settled` or `active`.
+
+    Read once per tick rather than once per worktree: the board is a single
+    file and a 68-worktree scan would otherwise open it 68 times.
+    """
+    from common import load_status
+
+    index: dict[str, str] = {}
+    try:
+        tasks = load_status(config).get("tasks", []) or []
+    except (OSError, ValueError):
+        return index
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        task_id = str(task.get("id") or "").strip().upper()
+        if not task_id:
+            continue
+        status = str(task.get("status") or "").strip().lower()
+        index[task_id] = "settled" if status in _SETTLED_TASK_STATUSES else "active"
+    return index
+
+
+@_entrypoint
+def _task_settlement(config: dict[str, Any], task_id: str, board_index: dict[str, str]) -> str:
+    """`settled`, `active`, or `unknown` for the task owning a worktree.
+
+    `unknown` is deliberately not folded into `settled`. A directory whose name
+    matches no task on the board and none in the archive is one this function
+    cannot explain, and deciding removal from an absence of evidence is how a
+    reclaimer eats work nobody showed it. Such a worktree keeps the old
+    merged-branch requirement and is reclaimed only on the original terms.
+    """
+    if not task_id:
+        return "unknown"
+    on_board = board_index.get(task_id)
+    if on_board is not None:
+        return on_board
+    # Not on the board. `done` archives a task and drops it from the board in
+    # one step, so the archive -- not the board's silence -- is what proves
+    # settlement.
+    from common import delivery_status_root, load_json
+
+    try:
+        archive_file = delivery_status_root(config) / "ai-task-archive" / "tasks" / f"{task_id}.json"
+        if not archive_file.exists():
+            return "unknown"
+        snapshot = load_json(archive_file, default=None)
+    except (OSError, ValueError):
+        return "unknown"
+    if not isinstance(snapshot, dict):
+        return "unknown"
+    task = snapshot.get("task")
+    if not isinstance(task, dict):
+        return "unknown"
+    # The archive envelope is evidence of a terminal task only when both
+    # copies of lifecycle state agree.  A parseable JSON object with a `task`
+    # dict is not enough: a partially written, hand-shaped, or nonterminal
+    # snapshot must not turn a worktree into a deletion candidate.
+    terminal_status = str(snapshot.get("terminal_status") or "").strip().lower()
+    task_status = str(task.get("status") or "").strip().lower()
+    if terminal_status in _SETTLED_TASK_STATUSES and terminal_status == task_status:
+        return "settled"
+    return "unknown"
+
+
+@_entrypoint
+def _signal_orphan_holders(bucket: dict[str, Any], worktree_path: Path, pids: list[int]) -> str:
+    """Ask this worktree's orphaned holders to exit; escalate on the next tick.
+
+    Two ticks, never one. `SIGTERM` reaches a pgserver as a *smart* shutdown --
+    it waits for clients that, the worker being gone, will never disconnect --
+    so the honest choices are to block the supervisor loop waiting for a death
+    that may not come, or to signal now and check later. This does the latter:
+    the removal itself is not attempted here at all. Once the holders are gone
+    the worktree stops appearing in `live_paths` and a later tick reclaims it
+    through the ordinary path, with every other guard still applied.
+
+    Returns what this tick did, for the scan report.
+    """
+    import signal
+
+    reaps = bucket.setdefault("orphan_reaps", {})
+    key = str(worktree_path)
+    record = reaps.get(key) if isinstance(reaps.get(key), dict) else None
+    escalate = bool(record and record.get("signalled_at"))
+    sig = signal.SIGKILL if escalate else signal.SIGTERM
+    delivered: list[int] = []
+    for pid in pids:
+        try:
+            os.kill(int(pid), sig)
+        except (OSError, ValueError, OverflowError):
+            # Already gone, or not ours to signal. Either way this pid is not
+            # what keeps the worktree pinned.
+            continue
+        delivered.append(int(pid))
+    if not delivered:
+        reaps.pop(key, None)
+        return "already_gone"
+    reaps[key] = {
+        "pids": sorted(delivered),
+        "signalled_at": utc_now(),
+        "escalated": escalate,
+    }
+    return "escalated" if escalate else "signalled"
+
+
+@_entrypoint
+def _forget_orphan_reap(bucket: dict[str, Any], worktree_path: Path) -> None:
+    """Drop reap bookkeeping for a worktree that no longer needs it."""
+    reaps = bucket.get("orphan_reaps")
+    if isinstance(reaps, dict):
+        reaps.pop(str(worktree_path), None)
+
 
 @_entrypoint
 def _scan_process_paths_in_root(base_root: Path) -> set[Path]:
@@ -1874,6 +2909,87 @@ def _scan_process_paths_in_root(base_root: Path) -> set[Path]:
                 except OSError:
                     pass
     return referenced
+
+# How many unmanaged worktree paths a single scan reports. The count is exact;
+# this only bounds the sample, so one pathological host cannot turn a routine
+# status record into an unbounded blob.
+_UNMANAGED_SAMPLE_LIMIT = 20
+
+
+@_entrypoint
+def _classify_processes_in_worktree(worktree_path: Path) -> tuple[list[int], int]:
+    """Split processes referencing a worktree into (orphan pids, still-parented count).
+
+    "Orphan" here means PPid == 1: the process that started it is gone and init
+    adopted it. That is the judgment that makes reaping safe, and it is the one
+    that survives a child which called `setsid()`.
+
+    Process groups cannot answer this. The pgserver instances that kept
+    worktrees pinned on this host each ran as their own session leader
+    (`pid == pgid == sid`), so they had already escaped any group the worker
+    was killed through -- twelve of them outlived their workers by up to three
+    days. Reparenting to init is the one signal they could not escape.
+
+    A non-zero second element means something still has a living parent, so the
+    worktree is genuinely in use and must not be touched.
+    """
+    orphans: list[int] = []
+    still_parented = 0
+    wt_str = str(worktree_path)
+
+    def references_worktree(cmdline: str) -> bool:
+        """True when the path appears as a whole path, not as a prefix.
+
+        A bare `in` test reads a process running in `<path>-old` as a holder of
+        `<path>` -- the same prefix collision that made a string-prefix
+        managed-root check unsound. Requiring a boundary on both sides keeps
+        `--dir=<path>` style arguments matching while rejecting a longer
+        sibling name. This only labels a refusal that has already been decided,
+        so a miss degrades the diagnosis, never the safety of the skip.
+        """
+        index = cmdline.find(wt_str)
+        while index != -1:
+            end = index + len(wt_str)
+            before_ok = index == 0 or cmdline[index - 1] in " =:,\"'"
+            after_ok = end >= len(cmdline) or cmdline[end] in (" ", os.sep)
+            if before_ok and after_ok:
+                return True
+            index = cmdline.find(wt_str, index + 1)
+        return False
+
+    try:
+        entries = list(Path("/proc").iterdir())
+    except OSError:
+        return ([], 1)  # Fail closed: unreadable /proc means "assume in use".
+    self_pid = os.getpid()
+    for entry in entries:
+        name = entry.name
+        if not name.isdigit() or int(name) == self_pid:
+            continue
+        try:
+            raw = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue
+        if not raw:
+            continue
+        cmdline = raw.replace(b"\x00", b" ").decode("utf-8", errors="ignore")
+        if not references_worktree(cmdline):
+            continue
+        ppid = None
+        try:
+            for line in (entry / "status").read_text(errors="ignore").splitlines():
+                if line.startswith("PPid:"):
+                    ppid = int(line.split()[1])
+                    break
+        except (OSError, ValueError, IndexError):
+            still_parented += 1  # Unreadable state is not evidence of an orphan.
+            continue
+        if ppid == 1:
+            orphans.append(int(name))
+        else:
+            still_parented += 1
+    return (orphans, still_parented)
+
 
 @_entrypoint
 def prune_orphan_worktrees(
@@ -1932,10 +3048,31 @@ def prune_orphan_worktrees(
             continue
 
     live_paths = _scan_process_paths_in_root(base_root)
+    # Read once per tick. Which task owns a worktree is what separates "this
+    # branch has not landed yet" from "this branch will never land", and only
+    # the board and the archive know that; git cannot tell them apart.
+    board_index = _task_board_settlement_index(config)
 
     max_removals = max(0, settings["max_removals_per_tick"])
-    base_root_str = str(base_root)
     removed: list[str] = []
+    # Every guard below ends in a bare `continue`, and the only log this
+    # function ever wrote was the success one. "Examined 69 worktrees and
+    # refused all 69" and "there was nothing to examine" were therefore the
+    # same silence, which is how a pruner that had never reclaimed a single
+    # worktree kept looking healthy while the host filled to 99%. Counting the
+    # refusals costs nothing and is the difference between a stalled reclaim
+    # being visible and being invisible.
+    examined = 0
+    skipped: dict[str, int] = {}
+    repos_skipped: dict[str, int] = {}
+    # A configured cap of 0 means "reclaim nothing this tick", which is the
+    # capped state before the scan even starts.
+    capped = max_removals <= 0
+    orphan_reports: list[tuple[str, list[int]]] = []
+    reaped: dict[str, int] = {}
+    settled_unmerged = 0
+    unmanaged = 0
+    unmanaged_paths: list[str] = []
     # Pruning has the same authority boundary as leasing: each distinct local
     # checkout contributes its registry default branch and freshly fetched
     # immutable remote SHA.  Never use a developer's local dev/master/main as
@@ -1944,56 +3081,159 @@ def prune_orphan_worktrees(
 
     active_base_cache = base_cache if base_cache is not None else {}
     for repo in iter_local_repositories(config):
-        if len(removed) >= max_removals:
-            break
         repo_root = repo.get("resolved_local_path")
         repo_id = str(repo.get("id") or "").strip()
         default_branch = str(repo.get("default_branch") or "").strip()
         if not isinstance(repo_root, Path) or not repo_id:
+            repos_skipped["unusable"] = repos_skipped.get("unusable", 0) + 1
             continue
-        base, _base_error = resolve_worker_base(
-            repo_root,
-            repository_id=repo_id,
-            default_branch=default_branch,
-            base_cache=active_base_cache,
-            network_timeout_seconds=float(worktree_settings["git_network_timeout_seconds"]),
-        )
-        if base is None:
-            continue
-        base_refs = [base.sha]
+        base_refs: list[str] = []
         merged_branches: set[str] = set()
-        merged_proc = subprocess.run(
-            ["git", "branch", "--merged", base.sha, "--list", "task/*"],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if merged_proc.returncode == 0:
-            for line in merged_proc.stdout.splitlines():
-                name = line.strip().lstrip("*").strip()
-                if name:
-                    merged_branches.add(name)
+        # `max_removals_per_tick` bounds destruction, not accounting. Reaching
+        # it used to `break` out of both loops, which stopped the counters
+        # dead: a capped tick would report "3 unmanaged" on a host with 68 and
+        # call the number exact. That is the same under-reporting this function
+        # exists to remove, so the scan now runs to the end and only the
+        # expensive work stops -- no base resolution (a network fetch), no
+        # per-worktree git status, and above all no further removal.
+        if not capped:
+            base, _base_error = resolve_worker_base(
+                repo_root,
+                repository_id=repo_id,
+                default_branch=default_branch,
+                base_cache=active_base_cache,
+                network_timeout_seconds=float(worktree_settings["git_network_timeout_seconds"]),
+            )
+            if base is None:
+                # Counted separately from the per-worktree refusals. A repo
+                # whose base will not resolve is skipped whole, and folding
+                # that into the worktree tally reads as "4 of the 68 examined
+                # worktrees" when it actually means "4 repos, contributing an
+                # unknown number of worktrees, were never examined at all".
+                repos_skipped["base_unresolved"] = repos_skipped.get("base_unresolved", 0) + 1
+                continue
+            base_refs = [base.sha]
+            merged_proc = subprocess.run(
+                ["git", "branch", "--merged", base.sha, "--list", "task/*"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if merged_proc.returncode == 0:
+                for line in merged_proc.stdout.splitlines():
+                    name = line.strip().lstrip("*").strip()
+                    if name:
+                        merged_branches.add(name)
 
         for record in _git_worktree_records(repo_root):
-            if len(removed) >= max_removals:
-                break
             wt_value = record.get("worktree")
-            if not wt_value or not wt_value.startswith(base_root_str):
+            if not wt_value:
                 continue
             try:
                 wt_path = Path(wt_value).resolve()
-            except OSError:
+            except (OSError, ValueError):
+                # Unresolvable, so it can be placed neither inside nor outside
+                # the managed root. Counted as an examined refusal rather than
+                # as foreign: attributing an unreadable record to the side this
+                # function does not own would quietly shrink the denominator in
+                # "reclaimed 0 of N".
+                examined += 1
+                skipped["path_unresolvable"] = skipped.get("path_unresolvable", 0) + 1
+                continue
+            if not wt_path.is_relative_to(base_root):
+                # Registered in this repository, but outside the root this
+                # function manages -- someone ran `git worktree add` somewhere
+                # else. Reclaiming it is not this function's call: it did not
+                # create it and cannot know who is using it.
+                #
+                # Staying silent about it was still wrong. On the host that
+                # prompted this work, 68 of 178 registered worktrees sat
+                # outside the managed root and held 8.3G, and because this
+                # branch skipped before any counter, they were invisible to
+                # every reclaim report -- not even counted as refused. Naming
+                # them is what lets an operator find space the pruner is not
+                # allowed to take.
+                #
+                # Membership is decided on the RESOLVED path, by path
+                # components. A `str.startswith` test on the raw record got
+                # this wrong in both directions: it claimed a sibling root
+                # named `<root>-archive` as managed, and it accepted a symlink
+                # under the root whose target lives somewhere else entirely.
+                # Both end with the pruner deciding removal for a directory it
+                # does not own.
+                unmanaged += 1
+                if len(unmanaged_paths) < _UNMANAGED_SAMPLE_LIMIT:
+                    unmanaged_paths.append(wt_value)
+                continue
+            # Only worktrees under the managed root are this function's
+            # business, so `examined` counts from here: anything earlier is a
+            # foreign checkout, not a reclaim candidate we declined.
+            examined += 1
+            if capped:
+                # Still counted, deliberately not evaluated: this tick has
+                # spent its removal budget, and saying so is more useful than
+                # a truncated scan that looks like a complete one.
+                skipped["deferred_removal_cap"] = skipped.get("deferred_removal_cap", 0) + 1
                 continue
             if wt_path in claimed_paths:
+                skipped["claimed_by_active_worker"] = skipped.get("claimed_by_active_worker", 0) + 1
                 continue
-            if any(str(live).startswith(str(wt_path)) or str(wt_path).startswith(str(live)) for live in live_paths):
+            if any(live.is_relative_to(wt_path) or wt_path.is_relative_to(live) for live in live_paths):
+                # No ACTIVE worker claims this worktree, yet something inside is
+                # still running. Two very different situations look identical
+                # here, and conflating them is why twelve test databases
+                # outlived their workers by up to three days while the pruner
+                # reported a uniform "busy": either a real tenant is at work, or
+                # a settled worker leaked a child that now pins the worktree
+                # forever. Reparenting to init (PPid == 1) tells them apart.
+                orphan_pids, still_parented = _classify_processes_in_worktree(wt_path)
+                if orphan_pids and not still_parented:
+                    skipped["live_process_orphaned"] = skipped.get("live_process_orphaned", 0) + 1
+                    orphan_reports.append((str(wt_path), sorted(orphan_pids)))
+                    # Naming an orphan-pinned worktree was the whole of the
+                    # previous behaviour, and a report nobody acts on leaves
+                    # the space pinned just as firmly. Only a settled task's
+                    # holders are signalled: while the task can still be worked
+                    # its processes are somebody's working state, however
+                    # detached from a parent they look.
+                    if settings["reap_orphan_holders"] and (
+                        _task_settlement(config, _worktree_task_id(wt_path), board_index) == "settled"
+                    ):
+                        outcome = _signal_orphan_holders(bucket, wt_path, sorted(orphan_pids))
+                        reaped[outcome] = reaped.get(outcome, 0) + 1
+                else:
+                    skipped["live_process"] = skipped.get("live_process", 0) + 1
+                    # A real tenant moved in. Any reap streak recorded against
+                    # this path describes holders that are no longer the reason
+                    # it is busy.
+                    _forget_orphan_reap(bucket, wt_path)
                 continue
+            # Merge state answers "is this work safe to discard". For a task
+            # that can still be worked it is the right question. For a settled
+            # one it is unanswerable in the only direction that matters: the
+            # task is finished, so no future event will ever merge the branch,
+            # and the worktree it left behind would be refused on the same
+            # ground forever. What the merge check actually protects -- the
+            # commits -- lives in the repository and survives the checkout's
+            # removal either way; the branch ref is not touched here.
+            settlement = _task_settlement(config, _worktree_task_id(wt_path), board_index)
+            reclaim_unmerged = settings["reclaim_settled_unmerged"] and settlement == "settled"
             branch = _worktree_record_branch(record)
+            unmerged = False
             if branch:
                 if branch not in merged_branches:
-                    continue
+                    if not reclaim_unmerged:
+                        skipped["branch_not_merged"] = skipped.get("branch_not_merged", 0) + 1
+                        continue
+                    unmerged = True
             elif not _detached_head_is_merged(repo_root, wt_path, base_refs):
+                # A detached HEAD has no branch ref whose commits remain
+                # reachable after the checkout is removed.  Settlement can
+                # waive the named-branch merge requirement, but it cannot
+                # waive this ancestry proof: the detached commit may be
+                # reachable only through the worktree metadata itself.
+                skipped["detached_head_not_merged"] = skipped.get("detached_head_not_merged", 0) + 1
                 continue
             status_proc = subprocess.run(
                 ["git", "-C", str(wt_path), "status", "--porcelain"],
@@ -2001,7 +3241,11 @@ def prune_orphan_worktrees(
                 text=True,
                 check=False,
             )
-            if status_proc.returncode != 0 or status_proc.stdout.strip():
+            if status_proc.returncode != 0:
+                skipped["status_query_failed"] = skipped.get("status_query_failed", 0) + 1
+                continue
+            if status_proc.stdout.strip():
+                skipped["dirty"] = skipped.get("dirty", 0) + 1
                 continue
             remove_proc = subprocess.run(
                 ["git", "-C", str(repo_root), "worktree", "remove", str(wt_path)],
@@ -2011,8 +3255,67 @@ def prune_orphan_worktrees(
             )
             if remove_proc.returncode == 0:
                 removed.append(str(wt_path))
+                _forget_orphan_reap(bucket, wt_path)
+                if unmerged:
+                    # Reclaimed on the settled-task rule alone. Reported
+                    # separately so that relaxing the merge requirement stays
+                    # auditable rather than disappearing into the total.
+                    settled_unmerged += 1
+                if len(removed) >= max_removals:
+                    capped = True
+            else:
+                skipped["remove_failed"] = skipped.get("remove_failed", 0) + 1
+
+    # Durable per-tick reclaim accounting. This is cheap, it overwrites rather
+    # than accumulates, and it is what makes "the pruner is running but
+    # reclaiming nothing" a readable state instead of an inferred one.
+    bucket["last_scan"] = {
+        "at": bucket["last_run_at"],
+        "examined": examined,
+        "removed": len(removed),
+        "skipped": dict(sorted(skipped.items())),
+        # Repository-level refusals, and only for repositories this tick
+        # actually evaluated for removal. Once the removal budget is spent no
+        # base is resolved, so a repo scanned after that point contributes its
+        # worktrees to the counts above without ever reaching a verdict here.
+        "repos_skipped": dict(sorted(repos_skipped.items())),
+        # The tick spent its `max_removals_per_tick` budget. Counting continues
+        # past this point, so `examined` and `unmanaged` stay exact; what a
+        # capped tick does not carry is a removal verdict for every worktree it
+        # counted -- those sit in `skipped.deferred_removal_cap`.
+        "capped_at_max_removals": capped,
+        # Registered worktrees living outside the managed root, which this
+        # function may not reclaim. NOT a garbage count: the main checkout and
+        # every live supervisor runtime legitimately appear here. It answers
+        # "what else does this repository have on the same disk that reclaim
+        # will never touch", which on the live host was 8.3G of abandoned
+        # scratch checkouts sitting alongside those legitimate ones. The sample
+        # is capped; `unmanaged` is the true count.
+        "unmanaged": unmanaged,
+        "unmanaged_sample": list(unmanaged_paths),
+        # Worktrees held only by init-reparented leftovers. Unlike the other
+        # refusals this one is actionable without waiting for anybody: the
+        # owning worker is already gone, so these pids and paths are what an
+        # operator needs to reclaim the space.
+        "orphaned_worktrees": [
+            {"path": path, "pids": pids} for path, pids in orphan_reports
+        ],
+        # What this tick did about those orphans, keyed by outcome:
+        # `signalled` (SIGTERM sent), `escalated` (SIGKILL, the holder having
+        # survived an earlier SIGTERM), `already_gone` (nothing left to
+        # signal). Reclaim itself happens on a later tick, once the holders
+        # stop appearing in the live-process scan, so a non-empty value here
+        # with `removed: 0` is the expected shape rather than another stall.
+        "orphan_reaps": dict(sorted(reaped.items())),
+        # Of `removed`, how many were reclaimed because their task is settled
+        # despite an unmerged branch. Zero means every reclaim this tick would
+        # also have passed the old merged-only rule.
+        "settled_unmerged_reclaimed": settled_unmerged,
+    }
 
     if removed:
+        bucket.pop("stall_since", None)
+        bucket.pop("last_stall_log_at", None)
         write_activity_log(
             config,
             {
@@ -2021,6 +3324,57 @@ def prune_orphan_worktrees(
             },
         )
         return True
+
+    if examined or repos_skipped:
+        # Reclaimed nothing. One such tick is ordinary -- every worktree may
+        # legitimately be busy. A run of them means reclaim has stopped
+        # working, and that is the condition that silently filled this host's
+        # disk. Log it on a slow cadence, and again whenever the refusal mix
+        # changes, so the signal survives without flooding.
+        #
+        # `repos_skipped` alone is enough to report: if every repository fails
+        # to resolve, `examined` is 0 and this is the only thing that would
+        # distinguish a broken pruner from an empty one.
+        stall_interval = max(0, settings["stall_log_interval_seconds"])
+        signature = ",".join(
+            [f"{k}={v}" for k, v in sorted(skipped.items())]
+            + [f"repo:{k}={v}" for k, v in sorted(repos_skipped.items())]
+        )
+        bucket.setdefault("stall_since", bucket["last_run_at"])
+        last_logged_at = _parse_iso_utc(str(bucket.get("last_stall_log_at") or ""))
+        elapsed_ok = True
+        if last_logged_at is not None and stall_interval > 0:
+            elapsed_ok = (datetime.now(UTC) - last_logged_at).total_seconds() >= stall_interval
+        if elapsed_ok or bucket.get("last_stall_signature") != signature:
+            bucket["last_stall_log_at"] = bucket["last_run_at"]
+            bucket["last_stall_signature"] = signature
+            try:
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worktree_prune_stalled",
+                        "message": (
+                            f"Reclaimed 0 of {examined} candidate worktree(s) since "
+                            f"{bucket.get('stall_since')}; refusals: {signature or 'none'}"
+                        ),
+                        "examined": examined,
+                        "skipped": dict(sorted(skipped.items())),
+                        "repos_skipped": dict(sorted(repos_skipped.items())),
+                        "orphaned_worktrees": [
+                            {"path": path, "pids": pids} for path, pids in orphan_reports
+                        ],
+                        "unmanaged": unmanaged,
+                    },
+                )
+            except (KeyError, OSError):
+                # This log is diagnostic; `bucket["last_scan"]` above already
+                # carries the same counts durably. A caller with no activity-log
+                # path configured must still get its reclaim decision, so a
+                # missing sink degrades the diagnosis rather than the function.
+                pass
+        return False
+
+    bucket.pop("stall_since", None)
     return False
 
 class QuarantineOutcome(NamedTuple):
@@ -2127,6 +3481,36 @@ def preserve_dead_worker_worktree(
             ),
         },
     )
+    if outcome and _dead_owner_continuation_eligible(config, worker, record):
+        handoff_seal = seal_worker_handoff(config, state, worker, record)
+        if handoff_seal.reason == "git_operation_in_progress":
+            merge_snapshot = _interrupted_merge_snapshot(Path(workspace_path))
+            if merge_snapshot is not None:
+                inspection = inspect_worktree(Path(workspace_path), materialized_paths=_worker_materialized_context_paths(state, worker))
+                merge_fingerprint = _interrupted_merge_fingerprint(merge_snapshot, Path(workspace_path), inspection)
+                # None means the exact working-file state could not be read
+                # (git status failed, or a nested repository is unreadable).
+                # Keep the plain refusal: a seal that cannot be verified later
+                # must not be recorded as a continuation.
+                if merge_fingerprint is not None:
+                    handoff_seal = WorkerHandoffSeal(
+                        False, "interrupted_merge", "Resume the preserved interrupted merge in this same checkout",
+                        _git_commit_oid(Path(workspace_path), "HEAD"),
+                        merge_fingerprint,
+                    )
+        if (
+            not handoff_seal.accepted
+            and handoff_seal.reason in {"owner_dirty", "interrupted_merge"}
+            and handoff_seal.head_sha
+            and handoff_seal.dirt_fingerprint
+        ):
+            record_unsealed_worker_handoff(
+                config,
+                state,
+                worker,
+                record,
+                handoff_seal,
+            )
     return outcome
 
 
@@ -2207,8 +3591,11 @@ def _quarantine_and_preserve_dirty_worktree(
         return _quarantine_refused("detached_head")
     if expected_branch and current_branch != expected_branch:
         return _quarantine_refused("branch_mismatch")
+    merge_snapshot = None
     if _git_operation_in_progress(worktree_path):
-        return _quarantine_refused("git_operation_in_progress")
+        merge_snapshot = _interrupted_merge_snapshot(worktree_path)
+        if merge_snapshot is None:
+            return _quarantine_refused("git_operation_in_progress")
 
     local_head = _git_commit_oid(worktree_path, "HEAD")
     if not local_head:
@@ -2229,14 +3616,14 @@ def _quarantine_and_preserve_dirty_worktree(
                 return _quarantine_refused("worktree_in_use_by_active_worker")
 
     status_proc = subprocess.run(
-        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"],
         cwd=worktree_path,
         capture_output=True,
         check=False,
     )
     if status_proc.returncode != 0:
         return _quarantine_refused("status_unreadable")
-    if not status_proc.stdout:
+    if not status_proc.stdout and merge_snapshot is None:
         # A clean worktree is the ordinary case at worker death, not a failure
         # to read it. Folding both into "status_unreadable" made the routine
         # outcome indistinguishable from a real one, and the single time it
@@ -2244,7 +3631,7 @@ def _quarantine_and_preserve_dirty_worktree(
         return _quarantine_refused("worktree_clean")
 
     raw_entries = [e for e in status_proc.stdout.split(b"\0") if e]
-    if not raw_entries:
+    if not raw_entries and merge_snapshot is None:
         return _quarantine_refused("nothing_to_preserve")
 
     inventory_files: list[dict[str, Any]] = []
@@ -2276,20 +3663,51 @@ def _quarantine_and_preserve_dirty_worktree(
             try:
                 symlink_target = os.readlink(full_p)
             except OSError:
+                if merge_snapshot is not None:
+                    return _quarantine_refused("unreadable_file", rel_path)
                 symlink_target = None
-        elif full_p.exists():
-            if full_p.is_file():
-                is_file = True
+        else:
+            try:
+                p_exists = full_p.exists()
+            except OSError:
+                if merge_snapshot is not None:
+                    return _quarantine_refused("unreadable_file", rel_path)
+                p_exists = False
+            if p_exists:
                 try:
-                    h = hashlib.sha256()
-                    with open(full_p, "rb") as f:
-                        while chunk := f.read(65536):
-                            h.update(chunk)
-                    sha256_val = h.hexdigest()
+                    p_is_file = full_p.is_file()
                 except OSError:
-                    sha256_val = None
-            elif full_p.is_dir():
-                is_dir = True
+                    if merge_snapshot is not None:
+                        return _quarantine_refused("unreadable_file", rel_path)
+                    p_is_file = False
+                if p_is_file:
+                    is_file = True
+                    try:
+                        h = hashlib.sha256()
+                        with open(full_p, "rb") as f:
+                            while chunk := f.read(65536):
+                                h.update(chunk)
+                        sha256_val = h.hexdigest()
+                    except OSError:
+                        if merge_snapshot is not None:
+                            return _quarantine_refused("unreadable_file", rel_path)
+                        sha256_val = None
+                else:
+                    try:
+                        p_is_dir = full_p.is_dir()
+                    except OSError:
+                        if merge_snapshot is not None:
+                            return _quarantine_refused("unreadable_file", rel_path)
+                        p_is_dir = False
+                    if p_is_dir:
+                        is_dir = True
+                        try:
+                            if (full_p / ".git").exists():
+                                if merge_snapshot is not None:
+                                    return _quarantine_refused("nested_repository_not_supported")
+                        except OSError:
+                            if merge_snapshot is not None:
+                                return _quarantine_refused("nested_repository_not_supported")
 
         inventory_files.append({
             "path": rel_path,
@@ -2322,12 +3740,12 @@ def _quarantine_and_preserve_dirty_worktree(
         manifest_path = task_backup_dir / "manifest.json"
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
-        staged_proc = subprocess.run(["git", "diff", "--cached", "--binary"], cwd=worktree_path, capture_output=True, check=False)
+        staged_proc = subprocess.run(["git", "diff", "--cached", "--binary", "--no-textconv", "--no-ext-diff"], cwd=worktree_path, capture_output=True, check=False)
         if staged_proc.returncode != 0:
             raise RuntimeError("failed to capture staged diff")
         (task_backup_dir / "staged.patch").write_bytes(staged_proc.stdout)
 
-        unstaged_proc = subprocess.run(["git", "diff", "--binary"], cwd=worktree_path, capture_output=True, check=False)
+        unstaged_proc = subprocess.run(["git", "diff", "--binary", "--no-textconv", "--no-ext-diff"], cwd=worktree_path, capture_output=True, check=False)
         if unstaged_proc.returncode != 0:
             raise RuntimeError("failed to capture unstaged diff")
         (task_backup_dir / "unstaged.patch").write_bytes(unstaged_proc.stdout)
@@ -2355,8 +3773,57 @@ def _quarantine_and_preserve_dirty_worktree(
                         if h_check.hexdigest() != file_entry["sha256"]:
                             raise RuntimeError(f"backup checksum mismatch for {rel_p}")
 
+        if merge_snapshot is not None:
+            merge_dir = task_backup_dir / "git-state"
+            merge_dir.mkdir()
+            for marker, payload in merge_snapshot.items():
+                saved = merge_dir / marker
+                saved.write_bytes(payload)
+                if saved.read_bytes() != payload:
+                    raise RuntimeError(f"merge state backup mismatch for {marker}")
+            autostash_oid = _interrupted_merge_autostash_oid(worktree_path, merge_snapshot)
+            if autostash_oid is not None:
+                # The parked pre-merge work lives in a commit no ref reaches;
+                # git gc prunes it once MERGE_AUTOSTASH is gone.  Keep its
+                # content as patches so the backup does not depend on the
+                # object store surviving.
+                for name, base_rev, target_rev in (
+                    ("MERGE_AUTOSTASH-worktree.patch", f"{autostash_oid}^1", autostash_oid),
+                    ("MERGE_AUTOSTASH-index.patch", f"{autostash_oid}^1", f"{autostash_oid}^2"),
+                ):
+                    patch_proc = subprocess.run(
+                        ["git", "diff", "--binary", "--no-textconv", "--no-ext-diff", base_rev, target_rev],
+                        cwd=worktree_path, capture_output=True, check=False,
+                    )
+                    if patch_proc.returncode != 0:
+                        raise RuntimeError(f"failed to capture autostash content ({name})")
+                    (merge_dir / name).write_bytes(patch_proc.stdout)
+            # Patches cannot reproduce unmerged index entries alone. Preserve
+            # actual dirty file bytes too, including conflict resolutions.
+            for entry in inventory_files:
+                if entry.get("is_file") and entry.get("sha256"):
+                    saved = task_backup_dir / "files" / entry["path"]
+                    saved.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(worktree_path / entry["path"], saved)
+                    if hashlib.sha256(saved.read_bytes()).hexdigest() != entry["sha256"]:
+                        raise RuntimeError(f"merge file backup mismatch for {entry['path']}")
+                elif entry.get("is_symlink") and entry.get("symlink_target") is not None:
+                    saved = task_backup_dir / "files" / entry["path"]
+                    saved.parent.mkdir(parents=True, exist_ok=True)
+                    if saved.exists() or os.path.islink(saved):
+                        saved.unlink()
+                    os.symlink(entry["symlink_target"], saved)
+
         checksums: dict[str, str] = {}
-        for b_root, _, b_files in os.walk(task_backup_dir):
+        for b_root, b_dirs, b_files in os.walk(task_backup_dir):
+            # os.walk lists a symlink that resolves to a directory under the
+            # directory names and does not descend into it; record its target
+            # the same way as a file symlink so every preserved link is covered.
+            for bd in b_dirs:
+                dp = Path(b_root) / bd
+                if os.path.islink(dp):
+                    rel_dp = dp.relative_to(task_backup_dir).as_posix()
+                    checksums[rel_dp] = "symlink:" + hashlib.sha256(os.readlink(dp).encode("utf-8")).hexdigest()
             for bf in b_files:
                 if bf == "backup_checksums.sha256":
                     continue

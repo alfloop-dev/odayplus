@@ -38,6 +38,36 @@ class SourcePolicyViolation(ValueError):
         super().__init__(f"Source policy evaluation failed: {policy}")
 
 
+class SnapshotProvenanceError(RuntimeError):
+    """A snapshot cannot be recorded because its provenance is unverifiable."""
+
+
+def resolve_existing_object_generation(
+    object_store: Any, tenant_id: str, uri: str, snapshot_id: str
+) -> int:
+    """Read back the generation of an object a previous attempt already uploaded.
+
+    Reached after a Precondition Failed: the object is there, and what remains
+    is establishing which version it is. That version is persisted as the
+    snapshot's ``object_generation`` and is the anchor downstream consumers
+    resolve to fetch this exact object -- a masked release snapshot binds to it.
+
+    There is deliberately no fallback value. The previous code substituted a
+    literal ``1`` when this read failed, which recorded a provenance claim
+    pointing at a version nobody had verified, and left nothing in the record
+    to show the number was invented. A visible failure is the lesser harm.
+    """
+    try:
+        meta = object_store.head_object(tenant_id, uri)
+        return meta["generation"]
+    except Exception as exc:
+        raise SnapshotProvenanceError(
+            f"snapshot {snapshot_id}: raw object exists at {uri} but its generation "
+            "could not be read back; refusing to record a provenance claim without "
+            "a verified object version"
+        ) from exc
+
+
 class SourceSnapshotService:
     """Service to handle immutable snapshots, policy check, residency, and consistency."""
 
@@ -276,11 +306,9 @@ class SourceSnapshotService:
             if "Precondition Failed" in str(exc):
                 # Object already uploaded in a previous attempt. Ignore.
                 raw_uri = f"gs://{bucket}/{raw_key}"
-                try:
-                    meta = self.object_store.head_object(tenant_id, raw_uri)
-                    raw_gen = meta["generation"]
-                except Exception:
-                    raw_gen = 1
+                raw_gen = resolve_existing_object_generation(
+                    self.object_store, tenant_id, raw_uri, snapshot_id
+                )
             else:
                 raise exc
 
@@ -851,31 +879,16 @@ def build_source_snapshot_service(persistence: Any, doc_store: Any = None) -> So
                 return tenant_meta.get("residency_mode", "TW_ONLY")
         return "TW_ONLY"
 
-    # Default to the real GCS store if credentials/token or explicit gcs setting is present.
-    # Fail closed when explicit gcs is requested or in production env but no credentials exist.
-    has_gcs_credentials = bool(
-        os.environ.get("GOOGLE_OAUTH_ACCESS_TOKEN", "").strip()
-        or os.environ.get("ODP_AUDIT_WORM_GCS_TOKEN", "").strip()
-        or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
-    )
-    explicit_store = os.environ.get("ODP_OBJECT_STORE")
-    odp_env = (os.environ.get("ODP_ENV", "").strip().lower() or os.environ.get("ODAY_ENV", "").strip().lower())
-    is_prod_env = odp_env in ("production", "prod")
+    from apps.api.oday_api.runtime_mode import live_data_required
 
-    if explicit_store == "gcs" or is_prod_env:
-        if not has_gcs_credentials:
-            raise RuntimeError(
-                "GcsObjectStore required in production (or explicitly via ODP_OBJECT_STORE) but no GCS credentials/tokens found in environment."
-            )
+    # Production obtains its identity from the metadata service at authorized
+    # object I/O. Environment token/key-file presence is not workload authority.
+    explicit_store = os.environ.get("ODP_OBJECT_STORE", "").strip().lower()
+    local_oauth = bool(os.environ.get("GOOGLE_OAUTH_ACCESS_TOKEN", "").strip())
+    if live_data_required() or explicit_store == "gcs" or (not explicit_store and local_oauth):
         object_store = GcsObjectStore(tenant_residency_resolver=residency_resolver)
-    elif explicit_store == "in_memory":
-        object_store = InMemoryObjectStore(tenant_residency_resolver=residency_resolver)
     else:
-        # Implicit selection based on credential availability
-        if has_gcs_credentials:
-            object_store = GcsObjectStore(tenant_residency_resolver=residency_resolver)
-        else:
-            object_store = InMemoryObjectStore(tenant_residency_resolver=residency_resolver)
+        object_store = InMemoryObjectStore(tenant_residency_resolver=residency_resolver)
 
     return SourceSnapshotService(
         db_conn=db_conn,

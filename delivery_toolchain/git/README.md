@@ -34,6 +34,7 @@ AI_NAME=<Owner> ./scripts/ai-status.sh done "$TASK" "<checkpoint>"
 | `worker_commit.py` | The only sanctioned way to make a task commit. Private index, explicit scope, leak check, message check, protected-branch guard, no empty commits. |
 | `check_commit_scope.py` | Rejects a staged set that leaks outside `--scope`. Importable and standalone. |
 | `check_commit_trailers.py` | Validates subject shape/length and the `LLM-Agent` / `Task-ID` / `Reviewer` trailers. Backs both `worker_commit.py` and the hook. |
+| `check_task_delivery_identity.py` | Validates delivery range identity (task ID prefix, trailers, reviewer separation, branch binding) without enforcing the subject length format lint on historical commits. |
 | `task_finalize.sh` | Push the branch, open (or re-use) the PR against `dev`, undraft it, and atomically submit review evidence. |
 | `install_hooks.sh` | Point `core.hooksPath` at `.githooks/` (per-clone local config, so it cannot be committed). |
 
@@ -79,10 +80,15 @@ races another opener still recovers the existing PR number from `gh`'s output.
 
 - `.orchestrator/bin/gh` is a broker shim, not the real CLI. `task_finalize.sh`
   resolves `gh` the same way `delivery_toolchain/github/check_pr_merge_eligibility.py` does.
-- `check_commit_trailers.py` enforces a **72**-character subject limit, the
-  value `.orchestrator/auto_commit_archive.py` builds its messages against.
+- `check_commit_trailers.py` enforces a **72**-character subject limit on new
+  commits (via `worker_commit.py` and `.githooks/commit-msg`), matching the
+  format `.orchestrator/auto_commit_archive.py` builds its messages against.
   `task-closeout-finalization.md` recommends ≤ 70; that is stricter guidance,
   not a conflicting rule.
+- `check_task_delivery_identity.py` verifies task ID, required trailers, and
+  branch binding across the full delivery range without re-checking the
+  72-character subject length limit, ensuring pushed commits with long subjects
+  can finalize without requiring history rewrites.
 - `--dry-run` on `worker_commit.py` and `task_finalize.sh` runs every guard
   without touching the repo, origin, or GitHub.
 - Tests: `python3 -m pytest delivery_toolchain/git/test_git_task_scripts.py`. They run

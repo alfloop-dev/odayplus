@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from collections.abc import Iterable
 from copy import deepcopy
@@ -28,6 +30,7 @@ def status_root() -> Path:
 STATUS_ROOT = status_root()
 ARCHIVE_DIR = STATUS_ROOT / "ai-task-archive"
 ARCHIVE_TASKS_DIR = ARCHIVE_DIR / "tasks"
+ARCHIVE_CORRECTIONS_DIR = ARCHIVE_DIR / "corrections"
 ARCHIVE_INDEX_FILE = ARCHIVE_DIR / "index.json"
 
 ARCHIVE_VERSION = 1
@@ -35,6 +38,7 @@ TERMINAL_STATUS_DONE = "done"
 TERMINAL_OUTCOME_COMPLETED = "completed"
 TERMINAL_OUTCOME_SUPERSEDED = "superseded"
 DEFAULT_RECENT_LIMIT = 20
+CORRECTION_TYPE_INVALIDATION = "archive_recovery_invalidation"
 
 
 def iso_now() -> str:
@@ -145,6 +149,96 @@ def archive_task_path(task_id: str | None) -> Path:
     return ARCHIVE_TASKS_DIR / f"{slug}.json"
 
 
+def archive_correction_path(task_id: str | None) -> Path:
+    normalized = normalize_task_id(task_id)
+    if not normalized:
+        raise ValueError("task_id is required for archive correction lookup")
+    slug = quote(normalized, safe="-_.")
+    return ARCHIVE_CORRECTIONS_DIR / f"{slug}.json"
+
+
+def validate_archive_correction_record(
+    record: Any,
+    expected_task_id: str,
+    snapshot_bytes: bytes | None = None,
+) -> list[str]:
+    problems: list[str] = []
+    if not isinstance(record, dict):
+        return [f"{expected_task_id}: correction record must be a JSON object"]
+
+    schema_version = record.get("schema_version")
+    if schema_version != 1 and schema_version != "1":
+        problems.append(f"{expected_task_id}: schema_version must be 1")
+
+    rec_type = str(record.get("type") or "").strip()
+    if rec_type != CORRECTION_TYPE_INVALIDATION:
+        problems.append(
+            f"{expected_task_id}: type must be {CORRECTION_TYPE_INVALIDATION!r}, got {rec_type!r}"
+        )
+
+    task_id = normalize_task_id(record.get("task_id"))
+    if not task_id or task_id != normalize_task_id(expected_task_id):
+        problems.append(
+            f"{expected_task_id}: task_id {task_id!r} does not match expected {expected_task_id!r}"
+        )
+
+    for field in ("actor", "coordination_task_id", "reason", "evidence_ref", "invalidated_at"):
+        val = str(record.get(field) or "").strip()
+        if not val:
+            problems.append(f"{expected_task_id}: missing required field {field!r}")
+
+    declared_sha = str(record.get("snapshot_sha256") or "").strip().lower()
+    if not declared_sha:
+        problems.append(f"{expected_task_id}: missing required field 'snapshot_sha256'")
+    elif snapshot_bytes is not None:
+        actual_sha = hashlib.sha256(snapshot_bytes).hexdigest().lower()
+        if declared_sha != actual_sha:
+            problems.append(
+                f"{expected_task_id}: snapshot_sha256 mismatch (declared {declared_sha} != actual {actual_sha})"
+            )
+
+    return problems
+
+
+def load_archive_correction(task_id: str | None) -> dict[str, Any] | None:
+    normalized = normalize_task_id(task_id)
+    if not normalized:
+        return None
+    corr_path = archive_correction_path(normalized)
+    if not corr_path.exists():
+        return None
+    try:
+        raw_bytes = corr_path.read_bytes()
+        payload = json.loads(raw_bytes.decode("utf-8"))
+    except Exception as exc:
+        return {
+            "schema_version": 1,
+            "type": CORRECTION_TYPE_INVALIDATION,
+            "task_id": normalized,
+            "corrupt": True,
+            "error": f"unreadable correction file: {exc}",
+            "validation_errors": [f"unreadable correction file: {exc}"],
+        }
+    if not isinstance(payload, dict):
+        return {
+            "schema_version": 1,
+            "type": CORRECTION_TYPE_INVALIDATION,
+            "task_id": normalized,
+            "corrupt": True,
+            "error": "correction payload is not a JSON object",
+            "validation_errors": ["correction payload is not a JSON object"],
+        }
+    snap_path = archive_task_path(normalized)
+    snap_bytes = snap_path.read_bytes() if snap_path.exists() else None
+    problems = validate_archive_correction_record(payload, normalized, snap_bytes)
+    if problems:
+        res = deepcopy(payload)
+        res["corrupt"] = True
+        res["validation_errors"] = problems
+        return res
+    return deepcopy(payload)
+
+
 def archive_display_path(path: Path) -> str:
     for root in (STATUS_ROOT, ROOT):
         try:
@@ -189,6 +283,14 @@ def save_archive_index(index: dict[str, Any]) -> None:
     write_json(ARCHIVE_INDEX_FILE, payload)
 
 
+def save_archive_correction(record: dict[str, Any]) -> None:
+    task_id = normalize_task_id(record.get("task_id"))
+    if not task_id:
+        raise ValueError("task_id is required in correction record")
+    path = archive_correction_path(task_id)
+    write_json(path, record)
+
+
 def load_archived_snapshot(task_id: str | None) -> dict[str, Any] | None:
     normalized = normalize_task_id(task_id)
     if not normalized:
@@ -205,7 +307,35 @@ def load_archived_task(task_id: str | None) -> dict[str, Any] | None:
     if not snapshot:
         return None
     task = snapshot.get("task")
-    return deepcopy(task) if isinstance(task, dict) else None
+    if not isinstance(task, dict):
+        return None
+    task_copy = deepcopy(task)
+    normalized = normalize_task_id(task_id)
+    corr_path = archive_correction_path(normalized)
+    if corr_path.exists():
+        correction = load_archive_correction(normalized)
+        task_copy["status"] = "blocked"
+        task_copy["terminal_outcome"] = None
+        task_copy["blocked_by_invalidation"] = True
+        if correction is not None:
+            task_copy["invalidation"] = deepcopy(correction)
+            task_copy["correction"] = deepcopy(correction)
+            if correction.get("corrupt"):
+                err_msg = "; ".join(
+                    correction.get("validation_errors")
+                    or [correction.get("error", "corrupt correction")]
+                )
+                task_copy["next"] = (
+                    f"Archive recovery invalidation failed closed (corrupt correction: {err_msg})"
+                )
+            else:
+                task_copy["next"] = (
+                    f"Archive recovery invalidated by {correction.get('coordination_task_id')}: "
+                    f"{correction.get('reason')}"
+                )
+        else:
+            task_copy["next"] = "Archive recovery invalidated (failed closed)."
+    return task_copy
 
 
 def compact_terminal_summary(snapshot: dict[str, Any]) -> dict[str, Any]:

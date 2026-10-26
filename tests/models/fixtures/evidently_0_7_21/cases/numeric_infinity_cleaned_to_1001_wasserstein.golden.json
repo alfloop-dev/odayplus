@@ -1,0 +1,76 @@
+{
+  "case_id": "numeric_infinity_cleaned_to_1001_wasserstein",
+  "description": "+inf in reference and -inf in current are replaced by NaN and dropped, so they change the routing N without entering any statistic.",
+  "kind": "data_drift",
+  "metrics_index": {
+    "columns": {
+      "demand": {
+        "id": "d68f9d174bd22d48d0856d226943a02b",
+        "method": "Wasserstein distance (normed)",
+        "metric_name": "ValueDrift(column=demand,method=Wasserstein distance (normed),threshold=0.1)",
+        "threshold": 0.1,
+        "value": 0.0
+      }
+    },
+    "drifted_columns_count": {
+      "count": 0.0,
+      "drift_share_argument": 0.5,
+      "id": "15e89f895b482f9b84ba7274ed18a106",
+      "metric_name": "DriftedColumnsCount(drift_share=0.5)",
+      "share": 0.0
+    }
+  },
+  "outcome": "completed",
+  "result": {
+    "cohort_key": null,
+    "current_snapshot_id": null,
+    "decision_policy_version_id": null,
+    "drift_detected": false,
+    "drift_share": 0.0,
+    "drifted_column_names": [],
+    "drifted_columns": 0,
+    "engine": "evidently",
+    "model_name": null,
+    "model_version": null,
+    "prediction_columns": [],
+    "prediction_output_types": null,
+    "reference_snapshot_id": null,
+    "snapshot_id": "baseline-inf-1001"
+  },
+  "routing_expectation": "cleaned N>1000, Numerical, merged unique>5 -> wasserstein_stat_test",
+  "to_dict": {
+    "drift_detected": false,
+    "drift_share": 0.0,
+    "drifted_columns": 0,
+    "engine": "evidently",
+    "report": {
+      "metrics": [
+        {
+          "config": {
+            "drift_share": 0.5,
+            "type": "evidently:metric_v2:DriftedColumnsCount"
+          },
+          "id": "15e89f895b482f9b84ba7274ed18a106",
+          "metric_name": "DriftedColumnsCount(drift_share=0.5)",
+          "value": {
+            "count": 0.0,
+            "share": 0.0
+          }
+        },
+        {
+          "config": {
+            "column": "demand",
+            "method": "Wasserstein distance (normed)",
+            "threshold": 0.1,
+            "type": "evidently:metric_v2:ValueDrift"
+          },
+          "id": "d68f9d174bd22d48d0856d226943a02b",
+          "metric_name": "ValueDrift(column=demand,method=Wasserstein distance (normed),threshold=0.1)",
+          "value": 0.0
+        }
+      ],
+      "tests": []
+    },
+    "snapshot_id": "baseline-inf-1001"
+  }
+}

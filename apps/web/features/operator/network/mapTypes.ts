@@ -2,10 +2,12 @@ export type HeatZone = {
   id: string;
   district: string;
   h3: string;
+  /** Explicit null from a native owner means unavailable; never derive over it. */
+  geometry?: GeoJSON.Polygon | null;
   centroid: [number, number];
   h3Resolution: number;
   score: number;
-  confidence: number;
+  confidence: number | null;
   state:
     | "UNTOUCHED"
     | "PARTIALLY_ABSORBED"
@@ -14,7 +16,7 @@ export type HeatZone = {
     | "STILL_EXPANDABLE"
     | "SUPPRESSED_LOW_CONFIDENCE";
   rank: number;
-  listings: number;
+  listings: number | null;
   warnings: string[];
   reasons: string[];
   modelVersion: string;
@@ -28,12 +30,17 @@ export type HeatZone = {
   cannibalizationRisk: number;
   rentFeasibility: number;
   listingAvailability: number;
-  poiCount: number;
-  competitorCount: number;
-  competitorCapacity: number;
-  medianListingRent: number;
-  existingStoreCount: number;
-  dataQualityScore: number;
+  poiCount: number | null;
+  competitorCount: number | null;
+  competitorCapacity: number | null;
+  medianListingRent: number | null;
+  existingStoreCount: number | null;
+  dataQualityScore: number | null;
+  isMerged?: boolean;
+  compositionKind?: "MERGED" | "SPLIT_CHILD" | "ATOMIC";
+  memberCellIds?: string[];
+  parentZoneId?: string;
+  revertedAt?: string;
 };
 
 export type Listing = {
@@ -52,8 +59,8 @@ export type Listing = {
   area: string;
   geocode: string;
   duplicate: string;
-  heatZoneId: string;
-  coordinates: [number, number];
+  heatZoneId: string | null;
+  coordinates: [number, number] | null;
   updatedAt: string;
   action: string;
 };
@@ -70,8 +77,8 @@ export type CandidateSite = {
     | "approved"
     | "opened";
   heatZoneId: string;
-  coordinates: [number, number];
-  heatZoneScore: number;
+  coordinates: [number, number] | null;
+  heatZoneScore: number | null;
   rentArea: string;
   geocode: string;
   feasibility: string;

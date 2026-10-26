@@ -1,0 +1,97 @@
+[WebServer] 2026/10/09 07:17:30 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /home/lupin/odayplus/.venv/lib/python3.12/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+[WebServer] 2026/10/09 07:17:32 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+[WebServer] 2026/10/09 07:17:32 INFO mlflow.store.db.utils: Updating database tables
+[WebServer] INFO:     Started server process [1416100]
+[WebServer] INFO:     Waiting for application startup.
+[WebServer] INFO:     Application startup complete.
+[WebServer] INFO:     Uvicorn running on http://127.0.0.1:8217 (Press CTRL+C to quit)
+[WebServer] {"timestamp": "2026-10-09T07:17:36.201151+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "d2e8abf7-4407-4a72-b0b9-6984e5cb14d2", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /platform/health ok"}
+
+Running 1 test using 1 worker
+
+[WebServer] {"timestamp": "2026-10-09T07:17:58.052090+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-operator-bootstrap-0a11aed6-5970-4907-97aa-646afbb1a7cf", "resource": "HTTP", "action": "GET", "result": "ok", "error_code": null, "message": "HTTP GET /api/v1/operator/bootstrap ok"}
+  ✘  1 [chromium] › tests/e2e/operator-shell-layout.spec.ts:69:9 › Operator shared header layout › Today long ingestion identifiers and human titles remain readable at 390px (7.6s)
+
+
+  1) [chromium] › tests/e2e/operator-shell-layout.spec.ts:69:9 › Operator shared header layout › Today long ingestion identifiers and human titles remain readable at 390px 
+
+    Error: clipped identifier/title text
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  -  1
+    + Received  + 58
+
+    - Array []
+    + Array [
+    +   Object {
+    +     "readable": false,
+    +     "text": "external-fetch:listing.partner_feed:blocked:20261005234153:e34f2117-de4b-478c-82fd-13c4ef428d42",
+    +   },
+    +   Object {
+    +     "readable": false,
+    +     "text": "External ingestion requires review",
+    +   },
+    +   Object {
+    +     "readable": false,
+    +     "text": "external-fetch:listing.partner_feed:blocked:20261006111822:e34f2117-de4b-478c-82fd-13c4ef428d42",
+    +   },
+    +   Object {
+    +     "readable": false,
+    +     "text": "External ingestion requires review",
+    +   },
+    +   Object {
+    +     "readable": false,
+    +     "text": "external-fetch:listing.partner_feed:blocked:20261007061834:e34f2117-de4b-478c-82fd-13c4ef428d42",
+    +   },
+    +   Object {
+    +     "readable": false,
+    +     "text": "External ingestion requires review",
+    +   },
+    +   Object {
+    +     "readable": false,
+    +     "text": "external-fetch:listing.partner_feed:blocked:20261007115623:e34f2117-de4b-478c-82fd-13c4ef428d42",
+    +   },
+    +   Object {
+    +     "readable": false,
+    +     "text": "External ingestion requires review",
+    +   },
+    +   Object {
+    +     "readable": false,
+    +     "text": "external-fetch:listing.partner_feed:blocked:20261008040013:e34f2117-de4b-478c-82fd-13c4ef428d42",
+    +   },
+    +   Object {
+    +     "readable": false,
+    +     "text": "External ingestion requires review",
+    +   },
+    +   Object {
+    +     "readable": false,
+    +     "text": "external-fetch:listing.partner_feed:blocked:20261008190312:e34f2117-de4b-478c-82fd-13c4ef428d42",
+    +   },
+    +   Object {
+    +     "readable": false,
+    +     "text": "External ingestion requires review",
+    +   },
+    +   Object {
+    +     "readable": false,
+    +     "text": "external-fetch:listing.partner_feed:blocked:20261009010154:e34f2117-de4b-478c-82fd-13c4ef428d42",
+    +   },
+    +   Object {
+    +     "readable": false,
+    +     "text": "External ingestion requires review",
+    +   },
+    + ]
+
+      120 |         });
+      121 |       }));
+    > 122 |       expect(geometry.flat().filter((label) => !label.readable), "clipped identifier/title text").toEqual([]);
+          |                                                                                                   ^
+      123 |       expect((await measureHeader(page)).docScrollWidth).toBeLessThanOrEqual(width);
+      124 |       await testInfo.attach(`today-long-identifiers-${width}`, {
+      125 |         body: await page.screenshot({ fullPage: true }), contentType: "image/png",
+        at /tmp/pantheon-worker-worktrees/pantheon/odp-operator-read-authorization-001/tests/e2e/operator-shell-layout.spec.ts:122:99
+
+    Error Context: ../../../../home/lupin/odayplus/.orchestrator/worker-runtime/scratch/pi-20261009T071413Z-f6330bec/today-playwright-results/operator-shell-layout-Oper-9c292-es-remain-readable-at-390px-chromium/error-context.md
+
+  1 failed
+    [chromium] › tests/e2e/operator-shell-layout.spec.ts:69:9 › Operator shared header layout › Today long ingestion identifiers and human titles remain readable at 390px 

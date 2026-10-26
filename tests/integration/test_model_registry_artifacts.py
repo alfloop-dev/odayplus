@@ -43,6 +43,7 @@ from modules.learninghub import (
     ReleaseType,
     run_learninghub_release,
 )
+from shared.governance import default_model_performance_drift_policy
 from shared.infrastructure.persistence import (
     DurableArtifactStore,
     DurableAuditLog,
@@ -50,6 +51,7 @@ from shared.infrastructure.persistence import (
     SqliteDocumentStore,
     SqliteEngine,
 )
+from tests.integration._model_publish_flag_fixture import enable_model_publish
 
 MODEL_NAME = "forecast_revenue_interval"
 SNAPSHOT_TIME = datetime(2026, 6, 27, 8, 0, tzinfo=UTC)
@@ -70,6 +72,8 @@ def _rows() -> list[dict[str, object]]:
             "feature_snapshot_time": SNAPSHOT_TIME.isoformat(),
             "prediction_origin_time": PREDICTION_TIME.isoformat(),
             "source_snapshot_ids": ["pos-20260627", "machine-20260627"],
+            "data_quality_score": 0.98,
+            "confidence": 0.95,
             "labels": {"w4_revenue": 410_000},
             "label_maturity_time": SNAPSHOT_TIME.isoformat(),
             "features": {"event_time": SNAPSHOT_TIME.isoformat(), "revenue_lag_7d": 92_000},
@@ -81,6 +85,8 @@ def _rows() -> list[dict[str, object]]:
             "feature_snapshot_time": SNAPSHOT_TIME.isoformat(),
             "prediction_origin_time": PREDICTION_TIME.isoformat(),
             "source_snapshot_ids": ["pos-20260627"],
+            "data_quality_score": 0.97,
+            "confidence": 0.94,
             "labels": {"w4_revenue": 380_000},
             "label_maturity_time": SNAPSHOT_TIME.isoformat(),
             "features": {"event_time": SNAPSHOT_TIME.isoformat(), "revenue_lag_7d": 88_000},
@@ -131,15 +137,17 @@ def _prepare_candidate(
     snapshot = service.register_dataset_snapshot(
         _rows(), dataset_snapshot_id=f"forecast-training-{version}"
     )
+    policy = default_model_performance_drift_policy()
     validation = service.validate_candidate(
         model_name=MODEL_NAME,
         model_version=version,
         dataset_snapshot_id=snapshot.dataset_snapshot_id,
-        metrics={"w4_smape": 0.11, "p80_coverage": 0.82},
-        baseline_metrics={"w4_smape": 0.15, "p80_coverage": 0.78},
+        metrics={"w4_smape": 0.11, "p80_coverage": 0.82, "normalized_mae": 0.11},
+        baseline_metrics={"w4_smape": 0.15, "p80_coverage": 0.78, "normalized_mae": 0.15},
         thresholds=(
             MetricThreshold("w4_smape", max_value=0.12, warning_max_value=0.115),
             MetricThreshold("p80_coverage", min_value=0.80, warning_min_value=0.81),
+            MetricThreshold("normalized_mae", max_value=0.35),
         ),
         segment_metrics=(
             SegmentMetric(
@@ -150,8 +158,25 @@ def _prepare_candidate(
             ),
         ),
         calibration_summary={"p80_coverage": 0.82},
+        decision_policy=policy,
     )
     assert validation.passed
+
+    service.evaluate_backtest(
+        model_name=MODEL_NAME,
+        model_version=version,
+        dataset_snapshot_id=snapshot.dataset_snapshot_id,
+        code_version="abc1234",
+        metrics={"w4_smape": 0.11, "p80_coverage": 0.82, "normalized_mae": 0.11},
+        baseline_metrics={"w4_smape": 0.15, "p80_coverage": 0.78, "normalized_mae": 0.15},
+        thresholds=(
+            MetricThreshold("w4_smape", max_value=0.12, warning_max_value=0.115),
+            MetricThreshold("p80_coverage", min_value=0.80, warning_min_value=0.81),
+            MetricThreshold("normalized_mae", max_value=0.35),
+        ),
+        decision_policy=policy,
+        calibration_summary={"p80_coverage": 0.82},
+    )
 
     # Store the real artifact and bind the model version to its content digest.
     record = artifact_store.put_artifact(
@@ -211,6 +236,7 @@ def _release(service: LearningHubService, **kwargs):
 
 def test_full_lifecycle_promote_rollback_survives_restart(db_path) -> None:
     engine, service, artifacts = _build_durable(db_path)
+    enable_model_publish(service, tenant_id='tenant-modeling')
     try:
         v1, _ = _prepare_candidate(service, artifacts, "1.0.0")
         v2, _ = _prepare_candidate(service, artifacts, "1.1.0")
@@ -409,6 +435,7 @@ def test_artifact_content_addressing_and_tamper_evidence(db_path) -> None:
 
 def test_registry_evidence_manifest_is_audit_complete(db_path) -> None:
     engine, service, artifacts = _build_durable(db_path)
+    enable_model_publish(service, tenant_id='tenant-modeling')
     try:
         v1, _ = _prepare_candidate(service, artifacts, "1.0.0")
         _release(

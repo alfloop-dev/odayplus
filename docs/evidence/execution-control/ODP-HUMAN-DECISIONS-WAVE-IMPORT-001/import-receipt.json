@@ -1,0 +1,776 @@
+{
+  "started_at": "2026-09-08T15:01:14.903854+00:00",
+  "mode": "execute",
+  "actor": "Codex",
+  "manifest": "/home/lupin/odayplus/support/handoffs/ODP-HUMAN-DECISIONS-WAVE-IMPORT-001/proposed-wave.json",
+  "manifest_sha256": "dca1a58c0b1e312604bcd384c8df7d0df8e8383ad93bce0c47bd69ec068a6089",
+  "expected_pr": 1247,
+  "expected_approved_head": "c7d9735834daa670baa64c54f25b5fb0dd25ceaf",
+  "canonical_mutations_attempted": 8,
+  "assignments": [
+    {
+      "task_id": "ODP-OSS-DECISION-PACK-001",
+      "started_at": "2026-09-08T15:01:16.297146+00:00",
+      "argv": [
+        "bash",
+        "/home/lupin/odayplus/scripts/ai-status.sh",
+        "assign",
+        "ODP-OSS-DECISION-PACK-001",
+        "Claude",
+        "Codex",
+        "依已確認政策更新 OSS／逐資料來源審查包與未簽署 receipt 草案"
+      ],
+      "metadata_sha256": "001798432cce100ae813272b3d774f539c672c236845c98758ad8404a1b0e4dc",
+      "initial_dependency_env": "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001",
+      "status": "assigned_and_verified",
+      "finished_at": "2026-09-08T15:01:27.783509+00:00",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "",
+      "readback": {
+        "id": "ODP-OSS-DECISION-PACK-001",
+        "status": "todo",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "depends_on": [
+          "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+        ],
+        "source_docs": [
+          "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/OSS_LEGAL_POLICY_HUMAN_HANDOFF_2026-07-31.md",
+          "github://alfloop-dev/oday-data-platform@cf5c48d60f3d33b9863b0458f44b4fd49d842b12/docs/runbooks/external-source-update-policy.md"
+        ],
+        "owned_paths": [
+          "docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/"
+        ],
+        "mutates_canonical": true,
+        "expected_fields_verified": [
+          "acceptance",
+          "artifacts",
+          "assignment_note",
+          "base_branch",
+          "catalog_managed",
+          "depends_on",
+          "evidence_path",
+          "forbidden_paths",
+          "id",
+          "mutates_canonical",
+          "next_stage_entry",
+          "owned_paths",
+          "owner",
+          "phase",
+          "priority",
+          "related_task_ids",
+          "repository",
+          "reviewer",
+          "source_docs",
+          "source_refs",
+          "stage",
+          "summary_zh",
+          "task_class",
+          "title",
+          "verification",
+          "work_package"
+        ]
+      }
+    },
+    {
+      "task_id": "ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001",
+      "started_at": "2026-09-08T15:01:27.813797+00:00",
+      "argv": [
+        "bash",
+        "/home/lupin/odayplus/scripts/ai-status.sh",
+        "assign",
+        "ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001",
+        "Claude2",
+        "Codex2",
+        "核對 password-first／OIDC-off 證據並交 OAuth human task 待命說明"
+      ],
+      "metadata_sha256": "02ada5c0b468690ff3cce6757a973b5e6740dc7e0e69c4b8b0f492a10f81b6fc",
+      "initial_dependency_env": "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001",
+      "status": "assigned_and_verified",
+      "finished_at": "2026-09-08T15:01:48.870250+00:00",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "",
+      "readback": {
+        "id": "ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001",
+        "status": "todo",
+        "owner": "Claude2",
+        "reviewer": "Codex2",
+        "depends_on": [
+          "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+        ],
+        "source_docs": [
+          "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/design/ODP_WEB_PASSWORD_FIRST_AUTH_CONTRACT.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md"
+        ],
+        "owned_paths": [
+          "docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/"
+        ],
+        "mutates_canonical": true,
+        "expected_fields_verified": [
+          "acceptance",
+          "artifacts",
+          "assignment_note",
+          "base_branch",
+          "catalog_managed",
+          "depends_on",
+          "evidence_path",
+          "forbidden_paths",
+          "id",
+          "mutates_canonical",
+          "next_stage_entry",
+          "owned_paths",
+          "owner",
+          "phase",
+          "priority",
+          "related_task_ids",
+          "repository",
+          "reviewer",
+          "source_docs",
+          "source_refs",
+          "stage",
+          "summary_zh",
+          "task_class",
+          "title",
+          "verification",
+          "work_package"
+        ]
+      }
+    },
+    {
+      "task_id": "ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
+      "started_at": "2026-09-08T15:01:48.901196+00:00",
+      "argv": [
+        "bash",
+        "/home/lupin/odayplus/scripts/ai-status.sh",
+        "assign",
+        "ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
+        "Claude",
+        "Codex",
+        "交品牌轉移資料契約草案、producer／consumer 差距及 H03 請求"
+      ],
+      "metadata_sha256": "873aa45dd3f0f7b5e45bdc7c267b2da57e1b0785c0baed58792887fe3a2c60bb",
+      "initial_dependency_env": "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001",
+      "status": "assigned_and_verified",
+      "finished_at": "2026-09-08T15:01:59.766107+00:00",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "",
+      "readback": {
+        "id": "ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
+        "status": "todo",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "depends_on": [
+          "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+        ],
+        "source_docs": [
+          "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_SITE001_DATA_READINESS_2026-09-03.md"
+        ],
+        "owned_paths": [
+          "docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/"
+        ],
+        "mutates_canonical": true,
+        "expected_fields_verified": [
+          "acceptance",
+          "artifacts",
+          "assignment_note",
+          "base_branch",
+          "catalog_managed",
+          "depends_on",
+          "evidence_path",
+          "forbidden_paths",
+          "id",
+          "mutates_canonical",
+          "next_stage_entry",
+          "owned_paths",
+          "owner",
+          "phase",
+          "priority",
+          "related_task_ids",
+          "repository",
+          "reviewer",
+          "source_docs",
+          "source_refs",
+          "stage",
+          "summary_zh",
+          "task_class",
+          "title",
+          "verification",
+          "work_package"
+        ]
+      }
+    },
+    {
+      "task_id": "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001",
+      "started_at": "2026-09-08T15:01:59.796748+00:00",
+      "argv": [
+        "bash",
+        "/home/lupin/odayplus/scripts/ai-status.sh",
+        "assign",
+        "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001",
+        "Antigravity",
+        "Codex2",
+        "交店型轉換事件／財務契約草案與 H04 請求"
+      ],
+      "metadata_sha256": "7b8b655a97d445ced794a11c4e0a81738dcb4460bac5949e377f969d7d7e397c",
+      "initial_dependency_env": "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001",
+      "status": "assigned_and_verified",
+      "finished_at": "2026-09-08T15:02:11.208145+00:00",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "",
+      "readback": {
+        "id": "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001",
+        "status": "todo",
+        "owner": "Antigravity",
+        "reviewer": "Codex2",
+        "depends_on": [
+          "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+        ],
+        "source_docs": [
+          "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_SITE001_DATA_READINESS_2026-09-03.md"
+        ],
+        "owned_paths": [
+          "docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/"
+        ],
+        "mutates_canonical": true,
+        "expected_fields_verified": [
+          "acceptance",
+          "artifacts",
+          "assignment_note",
+          "base_branch",
+          "catalog_managed",
+          "depends_on",
+          "evidence_path",
+          "forbidden_paths",
+          "id",
+          "mutates_canonical",
+          "next_stage_entry",
+          "owned_paths",
+          "owner",
+          "phase",
+          "priority",
+          "related_task_ids",
+          "repository",
+          "reviewer",
+          "source_docs",
+          "source_refs",
+          "stage",
+          "summary_zh",
+          "task_class",
+          "title",
+          "verification",
+          "work_package"
+        ]
+      }
+    },
+    {
+      "task_id": "ODP-NET002-LEASE-CONTRACT-PREP-001",
+      "started_at": "2026-09-08T15:02:11.241310+00:00",
+      "argv": [
+        "bash",
+        "/home/lupin/odayplus/scripts/ai-status.sh",
+        "assign",
+        "ODP-NET002-LEASE-CONTRACT-PREP-001",
+        "Claude2",
+        "Codex",
+        "交 NetPlan 租約最小契約、solver 一致驗收方案與 H05 請求"
+      ],
+      "metadata_sha256": "6f1301077f9727e3324959892f522c310b44950475766a68950e8a579f75f191",
+      "initial_dependency_env": "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001",
+      "status": "assigned_and_verified",
+      "finished_at": "2026-09-08T15:02:22.090687+00:00",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "",
+      "readback": {
+        "id": "ODP-NET002-LEASE-CONTRACT-PREP-001",
+        "status": "todo",
+        "owner": "Claude2",
+        "reviewer": "Codex",
+        "depends_on": [
+          "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+        ],
+        "source_docs": [
+          "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_NET002_LEASE_DISPOSITION_2026-09-03.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_NET002_LEASE_DATA_READINESS_2026-09-03.md"
+        ],
+        "owned_paths": [
+          "docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/"
+        ],
+        "mutates_canonical": true,
+        "expected_fields_verified": [
+          "acceptance",
+          "artifacts",
+          "assignment_note",
+          "base_branch",
+          "catalog_managed",
+          "depends_on",
+          "evidence_path",
+          "forbidden_paths",
+          "id",
+          "mutates_canonical",
+          "next_stage_entry",
+          "owned_paths",
+          "owner",
+          "phase",
+          "priority",
+          "related_task_ids",
+          "repository",
+          "reviewer",
+          "source_docs",
+          "source_refs",
+          "stage",
+          "summary_zh",
+          "task_class",
+          "title",
+          "verification",
+          "work_package"
+        ]
+      }
+    },
+    {
+      "task_id": "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001",
+      "started_at": "2026-09-08T15:02:22.120421+00:00",
+      "argv": [
+        "bash",
+        "/home/lupin/odayplus/scripts/ai-status.sh",
+        "assign",
+        "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001",
+        "Antigravity2",
+        "Codex2",
+        "交真實 durable job 候選與 PARTIAL／receipt／retry 契約及 H06 請求"
+      ],
+      "metadata_sha256": "45c239b6acee33125e2dd917266f0cb8c8c8322ae7829cab662a8d2dece02878",
+      "initial_dependency_env": "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001",
+      "status": "assigned_and_verified",
+      "finished_at": "2026-09-08T15:02:32.913642+00:00",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "",
+      "readback": {
+        "id": "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001",
+        "status": "todo",
+        "owner": "Antigravity2",
+        "reviewer": "Codex2",
+        "depends_on": [
+          "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+        ],
+        "source_docs": [
+          "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md"
+        ],
+        "owned_paths": [
+          "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/"
+        ],
+        "mutates_canonical": true,
+        "expected_fields_verified": [
+          "acceptance",
+          "artifacts",
+          "assignment_note",
+          "base_branch",
+          "catalog_managed",
+          "depends_on",
+          "evidence_path",
+          "forbidden_paths",
+          "id",
+          "mutates_canonical",
+          "next_stage_entry",
+          "owned_paths",
+          "owner",
+          "phase",
+          "priority",
+          "related_task_ids",
+          "repository",
+          "reviewer",
+          "source_docs",
+          "source_refs",
+          "stage",
+          "summary_zh",
+          "task_class",
+          "title",
+          "verification",
+          "work_package"
+        ]
+      }
+    },
+    {
+      "task_id": "ODP-CDC-SOURCE-CONTRACT-PREP-001",
+      "started_at": "2026-09-08T15:02:32.946018+00:00",
+      "argv": [
+        "bash",
+        "/home/lupin/odayplus/scripts/ai-status.sh",
+        "assign",
+        "ODP-CDC-SOURCE-CONTRACT-PREP-001",
+        "Claude",
+        "Codex",
+        "交 CDC 逐來源適用性／刪除傳播矩陣與 H07 請求"
+      ],
+      "metadata_sha256": "746b4db194c5782c69c3be7225d49e92c3d8549cff536b7cc9076a2c2df36a2e",
+      "initial_dependency_env": "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001",
+      "status": "assigned_and_verified",
+      "finished_at": "2026-09-08T15:02:43.816310+00:00",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "",
+      "readback": {
+        "id": "ODP-CDC-SOURCE-CONTRACT-PREP-001",
+        "status": "todo",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "depends_on": [
+          "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+        ],
+        "source_docs": [
+          "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_INT001_CDC_SOURCE_EVIDENCE_2026-09-03.md"
+        ],
+        "owned_paths": [
+          "docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/"
+        ],
+        "mutates_canonical": true,
+        "expected_fields_verified": [
+          "acceptance",
+          "artifacts",
+          "assignment_note",
+          "base_branch",
+          "catalog_managed",
+          "depends_on",
+          "evidence_path",
+          "forbidden_paths",
+          "id",
+          "mutates_canonical",
+          "next_stage_entry",
+          "owned_paths",
+          "owner",
+          "phase",
+          "priority",
+          "related_task_ids",
+          "repository",
+          "reviewer",
+          "source_docs",
+          "source_refs",
+          "stage",
+          "summary_zh",
+          "task_class",
+          "title",
+          "verification",
+          "work_package"
+        ]
+      }
+    },
+    {
+      "task_id": "ODP-MERGE-QUEUE-BATCH-DESIGN-001",
+      "started_at": "2026-09-08T15:02:43.848324+00:00",
+      "argv": [
+        "bash",
+        "/home/lupin/odayplus/scripts/ai-status.sh",
+        "assign",
+        "ODP-MERGE-QUEUE-BATCH-DESIGN-001",
+        "Antigravity3",
+        "Codex2",
+        "將批次 queue 視為正式需求並交只讀量測與可審查設計"
+      ],
+      "metadata_sha256": "94912618584ed138851f287308f24ff20be6372091283212307bbd717e23d720",
+      "initial_dependency_env": "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001",
+      "status": "assigned_and_verified",
+      "finished_at": "2026-09-08T15:02:54.694897+00:00",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "",
+      "readback": {
+        "id": "ODP-MERGE-QUEUE-BATCH-DESIGN-001",
+        "status": "todo",
+        "owner": "Antigravity3",
+        "reviewer": "Codex2",
+        "depends_on": [
+          "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+        ],
+        "source_docs": [
+          "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_MERGE_QUEUE_DISPOSITION_2026-09-03.md",
+          "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/runbooks/dev-merge-queue.md"
+        ],
+        "owned_paths": [
+          "docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/"
+        ],
+        "mutates_canonical": true,
+        "expected_fields_verified": [
+          "acceptance",
+          "artifacts",
+          "assignment_note",
+          "base_branch",
+          "catalog_managed",
+          "depends_on",
+          "evidence_path",
+          "forbidden_paths",
+          "id",
+          "mutates_canonical",
+          "next_stage_entry",
+          "owned_paths",
+          "owner",
+          "phase",
+          "priority",
+          "related_task_ids",
+          "repository",
+          "reviewer",
+          "source_docs",
+          "source_refs",
+          "stage",
+          "summary_zh",
+          "task_class",
+          "title",
+          "verification",
+          "work_package"
+        ]
+      }
+    }
+  ],
+  "status": "all_eight_assigned_and_verified",
+  "updated_at": "2026-09-08T15:02:54.717862+00:00",
+  "preflight": {
+    "pr": {
+      "baseRefName": "dev",
+      "headRefOid": "c7d9735834daa670baa64c54f25b5fb0dd25ceaf",
+      "mergeCommit": {
+        "oid": "be04fe7954d3414f024901e034caacd95ae81538"
+      },
+      "mergedAt": "2026-09-08T14:45:31Z",
+      "number": 1247,
+      "state": "MERGED",
+      "url": "https://github.com/alfloop-dev/odayplus/pull/1247"
+    },
+    "publication": {
+      "id": "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001",
+      "status": "done",
+      "approved_head": "c7d9735834daa670baa64c54f25b5fb0dd25ceaf",
+      "review_gate_sha": "c7d9735834daa670baa64c54f25b5fb0dd25ceaf",
+      "review_submission": {
+        "pr_number": 1247,
+        "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1247",
+        "branch": "task/ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001",
+        "remote_sha": "c7d9735834daa670baa64c54f25b5fb0dd25ceaf",
+        "base_branch": "dev",
+        "verified_at": "2026-09-08T13:26:15Z",
+        "submitted_by": "Claude"
+      },
+      "location": "archive"
+    },
+    "merge_sha": "be04fe7954d3414f024901e034caacd95ae81538",
+    "published_plan": {
+      "path": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+      "sha": "76ac99f378a95c99b9f24ee46cd09e95a653dc60",
+      "size": 30793
+    },
+    "source_resolution": [
+      {
+        "reference": "github://alfloop-dev/oday-data-platform@cf5c48d60f3d33b9863b0458f44b4fd49d842b12/docs/runbooks/external-source-update-policy.md",
+        "method": "git cat-file -e",
+        "exit_code": 0,
+        "observed_at": "2026-09-08T15:01:16.197095+00:00"
+      },
+      {
+        "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/design/ODP_WEB_PASSWORD_FIRST_AUTH_CONTRACT.md",
+        "method": "git cat-file -e",
+        "exit_code": 0,
+        "observed_at": "2026-09-08T15:01:16.203893+00:00"
+      },
+      {
+        "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md",
+        "method": "git cat-file -e",
+        "exit_code": 0,
+        "observed_at": "2026-09-08T15:01:16.210385+00:00"
+      },
+      {
+        "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_INT001_CDC_SOURCE_EVIDENCE_2026-09-03.md",
+        "method": "git cat-file -e",
+        "exit_code": 0,
+        "observed_at": "2026-09-08T15:01:16.216895+00:00"
+      },
+      {
+        "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md",
+        "method": "git cat-file -e",
+        "exit_code": 0,
+        "observed_at": "2026-09-08T15:01:16.223507+00:00"
+      },
+      {
+        "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md",
+        "method": "git cat-file -e",
+        "exit_code": 0,
+        "observed_at": "2026-09-08T15:01:16.229916+00:00"
+      },
+      {
+        "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_MERGE_QUEUE_DISPOSITION_2026-09-03.md",
+        "method": "git cat-file -e",
+        "exit_code": 0,
+        "observed_at": "2026-09-08T15:01:16.236011+00:00"
+      },
+      {
+        "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_NET002_LEASE_DATA_READINESS_2026-09-03.md",
+        "method": "git cat-file -e",
+        "exit_code": 0,
+        "observed_at": "2026-09-08T15:01:16.242008+00:00"
+      },
+      {
+        "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_NET002_LEASE_DISPOSITION_2026-09-03.md",
+        "method": "git cat-file -e",
+        "exit_code": 0,
+        "observed_at": "2026-09-08T15:01:16.247903+00:00"
+      },
+      {
+        "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md",
+        "method": "git cat-file -e",
+        "exit_code": 0,
+        "observed_at": "2026-09-08T15:01:16.253757+00:00"
+      },
+      {
+        "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_SITE001_DATA_READINESS_2026-09-03.md",
+        "method": "git cat-file -e",
+        "exit_code": 0,
+        "observed_at": "2026-09-08T15:01:16.259495+00:00"
+      },
+      {
+        "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/OSS_LEGAL_POLICY_HUMAN_HANDOFF_2026-07-31.md",
+        "method": "git cat-file -e",
+        "exit_code": 0,
+        "observed_at": "2026-09-08T15:01:16.265159+00:00"
+      },
+      {
+        "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md",
+        "method": "git cat-file -e",
+        "exit_code": 0,
+        "observed_at": "2026-09-08T15:01:16.270955+00:00"
+      },
+      {
+        "reference": "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/runbooks/dev-merge-queue.md",
+        "method": "git cat-file -e",
+        "exit_code": 0,
+        "observed_at": "2026-09-08T15:01:16.276935+00:00"
+      },
+      {
+        "reference": "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+        "method": "git cat-file -e",
+        "exit_code": 0,
+        "observed_at": "2026-09-08T15:01:16.282983+00:00"
+      }
+    ],
+    "blockers": []
+  },
+  "planned_assignments": [
+    {
+      "id": "ODP-OSS-DECISION-PACK-001",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "depends_on": [
+        "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+      ],
+      "source_docs": [
+        "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/OSS_LEGAL_POLICY_HUMAN_HANDOFF_2026-07-31.md",
+        "github://alfloop-dev/oday-data-platform@cf5c48d60f3d33b9863b0458f44b4fd49d842b12/docs/runbooks/external-source-update-policy.md"
+      ]
+    },
+    {
+      "id": "ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001",
+      "owner": "Claude2",
+      "reviewer": "Codex2",
+      "depends_on": [
+        "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+      ],
+      "source_docs": [
+        "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/design/ODP_WEB_PASSWORD_FIRST_AUTH_CONTRACT.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md"
+      ]
+    },
+    {
+      "id": "ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "depends_on": [
+        "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+      ],
+      "source_docs": [
+        "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_SITE001_DATA_READINESS_2026-09-03.md"
+      ]
+    },
+    {
+      "id": "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "depends_on": [
+        "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+      ],
+      "source_docs": [
+        "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_SITE001_DATA_READINESS_2026-09-03.md"
+      ]
+    },
+    {
+      "id": "ODP-NET002-LEASE-CONTRACT-PREP-001",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "depends_on": [
+        "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+      ],
+      "source_docs": [
+        "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_NET002_LEASE_DISPOSITION_2026-09-03.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_NET002_LEASE_DATA_READINESS_2026-09-03.md"
+      ]
+    },
+    {
+      "id": "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001",
+      "owner": "Antigravity2",
+      "reviewer": "Codex2",
+      "depends_on": [
+        "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+      ],
+      "source_docs": [
+        "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md"
+      ]
+    },
+    {
+      "id": "ODP-CDC-SOURCE-CONTRACT-PREP-001",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "depends_on": [
+        "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+      ],
+      "source_docs": [
+        "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_INT001_CDC_SOURCE_EVIDENCE_2026-09-03.md"
+      ]
+    },
+    {
+      "id": "ODP-MERGE-QUEUE-BATCH-DESIGN-001",
+      "owner": "Antigravity3",
+      "reviewer": "Codex2",
+      "depends_on": [
+        "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+      ],
+      "source_docs": [
+        "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_MERGE_QUEUE_DISPOSITION_2026-09-03.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/runbooks/dev-merge-queue.md"
+      ]
+    }
+  ]
+}

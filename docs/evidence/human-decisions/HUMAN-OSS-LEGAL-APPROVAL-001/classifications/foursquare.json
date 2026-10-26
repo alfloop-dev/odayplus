@@ -1,0 +1,196 @@
+{
+  "authority_reference": {
+    "issued_by": "蔡尚志 (負責人)",
+    "reference": "HUMAN-OSS-LEGAL-APPROVAL-001 source-data approval receipt sha256:2119dc6f74335d3a1884e0a0dfda6db61171df0542c46371c1719c26204d83c7 (alfloop-dev/odayplus#1418, authored by ajoe734)",
+    "scope": "raw field classification of source lane 'foursquare', accepted as reviewed in classification-review.md"
+  },
+  "classification_digest": "82b7f8736570d12be5633ee0861bcfc59cd5258886a2c26f763d33ea387c97a6",
+  "contract_id": "emgi.source.foursquare-places.v1",
+  "fields": {
+    "available_at": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "blob_id": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "confidence": {
+      "basis": "Foursquare OS Places 欄位（Apache-2.0）；fsq_place_id 與信心值",
+      "classification": "PUBLIC"
+    },
+    "dataset_version_id": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "fetched_at": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "first_seen_at": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "ingested_at": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "last_seen_at": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "observation_id": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "observed_at": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "payload_excerpt": {
+      "basis": "Foursquare OS Places 欄位（Apache-2.0）；excerpt 含 name/coordinates/address/locality/categories/chain/delta_action/is_closed",
+      "classification": "PUBLIC"
+    },
+    "scope_principal_id": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "source_entity_id": {
+      "basis": "Foursquare OS Places 欄位（Apache-2.0）；fsq_place_id 與信心值",
+      "classification": "PUBLIC"
+    },
+    "status": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    }
+  },
+  "provider_id": "provider.foursquare",
+  "raw_source_fields": {
+    "address": {
+      "basis": "Foursquare OS Places 欄位（Apache-2.0）；POI 營業地址（商家地點）",
+      "classification": "PUBLIC"
+    },
+    "chain_id": {
+      "basis": "Foursquare OS Places 欄位（Apache-2.0）；FoursquarePlacesAdapter.parse_record 讀取的鍵",
+      "classification": "PUBLIC"
+    },
+    "chain_name": {
+      "basis": "Foursquare OS Places 欄位（Apache-2.0）；FoursquarePlacesAdapter.parse_record 讀取的鍵",
+      "classification": "PUBLIC"
+    },
+    "confidence": {
+      "basis": "Foursquare OS Places 欄位（Apache-2.0）；FoursquarePlacesAdapter.parse_record 讀取的鍵",
+      "classification": "PUBLIC"
+    },
+    "country": {
+      "basis": "Foursquare OS Places 欄位（Apache-2.0）；FoursquarePlacesAdapter.parse_record 讀取的鍵",
+      "classification": "PUBLIC"
+    },
+    "data": {
+      "basis": "defs/external/poi.py 認得的集合/GeoJSON 封套鍵",
+      "classification": "INTERNAL"
+    },
+    "date_closed": {
+      "basis": "Foursquare OS Places 欄位（Apache-2.0）；FoursquarePlacesAdapter.parse_record 讀取的鍵",
+      "classification": "PUBLIC"
+    },
+    "date_created": {
+      "basis": "Foursquare OS Places 欄位（Apache-2.0）；FoursquarePlacesAdapter.parse_record 讀取的鍵",
+      "classification": "PUBLIC"
+    },
+    "date_refreshed": {
+      "basis": "Foursquare OS Places 欄位（Apache-2.0）；FoursquarePlacesAdapter.parse_record 讀取的鍵",
+      "classification": "PUBLIC"
+    },
+    "delta_action": {
+      "basis": "Foursquare OS Places 欄位（Apache-2.0）；FoursquarePlacesAdapter.parse_record 讀取的鍵",
+      "classification": "PUBLIC"
+    },
+    "features": {
+      "basis": "defs/external/poi.py 認得的集合/GeoJSON 封套鍵",
+      "classification": "INTERNAL"
+    },
+    "fsq_category_ids": {
+      "basis": "Foursquare OS Places 欄位（Apache-2.0）；FoursquarePlacesAdapter.parse_record 讀取的鍵",
+      "classification": "PUBLIC"
+    },
+    "fsq_category_labels": {
+      "basis": "Foursquare OS Places 欄位（Apache-2.0）；FoursquarePlacesAdapter.parse_record 讀取的鍵",
+      "classification": "PUBLIC"
+    },
+    "fsq_place_id": {
+      "basis": "Foursquare OS Places 欄位（Apache-2.0）；FoursquarePlacesAdapter.parse_record 讀取的鍵",
+      "classification": "PUBLIC"
+    },
+    "items": {
+      "basis": "defs/external/poi.py 認得的集合/GeoJSON 封套鍵",
+      "classification": "INTERNAL"
+    },
+    "latitude": {
+      "basis": "Foursquare OS Places 欄位（Apache-2.0）；FoursquarePlacesAdapter.parse_record 讀取的鍵",
+      "classification": "PUBLIC"
+    },
+    "locality": {
+      "basis": "Foursquare OS Places 欄位（Apache-2.0）；FoursquarePlacesAdapter.parse_record 讀取的鍵",
+      "classification": "PUBLIC"
+    },
+    "longitude": {
+      "basis": "Foursquare OS Places 欄位（Apache-2.0）；FoursquarePlacesAdapter.parse_record 讀取的鍵",
+      "classification": "PUBLIC"
+    },
+    "merge_target_fsq_id": {
+      "basis": "Foursquare OS Places 欄位（Apache-2.0）；FoursquarePlacesAdapter.parse_record 讀取的鍵",
+      "classification": "PUBLIC"
+    },
+    "metadata": {
+      "basis": "Foursquare OS Places 欄位（Apache-2.0）；附帶中繼資料，內容未定義",
+      "classification": "INTERNAL"
+    },
+    "name": {
+      "basis": "Foursquare OS Places 欄位（Apache-2.0）；FoursquarePlacesAdapter.parse_record 讀取的鍵",
+      "classification": "PUBLIC"
+    },
+    "places": {
+      "basis": "defs/external/poi.py 認得的集合/GeoJSON 封套鍵",
+      "classification": "INTERNAL"
+    },
+    "postcode": {
+      "basis": "Foursquare OS Places 欄位（Apache-2.0）；FoursquarePlacesAdapter.parse_record 讀取的鍵",
+      "classification": "PUBLIC"
+    },
+    "properties": {
+      "basis": "defs/external/poi.py 認得的集合/GeoJSON 封套鍵",
+      "classification": "INTERNAL"
+    },
+    "records": {
+      "basis": "defs/external/poi.py 認得的集合/GeoJSON 封套鍵",
+      "classification": "INTERNAL"
+    },
+    "region": {
+      "basis": "Foursquare OS Places 欄位（Apache-2.0）；FoursquarePlacesAdapter.parse_record 讀取的鍵",
+      "classification": "PUBLIC"
+    },
+    "results": {
+      "basis": "defs/external/poi.py 認得的集合/GeoJSON 封套鍵",
+      "classification": "INTERNAL"
+    },
+    "stores": {
+      "basis": "defs/external/poi.py 認得的集合/GeoJSON 封套鍵",
+      "classification": "INTERNAL"
+    },
+    "type": {
+      "basis": "defs/external/poi.py 認得的集合/GeoJSON 封套鍵",
+      "classification": "INTERNAL"
+    }
+  },
+  "schema": "emgi.raw-field-classification.v1",
+  "schema_sha256": "928d84baf4b1d92bb99249595ea9d0e21fad9fd9ece1d79d8bba212652a57100",
+  "source": "foursquare",
+  "source_version_binding": {
+    "classification_policy": "AUTHORITY_ARTIFACT_REQUIRED",
+    "drafted_against": "origin/dev 24c40ae75e5759a47a21566f4dccfa15d5d38386",
+    "drafted_at": "2026-10-06",
+    "policy_source_id": "foursquare",
+    "record_model": "SourceObservation"
+  }
+}

@@ -38,6 +38,7 @@ from modules.integration.domain.contracts import (
     load_index,
     validate_record,
 )
+from shared.domain.models import canonical_measurement_dict
 
 # Record fields that, in order, supply the canonical observation / event time.
 _OBSERVATION_FIELDS = (
@@ -142,6 +143,22 @@ class ConnectorRun:
 
     def canonical_entities(self) -> list[Any]:
         return [r.canonical for r in self.accepted if r.canonical is not None]
+
+    def canonical_entity_dicts(self) -> tuple[dict[str, Any], ...]:
+        """Accepted canonical entities as dicts, with absence preserved.
+
+        Connector output is where Poi, CompetitorStore and Listing stop being
+        aggregates and become plain payloads (snapshot bodies, provider
+        evidence, downstream JSON). A straight ``asdict`` republishes a
+        pre-cutover substituted 1.00 as though it had been measured, so every
+        connector crosses that boundary through the canonical projection --
+        the effective value plus an explicit ``*_provenance`` key.
+        """
+        return tuple(
+            canonical_measurement_dict(record.canonical)
+            for record in self.accepted
+            if record.canonical is not None
+        )
 
     def quarantine_reasons(self) -> set[str]:
         reasons: set[str] = set()

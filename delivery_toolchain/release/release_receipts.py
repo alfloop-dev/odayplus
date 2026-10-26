@@ -61,6 +61,7 @@ RUNTIME_RELEASE_ARTIFACT_ALLOWLIST = (
     ".odp_data/deployment/cloud-run-smoke.json",
     ".odp_data/deployment/cloud-run-migration-compatibility.json",
     ".odp_data/deployment/live-e2e-gate.json",
+    ".odp_data/deployment/public-egress-probe.json",
     ".odp_data/deployment/cloud-run-jobs/migration-validation.json",
     ".odp_data/deployment/cloud-run-jobs/scheduler-validation.json",
     ".odp_data/deployment/cloud-run-jobs/worker-validation.json",

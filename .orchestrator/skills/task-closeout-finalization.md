@@ -21,6 +21,10 @@ reviewed commit. A finalize worker is read-only with respect to the task branch:
 - do not merge or rebase `dev`, even when the PR is behind;
 - do not edit tracked files, create a closeout commit, push, or rerun
   `task_finalize.sh`;
+- do not rerun focused verification, test suites (pytest, npm test, etc.), build,
+  lint, security scans, or E2E tests; all verification was already completed prior
+  to review submission;
+- only verify and check the exact approved head's PR, CI status, and receipts;
 - wait for the merge queue to compose the approved head with the current base;
 - if any repo change is truly required, run `re_review` first, make the change,
   resubmit the exact new head, and obtain a new reviewer approval.
@@ -33,12 +37,12 @@ reviewed commit. A finalize worker is read-only with respect to the task branch:
    the exact reviewer-approved head; do not update them during finalization.
 4. Do not broaden canonical architecture docs unless the task
    explicitly changes canonical truth.
-5. Run focused verification appropriate to the task and record the
-   exact commands in the finalization message or task artifact.
+5. Only read and verify the exact approved head's PR, CI status, and verification
+   receipts; do not rerun tests (pytest, npm test, cargo test, go test, etc.),
+   build, lint, security scans, or E2E suites during finalization.
 6. Inspect `git status --short`. Any tracked change is a blocker in the
    immutable finalize lane; do not commit, discard, or push it.
-7. Create the task PR (see § Per-Task PR Flow below) whenever the task
-   changed repo files, then wait for it to merge into the target branch.
+7. Confirm the task PR (created before review) has merged into the target branch.
 8. Run `AI_NAME=<Owner> ./scripts/ai-status.sh done <task-id> "<checkpoint message>"`
    only after the PR is merged. An open PR, auto-merge enabled, or green
    checks are not sufficient.

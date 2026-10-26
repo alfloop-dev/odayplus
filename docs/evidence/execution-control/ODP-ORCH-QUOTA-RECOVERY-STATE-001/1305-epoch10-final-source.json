@@ -1,0 +1,18 @@
+{
+  "base_head": "10e20f8ae74fe5d31696ff67a6b033754ead8b7d",
+  "source_sha256": {
+    ".orchestrator/runtime_state.py": "a2b58349880d7f464d9e56dbb6a47177a8b76e5a4b9c9d025e7e566018513491",
+    ".orchestrator/supervisor.py": "aacae3116d7d2c2899feea29d18e368f497f207a1daad0a62395a4a429271390",
+    ".orchestrator/worker_failure_policy.py": "a7b639036312a3185040d61425fd3ee9b9e0e00388ce0f23f05a03920d5b0b8c",
+    ".orchestrator/dispatch_engine.py": "e445ae45a8acaccaa9c4597721c13fc9eac825874b48242844b766855fb5a7fd",
+    ".orchestrator/test_account_pool_queue_recovery.py": "53fc186867675f71a360c53ce4af757f620b8e35edb14b8223c878b6c137a42d",
+    ".orchestrator/test_provider_failure_epoch.py": "d0fd1126cae0abc25a519e38fbceba790d35b11c6b8163d840d7d66b126362b9",
+    ".orchestrator/test_worker_failure_policy.py": "e26fc95985dbe7c372b02402966882d4bf23b0561984e7a1de73ee6192ee5aee",
+    "docs/audits/code-boundary-inventory.csv": "a2d3caa71bc3d5722db36c46a71244cdfbe664cdcc0d6870760fd6a3b6a972d9"
+  },
+  "boundary_check": {
+    "exit_code": 0,
+    "file_count": 1161,
+    "inventory_change": "Two new regression files only"
+  }
+}

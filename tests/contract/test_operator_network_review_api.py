@@ -13,9 +13,19 @@ Covers acceptance:
 
 from __future__ import annotations
 
+from dataclasses import replace
+
+import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
+from shared.infrastructure.persistence import build_persistence
+from shared.jobs.queue import InMemoryJobQueue
+from tests.integration._operation_flag_fixtures import (
+    SITE_GO_FLAG,
+    enable_operation_flag,
+    new_operation_flags,
+)
 
 # Site Reviewer holds sitescore APPROVE (may decide).
 REVIEWER_HEADERS = {
@@ -28,18 +38,89 @@ REVIEWER_HEADERS = {
 # Expansion holds sitescore VIEW/EXECUTE only (may submit, not decide).
 EXPANSION_HEADERS = {
     "x-subject-id": "operator-expansion-manager",
-    "x-roles": "site_reviewer",
-    "x-operator-role": "expansion-manager",
+    "x-roles": "expansion_user",
+    "x-operator-role": "expansion-staff",
     "x-tenant-id": "tenant-a",
 }
 
 
-def _client() -> TestClient:
-    return TestClient(create_app())
+def _client(*, go_enabled=False) -> TestClient:
+    # This suite covers the explicitly seeded memory API. Use a fresh owner;
+    # never enable the process-global default registry for unrelated tests.
+    bundle = build_persistence()
+    assert bundle.mode == "memory"
+    owner, _ = new_operation_flags()
+    bundle = replace(bundle, feature_flag_registry=owner, job_queue=InMemoryJobQueue(flags=owner))
+    if go_enabled:
+        enable_operation_flag(
+            owner, key=SITE_GO_FLAG, tenant_id=REVIEWER_HEADERS["x-tenant-id"],
+            queue=bundle.job_queue, audit_log=bundle.audit_log,
+        )
+    return TestClient(create_app(persistence=bundle))
 
 
 def _snapshot(client: TestClient) -> dict:
     return client.get("/api/v1/operator/network-reviews", headers=REVIEWER_HEADERS).json()
+
+
+@pytest.mark.parametrize("binding", ["matched", "foreign_queue", "foreign_owner"])
+@pytest.mark.parametrize("after_reset", [False, True])
+def test_seeded_durable_review_uses_its_explicit_business_engine(tmp_path, binding, after_reset) -> None:
+    """The local SQL composition keeps the same owner/queue rule as live work."""
+    bundle = build_persistence(mode="durable", db_path=tmp_path / "local-review.sqlite")
+    other = build_persistence(mode="durable", db_path=tmp_path / "other.sqlite")
+    try:
+        assert bundle.engine is not other.engine
+        enable_operation_flag(
+            bundle.feature_flag_registry, key=SITE_GO_FLAG, tenant_id="tenant-a",
+            queue=bundle.job_queue, audit_log=bundle.audit_log,
+        )
+        enable_operation_flag(
+            other.feature_flag_registry, key=SITE_GO_FLAG, tenant_id="tenant-a",
+            queue=other.job_queue, audit_log=other.audit_log,
+        )
+        selected = replace(bundle,
+            job_queue=other.job_queue if binding == "foreign_queue" else bundle.job_queue,
+            feature_flag_registry=other.feature_flag_registry if binding == "foreign_owner" else bundle.feature_flag_registry)
+        with TestClient(create_app(persistence=selected)) as client:
+            if after_reset:
+                reset = client.post("/api/v1/operator/network-reviews/reset", headers=REVIEWER_HEADERS)
+                assert reset.status_code == 200, reset.text
+            before = _snapshot(client)
+            response = client.post("/api/v1/operator/network-reviews/RV-702/decide",
+                headers={**REVIEWER_HEADERS, "idempotency-key": "explicit-sql-review"},
+                json={"decision": "GO", "reason": "Explicit synthetic durable review decision"})
+            if binding == "matched":
+                assert response.status_code == 200, response.text
+                assert response.json()["review"]["status"] == "approved"
+                assert response.json()["candidate"]["status"] == "approved"
+                assert response.json()["approval"]["status"] == "approved"
+            else:
+                assert response.status_code == 503, response.text
+                assert response.json()["detail"]["message"] == "FEATURE_FLAG_STORE_UNAVAILABLE"
+                assert _snapshot(client) == before
+    finally:
+        other.engine.close()
+        bundle.engine.close()
+
+
+@pytest.mark.parametrize("after_reset", [False, True])
+def test_seeded_durable_review_keeps_default_disabled_flag_and_all_records(tmp_path, after_reset) -> None:
+    bundle = build_persistence(mode="durable", db_path=tmp_path / "disabled-review.sqlite")
+    try:
+        assert not bundle.feature_flag_registry.is_enabled(SITE_GO_FLAG)
+        with TestClient(create_app(persistence=bundle)) as client:
+            if after_reset:
+                reset = client.post("/api/v1/operator/network-reviews/reset", headers=REVIEWER_HEADERS)
+                assert reset.status_code == 200, reset.text
+            before = _snapshot(client)
+            response = client.post("/api/v1/operator/network-reviews/RV-702/decide",
+                headers=REVIEWER_HEADERS,
+                json={"decision": "GO", "reason": "Explicit synthetic durable review decision"})
+            assert response.status_code == 403 and "FEATURE_FLAG_DISABLED" in response.text
+            assert _snapshot(client) == before
+    finally:
+        bundle.engine.close()
 
 
 def test_review_snapshot_exposes_seeded_queue() -> None:
@@ -71,7 +152,7 @@ def test_review_snapshot_exposes_seeded_queue() -> None:
 
 
 def test_go_decision_syncs_five_records_and_survives_reload() -> None:
-    client = _client()
+    client = _client(go_enabled=True)
     response = client.post(
         "/api/v1/operator/network-reviews/RV-702/decide",
         headers={
@@ -83,7 +164,7 @@ def test_go_decision_syncs_five_records_and_survives_reload() -> None:
             "decision": "GO",
             "reason": "人流量體大且回本期可接受，核准進展店閘。",
             "actorRoleId": "siteReviewer",
-            "actorName": "陳審核",
+            "actorName": "forged-client-actor",
         },
     )
     assert response.status_code == 200, response.text
@@ -97,6 +178,10 @@ def test_go_decision_syncs_five_records_and_survives_reload() -> None:
     assert body["decision"]["finalDecision"] == "Approved"
     assert body["decision"]["mappedStatus"] == "approved"
     assert body["auditEvent"]["action"] == "review.decision"
+    assert body["auditEvent"]["actorName"] == REVIEWER_HEADERS["x-subject-id"]
+    assert body["decision"]["actor"] == REVIEWER_HEADERS["x-subject-id"]
+    assert body["auditEvent"]["actorRoleId"] == "site_reviewer"
+    assert body["decision"]["actorRoleId"] == "site_reviewer"
     assert body["records"] == {
         "candidateId": "CS-1001",
         "reviewId": "RV-702",
@@ -222,7 +307,7 @@ def test_reason_and_override_policies_are_enforced() -> None:
 
 
 def test_idempotent_replay_creates_no_duplicate_records() -> None:
-    client = _client()
+    client = _client(go_enabled=True)
     payload = {
         "decision": "GO",
         "reason": "人流量體大且回本期可接受，核准進展店閘。",
@@ -250,7 +335,7 @@ def test_idempotency_key_reused_across_reviews_does_not_replay() -> None:
     result. The cache is scoped by review id + payload, so the same key decides
     each review on its own terms and produces distinct records."""
 
-    client = _client()
+    client = _client(go_enabled=True)
     shared = {**REVIEWER_HEADERS, "idempotency-key": "idem-shared-key"}
 
     first = client.post(
@@ -289,7 +374,7 @@ def test_idempotency_key_reused_across_reviews_does_not_replay() -> None:
 
 
 def test_second_decision_on_decided_review_conflicts() -> None:
-    client = _client()
+    client = _client(go_enabled=True)
     client.post(
         "/api/v1/operator/network-reviews/RV-702/decide",
         headers=REVIEWER_HEADERS,
@@ -343,6 +428,51 @@ def test_expansion_role_may_submit_read_but_not_decide() -> None:
         },
     )
     assert decide.status_code == 403, decide.text
+
+
+def test_decision_uses_verified_role_not_client_actor_fields() -> None:
+    client = _client(go_enabled=True)
+    response = client.post(
+        "/api/v1/operator/network-reviews/RV-702/decide",
+        headers=REVIEWER_HEADERS,
+        json={
+            "decision": "GO",
+            "reason": "approve this strong site now.",
+            "actorRoleId": "expansion-manager",  # canonical UI persona, not a grant
+            "actorName": "forged-client-actor",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["auditEvent"]["actorRoleId"] == "site_reviewer"
+    assert response.json()["auditEvent"]["actorName"] == REVIEWER_HEADERS["x-subject-id"]
+
+
+def test_client_reviewer_claim_cannot_promote_read_only_roles() -> None:
+    client = _client()
+    for roles, persona in (
+        ("operations_manager", "ops-lead"),
+        ("platform_admin,operator_viewer", "pm-audit"),
+        ("expansion_user", "expansion-staff"),
+    ):
+        response = client.post(
+            "/api/v1/operator/network-reviews/RV-702/decide",
+            headers={
+                "x-subject-id": "read-only-actor",
+                "x-roles": roles,
+                "x-operator-role": persona,
+                "x-tenant-id": "tenant-a",
+            },
+            json={
+                "decision": "GO",
+                "reason": "approve this strong site now.",
+                "actorRoleId": "siteReviewer",
+                "actorName": "forged-reviewer",
+            },
+        )
+        assert response.status_code == 403, response.text
+    snapshot = _snapshot(client)
+    assert snapshot["counts"]["decided"] == 0
+    assert snapshot["auditEvents"] == []
 
 
 def test_unauthenticated_reads_and_writes_fail_closed() -> None:

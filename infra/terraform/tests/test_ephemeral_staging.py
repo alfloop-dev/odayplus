@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -13,6 +17,102 @@ if str(ROOT) not in sys.path:
 from product_ops.deployment.staging_lifecycle import validate_module_contract
 
 MODULE_DIR = Path(__file__).resolve().parents[1] / "modules" / "ephemeral_staging"
+
+# The plan probes below have to prove the module plans *offline*: no GCP login,
+# no remote backend, no apply. Leaving that to "the runner happens to have no
+# credentials" makes it a property of the machine rather than of the test, and
+# the two machines disagree in both directions:
+#
+#   * on a Google Cloud VM, Application Default Credentials resolve through the
+#     metadata server even with an empty environment and an empty HOME, so the
+#     provider silently authenticates as that VM and the probe proves nothing;
+#   * on a GitHub runner there is no metadata server, so the same provider
+#     stops with "Attempted to load application default credentials since
+#     neither `credentials` nor `access_token` was set in the provider block".
+#
+# So the harness fixes both ends rather than depending on either:
+#
+#   * an override file hands the provider a synthetic `access_token`, which is
+#     the branch the provider takes *before* it ever looks for ADC;
+#   * GOOGLE_APPLICATION_CREDENTIALS points at a file that does not exist.
+#     That is the first source ADC consults and it fails outright instead of
+#     falling through to the metadata server, so no ambient identity is
+#     reachable even when the tests run on Google Cloud;
+#   * every environment variable the google provider reads credentials from is
+#     dropped, and HOME points at a scratch directory;
+#   * only init/plan/validate are reachable, so no edit here can grow into an
+#     apply or a destroy against a real project;
+#   * init always carries -backend=false, so no remote state is configured.
+CREDENTIAL_ENV_PREFIXES = ("GOOGLE_", "GCLOUD_", "CLOUDSDK_", "GCP_")
+CREDENTIAL_ENV_NAMES = ("TF_VAR_credentials", "TF_TOKEN_app_terraform_io")
+OFFLINE_TERRAFORM_SUBCOMMANDS = frozenset({"init", "plan", "validate"})
+
+# The file name matters: Terraform treats `*_override.tf` as an override file
+# and merges it into the base configuration argument by argument, so the
+# module's own `project` and `region` survive and only `access_token` is added.
+# A plain second `provider "google"` block would be a duplicate-configuration
+# error instead. The token is never sent anywhere -- the module declares no
+# data sources, so a create-only plan needs no API call to resolve.
+OFFLINE_PROVIDER_OVERRIDE_FILENAME = "zz_offline_provider_override.tf"
+OFFLINE_PROVIDER_OVERRIDE = """\
+# Written by the test harness. Not part of the module under test: it exists so
+# the provider configures without credentials, and it must never be applied.
+provider "google" {
+  access_token = "offline"
+}
+"""
+ABSENT_ADC_FILENAME = "absent-application-default-credentials.json"
+
+
+def offline_terraform_env(home: Path) -> dict[str, str]:
+    """Return os.environ with every GCP credential source removed."""
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(CREDENTIAL_ENV_PREFIXES) and key not in CREDENTIAL_ENV_NAMES
+    }
+    env["HOME"] = str(home)
+    env["TF_IN_AUTOMATION"] = "1"
+    env["TF_INPUT"] = "0"
+    # Deliberately a path that is never created. See the module comment: this
+    # is what stops ADC from reaching the metadata server on a Google Cloud VM.
+    env["GOOGLE_APPLICATION_CREDENTIALS"] = str(home / ABSENT_ADC_FILENAME)
+    return env
+
+
+def write_offline_provider_override(module_dir: Path) -> Path:
+    """Give the google provider a synthetic token so it never looks for ADC."""
+
+    path = module_dir / OFFLINE_PROVIDER_OVERRIDE_FILENAME
+    path.write_text(OFFLINE_PROVIDER_OVERRIDE, encoding="utf-8")
+    return path
+
+
+def run_terraform(
+    subcommand: str,
+    *args: str,
+    chdir: Path,
+    home: Path,
+) -> subprocess.CompletedProcess[str]:
+    """Run one read-only terraform subcommand with no credentials in scope."""
+
+    if subcommand not in OFFLINE_TERRAFORM_SUBCOMMANDS:
+        raise AssertionError(
+            f"refusing to run 'terraform {subcommand}': these tests may only run "
+            f"{sorted(OFFLINE_TERRAFORM_SUBCOMMANDS)} so they can never reach real infrastructure"
+        )
+    command = ["terraform", f"-chdir={chdir}", subcommand, *args]
+    if subcommand == "init":
+        command.append("-backend=false")
+    home.mkdir(parents=True, exist_ok=True)
+    return subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        env=offline_terraform_env(home),
+        check=False,
+    )
 
 
 class EphemeralStagingModuleContractTests(unittest.TestCase):
@@ -48,6 +148,12 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
         self.assertIn('resource "google_cloud_scheduler_job" "staging_worker_trigger"', main_tf)
         self.assertTrue(re.search(r"paused\s*=\s*true", main_tf))
 
+    def test_all_release_scoped_cloud_run_resources_use_controlled_vpc_egress(self) -> None:
+        main_tf = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
+
+        self.assertEqual(main_tf.count('egress = "ALL_TRAFFIC"'), 5)
+        self.assertNotIn('egress = "PRIVATE_RANGES_ONLY"', main_tf)
+
     def test_module_variables_validation_rules(self) -> None:
         vars_tf = (MODULE_DIR / "variables.tf").read_text(encoding="utf-8")
 
@@ -56,6 +162,8 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
         self.assertIn('variable "manifest_digest"', vars_tf)
         self.assertIn('variable "api_image"', vars_tf)
         self.assertIn('variable "web_image"', vars_tf)
+        self.assertIn('variable "worker_image"', vars_tf)
+        self.assertIn('variable "scheduler_image"', vars_tf)
         self.assertIn('variable "ttl_hours"', vars_tf)
         self.assertIn('variable "created_at"', vars_tf)
         self.assertIn('var.ttl_hours >= 1 && var.ttl_hours <= 168', vars_tf)
@@ -130,6 +238,7 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
             self.assertNotIn(forbidden, outputs_tf)
 
         self.assertIn('output "staging_api_uri"', outputs_tf)
+        self.assertIn('output "staging_project_id"', outputs_tf)
         self.assertIn('output "staging_web_uri"', outputs_tf)
         self.assertIn('output "staging_database_name"', outputs_tf)
         self.assertIn('output "staging_data_bucket"', outputs_tf)
@@ -164,12 +273,11 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
         self.assertEqual(tenant_label_value(tenant_id), "custom_tenant")
 
     def test_terraform_standalone_plan_guards_future_timestamp_and_accepts_valid(self) -> None:
-        import shutil
-        import subprocess
-        import tempfile
         from datetime import UTC, datetime
 
         if not shutil.which("terraform"):
+            if os.environ.get("CI"):
+                self.fail("terraform binary not available in CI environment")
             self.skipTest("terraform binary not available in environment")
 
         valid_now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -183,29 +291,42 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
             "manifest_digest": "sha256:" + "0" * 64,
             "api_image": "asia-east1-docker.pkg.dev/test/repo/api@sha256:" + "0" * 64,
             "web_image": "asia-east1-docker.pkg.dev/test/repo/web@sha256:" + "0" * 64,
+            "worker_image": "asia-east1-docker.pkg.dev/test/repo/worker@sha256:" + "0" * 64,
+            "scheduler_image": "asia-east1-docker.pkg.dev/test/repo/scheduler@sha256:" + "0" * 64,
             "ttl_hours": 24,
             "owner_task_id": "ODP_TASK_001",
+            "release_profile": "core-ops",
             "tenant_id": "custom_tenant",
             "cloud_sql_instance_name": "test-db",
             "cloud_sql_connection_name": "test:asia-east1:test-db",
             "network_name": "test-vpc",
             "subnetwork_name": "test-subnet",
-            "kms_key_id": "projects/p/locations/asia-east1/keyRings/r/cryptoKeys/k",
-            "deployer_service_account_email": "deployer@test.iam.gserviceaccount.com",
+            "kms_key_id": "projects/test-staging-proj/locations/asia-east1/keyRings/staging/cryptoKeys/release",
+            "deployer_service_account_email": "deployer@test-staging-proj.iam.gserviceaccount.com",
         }
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmppath = Path(tmpdir)
             # Copy module files
             for f in ("main.tf", "variables.tf", "outputs.tf"):
-                shutil.copy(MODULE_DIR / f, tmppath / f)
+                if f == "main.tf":
+                    # The live module uses a release-scoped GCS backend. This
+                    # unit test deliberately plans offline, so remove only
+                    # that backend stanza from the temporary copy.
+                    main_text = (MODULE_DIR / f).read_text(encoding="utf-8")
+                    backend_start = main_text.index("  # The workflow supplies a protected bucket")
+                    backend_end = main_text.index("  required_providers", backend_start)
+                    (tmppath / f).write_text(
+                        main_text[:backend_start] + main_text[backend_end:],
+                        encoding="utf-8",
+                    )
+                else:
+                    shutil.copy(MODULE_DIR / f, tmppath / f)
 
             # Init terraform
-            init_res = subprocess.run(
-                ["terraform", f"-chdir={tmppath}", "init", "-backend=false"],
-                capture_output=True,
-                text=True,
-            )
+            scratch_home = tmppath / "offline-home"
+            write_offline_provider_override(tmppath)
+            init_res = run_terraform("init", chdir=tmppath, home=scratch_home)
             self.assertEqual(init_res.returncode, 0, f"terraform init failed: {init_res.stderr}")
 
             # 1. Test future timestamp produces plan failure
@@ -213,10 +334,11 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
             future_vars["created_at"] = future_ts
             (tmppath / "future.tfvars.json").write_text(json.dumps(future_vars), encoding="utf-8")
 
-            future_plan = subprocess.run(
-                ["terraform", f"-chdir={tmppath}", "plan", "-var-file=future.tfvars.json"],
-                capture_output=True,
-                text=True,
+            future_plan = run_terraform(
+                "plan",
+                "-var-file=future.tfvars.json",
+                chdir=tmppath,
+                home=scratch_home,
             )
             self.assertNotEqual(
                 future_plan.returncode,
@@ -230,10 +352,11 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
             valid_vars["created_at"] = valid_now
             (tmppath / "valid.tfvars.json").write_text(json.dumps(valid_vars), encoding="utf-8")
 
-            valid_plan = subprocess.run(
-                ["terraform", f"-chdir={tmppath}", "plan", "-var-file=valid.tfvars.json"],
-                capture_output=True,
-                text=True,
+            valid_plan = run_terraform(
+                "plan",
+                "-var-file=valid.tfvars.json",
+                chdir=tmppath,
+                home=scratch_home,
             )
             self.assertEqual(
                 valid_plan.returncode,
@@ -256,26 +379,32 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        import shutil
-        import subprocess
-        import tempfile
-
         if not shutil.which("terraform"):
+            if os.environ.get("CI"):
+                raise AssertionError("terraform binary not available in CI environment")
             raise unittest.SkipTest("terraform binary not available in environment")
 
         cls._tmpdir = tempfile.TemporaryDirectory()
-        cls.workdir = Path(cls._tmpdir.name)
+        cls.workdir = Path(cls._tmpdir.name) / "module"
+        cls.workdir.mkdir()
+        cls.scratch_home = Path(cls._tmpdir.name) / "offline-home"
         for filename in ("main.tf", "variables.tf", "outputs.tf"):
-            shutil.copy(MODULE_DIR / filename, cls.workdir / filename)
+            if filename == "main.tf":
+                main_text = (MODULE_DIR / filename).read_text(encoding="utf-8")
+                backend_start = main_text.index("  # The workflow supplies a protected bucket")
+                backend_end = main_text.index("  required_providers", backend_start)
+                (cls.workdir / filename).write_text(
+                    main_text[:backend_start] + main_text[backend_end:],
+                    encoding="utf-8",
+                )
+            else:
+                shutil.copy(MODULE_DIR / filename, cls.workdir / filename)
 
-        init_res = subprocess.run(
-            ["terraform", f"-chdir={cls.workdir}", "init", "-backend=false"],
-            capture_output=True,
-            text=True,
-        )
+        write_offline_provider_override(cls.workdir)
+        init_res = run_terraform("init", chdir=cls.workdir, home=cls.scratch_home)
         if init_res.returncode != 0:
             cls._tmpdir.cleanup()
-            raise unittest.SkipTest(f"terraform init unavailable: {init_res.stderr}")
+            raise AssertionError(f"terraform init failed with code {init_res.returncode}: {init_res.stderr}\n{init_res.stdout}")
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -295,24 +424,26 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
             owner_task_id="ODP_TASK_001",
             api_image="asia-east1-docker.pkg.dev/test/repo/api@sha256:" + "0" * 64,
             web_image="asia-east1-docker.pkg.dev/test/repo/web@sha256:" + "0" * 64,
+            worker_image="asia-east1-docker.pkg.dev/test/repo/worker@sha256:" + "0" * 64,
+            scheduler_image="asia-east1-docker.pkg.dev/test/repo/scheduler@sha256:" + "0" * 64,
             cloud_sql_instance_name="test-db",
             cloud_sql_connection_name="test:asia-east1:test-db",
             network_name="test-vpc",
             subnetwork_name="test-subnet",
-            kms_key_id="projects/p/locations/asia-east1/keyRings/r/cryptoKeys/k",
-            deployer_service_account_email="deployer@test.iam.gserviceaccount.com",
+            kms_key_id="projects/test-staging-proj/locations/asia-east1/keyRings/staging/cryptoKeys/release",
+            deployer_service_account_email="deployer@test-staging-proj.iam.gserviceaccount.com",
             created_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         )
 
     def _plan(self, name: str, tfvars: dict) -> str:
-        import subprocess
-
         var_file = f"{name}.tfvars.json"
         (self.workdir / var_file).write_text(json.dumps(tfvars), encoding="utf-8")
-        result = subprocess.run(
-            ["terraform", f"-chdir={self.workdir}", "plan", "-no-color", f"-var-file={var_file}"],
-            capture_output=True,
-            text=True,
+        result = run_terraform(
+            "plan",
+            "-no-color",
+            f"-var-file={var_file}",
+            chdir=self.workdir,
+            home=self.scratch_home,
         )
         self.assertEqual(
             result.returncode,
@@ -385,4 +516,3 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

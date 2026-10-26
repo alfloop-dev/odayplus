@@ -1,0 +1,23 @@
+{
+  "cwd": "/tmp/codex-1305-tooling-closeout",
+  "head_sha": "749e740a1ed2cd10bffa56cad0dcf3ddbf93983f",
+  "tracked_diff_sha256": "c1ab8c8d16b5161cff18f8d555c4181023c2c272856b4c991a3bbcce22b52ec6",
+  "argv": [
+    "env",
+    "UV_PROJECT_ENVIRONMENT=/tmp/pantheon-worker-worktrees/pantheon/odp-orch-merged-review-submission-001/.venv",
+    "uv",
+    "run",
+    "--no-sync",
+    "pytest",
+    "-o",
+    "addopts=",
+    "-q",
+    "scripts/test_ai_status.py",
+    "-k",
+    "remote_lookup_errors_cannot_be_reused_as_absence or r3_workspace_reattachment_rejects_clean_detached_drift"
+  ],
+  "started_at": "2026-09-13T15:26:18.168576+00:00",
+  "duration_seconds": 7.375167321995832,
+  "exit_code": 1,
+  "output": "1305-closeout-defects-red.log"
+}

@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 _MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "infra" / "db" / "migrations"
@@ -32,6 +34,11 @@ _SCHEMA_FILES = (
     "000005_durable_notifications.sql",
     "000006_durable_outbox.sql",
     "000007_job_lease_columns.sql",
+    "000017_durable_operator_comments.sql",
+    "000022_durable_manual_corrections.sql",
+    "000024_avm_quality_score_nullable_sqlite.sql",
+    "000026_canonical_measurement_nullable_sqlite.sql",
+    "000031_durable_job_availability_sqlite.sql",
 )
 
 
@@ -50,11 +57,17 @@ class SqliteEngine:
         if self._path.parent and str(self._path.parent) not in ("", "."):
             self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        # Depth of the enclosing `transaction()` blocks. While it is non-zero,
+        # writes stop committing per statement so the whole block can be rolled
+        # back; see `transaction`.
+        self._tx_depth = 0
         self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA foreign_keys=ON")
-        self._bootstrap()
+        try:
+            self._bootstrap()
+        except BaseException:
+            self._conn.close()
+            raise
 
     @property
     def path(self) -> Path:
@@ -66,39 +79,94 @@ class SqliteEngine:
 
     def _bootstrap(self) -> None:
         with self._lock:
-            for filename in _SCHEMA_FILES:
-                ddl = (_MIGRATIONS_DIR / filename).read_text(encoding="utf-8")
-                # Strip comments and group lines into semicolon-separated statements
-                statements = []
-                current = []
-                for line in ddl.splitlines():
-                    stripped = line.split("--")[0].strip()
-                    if not stripped:
-                        continue
-                    current.append(stripped)
-                    if stripped.endswith(";"):
-                        statements.append(" ".join(current))
-                        current = []
-                if current:
-                    statements.append(" ".join(current))
-
-                for statement in statements:
-                    statement = statement.strip()
-                    if not statement:
-                        continue
-                    try:
-                        self._conn.execute(statement)
-                    except sqlite3.OperationalError as exc:
-                        exc_msg = str(exc).lower()
-                        if "duplicate column name" in exc_msg or "already exists" in exc_msg:
+            # Bound only initialization waits; ordinary command waits retain
+            # SQLite's existing five-second timeout after bootstrap.
+            self._conn.execute("PRAGMA busy_timeout=30000")
+            try:
+                self._conn.execute("PRAGMA journal_mode=WAL")
+                self._conn.execute("PRAGMA foreign_keys=OFF")
+                self._conn.execute("BEGIN IMMEDIATE")
+                for filename in _SCHEMA_FILES:
+                    ddl = (_MIGRATIONS_DIR / filename).read_text(encoding="utf-8")
+                    # Strip comments and group lines into semicolon-separated statements
+                    statements = []
+                    current = []
+                    for line in ddl.splitlines():
+                        stripped = line.split("--")[0].strip()
+                        if not stripped:
                             continue
-                        raise exc
+                        current.append(stripped)
+                        if stripped.endswith(";"):
+                            statements.append(" ".join(current))
+                            current = []
+                    if current:
+                        statements.append(" ".join(current))
+
+                    for statement in statements:
+                        statement = statement.strip()
+                        if not statement:
+                            continue
+                        if statement.upper().startswith("PRAGMA FOREIGN_KEYS"):
+                            # Table-rebuild migrations require FK checks off. The
+                            # whole bootstrap owns one SQL transaction; do not
+                            # commit midway and release its cross-connection lock.
+                            continue
+                        try:
+                            self._conn.execute(statement)
+                        except sqlite3.OperationalError as exc:
+                            exc_msg = str(exc).lower()
+                            if "duplicate column name" in exc_msg or "already exists" in exc_msg:
+                                continue
+                            raise exc
+                self._conn.commit()
+            except BaseException:
+                self._conn.rollback()
+                raise
+            finally:
+                self._conn.execute("PRAGMA foreign_keys=ON")
+                self._conn.execute("PRAGMA busy_timeout=5000")
+
+    @contextmanager
+    def transaction(self) -> Iterator[SqliteEngine]:
+        """Run a block as one unit: all of its writes commit, or none do.
+
+        Without this, `execute` commits per statement, so a caller that wrote
+        three rows and then raised would leave the first two behind. Callers
+        that need a multi-statement invariant -- a heat-zone split approval has
+        to retire the parent and create every child together -- would silently
+        get serialization instead of atomicity, which reads the same in the code
+        and is not the same in the data.
+
+        The lock is held for the whole block, matching the engine's
+        serialize-every-statement design, and nesting is safe: only the
+        outermost block commits or rolls back.
+        """
+        with self._lock:
+            self._tx_depth += 1
+            try:
+                yield self
+            except BaseException:
+                self._tx_depth -= 1
+                if self._tx_depth == 0:
+                    self._conn.rollback()
+                raise
+            else:
+                self._tx_depth -= 1
+                if self._tx_depth == 0:
+                    try:
+                        self._conn.commit()
+                    except BaseException:
+                        self._conn.rollback()
+                        raise
+
+    def _maybe_commit(self) -> None:
+        if self._tx_depth == 0:
             self._conn.commit()
 
     def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         with self._lock:
             cur = self._conn.execute(sql, params)
-            self._conn.commit()
+            self._maybe_commit()
             return cur
 
     def query(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
@@ -120,7 +188,7 @@ class SqliteEngine:
             row = self._conn.execute(
                 "SELECT counter FROM durable_sequences WHERE name = ?", (name,)
             ).fetchone()
-            self._conn.commit()
+            self._maybe_commit()
             return int(row["counter"])
 
     def close(self) -> None:

@@ -60,6 +60,13 @@ class HeatZoneV3ShadowRunner:
         baseline_features: Sequence[HeatZoneFeatureInput | Mapping[str, Any]] | None = None,
         own_store_capacities: Sequence[MachineCapacityRecord] | None = None,
         store_coverage_records: Sequence[StoreDayCoverage] | None = None,
+        store_performances: Sequence[Any] | None = None,
+        operational_starts: Mapping[str, Any] | Sequence[Any] | None = None,
+        decision_policy: Any | None = None,
+        as_of: Any | None = None,
+        original_demand: float | None = None,
+        observation_window_start: Any | None = None,
+        observation_window_end: Any | None = None,
         tenant_id: str = "default",
         manifest_document: ManifestDocument | None = None,
     ) -> HeatZoneV3BatchResult:
@@ -74,6 +81,13 @@ class HeatZoneV3ShadowRunner:
                 cell,
                 own_store_capacities=own_store_capacities,
                 store_coverage_records=store_coverage_records,
+                store_performances=store_performances,
+                operational_starts=operational_starts,
+                decision_policy=decision_policy,
+                as_of=as_of,
+                original_demand=original_demand,
+                observation_window_start=observation_window_start,
+                observation_window_end=observation_window_end,
                 tenant_id=tenant_id,
             )
             for cell in doc.cells
@@ -95,6 +109,13 @@ class HeatZoneV3ShadowRunner:
         baseline_features: Sequence[HeatZoneFeatureInput | Mapping[str, Any]] | None = None,
         own_store_capacities: Sequence[MachineCapacityRecord] | None = None,
         store_coverage_records: Sequence[StoreDayCoverage] | None = None,
+        store_performances: Sequence[Any] | None = None,
+        operational_starts: Mapping[str, Any] | Sequence[Any] | None = None,
+        decision_policy: Any | None = None,
+        as_of: Any | None = None,
+        original_demand: float | None = None,
+        observation_window_start: Any | None = None,
+        observation_window_end: Any | None = None,
         tenant_id: str = "default",
         manifest_document: ManifestDocument | None = None,
     ) -> HeatZoneV3BatchResult:
@@ -109,6 +130,13 @@ class HeatZoneV3ShadowRunner:
                 prof,
                 own_store_capacities=own_store_capacities,
                 store_coverage_records=store_coverage_records,
+                store_performances=store_performances,
+                operational_starts=operational_starts,
+                decision_policy=decision_policy,
+                as_of=as_of,
+                original_demand=original_demand,
+                observation_window_start=observation_window_start,
+                observation_window_end=observation_window_end,
                 tenant_id=tenant_id,
             )
             for prof in doc.profiles
@@ -177,6 +205,14 @@ class HeatZoneV3ShadowRunner:
                     active_listing_count=inp.active_listing_count,
                     existing_store_count=inp.own_store_count,
                     average_confidence=inp.confidence,
+                    # v3 composes quality as confidence * coverage_ratio; the
+                    # v2 baseline composes it as average_confidence *
+                    # data_quality_score. Carry coverage across so the
+                    # synthesized baseline reports the same composite the v3
+                    # input measured. Leaving it unset makes every synthesized
+                    # baseline fail closed at confidence 0.0 no matter what the
+                    # input measured, which silently flattens the comparison.
+                    data_quality_score=inp.coverage_ratio,
                     admin_city=inp.county,
                     admin_district=inp.district,
                     cell_latitude=inp.centroid_lat or 0.0,

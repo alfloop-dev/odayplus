@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { primeOperatorPersona } from "./_operatorPersona";
 
 /**
  * ODP-FIN-FE-002 — Network Find Areas workspace API binding.
@@ -20,16 +21,32 @@ import { expect, test } from "@playwright/test";
 test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
   test.describe.configure({ timeout: 60_000 });
 
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page }, testInfo) => {
+    await primeOperatorPersona(page, "expansion-manager");
+    const unavailableCase = testInfo.title === "Network workspace shows fixture data indicator when API is unavailable";
+    const unavailableRead = unavailableCase ? page.waitForEvent("requestfailed", {
+      predicate: (request) => new URL(request.url()).pathname === "/api/v1/operator/network-listings",
+    }) : null;
+    if (unavailableCase) {
+      // Exercise an actual transport failure in this explicit local fixture
+      // lane. No successful business response or production fallback is forged.
+      await page.route((url) => url.pathname === "/api/v1/operator/network-listings"
+        || url.pathname.startsWith("/api/v1/heatzones/")
+        || url.pathname.startsWith("/api/v1/listings/candidates"),
+      (route) => route.abort("failed"));
+    }
     // Navigate to the operator console and activate the Network workspace.
     await page.goto("/operator");
     // Click the Network tab in the workspace navigation.
-    const networkTab = page.getByRole("button", { name: /network/i }).first();
+    const networkTab = page.getByRole("navigation", { name: "Operator workspaces" })
+      .getByRole("button", { name: /network/i });
+    await expect(networkTab).toHaveAttribute("aria-disabled", "false");
     await networkTab.click();
     // Wait for the Network Find Areas workspace to mount.
     await expect(
       page.getByTestId("network-find-areas-workspace"),
     ).toBeVisible();
+    if (unavailableRead) await unavailableRead;
   });
 
   test("Network Find Areas workspace renders with HeatZone summary stats", async ({
@@ -38,10 +55,12 @@ test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
     const workspace = page.getByTestId("network-find-areas-workspace");
     await expect(workspace).toBeVisible();
 
-    // The header should show summary counts.
-    await expect(workspace.getByText(/^\d+ HeatZones$/i)).toBeVisible();
-    await expect(workspace.getByText(/^\d+ listings$/i)).toBeVisible();
-    await expect(workspace.getByText(/^\d+ candidates$/i)).toBeVisible();
+    // The header shows the four Package 10 KPI chips.
+    const stats = workspace.getByTestId("network-header-stats");
+    await expect(stats.getByRole("listitem")).toHaveCount(4);
+    for (const label of ["今日新物件", "進行中候選", "待審 Review", "重配候選"]) {
+      await expect(stats.getByText(label)).toBeVisible();
+    }
   });
 
   test("Network workspace shows fixture data indicator when API is unavailable", async ({
@@ -50,15 +69,9 @@ test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
     const workspace = page.getByTestId("network-find-areas-workspace");
     // When backend is unconfigured, the workspace renders fixture data and
     // shows a fixture-mode chip in the header.
-    const fixtureChip = workspace.getByText(/fixture data/i);
-    // Fixture indicator may or may not show depending on env — but the
-    // workspace must still render without crashing.
+    const fixtureChip = workspace.getByText("示範資料", { exact: true });
     await expect(workspace).toBeVisible();
-    // The fixture chip only appears when liveHeatZones/liveCandidates props
-    // are bound but fall back; in static env it may be absent.
-    const isFixture = await fixtureChip.isVisible().catch(() => false);
-    // Either fixture mode is shown or the workspace rendered live data — both valid.
-    expect(isFixture || true).toBe(true);
+    await expect(fixtureChip).toBeVisible();
   });
 
   test("Listing Radar tab renders the listing table", async ({ page }) => {
@@ -108,6 +121,8 @@ test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
     await expect(findAreasPanel).toBeVisible();
     // Zone markers should exist in the map canvas.
     const mapCanvas = findAreasPanel.getByTestId("heat-zone-map");
-    await expect(mapCanvas).toBeVisible();
+    // The map is its own deck.gl/MapLibre chunk; a dev-server first load takes
+    // well over the 5s default (8-18s measured locally on dev as well).
+    await expect(mapCanvas).toBeVisible({ timeout: 30_000 });
   });
 });

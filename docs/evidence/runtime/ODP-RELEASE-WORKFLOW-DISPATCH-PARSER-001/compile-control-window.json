@@ -1,0 +1,134 @@
+{
+  "evidence_kind": "runtime-release-workflow-compile-control-window",
+  "task_id": "ODP-RELEASE-WORKFLOW-DISPATCH-PARSER-001",
+  "window_utc": {
+    "from": "2026-08-25T15:14:22Z",
+    "to": "2026-08-26T16:11:33Z"
+  },
+  "說明": "對照組。這段期間 dev 上的 deploy-dev.yml 已經含有 step 層級的 ${{ runner.temp }}（with.path 與 steps.env），但還沒有 job 層級的那一筆。以下每一次 merge 都是一次對 dev 的 push；期間 Deploy Dev 建立的 run 數為 0，代表 GitHub 編譯成功、而此 workflow 沒有 push trigger 所以不產生 run。job 層級那一筆一加進去（c2ed5e42，16:11:33Z），之後每一次 push 都產生一個 0 job 的 failure run。",
+  "deploy_dev_runs_created_in_window": 0,
+  "pushes_to_dev_in_window": 11,
+  "pushes": [
+    {
+      "committed_at": "2026-08-26T14:55:24+00:00",
+      "sha": "7f3744ce7413e4134b2c178060b1d919bee2bf0f",
+      "subject": "Merge pull request #984 from alfloop-dev/fix/worker-hard-inactivity",
+      "job_level_env_runner_temp": [],
+      "step_level_runner_temp": [
+        "169:path: ${{ runner.temp }}/release-admission-receipt.json",
+        "340:HANDOFF_PATH: ${{ runner.temp }}/runtime-release-images.json",
+        "366:path: ${{ runner.temp }}/runtime-release-images.json"
+      ]
+    },
+    {
+      "committed_at": "2026-08-26T13:58:47+00:00",
+      "sha": "a027fa1c3935360e6fc4b3bd073cd91cbee07548",
+      "subject": "Merge pull request #1025 from alfloop-dev/task/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001",
+      "job_level_env_runner_temp": [],
+      "step_level_runner_temp": [
+        "169:path: ${{ runner.temp }}/release-admission-receipt.json",
+        "340:HANDOFF_PATH: ${{ runner.temp }}/runtime-release-images.json",
+        "366:path: ${{ runner.temp }}/runtime-release-images.json"
+      ]
+    },
+    {
+      "committed_at": "2026-08-26T09:43:19+00:00",
+      "sha": "ace4265b5190c00c72846b637fc04850bacec77e",
+      "subject": "Merge pull request #1023 from alfloop-dev/task/ODP-RELEASE-ADMISSION-HOSTED-WIF-GUARD-001",
+      "job_level_env_runner_temp": [],
+      "step_level_runner_temp": [
+        "169:path: ${{ runner.temp }}/release-admission-receipt.json",
+        "340:HANDOFF_PATH: ${{ runner.temp }}/runtime-release-images.json",
+        "366:path: ${{ runner.temp }}/runtime-release-images.json"
+      ]
+    },
+    {
+      "committed_at": "2026-08-26T09:39:39+00:00",
+      "sha": "673310a964bf38f3e3a76304a1edfcffd9bf8c87",
+      "subject": "Merge pull request #1024 from alfloop-dev/task/ODP-TEST-AUDIT-EXPORT-TIME-001",
+      "job_level_env_runner_temp": [],
+      "step_level_runner_temp": [
+        "150:path: ${{ runner.temp }}/release-admission-receipt.json",
+        "321:HANDOFF_PATH: ${{ runner.temp }}/runtime-release-images.json",
+        "347:path: ${{ runner.temp }}/runtime-release-images.json"
+      ]
+    },
+    {
+      "committed_at": "2026-08-26T08:19:17+00:00",
+      "sha": "43d07157536afa03e4a4f17ddefe20e5758865b8",
+      "subject": "Merge pull request #1022 from alfloop-dev/task/ODP-ORCH-REVIEWBUS-STALE-PR-RECONCILE-001",
+      "job_level_env_runner_temp": [],
+      "step_level_runner_temp": [
+        "150:path: ${{ runner.temp }}/release-admission-receipt.json",
+        "321:HANDOFF_PATH: ${{ runner.temp }}/runtime-release-images.json",
+        "347:path: ${{ runner.temp }}/runtime-release-images.json"
+      ]
+    },
+    {
+      "committed_at": "2026-08-26T07:23:39+00:00",
+      "sha": "87eb13a1eb69d36558b02dd450572a4887e349b6",
+      "subject": "Merge pull request #1019 from alfloop-dev/task/ODP-XR-PROVIDER-OFF-DEPLOYMENT-002",
+      "job_level_env_runner_temp": [],
+      "step_level_runner_temp": [
+        "150:path: ${{ runner.temp }}/release-admission-receipt.json",
+        "321:HANDOFF_PATH: ${{ runner.temp }}/runtime-release-images.json",
+        "347:path: ${{ runner.temp }}/runtime-release-images.json"
+      ]
+    },
+    {
+      "committed_at": "2026-08-26T04:12:26+00:00",
+      "sha": "c6c81d0230b90202ba9a2358b0e92c786de40813",
+      "subject": "Merge pull request #1021 from alfloop-dev/task/ODP-STAGING-VPC-CONNECTOR-002",
+      "job_level_env_runner_temp": [],
+      "step_level_runner_temp": [
+        "150:path: ${{ runner.temp }}/release-admission-receipt.json",
+        "321:HANDOFF_PATH: ${{ runner.temp }}/runtime-release-images.json",
+        "347:path: ${{ runner.temp }}/runtime-release-images.json"
+      ]
+    },
+    {
+      "committed_at": "2026-08-26T03:56:49+00:00",
+      "sha": "1fa6ac95d4d24764f157ba340837bcad91720e3a",
+      "subject": "Merge pull request #1020 from alfloop-dev/task/ODP-RELEASE-ADMISSION-AUTHORITY-002",
+      "job_level_env_runner_temp": [],
+      "step_level_runner_temp": [
+        "150:path: ${{ runner.temp }}/release-admission-receipt.json",
+        "321:HANDOFF_PATH: ${{ runner.temp }}/runtime-release-images.json",
+        "347:path: ${{ runner.temp }}/runtime-release-images.json"
+      ]
+    },
+    {
+      "committed_at": "2026-08-25T17:32:43+00:00",
+      "sha": "8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3",
+      "subject": "Merge pull request #1012 from alfloop-dev/task/ODP-DEPLOY-DEAD-CODE-REMOVAL-001",
+      "job_level_env_runner_temp": [],
+      "step_level_runner_temp": [
+        "140:path: ${{ runner.temp }}/release-admission-receipt.json",
+        "311:HANDOFF_PATH: ${{ runner.temp }}/runtime-release-images.json",
+        "337:path: ${{ runner.temp }}/runtime-release-images.json"
+      ]
+    },
+    {
+      "committed_at": "2026-08-25T17:11:56+00:00",
+      "sha": "b8262d911c95887767877e7cee23bded0ef7dd61",
+      "subject": "Merge pull request #1013 from alfloop-dev/task/ODP-DEV-ROLLOUT-001",
+      "job_level_env_runner_temp": [],
+      "step_level_runner_temp": [
+        "140:path: ${{ runner.temp }}/release-admission-receipt.json",
+        "311:HANDOFF_PATH: ${{ runner.temp }}/runtime-release-images.json",
+        "337:path: ${{ runner.temp }}/runtime-release-images.json"
+      ]
+    },
+    {
+      "committed_at": "2026-08-25T16:07:06+00:00",
+      "sha": "8ad3f10dab707711bc1394ff3f6a81042b0b5648",
+      "subject": "Merge pull request #1011 from alfloop-dev/task/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+      "job_level_env_runner_temp": [],
+      "step_level_runner_temp": [
+        "140:path: ${{ runner.temp }}/release-admission-receipt.json",
+        "311:HANDOFF_PATH: ${{ runner.temp }}/runtime-release-images.json",
+        "337:path: ${{ runner.temp }}/runtime-release-images.json"
+      ]
+    }
+  ]
+}

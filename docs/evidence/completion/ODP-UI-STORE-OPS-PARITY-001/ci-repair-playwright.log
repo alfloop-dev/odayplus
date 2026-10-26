@@ -1,0 +1,14 @@
+
+Running 9 tests using 1 worker
+
+  ✓  1 [chromium] › tests/e2e/operator-store-ops.spec.ts:146:5 › Package 10 issue detail exposes the four-light evidence without legacy filter chips (5.3s)
+  ✓  2 [chromium] › tests/e2e/operator-store-ops.spec.ts:168:5 › ISS-1024 lifecycle writes through Store Ops API and reloads updated state (12.1s)
+  ✓  3 [chromium] › tests/e2e/operator-store-ops.spec.ts:251:5 › camera evidence remains locked until permitted purpose is submitted (3.8s)
+  ✓  4 [chromium] › tests/visual/operator-store-ops-parity.spec.ts:55:5 › Missing payment series stays unavailable; AI CTA opens action without a write (2.8s)
+  ✓  5 [chromium] › tests/visual/operator-store-ops-parity.spec.ts:69:7 › Store content geometry and reachable bottom cards at 1440 (5.8s)
+  ✓  6 [chromium] › tests/visual/operator-store-ops-parity.spec.ts:69:7 › Store content geometry and reachable bottom cards at 1024 (5.9s)
+  ✓  7 [chromium] › tests/visual/operator-store-ops-parity.spec.ts:69:7 › Store content geometry and reachable bottom cards at 390 (5.1s)
+  ✓  8 [chromium] › tests/visual/operator-store-ops-parity.spec.ts:120:7 › Seven Store dialogs preserve Package 10 geometry and keyboard return at 1440 (16.3s)
+  ✓  9 [chromium] › tests/visual/operator-store-ops-parity.spec.ts:120:7 › Seven Store dialogs preserve Package 10 geometry and keyboard return at 390 (23.7s)
+
+  9 passed (2.2m)

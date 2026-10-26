@@ -304,6 +304,11 @@ Rules：badge 帶文字（不只顏色）；hover 顯示觸發條件；click 進
 
 ### 5.6 RootCauseEvidenceCard
 
+> [!NOTE]
+> **契約保留宣告（ODP-FR-FCT-004 / ODP-FCT-ROOT-CAUSE-CONTRACT-001）**：
+> `RootCauseEvidenceCard` 與 `causeCandidate` 欄位為前端 presentation 契約定義，目前後端無自動化推導生產者（unproduced / reserved）。
+> 擁有團隊：`ForecastOps / Platform Ops`；預計時程：`Wave 5+`。
+
 必備欄位：`causeCandidate`、`evidenceStrength`、`supportingSignals`、`contradictingSignals`、`dataConfidence`、`recommendedNextCheck`。Cause categories 取自 `ODP-UX-04 §7.4`（Revenue Residual / Store-age Ramp / Seasonality / Equipment / Cost Unit / CX / Price / Ad / Promotion / Competitor / External Shock）。
 
 ### 5.7 InterventionTimeline
@@ -335,7 +340,7 @@ Rules：solver 無可行解時呈現 Infeasibility Diagnosis（violated_constrai
 
 ### 5.13 DecisionAuditTimeline
 
-固定節點：`Prediction generated → Recommendation generated → Human review requested → Human decision submitted → Execution started → Outcome observed → Feedback written to label registry`。每個 Decision Detail 顯示；可匯出 Evidence（decision_id / entity / model_version / feature_snapshot_time / actor / decision_time / execution_status / outcome_status / audit_status），匯出記 Audit。
+固定節點：`Prediction generated → Recommendation generated → Human review requested → Human decision submitted → Execution started → Outcome observed`。每個 Decision Detail 顯示；可匯出 Evidence（decision_id / entity / model_version / feature_snapshot_time / actor / decision_time / execution_status / outcome_status / audit_status），匯出記 Audit。
 
 ---
 

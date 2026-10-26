@@ -13,27 +13,110 @@ the HTTP boundary. They compose through apps.api.app.routes.operator.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from datetime import UTC, datetime
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from apps.api.app.routes._common import reset_allowed_guard
 from apps.api.app.routes.operator_modules.live_service import resolve_service
 from modules.external_data.security import contains_sensitive_submission_material
 from modules.listing.application.intake_authorization import (
     authorize_intake_action,
+    collection_rows_are_scope_projected,
+    intake_resource_in_scope,
     mask_intake,
     mask_listing,
 )
+from modules.listing.application.intake_workflow_bootstrap import IntakeWorkflowUnavailable
+from modules.listing.domain.intake_states import AssignmentState
 from modules.opsboard.application.network_listings import (
     NetworkListingConflict,
     NetworkListingNotFound,
     NetworkListingPolicyError,
+    NetworkListingPreconditionRequired,
     NetworkListingService,
+    NetworkListingVersionUnavailable,
 )
+from modules.opsboard.application.network_read_scope import (
+    project_intake_record,
+    project_listing_snapshot,
+)
+from modules.opsboard.application.operator_actor import operator_actor
 from shared.audit import InMemoryAuditLog
-from shared.auth import Principal, Role
+from shared.auth import DataClassification, Principal, Role
+from shared.infrastructure.persistence.assisted_listing_intake import (
+    AssistedIntakePersistenceConflict,
+)
+from shared.jobs.queue import JobFenceRejectedError
+
+
+def _visible_inbox_value(item: dict[str, Any], key: str) -> Any:
+    """Filtering/search must not make a withheld value observable through membership."""
+    if item.get(f"{key}_masked") is True or key in (item.get("masked_fields") or []):
+        return None
+    if any(field.get("field_path") == key and field.get("masked") is True
+           for field in (item.get("fields") or []) if isinstance(field, dict)):
+        return None
+    return item.get(key)
+
+
+def _inbox_instant(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return instant.astimezone(UTC) if instant.utcoffset() is not None else None
+    except ValueError:
+        return None
+
+
+def _inbox_query_instant(value: str | None, name: str) -> datetime | None:
+    if value is None:
+        return None
+    instant = _inbox_instant(value)
+    if instant is None:
+        raise HTTPException(422, f"{name} requires an ISO 8601 timestamp with timezone")
+    return instant
+
+
+def _inbox_visibility(item: dict[str, Any]) -> tuple[bool, bool | None]:
+    fields = [field for field in (item.get("fields") or []) if isinstance(field, dict)]
+    parsed = item.get("parsedFields") or {}
+    parsed = parsed if isinstance(parsed, dict) else {}
+    masked = bool(item.get("masked_fields")) or any(
+        value is True for key, value in item.items() if key.endswith("_masked")
+    ) or any(field.get("masked") is True for field in fields) or any(
+        isinstance(field, dict) and field.get("masked") is True for field in parsed.values()
+    )
+    restricted = None if not fields and not parsed else False
+    for field in fields:
+        classification = field.get("classification", "RESTRICTED")
+        try:
+            level = (classification if isinstance(classification, DataClassification)
+                     else DataClassification[str(classification).upper()])
+        except (KeyError, TypeError):
+            level = DataClassification.HIGHLY_RESTRICTED
+        if level >= DataClassification.RESTRICTED:
+            restricted = True
+    # These are the existing parsedFields classifications in mask_intake.
+    if any(key in parsed for key in ("contactPhone", "brokerEmail", "privateNotes")):
+        restricted = True
+    return masked, restricted
+
+
+def _project_inbox_visibility(item: dict[str, Any]) -> dict[str, Any]:
+    projected = dict(item)
+    for key in ("sourceId", "submittedBy", "ownerSubjectId", "assignedAreaId", "assignmentStatus",
+                "submittedAt", "updatedAt", "lastObservedAt", "dueAt", "canonicalUrl", "failure"):
+        if key in item:
+            projected[key] = _visible_inbox_value(item, key)
+    for authority, legacy in (("submittedBy", "submitter"), ("ownerSubjectId", "owner")):
+        if item.get(authority) is not None and projected.get(authority) is None:
+            projected[legacy] = None
+    projected["masked"], projected["restricted"] = _inbox_visibility(item)
+    return projected
 
 
 def is_record_owner(principal: Principal, record: dict[str, Any]) -> bool:
@@ -66,6 +149,12 @@ class RiskDisclosurePayload(NetworkListingActorPayload):
 
 class NetworkListingMergePayload(RiskDisclosurePayload):
     targetListingId: str
+    targetIfMatch: str | None = None
+    expectedActorSubjectId: str | None = None
+
+
+class NetworkListingArchivePayload(NetworkListingActorPayload):
+    expectedActorSubjectId: str | None = None
 
 
 class IntakeSubmitPayload(BaseModel):
@@ -88,6 +177,38 @@ class IntakePromotePayload(RiskDisclosurePayload):
     """Promotion carries no extra fields beyond the risk disclosure."""
 
 
+class NetworkListingReadResponse(BaseModel):
+    """The recorded hard-rule verdict; other authorized listing fields survive."""
+
+    model_config = ConfigDict(extra="allow")
+
+    hardRuleFailures: list[str] | None = Field(
+        default=None,
+        description=(
+            "Recorded hard-rule failures. Null or absent means unmeasured, not passed. "
+            "An empty array means a recorded check found no failures; a nonempty "
+            "array names recorded failures. This field alone does not authorize promotion."
+        ),
+    )
+
+
+class HeatZoneAvailabilityReadResponse(BaseModel):
+    state: Literal["available", "unavailable"]
+    source: Literal["canonical-heatzone"]
+    count: int | None = Field(default=None, ge=0)
+    code: str | None = None
+    message: str | None = None
+
+
+class NetworkListingRadarReadResponse(BaseModel):
+    """Narrow read contract preserving the existing authorized snapshot fields."""
+
+    model_config = ConfigDict(extra="allow")
+
+    listings: list[NetworkListingReadResponse]
+    heatZoneAvailability: HeatZoneAvailabilityReadResponse | None = None
+
+
 def create_network_listings_sub_router(
     service: NetworkListingService,
     *,
@@ -95,9 +216,14 @@ def create_network_listings_sub_router(
     require_write_permission_fn: Callable[..., Any],
     audit_log: InMemoryAuditLog | None = None,
     service_resolver: Callable[[Request], Any] | None = None,
+    heat_zone_reader: Callable[[Request], dict[str, Any]] | None = None,
     allow_reset: bool = True,
 ) -> APIRouter:
     router = APIRouter(prefix="/network-listings")
+    from apps.api.app.routes.operator_modules.listing_searches import (
+        create_listing_search_sub_router,
+    )
+    router.include_router(create_listing_search_sub_router(require_view_permission_fn))
 
     def reject_sensitive_submission_material(body: IntakeSubmitPayload) -> None:
         payload = body.model_dump()
@@ -132,8 +258,10 @@ def create_network_listings_sub_router(
         resource_label="network listing",
     )
 
-    @router.get("", dependencies=[Depends(require_view_permission_fn)])
-    @router.get("/", dependencies=[Depends(require_view_permission_fn)])
+    @router.get("", dependencies=[Depends(require_view_permission_fn)],
+                response_model=NetworkListingRadarReadResponse)
+    @router.get("/", dependencies=[Depends(require_view_permission_fn)],
+                response_model=NetworkListingRadarReadResponse)
     def get_network_listings(
         request: Request,
         selected_heat_zone_id: str | None = Query(default=None, alias="selectedHeatZoneId"),
@@ -145,15 +273,25 @@ def create_network_listings_sub_router(
         authorize_intake_action(
             principal,
             "view",
+            collection_scope=(
+                {"heatZoneId": selected_heat_zone_id} if selected_heat_zone_id else None
+            ),
             operator_role_id=operator_role_id,
             audit_log=audit_log,
             correlation_id=x_correlation_id,
+            tenant_id=principal.tenant_id,
         )
         snap = active_service(request).snapshot(
             selected_heat_zone_id=selected_heat_zone_id,
             lens=lens,
             correlation_id=x_correlation_id,
+            tenant_id=principal.tenant_id,
         )
+        if heat_zone_reader is not None:
+            from modules.opsboard.application.network_heat_zones import project_canonical_heat_zones
+
+            snap = project_canonical_heat_zones(snap, heat_zone_reader(request),
+                                               principal=principal, selected_id=selected_heat_zone_id)
 
         is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
             "expansion-manager",
@@ -185,12 +323,17 @@ def create_network_listings_sub_router(
                     if is_record_owner(principal, intake)
                 ]
 
+        if collection_rows_are_scope_projected(principal):
+            snap = project_listing_snapshot(principal, snap)
+
         if "listings" in snap:
             snap["listings"] = [mask_listing(principal, lst) for lst in snap["listings"]]
         if "assistedIntakes" in snap:
             snap["assistedIntakes"] = [
                 mask_intake(principal, intake) for intake in snap["assistedIntakes"]
             ]
+        if (snap.get("heatZoneAvailability") or {}).get("state") == "unavailable":
+            snap["counts"] = {**snap.get("counts", {}), "heatZones": None}
         return snap
 
     @router.post(
@@ -220,7 +363,7 @@ def create_network_listings_sub_router(
             listing = active_service(request)._listing(listing_id)
             has_legal_hold = listing.get("hasLegalHold") or listing.get("legalHold") or False
             first_actor_id = listing.get("submitter") or listing.get("owner")
-            actor_name = body.actorName or principal.subject_id
+            actor = operator_actor(principal)
 
             authorize_intake_action(
                 principal,
@@ -239,8 +382,8 @@ def create_network_listings_sub_router(
 
             result = active_service(request).convert_listing(
                 listing_id=listing_id,
-                actor_role_id=body.actorRoleId,
-                actor_name=actor_name,
+                actor_role_id=actor.role_id,
+                actor_name=actor.subject_id,
                 idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
             )
@@ -250,6 +393,8 @@ def create_network_listings_sub_router(
             if "candidate" in result:
                 result["candidate"] = mask_listing(principal, result["candidate"])
             return result
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except NetworkListingNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except NetworkListingConflict as exc:
@@ -267,62 +412,42 @@ def create_network_listings_sub_router(
         body: NetworkListingMergePayload,
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
+        if_match: str | None = Header(default=None, alias="If-Match"),
+        if_actor_match: str | None = Header(default=None, alias="If-Actor-Match"),
     ) -> dict[str, Any]:
         try:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            source = active_service(request)._listing(listing_id)
-            target = active_service(request)._listing(body.targetListingId)
+            actor = operator_actor(principal)
+            if if_actor_match is not None and if_actor_match != actor.subject_id:
+                raise NetworkListingConflict("ACTOR_CONTEXT_CONFLICT")
+            if body.expectedActorSubjectId is not None and body.expectedActorSubjectId != actor.subject_id:
+                raise NetworkListingConflict("ACTOR_CONTEXT_CONFLICT")
 
-            has_legal_hold = (
-                source.get("hasLegalHold")
-                or source.get("legalHold")
-                or target.get("hasLegalHold")
-                or target.get("legalHold")
-                or False
-            )
-            first_actor_id = (
-                request.headers.get("x-first-actor-id")
-                or source.get("proposer")
-                or source.get("submitter")
-            )
-            actor_name = body.actorName or principal.subject_id
-
-            authorize_intake_action(
-                principal,
-                "merge",
-                resource=source,
-                risk_acknowledged=body.riskAcknowledged,
-                risk_summary=body.riskSummary,
-                first_actor_id=first_actor_id,
-                has_legal_hold=has_legal_hold,
-                operator_role_id=operator_role_id,
-                audit_log=audit_log,
-                correlation_id=x_correlation_id,
-            )
-            authorize_intake_action(
-                principal,
-                "merge",
-                resource=target,
-                risk_acknowledged=body.riskAcknowledged,
-                risk_summary=body.riskSummary,
-                first_actor_id=first_actor_id,
-                has_legal_hold=has_legal_hold,
-                operator_role_id=operator_role_id,
-                audit_log=audit_log,
-                correlation_id=x_correlation_id,
-            )
+            def authorize_current(resource: dict[str, Any]) -> None:
+                authorize_intake_action(
+                    principal, "merge", resource=resource,
+                    risk_acknowledged=body.riskAcknowledged,
+                    risk_summary=body.riskSummary,
+                    first_actor_id=resource.get("proposer") or resource.get("submitter"),
+                    has_legal_hold=resource.get("hasLegalHold") is True or resource.get("legalHold") is True,
+                    operator_role_id=operator_role_id, audit_log=audit_log,
+                    correlation_id=x_correlation_id,
+                )
 
             result = active_service(request).merge_listing(
                 source_listing_id=listing_id,
                 target_listing_id=body.targetListingId,
+                target_if_match=body.targetIfMatch,
                 reason=body.reason or "",
                 risk_summary=body.riskSummary,
                 risk_acknowledged=body.riskAcknowledged,
-                actor_role_id=body.actorRoleId,
-                actor_name=actor_name,
+                actor_role_id=actor.role_id,
+                actor_name=actor.subject_id,
                 idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
+                if_match=if_match,
+                authorize_existing=authorize_current,
             )
 
             if "source" in result:
@@ -330,10 +455,16 @@ def create_network_listings_sub_router(
             if "target" in result:
                 result["target"] = mask_listing(principal, result["target"])
             return result
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except NetworkListingNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except NetworkListingConflict as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except NetworkListingPreconditionRequired as exc:
+            raise HTTPException(status_code=428, detail=str(exc)) from exc
+        except NetworkListingVersionUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except NetworkListingPolicyError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -344,43 +475,55 @@ def create_network_listings_sub_router(
     def archive_listing(
         request: Request,
         listing_id: str,
-        body: NetworkListingActorPayload,
+        body: NetworkListingArchivePayload,
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
+        if_match: str | None = Header(default=None, alias="If-Match"),
+        if_actor_match: str | None = Header(default=None, alias="If-Actor-Match"),
     ) -> dict[str, Any]:
         try:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            listing = active_service(request)._listing(listing_id)
-            has_legal_hold = listing.get("hasLegalHold") or listing.get("legalHold") or False
-            actor_name = body.actorName or principal.subject_id
+            actor = operator_actor(principal)
+            if if_actor_match is not None and if_actor_match != actor.subject_id:
+                raise NetworkListingConflict("ACTOR_CONTEXT_CONFLICT")
+            if body.expectedActorSubjectId is not None and body.expectedActorSubjectId != actor.subject_id:
+                raise NetworkListingConflict("ACTOR_CONTEXT_CONFLICT")
 
-            authorize_intake_action(
-                principal,
-                "cancel",
-                resource=listing,
-                has_legal_hold=has_legal_hold,
-                operator_role_id=operator_role_id,
-                audit_log=audit_log,
-                correlation_id=x_correlation_id,
-            )
+            def authorize_current(resource: dict[str, Any]) -> None:
+                # Archive has retention semantics distinct from intake cancel.
+                # Its hold/terminal guards run in the listing write owner.
+                authorize_intake_action(
+                    principal, "cancel", resource=resource,
+                    has_legal_hold=resource.get("hasLegalHold") is True or resource.get("legalHold") is True,
+                    operator_role_id=operator_role_id, audit_log=audit_log,
+                    correlation_id=x_correlation_id,
+                )
 
             result = active_service(request).archive_listing(
                 listing_id=listing_id,
                 reason=body.reason or "",
-                actor_role_id=body.actorRoleId,
-                actor_name=actor_name,
+                actor_role_id=actor.role_id,
+                actor_name=actor.subject_id,
                 idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
+                if_match=if_match,
+                authorize_existing=authorize_current,
             )
 
             if "listing" in result:
                 result["listing"] = mask_listing(principal, result["listing"])
             return result
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except NetworkListingNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except NetworkListingConflict as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except NetworkListingPreconditionRequired as exc:
+            raise HTTPException(status_code=428, detail=str(exc)) from exc
+        except NetworkListingVersionUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except NetworkListingPolicyError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -412,15 +555,20 @@ def create_network_listings_sub_router(
 
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
-            actor_name = body.actorName or principal.subject_id
+            actor = operator_actor(principal)
 
+            # Submitting a URL creates a new intake inside the caller's scope;
+            # there is no existing object to read a tenant from, so the heat
+            # zone travels as a collection filter and the verified principal
+            # tenant is the declared query scope.
             authorize_intake_action(
                 principal,
                 "submit_url",
-                resource={"heatZoneId": body.heatZoneId},
+                collection_scope={"heatZoneId": body.heatZoneId},
                 operator_role_id=operator_role_id,
                 audit_log=audit_log,
                 correlation_id=x_correlation_id,
+                tenant_id=principal.tenant_id,
             )
 
             is_async = x_async_intake == "true"
@@ -428,20 +576,29 @@ def create_network_listings_sub_router(
             result = active_service(request).submit_intake(
                 url=body.url,
                 heat_zone_id=body.heatZoneId,
-                actor_role_id=body.actorRoleId,
-                actor_name=actor_name,
+                actor_role_id=actor.role_id,
+                actor_name=actor.subject_id,
                 idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
                 job_queue=job_queue,
                 async_intake=is_async,
-                tenant_id=principal.scope.tenant_id if (principal and principal.scope) else None,
+                tenant_id=actor.tenant_id,
+                authorize_existing=lambda intake: authorize_intake_action(
+                    principal, "view", resource=intake,
+                    operator_role_id=operator_role_id, audit_log=audit_log,
+                    correlation_id=x_correlation_id,
+                ),
             )
             return mask_intake(principal, result)
+        except IntakeWorkflowUnavailable as exc:
+            raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except NetworkListingNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-        except NetworkListingConflict as exc:
+        except (NetworkListingConflict, AssistedIntakePersistenceConflict) as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except NetworkListingPolicyError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -461,23 +618,51 @@ def create_network_listings_sub_router(
         intake_stage: str = Query(default="", alias="intakeStage"),
         match_outcome: str = Query(default="", alias="matchOutcome"),
         sla_state: str = Query(default="", alias="slaState"),
+        source_id: str = Query(default="", alias="sourceId", max_length=200),
+        submitted_by: str = Query(default="", alias="submittedBy", max_length=200),
+        owner_id: str = Query(default="", alias="ownerId", max_length=200),
+        assignment_status: Annotated[AssignmentState | None, Query(alias="assignmentStatus")] = None,
+        assigned_area_id: str = Query(default="", alias="assignedAreaId", max_length=200),
+        observed_from: str | None = Query(default=None, alias="observedFrom", max_length=64, json_schema_extra={"format": "date-time"}),
+        observed_to: str | None = Query(default=None, alias="observedTo", max_length=64, json_schema_extra={"format": "date-time"}),
+        updated_from: str | None = Query(default=None, alias="updatedFrom", max_length=64, json_schema_extra={"format": "date-time"}),
+        updated_to: str | None = Query(default=None, alias="updatedTo", max_length=64, json_schema_extra={"format": "date-time"}),
+        masked: bool | None = Query(default=None),
+        restricted: bool | None = Query(default=None),
+        retryable: bool | None = Query(default=None),
         sort_by: str = Query(default="updatedAt", alias="sortBy"),
         sort_order: str = Query(default="desc", alias="sortOrder", pattern="^(asc|desc)$"),
     ) -> dict[str, Any]:
+        observed_start = _inbox_query_instant(observed_from, "observedFrom")
+        observed_end = _inbox_query_instant(observed_to, "observedTo")
+        updated_start = _inbox_query_instant(updated_from, "updatedFrom")
+        updated_end = _inbox_query_instant(updated_to, "updatedTo")
+        if ((observed_start and observed_end and observed_start > observed_end)
+                or (updated_start and updated_end and updated_start > updated_end)):
+            raise HTTPException(422, "Date range start must not follow its end")
         principal = get_principal(request)
         operator_role_id = get_operator_role_id(request)
         correlation_id = request.headers.get("x-correlation-id") or request.headers.get(
             "X-Correlation-Id"
         )
+        # Listing intakes is a collection query: the heat zone is a filter on
+        # that query, never a stand-in target resource.
         authorize_intake_action(
             principal,
             "view",
-            resource={"heatZoneId": selected_heat_zone_id} if selected_heat_zone_id else None,
+            collection_scope={
+                **({"heatZoneId": selected_heat_zone_id} if selected_heat_zone_id else {}),
+                **({"assignedAreaId": assigned_area_id} if assigned_area_id else {}),
+            } or None,
             operator_role_id=operator_role_id,
             audit_log=audit_log,
             correlation_id=correlation_id,
+            tenant_id=principal.tenant_id,
         )
-        intakes = active_service(request).list_intakes(selected_heat_zone_id=selected_heat_zone_id)
+        intakes = active_service(request).list_intakes(
+            selected_heat_zone_id=selected_heat_zone_id,
+            tenant_id=principal.tenant_id,
+        )
 
         is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
             "expansion-manager",
@@ -499,7 +684,11 @@ def create_network_listings_sub_router(
 
         if is_staff:
             intakes = [intake for intake in intakes if is_record_owner(principal, intake)]
+        intakes = [i for i in intakes if intake_resource_in_scope(principal, i)]
+        if collection_rows_are_scope_projected(principal):
+            intakes = [project_intake_record(intake) for intake in intakes]
         visible = [mask_intake(principal, intake) for intake in intakes]
+        visible = [_project_inbox_visibility(item) for item in visible]
         processing_stages = {
             "SUBMITTED",
             "CHECKING_IDENTITY",
@@ -517,12 +706,6 @@ def create_network_listings_sub_router(
             "blocked": sum(item.get("stage") in {"QUARANTINED", "FAILED"} for item in visible),
             "ready": sum(item.get("stage") == "READY" for item in visible),
         }
-
-        def latest(item: dict[str, Any]) -> str:
-            events = item.get("auditEvents") or []
-            return (
-                (events[-1].get("occurredAt") if events else None) or item.get("capturedAt") or ""
-            )
 
         if saved_view == "needsReview":
             visible = [i for i in visible if i.get("stage") == "NEEDS_REVIEW"]
@@ -544,26 +727,53 @@ def create_network_listings_sub_router(
             ]
         if sla_state:
             visible = [i for i in visible if i.get("slaState") == sla_state]
+        for key, expected in (
+            ("sourceId", source_id), ("submittedBy", submitted_by),
+            ("ownerSubjectId", owner_id), ("assignmentStatus", assignment_status),
+            ("assignedAreaId", assigned_area_id),
+        ):
+            if expected:
+                visible = [i for i in visible if _visible_inbox_value(i, key) == expected]
+        for key, start_at, end_at in (
+            ("lastObservedAt", observed_start, observed_end),
+            ("updatedAt", updated_start, updated_end),
+        ):
+            if start_at is not None or end_at is not None:
+                visible = [i for i in visible
+                           if (at := _inbox_instant(_visible_inbox_value(i, key))) is not None
+                           and (start_at is None or at >= start_at)
+                           and (end_at is None or at <= end_at)]
+        for key, expected in (("masked", masked), ("restricted", restricted)):
+            if expected is not None:
+                visible = [i for i in visible if i.get(key) is expected]
+        if retryable is not None:
+            visible = [i for i in visible
+                       if _visible_inbox_value(i, "failure") is not None
+                       and isinstance(i["failure"], dict)
+                       and i["failure"].get("retryable") is retryable]
         if search:
             needle = search.casefold()
             visible = [
                 i
                 for i in visible
                 if any(
-                    needle in str(i.get(k) or "").casefold()
-                    for k in ("id", "canonicalUrl", "sourceId", "submitter", "owner")
+                    needle in str(_visible_inbox_value(i, k) or "").casefold()
+                    for k in ("id", "canonicalUrl", "sourceId", "submitter", "owner", "submittedBy", "ownerSubjectId")
                 )
             ]
-        keys = {
-            "id": lambda i: i.get("id", ""),
-            "stage": lambda i: i.get("stage", ""),
-            "sourceId": lambda i: i.get("sourceId", ""),
-            "updatedAt": latest,
-        }
-        visible.sort(
-            key=lambda i: (keys.get(sort_by, latest)(i), i.get("id", "")),
-            reverse=sort_order == "desc",
-        )
+        sort_key = sort_by if sort_by in {
+            "id", "stage", "sourceId", "updatedAt", "submittedAt", "lastObservedAt", "dueAt",
+        } else "updatedAt"
+        def ordering_value(item: dict[str, Any]) -> Any:
+            value = _visible_inbox_value(item, sort_key)
+            if sort_key in {"updatedAt", "submittedAt", "lastObservedAt", "dueAt"}:
+                return _inbox_instant(value)
+            return value if isinstance(value, str) and value else None
+        known = [item for item in visible if ordering_value(item) is not None]
+        unknown = [item for item in visible if ordering_value(item) is None]
+        known.sort(key=lambda i: (ordering_value(i), i.get("id", "")), reverse=sort_order == "desc")
+        unknown.sort(key=lambda i: i.get("id", ""))
+        visible = known + unknown
         total = len(visible)
         start = (page - 1) * page_size
         page_items = visible[start : start + page_size]
@@ -601,7 +811,11 @@ def create_network_listings_sub_router(
                 audit_log=audit_log,
                 correlation_id=correlation_id,
             )
+            if principal.has_role(Role.OPERATOR_VIEWER):
+                intake = project_intake_record(intake)
             return mask_intake(principal, intake)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except NetworkListingNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -624,23 +838,24 @@ def create_network_listings_sub_router(
             is_identity_affecting = any(
                 k in {"providerListingId", "address", "rent", "areaPing"} for k in body.fields
             )
-            first_actor_id = intake.get("submitter")
-            has_legal_hold = intake.get("hasLegalHold") or intake.get("legalHold") or False
-            actor_name = body.actorName or principal.subject_id
+            actor = operator_actor(principal)
 
-            authorize_intake_action(
-                principal,
-                "correct",
-                resource=intake,
-                risk_acknowledged=body.riskAcknowledged,
-                risk_summary=body.riskSummary,
-                first_actor_id=first_actor_id,
-                is_identity_affecting=is_identity_affecting,
-                has_legal_hold=has_legal_hold,
-                operator_role_id=operator_role_id,
-                audit_log=audit_log,
-                correlation_id=x_correlation_id,
-            )
+            def authorize_existing(current: dict[str, Any]) -> None:
+                authorize_intake_action(
+                    principal,
+                    "correct",
+                    resource=current,
+                    risk_acknowledged=body.riskAcknowledged,
+                    risk_summary=body.riskSummary,
+                    first_actor_id=current.get("submitter"),
+                    is_identity_affecting=is_identity_affecting,
+                    has_legal_hold=bool(current.get("hasLegalHold") or current.get("legalHold")),
+                    operator_role_id=operator_role_id,
+                    audit_log=audit_log,
+                    correlation_id=x_correlation_id,
+                )
+
+            authorize_existing(intake)
 
             result = active_service(request).correct_intake(
                 intake_id=intake_id,
@@ -648,15 +863,18 @@ def create_network_listings_sub_router(
                 reason=body.reason,
                 risk_summary=body.riskSummary,
                 risk_acknowledged=body.riskAcknowledged,
-                actor_role_id=body.actorRoleId,
-                actor_name=actor_name,
+                actor_role_id=actor.role_id,
+                actor_name=actor.subject_id,
                 idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
+                authorize_existing=authorize_existing,
             )
             return mask_intake(principal, result)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except NetworkListingNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-        except NetworkListingConflict as exc:
+        except (NetworkListingConflict, AssistedIntakePersistenceConflict) as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except NetworkListingPolicyError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -676,22 +894,23 @@ def create_network_listings_sub_router(
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             intake = active_service(request).get_intake(intake_id)
-            first_actor_id = intake.get("submitter")
-            has_legal_hold = intake.get("hasLegalHold") or intake.get("legalHold") or False
-            actor_name = body.actorName or principal.subject_id
+            actor = operator_actor(principal)
 
-            authorize_intake_action(
-                principal,
-                "decide",
-                resource=intake,
-                risk_acknowledged=body.riskAcknowledged,
-                risk_summary=body.riskSummary,
-                first_actor_id=first_actor_id,
-                has_legal_hold=has_legal_hold,
-                operator_role_id=operator_role_id,
-                audit_log=audit_log,
-                correlation_id=x_correlation_id,
-            )
+            def authorize_existing(current: dict[str, Any]) -> None:
+                authorize_intake_action(
+                    principal,
+                    "decide",
+                    resource=current,
+                    risk_acknowledged=body.riskAcknowledged,
+                    risk_summary=body.riskSummary,
+                    first_actor_id=current.get("submitter"),
+                    has_legal_hold=bool(current.get("hasLegalHold") or current.get("legalHold")),
+                    operator_role_id=operator_role_id,
+                    audit_log=audit_log,
+                    correlation_id=x_correlation_id,
+                )
+
+            authorize_existing(intake)
 
             result = active_service(request).decide_intake(
                 intake_id=intake_id,
@@ -699,16 +918,19 @@ def create_network_listings_sub_router(
                 reason=body.reason,
                 risk_summary=body.riskSummary,
                 risk_acknowledged=body.riskAcknowledged,
-                actor_role_id=body.actorRoleId,
-                actor_name=actor_name,
+                actor_role_id=actor.role_id,
+                actor_name=actor.subject_id,
                 idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
                 target_listing_id=getattr(body, "targetListingId", None),
+                authorize_existing=authorize_existing,
             )
             return mask_intake(principal, result)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except NetworkListingNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-        except NetworkListingConflict as exc:
+        except (NetworkListingConflict, AssistedIntakePersistenceConflict) as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except NetworkListingPolicyError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -721,41 +943,46 @@ def create_network_listings_sub_router(
         request: Request,
         intake_id: str,
         body: NetworkListingActorPayload,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
     ) -> dict[str, Any]:
         try:
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             intake = active_service(request).get_intake(intake_id)
-            actor_name = body.actorName or principal.subject_id
+            actor = operator_actor(principal)
 
-            if intake.get("stage") == "QUARANTINED":
-                action = "reopen_quarantine"
-            else:
-                action = "reopen_failed"
+            def authorize_retry(current: dict[str, Any]) -> None:
+                authorize_intake_action(
+                    principal,
+                    "reopen_quarantine" if current.get("stage") == "QUARANTINED" else "reopen_failed",
+                    resource=current,
+                    operator_role_id=operator_role_id,
+                    audit_log=audit_log,
+                    correlation_id=x_correlation_id,
+                )
 
-            authorize_intake_action(
-                principal,
-                action,
-                resource=intake,
-                operator_role_id=operator_role_id,
-                audit_log=audit_log,
-                correlation_id=x_correlation_id,
-            )
+            authorize_retry(intake)
 
             job_queue = getattr(request.app.state, "job_queue", None)
             result = active_service(request).retry_intake(
                 intake_id=intake_id,
-                actor_role_id=body.actorRoleId,
-                actor_name=actor_name,
+                actor_role_id=actor.role_id,
+                actor_name=actor.subject_id,
                 correlation_id=x_correlation_id,
                 job_queue=job_queue,
-                tenant_id=principal.scope.tenant_id if (principal and principal.scope) else None,
+                tenant_id=actor.tenant_id,
+                idempotency_key=idempotency_key,
+                authorize_existing=authorize_retry,
             )
             return mask_intake(principal, result)
+        except IntakeWorkflowUnavailable as exc:
+            raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except NetworkListingNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-        except NetworkListingConflict as exc:
+        except (NetworkListingConflict, AssistedIntakePersistenceConflict, JobFenceRejectedError) as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except NetworkListingPolicyError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -775,32 +1002,34 @@ def create_network_listings_sub_router(
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             intake = active_service(request).get_intake(intake_id)
-            first_actor_id = intake.get("submitter")
-            has_legal_hold = intake.get("hasLegalHold") or intake.get("legalHold") or False
-            actor_name = body.actorName or principal.subject_id
+            actor = operator_actor(principal)
 
-            authorize_intake_action(
-                principal,
-                "promote",
-                resource=intake,
-                risk_acknowledged=body.riskAcknowledged,
-                risk_summary=body.riskSummary,
-                first_actor_id=first_actor_id,
-                has_legal_hold=has_legal_hold,
-                operator_role_id=operator_role_id,
-                audit_log=audit_log,
-                correlation_id=x_correlation_id,
-            )
+            def authorize_existing(current: dict[str, Any]) -> None:
+                authorize_intake_action(
+                    principal,
+                    "promote",
+                    resource=current,
+                    risk_acknowledged=body.riskAcknowledged,
+                    risk_summary=body.riskSummary,
+                    first_actor_id=current.get("submitter"),
+                    has_legal_hold=bool(current.get("hasLegalHold") or current.get("legalHold")),
+                    operator_role_id=operator_role_id,
+                    audit_log=audit_log,
+                    correlation_id=x_correlation_id,
+                )
+
+            authorize_existing(intake)
 
             result = active_service(request).promote_intake(
                 intake_id=intake_id,
                 reason=body.reason,
                 risk_summary=body.riskSummary,
                 risk_acknowledged=body.riskAcknowledged,
-                actor_role_id=body.actorRoleId,
-                actor_name=actor_name,
+                actor_role_id=actor.role_id,
+                actor_name=actor.subject_id,
                 idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
+                authorize_existing=authorize_existing,
             )
 
             if "listing" in result:
@@ -808,9 +1037,11 @@ def create_network_listings_sub_router(
             if "candidate" in result:
                 result["candidate"] = mask_listing(principal, result["candidate"])
             return result
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except NetworkListingNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-        except NetworkListingConflict as exc:
+        except (NetworkListingConflict, AssistedIntakePersistenceConflict) as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except NetworkListingPolicyError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

@@ -20,10 +20,15 @@ PROJECT="${ODP_E2E_PROJECT:-oday-plus-e2e}"
 WEB_PORT="${ODP_E2E_WEB_PORT:-3100}"
 API_PORT="${ODP_E2E_API_PORT:-8099}"
 SOURCE_STUB_PORT="${ODP_E2E_SOURCE_STUB_PORT:-8077}"
+export ODP_SCORE_BROWSER_API_URL="http://127.0.0.1:${ODP_SCORE_BROWSER_API_PORT:-38299}"
+export ODP_SCORE_BROWSER_WEB_URL="http://127.0.0.1:${ODP_SCORE_BROWSER_WEB_PORT:-38300}"
+export ODP_SCORE_BROWSER_CONTROL_KEY="synthetic-browser-control-20261013-local-only"
 DIAGNOSTICS_DIR="${ODP_E2E_DIAGNOSTICS_DIR:-.odp_data/e2e-diagnostics}"
 COMPOSE=(docker compose -p "$PROJECT" -f infra/docker/docker-compose.e2e.yml)
 PLAYWRIGHT_PAYLOAD="$(mktemp "${TMPDIR:-/tmp}/odp-playwright-payload.XXXXXX.json")"
 PLAYWRIGHT_ARTIFACT="docs/evidence/e2e/raw_playwright_results.json"
+COMPOSE_STARTED=0
+DIAGNOSTICS_CAPTURED=0
 export PATH="/home/lupin/.local/bin:$PATH"
 
 if command -v uv >/dev/null 2>&1; then
@@ -36,11 +41,27 @@ fi
 
 
 
-cleanup() {
-  rm -f "$PLAYWRIGHT_PAYLOAD"
-  if [[ "${ODP_E2E_KEEP_STACK:-0}" != "1" ]]; then
-    "${COMPOSE[@]}" down --remove-orphans --volumes
+capture_diagnostics() {
+  if [[ "$COMPOSE_STARTED" == "1" && "$DIAGNOSTICS_CAPTURED" != "1" ]]; then
+    mkdir -p "$DIAGNOSTICS_DIR" || true
+    "${COMPOSE[@]}" ps >"${DIAGNOSTICS_DIR}/compose-ps.txt" 2>&1 || true
+    "${COMPOSE[@]}" logs --no-color --tail=200 >"${DIAGNOSTICS_DIR}/compose-tail.log" 2>&1 || true
+    DIAGNOSTICS_CAPTURED=1
   fi
+}
+
+cleanup() {
+  local runner_exit=$?
+  trap - EXIT
+  # Startup, fixture seeding and readiness failures must retain their logs
+  # before disposable volumes and containers disappear. Never replace the
+  # original test/startup exit status with a diagnostics/teardown error.
+  capture_diagnostics
+  rm -f "$PLAYWRIGHT_PAYLOAD" || true
+  if [[ "$COMPOSE_STARTED" == "1" && "${ODP_E2E_KEEP_STACK:-0}" != "1" ]]; then
+    "${COMPOSE[@]}" down --remove-orphans --volumes || true
+  fi
+  exit "$runner_exit"
 }
 trap cleanup EXIT
 
@@ -71,6 +92,24 @@ done < <(
   } | sort -u
 )
 
+"${PYTHON_COMMAND[@]}" delivery_toolchain/e2e/check_chromium_prerequisites.py
+
+python3 - "$DIAGNOSTICS_DIR/source-identity.json" "$TESTED_SOURCE_SHA" "$TESTED_TREE_SHA" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+Path(sys.argv[1]).write_text(json.dumps({
+    "diagnostic_only": True,
+    "canonical_receipt": False,
+    "source_sha": sys.argv[2],
+    "tree_sha": sys.argv[3],
+    "created_at": datetime.now(timezone.utc).isoformat(),
+}, indent=2) + "\n", encoding="utf-8")
+PY
+
+COMPOSE_STARTED=1
 "${COMPOSE[@]}" down --remove-orphans --volumes
 "${COMPOSE[@]}" up -d --build
 
@@ -80,6 +119,26 @@ python3 delivery_toolchain/e2e/seed_product_e2e_data.py \
   --source-stub-url "http://127.0.0.1:${SOURCE_STUB_PORT}" \
   --web-url "http://127.0.0.1:${WEB_PORT}" \
   --diagnostics-dir "$DIAGNOSTICS_DIR"
+
+python3 - <<'PY'
+import os
+import time
+import urllib.error
+import urllib.request
+
+for url in (os.environ["ODP_SCORE_BROWSER_API_URL"] + "/_synthetic/health", os.environ["ODP_SCORE_BROWSER_WEB_URL"]):
+    deadline = time.monotonic() + 120
+    while True:
+        try:
+            with urllib.request.urlopen(url, timeout=5) as response:
+                if response.status == 200:
+                    break
+        except (OSError, urllib.error.URLError):
+            pass
+        if time.monotonic() >= deadline:
+            raise SystemExit("Synthetic PostgreSQL browser composition did not become ready: " + url)
+        time.sleep(1)
+PY
 
 PLAYWRIGHT_COMMAND=(
   npx playwright test
@@ -96,12 +155,14 @@ PLAYWRIGHT_COMMAND=(
   tests/e2e/operator-network-rebalance.spec.ts
   tests/e2e/operator-network-review.spec.ts
   tests/e2e/operator-network-scoring.spec.ts
+  tests/e2e/operator-shell-layout.spec.ts
   tests/e2e/operator-shell-today.spec.ts
   tests/e2e/operator-store-ops.spec.ts
   tests/e2e/product-e2e-env.spec.ts
   tests/e2e/shell-resource-binding.spec.ts
   --workers=1
   --retries=0
+  --trace=retain-on-failure
   --project=chromium
   --reporter=json
 )
@@ -141,8 +202,7 @@ pytest_status=$?
 "${PYTHON_COMMAND[@]}" delivery_toolchain/e2e/generate_product_e2e_receipt.py
 receipt_status=$?
 
-"${COMPOSE[@]}" ps >"${DIAGNOSTICS_DIR}/compose-ps.txt"
-"${COMPOSE[@]}" logs --no-color --tail=200 >"${DIAGNOSTICS_DIR}/compose-tail.log"
+capture_diagnostics
 set -e
 
 printf "Product E2E diagnostics written to %s\n" "$DIAGNOSTICS_DIR"

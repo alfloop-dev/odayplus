@@ -1,0 +1,316 @@
+{
+  "schema_version": 1,
+  "record_kind": "runtime-release-build-only-reconciliation",
+  "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+  "observed_at": "2026-09-28T12:22:08Z",
+  "candidate": {
+    "sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+    "environment": "dev",
+    "phase": "build",
+    "release_id": "odp-a663d604831c"
+  },
+  "manifest": {
+    "artifact": "runtime-release-manifest-a663d604831c4b9710dda9b7ca85ddbc193837e8",
+    "logical_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
+    "logical_digest_recomputed": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
+    "raw_file_sha256": "sha256:edd98d4e786f86121ceaafaf779041a939df924beae91cf0265946f89475497b",
+    "release_status": "ready",
+    "schema_version": 2
+  },
+  "build_run": {
+    "workflow": "Runtime Release",
+    "workflow_file": ".github/workflows/deploy-dev.yml",
+    "run_id": 36415981871,
+    "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36415981871",
+    "event": "workflow_dispatch",
+    "phase_receipt": "admitted; lease_supplied=false",
+    "head_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+    "conclusion": "success",
+    "build_job": "success",
+    "e2e_backup_restore_rollback_proof": "success",
+    "gcp_wif_authentication": "success",
+    "initial_release_target_absence_readback": "success; five targets absent at readback time",
+    "immutable_images_signatures_sbom_attestations": "success; four component refs and supply-chain refs resolved by workflow",
+    "manifest_and_image_handoff_publication": "success",
+    "deploy_job_results": {
+      "Supervisor lease admission": "skipped",
+      "Deploy by immutable digest": "skipped",
+      "Production watch and staging cleanup": "skipped"
+    },
+    "lease_issued": false,
+    "deployment_performed": false
+  },
+  "receipts": {
+    "phase": {
+      "admitted": true,
+      "lease_supplied": false
+    },
+    "build_environment": {
+      "admitted": true,
+      "github_environment": "dev-build",
+      "resolved_variables": {
+        "GCP_WORKLOAD_IDENTITY_PROVIDER": true,
+        "GCP_SERVICE_ACCOUNT": true,
+        "GCP_PROJECT_ID": true,
+        "GCP_REGION": true,
+        "GCP_AR_REPO": true,
+        "ODP_CLOUD_RUN_API_SERVICE": true,
+        "ODP_CLOUD_RUN_WEB_SERVICE": true,
+        "ODP_CLOUD_RUN_WORKER_JOB": true,
+        "ODP_CLOUD_RUN_SCHEDULER_JOB": true,
+        "ODP_CLOUD_RUN_VPC_EGRESS": true
+      }
+    },
+    "production_npm_audit": {
+      "status": "passed",
+      "critical": 0,
+      "high": 0
+    },
+    "initial_target_absence": {
+      "all_five_absent": true,
+      "project": "odayplus-runtime-20260825",
+      "region": "asia-east1"
+    }
+  },
+  "immutable_images": {
+    "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:2b15ad2e35b0418af8cb83df44334cdaf6ff5f160cc442429c29c4e759779403",
+    "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:df358efeb5746865fc83cafcfc9cfd0fe7ddea3f1bc46a588ad94416eac2cf30",
+    "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:f1bf6835ad472017e7339a8d8c67011e62052e581752c0d24ee98f59fb67a8c7",
+    "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:c1b24d65d12014d71f336b417420d6099672645d1b9669b2472f4f5fb654db57"
+  },
+  "supply_chain_reference_counts": {
+    "sbom_refs": 4,
+    "signature_refs": 4
+  },
+  "runtime_posture": {
+    "external_sources_expected_enabled": [],
+    "sources_off_attestation": {
+      "all_sources_disabled": true,
+      "binding_digest": "sha256:51be248f4753e55203fd72fec69701882dcbbd702da22bd3b482b1568a71f36f",
+      "egress_evidence": {
+        "cloud_run_egress": "ALL_TRAFFIC",
+        "contract_digest": "sha256:d18b0a1178ed69442a92a9abe76e2c22f049d17ee0c86e34d39233cff244cd72",
+        "deploy_entrypoint_vpc_binding": "verified",
+        "firewall_egress": "default-deny",
+        "kind": "runtime-release-egress-contract",
+        "proof_source": [
+          ".github/workflows/deploy-dev.yml",
+          "product_ops/deployment/deploy_cloud_run_waji.sh",
+          "infra/terraform/cloud_run.tf",
+          "infra/terraform/network.tf",
+          "product_ops/deployment/staging_lifecycle.py",
+          "product_ops/deployment/cloud_run_job_entrypoint.py",
+          "infra/terraform/modules/runtime_foundation/main.tf",
+          "infra/terraform/modules/runtime_foundation/variables.tf",
+          "infra/terraform/modules/runtime_foundation/network.tf",
+          "infra/terraform/modules/runtime_foundation/outputs.tf",
+          "infra/terraform/modules/runtime_foundation/kms.tf",
+          "infra/terraform/modules/runtime_foundation/database.tf"
+        ],
+        "provider_credentials_runtime": "absent",
+        "resolved_cloud_run_egress": "ALL_TRAFFIC",
+        "runtime_probe": "public_egress_denied",
+        "runtime_probe_receipt": ".odp_data/deployment/public-egress-probe.json",
+        "runtime_probe_receipt_content_digest": "sha256:c41821c2e44c23c08142ed4d18de093112607fa07dff09660902df8379d29f85",
+        "runtime_probe_wiring": "verified",
+        "workflow_vpc_binding": "verified"
+      },
+      "egress_posture": "default-deny",
+      "provider_mode": "disabled",
+      "sources_inventory": [
+        {
+          "credentials_present": false,
+          "public_egress": "denied",
+          "source_id": "admin_boundary_snapshot",
+          "status": "disabled"
+        },
+        {
+          "credentials_present": false,
+          "public_egress": "denied",
+          "source_id": "competitor_store_snapshot",
+          "status": "disabled"
+        },
+        {
+          "credentials_present": false,
+          "public_egress": "denied",
+          "source_id": "customer_service_case_event",
+          "status": "disabled"
+        },
+        {
+          "credentials_present": false,
+          "public_egress": "denied",
+          "source_id": "demographics_snapshot",
+          "status": "disabled"
+        },
+        {
+          "credentials_present": false,
+          "public_egress": "denied",
+          "source_id": "geocode_result_snapshot",
+          "status": "disabled"
+        },
+        {
+          "credentials_present": false,
+          "public_egress": "denied",
+          "source_id": "listing_raw_snapshot",
+          "status": "disabled"
+        },
+        {
+          "credentials_present": false,
+          "public_egress": "denied",
+          "source_id": "machine_cycle_event",
+          "status": "disabled"
+        },
+        {
+          "credentials_present": false,
+          "public_egress": "denied",
+          "source_id": "machine_master_snapshot",
+          "status": "disabled"
+        },
+        {
+          "credentials_present": false,
+          "public_egress": "denied",
+          "source_id": "machine_status_event",
+          "status": "disabled"
+        },
+        {
+          "credentials_present": false,
+          "public_egress": "denied",
+          "source_id": "maintenance_work_order_event",
+          "status": "disabled"
+        },
+        {
+          "credentials_present": false,
+          "public_egress": "denied",
+          "source_id": "poi_snapshot",
+          "status": "disabled"
+        },
+        {
+          "credentials_present": false,
+          "public_egress": "denied",
+          "source_id": "price_schedule_snapshot",
+          "status": "disabled"
+        },
+        {
+          "credentials_present": false,
+          "public_egress": "denied",
+          "source_id": "store_master_snapshot",
+          "status": "disabled"
+        },
+        {
+          "credentials_present": false,
+          "public_egress": "denied",
+          "source_id": "store_opening_authority_snapshot",
+          "status": "disabled"
+        },
+        {
+          "credentials_present": false,
+          "public_egress": "denied",
+          "source_id": "transaction_event",
+          "status": "disabled"
+        },
+        {
+          "credentials_present": false,
+          "public_egress": "denied",
+          "source_id": "weather_daily_snapshot",
+          "status": "disabled"
+        }
+      ],
+      "total_sources_audited": 16,
+      "zero_credentials_present": true
+    }
+  },
+  "canonical_gate_inputs_at_observation": {
+    "origin_dev_head": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+    "release_manifest_candidate_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
+    "release_manifest_digest": "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2",
+    "release_gate_registry_candidate_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
+    "release_gate_registry_manifest_digest": "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2",
+    "release_gate_registry_decision": "go",
+    "previous_registry_approval_id": "HUMANOPS-DEV-MIGRATION-20260927T225545Z",
+    "previous_registry_approval_expired_at": "2026-09-28T04:55:45Z",
+    "reconciled_to_current_candidate": false
+  },
+  "task_review_at_observation": {
+    "task_status": "blocked",
+    "owner": "Antigravity3",
+    "reviewer": "Codex2",
+    "pr_number": 1107,
+    "pr_head_sha": "6a5f38704e09698e595aa69a97006c53006c385d",
+    "canonical_review_submission_sha": "7043ff66a73f13eb6b53fa9165abebf541058175",
+    "current_pr_head_reviewed": false
+  },
+  "new_user_authorization": {
+    "approval_id": "HUMANOPS-DEV-MIGRATION-20260928T120016Z",
+    "approved_by": "Human/Ops (user response transcribed by interactive Codex; not an external identity-system signature)",
+    "user_reply": "同意",
+    "recorded_at": "2026-09-28T12:00:16Z",
+    "expires_at": "2026-09-28T18:00:16Z",
+    "candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+    "manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
+    "manifest_run_id": 36415981871,
+    "target_environment": "dev",
+    "action": "deploy",
+    "dispatch_preconditions": [
+      "Owner updates canonical RELEASE_MANIFEST.json, RELEASE_GATE_REGISTRY.json, and task evidence on PR #1107 for this exact candidate.",
+      "Reviewer accepts the exact submitted head through the canonical task flow.",
+      "PR #1107 is merged before the fresh lease request is registered."
+    ],
+    "authorized_scope": [
+      "one fresh release request",
+      "one standard short-lived Supervisor lease",
+      "existing Runtime Release deploy phase only"
+    ],
+    "scope_limits": [
+      "no database reset",
+      "no Alembic stamp",
+      "no database deletion",
+      "no rewriting foreign Dagster migration history",
+      "no reuse of expired approval/request/nonce",
+      "all 16 external sources remain disabled",
+      "provider credentials absent",
+      "egress default-deny",
+      "staging and production unchanged"
+    ]
+  },
+  "artifact_ids": {
+    "release-environment-receipt-dev-build": "10968030024",
+    "initial-release-absence-readback-a663d604831c4b9710dda9b7ca85ddbc193837e8": "10967906043",
+    "release-npm-audit-receipt-dev": "10967620580",
+    "release-phase-receipt-dev-build": "10967535042",
+    "runtime-release-manifest-a663d604831c4b9710dda9b7ca85ddbc193837e8": "10967281361",
+    "runtime-release-images-a663d604831c4b9710dda9b7ca85ddbc193837e8": "10967216335"
+  },
+  "artifact_files": [
+    {
+      "path": "hosted-artifacts/run-36415981871/initial-release-absence-readback-a663d604831c4b9710dda9b7ca85ddbc193837e8/initial-release-absence-readback.json",
+      "bytes": 1226,
+      "sha256": "sha256:3391e27c24589dd90a89288a036c9bb6974881992d6c338b497e6d7ec8a12825"
+    },
+    {
+      "path": "hosted-artifacts/run-36415981871/release-environment-receipt-dev-build/release-environment-receipt.json",
+      "bytes": 1111,
+      "sha256": "sha256:1a7e6d95c757f9fd83ff26e69a33208883681ae22256da03593a324482407c60"
+    },
+    {
+      "path": "hosted-artifacts/run-36415981871/release-npm-audit-receipt-dev/npm-audit-receipt.json",
+      "bytes": 605,
+      "sha256": "sha256:9b23e1185aa4c6bc848b5b545a646212ec7ae75c39b15b6463d357147204fb0f"
+    },
+    {
+      "path": "hosted-artifacts/run-36415981871/release-phase-receipt-dev-build/release-phase-receipt.json",
+      "bytes": 767,
+      "sha256": "sha256:166f54af879ed322916b8c0b0acac4870b5c61c09b7f568151a7bb6369a4556f"
+    },
+    {
+      "path": "hosted-artifacts/run-36415981871/runtime-release-images-a663d604831c4b9710dda9b7ca85ddbc193837e8/runtime-release-images.json",
+      "bytes": 657,
+      "sha256": "sha256:497346f13d466199b5875c6580aefaaf65bb11f5431130096e4a508f1044138c"
+    },
+    {
+      "path": "hosted-artifacts/run-36415981871/runtime-release-manifest-a663d604831c4b9710dda9b7ca85ddbc193837e8/RELEASE_MANIFEST.json",
+      "bytes": 9481,
+      "sha256": "sha256:edd98d4e786f86121ceaafaf779041a939df924beae91cf0265946f89475497b"
+    }
+  ],
+  "historical_evidence_policy": "Earlier candidate artifacts remain unchanged under their original directories; this record is additive. It is not evidence of a deployment."
+}

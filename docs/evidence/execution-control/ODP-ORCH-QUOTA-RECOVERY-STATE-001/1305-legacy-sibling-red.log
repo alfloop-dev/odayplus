@@ -1,0 +1,36 @@
+.FF.FF                                                                   [100%]
+=================================== FAILURES ===================================
+___ test_canary_promotes_only_sibling_epoch_recorded_at_dispatch[0-missing] ____
+.orchestrator/test_account_pool_admission.py:155: in test_canary_promotes_only_sibling_epoch_recorded_at_dispatch
+    assert sibling["state"] == (
+E   AssertionError: assert 'healthy' == 'recovering'
+E     
+E     - recovering
+E     + healthy
+__ test_canary_promotes_only_sibling_epoch_recorded_at_dispatch[0-malformed] ___
+.orchestrator/test_account_pool_admission.py:155: in test_canary_promotes_only_sibling_epoch_recorded_at_dispatch
+    assert sibling["state"] == (
+E   AssertionError: assert 'healthy' == 'recovering'
+E     
+E     - recovering
+E     + healthy
+___ test_canary_promotes_only_sibling_epoch_recorded_at_dispatch[1-missing] ____
+.orchestrator/test_account_pool_admission.py:155: in test_canary_promotes_only_sibling_epoch_recorded_at_dispatch
+    assert sibling["state"] == (
+E   AssertionError: assert 'healthy' == 'recovering'
+E     
+E     - recovering
+E     + healthy
+__ test_canary_promotes_only_sibling_epoch_recorded_at_dispatch[1-malformed] ___
+.orchestrator/test_account_pool_admission.py:155: in test_canary_promotes_only_sibling_epoch_recorded_at_dispatch
+    assert sibling["state"] == (
+E   AssertionError: assert 'healthy' == 'recovering'
+E     
+E     - recovering
+E     + healthy
+=========================== short test summary info ============================
+FAILED .orchestrator/test_account_pool_admission.py::test_canary_promotes_only_sibling_epoch_recorded_at_dispatch[0-missing]
+FAILED .orchestrator/test_account_pool_admission.py::test_canary_promotes_only_sibling_epoch_recorded_at_dispatch[0-malformed]
+FAILED .orchestrator/test_account_pool_admission.py::test_canary_promotes_only_sibling_epoch_recorded_at_dispatch[1-missing]
+FAILED .orchestrator/test_account_pool_admission.py::test_canary_promotes_only_sibling_epoch_recorded_at_dispatch[1-malformed]
+4 failed, 2 passed, 7 deselected in 1.28s

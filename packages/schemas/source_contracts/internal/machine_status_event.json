@@ -9,6 +9,10 @@
   "mapping_id": "MAP-INT-STATUS-v1",
   "integration_mode": "event_stream",
   "envelope": "event",
+  "data_owner": "unconfirmed",
+  "target_latency_sla": "unconfirmed",
+  "contact_channel": "unconfirmed",
+  "runtime_capability": "batch_watermark_only",
   "fields": [
     {"name": "source_status_event_id", "type": "string", "required": true, "description": "Source event id."},
     {"name": "source_machine_id", "type": "string", "required": true, "description": "Machine id."},

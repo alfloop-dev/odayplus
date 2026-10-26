@@ -50,12 +50,17 @@ from product_ops.modeling.storage import (
     ModelReadyDataError,
     PostgresModelReadySource,
 )
+from shared.governance import (
+    InMemoryDecisionPolicyRepository,
+    default_model_performance_drift_policy,
+)
 from tests.integration._learninghub_fixtures import (
     DEFAULT_MODEL_NAME,
     dataset_rows,
     model_card,
     model_version,
 )
+from tests.integration._model_publish_flag_fixture import enable_model_publish
 
 
 class FakeGcsTransport:
@@ -849,6 +854,61 @@ def test_prepare_rows_requires_source_lineage_and_strict_causal_time() -> None:
         prepare_model_rows(MODEL_SPECS["forecastops"], _loaded(rows))
 
 
+def test_production_validation_binds_versioned_policy_and_rejects_weaker_callers() -> None:
+    repository = InMemoryLearningHubRepository()
+    service = LearningHubService(repository=repository)
+    snapshot = service.register_dataset_snapshot(
+        dataset_rows(),
+        dataset_snapshot_id="forecast-policy-governance",
+    )
+    policy = default_model_performance_drift_policy("tenant-modeling")
+    application = BoundedModelTrainingRelease(
+        source=SimpleNamespace(),
+        service=service,
+        artifact_store=GcsArtifactStore(
+            "gs://oday-model-artifacts/production",
+            FakeGcsTransport(),
+        ),
+        git_sha="abc1234",
+        actor="ml-training-operator",
+        decision_policy_repository=InMemoryDecisionPolicyRepository([policy]),
+        decision_policy_tenant_id="tenant-modeling",
+    )
+    resolved = application._resolve_performance_policy()
+    assert resolved == policy
+
+    validation = service.validate_candidate(
+        model_name=DEFAULT_MODEL_NAME,
+        model_version="2026.09.02.1",
+        dataset_snapshot_id=snapshot.dataset_snapshot_id,
+        metrics={"normalized_mae": 0.20, "p80_coverage": 0.70},
+        baseline_metrics={"normalized_mae": 0.20, "p80_coverage": 0.70},
+        # These legacy values are deliberately weaker than the policy rows.
+        thresholds=(
+            MetricThreshold(
+                "normalized_mae",
+                max_value=1.0,
+                max_degradation=0.50,
+            ),
+            MetricThreshold(
+                "p80_coverage",
+                min_value=0.0,
+                max_degradation=0.50,
+            ),
+        ),
+        decision_policy=resolved,
+    )
+
+    assert validation.decision_policy_version_id == policy.policy_version_id
+    normalized_mae = next(
+        threshold
+        for threshold in validation.thresholds
+        if threshold.metric_name == "normalized_mae"
+    )
+    assert normalized_mae.max_degradation == 0.05
+    assert normalized_mae.max_value == MODEL_SPECS["forecastops"].max_normalized_mae
+
+
 def test_prepare_rows_allows_labels_to_mature_after_prediction_origin() -> None:
     prepared = prepare_model_rows(MODEL_SPECS["forecastops"], _loaded(_raw_forecast_rows(120)))
 
@@ -1084,6 +1144,7 @@ def test_promote_first_success_and_identical_replay_share_one_durable_release() 
     assert spec.production_release_enabled
     assert spec.model_name == DEFAULT_MODEL_NAME
     application = _promotion_application()
+    enable_model_publish(application.service, tenant_id="tenant-modeling")
     repository = application.service.repository
     version = "2026.07.24.1"
     _register_promotable_candidate(application, version)
@@ -1132,6 +1193,7 @@ def test_promote_first_success_and_identical_replay_share_one_durable_release() 
 def test_promote_rejects_reusing_an_approval_for_a_different_command() -> None:
     spec = MODEL_SPECS["forecastops"]
     application = _promotion_application()
+    enable_model_publish(application.service, tenant_id="tenant-modeling")
     version = "2026.07.24.1"
     _register_promotable_candidate(application, version)
     application.promote(
@@ -1166,6 +1228,7 @@ def test_promote_replay_rejects_post_commit_approval_mutation(
 ) -> None:
     spec = MODEL_SPECS["forecastops"]
     application = _promotion_application()
+    enable_model_publish(application.service, tenant_id="tenant-modeling")
     version = "2026.07.24.1"
     _register_promotable_candidate(application, version)
     approval = _approval(model_version=version)
@@ -1188,6 +1251,7 @@ def test_promote_replay_rejects_post_commit_approval_mutation(
 def test_promote_replay_rejects_mutated_persisted_approval_digest() -> None:
     spec = MODEL_SPECS["forecastops"]
     application = _promotion_application()
+    enable_model_publish(application.service, tenant_id="tenant-modeling")
     repository = application.service.repository
     version = "2026.07.24.1"
     _register_promotable_candidate(application, version)
@@ -1220,6 +1284,7 @@ def test_promote_replay_rejects_mutated_persisted_approval_digest() -> None:
 def test_promote_incomplete_saga_replay_requires_operator_recovery() -> None:
     spec = MODEL_SPECS["forecastops"]
     application = _promotion_application()
+    enable_model_publish(application.service, tenant_id="tenant-modeling")
     version = "2026.07.24.1"
     _register_promotable_candidate(application, version)
     application.promote(
@@ -1244,6 +1309,7 @@ def test_promote_rejects_stale_release_revision_without_mutation() -> None:
     spec = MODEL_SPECS["forecastops"]
     repository = _RacedReleaseRepository()
     application = _promotion_application(repository)
+    enable_model_publish(application.service, tenant_id="tenant-modeling")
     first_version = "2026.07.24.1"
     _register_promotable_candidate(application, first_version)
     application.promote(

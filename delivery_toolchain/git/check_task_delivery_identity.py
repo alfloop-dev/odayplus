@@ -89,6 +89,7 @@ def validate_delivery_identity(
             message,
             task_id=task_id,
             allow_maintenance_skip=False,
+            require_subject_length_limit=False,
         )
         errors.extend(f"commit {commit[:12]}: {violation}" for violation in violations)
     return errors

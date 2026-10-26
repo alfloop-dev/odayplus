@@ -76,15 +76,13 @@ def restore_file(path: Path, snapshot: FileSnapshot) -> None:
         path.unlink(missing_ok=True)
 
 
-def status_launcher(runtime_link: Path, config_path: Path) -> bytes:
+def status_launcher(runtime_link: Path) -> bytes:
     runtime_writer = runtime_link / "scripts" / "ai_status.py"
     return (
         "#!/bin/bash\n"
         "set -euo pipefail\n"
         'status_root="$(cd "$(dirname "$0")/.." && pwd)"\n'
         'export PANTHEON_STATUS_ROOT="${PANTHEON_STATUS_ROOT:-$status_root}"\n'
-        f'export ORCH_CONFIG_PATH={shlex.quote(str(config_path))}\n'
-        f'export PANTHEON_CONFIG_PATH={shlex.quote(str(config_path))}\n'
         f'exec python3 {shlex.quote(str(runtime_writer))} "$@"\n'
     ).encode()
 
@@ -243,7 +241,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         # Install the stable entry point before changing the runtime symlink so
         # every status writer immediately follows the same code plane.
-        replace_file(launcher, status_launcher(link, live_config), 0o755)
+        replace_file(launcher, status_launcher(link), 0o755)
         point_link(link, target)
     except Exception:
         restore_file(launcher, launcher_before)

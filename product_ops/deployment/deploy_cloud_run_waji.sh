@@ -38,8 +38,201 @@ run_locked_python() {
 : "${ODP_SCHEDULER_CRON:?Error: ODP_SCHEDULER_CRON is required.}"
 : "${ODP_SCHEDULER_TIME_ZONE:?Error: ODP_SCHEDULER_TIME_ZONE is required.}"
 : "${ODP_FORECAST_ENGINE:?Error: ODP_FORECAST_ENGINE is required for live deployments.}"
+
+# Service-level minimum instances for the API and Web services, applied after
+# promotion with the service update `--min` flag. A revision-level minimum
+# would also keep every tagged candidate revision warm. Dev defaults to 1 because the API cold start was
+# measured at ~24-29s (ODP-WEB-BOOTSTRAP-COLDSTART-001), longer than the Web
+# BFF's 10s upstream timeout. Other environments change only when
+# ODP_CLOUD_RUN_MIN_INSTANCES is set explicitly.
+CLOUD_RUN_MIN_INSTANCES="${ODP_CLOUD_RUN_MIN_INSTANCES:-}"
+if [ -z "${CLOUD_RUN_MIN_INSTANCES}" ] && [ "${ODP_DEPLOY_ENV}" = "dev" ]; then
+  CLOUD_RUN_MIN_INSTANCES=1
+fi
+if [ -n "${CLOUD_RUN_MIN_INSTANCES}" ] && [[ ! "${CLOUD_RUN_MIN_INSTANCES}" =~ ^[0-9]+$ ]]; then
+  echo "Error: ODP_CLOUD_RUN_MIN_INSTANCES must be a non-negative integer, got '${CLOUD_RUN_MIN_INSTANCES}'." >&2
+  exit 1
+fi
 : "${ODP_FORECAST_MODEL:?Error: ODP_FORECAST_MODEL is required for live deployments.}"
 : "${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT:?Error: ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT is required.}"
+
+# ODP-DEV-ADMIN-RELEASE-READINESS-001: the acceptance scope the live gate holds
+# this release to. The workflow reads it from the admitted manifest (it is
+# sealed into the lease-bound digest); unset means the complete `full` scope.
+# A narrowed profile is refused here, before the preflight and before any
+# Cloud Run mutation, for anything but dev or without its sign-in inputs.
+ODP_RELEASE_PROFILE="${ODP_RELEASE_PROFILE:-full}"
+# Only the trusted foreground library supplies an inherited control descriptor.
+# The ordinary workflow never sets this and never provisions an identity.
+if [ -n "${ODP_DEV_SMOKE_FOREGROUND_FD:-}" ]; then
+  if [ "${ODP_DEPLOY_ENV}" != "dev" ] || [ "${ODP_RELEASE_PROFILE}" != "dev-admin" ] \
+    || [ -n "${ODP_DEV_ADMIN_CREDENTIAL_BUNDLE:-}" ]; then
+    echo "Error: PROVISIONING_FOREGROUND_SCOPE_INVALID" >&2
+    exit 1
+  fi
+  # This descriptor check imports only Python's standard library.
+  python3 - <<'PY'
+import os, socket, sys
+try:
+    s = socket.socket(fileno=int(os.environ["ODP_DEV_SMOKE_FOREGROUND_FD"]))
+    s.getpeername()
+    s.detach()
+except Exception:
+    sys.exit("Error: PROVISIONING_FOREGROUND_CHANNEL_INVALID")
+PY
+fi
+case "${ODP_RELEASE_PROFILE}" in
+  full)
+    ;;
+  dev-admin)
+    if [ "${ODP_DEPLOY_ENV}" != "dev" ]; then
+      echo "Error: release profile 'dev-admin' may only deploy to dev, not '${ODP_DEPLOY_ENV}'." >&2
+      exit 1
+    fi
+    if [ -z "${ODP_DEV_ADMIN_CREDENTIAL_BUNDLE:-}" ] && [ -z "${ODP_DEV_SMOKE_FOREGROUND_FD:-}" ]; then
+      ODP_DEV_ADMIN_USERNAME="${ODP_DEV_ADMIN_USERNAME:-${ODP_DEV_BOOTSTRAP_ADMIN_USERNAME:-}}"
+      ODP_DEV_ADMIN_PASSWORD="${ODP_DEV_ADMIN_PASSWORD:-${ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD:-}}"
+      : "${ODP_DEV_ADMIN_USERNAME:?Error: the dev-admin profile requires ODP_DEV_ADMIN_USERNAME (the platform_admin account).}"
+      : "${ODP_DEV_ADMIN_PASSWORD:?Error: the dev-admin profile requires ODP_DEV_ADMIN_PASSWORD (secret).}"
+    fi
+    : "${ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE:?Error: the dev-admin profile requires ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE (an operator role the account does not hold).}"
+    export ODP_DEV_ADMIN_USERNAME ODP_DEV_ADMIN_PASSWORD
+    ;;
+  core-ops)
+    # ODP-CORE-OPS-RELEASE-PROFILE-001: core operations ahead of trained models,
+    # admissible to every environment. It takes none of dev-admin's sign-in
+    # inputs; the live gate holds it to the missing-model refusal scope.
+    case "${ODP_DEPLOY_ENV}" in
+      dev|staging|production) ;;
+      *)
+        echo "Error: release profile 'core-ops' may only deploy to dev, staging or production, not '${ODP_DEPLOY_ENV}'." >&2
+        exit 1
+        ;;
+    esac
+    ;;
+  *)
+    echo "Error: unknown release profile '${ODP_RELEASE_PROFILE}'; expected full, dev-admin or core-ops." >&2
+    exit 1
+    ;;
+esac
+export ODP_RELEASE_PROFILE
+# Validate a staged matched pair before cloud mutation. Never decode credentials
+# into shell/argv/files/outputs; the gate reads the same bundle in its own memory.
+# Nonempty malformed/wrong-environment bundles MUST NOT fall back to legacy inputs.
+if [ -n "${ODP_DEV_ADMIN_CREDENTIAL_BUNDLE:-}" ]; then
+  run_locked_python -c '
+import os, sys
+from delivery_toolchain.release.provision_dev_smoke import ProvisioningRefused, read_dev_credential_bundle
+try:
+    read_dev_credential_bundle(os.environ["ODP_DEV_ADMIN_CREDENTIAL_BUNDLE"],
+        environment=os.environ["ODP_DEPLOY_ENV"], release_profile=os.environ["ODP_RELEASE_PROFILE"])
+except ProvisioningRefused:
+    sys.exit("Error: PROVISIONING_CREDENTIAL_BUNDLE_INVALID")
+'
+fi
+if [ "${ODP_DEPLOY_ENV}" = "production" ]; then
+  : "${ODP_PROD_DEPLOY_URL:?Error: ODP_PROD_DEPLOY_URL is required for production live E2E.}"
+  : "${ODP_PROD_API_URL:?Error: ODP_PROD_API_URL is required for production live E2E.}"
+  for production_url in "${ODP_PROD_DEPLOY_URL}" "${ODP_PROD_API_URL}"; do
+    if [[ ! "${production_url}" =~ ^https://[^[:space:]]+$ ]]; then
+      echo "Error: production live E2E URLs must be HTTPS custom domains." >&2
+      exit 1
+    fi
+  done
+fi
+
+# Private-IP Cloud SQL is reached through the VPC. Keep the connectivity
+# binding in this single release entrypoint so every service and job follows
+# the same path. Two mutually exclusive binding modes are supported:
+#
+#   connector  -- Serverless VPC Access connector (dev / staging):
+#                 ODP_CLOUD_RUN_VPC_CONNECTOR
+#   direct-vpc -- Direct VPC egress, the architecture infra/terraform/cloud_run.tf
+#                 declares for production (vpc_access.network_interfaces; the IaC
+#                 creates no connector resource):
+#                 ODP_PROD_VPC_NETWORK + ODP_PROD_VPC_SUBNETWORK
+#
+# Both modes require ODP_CLOUD_RUN_VPC_EGRESS. A half-configured mode, both
+# modes at once (`--vpc-connector` and `--network` are mutually exclusive on
+# Cloud Run), or an egress mode without a network binding all fail here,
+# before any mutation, instead of at the first gcloud call.
+CLOUD_RUN_VPC_MODE=""
+if [ -n "${ODP_CLOUD_RUN_VPC_CONNECTOR:-}" ] && { [ -n "${ODP_PROD_VPC_NETWORK:-}" ] || [ -n "${ODP_PROD_VPC_SUBNETWORK:-}" ]; }; then
+  echo "Error: ODP_CLOUD_RUN_VPC_CONNECTOR and ODP_PROD_VPC_NETWORK/ODP_PROD_VPC_SUBNETWORK are mutually exclusive; configure exactly one VPC binding mode." >&2
+  exit 1
+fi
+if [ -n "${ODP_PROD_VPC_NETWORK:-}" ] && [ -z "${ODP_PROD_VPC_SUBNETWORK:-}" ]; then
+  echo "Error: ODP_PROD_VPC_SUBNETWORK is required with ODP_PROD_VPC_NETWORK." >&2
+  exit 1
+fi
+if [ -n "${ODP_PROD_VPC_SUBNETWORK:-}" ] && [ -z "${ODP_PROD_VPC_NETWORK:-}" ]; then
+  echo "Error: ODP_PROD_VPC_NETWORK is required with ODP_PROD_VPC_SUBNETWORK." >&2
+  exit 1
+fi
+if [ -n "${ODP_CLOUD_RUN_VPC_CONNECTOR:-}" ]; then
+  CLOUD_RUN_VPC_MODE="connector"
+elif [ -n "${ODP_PROD_VPC_NETWORK:-}" ]; then
+  CLOUD_RUN_VPC_MODE="direct-vpc"
+fi
+if [ -n "${CLOUD_RUN_VPC_MODE}" ] && [ -z "${ODP_CLOUD_RUN_VPC_EGRESS:-}" ]; then
+  echo "Error: ODP_CLOUD_RUN_VPC_EGRESS is required with the ${CLOUD_RUN_VPC_MODE} VPC binding." >&2
+  exit 1
+fi
+if [ -n "${ODP_CLOUD_RUN_VPC_EGRESS:-}" ] && [ -z "${CLOUD_RUN_VPC_MODE}" ]; then
+  echo "Error: ODP_CLOUD_RUN_VPC_CONNECTOR or ODP_PROD_VPC_NETWORK+ODP_PROD_VPC_SUBNETWORK is required with ODP_CLOUD_RUN_VPC_EGRESS." >&2
+  exit 1
+fi
+if [ -n "${ODP_CLOUD_RUN_VPC_EGRESS:-}" ]; then
+  case "${ODP_CLOUD_RUN_VPC_EGRESS}" in
+    all|all-traffic|private-ranges-only)
+      ;;
+    *)
+      echo "Error: unsupported ODP_CLOUD_RUN_VPC_EGRESS '${ODP_CLOUD_RUN_VPC_EGRESS}'. " \
+        "Expected all, all-traffic, or private-ranges-only." >&2
+      exit 1
+      ;;
+  esac
+fi
+
+# A provider-off Runtime Release must route all traffic through the VPC.
+# `private-ranges-only` would leave public destinations on Cloud Run's direct
+# egress path, so accepting it here would turn an absent endpoint into a false
+# default-deny claim. Either binding mode satisfies the network half; the
+# egress half must be ALL_TRAFFIC. This guard runs before the first Cloud Run
+# mutation.
+if [ "${ODP_EXTERNAL_PROVIDER_MODE:-}" = "disabled" ]; then
+  if [ -z "${CLOUD_RUN_VPC_MODE}" ]; then
+    echo "Error: sources-off deploy requires a VPC binding: ODP_CLOUD_RUN_VPC_CONNECTOR or ODP_PROD_VPC_NETWORK+ODP_PROD_VPC_SUBNETWORK." >&2
+    exit 1
+  fi
+  : "${MANIFEST_DIGEST:?Error: sources-off deploy requires MANIFEST_DIGEST.}"
+  if [[ ! "${MANIFEST_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "Error: sources-off deploy requires an immutable MANIFEST_DIGEST." >&2
+    exit 1
+  fi
+  case "${ODP_CLOUD_RUN_VPC_EGRESS:-}" in
+    all|all-traffic)
+      ;;
+    *)
+      echo "Error: sources-off deploy requires ALL_TRAFFIC VPC egress; got '${ODP_CLOUD_RUN_VPC_EGRESS:-}'." >&2
+      exit 1
+      ;;
+  esac
+fi
+
+CLOUD_RUN_NETWORK_ARGS=()
+case "${CLOUD_RUN_VPC_MODE}" in
+  connector)
+    CLOUD_RUN_NETWORK_ARGS+=("--vpc-connector=${ODP_CLOUD_RUN_VPC_CONNECTOR}")
+    CLOUD_RUN_NETWORK_ARGS+=("--vpc-egress=${ODP_CLOUD_RUN_VPC_EGRESS}")
+    ;;
+  direct-vpc)
+    CLOUD_RUN_NETWORK_ARGS+=("--network=${ODP_PROD_VPC_NETWORK}")
+    CLOUD_RUN_NETWORK_ARGS+=("--subnet=${ODP_PROD_VPC_SUBNETWORK}")
+    CLOUD_RUN_NETWORK_ARGS+=("--vpc-egress=${ODP_CLOUD_RUN_VPC_EGRESS}")
+    ;;
+esac
+echo "Cloud Run VPC binding mode: ${CLOUD_RUN_VPC_MODE:-none}"
 
 if [ -z "${ODP_SCHEDULED_INGESTION_TENANT_ID:-}" ] && [ -z "${ODP_TENANT_ID:-}" ]; then
   echo "Error: ODP_SCHEDULED_INGESTION_TENANT_ID or ODP_TENANT_ID is required." >&2
@@ -60,6 +253,14 @@ case "${ODP_FORECAST_ENGINE}:${ODP_FORECAST_MODEL}" in
     ;;
 esac
 
+# Password-first is the default and OIDC is optional, so the preflight, the Web
+# secret bindings, and the Web runtime environment must all read one resolved
+# mode. Resolve it before the preflight so a split configuration is rejected
+# before anything is built or deployed.
+source product_ops/deployment/auth_mode.sh
+resolve_auth_mode
+echo "Authentication mode: ${ODP_AUTH_MODE} (ODP_AUTH_OIDC_ENABLED=${ODP_AUTH_OIDC_ENABLED})."
+
 PREFLIGHT_REPORT="${PREFLIGHT_REPORT:-.odp_data/deployment/cloud-run-preflight.json}"
 SMOKE_REPORT="${SMOKE_REPORT:-.odp_data/deployment/cloud-run-smoke.json}"
 MIGRATION_COMPAT_REPORT="${MIGRATION_COMPAT_REPORT:-.odp_data/deployment/cloud-run-migration-compatibility.json}"
@@ -72,6 +273,7 @@ MIGRATION_COMPAT_RETRY_BACKOFF="${MIGRATION_COMPAT_RETRY_BACKOFF:-2}"
 MIGRATION_COMPAT_RETRY_MAX_BACKOFF="${MIGRATION_COMPAT_RETRY_MAX_BACKOFF:-8}"
 MIGRATION_COMPAT_RETRY_DEADLINE="${MIGRATION_COMPAT_RETRY_DEADLINE:-120}"
 LIVE_E2E_REPORT="${LIVE_E2E_REPORT:-.odp_data/deployment/live-e2e-gate.json}"
+PUBLIC_EGRESS_PROBE_REPORT="${PUBLIC_EGRESS_PROBE_REPORT:-.odp_data/deployment/public-egress-probe.json}"
 JOB_REPORT_DIR="${JOB_REPORT_DIR:-.odp_data/deployment/cloud-run-jobs}"
 source product_ops/deployment/cloud_run_release_traffic.sh
 
@@ -94,6 +296,12 @@ release_job_name() {
 MIGRATION_CANDIDATE_JOB="$(release_job_name "${MIGRATION_JOB}")"
 WORKER_CANDIDATE_JOB="$(release_job_name "${WORKER_JOB}")"
 SCHEDULER_CANDIDATE_JOB="$(release_job_name "${SCHEDULER_JOB}")"
+# These values are forwarded to the probe container so the receipt observed in
+# Cloud Logging is bound to the exact admitted release and the job's resolved
+# network setting. The local evidence file is copied from that runtime receipt;
+# it is not a second, locally asserted probe result.
+export ODP_RELEASE_MANIFEST_DIGEST="${MANIFEST_DIGEST:-}"
+export ODP_CLOUD_RUN_JOB_NAME="${WORKER_CANDIDATE_JOB}"
 REGISTRY_HOST="${GCP_REGION}-docker.pkg.dev"
 REPO_PATH="${REGISTRY_HOST}/${GCP_PROJECT}/${GCP_AR_REPO}"
 if [ "${ODP_DEPLOY_BY_DIGEST:-false}" = "true" ]; then
@@ -107,7 +315,27 @@ if [ "${ODP_DEPLOY_BY_DIGEST:-false}" = "true" ]; then
       exit 1
     fi
   done
+  # ODP-PROD-IMAGE-PROMOTION-001: production runs only images in its own
+  # Artifact Registry. The workflow promotes the staging-built images there by
+  # digest before calling this script; a reference into any other project
+  # (the staging registry included) would make production depend on it.
+  case "${ODP_DEPLOY_ENV}" in
+    prod|production)
+      for image in "${API_IMAGE}" "${WEB_IMAGE}" "${WORKER_IMAGE}" "${SCHEDULER_IMAGE}"; do
+        if [[ "${image}" != "${REPO_PATH}/"* ]]; then
+          echo "Error: production deploys only images in its own registry ${REPO_PATH}; got '${image}'. Promote the image by digest first." >&2
+          exit 1
+        fi
+      done
+      ;;
+  esac
 else
+  case "${ODP_DEPLOY_ENV}" in
+    prod|production)
+      echo "Error: production deployment requires ODP_DEPLOY_BY_DIGEST=true and immutable image references." >&2
+      exit 1
+      ;;
+  esac
   IMAGE_TAG="${IMAGE_TAG:-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}}"
   API_IMAGE="${REPO_PATH}/${API_SERVICE}:${IMAGE_TAG}"
   WEB_IMAGE="${REPO_PATH}/${WEB_SERVICE}:${IMAGE_TAG}"
@@ -154,19 +382,40 @@ cleanup() {
 handle_deployment_exit() {
   local status=$?
   local rollback_status=0
+  local recovery_mode="unknown"
   trap - EXIT
   set +e
   if [ "${status}" -ne 0 ] \
     && [ "${ROLLBACK_ARMED}" = "true" ] \
     && [ "${DEPLOYMENT_COMMITTED}" != "true" ]; then
-    echo "Deployment failed; restoring the recorded API/Web traffic split." >&2
+    if recovery_mode="$(release_recovery_mode "${API_TRAFFIC_SNAPSHOT}" "${WEB_TRAFFIC_SNAPSHOT}")"; then
+      :
+    else
+      echo "Error: previous-release state could not be determined; no recovery mode is claimed." >&2
+    fi
+    if [ "${recovery_mode}" = "initial-release-cleanup" ]; then
+      echo "Deployment failed on the first release into this target." >&2
+      echo "There is no previous release to roll back to; recovery is deleting the candidate and holding zero traffic." >&2
+    elif [ "${recovery_mode}" = "rollback" ]; then
+      echo "Deployment failed; restoring the recorded API/Web traffic split." >&2
+    fi
     rollback_release_traffic \
       "${API_SERVICE}" \
       "${API_TRAFFIC_SNAPSHOT}" \
       "${WEB_SERVICE}" \
       "${WEB_TRAFFIC_SNAPSHOT}" || rollback_status=$?
+    if [ "${recovery_mode}" = "initial-release-cleanup" ]; then
+      cleanup_initial_release_candidates \
+        "${MIGRATION_CANDIDATE_JOB}" \
+        "${WORKER_CANDIDATE_JOB}" \
+        "${SCHEDULER_CANDIDATE_JOB}" || rollback_status=$?
+    fi
     if [ "${rollback_status}" -ne 0 ]; then
-      echo "Error: one or more Cloud Run traffic restores failed." >&2
+      if [ "${recovery_mode}" = "initial-release-cleanup" ]; then
+        echo "Error: one or more Cloud Run recovery actions failed." >&2
+      else
+        echo "Error: one or more Cloud Run traffic restores failed." >&2
+      fi
     fi
     if [ "${SCHEDULER_ROLLBACK_ARMED}" = "true" ]; then
       echo "Restoring the recorded Cloud Scheduler trigger targets." >&2
@@ -196,25 +445,61 @@ import sys
 keys = [
     "ODAY_RELEASE_SHA",
     "ODP_DEPLOY_ENV",
+    "ODP_RELEASE_PROFILE",
     "ODP_REQUIRE_LIVE_DATA",
     "ODP_DATA_BINDING_MODE",
     "ODP_PRODUCT_MODE",
     "ODP_FORECAST_ENGINE",
     "ODP_FORECAST_MODEL",
+    "ODP_EXTERNAL_PROVIDER_MODE",
+    "ODP_CLOUD_RUN_VPC_EGRESS",
+    "ODP_RELEASE_MANIFEST_DIGEST",
+    "ODP_CLOUD_RUN_JOB_NAME",
     "ODP_PERSISTENCE",
     "ODP_OBJECT_STORE",
     "ODP_SNAPSHOT_BUCKET",
+    "ODP_AUDIT_WORM_SINK_URI",
+    "ODP_AUDIT_WORM_WRITER_SERVICE_ACCOUNT",
+    "ODP_AUDIT_WORM_RECOVERY_SERVICE_ACCOUNT",
     "MLFLOW_TRACKING_URI",
     "ODP_MLFLOW_CLOUD_RUN_AUDIENCE",
     "ODP_COMPETITOR_MANUAL_SOURCE_STATUS",
     "ODP_AUTH_ISSUER",
     "ODP_AUTH_AUDIENCES",
     "ODP_AUTH_JWKS_URI",
+    "ODP_AUTH_LOCAL_ISSUER",
+    "ODP_AUTH_LOCAL_AUDIENCES",
+    # The resolved auth mode travels to the API too. The boundary reads it as
+    # the authoritative "is the OIDC provider on?" gate, so an API that never
+    # received it would keep trusting OIDC tokens for a password-first release
+    # (ODP-WEB-LOCAL-AUTH-API-TRUST-001). resolve_auth_mode has already run, so
+    # this is the resolved mode and not a raw operator input; the legacy
+    # ODP_AUTH_OIDC_ENABLED alias is deliberately not forwarded, because a pair
+    # that arrives split is a configuration the boundary would have to refuse.
+    "ODP_AUTH_MODE",
+    # True service/OIDC runtime env separation (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
+    # These separated variables let config_from_env route each issuer path
+    # deterministically. The legacy ODP_AUTH_ISSUER / _JWKS_URI / _AUDIENCES
+    # stay present as migration aliases.
+    "ODP_AUTH_SERVICE_ISSUER",
+    "ODP_AUTH_SERVICE_JWKS_URI",
+    "ODP_AUTH_SERVICE_AUDIENCES",
+    "ODP_AUTH_OIDC_ISSUER",
+    "ODP_AUTH_OIDC_JWKS_URI",
+    "ODP_AUTH_OIDC_AUDIENCES",
     "ODP_AUTH_SUBJECT_ROLE_BINDINGS",
     "ODP_SCHEDULED_INGESTION_TENANT_ID",
     "ODP_TENANT_ID",
 ]
 payload = {key: os.environ[key] for key in keys if key in os.environ}
+# Keep the local issuer contract explicit in the API manifest. The plain
+# signing-key binding is interpreted as kid=local-default by the API resolver.
+payload["ODP_AUTH_LOCAL_ISSUER"] = os.environ.get(
+    "ODP_AUTH_LOCAL_ISSUER", "urn:odp:identity:local"
+)
+payload["ODP_AUTH_LOCAL_AUDIENCES"] = os.environ.get(
+    "ODP_AUTH_LOCAL_AUDIENCES", os.environ.get("ODP_AUTH_AUDIENCES", "")
+)
 tenant_id = os.environ.get("ODP_SCHEDULED_INGESTION_TENANT_ID") or os.environ.get("ODP_TENANT_ID")
 if not tenant_id:
     raise ValueError("ODP_SCHEDULED_INGESTION_TENANT_ID or ODP_TENANT_ID is required for Cloud Run deployment")
@@ -260,8 +545,17 @@ build_publish_sign "scheduler" "${SCHEDULER_IMAGE}" "infra/docker/scheduler.Dock
 
 API_SECRET_BINDINGS="ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}"
 API_SECRET_BINDINGS+=",ODP_AUTH_PRINCIPAL_MAP=${ODP_AUTH_PRINCIPAL_MAP_SECRET}"
-WEB_SECRET_BINDINGS="ODP_WEB_OIDC_CLIENT_SECRET=${ODP_WEB_OIDC_CLIENT_SECRET_SECRET}"
+API_SECRET_BINDINGS+=",ODP_IDENTITY_TOKEN_SIGNING_KEY=${ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET}"
+WEB_SECRET_BINDINGS="ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}"
 WEB_SECRET_BINDINGS+=",ODP_WEB_SESSION_SECRET=${ODP_WEB_SESSION_SECRET_SECRET}"
+# The API and Web must consume the same Secret Manager version. The API
+# resolver assigns a plain key this task's canonical kid, local-default.
+WEB_SECRET_BINDINGS+=",ODP_IDENTITY_TOKEN_SIGNING_KEY=${ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET}"
+# Only the enabled provider's secrets reach Cloud Run. resolve_auth_mode has
+# already proven ODP_WEB_OIDC_CLIENT_SECRET_SECRET is set whenever OIDC is on.
+if [ "${ODP_AUTH_OIDC_ENABLED}" = "true" ]; then
+  WEB_SECRET_BINDINGS+=",ODP_WEB_OIDC_CLIENT_SECRET=${ODP_WEB_OIDC_CLIENT_SECRET_SECRET}"
+fi
 
 # gcloud's shortcut for describing a job's newest execution only exists on
 # recent releases, so job proof capture used to depend on the runner's CLI
@@ -337,6 +631,199 @@ execute_job() {
   capture_job_proof "${kind}" "${job}"
 }
 
+write_public_egress_probe_receipt() {
+  local result="$1"
+  local reason="$2"
+  local actual_egress="$3"
+  local execution="$4"
+  mkdir -p "$(dirname "${PUBLIC_EGRESS_PROBE_REPORT}")"
+  run_locked_python - "${PUBLIC_EGRESS_PROBE_REPORT}" "${result}" "${reason}" \
+    "${actual_egress}" "${execution}" <<'PY'
+import json
+import hashlib
+import os
+import sys
+from datetime import UTC, datetime
+
+core = {
+    "expected": "denied",
+    "reason": sys.argv[3],
+    "receipt_kind": "public_egress_probe",
+    "result": sys.argv[2],
+    "vpc_egress": sys.argv[4],
+}
+core_json = json.dumps(core, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+receipt_digest = "sha256:" + hashlib.sha256(core_json.encode("utf-8")).hexdigest()
+payload = {
+    "schema_version": 1,
+    "receipt_kind": "public_egress_probe",
+    "secret_values_redacted": True,
+    "candidate_sha": os.environ["ODAY_RELEASE_SHA"],
+    "manifest_digest": os.environ.get("ODP_RELEASE_MANIFEST_DIGEST", ""),
+    "job": os.environ["ODP_CLOUD_RUN_JOB_NAME"],
+    "probe_url": "https://example.com/",
+    "expected": "denied",
+    **core,
+    "receipt_content_digest": receipt_digest,
+    "execution": sys.argv[5],
+    "recorded_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+}
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, ensure_ascii=False, sort_keys=True)
+    handle.write("\n")
+PY
+}
+
+capture_public_egress_probe_receipt() {
+  local expected_egress="$1"
+  local execution_file="${PUBLIC_EGRESS_PROBE_REPORT%.json}-execution.json"
+  local logs_file="${PUBLIC_EGRESS_PROBE_REPORT%.json}-logs.json"
+  local execution_name attempt receipt_status
+  if ! capture_latest_execution "${WORKER_CANDIDATE_JOB}" "${execution_file}"; then
+    echo "Error: unable to read back the public egress probe execution." >&2
+    return 1
+  fi
+  if ! execution_name="$(run_locked_python - "${execution_file}" <<'PY'
+import json
+import sys
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+name = payload.get("metadata", {}).get("name") or payload.get("name")
+if not isinstance(name, str) or not name.strip():
+    raise SystemExit("execution readback has no name")
+print(name)
+PY
+)"; then
+    echo "Error: public egress probe execution readback has no name." >&2
+    return 1
+  fi
+  # Execution completion does not guarantee Cloud Logging ingestion is visible.
+  # Re-read only missing receipts for this exact execution, at most six times;
+  # invalid/duplicate receipts and read errors still fail immediately.
+  for attempt in 1 2 3 4 5 6; do
+  if ! gcloud logging read \
+    "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"${WORKER_CANDIDATE_JOB}\" AND labels.\"run.googleapis.com/execution_name\"=\"${execution_name##*/}\"" \
+    --project="${GCP_PROJECT}" \
+    --freshness=10m \
+    --limit=100 \
+    --format=json >"${logs_file}"; then
+    echo "Error: unable to read the public egress probe runtime receipt from Cloud Logging." >&2
+    return 1
+  fi
+  if run_locked_python - "${logs_file}" "${PUBLIC_EGRESS_PROBE_REPORT}" \
+    "${ODAY_RELEASE_SHA}" "${MANIFEST_DIGEST}" "${WORKER_CANDIDATE_JOB}" \
+    "${expected_egress}" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+from delivery_toolchain.release.release_manifest import validate_sources_off_probe_receipt
+
+
+def receipts(value):
+    if isinstance(value, dict):
+        if value.get("receipt_kind") == "public_egress_probe":
+            yield value
+        for child in value.values():
+            yield from receipts(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from receipts(child)
+    elif isinstance(value, str):
+        for line in value.splitlines():
+            try:
+                child = json.loads(line)
+            except json.JSONDecodeError:
+                # Ordinary job output is not a receipt. An identifiable probe
+                # receipt with broken JSON is evidence of corruption, not lag.
+                if re.search(r'"receipt_kind"\s*:\s*"public_egress_probe"', line):
+                    raise SystemExit("malformed public egress probe receipt JSON")
+                continue
+            yield from receipts(child)
+
+
+logs = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if not isinstance(logs, list):
+    raise SystemExit("Cloud Logging readback must be a JSON list")
+observed = list(receipts(logs))
+if not observed:
+    print("public egress probe receipt not yet visible for the exact execution", file=sys.stderr)
+    raise SystemExit(3)
+if len(observed) != 1:
+    raise SystemExit(
+        f"expected exactly one public egress probe receipt for the execution; found {len(observed)}"
+    )
+receipt = observed[0]
+errors = validate_sources_off_probe_receipt(
+    receipt,
+    expected_candidate_sha=sys.argv[3],
+    expected_manifest_digest=sys.argv[4],
+    expected_egress=sys.argv[6],
+)
+if receipt.get("job") != sys.argv[5]:
+    errors.append(
+        f"sources-off egress probe receipt.job must be {sys.argv[5]!r}; got {receipt.get('job')!r}"
+    )
+if errors:
+    raise SystemExit("invalid public egress probe receipt: " + "; ".join(errors))
+Path(sys.argv[2]).write_text(
+    json.dumps(receipt, ensure_ascii=False, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+  then
+    return 0
+  else
+    receipt_status=$?
+  fi
+  if [ "${receipt_status}" -ne 3 ]; then
+    echo "Error: public egress probe runtime receipt failed validation." >&2
+    return 1
+  fi
+  if [ "${attempt}" -lt 6 ]; then
+    echo "Waiting for the exact public egress probe receipt (attempt ${attempt}/6)..." >&2
+    sleep 10
+  fi
+  done
+  echo "Error: public egress probe receipt still absent after six reads; refusing deployment." >&2
+  return 1
+}
+
+run_public_egress_probe() {
+  local description actual_egress
+  echo "Proving sources-off public egress is denied from the candidate worker job..."
+  rm -f "${PUBLIC_EGRESS_PROBE_REPORT}"
+  if ! description="$(gcloud run jobs describe "${WORKER_CANDIDATE_JOB}" \
+    --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --format=json)"; then
+    write_public_egress_probe_receipt "failed" "job_readback_failed" "" "not_run"
+    return 1
+  fi
+  if ! actual_egress="$(printf '%s' "${description}" | cloud_run_job_vpc_egress)"; then
+    write_public_egress_probe_receipt "failed" "job_readback_invalid" "" "not_run"
+    return 1
+  fi
+  if [ "${actual_egress}" != "ALL_TRAFFIC" ]; then
+    write_public_egress_probe_receipt \
+      "failed" "vpc_egress_not_all_traffic" "${actual_egress}" "not_run"
+    return 1
+  fi
+  if ! gcloud run jobs execute "${WORKER_CANDIDATE_JOB}" \
+    --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --args="product_ops/deployment/cloud_run_job_entrypoint.py,public-egress-probe" \
+    --wait \
+    --quiet; then
+    write_public_egress_probe_receipt \
+      "failed" "public_canary_reachable_or_execution_failed" \
+      "${actual_egress}" "failed"
+    return 1
+  fi
+  capture_public_egress_probe_receipt "${actual_egress}"
+}
+
 echo "Recording the existing API/Web traffic before any runtime mutation..."
 capture_service_traffic "${API_SERVICE}" "${API_TRAFFIC_SNAPSHOT}"
 capture_service_traffic "${WEB_SERVICE}" "${WEB_TRAFFIC_SNAPSHOT}"
@@ -360,6 +847,7 @@ gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}" \
   --tasks=1 \
   --max-retries=0 \
   --task-timeout=1800s \
+  "${CLOUD_RUN_NETWORK_ARGS[@]}" \
   --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-runtime=migration,oday-data-binding=live" \
   --quiet
 
@@ -387,6 +875,8 @@ run_migration_compatibility_gate() {
     echo "Error: bootstrap state is inconsistent; API and Web must both exist or both be absent." >&2
     return 1
   fi
+  # The old API is private too; its stable URL is the transport token audience.
+  prepare_private_api_transport "${API_SERVICE}" "${OLD_API_URL}" || return 1
   run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py compatibility-smoke \
     --api-url "${OLD_API_URL}" \
     --web-url "${OLD_WEB_URL}" \
@@ -401,6 +891,16 @@ run_migration_compatibility_gate() {
 run_migration_compatibility_gate
 
 echo "Deploying immutable API candidate without production traffic..."
+# A first release creates the service, and Cloud Run rejects the no-traffic flag
+# on create: the first revision always takes 100% of a new service. Existing
+# services keep the no-traffic blue/green path unchanged.
+if ! API_SERVICE_PRESENCE="$(cloud_run_service_presence "${API_SERVICE}")"; then
+  exit 1
+fi
+API_TRAFFIC_ARGS=()
+if [ "${API_SERVICE_PRESENCE}" = "present" ]; then
+  API_TRAFFIC_ARGS=(--no-traffic)
+fi
 gcloud run deploy "${API_SERVICE}" \
   --image="${API_IMAGE}" \
   --region="${GCP_REGION}" \
@@ -413,9 +913,10 @@ gcloud run deploy "${API_SERVICE}" \
   --set-secrets="${API_SECRET_BINDINGS}" \
   --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-data-binding=live" \
   --revision-suffix="${REVISION_SUFFIX}" \
+  "${CLOUD_RUN_NETWORK_ARGS[@]}" \
   --tag="${API_REVISION_TAG}" \
-  --no-traffic \
-  --allow-unauthenticated \
+  "${API_TRAFFIC_ARGS[@]}" \
+  --no-allow-unauthenticated \
   --quiet
 
 gcloud run services describe "${API_SERVICE}" \
@@ -425,6 +926,11 @@ gcloud run services describe "${API_SERVICE}" \
 API_REVISION="$(tagged_revision "${API_CANDIDATE_DESCRIPTION}" "${API_REVISION_TAG}")"
 API_URL="$(tagged_revision_url "${API_CANDIDATE_DESCRIPTION}" "${API_REVISION_TAG}")"
 API_SERVICE_AUDIENCE="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"
+# A first release has just created the API service, so this is the first point
+# its service-scoped invokers can be bound; on an existing service the bindings
+# are already present and the grant is a no-op. The Web BFF runtime identity
+# needs it before the Web candidate serves.
+prepare_private_api_transport "${API_SERVICE}" "${API_SERVICE_AUDIENCE}"
 
 echo "Deploying immutable scheduler candidate Cloud Run Job..."
 gcloud run jobs deploy "${SCHEDULER_CANDIDATE_JOB}" \
@@ -440,6 +946,7 @@ gcloud run jobs deploy "${SCHEDULER_CANDIDATE_JOB}" \
   --tasks=1 \
   --max-retries=0 \
   --task-timeout=600s \
+  "${CLOUD_RUN_NETWORK_ARGS[@]}" \
   --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-runtime=scheduler,oday-data-binding=live" \
   --quiet
 
@@ -457,6 +964,7 @@ gcloud run jobs deploy "${WORKER_CANDIDATE_JOB}" \
   --tasks=1 \
   --max-retries=3 \
   --task-timeout=900s \
+  "${CLOUD_RUN_NETWORK_ARGS[@]}" \
   --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-runtime=worker,oday-data-binding=live" \
   --quiet
 
@@ -468,6 +976,10 @@ for job in "${SCHEDULER_CANDIDATE_JOB}" "${WORKER_CANDIDATE_JOB}"; do
     --role="roles/run.invoker" \
     --quiet
 done
+
+if [ "${ODP_EXTERNAL_PROVIDER_MODE:-}" = "disabled" ]; then
+  run_public_egress_probe
+fi
 
 upsert_scheduler_trigger() {
   local trigger_name="$1"
@@ -518,6 +1030,12 @@ payload = {
     "ODAY_ENV": os.environ["ODP_DEPLOY_ENV"],
     "ODP_DEPLOY_ENV": os.environ["ODP_DEPLOY_ENV"],
     "ODAY_RELEASE_SHA": os.environ["ODAY_RELEASE_SHA"],
+    # Normalised to full|dev-admin|core-ops at the top of this script; the default only
+    # matters when this serializer is exercised on its own.
+    "ODP_RELEASE_PROFILE": os.environ.get("ODP_RELEASE_PROFILE", "full"),
+    # Same admitted MANIFEST_DIGEST export as the API; never infer Web identity
+    # from an API response. Missing metadata stays empty and fails strict readback.
+    "ODP_RELEASE_MANIFEST_DIGEST": os.environ.get("ODP_RELEASE_MANIFEST_DIGEST", ""),
     "ODP_REQUIRE_LIVE_DATA": os.environ["ODP_REQUIRE_LIVE_DATA"],
     "ODP_DATA_BINDING_MODE": os.environ["ODP_DATA_BINDING_MODE"],
     "ODP_PRODUCT_MODE": os.environ["ODP_PRODUCT_MODE"],
@@ -527,10 +1045,33 @@ payload = {
     "ODP_API_BASE_URL": sys.argv[2],
     "ODP_API_SERVICE_AUDIENCE": sys.argv[3],
     "NEXT_PUBLIC_ODP_API_BASE_URL": sys.argv[2],
-    "ODP_WEB_OIDC_ISSUER": os.environ["ODP_WEB_OIDC_ISSUER"],
-    "ODP_WEB_OIDC_CLIENT_ID": os.environ["ODP_WEB_OIDC_CLIENT_ID"],
-    "ODP_WEB_OIDC_ALLOWED_ALGS": "RS256",
+    # The canonical web origin backs cookies, CSRF, and redirects in every auth
+    # mode; the Web runtime fails closed without it in production, so it is not
+    # part of the OIDC-only block below. The preflight has already proven it is
+    # set, which is why this is a direct lookup.
+    "ODP_WEB_BASE_URL": os.environ["ODP_WEB_BASE_URL"],
+    "ODP_AUTH_MODE": os.environ["ODP_AUTH_MODE"],
+    "ODP_AUTH_OIDC_ENABLED": os.environ["ODP_AUTH_OIDC_ENABLED"],
+    # These values are part of the Web-to-API local JWT contract. The API
+    # resolver uses the same defaults when the optional env vars are absent,
+    # but writing them explicitly keeps both runtime manifests auditable.
+    "ODP_AUTH_LOCAL_ISSUER": os.environ.get(
+        "ODP_AUTH_LOCAL_ISSUER", "urn:odp:identity:local"
+    ),
+    # Application JWT audiences must match the API manifest above, not the
+    # Cloud Run invoker audience. status.url can use a different hostname from
+    # the configured JWT audience even when both URLs address the same service.
+    "ODP_AUTH_LOCAL_AUDIENCES": os.environ.get(
+        "ODP_AUTH_LOCAL_AUDIENCES", os.environ.get("ODP_AUTH_AUDIENCES", "")
+    ),
+    "ODP_AUTH_AUDIENCES": os.environ.get("ODP_AUTH_AUDIENCES", ""),
 }
+# resolve_auth_mode owns the decision; this stage only follows it, so the Web
+# runtime can never disagree with the secrets bound to the same revision.
+if payload["ODP_AUTH_OIDC_ENABLED"] == "true":
+    payload["ODP_WEB_OIDC_ISSUER"] = os.environ["ODP_WEB_OIDC_ISSUER"]
+    payload["ODP_WEB_OIDC_CLIENT_ID"] = os.environ["ODP_WEB_OIDC_CLIENT_ID"]
+    payload["ODP_WEB_OIDC_ALLOWED_ALGS"] = "RS256"
 json.dump(payload, open(sys.argv[1], "w", encoding="utf-8"), sort_keys=True)
 PY
 
@@ -557,6 +1098,20 @@ else
 fi
 
 echo "Deploying immutable Web candidate without production traffic..."
+# A first release creates the service, and Cloud Run rejects the no-traffic flag
+# on create: the first revision always takes 100% of a new service. Existing
+# services keep the no-traffic blue/green path unchanged.
+if ! WEB_SERVICE_PRESENCE="$(cloud_run_service_presence "${WEB_SERVICE}")"; then
+  exit 1
+fi
+# Because a new Web service serves its first revision at once, it is created
+# private and only opened to allUsers at promotion (see grant_service_invoker).
+WEB_TRAFFIC_ARGS=()
+WEB_ACCESS_ARGS=(--no-allow-unauthenticated)
+if [ "${WEB_SERVICE_PRESENCE}" = "present" ]; then
+  WEB_TRAFFIC_ARGS=(--no-traffic)
+  WEB_ACCESS_ARGS=(--allow-unauthenticated)
+fi
 gcloud run deploy "${WEB_SERVICE}" \
   --image="${WEB_IMAGE}" \
   --region="${GCP_REGION}" \
@@ -564,13 +1119,15 @@ gcloud run deploy "${WEB_SERVICE}" \
   --platform=managed \
   --port=3000 \
   --service-account="${ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT}" \
+  --add-cloudsql-instances="${GCP_CLOUD_SQL_INSTANCE}" \
   --env-vars-file="${WEB_ENV_FILE}" \
   --set-secrets="${WEB_SECRET_BINDINGS}" \
   --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-data-binding=live" \
   --revision-suffix="${REVISION_SUFFIX}" \
+  "${CLOUD_RUN_NETWORK_ARGS[@]}" \
   --tag="${WEB_REVISION_TAG}" \
-  --no-traffic \
-  --allow-unauthenticated \
+  "${WEB_TRAFFIC_ARGS[@]}" \
+  "${WEB_ACCESS_ARGS[@]}" \
   --quiet
 
 gcloud run services describe "${WEB_SERVICE}" \
@@ -579,6 +1136,28 @@ gcloud run services describe "${WEB_SERVICE}" \
   --format=json >"${WEB_CANDIDATE_DESCRIPTION}"
 WEB_REVISION="$(tagged_revision "${WEB_CANDIDATE_DESCRIPTION}" "${WEB_REVISION_TAG}")"
 WEB_URL="$(tagged_revision_url "${WEB_CANDIDATE_DESCRIPTION}" "${WEB_REVISION_TAG}")"
+
+if [ "${WEB_SERVICE_PRESENCE}" = "absent" ]; then
+  echo "First-release Web candidate is private; granting the smoke identity invoker access..."
+  WEB_CANDIDATE_AUDIENCE="$(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")"
+  if [[ -z "${WEB_CANDIDATE_AUDIENCE}" ]]; then
+    echo "Error: first-release Web candidate has no service URL to use as token audience." >&2
+    exit 1
+  fi
+  grant_service_invoker "${WEB_SERVICE}" "serviceAccount:${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT}"
+  ODP_WEB_CANDIDATE_INVOKER_TOKEN="$(gcloud auth print-identity-token \
+    --impersonate-service-account="${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT}" \
+    --audiences="${WEB_CANDIDATE_AUDIENCE}")"
+  if [[ -z "${ODP_WEB_CANDIDATE_INVOKER_TOKEN}" ]]; then
+    echo "Error: failed to mint the first-release Web candidate invoker token." >&2
+    exit 1
+  fi
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    echo "::add-mask::${ODP_WEB_CANDIDATE_INVOKER_TOKEN}"
+  fi
+  export ODP_WEB_CANDIDATE_INVOKER_TOKEN
+  wait_for_private_candidate_invoker "${WEB_URL}" "${ODP_WEB_CANDIDATE_INVOKER_TOKEN}"
+fi
 
 if [[ -z "${ODP_OPERATOR_SMOKE_BEARER_TOKEN:-}" ]]; then
   smoke_audience="${ODP_AUTH_AUDIENCES%%,*}"
@@ -600,12 +1179,20 @@ if [[ -z "${ODP_OPERATOR_SMOKE_BEARER_TOKEN:-}" ]]; then
   fi
 fi
 
+# ID tokens are short-lived and the jobs and Web build above can take a while,
+# so the transport token is refreshed right before each probe stage.
+mint_api_invoker_token "${API_SERVICE_AUDIENCE}"
 echo "Running release-aware smoke checks against tagged candidate revisions..."
+# A tagged candidate revision gets no warm instance (the service-level minimum
+# only serves traffic-bearing revisions), so its first probe pays the API cold
+# start, measured at ~24-29s on dev. Cloud Run queues the request until the
+# instance serves; the per-probe timeout must outlast that, not the 15s default.
 run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py smoke \
   --api-url "${API_URL}" \
   --web-url "${WEB_URL}" \
   --expected-sha "${ODAY_RELEASE_SHA}" \
   --correlation-id "corr-cloud-run-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}" \
+  --timeout "${CANDIDATE_SMOKE_TIMEOUT_SECONDS:-60}" \
   --output "${SMOKE_REPORT}"
 
 SCHEDULER_ROLLBACK_ARMED=true
@@ -618,7 +1205,22 @@ upsert_scheduler_trigger \
   "${WORKER_CANDIDATE_JOB}" \
   "${ODP_WORKER_CRON}"
 promote_service_traffic "${API_SERVICE}" "${API_REVISION}"
+if [ "${WEB_SERVICE_PRESENCE}" = "absent" ]; then
+  echo "Promotion: opening the first-release Web service to public invocation..."
+  grant_service_invoker "${WEB_SERVICE}" "allUsers"
+fi
 promote_service_traffic "${WEB_SERVICE}" "${WEB_REVISION}"
+
+if [ -n "${CLOUD_RUN_MIN_INSTANCES:-}" ]; then
+  for min_service in "${API_SERVICE}" "${WEB_SERVICE}"; do
+    echo "Keeping ${CLOUD_RUN_MIN_INSTANCES} warm instance(s) for ${min_service} (service-level minimum)..."
+    gcloud run services update "${min_service}" \
+      --min="${CLOUD_RUN_MIN_INSTANCES}" \
+      --region="${GCP_REGION}" \
+      --project="${GCP_PROJECT}" \
+      --quiet
+  done
+fi
 
 # ODP-LIVE-E2E-001: the release is serving but is not committed yet. The live
 # E2E gate drives the promoted release the way an operator would -- authenticate,
@@ -630,13 +1232,27 @@ promote_service_traffic "${WEB_SERVICE}" "${WEB_REVISION}"
 echo "Running fail-closed live E2E acceptance gate against the promoted release..."
 # Resolve the served origins into variables first. Inside the argv of the gate
 # invocation a failing command substitution would expand to an empty string
-# without tripping `set -e`, handing the gate a blank URL.
-LIVE_E2E_API_URL="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"
-LIVE_E2E_WEB_URL="$(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")"
+# without tripping `set -e`, handing the gate a blank URL. Dev deliberately
+# uses the Cloud Run default service URL; production uses the configured HTTPS
+# custom domains so the final gate exercises the public production contract.
+if [ "${ODP_DEPLOY_ENV}" = "production" ]; then
+  LIVE_E2E_API_URL="${ODP_PROD_API_URL}"
+  LIVE_E2E_WEB_URL="${ODP_PROD_DEPLOY_URL}"
+else
+  LIVE_E2E_API_URL="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"
+  # The Web CSRF boundary trusts ODP_WEB_BASE_URL (and the container's own
+  # origin), not every alias Cloud Run serves the same service under, so the
+  # password journey must run against the canonical origin users sign in at.
+  LIVE_E2E_WEB_URL="${ODP_WEB_BASE_URL:-$(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")}"
+fi
 if [[ -z "${LIVE_E2E_API_URL}" || -z "${LIVE_E2E_WEB_URL}" ]]; then
   echo "Live E2E gate cannot run: served origin lookup returned empty" \
     "(api='${LIVE_E2E_API_URL}' web='${LIVE_E2E_WEB_URL}')." >&2
   exit 1
+fi
+if [ "${WEB_SERVICE_PRESENCE}" = "absent" ]; then
+  echo "Waiting for public invocation to become effective on ${LIVE_E2E_WEB_URL}..."
+  wait_for_public_service_invoker "${LIVE_E2E_WEB_URL}"
 fi
 # `deploymentMode` is what the *runtime* reports back from
 # `apps/api/oday_api/runtime_mode.deployment_mode()`, which reads the
@@ -654,6 +1270,38 @@ if [[ -z "${LIVE_E2E_DEPLOYMENT_MODE}" ]]; then
     "ODP_DEPLOY_ENV is set, so the expected deploymentMode is unknown." >&2
   exit 1
 fi
+# Production reaches the API through its custom domain, but the transport
+# audience stays the API's stable Cloud Run service URL.
+mint_api_invoker_token "${API_SERVICE_AUDIENCE}"
+if [ -n "${ODP_DEV_SMOKE_FOREGROUND_FD:-}" ]; then
+  # No command/plugin/receipt path: the parent owns the actual lifecycle and
+  # canonical same-process gate. Only minted service tokens cross this socket;
+  # admin/new-account/GitHub credentials never enter this shell or a file.
+  export LIVE_E2E_API_URL LIVE_E2E_WEB_URL LIVE_E2E_DEPLOYMENT_MODE WORKER_CANDIDATE_JOB
+  # This socket acknowledgement imports only Python's standard library.
+  python3 - <<'PY'
+import json, os, socket, sys
+try:
+    channel = socket.socket(fileno=int(os.environ["ODP_DEV_SMOKE_FOREGROUND_FD"]))
+    channel.settimeout(1800)
+    names = ("ODAY_RELEASE_SHA", "MANIFEST_DIGEST", "ODP_DEPLOY_ENV", "ODP_RELEASE_PROFILE",
+             "ODP_EXTERNAL_PROVIDER_MODE", "LIVE_E2E_API_URL", "LIVE_E2E_WEB_URL",
+             "LIVE_E2E_DEPLOYMENT_MODE", "WORKER_CANDIDATE_JOB", "GCP_REGION", "GCP_PROJECT",
+             "ODP_OPERATOR_SMOKE_BEARER_TOKEN", "ODP_API_INVOKER_TOKEN")
+    payload = {name: os.environ.get(name, "") for name in names}
+    channel.sendall(json.dumps(payload).encode() + b"\n")
+    # Fixed acknowledgement, not an uploaded passing receipt or a gate override.
+    reply = channel.recv(16)
+    if reply != b"PASS\n":
+        raise ValueError
+except Exception:
+    sys.exit("Error: PROVISIONING_FOREGROUND_GATE_REFUSED")
+PY
+else
+FULL_ACCEPTANCE_ARGS=()
+if [ "${ODP_RELEASE_PROFILE:-full}" = "full" ]; then
+  FULL_ACCEPTANCE_ARGS=(--require-full-acceptance)
+fi
 run_locked_python delivery_toolchain/e2e/check_live_e2e_gate.py \
   --api-url "${LIVE_E2E_API_URL}" \
   --web-url "${LIVE_E2E_WEB_URL}" \
@@ -663,7 +1311,10 @@ run_locked_python delivery_toolchain/e2e/check_live_e2e_gate.py \
   --gcp-region "${GCP_REGION}" \
   --gcp-project "${GCP_PROJECT}" \
   --worker-deadline-seconds "${ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS:-600}" \
+  --release-profile "${ODP_RELEASE_PROFILE:-full}" \
+  "${FULL_ACCEPTANCE_ARGS[@]}" \
   --output "${LIVE_E2E_REPORT}"
+fi
 
 DEPLOYMENT_COMMITTED=true
 

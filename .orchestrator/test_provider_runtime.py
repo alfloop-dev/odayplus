@@ -34,6 +34,28 @@ class ProviderRuntimeTests(unittest.TestCase):
             "codex1-1",
         )
 
+    def test_explicit_request_provider_wins_over_shared_slot_provider(self) -> None:
+        config = {
+            "agents": {
+                "antigravity2": {"provider": "antigravity2"},
+                "antigravity_slot_1": {"provider": "antigravity"},
+            },
+            "providers": {
+                "antigravity": {"delivery_mode": "antigravity"},
+                "antigravity2": {"delivery_mode": "antigravity"},
+            },
+        }
+
+        self.assertEqual(
+            provider_runtime.provider_key(
+                config,
+                default="antigravity",
+                agent_id="antigravity_slot_1",
+                provider_id="antigravity2",
+            ),
+            "antigravity2",
+        )
+
     def test_claude_probe_and_worker_environment_share_one_builder(self) -> None:
         config = {"providers": {"claude-alt": {"runtime": {
             "home": "~/claude-alt", "env": {"CLAUDE_PROFILE": "alternate"}

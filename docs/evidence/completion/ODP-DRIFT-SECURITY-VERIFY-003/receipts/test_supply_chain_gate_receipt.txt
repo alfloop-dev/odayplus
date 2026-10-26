@@ -1,0 +1,19 @@
+============================= test session starts ==============================
+collected 37 items
+
+tests/security/test_supply_chain_security_gate.py ......F............... [ 59%]
+...............                                                          [100%]
+
+=================================== FAILURES ===================================
+__________________ test_sbom_and_provenance_present_and_valid __________________
+tests/security/test_supply_chain_security_gate.py:98: in test_sbom_and_provenance_present_and_valid
+    assert current_sbom.get("components") == data.get("components"), (
+E   AssertionError: Committed sbom.json is stale and does not match the active package-lock.json or uv.lock. Run delivery_toolchain/security/generate_sbom.py to regenerate it.
+E   assert [{'name': '@a...7', ...}, ...] == [{'name': '@a...7', ...}, ...]
+E     
+E     At index 0 diff: {'name': '@adobe/css-tools', 'version': '4.5.0', 'type': 'library', 'purl': 'pkg:npm/@adobe/css-tools@4.5.0', 'bom-ref': 'pkg:npm/@adobe/css-tools@4.5.0', 'scope': 'optional', 'licenses': [{'license': {'id': 'MIT'}}], 'hashes': [{'alg': 'SHA-512', 'content': '6OzddxPio9UiWTCemp4N8cYLV2ZN1ncRnV1cVGtve7dhPOtRkleRyx32GQCYSwDYgaHU3USMm84tNsvKzRCa1Q=='}]} != {'name': '@adobe/css-tools', 'version': '4.5.0', 'type': 'library', 'purl': 'pkg:npm/@adobe/css-tools@4.5.0', 'bom-ref': 'pkg:npm/@adobe/css-tools@4.5.0', 'scope': 'optional', 'licenses': [{'license': {'...
+E     
+E     ...Full output truncated (2 lines hidden), use '-vv' to show
+=========================== short test summary info ============================
+FAILED tests/security/test_supply_chain_security_gate.py::test_sbom_and_provenance_present_and_valid
+=================== 1 failed, 36 passed in 64.01s (0:01:04) ====================

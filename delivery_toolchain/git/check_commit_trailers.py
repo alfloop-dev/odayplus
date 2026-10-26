@@ -106,6 +106,7 @@ def validate_message(
     task_id: str | None = None,
     files: list[str] | None = None,
     allow_maintenance_skip: bool = True,
+    require_subject_length_limit: bool = True,
 ) -> list[str]:
     """Return a list of rule violations; empty means the message is valid."""
     errors: list[str] = []
@@ -117,7 +118,7 @@ def validate_message(
     if allow_maintenance_skip and subject.startswith(SKIP_SUBJECT_PREFIXES):
         return []
 
-    if len(subject) > SUBJECT_MAX:
+    if require_subject_length_limit and len(subject) > SUBJECT_MAX:
         errors.append(f"subject is {len(subject)} chars, limit is {SUBJECT_MAX}: {subject!r}")
     if ":" not in subject:
         errors.append(f"subject must be '<TASK-ID>: <summary>', got {subject!r}")

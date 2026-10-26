@@ -1,0 +1,20 @@
+{
+  "command": "gcloud --quiet secrets describe oday-plus-dev-identity-token-signing-key --project=odayplus-runtime-20260825 --format=json",
+  "argv": [
+    "gcloud",
+    "--quiet",
+    "secrets",
+    "describe",
+    "oday-plus-dev-identity-token-signing-key",
+    "--project=odayplus-runtime-20260825",
+    "--format=json"
+  ],
+  "exit_code": 1,
+  "timestamp_utc": "2026-09-08T11:46:37Z",
+  "executor_account": "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com",
+  "target": "secret-identity-key",
+  "readback_masked": false,
+  "stdout": "",
+  "stderr": "ERROR: (gcloud.secrets.describe) PERMISSION_DENIED: Permission 'secretmanager.secrets.get' denied on resource (or it may not exist). Remediate access with this Troubleshooter URL or share it with your administrator - https://console.cloud.google.com/iam-admin/troubleshooter/summary;errorId=CiQwMWEwODBkNy03M2E2LTdjNmQtOTEyMC0wMzFkNTVmMzllZjYSAA%3D%3D . This command is authenticated as oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com which is the active account specified by the [core/account] property.\n- '@type': type.googleapis.com/google.rpc.ErrorInfo\n  domain: iam.googleapis.com\n  metadata:\n    error_info_id: CiQwMWEwODBkNy03M2E2LTdjNmQtOTEyMC0wMzFkNTVmMzllZjYSAA==\n    permission: secretmanager.secrets.get\n    troubleshooter_url: https://console.cloud.google.com/iam-admin/troubleshooter/summary;errorId=CiQwMWEwODBkNy03M2E2LTdjNmQtOTEyMC0wMzFkNTVmMzllZjYSAA%3D%3D\n  reason: IAM_PERMISSION_DENIED",
+  "finding": "PERMISSION_DENIED (exit 1). Active caller lacks IAM permissions on target secret-identity-key."
+}

@@ -223,6 +223,8 @@ def _forecast_training_records() -> list[dict[str, object]]:
             "feature_snapshot_time": row["feature_snapshot_time"].isoformat(),
             "prediction_origin_time": row["prediction_origin_time"].isoformat(),
             "source_snapshot_ids": row["source_snapshot_ids"],
+            "data_quality_score": 0.98,
+            "confidence": 0.95,
             "is_training_eligible": True,
             "labels": {
                 FORECASTOPS_LABEL_NAME: row["daily_net_revenue"],

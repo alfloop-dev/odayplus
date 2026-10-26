@@ -3,6 +3,10 @@ from __future__ import annotations
 import pytest
 
 from apps.api.oday_api.main import create_app
+from modules.external_data.application.external_contracts import (
+    external_contract,
+    external_contract_ids,
+)
 from modules.external_data.connectors import (
     ExternalProviderConfigError,
     ExternalProviderMode,
@@ -16,6 +20,7 @@ from modules.external_data.connectors import (
 from modules.external_data.connectors.provider_registry import (
     LIVE_MODE_ENV_VAR,
     PRODUCTION_PROVIDER_IDS_ENV_VAR,
+    external_provider_mode,
 )
 
 REQUIRED_ENV_VARS = {
@@ -70,6 +75,46 @@ def test_provider_registry_covers_live_external_source_classes() -> None:
     assert all(provider.license.downstream_use_flags for provider in providers)
 
 
+def test_every_provider_references_a_published_source_contract() -> None:
+    """A provider may not name a contract id the source-contract registry lacks.
+
+    ``store_opening_authority`` referenced ``store_opening_authority_snapshot``
+    for several releases while that contract existed nowhere under
+    ``packages/schemas/source_contracts`` — the reference resolved to nothing and
+    no test noticed. This is the regression guard for that shape of gap.
+    """
+    published = set(external_contract_ids())
+    referenced = {provider.source_contract_id for provider in provider_registry()}
+
+    unpublished = sorted(referenced - published)
+    assert not unpublished, (
+        f"provider(s) reference source contracts missing from the registry index: {unpublished}"
+    )
+    for contract_id in sorted(referenced):
+        # Loadable, not merely listed: a stale index entry must fail here too.
+        assert external_contract(contract_id).contract_id == contract_id
+
+
+def test_store_opening_authority_provider_binds_to_its_published_contract() -> None:
+    provider = next(
+        candidate
+        for candidate in provider_registry()
+        if candidate.category is ProviderCategory.STORE_OPENING_AUTHORITY
+    )
+    contract = external_contract(provider.source_contract_id)
+
+    assert contract.contract_id == "store_opening_authority_snapshot"
+    assert contract.acquisition_method == "manual"
+    assert contract.canonical_target == "store"
+    assert set(contract.required_fields()) == {
+        "source_id",
+        "snapshot_id",
+        "tenant_id",
+        "store_id",
+        "opened_on",
+    }
+
+
 def test_secret_inventory_contains_names_and_auth_modes_without_values() -> None:
     inventory = provider_secret_inventory()
     rendered = repr(inventory)
@@ -97,6 +142,21 @@ def test_fixture_mode_validates_without_provider_secrets(monkeypatch: pytest.Mon
     assert result.ok
     assert result.mode is ExternalProviderMode.FIXTURE
     assert app.state.external_provider_validation.mode is ExternalProviderMode.FIXTURE
+
+
+def test_disabled_mode_is_valid_without_allowlist_or_provider_secrets() -> None:
+    result = validate_external_providers(
+        env={
+            LIVE_MODE_ENV_VAR: "disabled",
+            "ODP_DEPLOY_ENV": "production",
+        },
+        correlation_id="corr-disabled-1",
+    )
+
+    assert result.ok
+    assert result.mode is ExternalProviderMode.DISABLED
+    assert result.providers == ()
+    assert result.errors == ()
 
 
 def test_live_mode_fails_closed_when_required_credentials_are_missing() -> None:
@@ -260,3 +320,40 @@ def test_downstream_export_flags_are_enforced_by_provider_license_metadata() -> 
     assert provider_export_allowed("listing.partner_feed") is False
     assert "audit_evidence" in provider_downstream_use_flags("admin_boundary.official_dataset")
     assert "manual_review" in provider_downstream_use_flags("competitor.manual_source")
+
+
+@pytest.mark.parametrize(
+    "garbage_mode",
+    ["garbage", "GARBAGE", "  unknown  ", "livee", "disabledd", "0", "true", "yes"],
+)
+def test_external_provider_mode_fails_closed_for_unknown_values(garbage_mode: str) -> None:
+    """Regression: unknown ODP_EXTERNAL_PROVIDER_MODE must return DISABLED, not ValueError.
+
+    A ValueError from external_provider_mode escapes _configuration_refusal's
+    try/except and crashes the worker with no FAILED/BLOCKED run or audit
+    receipt.  Fail-closed means unknown → disabled.
+    """
+    result = external_provider_mode({LIVE_MODE_ENV_VAR: garbage_mode})
+    assert result is ExternalProviderMode.DISABLED
+
+
+@pytest.mark.parametrize(
+    ("mode_value", "expected"),
+    [
+        ("fixture", ExternalProviderMode.FIXTURE),
+        ("fixtures", ExternalProviderMode.FIXTURE),
+        ("stub", ExternalProviderMode.FIXTURE),
+        ("live", ExternalProviderMode.LIVE),
+        ("disabled", ExternalProviderMode.DISABLED),
+        ("off", ExternalProviderMode.DISABLED),
+        ("none", ExternalProviderMode.DISABLED),
+        ("", ExternalProviderMode.FIXTURE),
+    ],
+)
+def test_external_provider_mode_known_values(
+    mode_value: str, expected: ExternalProviderMode
+) -> None:
+    """Known mode values still resolve correctly after the fail-closed change."""
+    result = external_provider_mode({LIVE_MODE_ENV_VAR: mode_value})
+    assert result is expected
+

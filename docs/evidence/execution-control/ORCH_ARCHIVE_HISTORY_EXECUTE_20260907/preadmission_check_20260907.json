@@ -1,0 +1,214 @@
+{
+  "measured_at": "2026-09-07T15:56:36Z",
+  "note": "離線預檢：呼叫 planner 自身的 validate_recovery_batch(for_apply=True)（與 live writer 在 apply 期重跑的是同一份 byte-identical 模組），以及對 pinned ref 重驗 23 筆 merge。不需要 hold，也未取得 canonical lock、未寫入任何檔案。",
+  "batches": {
+    "scenarioA_as_documented": {
+      "path": "docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_batch_20260907_scenarioA_as_documented.json",
+      "sha256": "3c7f5928db956bb6fd49840a09ab9e27de85fa5f550b15773327ec1988ab71c5",
+      "counts": {
+        "inventory_entries": 38,
+        "planned": 38,
+        "archive_reconstructed_done": 0,
+        "active_blocked_placeholder": 38,
+        "refused": 0
+      },
+      "validate_recovery_batch_for_apply_problems": [],
+      "admission_clean": true,
+      "pinned_ref_merge_recheck": {
+        "checked": 0,
+        "all_contained": true,
+        "all_subjects_match": true,
+        "entries": []
+      },
+      "live_id_conflicts": {
+        "on_active_board": [],
+        "already_archived": []
+      }
+    },
+    "scenarioB": {
+      "path": "docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_batch_20260907_scenarioB.json",
+      "sha256": "639059236692d8b0fc32d9b6cb1f0210f84068c023c0fdcf90c7760875f674a6",
+      "counts": {
+        "inventory_entries": 38,
+        "planned": 38,
+        "archive_reconstructed_done": 23,
+        "active_blocked_placeholder": 15,
+        "refused": 0
+      },
+      "validate_recovery_batch_for_apply_problems": [],
+      "admission_clean": true,
+      "pinned_ref_merge_recheck": {
+        "checked": 23,
+        "all_contained": true,
+        "all_subjects_match": true,
+        "entries": [
+          {
+            "task_id": "ODP-AVM-DEPRECIATION-CONTRACT-001",
+            "merge_commit": "739cbab19a171ef8d40e0f68f2b428f6b726bac0",
+            "contained_in_pinned_ref": true,
+            "subject_matches_record": true,
+            "subject": "Merge pull request #1148 from alfloop-dev/task/ODP-AVM-DEPRECIATION-CONTRACT-001"
+          },
+          {
+            "task_id": "ODP-CANONICAL-LEGACY-LINEAGE-001",
+            "merge_commit": "865ff82e817cc56ffff0187f33cd6d3e8718958b",
+            "contained_in_pinned_ref": true,
+            "subject_matches_record": true,
+            "subject": "Merge pull request #1150 from alfloop-dev/task/ODP-CANONICAL-LEGACY-LINEAGE-001"
+          },
+          {
+            "task_id": "ODP-DRIFT-DEP-REMOVE-002",
+            "merge_commit": "66244b30c2615dcad8373e03fff096e298d21e98",
+            "contained_in_pinned_ref": true,
+            "subject_matches_record": true,
+            "subject": "Merge pull request #1222 from alfloop-dev/task/ODP-DRIFT-DEP-REMOVE-002"
+          },
+          {
+            "task_id": "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+            "merge_commit": "dd7013df830cdabe33d1b09e093dd728318d50f5",
+            "contained_in_pinned_ref": true,
+            "subject_matches_record": true,
+            "subject": "Merge pull request #1135 from alfloop-dev/task/ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001"
+          },
+          {
+            "task_id": "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+            "merge_commit": "eed8d51bb8a18c677baa25ab30a536cc576ae5fe",
+            "contained_in_pinned_ref": true,
+            "subject_matches_record": true,
+            "subject": "Merge pull request #1170 from alfloop-dev/task/ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001"
+          },
+          {
+            "task_id": "ODP-INT-MANUAL-CORRECTION-AUDIT-001",
+            "merge_commit": "f02960fa81c2beeef88dd213e86ec96c8380b2d8",
+            "contained_in_pinned_ref": true,
+            "subject_matches_record": true,
+            "subject": "Merge pull request #1175 from alfloop-dev/task/ODP-INT-MANUAL-CORRECTION-AUDIT-001"
+          },
+          {
+            "task_id": "ODP-LH-PREDICTION-DRIFT-001",
+            "merge_commit": "0cbc5330f6a076344d2dff32370dedae5b82da4a",
+            "contained_in_pinned_ref": true,
+            "subject_matches_record": true,
+            "subject": "Merge pull request #1154 from alfloop-dev/task/ODP-LH-PREDICTION-DRIFT-001"
+          },
+          {
+            "task_id": "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+            "merge_commit": "d3e344353ad4280962ce25078c067f14c9a6df10",
+            "contained_in_pinned_ref": true,
+            "subject_matches_record": true,
+            "subject": "Merge pull request #1165 from alfloop-dev/task/ODP-LH003-BACKTEST-RELEASE-GATE-001"
+          },
+          {
+            "task_id": "ODP-MEASUREMENT-CROSSLAYER-GATE-001",
+            "merge_commit": "8479567d66d9d08d0aa4a27d9f0a901ab092f2ae",
+            "contained_in_pinned_ref": true,
+            "subject_matches_record": true,
+            "subject": "Merge pull request #1153 from alfloop-dev/task/ODP-MEASUREMENT-CROSSLAYER-GATE-001"
+          },
+          {
+            "task_id": "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+            "merge_commit": "830a8ebf919cd3f9dc3d53fc13c4f76e65eeff6e",
+            "contained_in_pinned_ref": true,
+            "subject_matches_record": true,
+            "subject": "Merge pull request #1169 from alfloop-dev/task/ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001"
+          },
+          {
+            "task_id": "ODP-MODELREADY-QUALITY-NULLABLE-001",
+            "merge_commit": "10d47d17a7b3ca8d3c655afaaf02b931c3fb7e0f",
+            "contained_in_pinned_ref": true,
+            "subject_matches_record": true,
+            "subject": "Merge pull request #1168 from alfloop-dev/task/ODP-MODELREADY-QUALITY-NULLABLE-001"
+          },
+          {
+            "task_id": "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+            "merge_commit": "1edb2f834cbf38ccd489cd999802098076e891b7",
+            "contained_in_pinned_ref": true,
+            "subject_matches_record": true,
+            "subject": "Merge pull request #1174 from alfloop-dev/task/ODP-NETPLAN-DISCLOSURE-UI-E2E-001"
+          },
+          {
+            "task_id": "ODP-OPS002-DECISION-COMMENTS-001",
+            "merge_commit": "c1371572af637ab1598370a495a126a4cddfba65",
+            "contained_in_pinned_ref": true,
+            "subject_matches_record": true,
+            "subject": "Merge pull request #1158 from alfloop-dev/task/ODP-OPS002-DECISION-COMMENTS-001"
+          },
+          {
+            "task_id": "ODP-PRICE006-BANDIT-GATED-001",
+            "merge_commit": "470f495d957edc38d330a624cf4d56618cbfb4e2",
+            "contained_in_pinned_ref": true,
+            "subject_matches_record": true,
+            "subject": "Merge pull request #1179 from alfloop-dev/task/ODP-PRICE006-BANDIT-GATED-001"
+          },
+          {
+            "task_id": "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+            "merge_commit": "640e35415aa33d5d53af21a8a527431b8f751cea",
+            "contained_in_pinned_ref": true,
+            "subject_matches_record": true,
+            "subject": "Merge pull request #1109 from alfloop-dev/task/ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001"
+          },
+          {
+            "task_id": "ODP-RELEASE-GATE-FIXTURE-STAGING-002",
+            "merge_commit": "17393dd447e9b25978a83641cabf7cd77951f24a",
+            "contained_in_pinned_ref": true,
+            "subject_matches_record": true,
+            "subject": "Merge pull request #1212 from alfloop-dev/task/ODP-RELEASE-GATE-FIXTURE-STAGING-002"
+          },
+          {
+            "task_id": "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+            "merge_commit": "fe698e88d91678b18cfd5356a9c10be08dfa5186",
+            "contained_in_pinned_ref": true,
+            "subject_matches_record": true,
+            "subject": "Merge pull request #1030 from alfloop-dev/task/ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001"
+          },
+          {
+            "task_id": "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+            "merge_commit": "d41b9328137cef1eceeb5990e8e0bb5963414682",
+            "contained_in_pinned_ref": true,
+            "subject_matches_record": true,
+            "subject": "Merge pull request #1050 from alfloop-dev/task/ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001"
+          },
+          {
+            "task_id": "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+            "merge_commit": "61ef9183d7c8ea2af4b5d7d625b1513dc683212f",
+            "contained_in_pinned_ref": true,
+            "subject_matches_record": true,
+            "subject": "Merge pull request #1146 from alfloop-dev/task/ODP-REQ-DISPOSITION-GOVERNANCE-001"
+          },
+          {
+            "task_id": "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+            "merge_commit": "74530caf5bbf8ee3802df658e21a3ffdfca56f25",
+            "contained_in_pinned_ref": true,
+            "subject_matches_record": true,
+            "subject": "Merge pull request #1206 from alfloop-dev/task/ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
+          },
+          {
+            "task_id": "ODP-SITESCORE-QUALITY-NULLABLE-001",
+            "merge_commit": "901b4348ade4fb8cbf5c40ef429c7b49980257cc",
+            "contained_in_pinned_ref": true,
+            "subject_matches_record": true,
+            "subject": "Merge pull request #1171 from alfloop-dev/task/ODP-SITESCORE-QUALITY-NULLABLE-001"
+          },
+          {
+            "task_id": "ODP-SPEC-SOURCE-PROVENANCE-001",
+            "merge_commit": "b7f9d465ddd71ecdd3dc01a8869e6e6cb485b54d",
+            "contained_in_pinned_ref": true,
+            "subject_matches_record": true,
+            "subject": "Merge pull request #1147 from alfloop-dev/task/ODP-SPEC-SOURCE-PROVENANCE-001"
+          },
+          {
+            "task_id": "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
+            "merge_commit": "541eb1fe2d6b426155dc401089bf0588ef82b345",
+            "contained_in_pinned_ref": true,
+            "subject_matches_record": true,
+            "subject": "Merge pull request #1164 from alfloop-dev/task/ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001"
+          }
+        ]
+      },
+      "live_id_conflicts": {
+        "on_active_board": [],
+        "already_archived": []
+      }
+    }
+  }
+}

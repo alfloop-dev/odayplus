@@ -1,0 +1,11 @@
+{
+  "explanation": "Original failed receipt remains unchanged after relocation. Resolve its original stream references with this map; the newly successful run occupies verification-20260913. No original process results are overwritten.",
+  "original_receipt": "receipt.json",
+  "original_receipt_sha256": "e3fcdc18c4c650a8c18bc34b11138d4ea92910a40cb4f2aef78ce880196f4ea9",
+  "stream_reference_relocation": {
+    "verification-20260913/command-1.stdout.txt": "historical-receipts/focused-capture-attempt-1/command-1.stdout.txt",
+    "verification-20260913/command-1.stderr.txt": "historical-receipts/focused-capture-attempt-1/command-1.stderr.txt",
+    "verification-20260913/command-2.stdout.txt": "historical-receipts/focused-capture-attempt-1/command-2.stdout.txt",
+    "verification-20260913/command-2.stderr.txt": "historical-receipts/focused-capture-attempt-1/command-2.stderr.txt"
+  }
+}

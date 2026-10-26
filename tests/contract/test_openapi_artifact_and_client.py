@@ -85,6 +85,18 @@ def test_artifact_documents_the_error_envelope() -> None:
     }
 
 
+def test_avm_quality_score_is_nullable_in_artifact_and_generated_types() -> None:
+    quality_score = _artifact()["components"]["schemas"]["AVMCasePayload"]["properties"][
+        "quality_score"
+    ]
+    assert "default" not in quality_score
+    assert quality_score["anyOf"] == [{"type": "number"}, {"type": "null"}]
+    assert "quality_score" not in _artifact()["components"]["schemas"]["AVMCasePayload"].get(
+        "required", []
+    )
+    assert "quality_score?: number | null;" in OUTPUT_PATH.read_text(encoding="utf-8")
+
+
 def test_generated_client_exposes_only_versioned_paths() -> None:
     text = OUTPUT_PATH.read_text(encoding="utf-8")
     assert '"/api/v1/audit/events": ["GET"]' in text

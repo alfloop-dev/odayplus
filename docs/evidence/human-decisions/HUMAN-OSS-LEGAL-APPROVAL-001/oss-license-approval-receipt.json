@@ -1,0 +1,178 @@
+{
+  "approval_reference": "HUMAN-OSS-LEGAL-APPROVAL-001/oss-license-policy-approval-20261006",
+  "approved_by": {
+    "display_name": "蔡尚志",
+    "github_login": "ajoe734",
+    "principal_id": "github:169176954",
+    "role": "負責人"
+  },
+  "conditions": [
+    "D01-D04 豁免只適用上表精確版本；任一套件升版即需重新核准",
+    "豁免不得擴及其他套件或全域使用"
+  ],
+  "decision": "approved_with_conditions",
+  "decisions": {
+    "d06_note": "目前 npm 與 pip 均 0 個漏洞，不建立任何豁免；TEMPORARY_ACCEPT 僅為內部 dev 範圍的政策方向",
+    "d14_system": "GitHub issues in alfloop-dev/odayplus authored by the named approver, read back by API",
+    "lgpl_cases": [
+      {
+        "case_id": "LGPL-SHARP-LIBVIPS",
+        "conditions": [
+          "保留授權聲明（NOTICE-THIRD-PARTY.md 每次 release 自動產生）",
+          "提供上游原始碼取得方式",
+          "使用未修改的上游套件，以動態載入方式使用",
+          "允許使用者替換該函式庫（不得靜態連結或阻止替換）"
+        ],
+        "decision": "allow_with_conditions",
+        "dependency_path": "@oday-plus/web -> next -> sharp@0.35.4 (Apache-2.0) -> @img/sharp-libvips-*@1.3.3",
+        "license": "LGPL-3.0-or-later",
+        "packages": [
+          {
+            "package": "@img/sharp-libvips-linux-x64",
+            "purl": "pkg:npm/%40img/sharp-libvips-linux-x64@1.3.3",
+            "version": "1.3.3"
+          },
+          {
+            "package": "@img/sharp-libvips-linuxmusl-x64",
+            "purl": "pkg:npm/%40img/sharp-libvips-linuxmusl-x64@1.3.3",
+            "version": "1.3.3"
+          }
+        ],
+        "policy_case_id": "D01",
+        "scope": "prod"
+      },
+      {
+        "case_id": "LGPL-PSYCOPG2",
+        "conditions": [
+          "接受上游連結例外（以函式庫方式使用，不傳染 copyleft）",
+          "保留授權聲明與例外條文"
+        ],
+        "decision": "accept_exception",
+        "dependency_path": "odayplus -> dlt[postgres] -> psycopg2-binary@2.9.12",
+        "license": "LGPL-3.0-or-later WITH psycopg2 linking exception",
+        "packages": [
+          {
+            "package": "psycopg2-binary",
+            "purl": "pkg:pypi/psycopg2-binary@2.9.12",
+            "version": "2.9.12"
+          }
+        ],
+        "policy_case_id": "D02",
+        "scope": "prod"
+      },
+      {
+        "case_id": "LGPL-PSYCOPG3",
+        "conditions": [
+          "保留授權聲明（NOTICE-THIRD-PARTY.md 每次 release 自動產生）",
+          "提供上游原始碼取得方式",
+          "使用未修改的上游套件，以動態載入方式使用",
+          "允許使用者替換該函式庫（不得靜態連結或阻止替換）",
+          "不得沿用 psycopg2 的連結例外"
+        ],
+        "decision": "allow_with_conditions",
+        "dependency_path": "odayplus -> psycopg[binary,pool]",
+        "license": "LGPL-3.0-only",
+        "packages": [
+          {
+            "package": "psycopg",
+            "purl": "pkg:pypi/psycopg@3.3.4",
+            "version": "3.3.4"
+          },
+          {
+            "package": "psycopg-binary",
+            "purl": "pkg:pypi/psycopg-binary@3.3.4",
+            "version": "3.3.4"
+          },
+          {
+            "package": "psycopg-pool",
+            "purl": "pkg:pypi/psycopg-pool@3.3.1",
+            "version": "3.3.1"
+          }
+        ],
+        "policy_case_id": "D03",
+        "scope": "prod"
+      },
+      {
+        "case_id": "LGPL-MOOCORE",
+        "conditions": [
+          "保留授權聲明（NOTICE-THIRD-PARTY.md 每次 release 自動產生）",
+          "提供上游原始碼取得方式",
+          "使用未修改的上游套件，以動態載入方式使用",
+          "允許使用者替換該函式庫（不得靜態連結或阻止替換）"
+        ],
+        "decision": "allow_with_conditions",
+        "dependency_path": "odayplus -> pymoo@0.6.2 -> moocore@0.3.2",
+        "license": "LGPL-2.1-or-later",
+        "packages": [
+          {
+            "package": "moocore",
+            "purl": "pkg:pypi/moocore@0.3.2",
+            "version": "0.3.2"
+          }
+        ],
+        "policy_case_id": "D04",
+        "scope": "prod"
+      }
+    ],
+    "license_policy": {
+      "d01_lgpl_sharp_libvips": "allow_with_conditions",
+      "d02_lgpl_psycopg2_exception": "accept_exception",
+      "d03_lgpl_psycopg3_conditions": "allow_with_conditions",
+      "d04_lgpl_moocore_conditions": "allow_with_conditions",
+      "d05_first_party_unlicensed": "apply_marker",
+      "d06_dev_toolchain_risk": "TEMPORARY_ACCEPT",
+      "d07_unknown_proprietary": "case_by_case_review",
+      "d08_permissive_allow": "approved",
+      "d09_notice_auto_generate": "approved",
+      "d10_exception_authority": "named_principal_confirmed",
+      "d11_exception_scope_limits": "approved",
+      "d12_receipt_fail_closed": "approved",
+      "d13_narrow_denylist": "approved",
+      "d14_authoritative_receipt": "system_identified"
+    },
+    "per_source_data_approvals": "see source data approval receipt sha256:2119dc6f74335d3a1884e0a0dfda6db61171df0542c46371c1719c26204d83c7 (alfloop-dev/odayplus#1418)"
+  },
+  "evidence": {
+    "case_matrix_sha256": "334eb5ab74aa5288e892c9302d4449e4e7687c90d29f42d815f968a1245e3d1e",
+    "evidence_head": "844c3fef8cdfc099e781b63fa297c83a72598983",
+    "policy_file_sha256": "05821214c43b22e7771954f072918c04477e90191a071d7bdcbe96e63e1d2fa9",
+    "sbom_sha256": "65370492b71f1442a80757416a49aa69c896ecfbedf900f969b46a45329e3c2a",
+    "source_cards_sha256": "adffb4c4f9f4541841a56ade2c8dae1827a2c96e86f09fa4004976086b89fac0",
+    "third_party_notices_sha256": "2656552e1896631acdbf7891073fa0cf92b3f43e9ccb27de1f91777a143e1b2c"
+  },
+  "expires_at": "2028-10-06T00:00:00Z",
+  "issued_at": "2026-10-06T10:55:56Z",
+  "policy_name": "ODP-OSS-License-Gate-Policy-v1",
+  "policy_version": "1.0.0",
+  "rationale": "負責人審閱四案 LGPL 依賴（皆為未修改、動態載入的上游套件）與十項整體政策後，照決策包既有方向具名核准。",
+  "receipt_type": "oss_legal_policy_approval",
+  "related_tasks": [
+    "ODP-OSS-DECISION-PACK-001",
+    "ODP-PLAN-OSS-LEGAL-POLICY-001",
+    "ODP-OSS-LICENSE-EXEMPTION-REGISTER-001"
+  ],
+  "review_at": "2027-10-06T00:00:00Z",
+  "revocation": {
+    "method": "負責人於同一 GitHub issue 留言撤銷或關閉並標註 revoked",
+    "reopen_triggers": [
+      "New LGPL dependency added",
+      "Version change in D01-D04 packages",
+      "New audit finding above accepted threshold",
+      "Receipt expiry",
+      "Scope or release mismatch"
+    ]
+  },
+  "schema_version": "1.0.0",
+  "scope": {
+    "applicable_releases": [
+      "alfloop-dev/odayplus releases from 844c3fef8cdfc099e781b63fa297c83a72598983 until expires_at, while D01-D04 package versions are unchanged"
+    ],
+    "environment": [
+      "prod",
+      "dev"
+    ]
+  },
+  "source_system": "GitHub issue in alfloop-dev/odayplus authored by ajoe734; readback via gh issue view",
+  "status": "active",
+  "task_id": "HUMAN-OSS-LEGAL-APPROVAL-001"
+}

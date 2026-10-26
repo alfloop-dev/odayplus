@@ -565,13 +565,14 @@ def test_api_governance_blocks_spoofing_and_purges_only_non_held(db_path) -> Non
                 EvidenceExportRequest(
                     program_id=f"program-{suffix}",
                     purpose=f"standard export {suffix}",
-                    requested_by="auditor-a",
+                    requested_by="test-operator",
                     from_time=old - timedelta(days=1),
                     to_time=old + timedelta(days=1),
                     correlation_ids=(f"corr-standard-{suffix}",),
                     export_scope="tenant=t1",
                     data_classification="internal",
                     sensitive=False,
+                    identity_boundary='http-principal:{"subject_id":"test-operator","tenant_id":null}',
                 ),
                 decision_cards=(_ready_card(event.event_id),),
                 generated_at=old,
@@ -598,7 +599,7 @@ def test_api_governance_blocks_spoofing_and_purges_only_non_held(db_path) -> Non
         self_hold = client.post(
             f"/audit/evidence/exports/{held_id}/legal-hold",
             headers={
-                **auth_headers(Role.FINANCE_LEGAL, subject="auditor-a"),
+                **auth_headers(Role.FINANCE_LEGAL, subject="test-operator"),
                 "X-Correlation-ID": "corr-self-hold",
             },
             json={
@@ -764,9 +765,7 @@ def test_durable_audit_log_rejects_event_tamper(db_path) -> None:
 
         assert bundle_persistence.audit_log.verify_chain().ok is False
         with pytest.raises(AuditIntegrityError):
-            bundle_persistence.audit_log.list_events(
-                correlation_id="corr-audit-tamper-1"
-            )
+            bundle_persistence.audit_log.list_events(correlation_id="corr-audit-tamper-1")
     finally:
         bundle_persistence.engine.close()
 
@@ -921,7 +920,7 @@ def test_api_persists_and_serves_retained_evidence(db_path) -> None:
                 "data_classification": "restricted",
                 "sensitive": True,
                 "purpose_scope": "model-release-subsidy-review",
-                "expires_at": (NOW + timedelta(days=60)).isoformat(),
+                "expires_at": (datetime.now(UTC) + timedelta(days=60)).isoformat(),
                 "authorized_by": "legal-approver",
                 "authorization_id": "authz-model-release-q2",
                 "masking_profile": "masked",
@@ -933,13 +932,19 @@ def test_api_persists_and_serves_retained_evidence(db_path) -> None:
         export_id = payload["export_id"]
         assert payload["retention"]["retention_class"] == RETENTION_REGULATORY
         assert payload["identity_boundary_subject"] == "auditor-a"
-        assert payload["export_governance"]["identity_boundary"] == "http-principal:auditor-a"
+        assert (
+            payload["export_governance"]["identity_boundary"]
+            == 'http-principal:{"subject_id":"auditor-a","tenant_id":null}'
+        )
         assert payload["audit_chain"]["end"]
 
-        # Retrieve the persisted bundle through the read endpoint.
-        fetched = client.get(f"/audit/evidence/exports/{export_id}", headers=AUDIT_HEADERS)
-        assert fetched.status_code == 200
-        fetched_payload = fetched.json()
+        # Sensitive full JSON is not a bypass around the download authority
+        # gate. Verify durable content through its actual internal store owner.
+        owner_headers = auth_headers(Role.AUDITOR, subject="auditor-a")
+        fetched = client.get(f"/audit/evidence/exports/{export_id}", headers=owner_headers)
+        assert fetched.status_code == 403
+        assert fetched.json()["detail"] == "SENSITIVE_EVIDENCE_DOWNLOAD_AUTHORITY_REQUIRED"
+        fetched_payload = bundle_persistence.evidence_store.get(export_id).to_dict()
         assert fetched_payload["bundle_checksum"] == payload["bundle_checksum"]
         assert fetched_payload["requested_by"] == "auditor-a"
         assert fetched_payload["retention_class"] == RETENTION_REGULATORY
@@ -948,7 +953,7 @@ def test_api_persists_and_serves_retained_evidence(db_path) -> None:
         # Listing by program returns the summary.
         listed = client.get(
             "/audit/evidence/exports",
-            headers=AUDIT_HEADERS,
+            headers=owner_headers,
             params={"program_id": "subsidy-program-2026-q2"},
         )
         assert listed.status_code == 200

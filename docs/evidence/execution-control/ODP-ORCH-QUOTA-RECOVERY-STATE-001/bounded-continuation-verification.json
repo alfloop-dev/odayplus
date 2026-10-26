@@ -1,0 +1,50 @@
+{
+  "pr": 1305,
+  "executor": "Codex",
+  "source_sha256": {
+    ".orchestrator/runtime_state.py": "a5e4e9b86277f13b5627282b524a723b312d8ba6b45fd697078357491643f61f",
+    ".orchestrator/test_runtime_state.py": "529438c5755aa123248cdcc3ab44b7d9fef268f4b87d47762bab21e0e6502592",
+    ".orchestrator/test_supervisor.py": "dc947682872bbd09c793936d08087c64706130128133c40b795f6c7d62e9e93b",
+    ".orchestrator/worker_failure_policy.py": "59ea7b1b55da10ec1b6d62203cf576595a1e5aa029ffe26e1edea69546af9892"
+  },
+  "scope": "Merge clearances by the exact auth/run/failure tuple even within one second. Require matching dispatched, pool and current auth for canary success. Attribute delayed failures to dispatched auth and preserve newer-auth pools.",
+  "receipts": [
+    {
+      "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-orch-quota-recovery-state-001",
+      "head_sha": "6abb25476170cc609b9bb3e351f8781ffe9d3ff3",
+      "tracked_diff_sha256": "ea4210e992982eb7f55d932742af9a4c29c0f687e6b86ff86b17d51d45d92d63",
+      "argv": [
+        "uv",
+        "run",
+        "pytest",
+        "-q",
+        ".orchestrator/test_runtime_state.py",
+        ".orchestrator/test_common.py",
+        ".orchestrator/test_supervisor.py",
+        "-k",
+        "quota or pause or account_pool or config or cleared_old_run or own_pool_success or late_failure or LoadRuntimeStateTests or QuotaRecoveryRuntimeStateTests"
+      ],
+      "started_at": "2026-09-11T12:33:42.547859+00:00",
+      "duration_seconds": 5.916925748984795,
+      "exit_code": 0,
+      "output": "1305-green.log"
+    },
+    {
+      "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-orch-quota-recovery-state-001",
+      "head_sha": "6abb25476170cc609b9bb3e351f8781ffe9d3ff3",
+      "tracked_diff_sha256": "ea4210e992982eb7f55d932742af9a4c29c0f687e6b86ff86b17d51d45d92d63",
+      "argv": [
+        "uv",
+        "run",
+        "pytest",
+        "-q",
+        ".orchestrator/test_runtime_state.py",
+        ".orchestrator/test_common.py"
+      ],
+      "started_at": "2026-09-11T12:37:55.723065+00:00",
+      "duration_seconds": 6.200999864027835,
+      "exit_code": 0,
+      "output": "1305-runtime-common.log"
+    }
+  ]
+}

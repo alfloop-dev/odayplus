@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from modules.priceops import (
     PRICEOPS_SOLVER_VERSION,
     ApprovalBlockedError,
@@ -27,6 +29,8 @@ from modules.priceops import (
     PricingPlanItem,
     run_priceops_optimizer_batch,
 )
+from shared.governance.evidence import EvidenceLevelError
+from shared.governance.vocabularies import EvidenceLevel
 from solver.pricing import (
     STATUS_INFEASIBLE,
     STATUS_OPTIMAL,
@@ -234,6 +238,41 @@ def test_plan_comparison_snapshot_covers_approval_and_rollback_readiness() -> No
     assert item.candidate_simulation.gross_margin.p50 > item.baseline_simulation.gross_margin.p50
 
 
+def test_plan_comparison_current_review_round_precedes_retained_prior_approval() -> None:
+    service = PriceOpsService()
+    plan_id = _evaluable_plan(service)
+    prior_records = [record.to_dict() for record in service.repository.list_approvals(plan_id)]
+    assert len(prior_records) == 1
+    simulation = service.repository.get_simulation(plan_id)
+    optimization = service.repository.get_optimization(plan_id)
+    assert simulation is not None and optimization is not None
+    assert optimization.total_incremental_gross_margin > 0
+    result = service.evaluate(
+        plan_id,
+        actual_gross_margin=(
+            simulation.expected_gross_margin + optimization.total_incremental_gross_margin / 4
+        ),
+        generated_at=MOMENT,
+    )
+    assert result.plan.status is PlanStatus.ADJUST
+    assert service.get_plan_comparison(plan_id).approval_status == "approved"
+
+    service.simulate(plan_id, generated_at=MOMENT)
+    assert service.get_plan_comparison(plan_id).approval_status == "not_submitted"
+    service.optimize(plan_id, optimized_at=MOMENT)
+    assert service.get_plan_comparison(plan_id).approval_status == "not_submitted"
+    service.submit_for_approval(plan_id, actor="pricing-maker", occurred_at=MOMENT)
+    assert service.get_plan_comparison(plan_id).approval_status == "pending_review"
+    assert [record.to_dict() for record in service.repository.list_approvals(plan_id)] == prior_records
+
+    second = service.approve(
+        plan_id, actor_id="second-pricing-reviewer", reason="revised pilot approved", approved_at=MOMENT,
+    )
+    assert service.get_plan_comparison(plan_id).approval_status == "approved"
+    records = [record.to_dict() for record in service.repository.list_approvals(plan_id)]
+    assert records == prior_records + [second.to_dict()]
+
+
 def test_rejected_plan_moves_to_stop() -> None:
     service = PriceOpsService()
     plan = service.create_plan(tenant_id="tenant-1", items=[_item()], correlation_id="corr-1")
@@ -345,7 +384,87 @@ def test_negative_impact_recommends_rollback_and_moves_to_rollback() -> None:
     assert result.plan.status is PlanStatus.ROLLBACK
     # outcome output carries the required maturity / evidence fields (§5.1)
     assert result.evaluation.measurement_method
-    assert result.evaluation.evidence_level
+    # ADR-0004 D3: unrated evaluation has evidence_level=None
+    assert result.evaluation.evidence_level is None
+
+
+# -- evidence ladder at the evaluation write boundary (ADR-0004 D2/D3) ----
+
+
+def _evaluable_plan(service: PriceOpsService) -> str:
+    """Drive a plan to the point where evaluate() is legal, and return its id."""
+    plan = service.create_plan(tenant_id="tenant-1", items=[_item()], correlation_id="corr-ev")
+    service.simulate(plan.plan_id, generated_at=MOMENT)
+    service.optimize(plan.plan_id, optimized_at=MOMENT)
+    service.submit_for_approval(plan.plan_id)
+    service.approve(plan.plan_id, actor_id="ops-manager", reason="ok", approved_at=MOMENT)
+    service.activate(plan.plan_id, executor="ops-runner", executed_at=MOMENT)
+    service.start_observation(plan.plan_id, start_time=MOMENT)
+    return plan.plan_id
+
+
+def test_evaluation_stores_the_named_rung_not_a_loose_string() -> None:
+    service = PriceOpsService()
+    plan_id = _evaluable_plan(service)
+    simulation = service.repository.get_simulation(plan_id)
+    assert simulation is not None
+
+    result = service.evaluate(
+        plan_id,
+        actual_gross_margin=simulation.expected_gross_margin,
+        evidence_level="L3",
+        generated_at=MOMENT,
+    )
+
+    # The wire value is a string; what is stored is the ladder member, so a
+    # downstream comparison against the ladder cannot depend on string luck.
+    assert result.evaluation.evidence_level is EvidenceLevel.L3_DID_VALIDATED
+    assert result.evaluation.to_dict()["evidence_level"] == "L3"
+
+
+@pytest.mark.parametrize("value", ["medium", "high", "low", "pending", "L6"])
+def test_evaluation_refuses_evidence_that_names_no_rung(value: str) -> None:
+    """The pre-ADR vocabulary is rejected here rather than persisted verbatim.
+
+    Removing the "medium" default only makes absence expressible. Refusing
+    off-ladder values is what stops the same claim arriving explicitly, which
+    is how a free string keeps its old meaning after the default is gone.
+    """
+    service = PriceOpsService()
+    plan_id = _evaluable_plan(service)
+    simulation = service.repository.get_simulation(plan_id)
+    assert simulation is not None
+
+    with pytest.raises(EvidenceLevelError):
+        service.evaluate(
+            plan_id,
+            actual_gross_margin=simulation.expected_gross_margin,
+            evidence_level=value,
+            generated_at=MOMENT,
+        )
+
+
+def test_rejected_evidence_does_not_advance_the_plan() -> None:
+    """A refused evaluation must leave no half-written state behind."""
+    service = PriceOpsService()
+    plan_id = _evaluable_plan(service)
+    simulation = service.repository.get_simulation(plan_id)
+    assert simulation is not None
+    before = service.repository.get_plan(plan_id)
+    assert before is not None
+
+    with pytest.raises(EvidenceLevelError):
+        service.evaluate(
+            plan_id,
+            actual_gross_margin=simulation.expected_gross_margin,
+            evidence_level="medium",
+            generated_at=MOMENT,
+        )
+
+    after = service.repository.get_plan(plan_id)
+    assert after is not None
+    assert after.status is before.status
+    assert service.repository.get_evaluation(plan_id) is None
 
 
 # -- rollback plan exists before execution (acceptance #4 / OR-007) -------
@@ -429,6 +548,11 @@ def test_activation_hands_off_treatment_to_intervention_and_label_registry() -> 
     assert label.label_key == f"pricing/{plan.plan_id}"
     assert label.label_maturity_time > MOMENT
     assert label.execution_id == activation.execution.execution_id
+    # ADR-0004 D3: the label is registered before its outcome matures, so it is
+    # unrated -- not the free string "pending", which named no rung and which a
+    # reader comparing against the ladder could not place.
+    assert label.evidence_level is None
+    assert label.to_dict()["evidence_level"] is None
 
     # the treatment records the actual price move
     treatment = handoff.treatments[0]

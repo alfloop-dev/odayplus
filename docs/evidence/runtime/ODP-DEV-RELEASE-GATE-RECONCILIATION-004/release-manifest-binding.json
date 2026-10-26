@@ -1,0 +1,96 @@
+{
+  "schema_version": 2,
+  "task_id": "ODP-DEV-RELEASE-GATE-RECONCILIATION-004",
+  "release_id": "odp-39ae43f6fe67",
+  "candidate_sha": "39ae43f6fe679f03dd7df459a51835cbd2d54f77",
+  "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
+  "manifest_digest": "sha256:ebe7d305e930471d2e7492a1fffced10dbaa05a710bb5f6573f370e7bfa8ae8a",
+  "recorded_at": "2026-09-20T06:03:10Z",
+  "recorded_by": "Antigravity7",
+  "binding_status": "BLOCKED",
+  "deployment_observed": false,
+  "build_run": {
+    "workflow": "Deploy Dev (Runtime Release)",
+    "run_id": 35493018607,
+    "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/35493018607",
+    "event": "workflow_dispatch",
+    "phase": "build",
+    "role": "artifact-handoff: reused images built by run 35492613570, re-verified signatures with cosign verify, and published the six manifest/handoff/receipt artifacts",
+    "conclusion": "success",
+    "workflow_head_sha": "39ae43f6fe679f03dd7df459a51835cbd2d54f77",
+    "release_sha_input": "39ae43f6fe679f03dd7df459a51835cbd2d54f77"
+  },
+  "producer_run": {
+    "workflow": "Deploy Dev (Runtime Release)",
+    "run_id": 35492613570,
+    "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/35492613570",
+    "event": "workflow_dispatch",
+    "phase": "build",
+    "role": "built, pushed, signed and attested the four component images for candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77",
+    "conclusion": "failure",
+    "failure_point": "step 20 'Write the build-once artifact handoff' exited 1 (initial_release_recovery false without rollback manifest); steps 21-23 were skipped",
+    "workflow_head_sha": "39ae43f6fe679f03dd7df459a51835cbd2d54f77",
+    "release_sha_input": "39ae43f6fe679f03dd7df459a51835cbd2d54f77"
+  },
+  "components_digest_validation": {
+    "api": {
+      "registry_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:e03442186309eb35d1f153979de21490f1346e0e098f8df02cff2bc3eb1d2842",
+      "registry_digest": "sha256:e03442186309eb35d1f153979de21490f1346e0e098f8df02cff2bc3eb1d2842",
+      "digest_match": true,
+      "candidate_sha_label_match": true,
+      "verification_status": "RESOLVED_NOT_RELEASE_ATTESTED",
+      "signature_ref": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:13854a2c589dbdb21fec8dbd95e50c5b7622c34b652e3c71349b55006a55b102",
+      "sbom_ref": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:c27829cfef89585afa3551b12ba8dc9a88693375e673263bc031aefc7f30fd79"
+    },
+    "web": {
+      "registry_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:d4202a96e0ab62a8d526ae6ebf74b075dab7ecb6905fa982eee0792b7565b89f",
+      "registry_digest": "sha256:d4202a96e0ab62a8d526ae6ebf74b075dab7ecb6905fa982eee0792b7565b89f",
+      "digest_match": true,
+      "candidate_sha_label_match": true,
+      "verification_status": "RESOLVED_NOT_RELEASE_ATTESTED",
+      "signature_ref": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:1d803aaf8d99028cf1b945aea98ee0aca95d625754f9235bcab994b10d8eca1e",
+      "sbom_ref": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:8b95bcf7ec800fb40a847f18b984e62f95e58291273d7fb9072fbd4aba3bdca7"
+    },
+    "worker": {
+      "registry_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:6935ab7eb49e528c8f24739500e40944a01718933c4012daa2d3bc434df59907",
+      "registry_digest": "sha256:6935ab7eb49e528c8f24739500e40944a01718933c4012daa2d3bc434df59907",
+      "digest_match": true,
+      "candidate_sha_label_match": true,
+      "verification_status": "RESOLVED_NOT_RELEASE_ATTESTED",
+      "signature_ref": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:aaf93ee036c8d5f49c9005e1b87ff5e96e0fa0d25d2c7cc892dabb79a8421dea",
+      "sbom_ref": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:f373482d278f0fb39cb87abd71d4c3f7e21cc23c442a670bbce963336a30af9a"
+    },
+    "scheduler": {
+      "registry_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:9d1267ad5a0c1334a812641b6c92dc702046ca09b48a8b5db6c8f61bd6c44373",
+      "registry_digest": "sha256:9d1267ad5a0c1334a812641b6c92dc702046ca09b48a8b5db6c8f61bd6c44373",
+      "digest_match": true,
+      "candidate_sha_label_match": true,
+      "verification_status": "RESOLVED_NOT_RELEASE_ATTESTED",
+      "signature_ref": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:fb05707b7cedc53c573b3a161188fe9e97017d20e192ae7cbe5d95206351f811",
+      "sbom_ref": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:2afa2b7b63d1cc5ced1eef6b8de4416877dde64e2c67d0d9ee731bf78ac0ad3e"
+    },
+    "migration": {
+      "registry_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:6935ab7eb49e528c8f24739500e40944a01718933c4012daa2d3bc434df59907",
+      "registry_digest": "sha256:6935ab7eb49e528c8f24739500e40944a01718933c4012daa2d3bc434df59907",
+      "digest_match": true,
+      "candidate_sha_label_match": true,
+      "verification_status": "RESOLVED_NOT_RELEASE_ATTESTED",
+      "shared_image_with": "worker"
+    }
+  },
+  "digests_integrity": {
+    "migration_digest": "sha256:9ee2d278321bcd5358500a3feb93a7c22c201adde76698f57b7dfcbaa3377375",
+    "data_contract_digest": "sha256:05e2cb05619f1c524b0f9578e4ceba9ec863d143d5e64b0eeac97539ce8e7c73",
+    "source_policy_digest": "sha256:f3cd9557c11f63721300914c31fbceb97250cc76e0c5dcfbe89c9249c93dfcbf",
+    "egress_contract_digest": "sha256:8492ae19fa623fba6db903f3a1b92bb209e5f6e898814ecfcff422b134fa8cd5",
+    "all_digests_match": true
+  },
+  "admission_decision": {
+    "build_once_enforced": true,
+    "candidate_image_digests_resolved": true,
+    "fail_closed_on_missing_registry_or_oidc": true,
+    "deployment_success_receipt_emitted": false,
+    "status": "BLOCKED",
+    "release_state": "NO-GO"
+  }
+}

@@ -3,6 +3,7 @@
 from modules.learninghub.application import (
     DEFAULT_RELEASE_LEASE_SECONDS,
     AliasReconciliationReceipt,
+    BacktestReceipt,
     GuardrailBreach,
     LearningHubConflictError,
     LearningHubError,
@@ -13,9 +14,11 @@ from modules.learninghub.application import (
     RecommendedAction,
     ReleaseMonitorAssessment,
     ReleaseType,
+    evaluate_backtest_run,
     evaluate_guardrails,
 )
 from modules.learninghub.domain import (
+    DatasetQualityAdmissionError,
     DatasetSnapshot,
     DatasetSnapshotError,
     FeatureLineageEvent,
@@ -30,6 +33,7 @@ from modules.learninghub.domain import (
     MonitoringSignalType,
     PointInTimeIssue,
     PointInTimeViolation,
+    QualityAdmissionIssue,
     RetrainingRequest,
     active_features_for_model,
     build_dataset_snapshot,
@@ -38,8 +42,11 @@ from modules.learninghub.domain import (
     has_blocked_features,
     model_ready_record_from_mapping,
     validate_point_in_time,
+    validate_quality_admission,
 )
 from modules.learninghub.infrastructure import (
+    EvidentlyDriftMonitor,
+    EvidentlyDriftResult,
     InMemoryLearningHubRepository,
     LearningHubReleaseConflict,
     LearningHubReleaseFenced,
@@ -50,6 +57,7 @@ from modules.learninghub.infrastructure import (
 from modules.learninghub.runtime import LearningHubRuntimeConfigurationError
 from modules.learninghub.workers import (
     LearningHubReleaseWorker,
+    run_learninghub_prediction_drift,
     run_learninghub_release,
     run_learninghub_release_monitor,
     run_learninghub_release_recovery,
@@ -58,8 +66,12 @@ from modules.learninghub.workers import (
 __all__ = [
     "DEFAULT_RELEASE_LEASE_SECONDS",
     "AliasReconciliationReceipt",
+    "BacktestReceipt",
+    "DatasetQualityAdmissionError",
     "DatasetSnapshot",
     "DatasetSnapshotError",
+    "EvidentlyDriftMonitor",
+    "EvidentlyDriftResult",
     "GuardrailBreach",
     "InMemoryLearningHubRepository",
     "InferenceComparison",
@@ -81,18 +93,22 @@ __all__ = [
     "MonitoringSignalType",
     "PointInTimeIssue",
     "PointInTimeViolation",
+    "QualityAdmissionIssue",
     "RecommendedAction",
     "ReleaseMonitorAssessment",
     "ReleaseSagaState",
     "ReleaseType",
     "RetrainingRequest",
     "build_dataset_snapshot",
+    "evaluate_backtest_run",
     "evaluate_guardrails",
     "model_ready_record_from_mapping",
     "run_learninghub_release",
     "run_learninghub_release_recovery",
     "run_learninghub_release_monitor",
+    "run_learninghub_prediction_drift",
     "validate_point_in_time",
+    "validate_quality_admission",
     # Feature Registry
     "FeatureLineageEvent",
     "FeatureRegistry",

@@ -22,6 +22,7 @@ is intentionally out of scope here.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -46,6 +47,110 @@ INTEGRATION_MODES = {
 }
 ACQUISITION_METHODS = {"api", "file", "manual", "feed", "public_dataset", "generated", "internal"}
 ENVELOPE_KINDS = {"batch", "event"}
+
+# Unconfirmed / unknown metadata markers.
+UNCONFIRMED_METADATA = "unconfirmed"
+UNKNOWN_METADATA = "unknown"
+
+# Allowed runtime execution capabilities (decoupled from declared integration modes).
+RUNTIME_CAPABILITIES = {
+    "unverified",
+    "unconfirmed",
+    "verified",
+    "supported",
+    "batch_watermark_only",
+    "batch_only",
+    "streaming_supported",
+    "manual_attestation",
+    "simulated_only",
+    "unsupported",
+}
+
+# Supported SLA formats: unconfirmed/unknown, standard frequency keywords,
+# ISO 8601 durations with at least one component (e.g. PT5S, PT15M, PT1H, PT1H30M, P1D, P1Y2M3D, P1DT12H),
+# and unit-qualified durations (e.g. 5s, 15m, 24h, 7d).
+_LATENCY_SLA_REGEX = re.compile(
+    r"^(?:"
+    r"unconfirmed|unknown|unspecified|"
+    r"realtime|subsecond|near_realtime|streaming|"
+    r"hourly|daily|weekly|monthly|on_demand|batch_hourly|batch_daily|"
+    r"PT(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+(?:\.\d+)?S)?|"
+    r"P(?=\d)(?:\d+Y)?(?:\d+M)?(?:\d+W)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+(?:\.\d+)?S)?)?|"
+    r"\d+\s*(?:s|sec|seconds?|m|min|minutes?|h|hr|hours?|d|days?|w|weeks?|mo|months?|y|yrs?|years?)"
+    r")$",
+    re.IGNORECASE,
+)
+
+# Mapping of runtime execution capabilities to the declared integration modes they can satisfy.
+# Capabilities unverified, unconfirmed, unsupported, and simulated_only never match any real mode.
+_CAPABILITY_SUPPORTED_MODES: dict[str, set[str]] = {
+    "unverified": set(),
+    "unconfirmed": set(),
+    "unsupported": set(),
+    "simulated_only": set(),
+    "verified": {"batch_snapshot", "incremental_batch", "event_stream", "backfill", "api_lookup"},
+    "supported": {"batch_snapshot", "incremental_batch", "backfill", "api_lookup"},
+    "streaming_supported": {"event_stream"},
+    "batch_only": {"batch_snapshot", "incremental_batch", "backfill"},
+    "batch_watermark_only": {"batch_snapshot", "incremental_batch", "backfill"},
+    "manual_attestation": {"backfill", "batch_snapshot", "api_lookup"},
+}
+
+
+def _validate_data_owner(raw: Any) -> str:
+    # Only an omitted field or an explicit null falls back to the unconfirmed
+    # default. A present-but-blank value ("" or whitespace) is a fake blank
+    # owner and must be rejected rather than silently read as unconfirmed.
+    if raw is None:
+        return UNCONFIRMED_METADATA
+    if not isinstance(raw, str):
+        raise ContractError(f"data_owner must be a string, got {type(raw).__name__}")
+    stripped = raw.strip()
+    if not stripped:
+        raise ContractError(
+            "data_owner cannot be blank (fake blank owner); "
+            f"omit the field or use null for {UNCONFIRMED_METADATA}"
+        )
+    return stripped
+
+
+def _validate_target_latency_sla(raw: Any) -> str:
+    if raw is None or raw == "":
+        return UNCONFIRMED_METADATA
+    if not isinstance(raw, str):
+        raise ContractError(f"target_latency_sla must be a string, got {type(raw).__name__}")
+    stripped = raw.strip()
+    if not stripped:
+        raise ContractError("target_latency_sla cannot be empty whitespace")
+    if not _LATENCY_SLA_REGEX.match(stripped):
+        raise ContractError(f"Invalid target_latency_sla format: {raw!r}")
+    return stripped
+
+
+def _validate_contact_channel(raw: Any) -> str:
+    if raw is None or raw == "":
+        return UNCONFIRMED_METADATA
+    if not isinstance(raw, str):
+        raise ContractError(f"contact_channel must be a string, got {type(raw).__name__}")
+    stripped = raw.strip()
+    if not stripped:
+        raise ContractError("contact_channel cannot be empty whitespace")
+    return stripped
+
+
+def _validate_runtime_capability(raw: Any) -> str:
+    if raw is None or raw == "":
+        return "unverified"
+    if not isinstance(raw, str):
+        raise ContractError(f"runtime_capability must be a string, got {type(raw).__name__}")
+    stripped = raw.strip().lower()
+    if not stripped:
+        raise ContractError("runtime_capability cannot be empty whitespace")
+    if stripped not in RUNTIME_CAPABILITIES:
+        raise ContractError(
+            f"Unknown runtime_capability {raw!r}; expected one of {sorted(RUNTIME_CAPABILITIES)}"
+        )
+    return stripped
 
 # Map low-level contract issue codes to the canonical quarantine reasons defined
 # in ODP-DATA-05 §8. Only "error" issues quarantine a record.
@@ -125,7 +230,7 @@ class SourceContract:
 
     contract_id: str
     title: str
-    kind: str  # internal | external
+    kind: str  # internal | external | envelope
     source_system: str
     source_dataset: str
     canonical_target: str
@@ -138,6 +243,10 @@ class SourceContract:
     schema_version: str = ""
     allow_unknown: bool = True
     invariants: tuple[Invariant, ...] = ()
+    data_owner: str = UNCONFIRMED_METADATA
+    target_latency_sla: str = UNCONFIRMED_METADATA
+    contact_channel: str = UNCONFIRMED_METADATA
+    runtime_capability: str = "unverified"
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SourceContract:
@@ -160,6 +269,16 @@ class SourceContract:
         if acquisition and acquisition not in ACQUISITION_METHODS:
             raise ContractError(f"Unknown acquisition_method {acquisition!r}")
         invariants = tuple(Invariant.from_dict(i) for i in data.get("invariants", []))
+
+        contact_raw = data.get("contact_channel")
+        if contact_raw is None:
+            contact_raw = data.get("contact_ref", data.get("contact_reference"))
+
+        owner = _validate_data_owner(data.get("data_owner"))
+        latency_sla = _validate_target_latency_sla(data.get("target_latency_sla"))
+        contact = _validate_contact_channel(contact_raw)
+        runtime_cap = _validate_runtime_capability(data.get("runtime_capability"))
+
         return cls(
             contract_id=data["contract_id"],
             title=data.get("title", data["contract_id"]),
@@ -176,7 +295,52 @@ class SourceContract:
             schema_version=str(data.get("schema_version", "")),
             allow_unknown=bool(data.get("allow_unknown", True)),
             invariants=invariants,
+            data_owner=owner,
+            target_latency_sla=latency_sla,
+            contact_channel=contact,
+            runtime_capability=runtime_cap,
         )
+
+    @property
+    def contact_ref(self) -> str:
+        """Alias for contact_channel."""
+        return self.contact_channel
+
+    @property
+    def contact_reference(self) -> str:
+        """Alias for contact_channel."""
+        return self.contact_channel
+
+    @property
+    def is_data_owner_confirmed(self) -> bool:
+        """True when data_owner is a confirmed named entity, not unknown/unconfirmed."""
+        return self.data_owner.lower() not in {UNCONFIRMED_METADATA, UNKNOWN_METADATA, "unspecified", ""}
+
+    @property
+    def is_latency_sla_confirmed(self) -> bool:
+        """True when target_latency_sla is a confirmed SLA specification, not unknown/unconfirmed."""
+        return self.target_latency_sla.lower() not in {UNCONFIRMED_METADATA, UNKNOWN_METADATA, "unspecified", ""}
+
+    @property
+    def is_contact_confirmed(self) -> bool:
+        """True when contact_channel is confirmed, not unknown/unconfirmed."""
+        return self.contact_channel.lower() not in {UNCONFIRMED_METADATA, UNKNOWN_METADATA, "unspecified", ""}
+
+    @property
+    def is_runtime_verified(self) -> bool:
+        """True when runtime execution capability has been verified against live/engine capabilities."""
+        return self.runtime_capability in {"verified", "supported", "streaming_supported"}
+
+    @property
+    def has_streaming_runtime(self) -> bool:
+        """True only if the actual runtime capability supports streaming (not batch fallback/watermark)."""
+        return self.runtime_capability in {"streaming_supported", "verified"} and self.integration_mode == "event_stream"
+
+    @property
+    def runtime_matches_declared_mode(self) -> bool:
+        """True if the runtime capability matches or fully supports the declared integration mode."""
+        supported_modes = _CAPABILITY_SUPPORTED_MODES.get(self.runtime_capability, set())
+        return self.integration_mode in supported_modes
 
     def field_map(self) -> dict[str, FieldSpec]:
         return {f.name: f for f in self.fields}

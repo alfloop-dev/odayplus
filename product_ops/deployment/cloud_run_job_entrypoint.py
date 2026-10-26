@@ -4,10 +4,16 @@
 from __future__ import annotations
 
 import argparse
+import errno
+import hashlib
 import json
 import logging
 import os
+import socket
 import sys
+import time
+import urllib.error
+import urllib.request
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
@@ -20,6 +26,21 @@ from shared.jobs.queue import JobRecord, JobStatus
 EXIT_FAILED = 1
 EXIT_CONTRACT_INVALID = 2
 EXIT_RETRY_QUEUED = 75
+PUBLIC_EGRESS_PROBE_URL = "https://example.com/"
+# Only kernel-level routing/permission denials are proof that the canary was
+# blocked by the VPC default-deny contract. Timeouts, DNS failures, and other
+# generic URL errors can equally mean a broken runner or a transient outage;
+# treating those as success would turn an unavailable probe into false evidence.
+PUBLIC_EGRESS_DENY_ERRNOS = frozenset(
+    {
+        errno.EACCES,
+        errno.EPERM,
+        errno.ENETDOWN,
+        errno.ENETUNREACH,
+        errno.EHOSTUNREACH,
+    }
+)
+_CLOUD_RUN_ALL_TRAFFIC_ALIASES = frozenset({"all", "all-traffic", "all_traffic"})
 
 
 def _now() -> str:
@@ -41,6 +62,91 @@ def _emit_receipt(kind: str, status: str, **details: Any) -> None:
         **details,
     }
     print(json.dumps(payload, sort_keys=True), flush=True)
+
+
+def _is_explicit_public_egress_denial(exc: BaseException) -> bool:
+    """Return whether *exc* is an explicit local network-policy denial.
+
+    ``urllib.error.URLError`` wraps the underlying ``OSError`` in ``reason``.
+    A socket timeout is deliberately not accepted: it says the canary could
+    not be classified, not that the firewall denied it.
+    """
+
+    cause: BaseException = exc
+    if isinstance(exc, urllib.error.URLError) and isinstance(exc.reason, BaseException):
+        cause = exc.reason
+    if isinstance(cause, socket.timeout) or isinstance(cause, TimeoutError):
+        return False
+    return isinstance(cause, OSError) and cause.errno in PUBLIC_EGRESS_DENY_ERRNOS
+
+
+def _public_egress_receipt_content_digest(
+    *,
+    resolved_egress: str,
+    result: str,
+    reason: str,
+) -> str:
+    """Hash the receipt's semantic fields without importing build tooling."""
+
+    payload = {
+        "expected": "denied",
+        "reason": reason,
+        "receipt_kind": "public_egress_probe",
+        "result": result,
+        "vpc_egress": resolved_egress,
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _emit_public_egress_receipt(
+    *,
+    status: str,
+    reason: str,
+    **details: Any,
+) -> None:
+    """Emit the canonical, secret-free receipt consumed by Runtime Release.
+
+    The deploy entrypoint reads this exact JSON object back from Cloud Logging.
+    Keeping the candidate, admitted manifest, resolved egress, and semantic
+    content digest in the container receipt prevents a local deploy script from
+    turning a successful command exit into an unverified denial claim.
+    """
+
+    from shared.runtime_config import get_release_identity
+
+    result = "passed" if status == "succeeded" else "failed"
+    raw_egress = os.environ.get("ODP_CLOUD_RUN_VPC_EGRESS", "").strip()
+    resolved_egress = (
+        "ALL_TRAFFIC" if raw_egress.lower() in _CLOUD_RUN_ALL_TRAFFIC_ALIASES else raw_egress
+    )
+    _emit_receipt(
+        "public_egress_probe",
+        status,
+        # Required by validate_sources_off_probe_receipt; the receipt carries no
+        # secret values, only release identity and the probe outcome.
+        secret_values_redacted=True,
+        candidate_sha=get_release_identity(),
+        manifest_digest=os.environ.get("ODP_RELEASE_MANIFEST_DIGEST", ""),
+        job=(os.environ.get("CLOUD_RUN_JOB") or os.environ.get("ODP_CLOUD_RUN_JOB_NAME", "")),
+        probe_url=PUBLIC_EGRESS_PROBE_URL,
+        expected="denied",
+        vpc_egress=resolved_egress,
+        result=result,
+        reason=reason,
+        execution="succeeded" if status == "succeeded" else "failed",
+        receipt_content_digest=_public_egress_receipt_content_digest(
+            resolved_egress=resolved_egress,
+            result=result,
+            reason=reason,
+        ),
+        **details,
+    )
 
 
 def _database_urls(value: str) -> tuple[str, str]:
@@ -79,9 +185,12 @@ class TrackingJobQueue:
         self.claim_errors: list[Exception] = []
         self.enqueue_errors: list[Exception] = []
 
-    def claim_next(self, worker_id: str = "cloud-run-worker") -> JobRecord | None:
+    def claim_next(self, worker_id: str = "cloud-run-worker", *, audit_only: bool = False) -> JobRecord | None:
         try:
-            record = self._delegate.claim_next(worker_id=worker_id)
+            if audit_only:
+                record = self._delegate.claim_next(worker_id=worker_id, audit_only=True)
+            else:
+                record = self._delegate.claim_next(worker_id=worker_id)
         except Exception as exc:
             self.claim_errors.append(exc)
             raise
@@ -247,36 +356,57 @@ def _worker_result(record: JobRecord) -> tuple[int, str]:
     return EXIT_CONTRACT_INVALID, "invalid_terminal_state"
 
 
-def run_worker(*, max_jobs: int, require_job: bool) -> int:
+def run_worker(*, max_jobs: int, require_job: bool, audit_only: bool = False,
+               run_for_seconds: int = 0) -> int:
     bundle = bootstrap_runtime()
     tracking_queue = TrackingJobQueue(bundle.job_queue)
-    worker = build_worker(replace(bundle, job_queue=tracking_queue))
+    if audit_only:
+        worker = build_worker(replace(bundle, job_queue=tracking_queue), audit_only=True)
+    else:
+        worker = build_worker(replace(bundle, job_queue=tracking_queue))
     processed: list[dict[str, Any]] = []
+    deadline = time.monotonic() + run_for_seconds if run_for_seconds else None
+    receipt_kind = "audit_publisher" if audit_only else "worker"
 
-    for _ in range(max_jobs):
+    while len(processed) < max_jobs:
+        if deadline is not None and time.monotonic() >= deadline:
+            break
         claimed_before = len(tracking_queue.claimed)
         worker.run_once()
         if tracking_queue.claim_errors:
             exc = tracking_queue.claim_errors[-1]
             _emit_receipt(
-                "worker",
+                receipt_kind,
                 "failed",
                 reason="claim_exception",
                 error_class=type(exc).__name__,
                 processed=processed,
             )
             return EXIT_FAILED
+        if audit_only:
+            try:
+                worker.export_metrics()
+            except Exception as exc:
+                _emit_receipt(
+                    receipt_kind, "failed", reason="metrics_export_exception",
+                    error_class=type(exc).__name__, processed=processed,
+                    claimed_job_ids=[job.job_id for job in tracking_queue.claimed],
+                )
+                return EXIT_FAILED
         if len(tracking_queue.claimed) == claimed_before:
+            if deadline is not None:
+                time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+                continue
             if not processed and require_job:
                 _emit_receipt(
-                    "worker",
+                    receipt_kind,
                     "failed",
                     reason="required_job_not_claimed",
                     queue_active=tracking_queue.count_active_jobs(),
                 )
                 return EXIT_FAILED
             _emit_receipt(
-                "worker",
+                receipt_kind,
                 "drained",
                 processed=processed,
                 processed_count=len(processed),
@@ -288,7 +418,7 @@ def run_worker(*, max_jobs: int, require_job: bool) -> int:
         persisted = tracking_queue.get(claimed.job_id)
         if persisted is None:
             _emit_receipt(
-                "worker",
+                receipt_kind,
                 "failed",
                 reason="claimed_job_receipt_missing",
                 job_id=claimed.job_id,
@@ -308,7 +438,7 @@ def run_worker(*, max_jobs: int, require_job: bool) -> int:
         processed.append(item)
         if exit_code != 0:
             _emit_receipt(
-                "worker",
+                receipt_kind,
                 outcome,
                 processed=processed,
                 processed_count=len(processed),
@@ -317,13 +447,61 @@ def run_worker(*, max_jobs: int, require_job: bool) -> int:
             return exit_code
 
     _emit_receipt(
-        "worker",
-        "bounded_complete",
+        receipt_kind,
+        "observation_window_complete" if deadline is not None and len(processed) < max_jobs else "bounded_complete",
         processed=processed,
         processed_count=len(processed),
         queue_active=tracking_queue.count_active_jobs(),
+        audit_only=audit_only,
+        run_for_seconds=run_for_seconds,
     )
     return 0
+
+
+def run_public_egress_probe(*, timeout: float = 5.0) -> int:
+    """Prove that the controlled VPC path denies a fixed public canary.
+
+    ``ALL_TRAFFIC`` is intentional here: Cloud Run sends every packet through
+    the staging VPC, where the foundation's lack of Cloud NAT/default-deny
+    firewall prevents public egress.  A response (including an HTTP error)
+    means the canary was reachable and therefore fails the rehearsal.
+    """
+
+    request = urllib.request.Request(
+        PUBLIC_EGRESS_PROBE_URL,
+        headers={"Accept": "text/plain"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout):  # noqa: S310 - fixed deny canary
+            _emit_public_egress_receipt(
+                status="failed",
+                reason="public_canary_reachable",
+            )
+            return EXIT_FAILED
+    except urllib.error.HTTPError as exc:
+        # HTTPError is a successful network connection, not a denied probe.
+        _emit_public_egress_receipt(
+            status="failed",
+            reason="public_canary_reachable",
+            http_status=exc.code,
+        )
+        return EXIT_FAILED
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        if _is_explicit_public_egress_denial(exc):
+            cause = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+            _emit_public_egress_receipt(
+                status="succeeded",
+                reason="public_canary_denied",
+                error_class=type(exc).__name__,
+                denial_errno=getattr(cause, "errno", None),
+            )
+            return 0
+        _emit_public_egress_receipt(
+            status="failed",
+            reason="public_probe_error_unclassified",
+            error_class=type(exc).__name__,
+        )
+        return EXIT_FAILED
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -334,6 +512,10 @@ def main(argv: list[str] | None = None) -> int:
     worker = subparsers.add_parser("worker")
     worker.add_argument("--max-jobs", type=int, default=100)
     worker.add_argument("--require-job", action="store_true")
+    publisher = subparsers.add_parser("audit-publisher")
+    publisher.add_argument("--max-jobs", type=int, default=100)
+    publisher.add_argument("--run-for-seconds", type=int, default=60)
+    subparsers.add_parser("public-egress-probe")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO)
@@ -341,6 +523,13 @@ def main(argv: list[str] | None = None) -> int:
         return run_migration()
     if args.command == "scheduler":
         return run_scheduler()
+    if args.command == "public-egress-probe":
+        return run_public_egress_probe()
+    if args.command == "audit-publisher":
+        if args.max_jobs < 1 or not 1 <= args.run_for_seconds <= 3600:
+            parser.error("audit-publisher requires --max-jobs >= 1 and --run-for-seconds in 1..3600")
+        return run_worker(max_jobs=args.max_jobs, require_job=False, audit_only=True,
+                          run_for_seconds=args.run_for_seconds)
     if args.max_jobs < 1:
         parser.error("--max-jobs must be at least 1")
     return run_worker(max_jobs=args.max_jobs, require_job=args.require_job)

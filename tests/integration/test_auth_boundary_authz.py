@@ -16,6 +16,7 @@ import pytest
 from modules.opsboard.auth import (
     AuthBoundaryConfig,
     AuthenticationBoundary,
+    AuthFailureReason,
     Credentials,
     SigningKey,
     encode_compact_jwt,
@@ -43,10 +44,21 @@ def audit_log() -> InMemoryAuditLog:
 
 @pytest.fixture
 def boundary(audit_log: InMemoryAuditLog) -> AuthenticationBoundary:
+    # Contract §4.4: the service issuer class (and its legacy ODP_AUTH_ISSUER
+    # alias, §8.4) takes roles and scope from ODP_AUTH_PRINCIPAL_MAP, never
+    # from the token's own claims. The subject must therefore be declared
+    # here for the boundary to authenticate it at all
+    # (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
     config = AuthBoundaryConfig(
         issuer=ISSUER,
         audiences=frozenset({AUDIENCE}),
         signing_keys={KEY.kid: KEY},
+        principal_mappings={
+            "user-1": {
+                "roles": ["operations_manager"],
+                "scope": {"tenant_id": "tenant-a", "region_ids": ["north"]},
+            }
+        },
     )
     return AuthenticationBoundary(config, audit_log=audit_log)
 
@@ -58,6 +70,13 @@ def engine(audit_log: InMemoryAuditLog) -> AuthorizationEngine:
 
 
 def _token(roles: list[str], **claims: object) -> str:
+    """Build a signed token for ``user-1``.
+
+    ``roles`` and the scope claims below are deliberately still written into
+    the token: the boundary must ignore them and use the authoritative
+    ODP_AUTH_PRINCIPAL_MAP declaration instead. Tests assert on the resulting
+    principal, not on these claims.
+    """
     payload = {
         "sub": "user-1",
         "iss": ISSUER,
@@ -72,13 +91,26 @@ def _token(roles: list[str], **claims: object) -> str:
     return encode_compact_jwt(payload, KEY)
 
 
-def _view_forecast(principal, engine, *, region_id: str = "north"):
+def _view_forecast(
+    principal,
+    engine,
+    *,
+    region_id: str | None = "north",
+    brand_id: str | None = None,
+    module: str | None = None,
+):
     # operations_manager may VIEW forecastops (RBAC); ABAC then enforces the
-    # principal's region scope.
+    # principal's scope.
     request = AccessRequest(
         principal=principal,
         action=Action.VIEW,
-        resource=ResourceDescriptor(type="forecastops", tenant_id="tenant-a", region_id=region_id),
+        resource=ResourceDescriptor(
+            type="forecastops",
+            tenant_id="tenant-a",
+            region_id=region_id,
+            brand_id=brand_id,
+            module=module,
+        ),
         environment=Environment(attributes={"correlation_id": "corr-int"}),
     )
     return engine.authorize(request)
@@ -92,6 +124,36 @@ def test_verified_principal_is_authorized_by_rbac(boundary, engine):
 
     decision = _view_forecast(outcome.principal, engine)
     assert decision.allowed is True
+
+
+def test_undeclared_subject_cannot_authenticate_from_its_own_claims(boundary, engine):
+    """A signed token whose sub is not in ODP_AUTH_PRINCIPAL_MAP fails closed.
+
+    Regression for ODP-WEB-LOCAL-AUTH-API-TRUST-001: the token is validly
+    signed by the trusted key and passes issuer/audience/expiry validation,
+    but its `sub` has no authoritative declaration, so its self-asserted
+    roles and tenant must not become authorization facts.
+    """
+    token = _token(["platform_admin"], sub="attacker", tenant_id="attacker-tenant")
+    outcome = boundary.authenticate(Credentials(bearer_token=token), now=NOW)
+
+    assert outcome.authenticated is False
+    assert outcome.reason is AuthFailureReason.UNKNOWN_SERVICE
+    assert outcome.principal.roles == frozenset()
+    assert outcome.principal.tenant_id is None
+
+    decision = _view_forecast(outcome.principal, engine)
+    assert decision.allowed is False
+
+
+def test_declared_subject_claim_roles_are_ignored(boundary):
+    """The declared principal wins over an escalated `roles` claim."""
+    token = _token(["platform_admin"], tenant_id="attacker-tenant")
+    outcome = boundary.authenticate(Credentials(bearer_token=token), now=NOW)
+
+    assert outcome.authenticated is True
+    assert outcome.principal.roles == frozenset({Role.OPERATIONS_MANAGER})
+    assert outcome.principal.tenant_id == "tenant-a"
 
 
 def test_unauthenticated_principal_is_denied_by_engine(boundary, engine):
@@ -112,6 +174,58 @@ def test_verified_principal_scope_still_enforced(boundary, engine):
     decision = _view_forecast(outcome.principal, engine, region_id="south")
     assert decision.allowed is False
     assert decision.policy_id == "scope.region"
+
+
+def test_verified_principal_brand_scope_enforced(engine):
+    config = AuthBoundaryConfig(
+        issuer=ISSUER,
+        audiences=frozenset({AUDIENCE}),
+        signing_keys={KEY.kid: KEY},
+        principal_mappings={
+            "user-1": {
+                "roles": ["operations_manager"],
+                "scope": {"tenant_id": "tenant-a", "brand_ids": ["brand-a"]},
+            }
+        },
+    )
+    boundary = AuthenticationBoundary(config)
+    outcome = boundary.authenticate(
+        Credentials(bearer_token=_token(["operations_manager"])), now=NOW
+    )
+    assert outcome.authenticated is True
+
+    decision_allowed = _view_forecast(outcome.principal, engine, brand_id="brand-a")
+    assert decision_allowed.allowed is True
+
+    decision_denied = _view_forecast(outcome.principal, engine, brand_id="brand-b")
+    assert decision_denied.allowed is False
+    assert decision_denied.policy_id == "scope.brand"
+
+
+def test_verified_principal_module_scope_enforced(engine):
+    config = AuthBoundaryConfig(
+        issuer=ISSUER,
+        audiences=frozenset({AUDIENCE}),
+        signing_keys={KEY.kid: KEY},
+        principal_mappings={
+            "user-1": {
+                "roles": ["operations_manager"],
+                "scope": {"tenant_id": "tenant-a", "modules": ["forecastops"]},
+            }
+        },
+    )
+    boundary = AuthenticationBoundary(config)
+    outcome = boundary.authenticate(
+        Credentials(bearer_token=_token(["operations_manager"])), now=NOW
+    )
+    assert outcome.authenticated is True
+
+    decision_allowed = _view_forecast(outcome.principal, engine, module="forecastops")
+    assert decision_allowed.allowed is True
+
+    decision_denied = _view_forecast(outcome.principal, engine, module="netplan")
+    assert decision_denied.allowed is False
+    assert decision_denied.policy_id == "scope.module"
 
 
 def test_authentication_and_authorization_share_audit_trail(boundary, engine, audit_log):

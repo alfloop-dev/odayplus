@@ -22,6 +22,7 @@ REQUIRED_FILES = {
     "kms.tf",
     "main.tf",
     "messaging.tf",
+    "monitoring.tf",
     "network.tf",
     "outputs.tf",
     "storage.tf",
@@ -29,6 +30,15 @@ REQUIRED_FILES = {
     "audit/main.tf",
     "audit/outputs.tf",
     "audit/variables.tf",
+    "modules/runtime_foundation/main.tf",
+    "modules/runtime_foundation/variables.tf",
+    "modules/runtime_foundation/outputs.tf",
+    "modules/runtime_foundation/network.tf",
+    "modules/runtime_foundation/kms.tf",
+    "modules/runtime_foundation/database.tf",
+    "bootstrap/main.tf",
+    "bootstrap/variables.tf",
+    "bootstrap/outputs.tf",
 }
 
 REQUIRED_TOKENS = {
@@ -38,14 +48,18 @@ REQUIRED_TOKENS = {
         'source  = "hashicorp/google-beta"',
         'version = "~> 3.6"',
         "ODP_PERSISTENCE",
-        'ODP_REQUIRE_LIVE_DATA',
-        'ODP_EXTERNAL_PROVIDER_MODE',
-        'ODP_AUTH_JWKS_URI',
-        'MLFLOW_TRACKING_URI',
-        'ODP_API_SERVICE_AUDIENCE',
-        'ODP_DATA_BINDING_MODE',
-        'ODP_WEB_BASE_URL',
-        'ODP_WEB_OIDC_CLIENT_ID',
+        "ODP_REQUIRE_LIVE_DATA",
+        "ODP_EXTERNAL_PROVIDER_MODE",
+        "ODP_AUTH_JWKS_URI",
+        "MLFLOW_TRACKING_URI",
+        "ODP_API_SERVICE_AUDIENCE",
+        "ODP_DATA_BINDING_MODE",
+        "ODP_AUTH_MODE",
+        "ODP_AUTH_LOCAL_ISSUER",
+        "ODP_IDENTITY_TOKEN_SIGNING_KEY",
+        "ODP_WEB_BASE_URL",
+        "ODP_WEB_OIDC_CLIENT_ID",
+        '"monitoring.googleapis.com"',
     },
     "checks.tf": {
         'resource "terraform_data" "production_contract"',
@@ -54,44 +68,61 @@ REQUIRED_TOKENS = {
         'check "production_identity_contract"',
         'check "production_model_runtime_contract"',
         'check "production_forbidden_values"',
+        'check "production_monitoring_contract"',
+        "var.monitoring_notification_emails",
+        "var.monitoring_notification_channel_ids",
+        "var.monitoring_api_uptime_host",
+        "var.monitoring_cloud_sql_max_connections",
         "@sha256:[0-9a-f]{64}$",
         "allUsers",
         "allAuthenticatedUsers",
         "var.web_image",
         "var.web_oidc_client_secret_ref",
+        "var.identity_token_signing_key_ref",
         "var.web_invoker_members",
         "var.web_min_instances",
         "required_model_config_env_names",
         "forbidden_production_value_pattern",
     },
     "database.tf": {
-        'database_version    = "POSTGRES_16"',
-        'availability_type           = local.is_prod ? "REGIONAL" : "ZONAL"',
-        "point_in_time_recovery_enabled = true",
-        "backup_retention_settings",
-        "ipv4_enabled",
-        "private_network",
-        "ssl_mode",
-        "encryption_key_name",
-        "deletion_protection = local.is_prod",
         'resource "google_sql_user" "app"',
         'resource "google_secret_manager_secret_version" "database_url"',
+        "module.runtime_foundation.cloud_sql_instance_name",
+    },
+    "monitoring.tf": {
+        'resource "google_monitoring_notification_channel" "email"',
+        'resource "google_monitoring_uptime_check_config" "web_login"',
+        'resource "google_monitoring_uptime_check_config" "api_health"',
+        'resource "google_monitoring_alert_policy" "uptime_failure"',
+        'resource "google_monitoring_alert_policy" "cloud_run_5xx_ratio"',
+        'resource "google_monitoring_alert_policy" "api_latency_p95"',
+        'resource "google_monitoring_alert_policy" "cloud_run_job_failed"',
+        'resource "google_monitoring_alert_policy" "cloud_sql_saturation"',
+        'path           = "/login"',
+        'path           = "/platform/health"',
+        'type = "OIDC_TOKEN"',
+        "monitoring_api_latency_p95_threshold_ms = 3000",
+        "monitoring_5xx_ratio_threshold = 0.05",
+        "run.googleapis.com/request_count",
+        "run.googleapis.com/request_latencies",
+        "run.googleapis.com/job/completed_execution_count",
+        "cloudsql.googleapis.com/database/cpu/utilization",
+        "cloudsql.googleapis.com/database/disk/utilization",
+        "cloudsql.googleapis.com/database/postgresql/num_backends",
+        "monitoring.googleapis.com/uptime_check/check_passed",
+        "notification_channels = local.monitoring_notification_channels",
+        "var.monitoring_notification_channel_ids",
     },
     "network.tf": {
-        'resource "google_compute_network" "runtime"',
-        'resource "google_service_networking_connection" "private_services"',
-        'resource "google_compute_firewall" "deny_all_egress"',
-        'resource "google_compute_firewall" "allow_private_egress"',
-        'resource "google_compute_firewall" "allow_restricted_google_apis"',
-        "private_ip_google_access = true",
+        'module "runtime_foundation"',
+        'source = "./modules/runtime_foundation"',
+        "moved {",
+        "from = google_compute_network.runtime",
+        "from = google_compute_subnetwork.runtime",
+        "from = google_compute_firewall.deny_all_egress",
     },
     "kms.tf": {
-        'resource "google_kms_crypto_key" "runtime"',
-        'rotation_period = "7776000s"',
-        "prevent_destroy = true",
-        "cloud_sql",
-        "pubsub",
-        "gcs",
+        "module.runtime_foundation",
     },
     "storage.tf": {
         'resource "google_storage_bucket" "artifacts"',
@@ -109,30 +140,66 @@ REQUIRED_TOKENS = {
         "allowed_persistence_regions",
     },
     "iam.tf": {
-        'roles/cloudsql.client',
-        'roles/secretmanager.secretAccessor',
-        'roles/storage.objectUser',
+        "roles/cloudsql.client",
+        "roles/secretmanager.secretAccessor",
+        "roles/storage.objectUser",
         'resource "google_service_account" "github_deployer"',
         'resource "google_service_account" "smoke_operator"',
         'resource "google_iam_workload_identity_pool" "github_actions"',
         'resource "google_iam_workload_identity_pool_provider" "odayplus"',
-        'roles/iam.workloadIdentityUser',
-        'roles/iam.serviceAccountTokenCreator',
+        "roles/iam.workloadIdentityUser",
+        "roles/iam.serviceAccountTokenCreator",
     },
     "cloud_run.tf": {
-        'image = var.api_image',
-        'image = var.web_image',
+        "image = var.api_image",
+        "image = var.web_image",
         'resource "google_cloud_run_v2_service" "web"',
         'resource "google_cloud_run_v2_service_iam_member" "web_invokes_api"',
-        'ODP_WEB_SESSION_SECRET',
-        'service_account',
-        'cloud_sql_instance',
+        "ODP_WEB_SESSION_SECRET",
+        "ODP_IDENTITY_TOKEN_SIGNING_KEY",
+        "service_account",
+        "cloud_sql_instance",
         'mount_path = "/cloudsql"',
         'path = "/readiness"',
-        'path = "/healthz"',
-        'secret_key_ref',
+        'path = "/liveness"',
+        "secret_key_ref",
         'egress = "ALL_TRAFFIC"',
-        'INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER',
+        "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER",
+    },
+    "modules/runtime_foundation/network.tf": {
+        'resource "google_compute_network" "runtime"',
+        'resource "google_service_networking_connection" "private_services"',
+        'resource "google_compute_firewall" "deny_all_egress"',
+        'resource "google_compute_firewall" "allow_private_egress"',
+        'resource "google_compute_firewall" "allow_restricted_google_apis"',
+        "private_ip_google_access = true",
+    },
+    "modules/runtime_foundation/kms.tf": {
+        'resource "google_kms_crypto_key" "runtime"',
+        'rotation_period = "7776000s"',
+        "prevent_destroy = true",
+        "cloud_sql",
+        "pubsub",
+        "gcs",
+    },
+    "modules/runtime_foundation/database.tf": {
+        'database_version    = "POSTGRES_16"',
+        'availability_type           = local.is_prod ? "REGIONAL" : "ZONAL"',
+        "point_in_time_recovery_enabled = true",
+        "backup_retention_settings",
+        "ipv4_enabled",
+        "private_network",
+        "ssl_mode",
+        "encryption_key_name",
+        "deletion_protection = var.enable_deletion_protection != null ? var.enable_deletion_protection : local.is_prod",
+    },
+    "bootstrap/main.tf": {
+        'backend "gcs"',
+        'resource "google_storage_bucket" "terraform_state"',
+        'resource "google_kms_crypto_key" "state_backend"',
+        'public_access_prevention    = "enforced"',
+        "versioning",
+        "retention_policy",
     },
 }
 
@@ -219,6 +286,10 @@ def validate(root: Path = ROOT) -> list[str]:
     if "RFC1918" not in variables and "10\\." not in variables:
         errors.append("variables.tf: network_cidr must restrict subnet to RFC1918 private address space")
 
+    mod_variables = texts.get("modules/runtime_foundation/variables.tf", "")
+    if mod_variables and "RFC1918" not in mod_variables and "10\\." not in mod_variables:
+        errors.append("modules/runtime_foundation/variables.tf: network_cidr must restrict subnet to RFC1918 private address space")
+
     outputs = texts.get("outputs.tf", "")
     for forbidden in (
         "random_password.database.result",
@@ -233,8 +304,14 @@ def validate(root: Path = ROOT) -> list[str]:
         if forbidden in outputs:
             errors.append(f"outputs.tf must not expose {forbidden!r}")
 
-    network = texts.get("network.tf", "")
-    errors.extend(validate_egress_contract(network))
+    foundation_network = texts.get("modules/runtime_foundation/network.tf", "")
+    if foundation_network:
+        errors.extend(validate_egress_contract(foundation_network, source_name="modules/runtime_foundation/network.tf"))
+    else:
+        network = texts.get("network.tf", "")
+        errors.extend(validate_egress_contract(network, source_name="network.tf"))
+
+    errors.extend(validate_monitoring_contract(texts))
 
     if not re.search(
         r'ODP_PERSISTENCE\s*=\s*"postgresql"',
@@ -256,13 +333,50 @@ def validate(root: Path = ROOT) -> list[str]:
     return errors
 
 
-def validate_egress_contract(network_text: str) -> list[str]:
+EMAIL_LITERAL = re.compile(r"[A-Za-z0-9._%+-]+@(?!gcp-sa-)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
+
+
+def validate_monitoring_contract(texts: dict[str, str]) -> list[str]:
+    """Alert routing comes from variables, every policy routes to it, and prod fails closed."""
+    errors: list[str] = []
+    monitoring = texts.get("monitoring.tf", "")
+    if EMAIL_LITERAL.search(monitoring):
+        errors.append("monitoring.tf must not hard-code notification email addresses")
+
+    policies = re.findall(
+        r'resource\s+"google_monitoring_alert_policy"\s+"([^"]+)"\s*\{(?P<body>.*?)\n\}',
+        monitoring,
+        re.DOTALL,
+    )
+    for name, body in policies:
+        if "notification_channels = local.monitoring_notification_channels" not in body:
+            errors.append(f"monitoring.tf: alert policy {name!r} must route to local.monitoring_notification_channels")
+
+    variables = texts.get("variables.tf", "")
+    for name in ("monitoring_notification_emails", "monitoring_notification_channel_ids"):
+        match = re.search(rf'variable\s+"{name}"\s*\{{(?P<body>.*?)\n\}}', variables, re.DOTALL)
+        if not match:
+            errors.append(f"variables.tf: missing variable {name!r}")
+        elif not re.search(r"default\s*=\s*\[\]", match.group("body")):
+            errors.append(f"variables.tf: {name} must default to an empty set, not a hard-coded target")
+
+    # Only the lifecycle precondition blocks a plan; check blocks merely warn.
+    contract = texts.get("checks.tf", "").split("\ncheck ", 1)[0]
+    if not re.search(
+        r"!local\.is_prod \|\| \(\s*length\(var\.monitoring_notification_emails\) \+ length\(var\.monitoring_notification_channel_ids\) > 0",
+        contract,
+    ):
+        errors.append("checks.tf: production must fail closed without an alert notification target")
+    return errors
+
+
+def validate_egress_contract(network_text: str, source_name: str = "network.tf") -> list[str]:
     """Computably verify fail-closed egress firewall rules and absence of Cloud NAT."""
     errors: list[str] = []
     if "google_compute_router_nat" in network_text:
-        errors.append("network.tf must not define google_compute_router_nat (Cloud NAT disabled)")
+        errors.append(f"{source_name} must not define google_compute_router_nat (Cloud NAT disabled)")
     if "google_compute_router" in network_text:
-        errors.append("network.tf must not define google_compute_router (Cloud NAT disabled)")
+        errors.append(f"{source_name} must not define google_compute_router (Cloud NAT disabled)")
 
     firewall_pattern = re.compile(
         r'resource\s+"google_compute_firewall"\s+"([^"]+)"\s*\{(?P<body>.*?)\n\}',
@@ -274,16 +388,16 @@ def validate_egress_contract(network_text: str) -> list[str]:
         firewalls[name] = match.group("body")
 
     if "deny_all_egress" not in firewalls:
-        errors.append("network.tf: missing required firewall rule 'deny_all_egress'")
+        errors.append(f"{source_name}: missing required firewall rule 'deny_all_egress'")
     else:
         body = firewalls["deny_all_egress"]
         if not re.search(r'direction\s*=\s*"EGRESS"', body):
             errors.append("deny_all_egress: direction must be EGRESS")
-        if not re.search(r'priority\s*=\s*65534\b', body):
+        if not re.search(r"priority\s*=\s*65534\b", body):
             errors.append("deny_all_egress: priority must be 65534")
         if not re.search(r'deny\s*\{\s*protocol\s*=\s*"all"\s*\}', body):
             errors.append("deny_all_egress: must deny protocol 'all'")
-        dest_match = re.search(r'destination_ranges\s*=\s*\[(.*?)\]', body, re.DOTALL)
+        dest_match = re.search(r"destination_ranges\s*=\s*\[(.*?)\]", body, re.DOTALL)
         if not dest_match:
             errors.append("deny_all_egress: missing destination_ranges")
         else:
@@ -292,16 +406,16 @@ def validate_egress_contract(network_text: str) -> list[str]:
                 errors.append(f"deny_all_egress: destination_ranges must be ['0.0.0.0/0'], got {ranges}")
 
     if "allow_private_egress" not in firewalls:
-        errors.append("network.tf: missing required firewall rule 'allow_private_egress'")
+        errors.append(f"{source_name}: missing required firewall rule 'allow_private_egress'")
     else:
         body = firewalls["allow_private_egress"]
         if not re.search(r'direction\s*=\s*"EGRESS"', body):
             errors.append("allow_private_egress: direction must be EGRESS")
-        if not re.search(r'priority\s*=\s*1000\b', body):
+        if not re.search(r"priority\s*=\s*1000\b", body):
             errors.append("allow_private_egress: priority must be 1000")
         if not re.search(r'allow\s*\{\s*protocol\s*=\s*"all"\s*\}', body):
             errors.append("allow_private_egress: must allow protocol 'all'")
-        dest_match = re.search(r'destination_ranges\s*=\s*\[(.*?)\]', body, re.DOTALL)
+        dest_match = re.search(r"destination_ranges\s*=\s*\[(.*?)\]", body, re.DOTALL)
         if not dest_match:
             errors.append("allow_private_egress: missing destination_ranges")
         else:
@@ -311,23 +425,23 @@ def validate_egress_contract(network_text: str) -> list[str]:
                 errors.append(f"allow_private_egress: destination_ranges contains non-RFC1918 destinations: {ranges - allowed_rfc1918}")
 
     if "allow_restricted_google_apis" not in firewalls:
-        errors.append("network.tf: missing required firewall rule 'allow_restricted_google_apis'")
+        errors.append(f"{source_name}: missing required firewall rule 'allow_restricted_google_apis'")
     else:
         body = firewalls["allow_restricted_google_apis"]
         if not re.search(r'direction\s*=\s*"EGRESS"', body):
             errors.append("allow_restricted_google_apis: direction must be EGRESS")
-        if not re.search(r'priority\s*=\s*1000\b', body):
+        if not re.search(r"priority\s*=\s*1000\b", body):
             errors.append("allow_restricted_google_apis: priority must be 1000")
         if not re.search(r'allow\s*\{[^}]*protocol\s*=\s*"tcp"', body):
             errors.append("allow_restricted_google_apis: must allow protocol 'tcp'")
-        ports_match = re.search(r'ports\s*=\s*\[(.*?)\]', body)
+        ports_match = re.search(r"ports\s*=\s*\[(.*?)\]", body)
         if not ports_match:
             errors.append("allow_restricted_google_apis: missing ports definition")
         else:
             ports = [p.strip().strip('"') for p in ports_match.group(1).split(",") if p.strip()]
             if ports != ["443"]:
                 errors.append(f"allow_restricted_google_apis: ports must be ['443'], got {ports}")
-        dest_match = re.search(r'destination_ranges\s*=\s*\[(.*?)\]', body, re.DOTALL)
+        dest_match = re.search(r"destination_ranges\s*=\s*\[(.*?)\]", body, re.DOTALL)
         if not dest_match:
             errors.append("allow_restricted_google_apis: missing destination_ranges")
         else:
@@ -339,7 +453,7 @@ def validate_egress_contract(network_text: str) -> list[str]:
     known_egress = {"deny_all_egress", "allow_private_egress", "allow_restricted_google_apis"}
     for name, body in firewalls.items():
         if name not in known_egress and re.search(r'direction\s*=\s*"EGRESS"', body):
-            errors.append(f"network.tf: unexpected egress firewall rule {name!r}")
+            errors.append(f"{source_name}: unexpected egress firewall rule {name!r}")
 
     return errors
 

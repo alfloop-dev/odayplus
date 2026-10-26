@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "record_kind": "exact-candidate-ci-reconciliation",
+  "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+  "candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+  "run": {
+    "workflow": "CI",
+    "run_id": 36391745153,
+    "url": "https://github.com/alfloop-dev/odayplus/actions/runs/36391745153",
+    "event": "merge_group",
+    "head_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+    "conclusion": "success"
+  },
+  "orchestrator_and_infrastructure_job": {
+    "conclusion": "success",
+    "test_command": "uv run pytest -m \"not requires_live_env\" .orchestrator delivery_toolchain scripts tests/tooling infra",
+    "summary": "3207 passed, 6 skipped, 10 deselected, 3 warnings, 726 subtests passed in 300.71s"
+  },
+  "change_scope": {
+    "conclusion": "success",
+    "product_child_jobs": "skipped by change-scope",
+    "product_wrapper": "success; does not convert skipped children into product test passes"
+  },
+  "interpretation": {
+    "supports": "Exact-candidate orchestrator and infrastructure test evidence for the merged lease-issuance recovery.",
+    "does_not_attest": [
+      "product lint/unit, database, API contract, product security, product E2E, or performance child jobs",
+      "a Code Gate or Contract Gate registry receipt",
+      "release admission, lease issuance, deploy, or live runtime acceptance"
+    ],
+    "deployment_performed": false,
+    "lease_issued": false
+  }
+}

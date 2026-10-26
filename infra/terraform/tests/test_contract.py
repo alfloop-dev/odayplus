@@ -35,7 +35,7 @@ class TerraformProductionContractTests(unittest.TestCase):
                 destination = copy_root / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-            database = copy_root / "database.tf"
+            database = copy_root / "modules" / "runtime_foundation" / "database.tf"
             database.write_text(
                 database.read_text(encoding="utf-8").replace("POSTGRES_16", "POSTGRES_15"),
                 encoding="utf-8",
@@ -102,7 +102,7 @@ class TerraformProductionContractTests(unittest.TestCase):
                 destination = copy_root / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-            network = copy_root / "network.tf"
+            network = copy_root / "modules" / "runtime_foundation" / "network.tf"
             network.write_text(
                 network.read_text(encoding="utf-8")
                 + '\nresource "google_compute_router_nat" "nat" { name = "nat" }\n',
@@ -119,7 +119,7 @@ class TerraformProductionContractTests(unittest.TestCase):
                 destination = copy_root / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-            network = copy_root / "network.tf"
+            network = copy_root / "modules" / "runtime_foundation" / "network.tf"
             network.write_text(
                 network.read_text(encoding="utf-8").replace("priority  = 65534", "priority  = 100"),
                 encoding="utf-8",
@@ -135,7 +135,7 @@ class TerraformProductionContractTests(unittest.TestCase):
                 destination = copy_root / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-            network = copy_root / "network.tf"
+            network = copy_root / "modules" / "runtime_foundation" / "network.tf"
             network.write_text(
                 network.read_text(encoding="utf-8").replace('"10.0.0.0/8",', '"10.0.0.0/8",\n    "0.0.0.0/0",'),
                 encoding="utf-8",
@@ -151,7 +151,7 @@ class TerraformProductionContractTests(unittest.TestCase):
                 destination = copy_root / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-            network = copy_root / "network.tf"
+            network = copy_root / "modules" / "runtime_foundation" / "network.tf"
             network.write_text(
                 network.read_text(encoding="utf-8").replace('ports    = ["443"]', 'ports    = ["80", "443"]'),
                 encoding="utf-8",
@@ -167,7 +167,7 @@ class TerraformProductionContractTests(unittest.TestCase):
                 destination = copy_root / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-            network = copy_root / "network.tf"
+            network = copy_root / "modules" / "runtime_foundation" / "network.tf"
             network.write_text(
                 network.read_text(encoding="utf-8")
                 + '\nresource "google_compute_firewall" "allow_all" {\n  name = "allow-all"\n  direction = "EGRESS"\n  priority = 10\n  allow { protocol = "all" }\n}\n',
@@ -232,6 +232,115 @@ class TerraformProductionContractTests(unittest.TestCase):
         public_cidrs = ["8.8.8.0/24", "1.1.1.0/24", "172.15.0.0/16", "172.32.0.0/16", "192.169.0.0/16", "203.0.113.0/24"]
         for cidr in public_cidrs:
             self.assertFalse(bool(pattern.match(cidr)), f"{cidr} must NOT match RFC1918 pattern")
+
+    def test_moved_blocks_cover_all_extracted_foundation_resources(self) -> None:
+        network_tf = (ROOT / "network.tf").read_text(encoding="utf-8")
+        expected_moved_targets = [
+            "google_compute_network.runtime",
+            "google_compute_subnetwork.runtime",
+            "google_compute_subnetwork_iam_member.runtime_network_user",
+            "google_compute_subnetwork_iam_member.web_network_user",
+            "google_compute_global_address.private_services",
+            "google_service_networking_connection.private_services",
+            "google_compute_firewall.deny_all_egress",
+            "google_compute_firewall.allow_private_egress",
+            "google_compute_firewall.allow_restricted_google_apis",
+            "google_kms_key_ring.runtime",
+            "google_kms_crypto_key.runtime",
+            "google_project_service_identity.cloud_sql",
+            "google_project_service_identity.pubsub",
+            "google_kms_crypto_key_iam_member.cloud_sql",
+            "google_kms_crypto_key_iam_member.gcs",
+            "google_kms_crypto_key_iam_member.pubsub",
+            "google_sql_database_instance.primary",
+        ]
+        for target in expected_moved_targets:
+            self.assertIn(f"from = {target}", network_tf, f"Missing moved block for {target}")
+        self.assertIn(
+            'to   = module.runtime_foundation.google_compute_subnetwork_iam_member.network_users["runtime"]',
+            network_tf,
+        )
+        self.assertIn(
+            'to   = module.runtime_foundation.google_compute_subnetwork_iam_member.network_users["web"]',
+            network_tf,
+        )
+        for target in expected_moved_targets[4:]:
+            self.assertIn(f"to   = module.runtime_foundation.{target}", network_tf)
+
+    def test_foundation_subnet_iam_uses_managed_staging_identities(self) -> None:
+        network_tf = (ROOT / "network.tf").read_text(encoding="utf-8")
+
+        self.assertIn(
+            'runtime = "serviceAccount:${google_service_account.runtime.email}"',
+            network_tf,
+        )
+        self.assertIn(
+            'web     = "serviceAccount:${google_service_account.web.email}"',
+            network_tf,
+        )
+        self.assertIn("google_service_account.runtime,", network_tf)
+        self.assertIn("google_service_account.web,", network_tf)
+        self.assertIn(
+            'enable_deletion_protection = local.is_prod || var.environment == "staging"',
+            network_tf,
+        )
+
+    def _errors_after_replacing(self, relative: str, old: str, new: str) -> list[str]:
+        with tempfile.TemporaryDirectory() as directory:
+            copy_root = Path(directory)
+            for path in validator.REQUIRED_FILES:
+                destination = copy_root / path
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_text((ROOT / path).read_text(encoding="utf-8"), encoding="utf-8")
+            target = copy_root / relative
+            text = target.read_text(encoding="utf-8")
+            self.assertIn(old, text)
+            target.write_text(text.replace(old, new, 1), encoding="utf-8")
+            return validator.validate(copy_root)
+
+    def test_monitoring_api_must_be_enabled(self) -> None:
+        errors = self._errors_after_replacing("main.tf", '    "monitoring.googleapis.com",\n', "")
+        self.assertTrue(any("monitoring.googleapis.com" in error for error in errors))
+
+    def test_hard_coded_notification_email_is_rejected(self) -> None:
+        errors = self._errors_after_replacing(
+            "monitoring.tf",
+            "email_address = each.value",
+            'email_address = "alerts@ops.invalid"',
+        )
+        self.assertTrue(any("hard-code notification email" in error for error in errors))
+
+    def test_notification_email_default_must_be_empty(self) -> None:
+        errors = self._errors_after_replacing(
+            "variables.tf",
+            'Production requires this or monitoring_notification_channel_ids."\n  default     = []',
+            'Production requires this or monitoring_notification_channel_ids."\n  default     = ["alerts@ops.invalid"]',
+        )
+        self.assertTrue(any("monitoring_notification_emails must default" in error for error in errors))
+
+    def test_alert_policy_without_notification_channels_is_rejected(self) -> None:
+        errors = self._errors_after_replacing(
+            "monitoring.tf",
+            "  notification_channels = local.monitoring_notification_channels\n",
+            "",
+        )
+        self.assertTrue(any("must route to local.monitoring_notification_channels" in error for error in errors))
+
+    def test_production_monitoring_precondition_is_required(self) -> None:
+        errors = self._errors_after_replacing(
+            "checks.tf",
+            "length(var.monitoring_notification_emails) + length(var.monitoring_notification_channel_ids) > 0\n        &&",
+            "true\n        &&",
+        )
+        self.assertTrue(any("fail closed without an alert notification target" in error for error in errors))
+
+    def test_ratified_api_latency_threshold_is_asserted(self) -> None:
+        errors = self._errors_after_replacing(
+            "monitoring.tf",
+            "monitoring_api_latency_p95_threshold_ms = 3000",
+            "monitoring_api_latency_p95_threshold_ms = 5000",
+        )
+        self.assertTrue(any("monitoring_api_latency_p95_threshold_ms = 3000" in error for error in errors))
 
 
 if __name__ == "__main__":

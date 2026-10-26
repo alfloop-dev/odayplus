@@ -19,7 +19,7 @@ export type HeatZoneScore = {
   cannibalization_risk_score: number;
   rent_feasibility_score: number;
   listing_availability_score: number;
-  confidence: number;
+  confidence: number | null;
   state: HeatZoneState;
   feature_snapshot_time: string;
   prediction_origin_time: string;
@@ -43,7 +43,7 @@ export type HeatZoneMapProperties = {
   cannibalization_risk: number;
   rent_feasibility: number;
   listing_availability: number;
-  confidence: number;
+  confidence: number | null;
   status: HeatZoneState;
   last_scored_at: string;
   model_version: string;

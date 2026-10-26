@@ -79,10 +79,26 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         # Admin manages configuration but does not get blanket business-data
         # visibility (ODP-SA-04 §3 ROLE-ADMIN limitation).
     ),
+    # The console aggregates StoreOps/Growth/Governance under operator_console.
+    # Network reads use the operator-only operator_network resource, accepted
+    # solely by Operator Console routes that project verified tenant/object
+    # scope. Never grant the general listing/sitescore/heatzone domain
+    # resources here: those routers are RBAC-only and not scope-filtered.
+    # Keep this finite: no export, wildcard, administration or mutation.
+    Role.OPERATOR_VIEWER: frozenset(
+        _grant("operator_console", Action.VIEW)
+        | _grant("operator_network", Action.VIEW)
+    ),
     Role.ARCHITECTURE_OWNER: frozenset(_grant("audit", Action.VIEW)),
     Role.DATA_OWNER: frozenset(
         _grant("integration", Action.VIEW, Action.CREATE, Action.UPDATE)
         | _grant("data_quality", Action.VIEW, Action.UPDATE, Action.OVERRIDE)
+        | _grant("data", Action.APPROVE)
+        # Recording HZ-004 absorption outcomes is a pipeline write, and it is
+        # deliberately not granted to the roles that decide merges and splits:
+        # merge/split is judged against this history, so whoever can approve a
+        # composition must not be able to write the evidence for it.
+        | _grant("heatzone_absorption", Action.VIEW, Action.CREATE)
         | _grant("audit", Action.VIEW)
     ),
     Role.MODEL_OWNER: frozenset(
@@ -101,13 +117,17 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     ),
     Role.EXPANSION_USER: frozenset(
         _grant("operator_console", Action.VIEW)
-        | _grant("heatzone", Action.VIEW, Action.CREATE)
+        # Preliminary planning intent has its own finite permission. It does
+        # not grant native NetPlan create/solve/approve/execute authority.
+        | _grant("netplan_area_draft", Action.VIEW, Action.CREATE, Action.UPDATE)
+        | _grant("heatzone", Action.VIEW, Action.CREATE, Action.OVERRIDE, Action.ROLLBACK)
         | _grant("listing", Action.VIEW, Action.CREATE, Action.UPDATE)
         | _grant("sitescore", Action.VIEW, Action.EXECUTE)
     ),
     Role.SITE_REVIEWER: frozenset(
         _grant("operator_console", Action.VIEW)
-        | _grant("heatzone", Action.VIEW)
+        | _grant("netplan_area_draft", Action.VIEW, Action.CREATE, Action.UPDATE)
+        | _grant("heatzone", Action.VIEW, Action.OVERRIDE, Action.ROLLBACK)
         | _grant("listing", Action.VIEW, Action.CREATE)
         | _grant("sitescore", Action.VIEW, Action.EXECUTE, Action.APPROVE, Action.OVERRIDE)
     ),
@@ -151,8 +171,9 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     ),
     Role.EXECUTIVE: frozenset(
         _grant("operator_console", Action.VIEW)
+        | _grant("netplan_area_draft", Action.VIEW, Action.CREATE, Action.UPDATE)
         | _grant("netplan", Action.VIEW, Action.APPROVE, Action.CREATE, Action.EXECUTE)
-        | _grant("heatzone", Action.VIEW, Action.APPROVE)
+        | _grant("heatzone", Action.VIEW, Action.APPROVE, Action.OVERRIDE, Action.ROLLBACK)
         | _grant("sitescore", Action.VIEW, Action.APPROVE)
         | _grant("audit", Action.VIEW)
     ),
@@ -167,6 +188,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     ),
     Role.AUDITOR: frozenset(
         _grant("operator_console", Action.VIEW)
+        | _grant("avm", Action.VIEW)
         | _grant("listing", Action.VIEW)
         | _grant("audit", Action.VIEW, Action.EXPORT)
         | _grant("model", Action.VIEW)
@@ -189,6 +211,8 @@ def rbac_allows(principal: Principal, resource: str, action: Action) -> bool:
     """True if any of the principal's roles grant ``action`` on ``resource``."""
 
     if not principal.authenticated:
+        return False
+    if principal.has_role(Role.OPERATOR_VIEWER) and not principal.tenant_id:
         return False
     for permission in permissions_for(principal.roles):
         if permission.matches(resource, action):

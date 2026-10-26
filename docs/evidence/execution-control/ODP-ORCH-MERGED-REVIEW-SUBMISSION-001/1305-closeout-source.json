@@ -1,0 +1,10 @@
+{
+  "base_sha": "749e740a1ed2cd10bffa56cad0dcf3ddbf93983f",
+  "files": {
+    "scripts/ai_status.py": "ce7045162bbd226c6ee2bc0c96343033cf4c77c97302d249d9407f5ef78f9fb0",
+    "scripts/test_ai_status.py": "87a5cf6f6624a31d78f1f745a672a5ac7639159f17107103ef4cb8ff83e36b34",
+    ".orchestrator/worker_workspace.py": "dc4b45a02923f5d4b02f6567433195706f2ba2f23cd0f745dec9f038a3b27ab7",
+    ".orchestrator/test_supervisor.py": "68c85b741039cd758b639aead05a93c3ad05ec4f722c96fa60d05a5347dd6402"
+  },
+  "scope": "development tooling; owner-only merged delivery closeout, transport failure cache and committed detached work preservation"
+}

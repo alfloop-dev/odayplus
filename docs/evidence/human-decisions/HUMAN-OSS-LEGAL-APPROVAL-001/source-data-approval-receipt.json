@@ -1,0 +1,285 @@
+{
+  "approval_reference": "HUMAN-OSS-LEGAL-APPROVAL-001/source-data-approval-20261006",
+  "approved_by": {
+    "display_name": "蔡尚志",
+    "github_login": "ajoe734",
+    "principal_id": "github:169176954",
+    "role": "負責人"
+  },
+  "conditions": [
+    "逐欄分類以 classification-review.md 審閱版本為準（照草稿接受）；分類目前無遮蔽強制效果，另開工作讓 runner 依分類遮蔽或拒存 RESTRICTED 欄位",
+    "標示「尚無 adapter」或「啟用前須改程式」的來源，在對應程式完成並審查前不得啟用",
+    "條款變更、來源新增欄位或改接其他供應者時，須重新審閱"
+  ],
+  "decision": "approved_with_conditions",
+  "decisions": {
+    "license_policy": "not decided in this receipt (OSS licence exemptions remain with ODP-OSS-LICENSE-EXEMPTION-REGISTER-001)",
+    "per_source_data_approvals": [
+      {
+        "approved_datasets": [
+          "中央氣象署即時氣象觀測",
+          "災害警示"
+        ],
+        "approved_usage": "dev 環境有界擷取與 EMGI raw 保存（技術稽核），以及 production 排程自動更新；用於選址、商圈與風險分析",
+        "conditions": [
+          "政府資料開放授權條款第1版（OGDL-Taiwan-1.0）：須標示出處",
+          "須使用 CWA_API_KEY，遵守 CWA API 流量限制"
+        ],
+        "disposition": "ALLOW_WITH_OBLIGATIONS",
+        "policy_source_id": "cwa",
+        "source_id": "CWA",
+        "source_owner": "蔡尚志（負責人）"
+      },
+      {
+        "approved_datasets": [
+          "TDX 停車供給與即時剩餘車位",
+          "道路與公車動態"
+        ],
+        "approved_usage": "dev 環境有界擷取與 EMGI raw 保存（技術稽核），以及 production 排程自動更新；用於選址、商圈與風險分析",
+        "conditions": [
+          "政府資料開放授權條款第1版（OGDL-Taiwan-1.0）：須標示出處",
+          "須使用 TDX OAuth 憑證，遵守 TDX 會員條款與流量限制"
+        ],
+        "disposition": "ALLOW_WITH_OBLIGATIONS",
+        "policy_source_id": "tdx",
+        "source_id": "TDX",
+        "source_owner": "蔡尚志（負責人）"
+      },
+      {
+        "approved_datasets": [
+          "政府公開公告與市場事件候選"
+        ],
+        "approved_usage": "dev 環境有界擷取與 EMGI raw 保存（技術稽核），以及 production 排程自動更新；用於選址、商圈與風險分析",
+        "conditions": [
+          "政府資料開放授權條款第1版（OGDL-Taiwan-1.0）：須標示出處",
+          "僅限公開公告來源；目前尚無 adapter，接線完成前不得啟用"
+        ],
+        "disposition": "ALLOW_WITH_OBLIGATIONS",
+        "policy_source_id": "market_events",
+        "source_id": "MARKET_EVENTS",
+        "source_owner": "蔡尚志（負責人）"
+      },
+      {
+        "approved_datasets": [
+          "財政部營業（稅籍）登記公開資料 businessRegistration"
+        ],
+        "approved_usage": "dev 環境有界擷取與 EMGI raw 保存（技術稽核），以及 production 排程自動更新；用於選址、商圈與風險分析",
+        "conditions": [
+          "政府資料開放授權條款第1版（OGDL-Taiwan-1.0）：須標示出處",
+          "負責人姓名等自然人欄位分類為 RESTRICTED"
+        ],
+        "disposition": "ALLOW_WITH_OBLIGATIONS",
+        "policy_source_id": "mof_business",
+        "source_id": "MOF",
+        "source_owner": "蔡尚志（負責人）"
+      },
+      {
+        "approved_datasets": [
+          "OpenStreetMap 臺灣道路與步行路網（釘選 release 物件）"
+        ],
+        "approved_usage": "dev 環境有界擷取與 EMGI raw 保存（技術稽核），以及 production 排程自動更新；用於選址、商圈與風險分析",
+        "conditions": [
+          "ODbL-1.0：須標示 © OpenStreetMap contributors",
+          "衍生資料庫若對外散布須依 ODbL share-alike 提供"
+        ],
+        "disposition": "ALLOW_WITH_OBLIGATIONS",
+        "policy_source_id": "osm",
+        "source_id": "OSM",
+        "source_owner": "蔡尚志（負責人）"
+      },
+      {
+        "approved_datasets": [
+          "內政部不動產租賃實價登錄批次資料"
+        ],
+        "approved_usage": "dev 環境有界擷取與 EMGI raw 保存（技術稽核），以及 production 排程自動更新；用於選址、商圈與風險分析",
+        "conditions": [
+          "政府資料開放授權條款第1版（OGDL-Taiwan-1.0）：須標示出處",
+          "門牌區段與備註欄位分類為 INTERNAL"
+        ],
+        "disposition": "ALLOW_WITH_OBLIGATIONS",
+        "policy_source_id": "moi_rental",
+        "source_id": "MOI_RENTAL",
+        "source_owner": "蔡尚志（負責人）"
+      },
+      {
+        "approved_datasets": [
+          "戶政司村里人口與戶數統計（ODRP014）"
+        ],
+        "approved_usage": "dev 環境有界擷取與 EMGI raw 保存（技術稽核），以及 production 排程自動更新；用於選址、商圈與風險分析",
+        "conditions": [
+          "政府資料開放授權條款第1版（OGDL-Taiwan-1.0）：須標示出處"
+        ],
+        "disposition": "ALLOW_WITH_OBLIGATIONS",
+        "policy_source_id": "ris_population",
+        "source_id": "RIS",
+        "source_owner": "蔡尚志（負責人）"
+      },
+      {
+        "approved_datasets": [
+          "國土測繪中心行政界線與地段資料（官方 ZIP / 註冊資料）"
+        ],
+        "approved_usage": "dev 環境有界擷取與 EMGI raw 保存（技術稽核），以及 production 排程自動更新；用於選址、商圈與風險分析",
+        "conditions": [
+          "政府資料開放授權條款第1版（OGDL-Taiwan-1.0）：須標示出處"
+        ],
+        "disposition": "ALLOW_WITH_OBLIGATIONS",
+        "policy_source_id": "nlsc_boundary",
+        "source_id": "NLSC",
+        "source_owner": "蔡尚志（負責人）"
+      },
+      {
+        "approved_datasets": [
+          "Overture Maps Places release"
+        ],
+        "approved_usage": "dev 環境有界擷取與 EMGI raw 保存（技術稽核），以及 production 排程自動更新；用於選址、商圈與風險分析",
+        "conditions": [
+          "CDLA-Permissive-2.0 / ODbL 混合授權：須標示出處",
+          "ODbL 來源衍生資料庫若對外散布須依 share-alike 提供（核准者已了解此義務）",
+          "phones、emails、socials 分類為 RESTRICTED"
+        ],
+        "disposition": "ALLOW_WITH_OBLIGATIONS",
+        "policy_source_id": "overture",
+        "source_id": "OVERTURE",
+        "source_owner": "蔡尚志（負責人）"
+      },
+      {
+        "approved_datasets": [
+          "Foursquare Open Source Places（Apache-2.0 開放資料集）"
+        ],
+        "approved_usage": "dev 環境有界擷取與 EMGI raw 保存（技術稽核），以及 production 排程自動更新；用於選址、商圈與風險分析",
+        "conditions": [
+          "Apache-2.0：須保留授權與 NOTICE 標示",
+          "僅限開放資料集；不含付費 Foursquare Places API"
+        ],
+        "disposition": "ALLOW_WITH_OBLIGATIONS",
+        "policy_source_id": "foursquare",
+        "source_id": "FOURSQUARE",
+        "source_owner": "蔡尚志（負責人）"
+      },
+      {
+        "approved_datasets": [
+          "各品牌官網門市定位頁或 feed"
+        ],
+        "approved_usage": "dev 環境有界擷取與 EMGI raw 保存（技術稽核），以及 production 排程自動更新；用於選址、商圈與風險分析",
+        "conditions": [
+          "須遵守各網站 robots.txt",
+          "低頻率（每週）擷取",
+          "核准者已了解各品牌網站使用條款可能限制擷取之第三方風險，仍予核准",
+          "目前尚無 adapter，接線完成前不得啟用"
+        ],
+        "disposition": "ALLOW_WITH_OBLIGATIONS",
+        "policy_source_id": "brand_locators",
+        "source_id": "BRAND_STORE_LOCATOR",
+        "source_owner": "蔡尚志（負責人）"
+      },
+      {
+        "approved_datasets": [
+          "TGOS 地址地理編碼 API"
+        ],
+        "approved_usage": "dev 環境有界擷取與 EMGI raw 保存（技術稽核），以及 production 排程自動更新；用於選址、商圈與風險分析",
+        "conditions": [
+          "政府資料開放授權條款第1版（OGDL-Taiwan-1.0）：須標示出處",
+          "僅於新增或變更地址時查詢，不得固定輪詢"
+        ],
+        "disposition": "ALLOW_WITH_OBLIGATIONS",
+        "policy_source_id": "tgos",
+        "source_id": "TGOS",
+        "source_owner": "蔡尚志（負責人）"
+      },
+      {
+        "approved_datasets": [
+          "Google Places API 候選點逐筆驗證"
+        ],
+        "approved_usage": "dev 環境有界擷取與 EMGI raw 保存（技術稽核），以及 production 排程自動更新；用於選址、商圈與風險分析",
+        "conditions": [
+          "僅限選址候選點逐筆即時驗證，禁止全量或週期抓取",
+          "不得保存原始回應（Google Maps Platform 條款），僅可保存 place ID 與驗證結論",
+          "啟用前必須先完成程式修改，關閉 raw 保存與快取",
+          "須有 Google Maps Platform 帳單帳戶與預算上限"
+        ],
+        "disposition": "ALLOW_WITH_OBLIGATIONS",
+        "policy_source_id": "google_places_verifier",
+        "source_id": "GOOGLE_PLACES",
+        "source_owner": "蔡尚志（負責人）"
+      },
+      {
+        "approved_datasets": [
+          "房源資料（runner lane fnp）"
+        ],
+        "approved_usage": "dev 環境有界擷取與 EMGI raw 保存（技術稽核），以及 production 排程自動更新；用於選址、商圈與風險分析",
+        "conditions": [
+          "核准者決定在無供應合約的情況下核准，並了解相關風險",
+          "商業欄位與個資欄位依分類表處理"
+        ],
+        "disposition": "ALLOW_WITH_OBLIGATIONS",
+        "policy_source_id": "listings",
+        "source_id": "LISTINGS",
+        "source_owner": "蔡尚志（負責人）"
+      },
+      {
+        "approved_datasets": [
+          "臺北捷運各站分時進出量（runner lane trtc，OGDL 開放彙總資料）"
+        ],
+        "approved_usage": "dev 環境有界擷取與 EMGI raw 保存（技術稽核），以及 production 排程自動更新；用於選址、商圈與風險分析",
+        "conditions": [
+          "政府資料開放授權條款第1版（OGDL-Taiwan-1.0）：須標示出處",
+          "若改接其他專有移動資料供應者，須另行核准"
+        ],
+        "disposition": "ALLOW_WITH_OBLIGATIONS",
+        "policy_source_id": "mobility",
+        "source_id": "MOBILITY",
+        "source_owner": "蔡尚志（負責人）"
+      },
+      {
+        "approved_datasets": [
+          "公司自有現場調查提交與審核紀錄"
+        ],
+        "approved_usage": "dev 環境有界擷取與 EMGI raw 保存（技術稽核），以及 production 排程自動更新；用於選址、商圈與風險分析",
+        "conditions": [
+          "第一方資料；調查員身分與自由文字欄位分類為 RESTRICTED"
+        ],
+        "disposition": "ALLOW_WITH_OBLIGATIONS",
+        "policy_source_id": "survey",
+        "source_id": "SURVEY",
+        "source_owner": "蔡尚志（負責人）"
+      }
+    ]
+  },
+  "evidence": {
+    "classification_review_sha256": "e702b8c07073a6b1df9afcdb1a142f32d18a66bf16bf1bddfe123b48aa7779aa",
+    "source_cards_ref": "origin/dev 9d988f8a docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/source-decision-cards.json",
+    "source_cards_sha256": "adffb4c4f9f4541841a56ade2c8dae1827a2c96e86f09fa4004976086b89fac0"
+  },
+  "expires_at": "2028-10-06T00:00:00Z",
+  "issued_at": "2026-10-06T02:34:41Z",
+  "rationale": "負責人逐一審閱 16 個外部資料來源的授權條款、用途與風險後，具名核准 dev 有界擷取／保存與 production 自動更新，各來源附條件如上。",
+  "receipt_type": "source_data_approval",
+  "related_tasks": [
+    "DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001",
+    "XR-SOURCE-APPROVAL-ACTIVATION-001"
+  ],
+  "review_at": "2027-10-06T00:00:00Z",
+  "revocation": {
+    "method": "負責人於同一 GitHub issue 留言撤銷或關閉並標註 revoked；撤銷後清空對應 ODAY_SOURCE_*_APPROVAL_RECEIPT_SHA256 與 ENABLED",
+    "reopen_triggers": [
+      "來源條款變更",
+      "新增資料欄位",
+      "更換供應者",
+      "到期或複審日"
+    ]
+  },
+  "schema_version": "1.0.0",
+  "scope": {
+    "applicable_releases": [
+      "all releases until expires_at or revocation"
+    ],
+    "environment": [
+      "dev",
+      "prod"
+    ]
+  },
+  "source_system": "GitHub issue in alfloop-dev/odayplus authored by ajoe734; readback via gh issue view",
+  "status": "active",
+  "task_id": "HUMAN-OSS-LEGAL-APPROVAL-001",
+  "template_ref": "docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/unsigned-receipt-template.json (decisions.per_source_data_approvals)"
+}

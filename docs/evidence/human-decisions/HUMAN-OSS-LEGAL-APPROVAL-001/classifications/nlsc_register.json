@@ -1,0 +1,100 @@
+{
+  "authority_reference": {
+    "issued_by": "蔡尚志 (負責人)",
+    "reference": "HUMAN-OSS-LEGAL-APPROVAL-001 source-data approval receipt sha256:2119dc6f74335d3a1884e0a0dfda6db61171df0542c46371c1719c26204d83c7 (alfloop-dev/odayplus#1418, authored by ajoe734)",
+    "scope": "raw field classification of source lane 'nlsc_register', accepted as reviewed in classification-review.md"
+  },
+  "classification_digest": "fb8d29ac722d29c24ea41f84387bbd4018f51c35b4aebc0ab01e27e71634ea67",
+  "contract_id": "emgi.source.nlsc-admin-code.v1",
+  "fields": {
+    "admin_code": {
+      "basis": "行政區代碼公開資料正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "admin_level": {
+      "basis": "行政區代碼公開資料正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "admin_name": {
+      "basis": "行政區代碼公開資料正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "legacy_code": {
+      "basis": "行政區代碼公開資料正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "observed_at": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "parent_code": {
+      "basis": "行政區代碼公開資料正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "release_key": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    }
+  },
+  "provider_id": "provider.moi.nlsc",
+  "raw_source_fields": {
+    "admin_code": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；行政區代碼公開資料",
+      "classification": "PUBLIC"
+    },
+    "admin_level": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；行政區代碼公開資料",
+      "classification": "PUBLIC"
+    },
+    "citycode": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；行政區代碼公開資料",
+      "classification": "PUBLIC"
+    },
+    "cityname": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；行政區代碼公開資料",
+      "classification": "PUBLIC"
+    },
+    "cityno": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；行政區代碼公開資料",
+      "classification": "PUBLIC"
+    },
+    "county_code": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；行政區代碼公開資料",
+      "classification": "PUBLIC"
+    },
+    "county_name": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；行政區代碼公開資料",
+      "classification": "PUBLIC"
+    },
+    "countycode": {
+      "basis": "國土測繪中心 ListCounty（parse_county_register 讀取的實際鍵）；行政區代碼公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "countycode01": {
+      "basis": "國土測繪中心 ListCounty（parse_county_register 讀取的實際鍵）；行政區代碼公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "countyname": {
+      "basis": "國土測繪中心 ListCounty（parse_county_register 讀取的實際鍵）；行政區代碼公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "district_code": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；行政區代碼公開資料",
+      "classification": "PUBLIC"
+    },
+    "district_name": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；行政區代碼公開資料",
+      "classification": "PUBLIC"
+    }
+  },
+  "schema": "emgi.raw-field-classification.v1",
+  "schema_sha256": "fcce035d0a8d31cfd2368ce250fe8c17c5b5d1f828a069a162fc183a9da4a3b9",
+  "source": "nlsc_register",
+  "source_version_binding": {
+    "classification_policy": "AUTHORITY_ARTIFACT_REQUIRED",
+    "drafted_against": "origin/dev 24c40ae75e5759a47a21566f4dccfa15d5d38386",
+    "drafted_at": "2026-10-06",
+    "policy_source_id": "nlsc_boundary",
+    "record_model": "NLSCAdminCodeRecord"
+  }
+}
