@@ -28,6 +28,8 @@ from modules.listing.domain.intake_states import (
     AssignmentAggregate,
     AssignmentState,
     AssignmentStateMachine,
+    DenialCode,
+    DomainValidationError,
     PrincipalRole,
     TransitionContext,
 )
@@ -65,6 +67,36 @@ def authorize_assignment_read(store: Any, record: Mapping[str, Any], policy: Any
     if scope != intake["scope"]:
         raise IntakeWorkflowUnavailable("Provider changed the authorized assignment scope")
     return intake, sla, schedule
+
+
+def authorize_initial_assignment(
+    store: Any, record: Mapping[str, Any], policy: Any, *, actor_id: str,
+    target: Mapping[str, Any],
+):
+    """Recheck current target/policy authority before replay and fresh mutation.
+
+    A prior receipt may survive later workflow transitions. State/version changes
+    therefore belong to the fresh command, rather than this authorization read.
+    """
+    if policy is None:
+        raise IntakeWorkflowUnavailable("Assignment registry is unavailable")
+    intake, sla, schedule = assignment_workflow(store, record)
+    scope = deepcopy(intake["scope"])
+    plan = policy.resolve_assignment(
+        scope, schedule, actor_id=actor_id,
+        owner_subject_id=target["owner_subject_id"], owner_role=target["owner_role"],
+        requested_due_at=datetime.fromisoformat(target["due_at"].replace("Z", "+00:00")),
+        reason=target["reason"],
+    )
+    if not isinstance(plan, IntakeWorkflowPlan) or scope != intake["scope"] or (
+        plan.schedule.tenant_id, plan.schedule.started_at,
+        plan.schedule.policy_version, plan.schedule.calendar_version,
+    ) != (
+        schedule.tenant_id, schedule.started_at,
+        schedule.policy_version, schedule.calendar_version,
+    ):
+        raise IntakeWorkflowUnavailable("Assignment changed the authoritative workflow binding")
+    return intake, sla, plan
 
 
 def list_assignment_transfer_targets(
@@ -109,23 +141,33 @@ def change_assignment(
     UUID(correlation_id)
     if not reason.strip() or current_time.utcoffset() is None:
         raise ValueError("Assignment reason and timezone-aware service clock are required")
-    intake, sla, schedule = authorize_assignment_read(store, record, policy, actor_id)
+    if action == "assign":
+        if target is None:
+            raise ValueError("Initial Assignment requires an authorized target")
+        intake, sla, plan = authorize_initial_assignment(
+            store, record, policy, actor_id=actor_id, target=target,
+        )
+        schedule = plan.schedule
+    else:
+        intake, sla, schedule = authorize_assignment_read(store, record, policy, actor_id)
     before, prior_sla = deepcopy(dict(record)), deepcopy(sla)
     scope = deepcopy(intake["scope"])
-    policy.authorize_assignment_action(
-        schedule,
-        scope,
-        actor_id=actor_id,
-        owner_subject_id=before["owner_subject_id"],
-        owner_role=before["owner_role"],
-        action=action,
-    )
+    if action != "assign":
+        policy.authorize_assignment_action(
+            schedule,
+            scope,
+            actor_id=actor_id,
+            owner_subject_id=before["owner_subject_id"],
+            owner_role=before["owner_role"],
+            action=action,
+        )
     aggregate = AssignmentAggregate(
         id=before["assignment_id"],
         tenant_id=before["tenant_id"],
         status=AssignmentState(before["status"]),
         version=before["version"],
-        assignee_id=str(UUID(before["owner_subject_id"])),
+        assignee_id=(str(UUID(before["owner_subject_id"]))
+                     if before["owner_subject_id"] is not None else None),
         owner_id=before.get("claimed_by"),
         due_at=schedule.due_at,
     )
@@ -142,7 +184,16 @@ def change_assignment(
     updated = deepcopy(before)
     transitions = []
     proofs = []
-    if action == "claim":
+    if action == "assign":
+        if aggregate.status != AssignmentState.UNASSIGNED or sla["state"] in {
+            "PAUSED", "COMPLETED", "BREACHED",
+        }:
+            raise DomainValidationError(DenialCode.WORKFLOW_STATE_DENIED, "Initial Assignment is unavailable")
+        service.assign_task(aggregate.id, str(UUID(target["owner_subject_id"])), schedule.due_at, context)
+        updated.update({"owner_subject_id": aggregate.assignee_id,
+                        "owner_role": target["owner_role"], "queue_key": plan.queue_key})
+        transitions.append(("assignment.assign", "assignment.assigned", aggregate.status.value, aggregate.version))
+    elif action == "claim":
         if aggregate.status == AssignmentState.TRANSFERRED:
             service.accept_transfer(aggregate.id, context)
             transitions.append(
@@ -329,7 +380,7 @@ def change_assignment(
         )
         updated, last = checkpoint, checkpoint
     new_sla = deepcopy(sla)
-    if action in {"transfer", "complete"}:
+    if action in {"assign", "transfer", "complete"}:
         new_sla.update(
             {
                 "version": sla["version"] + 1,
@@ -371,7 +422,8 @@ def change_assignment(
             resource_type="sla_instance",
             before=prior_sla,
             after=new_sla,
-            action="sla.complete" if action == "complete" else "sla.transfer_schedule",
+            action=("sla.complete" if action == "complete" else
+                    "sla.schedule_resolved" if action == "assign" else "sla.transfer_schedule"),
             actor_id=str(UUID(actor_id)),
         )
         enqueue_workflow_event(

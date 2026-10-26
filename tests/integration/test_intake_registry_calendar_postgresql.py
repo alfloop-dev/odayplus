@@ -432,19 +432,21 @@ def test_assignment_transitions_and_sla_completion_are_durable_atomic_and_replay
         )
         assert submitted.status_code == 202, submitted.text
         iid = submitted.json()["intake_id"]
-        assigned = client.put(
-            f"/api/v1/intakes/{iid}/assignment",
-            json={
+        assignment_body = {
                 "owner_subject_id": OWNER,
                 "owner_role": "expansion-staff",
                 "due_at": "2026-10-13T02:30:00Z",
                 "reason": "Synthetic SQL assignment",
-            },
-            headers={
+            }
+        assignment_headers = {
                 **headers(MANAGER),
                 "Idempotency-Key": "synthetic-pg-assign",
                 "If-Match": 'W/"1"',
-            },
+            }
+        assigned = client.put(
+            f"/api/v1/intakes/{iid}/assignment",
+            json=assignment_body,
+            headers=assignment_headers,
         )
         assert assigned.status_code == 200, assigned.text
         aid = assigned.json()["assignment_id"]
@@ -467,6 +469,29 @@ def test_assignment_transitions_and_sla_completion_are_durable_atomic_and_replay
         store.refresh(TENANT)
         assert store.assignments[aid]["status"] == "CLAIMED"
         assert claimed.json()["audit_event_id"] in store.workflow_audits
+        if failure is None:
+            # A restart and later claim retain the original receipt, while
+            # current SQL target authorization still governs access to it.
+            fields = ("intakes", "assignments", "slas", "workflow_audits", "workflow_outbox", "replays")
+            before_replay = deepcopy(tuple(getattr(store, field) for field in fields))
+            replayed = client.put(
+                f"/api/v1/intakes/{iid}/assignment",
+                json=assignment_body, headers=assignment_headers,
+            )
+            assert replayed.status_code == 200, replayed.text
+            assert replayed.json() == assigned.json()
+            assert replayed.headers["etag"] == assigned.headers["etag"]
+            with db.connect() as conn:
+                conn.execute("UPDATE identity.accounts SET status='disabled' WHERE account_id=%s", (OWNER,))
+            revoked_replay = client.put(
+                f"/api/v1/intakes/{iid}/assignment",
+                json=assignment_body, headers=assignment_headers,
+            )
+            assert revoked_replay.status_code == 403, revoked_replay.text
+            store.refresh(TENANT)
+            assert tuple(getattr(store, field) for field in fields) == before_replay
+            with db.connect() as conn:
+                conn.execute("UPDATE identity.accounts SET status='active' WHERE account_id=%s", (OWNER,))
 
         def directory():
             return client.get(

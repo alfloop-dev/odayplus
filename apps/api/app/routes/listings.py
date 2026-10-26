@@ -17,9 +17,9 @@ from uuid import UUID, uuid4
 
 from modules.external_data.geo import GeoPipeline
 from modules.listing import ListingPipeline
-from modules.listing.application.assignment_sla import AssignmentSlaService
 from modules.listing.application.intake_assignment_commands import (
     authorize_assignment_read,
+    authorize_initial_assignment,
     change_assignment,
     list_assignment_transfer_targets,
 )
@@ -27,10 +27,8 @@ from modules.listing.application.intake_completion import IntakeWorkIncomplete
 from modules.listing.application.intake_correction_lineage import apply_field, correction_values
 from modules.listing.application.intake_sla_commands import change_sla
 from modules.listing.application.intake_workflow_bootstrap import (
-    IntakeWorkflowPlan,
     IntakeWorkflowPolicy,
     IntakeWorkflowUnavailable,
-    enqueue_workflow_event,
     initialize_intake_workflow,
     record_workflow_change,
     schedule_from_record,
@@ -3174,132 +3172,56 @@ else:
                 raise HTTPException(403, "TENANT_SCOPE_DENIED")
 
             principal = get_principal(request)
-            operator_role_id = get_operator_role_id(request)
             require_intake_scope(principal, current)
 
-            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
-                "expansion-manager", "expansionManager", "site-reviewer", "siteReviewer", "executive"
-            )
-            is_staff = (principal.has_role(Role.EXPANSION_USER) or operator_role_id in (
-                "expansion-staff", "expansionStaff", "expansion-user", "expansion_user"
-            )) and not is_manager
-            is_steward = principal.has_role(Role.DATA_OWNER) or operator_role_id in ("data-steward", "dataSteward")
-
-            if not (is_manager or is_staff or is_steward):
+            is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE)
+            is_steward = principal.has_role(Role.DATA_OWNER)
+            if not (is_manager or is_steward):
                 raise HTTPException(403, "ROLE_DENIED")
-
-            if is_staff:
-                if current.get("submitted_by") != principal.subject_id and current.get("assigned_to") != principal.subject_id:
-                    raise HTTPException(403, "OWNERSHIP_REQUIRED")
-                if body.owner_subject_id != principal.subject_id:
-                    raise HTTPException(403, "ASSIGNMENT_SCOPE_DENIED")
-
             actor_id = principal.subject_id
+            target = body.model_dump()
+            bound = [value for value in active.assignments.values()
+                     if value.get("intake_id") == intake_id]
+            if len(bound) != 1:
+                raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE")
+            # A stored receipt retains its outcome, never revoked actor, target
+            # or policy authority. State/version checks remain fresh-only.
+            try:
+                authorize_initial_assignment(
+                    active, bound[0], workflow_policy, actor_id=actor_id, target=target,
+                )
+            except PermissionError as exc:
+                raise HTTPException(403, "ASSIGNMENT_SCOPE_DENIED") from exc
+            except Exception as exc:
+                raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
 
             def make() -> tuple[dict[str, Any], int]:
-                require_version(if_match, current["version"])
-                active_assignment = next(
-                    (
-                        assignment
-                        for assignment in active.assignments.values()
-                        if assignment.get("intake_id") == intake_id
-                        and assignment.get("status") != "COMPLETED"
-                    ),
-                    None,
-                )
-                if active_assignment is not None and active_assignment.get("status") != "UNASSIGNED":
-                    raise HTTPException(409, "OWNER_CONFLICT")
-                active_sla = next((s for s in active.slas.values() if s.get("intake_id") == intake_id), None)
-                if active_sla is not None and active_sla.get("state") in {"PAUSED", "COMPLETED", "BREACHED"}:
-                    raise HTTPException(409, "WORKFLOW_STATE_DENIED")
-                if active_assignment is None or active_sla is None or workflow_policy is None:
+                working_intake = active.intakes[intake_id]
+                require_intake_scope(principal, working_intake)
+                require_version(if_match, working_intake["version"])
+                assignments = [value for value in active.assignments.values()
+                               if value.get("intake_id") == intake_id]
+                if len(assignments) != 1:
                     raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE")
+                working = assignments[0]
+                if working.get("status") not in {"UNASSIGNED", "COMPLETED"}:
+                    raise HTTPException(409, "OWNER_CONFLICT")
                 try:
-                    schedule = schedule_from_record(active_sla)
-                    authorized_scope = copy.deepcopy(current["scope"])
-                    plan = workflow_policy.resolve_assignment(
-                        authorized_scope, schedule, actor_id=actor_id,
-                        owner_subject_id=body.owner_subject_id, owner_role=body.owner_role,
-                        requested_due_at=datetime.fromisoformat(body.due_at.replace("Z", "+00:00")),
+                    value = change_assignment(
+                        active, working, workflow_policy, action="assign", actor_id=actor_id,
+                        role=PrincipalRole.EXPANSION_MANAGER if is_manager else PrincipalRole.DATA_STEWARD,
                         reason=body.reason,
+                        correlation_id=request.headers.get("x-correlation-id") or str(uuid4()),
+                        current_time=datetime.now(UTC), target=target,
                     )
-                    if (
-                        not isinstance(plan, IntakeWorkflowPlan)
-                        or authorized_scope != current["scope"]
-                        or plan.schedule.tenant_id != tenant_id
-                        or plan.schedule.started_at != schedule.started_at
-                        or plan.schedule.policy_version != schedule.policy_version
-                        or plan.schedule.calendar_version != schedule.calendar_version
-                    ):
-                        raise IntakeWorkflowUnavailable("Assignment changed the workflow binding")
                 except PermissionError as exc:
                     raise HTTPException(403, "ASSIGNMENT_SCOPE_DENIED") from exc
-                except Exception as exc:
+                except DomainValidationError as exc:
+                    raise HTTPException(409, "WORKFLOW_STATE_DENIED") from exc
+                except (IntakeWorkflowUnavailable, KeyError, AttributeError) as exc:
                     raise HTTPException(503, "INTAKE_WORKFLOW_POLICY_UNAVAILABLE") from exc
-                current["version"] += 1
-                aid = active_assignment["assignment_id"]
-                ts = now()
-
-                current["assigned_to"] = body.owner_subject_id
-                resolved_due = plan.schedule.due_at.isoformat().replace("+00:00", "Z")
-                current["due_at"] = resolved_due
-                current["updated_at"] = ts
-
-                current["processing_history"].append({
-                    "transition_id": str(uuid4()),
-                    "from_state": current["state"],
-                    "to_state": current["state"],
-                    "occurred_at": ts,
-                    "actor": actor_id,
-                    "version_after": current["version"],
-                })
-
-                value = {
-                    **active_assignment,
-                    "assignment_id": aid,
-                    "status": "ASSIGNED",
-                    "owner_subject_id": body.owner_subject_id,
-                    "due_at": resolved_due,
-                    "owner_role": body.owner_role,
-                    "queue_key": plan.queue_key,
-                    "updated_at": ts,
-                    "version": active_assignment["version"] + 1,
-                    "tenant_id": tenant_id,
-                    "intake_id": intake_id,
-                }
-                active.assignments[aid] = value
-                prior_sla = copy.deepcopy(active_sla)
-                updated_schedule = plan.schedule
-                active_sla.update({
-                    "state": AssignmentSlaService.get_derived_sla_state(updated_schedule, datetime.now(UTC)).value,
-                    "due_at": resolved_due,
-                    "due_soon_at": updated_schedule.due_soon_at.isoformat().replace("+00:00", "Z"),
-                    "breach_at": updated_schedule.breach_at.isoformat().replace("+00:00", "Z"),
-                    "schedule": {**active_sla["schedule"], "due_at": resolved_due,
-                                 "due_soon_at": updated_schedule.due_soon_at.isoformat().replace("+00:00", "Z"),
-                                 "breach_at": updated_schedule.breach_at.isoformat().replace("+00:00", "Z")},
-                    "version": active_sla["version"] + 1,
-                })
-                record_workflow_change(active, current, resource_type="assignment",
-                                       before=active_assignment, after=value,
-                                       action="assignment.assign", actor_id=actor_id)
-                record_workflow_change(active, current, resource_type="sla_instance",
-                                       before=prior_sla, after=active_sla,
-                                       action="sla.schedule_resolved", actor_id=actor_id)
-                enqueue_workflow_event(
-                    active, current, event_type="assignment.assigned", producer="workflow_service",
-                    aggregate_type="assignment", aggregate_id=aid, aggregate_version=value["version"],
-                    payload={k: value[k] for k in ("assignment_id", "intake_id", "status", "owner_subject_id", "due_at", "version")},
-                )
-                enqueue_workflow_event(
-                    active, current, event_type="sla.state_changed", producer="sla_service",
-                    aggregate_type="sla_instance", aggregate_id=active_sla["sla_instance_id"],
-                    aggregate_version=active_sla["version"],
-                    payload={"sla_instance_id": active_sla["sla_instance_id"], "intake_id": intake_id,
-                             "from_state": prior_sla["state"], "to_state": active_sla["state"],
-                             "due_at": active_sla["due_at"], "version": active_sla["version"],
-                             "occurred_at": ts, "paused_duration_seconds": active_sla["paused_duration_seconds"]},
-                )
+                except ValueError as exc:
+                    raise HTTPException(422, "VALIDATION_FAILED") from exc
                 return value, 200
 
             val, code, was_replayed = replay(
