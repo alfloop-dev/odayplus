@@ -142,6 +142,53 @@ def test_each_candidate_uses_own_latest_committed_model_without_inference_or_sco
     assert service.snapshot()["auditEvents"] == []
 
 
+def test_template_is_exact_registry_allowlist_preserving_unknowns_and_v1_history():
+    from modules.site_economics.domain.formats import DEFAULT_FORMAT_REGISTRY
+
+    registry = DEFAULT_FORMAT_REGISTRY
+    historical = registry.get("ODAY_G2", "1.0.0").to_dict()
+    original = registry.get("ODAY_G2", "2.0.0").to_dict()
+    calls = []
+
+    def exact_get(code, version):
+        calls.append((code, version))
+        return registry.get(code, version)
+
+    service = _service(_listing_repo(), InMemorySiteScoreRepository())
+    service._format_registry = SimpleNamespace(get=exact_get)
+    principal = Principal("reader", frozenset({Role.SITE_REVIEWER}), Scope(tenant_id=TENANT))
+    projected = service.snapshot(read_principal=principal)["targetFormat"]
+    assert calls == [("ODAY_G2", "2.0.0")]
+    assert set(projected) == {"format_code", "format_name", "format_version", "package_total_untaxed",
+                             "unallocated_package_cost", "daily_operating_hours", "machine_mix", "capital_assets",
+                             "fitout_spec", "utilities_spec", "maintenance_spec", "financing_spec", "tax_spec",
+                             "residual_spec", "ramp_spec", "seasonality_spec"}
+    assert projected["package_total_untaxed"] == 5546000 and projected["unallocated_package_cost"] == 200000
+    assert projected["daily_operating_hours"] == original["daily_operating_hours"]
+    assert set(projected["machine_mix"]) == {"items"}
+    for item, source in zip(projected["machine_mix"]["items"], original["machine_mix"]["items"], strict=True):
+        assert set(item) == {"quantity", "machine_model"}
+        model = item["machine_model"]
+        assert set(model) == {"model_id", "machine_class", "capacity_kg", "unit_capex", "base_cycle_price", "cycle_minutes",
+                              "baseline_turns_per_day", "useful_life_months", "residual_value_ratio", "water_liters_per_cycle",
+                              "electricity_kwh_per_cycle", "gas_kg_per_cycle", "detergent_cost_per_cycle", "monthly_maintenance_per_unit"}
+        assert model == {key: source["machine_model"][key] for key in model}
+        assert item["quantity"] == source["quantity"]
+        assert model["baseline_turns_per_day"] is None
+    for asset, source in zip(projected["capital_assets"], original["capital_assets"], strict=True):
+        assert set(asset) == {"asset_id", "asset_kind", "quantity", "unit_capex", "useful_life_months",
+                              "residual_value_ratio", "monthly_fixed_operating_cost"}
+        assert asset == {key: source[key] for key in asset}
+    assert projected["fitout_spec"] == {key: original["fitout_spec"][key] for key in ("base_fitout_cost", "fitout_useful_life_months")}
+    assert all(projected[key] is None for key in ("utilities_spec", "maintenance_spec", "financing_spec", "tax_spec",
+                                                 "residual_spec", "ramp_spec", "seasonality_spec"))
+    assert "description" not in str(projected) and "1-Kgkrn" not in str(projected)
+    assert "spec_id" not in str(projected) and "max_turns_per_day" not in str(projected)
+    projected["machine_mix"]["items"][0]["quantity"] = 999
+    assert registry.get("ODAY_G2", "2.0.0").to_dict() == original
+    assert registry.get("ODAY_G2", "1.0.0").to_dict() == historical
+
+
 def test_missing_own_report_does_not_borrow_cached_or_other_candidate_model():
     reports = InMemorySiteScoreRepository()
     reports.save_report(_report("candidate-A", "other-candidate-model"))
