@@ -208,6 +208,7 @@ def authorize_intake_action(
     tenant_id: str | None = None,
     collection_scope: dict[str, Any] | None = None,
     collection_rows_projected: bool = False,
+    required_feature_flag: tuple[str, Any] | None = None,
 ) -> None:
     """Enforce deny-by-default assisted intake authorization and segregation.
 
@@ -525,6 +526,23 @@ def authorize_intake_action(
     else:
         # Default deny-by-default for unknown actions
         _raise_and_audit(status_code=403, detail="ROLE_DENIED")
+
+    # Native rollout is an additional restriction on this same authorization
+    # decision, never a substitute for current role, ownership or field scope.
+    # The API composition has already bound the real same-engine flag owner.
+    if required_feature_flag is not None:
+        from shared.infrastructure.persistence.feature_flags import FeatureFlagStoreUnavailable
+
+        key, owner = required_feature_flag
+        try:
+            enabled = owner.is_enabled(key, tenant_id=target_tenant,
+                source_id=resource.get("source_id") if resource is not None else None)
+        except FeatureFlagStoreUnavailable:
+            _raise_and_audit(status_code=503, detail="FEATURE_FLAG_STORE_UNAVAILABLE",
+                decision=Decision.deny("FEATURE_FLAG_STORE_UNAVAILABLE", policy_id="intake_feature_flag"))
+        if not enabled:
+            _raise_and_audit(status_code=403, detail="FEATURE_FLAG_DISABLED",
+                decision=Decision.deny("FEATURE_FLAG_DISABLED", policy_id="intake_feature_flag"))
 
     # Mandatory immutable audit recording for all authorized intake actions
     if audit_log is not None:

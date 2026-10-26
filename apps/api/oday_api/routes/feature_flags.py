@@ -4,20 +4,32 @@ import os
 from datetime import date
 from threading import Lock
 from typing import Any
+from uuid import UUID
 
 from modules.opsboard.auth import AuthenticationBoundary
 from shared.audit import AuditEvent, InMemoryAuditLog
 from shared.auth import Action, AuthorizationEngine, Principal
 from shared.auth.feature_flags import (
     FeatureFlag,
+    FeatureFlagConfigurationConflict,
     FeatureFlagRegistry,
+    FlagScope,
+    FlagScopeBinding,
     Readiness,
     default_registry,
 )
 
 try:
     from fastapi import APIRouter, Depends, HTTPException, Request, status
-    from pydantic import BaseModel, Field, StrictBool, StrictStr, model_validator
+    from pydantic import (
+        BaseModel,
+        ConfigDict,
+        Field,
+        StrictBool,
+        StrictInt,
+        StrictStr,
+        model_validator,
+    )
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
 else:
@@ -44,9 +56,21 @@ else:
 
     class EnableFlagPayload(FlagCommandProof):
         approvals: list[str] = Field(default_factory=list)
+        configuration_version: StrictInt | None = Field(default=None, ge=1)
 
     class ApproveFlagPayload(FlagCommandProof):
         approver: str | None = Field(default=None, min_length=1)
+        configuration_version: StrictInt | None = Field(default=None, ge=1)
+
+    class ScopeBindingPayload(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        tenant_id: UUID
+        source_id: StrictStr | None = None
+
+    class ConfigureFlagScopePayload(FlagCommandProof):
+        model_config = ConfigDict(extra="forbid")
+        configuration_version: StrictInt = Field(ge=1)
+        bindings: list[ScopeBindingPayload]
 
     class RegisterFlagPayload(FlagCommandProof):
         key: str = Field(min_length=1)
@@ -55,6 +79,8 @@ else:
         high_risk: bool = False
         readiness: str = "experimental"
         expires_on: str | None = None
+        scope: FlagScope = FlagScope.GLOBAL
+        bindings: list[ScopeBindingPayload] = Field(default_factory=list)
 
     def create_feature_flags_router(
         *,
@@ -184,7 +210,9 @@ else:
             return {"reason": reason, "riskAcknowledged": True}
 
         def durable_command(operation: str, key: str, request: Request, principal: Principal,
-                            *, proof: dict[str, Any], flag: FeatureFlag | None = None):
+                            *, proof: dict[str, Any], flag: FeatureFlag | None = None,
+                            configuration_version: int | None = None,
+                            bindings: tuple[FlagScopeBinding, ...] | None = None):
             from shared.infrastructure.persistence.feature_flags import (
                 DurableFeatureFlagRegistry,
                 FeatureFlagAlreadyExists,
@@ -204,6 +232,7 @@ else:
                     correlation_id=_correlation_id_from_request(request),
                     audit_log=active_audit_log, queue=queue, flag=flag,
                     reason=proof["reason"], risk_acknowledged=proof["riskAcknowledged"],
+                    configuration_version=configuration_version, bindings=bindings,
                 )
             except FeatureFlagAlreadyExists as exc:
                 raise HTTPException(status_code=409, detail="feature flag already exists") from exc
@@ -211,6 +240,8 @@ else:
                 raise HTTPException(status_code=503, detail="FEATURE_FLAG_STORE_UNAVAILABLE") from exc
             except FeatureFlagWriteConflict as exc:
                 raise HTTPException(status_code=409, detail="FEATURE_FLAG_VERSION_CONFLICT") from exc
+            except FeatureFlagConfigurationConflict as exc:
+                raise HTTPException(status_code=409, detail="FEATURE_FLAG_CONFIGURATION_CONFLICT") from exc
 
         def command_response(result):
             return {"status": "ok", "flag": result.flag.to_dict(),
@@ -226,7 +257,7 @@ else:
         def list_public_feature_flags() -> dict[str, Any]:
             # Runtime callers still read the same effective policy; this is
             # not an administration or mutation permission.
-            flags = [f.to_dict() for f in read_owner("all")]
+            flags = [f.to_dict(include_bindings=False) for f in read_owner("all")]
             return {"status": "ok", "count": len(flags), "flags": flags}
 
         @router.get("/admin/feature-flags/{key}", dependencies=[Depends(view_guard)])
@@ -258,10 +289,14 @@ else:
                 else frozenset()
             )
             try:
-                result = durable_command("enable", key, request, principal, proof=proof)
+                result = durable_command("enable", key, request, principal, proof=proof,
+                                         configuration_version=body.configuration_version)
                 if result is not None:
                     return command_response(result)
-                updated = flag_registry.enable(key, approvals=approvals)
+                updated = flag_registry.enable(key, approvals=approvals,
+                                               configuration_version=body.configuration_version)
+            except FeatureFlagConfigurationConflict as exc:
+                raise HTTPException(status_code=409, detail="FEATURE_FLAG_CONFIGURATION_CONFLICT") from exc
             except KeyError as err:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -326,10 +361,14 @@ else:
                 else principal.subject_id
             )
             try:
-                result = durable_command("approve", key, request, principal, proof=proof)
+                result = durable_command("approve", key, request, principal, proof=proof,
+                                         configuration_version=body.configuration_version)
                 if result is not None:
                     return command_response(result)
-                updated = flag_registry.add_approval(key, approver)
+                updated = flag_registry.add_approval(key, approver,
+                                                     configuration_version=body.configuration_version)
+            except FeatureFlagConfigurationConflict as exc:
+                raise HTTPException(status_code=409, detail="FEATURE_FLAG_CONFIGURATION_CONFLICT") from exc
             except KeyError as err:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -361,19 +400,24 @@ else:
                         detail="feature flag already exists",
                     )
                 proof = command_proof(body, "register")
-                expires_on = date.fromisoformat(body.expires_on) if body.expires_on else None
                 try:
-                    readiness = Readiness(body.readiness)
-                except ValueError:
-                    readiness = Readiness.EXPERIMENTAL
-                flag = FeatureFlag(
-                    key=body.key,
-                    owner=body.owner,
-                    description=body.description,
-                    high_risk=body.high_risk,
-                    readiness=readiness,
-                    expires_on=expires_on,
-                )
+                    expires_on = date.fromisoformat(body.expires_on) if body.expires_on else None
+                    try:
+                        readiness = Readiness(body.readiness)
+                    except ValueError:
+                        readiness = Readiness.EXPERIMENTAL
+                    flag = FeatureFlag(
+                        key=body.key,
+                        owner=body.owner,
+                        description=body.description,
+                        high_risk=body.high_risk,
+                        readiness=readiness,
+                        expires_on=expires_on,
+                        scope=body.scope,
+                        bindings=tuple(FlagScopeBinding.from_dict(v.model_dump(mode="json")) for v in body.bindings),
+                    )
+                except (ValueError, TypeError) as exc:
+                    raise HTTPException(status_code=422, detail="FEATURE_FLAG_CONFIGURATION_INVALID") from exc
                 result = durable_command("register", flag.key, request, principal, proof=proof, flag=flag)
                 if result is not None:
                     return command_response(result)
@@ -383,5 +427,33 @@ else:
                 metadata={"key": body.key, **proof},
             )
             return {"status": "ok", "flag": flag.to_dict()}
+
+        @router.post("/admin/feature-flags/{key}/scope")
+        def configure_feature_flag_scope(
+            key: str,
+            body: ConfigureFlagScopePayload,
+            request: Request,
+            principal: Principal = update_dependency,
+        ) -> dict[str, Any]:
+            proof = command_proof(body, "configure_scope")
+            try:
+                bindings = tuple(FlagScopeBinding.from_dict(v.model_dump(mode="json")) for v in body.bindings)
+                result = durable_command("configure_scope", key, request, principal, proof=proof,
+                    bindings=bindings, configuration_version=body.configuration_version)
+                if result is not None:
+                    return command_response(result)
+                before = flag_registry.get(key)
+                updated = flag_registry.configure_scope(key, bindings,
+                    configuration_version=body.configuration_version)
+            except FeatureFlagConfigurationConflict as exc:
+                raise HTTPException(status_code=409, detail="FEATURE_FLAG_CONFIGURATION_CONFLICT") from exc
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail="feature flag not found") from exc
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(status_code=422, detail="FEATURE_FLAG_CONFIGURATION_INVALID") from exc
+            record(request, principal, action="configure_scope", key=key,
+                   metadata={"key": key, "before": before.to_dict() if before else None,
+                             "after": updated.to_dict(), **proof})
+            return {"status": "ok", "flag": updated.to_dict()}
 
         return router

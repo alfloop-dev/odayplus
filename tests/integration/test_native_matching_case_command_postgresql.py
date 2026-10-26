@@ -991,7 +991,8 @@ def native_scheduler(exact_service_case, monkeypatch):
     # synthetic workflow dependency; memory construction has no runtime grant.
     bundle = replace(build_persistence(mode="memory"), engine=identity.engine,
         job_queue=identity.graph.queue, assisted_intake_store=store,
-        assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
+        assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy(),
+        feature_flag_registry=identity.graph.queue._flags)
     return ODayScheduler(persistence=bundle, tenant_id=case[1]["tenant"])
 
 

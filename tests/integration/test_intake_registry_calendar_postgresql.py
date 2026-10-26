@@ -107,6 +107,7 @@ def test_native_submission_uses_the_existing_sql_workflow_policy_and_current_app
     from apps.api.app.routes import canonical_intakes
     from shared.audit import InMemoryAuditLog
     from shared.auth import Principal, Scope
+    from tests.intake_workflow_fixture import seed_synthetic_intake_read_flag
 
     db = intake_blank_db
     _upgrade(db, "head")
@@ -118,6 +119,7 @@ def test_native_submission_uses_the_existing_sql_workflow_policy_and_current_app
         _insert_policy(conn, _audit_retention_row())
     bundle = _bundle(db, monkeypatch)
     try:
+        seed_synthetic_intake_read_flag(bundle.feature_flag_registry, TENANT)
         monkeypatch.setattr(canonical_intakes, "principal_from_headers", lambda _: Principal(
             MANAGER, frozenset({Role.SITE_REVIEWER}), Scope(tenant_id=TENANT),
         ))

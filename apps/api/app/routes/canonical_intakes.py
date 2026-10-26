@@ -336,11 +336,25 @@ def create_canonical_intakes_router(store) -> APIRouter:
         except (ValueError, RuntimeError) as exc:
             raise HTTPException(503, "CANONICAL_INTAKE_STORAGE_UNAVAILABLE") from exc
 
-    def authorize(request, principal, repo, row, action="view", *, listing_context=None):
+    def read_flag_owner(request, repo):
+        from shared.infrastructure.persistence.feature_flags import (
+            FeatureFlagStoreUnavailable,
+            require_durable_flag_owner,
+        )
+
+        bundle = request.app.state.persistence_bundle
+        try:
+            return require_durable_flag_owner(getattr(bundle, "feature_flag_registry", None), repo.engine,
+                queue=getattr(bundle, "job_queue", None))
+        except FeatureFlagStoreUnavailable as exc:
+            raise HTTPException(503, "FEATURE_FLAG_STORE_UNAVAILABLE") from exc
+
+    def authorize(request, principal, repo, row, action="view", *, listing_context=None, flag_owner=None):
         authorize_intake_action(principal, action,
             resource=native_intake_authorization_resource(row, graph=repo.graph, listing_context=listing_context),
             audit_log=getattr(request.app.state, "audit_log", None),
-            correlation_id=request.headers.get("x-correlation-id"))
+            correlation_id=request.headers.get("x-correlation-id"),
+            required_feature_flag=("assisted_intake_v1_read", flag_owner) if flag_owner is not None else None)
 
     errors = {code: {"description": description} for code, description in (
         (401, "Authentication required"), (403, "Current actor or resource scope denied"),
@@ -356,13 +370,15 @@ def create_canonical_intakes_router(store) -> APIRouter:
         with _http_errors():
             principal, repo = context(request)
             tenant = principal.tenant_id
+            flags = read_flag_owner(request, repo)
             # Server-owned contract: SQL projects all native scope axes and
             # staff ownership before LIMIT; each row is reauthorized below.
             # This opt-in cannot be supplied through a query/body parameter.
             authorize_intake_action(principal, "view", tenant_id=tenant,
                 collection_scope={}, collection_rows_projected=True,
                 audit_log=getattr(request.app.state, "audit_log", None),
-                correlation_id=request.headers.get("x-correlation-id"))
+                correlation_id=request.headers.get("x-correlation-id"),
+                required_feature_flag=("assisted_intake_v1_read", flags))
             position = None
             if cursor is not None:
                 try:
@@ -378,7 +394,7 @@ def create_canonical_intakes_router(store) -> APIRouter:
                                  state=processing_state.value if processing_state else None,
                                  before=position, limit=page_size + 1)
                 for row in rows:
-                    authorize(request, principal, repo, row)
+                    authorize(request, principal, repo, row, flag_owner=flags)
                 selected = rows[:page_size]
                 next_cursor = None
                 if len(rows) > page_size:
@@ -394,9 +410,10 @@ def create_canonical_intakes_router(store) -> APIRouter:
     def get(intake_id: UUID, request: Request, response: Response):
         with _http_errors():
             principal, repo = context(request)
+            flags = read_flag_owner(request, repo)
             with repo.graph.transaction(principal.tenant_id):
                 row = repo.get(principal.tenant_id, str(intake_id))
-                authorize(request, principal, repo, row)
+                authorize(request, principal, repo, row, flag_owner=flags)
                 resolution = None
                 if row["resolved_listing_id"] is not None:
                     listing = repo.graph._one("SELECT * FROM expansion.listings WHERE tenant_id=? AND listing_id=?",
@@ -406,8 +423,8 @@ def create_canonical_intakes_router(store) -> APIRouter:
                         (principal.tenant_id, resolved["effective_property_id"]))
                     # Intake ownership grants no access to a resolved Listing
                     # or a subsequently merged Property outside current scope.
-                    authorize(request, principal, repo, listing, listing_context=(resolved, prop))
-                    authorize(request, principal, repo, prop)
+                    authorize(request, principal, repo, listing, listing_context=(resolved, prop), flag_owner=flags)
+                    authorize(request, principal, repo, prop, flag_owner=flags)
                     fields = []
                     if listing["current_revision_id"] is not None:
                         revision = repo.graph._one("SELECT effective_values,parser_run_id,source_snapshot_id "

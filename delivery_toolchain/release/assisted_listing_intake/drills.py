@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from delivery_toolchain.release.assisted_listing_intake.config import (
+from modules.listing.application.intake_release_governance import (
     EXPECTED_FLAG_KEYS,
     ReleaseConfig,
 )
@@ -731,16 +731,20 @@ def run_killswitch_rollback(config: ReleaseConfig, workdir: Path) -> dict[str, A
         audit_before = len(bundle.audit_log.list_events())
         snapshots_before = len(snapshot_manifest)
 
-        # Staging-scope registry: enable the shadow/write flags with a real
-        # dual approval so the kill switch has live flags to disable. This is
-        # a drill-scoped in-memory registry — the production manifest on disk
-        # stays untouched and disabled.
+        # Explicit synthetic units/approvers for this in-memory drill only.
+        # Production flags and actual release/source approvals are unchanged.
         registry: FeatureFlagRegistry = build_intake_flag_registry(config)
+        from shared.auth.feature_flags import FlagScopeBinding
+
         staging_flag_keys = ("assisted_intake_v1_shadow", "assisted_intake_v1_write")
         for key in staging_flag_keys:
-            registry.enable(key, approvals=frozenset({"drill-approver-1", "drill-approver-2"}))
+            configured = registry.configure_scope(key, (FlagScopeBinding(STAGING_TENANT_A, "SRC-591"),),
+                configuration_version=registry.get(key).configuration_version)
+            registry.enable(key, approvals=frozenset({"drill-approver-1", "drill-approver-2"}),
+                            configuration_version=configured.configuration_version)
         flags_enabled_before = [
-            k for k in EXPECTED_FLAG_KEYS if registry.is_enabled(k, on=datetime.now(UTC).date())
+            k for k in EXPECTED_FLAG_KEYS if registry.is_enabled(k, on=datetime.now(UTC).date(),
+                tenant_id=STAGING_TENANT_A, source_id="SRC-591")
         ]
 
         # --- Trigger: real checksum-mismatch detection (TRG-CHECKSUM) -----
@@ -756,14 +760,15 @@ def run_killswitch_rollback(config: ReleaseConfig, workdir: Path) -> dict[str, A
         for key in EXPECTED_FLAG_KEYS:
             registry.disable(key)
         flags_disabled = [
-            k for k in EXPECTED_FLAG_KEYS if not registry.is_enabled(k, on=datetime.now(UTC).date())
+            k for k in EXPECTED_FLAG_KEYS if not registry.is_enabled(k, on=datetime.now(UTC).date(),
+                tenant_id=STAGING_TENANT_A, source_id="SRC-591")
         ]
         kill_switch_engaged = len(flags_disabled) == len(EXPECTED_FLAG_KEYS)
 
         def guarded_enqueue() -> bool:
-            """Post-kill-switch intake boundary: reject new work while the
-            write flag is down (the API/worker boundary consults the flag)."""
-            if not registry.is_enabled("assisted_intake_v1_write", on=datetime.now(UTC).date()):
+            """Local drill checkpoint, not proof of API/worker write adoption."""
+            if not registry.is_enabled("assisted_intake_v1_write", on=datetime.now(UTC).date(),
+                tenant_id=STAGING_TENANT_A, source_id="SRC-591"):
                 return False
             bundle.job_queue.enqueue(  # pragma: no cover - unreachable while disarmed
                 JobRequest(job_type="assisted-listing-intake", payload={}, idempotency_key="ks-blocked"),
@@ -779,6 +784,8 @@ def run_killswitch_rollback(config: ReleaseConfig, workdir: Path) -> dict[str, A
                 "step": 1,
                 "action": "disable per-tenant/source flags and stop new Cloud Tasks",
                 "flags_enabled_before": flags_enabled_before,
+                "synthetic_authority_unit": {"tenant_id": STAGING_TENANT_A, "source_id": "SRC-591"},
+                "product_write_authority_qualified": False,
                 "flags_disabled": flags_disabled,
                 "new_enqueue_refused": enqueue_refused,
                 "active_jobs_unchanged": queue_before_stop == queue_after_stop,

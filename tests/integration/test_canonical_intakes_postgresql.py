@@ -32,7 +32,7 @@ def native_api(canonical_graph, monkeypatch):
     store = DurableAssistedIntakeStore(PostgresDocumentStore(graph.engine))
     store.configure_canonical_audit(graph.audit_sink)
     bundle = SimpleNamespace(engine=graph.engine, job_queue=graph.queue, assisted_intake_store=store,
-                             assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
+        assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy(), feature_flag_registry=graph.queue._flags)
     for name in ("canonical_identity_graph", "canonical_intakes"):
         setattr(bundle, name, MethodType(getattr(PersistenceBundle, name), bundle))
     caller = {"principal": Principal(ids["actor"], frozenset({Role.EXPANSION_USER}), Scope(tenant_id=ids["tenant"]))}
@@ -49,6 +49,98 @@ def native_api(canonical_graph, monkeypatch):
 
 def command(**overrides):
     return {"intake_method": "MANUAL", "scope": {}, "reason": "Explicit synthetic investigation request", **overrides}
+
+
+def test_native_gets_use_verified_tenant_and_fresh_original_flag_owner(canonical_graph, native_api):
+    from shared.infrastructure.persistence.audit_log import DurableAuditLog
+    from tests.integration.test_assisted_listing_identity import independent_canonical_graph
+    from tests.integration.test_canonical_identity_cases_postgresql import _parent
+
+    graph, ids, _, database = canonical_graph
+    client, _, _ = native_api
+    intake_id = _parent(canonical_graph, state="SUBMITTED")
+    path = "/api/v1/canonical-intakes/" + intake_id
+    assert client.get(path).status_code == 200
+    page = client.get("/api/v1/canonical-intakes?tenant_id=" + str(uuid4()),
+                      headers={"X-Tenant-Id": str(uuid4())})
+    assert page.status_code == 200
+    assert all(row["tenant_id"] == ids["tenant"] for row in page.json()["items"])
+    before = {k: v for k, v in snapshot(canonical_graph).items() if k not in {"documents", "delivery"}}
+    # A separately opened real SQL owner revokes the read eligibility. The
+    # original app must not retain a RAM/default grant or return an empty list.
+    with independent_canonical_graph(graph, database) as reopened:
+        reopened.queue._flags.execute("disable", "assisted_intake_v1_read", actor="synthetic-independent-admin",
+            correlation_id="synthetic-stop-native-read", audit_log=DurableAuditLog(reopened.engine))
+    for url in (path, "/api/v1/canonical-intakes"):
+        response = client.get(url)
+        assert response.status_code == 403 and response.json() == {"detail": "FEATURE_FLAG_DISABLED"}
+    denied = [event for event in client.app.state.audit_log.list_events()
+              if event.metadata.get("policy_id") == "intake_feature_flag"]
+    assert len(denied) == 2 and all(event.metadata["tenant_id"] == ids["tenant"] for event in denied)
+    after = {k: v for k, v in snapshot(canonical_graph).items() if k not in {"documents", "delivery"}}
+    assert after == before
+
+
+@pytest.mark.parametrize("damage", ["missing-owner", "memory-owner", "wrong-engine", "corrupt-record", "missing-enrollment"])
+def test_native_read_rollout_distinguishes_unavailable_owner_from_disabled_enrollment(
+    canonical_graph, native_api, monkeypatch, tmp_path, damage,
+):
+    from shared.auth.feature_flags import FeatureFlagRegistry
+    from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+    from shared.infrastructure.persistence.engine import SqliteEngine
+    from shared.infrastructure.persistence.feature_flags import (
+        COLLECTION,
+        DOCUMENT,
+        DurableFeatureFlagRegistry,
+    )
+    from tests.intake_workflow_fixture import seed_synthetic_intake_read_flag
+    from tests.integration.test_canonical_identity_cases_postgresql import _parent
+
+    graph, ids, _, _ = canonical_graph
+    client, _, _ = native_api
+    intake_id = _parent(canonical_graph, state="SUBMITTED")
+    owner = graph.queue._flags
+    bundle = client.app.state.persistence_bundle
+    foreign = None
+    try:
+        if damage == "missing-owner":
+            monkeypatch.delattr(bundle, "feature_flag_registry")
+        elif damage == "memory-owner":
+            monkeypatch.setattr(bundle, "feature_flag_registry", FeatureFlagRegistry({f.key: f for f in owner.all()}))
+        elif damage == "wrong-engine":
+            foreign = SqliteEngine(tmp_path / "foreign-synthetic-flags.sqlite")
+            other = DurableFeatureFlagRegistry(SqliteDocumentStore(foreign))
+            other.initialize_defaults()
+            seed_synthetic_intake_read_flag(other, ids["tenant"])
+            monkeypatch.setattr(bundle, "feature_flag_registry", other)
+        else:
+            raw, version = owner.store.get_versioned(COLLECTION, DOCUMENT)
+            if damage == "corrupt-record":
+                raw["flags"]["assisted_intake_v1_read"]["bindings"] = None
+            else:
+                raw["flags"].pop("assisted_intake_v1_read")
+            assert owner.store.compare_and_put(COLLECTION, DOCUMENT, raw, expected_version=version) is not None
+        for url in ("/api/v1/canonical-intakes/" + intake_id, "/api/v1/canonical-intakes"):
+            response = client.get(url)
+            assert response.status_code == (403 if damage == "missing-enrollment" else 503), response.text
+            assert response.json()["detail"] == (
+                "FEATURE_FLAG_DISABLED" if damage == "missing-enrollment" else "FEATURE_FLAG_STORE_UNAVAILABLE")
+    finally:
+        if foreign is not None:
+            foreign.close()
+
+
+def test_read_flag_does_not_substitute_for_or_accidentally_gate_the_original_submit_policy(canonical_graph, native_api):
+    from shared.infrastructure.persistence.audit_log import DurableAuditLog
+
+    graph, _, _, _ = canonical_graph
+    client, _, _ = native_api
+    graph.queue._flags.execute("disable", "assisted_intake_v1_read", actor="synthetic-admin",
+        correlation_id="synthetic-read-stop", audit_log=DurableAuditLog(graph.engine))
+    result = client.post("/api/v1/canonical-intakes", json=command(),
+                         headers={"Idempotency-Key": "synthetic-submit-with-explicit-workflow-read-disabled"})
+    assert result.status_code == 201 and result.json()["processing_state"] == "SUBMITTED", result.text
+    assert client.get("/api/v1/canonical-intakes/" + result.json()["intake_id"]).status_code == 403
 
 
 def snapshot(case):
@@ -144,7 +236,8 @@ def test_native_submission_is_atomic_durable_and_never_claims_processing(canonic
         reopened = DurableAssistedIntakeStore(PostgresDocumentStore(reopened_graph.engine))
         reopened.configure_canonical_audit(reopened_graph.audit_sink)
         bundle = SimpleNamespace(engine=reopened_graph.engine, job_queue=reopened_graph.queue,
-            assisted_intake_store=reopened, assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy())
+            assisted_intake_store=reopened, assisted_intake_workflow_policy=SyntheticIntakeWorkflowPolicy(),
+            feature_flag_registry=reopened_graph.queue._flags)
         for name in ("canonical_identity_graph", "canonical_intakes"):
             setattr(bundle, name, MethodType(getattr(PersistenceBundle, name), bundle))
         app = FastAPI()

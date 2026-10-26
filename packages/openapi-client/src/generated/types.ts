@@ -199,6 +199,7 @@ export type ApprovalReadContext = {
 /** ApproveFlagPayload */
 export type ApproveFlagPayload = {
   approver?: string | null;
+  configuration_version?: number | null;
   reason: string;
   riskAcknowledged: boolean;
 };
@@ -759,6 +760,14 @@ export type ComparePayload = {
   site_ids?: string[];
 };
 
+/** ConfigureFlagScopePayload */
+export type ConfigureFlagScopePayload = {
+  bindings: ScopeBindingPayload[];
+  configuration_version: number;
+  reason: string;
+  riskAcknowledged: boolean;
+};
+
 /** ConflictError */
 export type ConflictError = {
   code: "AUTHENTICATION_REQUIRED" | "ROLE_DENIED" | "TENANT_SCOPE_DENIED" | "SCOPE_DENIED" | "OWNERSHIP_REQUIRED" | "ASSIGNMENT_SCOPE_DENIED" | "SOURCE_SCOPE_DENIED" | "FIELD_MASKED" | "DATA_CLASSIFICATION_DENIED" | "PURPOSE_REQUIRED" | "PRECONDITION_REQUIRED" | "VERSION_CONFLICT" | "WORKFLOW_STATE_DENIED" | "OWNER_CONFLICT" | "SECOND_ACTOR_REQUIRED" | "SELF_REVIEW_DENIED" | "RISK_ACKNOWLEDGEMENT_REQUIRED" | "SOURCE_POLICY_DENIED" | "SOURCE_POLICY_UNKNOWN" | "SOURCE_AUTH_REQUIRED" | "LEGAL_HOLD_CONFLICT" | "RETENTION_NOT_REACHED" | "RESIDENCY_DENIED" | "EXPORT_APPROVAL_REQUIRED" | "PURGE_APPROVAL_REQUIRED" | "QUARANTINE_RELEASE_DENIED" | "PROMOTION_APPROVAL_REQUIRED" | "RESTRICTED_EXPORT_DENIED" | "BREAK_GLASS_DENIED" | "DEPENDENCY_CONFLICT" | "DUPLICATE_CANDIDATE" | "IDEMPOTENCY_KEY_REUSED" | "RETRY_BUDGET_EXHAUSTED" | "CHECKPOINT_UNAVAILABLE" | "JOB_FENCE_REJECTED" | "SLA_PAUSE_DENIED" | "DECISION_INCOMPLETE" | "BACKPRESSURE_ACTIVE" | "RATE_LIMITED" | "RESOURCE_NOT_FOUND" | "VALIDATION_FAILED" | "FIELD_REQUIRED" | "CURSOR_INVALID" | "CURSOR_EXPIRED" | "INTERNAL_ERROR";
@@ -953,6 +962,7 @@ export type EligibilityPayload = {
 /** EnableFlagPayload */
 export type EnableFlagPayload = {
   approvals?: string[];
+  configuration_version?: number | null;
   reason: string;
   riskAcknowledged: boolean;
 };
@@ -1157,6 +1167,9 @@ export type FlagCommandProof = {
   reason: string;
   riskAcknowledged: boolean;
 };
+
+/** FlagScope */
+export type FlagScope = "global" | "per-tenant" | "per-tenant-per-source" | "global-per-tenant";
 
 /** ForecastOpsAlertAcknowledgePayload */
 export type ForecastOpsAlertAcknowledgePayload = {
@@ -2423,6 +2436,7 @@ export type RebalanceSubmitPayload = {
 
 /** RegisterFlagPayload */
 export type RegisterFlagPayload = {
+  bindings?: ScopeBindingPayload[];
   description?: string;
   expires_on?: string | null;
   high_risk?: boolean;
@@ -2431,6 +2445,7 @@ export type RegisterFlagPayload = {
   readiness?: string;
   reason: string;
   riskAcknowledged: boolean;
+  scope?: FlagScope;
 };
 
 /** ReleaseHoldPayload */
@@ -2590,6 +2605,12 @@ export type SavedViewRequest = {
 
 /** SavedViewVisibility */
 export type SavedViewVisibility = "PRIVATE" | "ROLE" | "TENANT";
+
+/** ScopeBindingPayload */
+export type ScopeBindingPayload = {
+  source_id?: string | null;
+  tenant_id: string;
+};
 
 /** ScopeContext */
 export type ScopeContext = {
@@ -3050,6 +3071,7 @@ export const API_PATHS = {
   "/api/v1/admin/feature-flags/{key}/approve": ["POST"],
   "/api/v1/admin/feature-flags/{key}/disable": ["POST"],
   "/api/v1/admin/feature-flags/{key}/enable": ["POST"],
+  "/api/v1/admin/feature-flags/{key}/scope": ["POST"],
   "/api/v1/assignments/{assignment_id}/actions/claim": ["POST"],
   "/api/v1/assignments/{assignment_id}/actions/complete": ["POST"],
   "/api/v1/assignments/{assignment_id}/actions/transfer": ["POST"],

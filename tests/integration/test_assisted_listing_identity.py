@@ -105,12 +105,15 @@ def independent_canonical_graph(graph, database):
     from modules.listing.application.intake_audit import CanonicalIntakeAuditSink
     from shared.audit.canonical_delivery import CanonicalAuditDelivery
     from shared.audit.canonical_postgresql import CanonicalPostgresAuditLog
+    from shared.infrastructure.persistence import PostgresDocumentStore
+    from shared.infrastructure.persistence.feature_flags import DurableFeatureFlagRegistry
     from shared.infrastructure.persistence.job_queue import DurableJobQueue
     from shared.infrastructure.persistence.postgresql import PostgresEngine
 
     reopened = PostgresEngine(database.url(), bootstrap=False, validate_schema=False)
     try:
-        queue = DurableJobQueue(reopened)
+        flags = DurableFeatureFlagRegistry(PostgresDocumentStore(reopened))
+        queue = DurableJobQueue(reopened, flags=flags)
         writer = CanonicalPostgresAuditLog(reopened)
         sink = CanonicalIntakeAuditSink(writer, graph.audit_sink.retention,
             CanonicalAuditDelivery(writer, queue, graph.audit_sink.delivery.sink))
@@ -128,10 +131,15 @@ def canonical_graph(intake_db, tmp_path):
     from shared.audit.canonical_delivery import CanonicalAuditDelivery
     from shared.audit.canonical_postgresql import CanonicalPostgresAuditLog
     from shared.audit.worm import LocalAppendOnlyWormSink
+    from shared.infrastructure.persistence import PostgresDocumentStore
+    from shared.infrastructure.persistence.feature_flags import DurableFeatureFlagRegistry
     from shared.infrastructure.persistence.job_queue import DurableJobQueue
     from shared.infrastructure.persistence.postgresql import PostgresEngine
     from shared.jobs.queue import JobRequest
-    from tests.intake_workflow_fixture import SyntheticIntakeAuditRetention
+    from tests.intake_workflow_fixture import (
+        SyntheticIntakeAuditRetention,
+        seed_synthetic_intake_read_flag,
+    )
 
     ids = {key: str(uuid4()) for key in (
         "tenant", "actor", "reviewer", "intake", "case", "decision", "job", "listing", "edge",
@@ -190,7 +198,10 @@ def canonical_graph(intake_db, tmp_path):
         )
     engine = PostgresEngine(intake_db.url(), bootstrap=False, validate_schema=False)
     engine.apply_runtime_migration()
-    queue = DurableJobQueue(engine)
+    flags = DurableFeatureFlagRegistry(PostgresDocumentStore(engine))
+    flags.initialize_defaults()
+    seed_synthetic_intake_read_flag(flags, ids["tenant"])
+    queue = DurableJobQueue(engine, flags=flags)
     writer = CanonicalPostgresAuditLog(engine)
     sink = CanonicalIntakeAuditSink(writer, SyntheticIntakeAuditRetention(),
         CanonicalAuditDelivery(writer, queue, LocalAppendOnlyWormSink(tmp_path / "synthetic-worm")))

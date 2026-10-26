@@ -1113,6 +1113,18 @@
             ],
             "title": "Approver"
           },
+          "configuration_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configuration Version"
+          },
           "reason": {
             "title": "Reason",
             "type": "string"
@@ -4129,6 +4141,39 @@
         "title": "ComparePayload",
         "type": "object"
       },
+      "ConfigureFlagScopePayload": {
+        "additionalProperties": false,
+        "properties": {
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/ScopeBindingPayload"
+            },
+            "title": "Bindings",
+            "type": "array"
+          },
+          "configuration_version": {
+            "minimum": 1.0,
+            "title": "Configuration Version",
+            "type": "integer"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "riskAcknowledged": {
+            "title": "Riskacknowledged",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reason",
+          "riskAcknowledged",
+          "configuration_version",
+          "bindings"
+        ],
+        "title": "ConfigureFlagScopePayload",
+        "type": "object"
+      },
       "ConflictError": {
         "properties": {
           "code": {
@@ -5134,6 +5179,18 @@
             "title": "Approvals",
             "type": "array"
           },
+          "configuration_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configuration Version"
+          },
           "reason": {
             "title": "Reason",
             "type": "string"
@@ -6067,6 +6124,16 @@
         ],
         "title": "FlagCommandProof",
         "type": "object"
+      },
+      "FlagScope": {
+        "enum": [
+          "global",
+          "per-tenant",
+          "per-tenant-per-source",
+          "global-per-tenant"
+        ],
+        "title": "FlagScope",
+        "type": "string"
       },
       "ForecastOpsAlertAcknowledgePayload": {
         "properties": {
@@ -13255,6 +13322,13 @@
       },
       "RegisterFlagPayload": {
         "properties": {
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/ScopeBindingPayload"
+            },
+            "title": "Bindings",
+            "type": "array"
+          },
           "description": {
             "default": "",
             "title": "Description",
@@ -13298,6 +13372,10 @@
           "riskAcknowledged": {
             "title": "Riskacknowledged",
             "type": "boolean"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/FlagScope",
+            "default": "global"
           }
         },
         "required": [
@@ -14107,6 +14185,32 @@
         ],
         "title": "SavedViewVisibility",
         "type": "string"
+      },
+      "ScopeBindingPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_id"
+        ],
+        "title": "ScopeBindingPayload",
+        "type": "object"
       },
       "ScopeContext": {
         "properties": {
@@ -17947,6 +18051,120 @@
           }
         },
         "summary": "Enable Feature Flag",
+        "tags": [
+          "admin-feature-flags"
+        ]
+      }
+    },
+    "/api/v1/admin/feature-flags/{key}/scope": {
+      "post": {
+        "operationId": "configure_feature_flag_scope_api_v1_admin_feature_flags__key__scope_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "title": "Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigureFlagScopePayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Configure Feature Flag Scope Api V1 Admin Feature Flags  Key  Scope Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Configure Feature Flag Scope",
         "tags": [
           "admin-feature-flags"
         ]
