@@ -1163,6 +1163,7 @@ echo "Running release-aware smoke checks against tagged candidate revisions..."
 # start, measured at ~24-29s on dev. Cloud Run queues the request until the
 # instance serves; the per-probe timeout must outlast that, not the 15s default.
 run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py smoke \
+  --runtime-env-file "${API_ENV_FILE}" \
   --api-url "${API_URL}" \
   --web-url "${WEB_URL}" \
   --expected-sha "${ODAY_RELEASE_SHA}" \

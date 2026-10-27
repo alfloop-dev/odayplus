@@ -2805,6 +2805,30 @@ def smoke_checks(
         }
         bootstrap_meta = bootstrap.get("meta")
         bootstrap_meta = bootstrap_meta if isinstance(bootstrap_meta, Mapping) else {}
+        # This is the verified tenant used by this very bootstrap read. Compare
+        # exact namespace text, trimming whitespace only; no identity headers or
+        # second request may substitute for the response's actual read scope.
+        expected_tenant = operator_tenant.strip() if isinstance(operator_tenant, str) else ""
+        actual_tenant = bootstrap_meta.get("tenantId")
+        actual_tenant = actual_tenant.strip() if isinstance(actual_tenant, str) else ""
+        tenant_matches = bool(expected_tenant and actual_tenant and expected_tenant == actual_tenant)
+        report["operator_bootstrap"]["tenant_scope"] = {
+            "expected_tenant_present": bool(expected_tenant),
+            "actual_tenant_present": bool(actual_tenant),
+            "matches_deployment": tenant_matches,
+            "source": "bootstrap.meta.tenantId",
+        }
+        checks.append(
+            CheckResult(
+                ok=tenant_matches,
+                name="smoke:/api/v1/operator/bootstrap:tenant_scope",
+                detail=(
+                    "bootstrap read tenant matches deployment tenant"
+                    if tenant_matches
+                    else "bootstrap read tenant is missing, invalid or differs from deployment tenant"
+                ),
+            )
+        )
         section_diagnostics = _operator_section_diagnostics(
             bootstrap_meta,
             _secret_spellings((bearer_token, web_invoker_token, api_invoker_token)),
@@ -4633,6 +4657,7 @@ def main() -> int:
     smoke.add_argument("--api-url", required=True)
     smoke.add_argument("--web-url", required=True)
     smoke.add_argument("--expected-sha", required=True)
+    smoke.add_argument("--runtime-env-file", required=True, type=Path)
     smoke.add_argument("--correlation-id", default=f"corr-cloud-run-{int(time.time())}")
     smoke.add_argument("--timeout", type=float, default=15.0)
     smoke.add_argument("--smoke-retry-attempts", type=int, default=SMOKE_PROBE_ATTEMPTS)
@@ -4854,6 +4879,27 @@ def main() -> int:
                 output=args.output,
                 label="Cloud Run live deployment smoke",
             )
+        try:
+            # The deploy script already resolved aliases once and deployed this
+            # exact manifest to API/scheduler/worker. Do not resolve them again
+            # from process env or the historical smoke-tenant input.
+            runtime_tenant = _read_json_object(args.runtime_env_file).get(
+                "ODP_SCHEDULED_INGESTION_TENANT_ID"
+            )
+            if not isinstance(runtime_tenant, str) or not runtime_tenant.strip():
+                raise ValueError("invalid deployment tenant")
+            runtime_tenant = runtime_tenant.strip()
+        except (OSError, ValueError):
+            return _finalize(
+                checks=[CheckResult(
+                    False,
+                    "smoke:runtime_tenant",
+                    "runtime env file must contain a nonblank canonical deployment tenant",
+                )],
+                report={"secret_values_redacted": True},
+                output=args.output,
+                label="Cloud Run live deployment smoke",
+            )
         token = os.environ.get("ODP_OPERATOR_SMOKE_BEARER_TOKEN", "")
         api_invoker_token = os.environ.get(API_INVOKER_TOKEN_ENV, "")
         checks = []
@@ -4877,7 +4923,7 @@ def main() -> int:
                 bearer_token=token,
                 operator_role=os.environ.get("ODP_OPERATOR_SMOKE_ROLE", ""),
                 operator_subject=os.environ.get("ODP_OPERATOR_SMOKE_SUBJECT", ""),
-                operator_tenant=os.environ.get("ODP_OPERATOR_SMOKE_TENANT", ""),
+                operator_tenant=runtime_tenant,
                 correlation_id=args.correlation_id,
                 timeout=args.timeout,
                 web_invoker_token=os.environ.get("ODP_WEB_CANDIDATE_INVOKER_TOKEN", ""),

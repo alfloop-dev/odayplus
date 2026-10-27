@@ -826,6 +826,7 @@ class DeterministicRuntimeHandler(BaseHTTPRequestHandler):
     failed_provider_id = ""
     probe_age_seconds = 0
     operator_section_meta: dict[str, object] = {}
+    operator_tenant_meta: dict[str, object] = {"tenantId": "tenant-live"}
 
     @classmethod
     def _operator_origin(cls) -> dict[str, object]:
@@ -935,6 +936,7 @@ class DeterministicRuntimeHandler(BaseHTTPRequestHandler):
                                 else "OPERATOR_LIVE_REPOSITORY_UNAVAILABLE"
                             ),
                         },
+                        **self.operator_tenant_meta,
                         **self.operator_section_meta,
                     },
                     "today": {"queue": []},
@@ -974,7 +976,7 @@ def start_server() -> tuple[ThreadingHTTPServer, str]:
     return server, f"http://{host}:{port}"
 
 
-def run_smoke(url: str):
+def run_smoke(url: str, *, operator_tenant: object = "tenant-live"):
     return validator.smoke_checks(
         api_url=url,
         web_url=url,
@@ -982,7 +984,7 @@ def run_smoke(url: str):
         bearer_token="smoke-token",
         operator_role="ops-lead",
         operator_subject="smoke-operator",
-        operator_tenant="tenant-live",
+        operator_tenant=operator_tenant,
         correlation_id="corr-cloud-run-test",
         timeout=2,
     )
@@ -2415,12 +2417,18 @@ def test_smoke_cli_report_masks_quoted_and_boundary_secrets_in_operator_sections
     DeterministicRuntimeHandler.operator_section_meta = _quoted_credential_operator_sections()
     server, url = start_server()
     report_path = tmp_path / "cloud-run-smoke.json"
+    runtime_env_path = tmp_path / "api-env.json"
+    runtime_env_path.write_text(
+        json.dumps({"ODP_SCHEDULED_INGESTION_TENANT_ID": "tenant-live"}), encoding="utf-8"
+    )
     try:
         result = subprocess.run(
             [
                 sys.executable,
                 str(VALIDATOR_PATH),
                 "smoke",
+                "--runtime-env-file",
+                str(runtime_env_path),
                 "--api-url",
                 url,
                 "--web-url",
@@ -2483,6 +2491,7 @@ def test_deterministic_smoke_live_operator_bootstrap_report_is_unchanged() -> No
         "data_mode",
         "data_source",
         "origin_kind",
+        "tenant_scope",
     }
     by_name = {check.name: check for check in checks}
     assert by_name["smoke:/api/v1/operator/bootstrap:provenance"].detail == (
@@ -6701,7 +6710,13 @@ def test_cli_fails_closed_without_the_api_transport_token(
         str(report_path),
     ]
     if command == "smoke":
-        argv.extend(["--expected-sha", EXPECTED_SHA])
+        runtime_env_path = tmp_path / "api-env.json"
+        runtime_env_path.write_text(
+            json.dumps({"ODP_SCHEDULED_INGESTION_TENANT_ID": "tenant-live"}), encoding="utf-8"
+        )
+        argv.extend(
+            ["--expected-sha", EXPECTED_SHA, "--runtime-env-file", str(runtime_env_path)]
+        )
     environment = {**os.environ, "ODP_OPERATOR_SMOKE_BEARER_TOKEN": "operator-app-token"}
     environment.pop("ODP_API_INVOKER_TOKEN", None)
 
@@ -7258,12 +7273,18 @@ def _smoke_cli_env() -> dict[str, str]:
 def test_smoke_cli_defaults_to_the_bounded_startup_retry_contract(tmp_path: Path) -> None:
     server, url = start_server()
     report_path = tmp_path / "cloud-run-smoke.json"
+    runtime_env_path = tmp_path / "api-env.json"
+    runtime_env_path.write_text(
+        json.dumps({"ODP_SCHEDULED_INGESTION_TENANT_ID": "tenant-live"}), encoding="utf-8"
+    )
     try:
         result = subprocess.run(
             [
                 sys.executable,
                 str(VALIDATOR_PATH),
                 "smoke",
+                "--runtime-env-file",
+                str(runtime_env_path),
                 "--api-url",
                 url,
                 "--web-url",
@@ -7315,11 +7336,17 @@ def test_smoke_cli_fails_closed_on_an_unbounded_retry_policy(
     tmp_path: Path, flag: str, value: str
 ) -> None:
     report_path = tmp_path / "cloud-run-smoke.json"
+    runtime_env_path = tmp_path / "api-env.json"
+    runtime_env_path.write_text(
+        json.dumps({"ODP_SCHEDULED_INGESTION_TENANT_ID": "tenant-live"}), encoding="utf-8"
+    )
     result = subprocess.run(
         [
             sys.executable,
             str(VALIDATOR_PATH),
             "smoke",
+            "--runtime-env-file",
+            str(runtime_env_path),
             "--api-url",
             "http://127.0.0.1:1",
             "--web-url",
@@ -7829,12 +7856,18 @@ def test_compatibility_redacts_a_token_quoted_by_a_transport_exception() -> None
 def test_smoke_cli_redacts_a_token_quoted_by_a_transport_exception(tmp_path: Path) -> None:
     server, url = start_server()
     report_path = tmp_path / "cloud-run-smoke.json"
+    runtime_env_path = tmp_path / "api-env.json"
+    runtime_env_path.write_text(
+        json.dumps({"ODP_SCHEDULED_INGESTION_TENANT_ID": "tenant-live"}), encoding="utf-8"
+    )
     try:
         result = subprocess.run(
             [
                 sys.executable,
                 str(VALIDATOR_PATH),
                 "smoke",
+                "--runtime-env-file",
+                str(runtime_env_path),
                 "--api-url",
                 url,
                 "--web-url",
@@ -7971,3 +8004,277 @@ def test_smoke_report_is_compatible_with_existing_generic_receipt_redaction() ->
     assert wrapped["details"] == report
     for leaked in _quoted_credential_leaks():
         assert leaked not in json.dumps(wrapped)
+
+
+# The tenant verdict belongs to the existing authenticated bootstrap response.
+# These fixtures are synthetic; no principal/token/tenant is queried separately.
+@pytest.mark.parametrize(
+    ("expected_tenant", "tenant_meta", "expected_present", "actual_present", "matches"),
+    [
+        ("tenant-live", {"tenantId": "tenant-live"}, True, True, True),
+        (" \ttenant-live\r\n", {"tenantId": "\r tenant-live\t "}, True, True, True),
+        ("tenant-live", {"tenantId": "tenant-other"}, True, True, False),
+        ("tenant-live", {}, True, False, False),
+        ("tenant-live", {"tenantId": None}, True, False, False),
+        ("tenant-live", {"tenantId": ""}, True, False, False),
+        ("tenant-live", {"tenantId": " \t\r\n"}, True, False, False),
+        ("tenant-live", {"tenantId": 42}, True, False, False),
+        ("tenant-live", {"tenantId": True}, True, False, False),
+        ("tenant-live", {"tenantId": ["tenant-live"]}, True, False, False),
+        ("tenant-live", {"tenantId": {"value": "tenant-live"}}, True, False, False),
+        ("", {"tenantId": "tenant-live"}, False, True, False),
+        (" \t\n", {"tenantId": "tenant-live"}, False, True, False),
+        (None, {"tenantId": "tenant-live"}, False, True, False),
+        (42, {"tenantId": "tenant-live"}, False, True, False),
+        # The namespace hashes text. UUID equivalence must not replace equality.
+        (
+            "aabbccdd-1234-4567-89ab-aabbccddeeff",
+            {"tenantId": "AABBCCDD-1234-4567-89AB-AABBCCDDEEFF"},
+            True, True, False,
+        ),
+        (
+            "aabbccdd-1234-4567-89ab-aabbccddeeff",
+            {"tenantId": "aabbccdd1234456789abaabbccddeeff"},
+            True, True, False,
+        ),
+    ],
+    ids=[
+        "same-text", "trim-only", "foreign-tenant", "missing", "null", "empty",
+        "whitespace", "number", "boolean", "list", "object", "expected-empty",
+        "expected-whitespace", "expected-null", "expected-number", "uuid-case",
+        "uuid-format",
+    ],
+)
+def test_smoke_tenant_scope_uses_the_same_bootstrap_response_without_exposing_ids(
+    monkeypatch: pytest.MonkeyPatch,
+    expected_tenant: object,
+    tenant_meta: dict[str, object],
+    expected_present: bool,
+    actual_present: bool,
+    matches: bool,
+) -> None:
+    monkeypatch.setattr(DeterministicRuntimeHandler, "operator_tenant_meta", tenant_meta)
+    requests: list[tuple[str, dict[str, str]]] = []
+    original_get = DeterministicRuntimeHandler.do_GET
+
+    def record_request(self) -> None:
+        requests.append((self.path, {key.lower(): value for key, value in self.headers.items()}))
+        original_get(self)
+
+    monkeypatch.setattr(DeterministicRuntimeHandler, "do_GET", record_request)
+    server, url = start_server()
+    try:
+        checks, report = run_smoke(url, operator_tenant=expected_tenant)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    by_name = {check.name: check for check in checks}
+    tenant_check = by_name["smoke:/api/v1/operator/bootstrap:tenant_scope"]
+    assert tenant_check.ok is matches
+    assert report["operator_bootstrap"]["tenant_scope"] == {
+        "expected_tenant_present": expected_present,
+        "actual_tenant_present": actual_present,
+        "matches_deployment": matches,
+        "source": "bootstrap.meta.tenantId",
+    }
+    assert all(
+        check.ok for check in checks
+        if check.name != "smoke:/api/v1/operator/bootstrap:tenant_scope"
+    )
+    assert [path for path, _ in requests] == [*SMOKE_API_PATHS, "/operator"]
+    assert report["operator_bootstrap_probe"]["attempt_count"] == 1
+    for _, headers in requests:
+        assert not {
+            "x-operator-subject", "x-operator-tenant", "x-subject-id", "x-tenant-id",
+        } & headers.keys()
+    serialized = json.dumps(report) + json.dumps([asdict(check) for check in checks])
+    for raw in (expected_tenant, tenant_meta.get("tenantId")):
+        if isinstance(raw, str) and raw.strip():
+            assert raw.strip() not in serialized
+
+
+def test_smoke_tenant_scope_detail_does_not_change_with_identifier_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Two different mismatches must report the same fixed, non-identifying detail.
+    details: list[str] = []
+    server, url = start_server()
+    try:
+        for expected, actual in (("expected-one", "actual-one"), ("expected-two", "actual-two")):
+            monkeypatch.setattr(
+                DeterministicRuntimeHandler, "operator_tenant_meta", {"tenantId": actual}
+            )
+            checks, _ = run_smoke(url, operator_tenant=expected)
+            tenant_check = next(
+                check for check in checks
+                if check.name == "smoke:/api/v1/operator/bootstrap:tenant_scope"
+            )
+            assert tenant_check.ok is False
+            details.append(tenant_check.detail)
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert details[0] == details[1]
+    assert details[0]
+
+
+@pytest.mark.parametrize(
+    ("runtime_tenant", "expected_match"),
+    [("tenant-live", True), (" \ttenant-live\n", True), ("tenant-other", False)],
+    ids=["canonical", "canonical-trim", "canonical-mismatch"],
+)
+def test_smoke_cli_uses_only_the_runtime_file_canonical_tenant(
+    tmp_path: Path, runtime_tenant: str, expected_match: bool,
+) -> None:
+    runtime_env_path = tmp_path / "api-env.json"
+    runtime_env_path.write_text(
+        json.dumps({
+            "ODP_SCHEDULED_INGESTION_TENANT_ID": runtime_tenant,
+            "ODP_TENANT_ID": "tenant-live",
+            "ODP_OPERATOR_SMOKE_TENANT": "tenant-live",
+        }),
+        encoding="utf-8",
+    )
+    report_path = tmp_path / "cloud-run-smoke.json"
+    server, url = start_server()
+    try:
+        result = subprocess.run(
+            [
+                sys.executable, str(VALIDATOR_PATH), "smoke",
+                "--runtime-env-file", str(runtime_env_path),
+                "--api-url", url, "--web-url", url,
+                "--expected-sha", EXPECTED_SHA, "--output", str(report_path),
+            ],
+            cwd=ROOT,
+            env={
+                **_smoke_cli_env(),
+                "ODP_SCHEDULED_INGESTION_TENANT_ID": "process-env-conflict",
+                "ODP_TENANT_ID": "process-alias-conflict",
+                "ODP_OPERATOR_SMOKE_TENANT": "process-smoke-conflict",
+                "ODP_OPERATOR_SMOKE_SUBJECT": "compatibility-subject-not-authority",
+            },
+            check=False, capture_output=True, text=True,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert result.returncode == (0 if expected_match else 1), result.stdout + result.stderr
+    text = report_path.read_text(encoding="utf-8")
+    report = json.loads(text)
+    assert report["ok"] is expected_match
+    assert report["operator_bootstrap"]["tenant_scope"] == {
+        "expected_tenant_present": True,
+        "actual_tenant_present": True,
+        "matches_deployment": expected_match,
+        "source": "bootstrap.meta.tenantId",
+    }
+    failed = [check["name"] for check in report["checks"] if not check["ok"]]
+    assert failed == ([] if expected_match else ["smoke:/api/v1/operator/bootstrap:tenant_scope"])
+    assert report["probe_retry_policy"]["attempts"] == validator.SMOKE_PROBE_ATTEMPTS
+    assert report["probe_retry_policy"]["deadline_scope"] == "shared_by_api_probes"
+    assert report["operator_bootstrap_probe"]["attempt_count"] == 1
+    for forbidden in (
+        "tenant-live", "tenant-other", "process-env-conflict", "process-alias-conflict",
+        "process-smoke-conflict", "compatibility-subject-not-authority",
+    ):
+        assert forbidden not in text + result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "runtime_text",
+    [
+        None,
+        "{not-json-do-not-echo-runtime-input",
+        json.dumps(["do-not-echo-root-list"]),
+        json.dumps("do-not-echo-root-string"),
+        json.dumps({}),
+        json.dumps({"ODP_TENANT_ID": "tenant-live", "ODP_OPERATOR_SMOKE_TENANT": "tenant-live"}),
+        json.dumps({"ODP_SCHEDULED_INGESTION_TENANT_ID": None}),
+        json.dumps({"ODP_SCHEDULED_INGESTION_TENANT_ID": ""}),
+        json.dumps({"ODP_SCHEDULED_INGESTION_TENANT_ID": " \t\n"}),
+        json.dumps({"ODP_SCHEDULED_INGESTION_TENANT_ID": 4242424242}),
+        json.dumps({"ODP_SCHEDULED_INGESTION_TENANT_ID": True}),
+        json.dumps({"ODP_SCHEDULED_INGESTION_TENANT_ID": ["do-not-echo-list-value"]}),
+        json.dumps({"ODP_SCHEDULED_INGESTION_TENANT_ID": {"tenant": "do-not-echo-object-value"}}),
+    ],
+    ids=[
+        "file-missing", "bad-json", "root-list", "root-string", "canonical-missing",
+        "alias-only", "null", "empty", "whitespace", "number", "boolean", "list", "object",
+    ],
+)
+def test_smoke_cli_rejects_invalid_runtime_tenant_without_fallback_or_value_disclosure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runtime_text: str | None,
+) -> None:
+    runtime_env_path = tmp_path / "runtime-input-do-not-echo.json"
+    if runtime_text is not None:
+        runtime_env_path.write_text(runtime_text, encoding="utf-8")
+    report_path = tmp_path / "cloud-run-smoke.json"
+    requests: list[str] = []
+    original_get = DeterministicRuntimeHandler.do_GET
+
+    def record_request(self) -> None:
+        requests.append(self.path)
+        original_get(self)
+
+    monkeypatch.setattr(DeterministicRuntimeHandler, "do_GET", record_request)
+    server, url = start_server()
+    try:
+        result = subprocess.run(
+            [
+                sys.executable, str(VALIDATOR_PATH), "smoke",
+                "--runtime-env-file", str(runtime_env_path),
+                "--api-url", url, "--web-url", url,
+                "--expected-sha", EXPECTED_SHA, "--output", str(report_path),
+            ],
+            cwd=ROOT,
+            env={
+                **_smoke_cli_env(),
+                "ODP_SCHEDULED_INGESTION_TENANT_ID": "tenant-live",
+                "ODP_TENANT_ID": "tenant-live",
+                "ODP_OPERATOR_SMOKE_TENANT": "tenant-live",
+            },
+            check=False, capture_output=True, text=True,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert result.returncode == 1, result.stdout + result.stderr
+    text = report_path.read_text(encoding="utf-8")
+    report = json.loads(text)
+    assert report["ok"] is False
+    assert [(check["name"], check["ok"]) for check in report["checks"]] == [
+        ("smoke:runtime_tenant", False)
+    ]
+    assert requests == []
+    assert report["secret_values_redacted"] is True
+    serialized = text + result.stdout + result.stderr
+    for forbidden in (
+        "tenant-live", "not-json-do-not-echo-runtime-input", "do-not-echo-root-list",
+        "do-not-echo-root-string", "4242424242", "do-not-echo-list-value",
+        "do-not-echo-object-value", str(runtime_env_path),
+    ):
+        assert forbidden not in serialized
+
+
+def test_smoke_cli_requires_the_runtime_env_file_argument(tmp_path: Path) -> None:
+    report_path = tmp_path / "cloud-run-smoke.json"
+    result = subprocess.run(
+        [
+            sys.executable, str(VALIDATOR_PATH), "smoke",
+            "--api-url", "http://127.0.0.1:1", "--web-url", "http://127.0.0.1:1",
+            "--expected-sha", EXPECTED_SHA, "--output", str(report_path),
+        ],
+        cwd=ROOT,
+        env={
+            **_smoke_cli_env(),
+            "ODP_SCHEDULED_INGESTION_TENANT_ID": "do-not-fallback-to-process-tenant",
+            "ODP_OPERATOR_SMOKE_TENANT": "do-not-fallback-to-legacy-tenant",
+        },
+        check=False, capture_output=True, text=True,
+    )
+    assert result.returncode == 2
+    assert "--runtime-env-file" in result.stderr
+    assert not report_path.exists()
+    assert "do-not-fallback-to-process-tenant" not in result.stdout + result.stderr
+    assert "do-not-fallback-to-legacy-tenant" not in result.stdout + result.stderr
