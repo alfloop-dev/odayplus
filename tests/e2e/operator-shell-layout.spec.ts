@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { openOperatorWorkspace } from "./_operatorPersona";
+import type { OperatorHeatZone } from "../../apps/web/features/operator/types";
 
 /**
  * Real-CSS geometry guard for the shared Operator header (audit
@@ -420,11 +421,53 @@ test.describe("Network Find Areas Package 10 layout", () => {
     await expect(page.getByTestId("find-areas-zone-detail")).toBeVisible({ timeout: 30_000 });
   }
 
-  test("1440px geometry matches the design grid", async ({ page }) => {
+  test("1440px geometry matches the design grid", async ({ page }, testInfo) => {
+    // Bind the geometry to the owning scoped API read, not the transient
+    // direct HeatZone binding or the client fixture shown before it settles.
+    const networkRead = page.waitForResponse((response) =>
+      response.request().method() === "GET"
+      && new URL(response.url()).pathname === "/api/v1/operator/network-listings");
     await openFindAreas(page, 1440);
-    // The product seed is read through the recorded HeatZone projection. Wait
-    // for its provenance row before measuring, rather than the prototype rows.
-    await expect(page.getByTestId("find-areas-zone-facts").locator("dt").last()).toHaveText("評估模式");
+    const response = await networkRead;
+    expect(response.status()).toBe(200);
+    const snapshot = await response.json() as {
+      source?: string;
+      selectedHeatZoneId?: string;
+      heatZones?: OperatorHeatZone[];
+      heatZoneAvailability?: { state?: string; source?: string };
+    };
+    expect(snapshot.source).toBe("api");
+    expect(Array.isArray(snapshot.heatZones)).toBe(true);
+    expect(snapshot.heatZones!.length).toBeGreaterThan(0);
+    expect(snapshot.heatZoneAvailability?.state).not.toBe("unavailable");
+    const selectedZones = snapshot.heatZones!.filter((zone) => zone.id === snapshot.selectedHeatZoneId);
+    expect(selectedZones).toHaveLength(1);
+    const selectedZone = selectedZones[0]!;
+    const recorded = selectedZone.recordedMap;
+    // An explicit null projection is malformed, not an absent legacy field.
+    if (recorded !== undefined) {
+      expect(recorded).toMatchObject({ id: selectedZone.id });
+      expect(snapshot.heatZoneAvailability).toMatchObject({ state: "available", source: "canonical-heatzone" });
+    }
+    const factLabels = recorded ? [
+      "未滿足需求", "店型適配", "競爭壓力", "自家稀釋風險", "租金可行性", "物件供給", "資料信心", "評估模式",
+    ] : [
+      "需求缺口", "競店壓力", "自家稀釋", "租金帶", "租金可行性", "可用物件", "資料信心",
+    ];
+    await expect(page.getByTestId("find-areas-tray").locator('button[aria-current="true"]'))
+      .toHaveAttribute("data-zone-id", selectedZone.id);
+    await expect(page.getByTestId("find-areas-zone-detail").getByRole("heading", { level: 3 }))
+      .toHaveText(selectedZone.label);
+    const facts = page.getByTestId("find-areas-zone-facts");
+    await expect(facts.locator("dt")).toHaveText(factLabels);
+    const confidence = recorded ? recorded.confidence : selectedZone.confidence;
+    const confidenceValue = facts.locator("div")
+      .filter({ has: page.getByText("資料信心", { exact: true }) }).locator("dd");
+    if (recorded || confidence === null) {
+      await expect(confidenceValue).toHaveText(confidence === null ? "未評估" : `${Math.round(confidence * 100)}%`);
+    } else {
+      await expect(confidenceValue).toHaveText(new RegExp(`^[^0-9]*${Math.round(confidence * 100)}%[^0-9]*$`));
+    }
     const g = await page.evaluate(() => {
       const box = (selector: string) => {
         const element = document.querySelector<HTMLElement>(selector);
@@ -492,13 +535,16 @@ test.describe("Network Find Areas Package 10 layout", () => {
     expect(g.legend).not.toMatch(/High lens fit|Watch tradeoff|Risk pressure/);
     // Package 10 has one primary, URL intake and four secondary actions.
     expect(g.bigScoreFont).toBe("22px");
-    expect(g.facts.map((row) => row.label)).toEqual([
-      "未滿足需求", "店型適配", "競爭壓力", "自家稀釋風險", "租金可行性", "物件供給", "資料信心", "評估模式",
-    ]);
-    // The baseline seed does not record these facts. Retain unknown values;
-    // competitor counts and a numeric score cannot establish them.
-    expect(g.facts.find((row) => row.label === "競爭壓力")?.value).toBe("未評估");
-    expect(g.facts.find((row) => row.label === "評估模式")?.value).toBe("未知");
+    expect(g.facts.map((row) => row.label)).toEqual(factLabels);
+    if (recorded) {
+      // Missing source facts stay unknown; counts and a score do not supply them.
+      expect(g.facts.find((row) => row.label === "競爭壓力")?.value).toBe(
+        recorded.competitorPressureScore == null ? "未評估" : `${Math.round(recorded.competitorPressureScore * 100)}%`,
+      );
+      expect(g.facts.find((row) => row.label === "評估模式")?.value).toBe(
+        recorded.executionMode === "SHADOW" ? "影子評估" : recorded.executionMode || "未知",
+      );
+    }
     expect(g.actions.map((action) => action.text)).toContain("＋ 從網址新增物件（帶入本區）");
     expect(g.actions).toHaveLength(6);
     expect(g.actions.slice(3).map((action) => action.text)).toEqual([
@@ -506,6 +552,15 @@ test.describe("Network Find Areas Package 10 layout", () => {
     ]);
     expect(g.actions[0].bg).toBe("rgb(46, 58, 151)");
     for (const action of g.actions.slice(1)) expect(action.bg).not.toBe("rgb(46, 58, 151)");
+    await testInfo.attach("find-areas-owning-api-projection.json", {
+      body: JSON.stringify({ source: snapshot.source, selectedHeatZoneId: snapshot.selectedHeatZoneId,
+        requestSelectedHeatZoneId: new URL(response.url()).searchParams.get("selectedHeatZoneId"),
+        rowContract: recorded ? "recorded-map" : "operator-zone", factLabels, confidence,
+        availability: snapshot.heatZoneAvailability,
+        modelVersion: recorded?.modelVersion, featureVersion: recorded?.featureVersion,
+        sourceSnapshotIds: recorded?.sourceSnapshotIds }, null, 2),
+      contentType: "application/json",
+    });
   });
 
   test("map draws the offline basemap under a lens caption without developer strings", async ({ page }) => {
