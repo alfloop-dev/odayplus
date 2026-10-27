@@ -818,6 +818,7 @@ class DeterministicRuntimeHandler(BaseHTTPRequestHandler):
     missing_provider_id = ""
     failed_provider_id = ""
     probe_age_seconds = 0
+    operator_section_meta: dict[str, object] = {}
 
     @classmethod
     def _operator_origin(cls) -> dict[str, object]:
@@ -927,6 +928,7 @@ class DeterministicRuntimeHandler(BaseHTTPRequestHandler):
                                 else "OPERATOR_LIVE_REPOSITORY_UNAVAILABLE"
                             ),
                         },
+                        **self.operator_section_meta,
                     },
                     "today": {"queue": []},
                 }
@@ -2215,6 +2217,271 @@ def test_deterministic_smoke_requires_ready_operator_live_repository_probe() -> 
     # An unavailable repository blocks candidate promotion, but the failure is
     # reported as a failing probe, not as seed exposure.
     assert by_name["smoke:/api/v1/operator/bootstrap:provenance"].ok is True
+
+
+def _degraded_operator_sections() -> dict[str, object]:
+    # Shape emitted by OperatorStateService from OperatorLiveRepository: one
+    # unavailable section degrades the whole bootstrap.
+    return {
+        "sections": {
+            "stores": {"state": "available", "source": "postgresql", "recordCount": 3},
+            "storeOpsIssues": {
+                "state": "unavailable",
+                "source": "store_ops_issue_repository",
+                "recordCount": None,
+                "reasonCode": "OPERATOR_STOREOPSISSUES_UNAVAILABLE",
+                "message": (
+                    "connection to postgresql://odp_app:hunter2-db-pass@10.0.0.5:5432/odp "
+                    "failed: password=hunter2-db-pass api_key='sk-live-abc123' "
+                    "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig "
+                )
+                + "x" * 600,
+            },
+            "interventions": {
+                "state": "degraded",
+                "source": "intervention_store",
+                "recordCount": 1,
+                "reasonCode": "OPERATOR_INTERVENTIONS_PARTIAL",
+                "message": "store s-2: timeout",
+            },
+        },
+        "unavailableSections": ["storeOpsIssues"],
+        "degradedSections": ["interventions"],
+    }
+
+
+def test_deterministic_smoke_records_degraded_operator_sections_and_reason_codes() -> None:
+    DeterministicRuntimeHandler.data_mode = "degraded"
+    DeterministicRuntimeHandler.operator_origin_kind = "degraded"
+    DeterministicRuntimeHandler.operator_section_meta = _degraded_operator_sections()
+    server, url = start_server()
+    try:
+        checks, report = run_smoke(url)
+    finally:
+        server.shutdown()
+        DeterministicRuntimeHandler.data_mode = "live"
+        DeterministicRuntimeHandler.operator_origin_kind = "authoritative"
+        DeterministicRuntimeHandler.operator_section_meta = {}
+
+    bootstrap = report["operator_bootstrap"]
+    assert bootstrap["data_mode"] == "degraded"
+    assert bootstrap["origin_kind"] == "degraded"
+    assert bootstrap["unavailable_sections"] == ["storeOpsIssues"]
+    assert bootstrap["degraded_sections"] == ["interventions"]
+    sections = bootstrap["non_available_sections"]
+    # Available sections are not listed; only the ones that degraded the bootstrap.
+    assert set(sections) == {"storeOpsIssues", "interventions"}
+    assert sections["storeOpsIssues"]["state"] == "unavailable"
+    assert sections["storeOpsIssues"]["reason_code"] == "OPERATOR_STOREOPSISSUES_UNAVAILABLE"
+    assert sections["interventions"] == {
+        "state": "degraded",
+        "reason_code": "OPERATOR_INTERVENTIONS_PARTIAL",
+        "message": "store s-2: timeout",
+    }
+
+    # The pass/fail verdict is unchanged: degraded is still not live.
+    by_name = {check.name: check for check in checks}
+    for name in (
+        "smoke:/api/v1/operator/bootstrap:provenance",
+        "smoke:/api/v1/operator/bootstrap:read_provenance",
+    ):
+        assert by_name[name].ok is False
+        assert "storeOpsIssues:OPERATOR_STOREOPSISSUES_UNAVAILABLE" in by_name[name].detail
+        assert "interventions:OPERATOR_INTERVENTIONS_PARTIAL" in by_name[name].detail
+
+
+def test_deterministic_smoke_masks_suspected_secrets_in_operator_section_messages() -> None:
+    DeterministicRuntimeHandler.data_mode = "degraded"
+    DeterministicRuntimeHandler.operator_origin_kind = "degraded"
+    DeterministicRuntimeHandler.operator_section_meta = _degraded_operator_sections()
+    server, url = start_server()
+    try:
+        _, report = run_smoke(url)
+    finally:
+        server.shutdown()
+        DeterministicRuntimeHandler.data_mode = "live"
+        DeterministicRuntimeHandler.operator_origin_kind = "authoritative"
+        DeterministicRuntimeHandler.operator_section_meta = {}
+
+    message = report["operator_bootstrap"]["non_available_sections"]["storeOpsIssues"]["message"]
+    rendered = json.dumps(report)
+    for leaked in ("hunter2-db-pass", "sk-live-abc123", "eyJhbGciOiJIUzI1NiJ9", "odp_app"):
+        assert leaked not in rendered
+    assert "postgresql://<redacted>@10.0.0.5:5432/odp" in message
+    assert "password=<redacted>" in message
+    assert "api_key=<redacted>" in message
+    assert "Bearer <redacted>" in message
+    assert len(message) <= validator.OPERATOR_SECTION_MESSAGE_MAX_CHARS
+    assert message.endswith("...")
+
+
+def _quoted_credential_operator_sections() -> dict[str, object]:
+    # Repository errors are ``str(exc)``: a driver may print a JSON body or a dict
+    # repr, and an API error may echo the invoker token near the length cap.
+    return {
+        "sections": {
+            "survey_assignments": {
+                "state": "unavailable",
+                "reasonCode": "OPERATOR_SURVEY_ASSIGNMENTS_UNAVAILABLE",
+                "message": 'db rejected {"password": "synthetic-db-secret", "user": "odp"}',
+            },
+            "providers": {
+                "state": "unavailable",
+                "reasonCode": "OPERATOR_PROVIDERS_UNAVAILABLE",
+                "message": "provider config {'api_key': 'synthetic-provider-key'}",
+            },
+            "notices": {
+                "state": "degraded",
+                "reasonCode": "OPERATOR_NOTICES_PARTIAL",
+                "message": r"upstream body {\"token\": \"synthetic-escaped-token\"}",
+            },
+            # The known token straddles the 240-character cap.
+            "storeOpsIssues": {
+                "state": "unavailable",
+                "reasonCode": "OPERATOR_STOREOPSISSUES_UNAVAILABLE",
+                "message": "x" * 225 + SMOKE_API_INVOKER + "y" * 20,
+            },
+        },
+        "unavailableSections": ["survey_assignments", "providers", "storeOpsIssues"],
+        "degradedSections": ["notices"],
+    }
+
+
+def _quoted_credential_leaks() -> tuple[str, ...]:
+    return (
+        "synthetic-db-secret",
+        "synthetic-provider-key",
+        "synthetic-escaped-token",
+        SMOKE_API_INVOKER[:8],
+    )
+
+
+def _assert_quoted_credentials_masked(bootstrap: dict[str, object]) -> None:
+    sections = bootstrap["non_available_sections"]
+    assert sections["survey_assignments"]["message"] == (
+        'db rejected {"password": <redacted>, "user": "odp"}'
+    )
+    assert sections["providers"]["message"] == "provider config {'api_key': <redacted>}"
+    assert sections["notices"]["message"] == r"upstream body {\"token\": <redacted>}"
+    # Known-token redaction runs before the cut, so no prefix of it survives.
+    assert sections["storeOpsIssues"]["message"] == "x" * 225 + "<redacted>" + "yy..."
+    assert sections["storeOpsIssues"]["reason_code"] == "OPERATOR_STOREOPSISSUES_UNAVAILABLE"
+
+
+def test_deterministic_smoke_masks_quoted_and_boundary_secrets_in_operator_sections() -> None:
+    DeterministicRuntimeHandler.data_mode = "degraded"
+    DeterministicRuntimeHandler.operator_origin_kind = "degraded"
+    DeterministicRuntimeHandler.operator_section_meta = _quoted_credential_operator_sections()
+    server, url = start_server()
+    try:
+        checks, report = validator.smoke_checks(
+            api_url=url,
+            web_url=url,
+            expected_sha=EXPECTED_SHA,
+            bearer_token=SMOKE_BEARER,
+            operator_role="ops-lead",
+            operator_subject="smoke-operator",
+            operator_tenant="tenant-live",
+            correlation_id="corr-operator-quoted-secrets",
+            timeout=2,
+            api_invoker_token=SMOKE_API_INVOKER,
+        )
+    finally:
+        server.shutdown()
+        DeterministicRuntimeHandler.data_mode = "live"
+        DeterministicRuntimeHandler.operator_origin_kind = "authoritative"
+        DeterministicRuntimeHandler.operator_section_meta = {}
+
+    rendered = json.dumps(report) + json.dumps([[c.name, c.detail] for c in checks])
+    for leaked in _quoted_credential_leaks():
+        assert leaked not in rendered
+    _assert_quoted_credentials_masked(report["operator_bootstrap"])
+    by_name = {check.name: check for check in checks}
+    assert by_name["smoke:/api/v1/operator/bootstrap:provenance"].ok is False
+
+
+def test_smoke_cli_report_masks_quoted_and_boundary_secrets_in_operator_sections(
+    tmp_path: Path,
+) -> None:
+    DeterministicRuntimeHandler.data_mode = "degraded"
+    DeterministicRuntimeHandler.operator_origin_kind = "degraded"
+    DeterministicRuntimeHandler.operator_section_meta = _quoted_credential_operator_sections()
+    server, url = start_server()
+    report_path = tmp_path / "cloud-run-smoke.json"
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(VALIDATOR_PATH),
+                "smoke",
+                "--api-url",
+                url,
+                "--web-url",
+                url,
+                "--expected-sha",
+                EXPECTED_SHA,
+                "--smoke-retry-attempts",
+                "1",
+                "--output",
+                str(report_path),
+            ],
+            cwd=ROOT,
+            env=_smoke_cli_env(),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        server.shutdown()
+        DeterministicRuntimeHandler.data_mode = "live"
+        DeterministicRuntimeHandler.operator_origin_kind = "authoritative"
+        DeterministicRuntimeHandler.operator_section_meta = {}
+
+    # Degraded stays fail-closed; the report says which sections and why.
+    assert result.returncode == 1, result.stdout + result.stderr
+    text = report_path.read_text(encoding="utf-8")
+    for leaked in _quoted_credential_leaks():
+        assert leaked not in text
+        assert leaked not in result.stdout + result.stderr
+    report = json.loads(text)
+    assert report["ok"] is False
+    _assert_quoted_credentials_masked(report["operator_bootstrap"])
+    provenance = next(
+        check
+        for check in report["checks"]
+        if check["name"] == "smoke:/api/v1/operator/bootstrap:provenance"
+    )
+    assert "providers:OPERATOR_PROVIDERS_UNAVAILABLE" in provenance["detail"]
+    assert "notices:OPERATOR_NOTICES_PARTIAL" in provenance["detail"]
+
+
+def test_deterministic_smoke_live_operator_bootstrap_report_is_unchanged() -> None:
+    DeterministicRuntimeHandler.operator_section_meta = {
+        "sections": {
+            "stores": {"state": "available", "source": "postgresql", "recordCount": 3},
+        },
+        "unavailableSections": [],
+        "degradedSections": [],
+    }
+    server, url = start_server()
+    try:
+        checks, report = run_smoke(url)
+    finally:
+        server.shutdown()
+        DeterministicRuntimeHandler.operator_section_meta = {}
+
+    assert all(check.ok for check in checks)
+    assert set(report["operator_bootstrap"]) == {
+        "status",
+        "data_mode",
+        "data_source",
+        "origin_kind",
+    }
+    by_name = {check.name: check for check in checks}
+    assert by_name["smoke:/api/v1/operator/bootstrap:provenance"].detail == (
+        "data_mode=live data_source=postgresql"
+    )
+    assert "sections=" not in by_name["smoke:/api/v1/operator/bootstrap:read_provenance"].detail
 
 
 def test_workflows_do_not_reference_secrets_in_step_if() -> None:
