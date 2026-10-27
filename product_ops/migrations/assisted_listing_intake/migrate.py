@@ -2288,7 +2288,8 @@ def inventory_intakes(engine: Any, tenant_id: str, *, source_id: str | None = No
                                     or stored["doc_id"] != tenant_id + ":" + wrapped["_state_key"]):
                                 raise ValueError("Invalid bridge storage binding")
                             value = intake_schema.DurableAssistedIntakeStore._unwrap(wrapped)
-                        if not isinstance(value, dict):
+                        if (not isinstance(value, dict) or (model == "bridge_documents"
+                                and not {"intake_id", "scope"}.issubset(value))):
                             raise ValueError("Invalid Intake document")
                         row, errors = _normalize_intake(value)
                         if "tenantId" not in errors and str(uuid.UUID(row["tenantId"])) != tenant_id:
@@ -2430,7 +2431,8 @@ def main() -> None:
         sys.exit(0 if result["status"] == "complete" else 1)
 
     # Keep the historical default for every original action, never inventory.
-    args.tenant_id = args.tenant_id or "00000000-0000-0000-0000-000000000001"
+    if args.tenant_id is None:
+        args.tenant_id = "00000000-0000-0000-0000-000000000001"
     if not dsn and not args.sqlite_path:
         print("Error: No database connection target provided. Specify --db-dsn/--dsn, --sqlite-path, or set ODAY_DATABASE_URL.", file=sys.stderr)
         sys.exit(1)

@@ -1633,6 +1633,7 @@ def run_inventory_cli(database, role, *selectors, tenant=INVENTORY_TENANT, expec
     else:
         dsn = database.url().replace("postgres@", role + "@")
     env = {key: value for key, value in os.environ.items() if "DATABASE_URL" not in key}
+    env["MLFLOW_DISABLE_AGENT_HINT"] = "1"  # Unrelated installed MLflow startup advertising.
     args = [sys.executable, "-m", "product_ops.migrations.assisted_listing_intake.migrate",
             "--action", "inventory", "--db-dsn", dsn, *selectors]
     if tenant is not None:
@@ -1840,17 +1841,62 @@ def test_inventory_requires_explicit_valid_context(inventory_db, tenant, selecto
     assert result == {"action": "inventory", "status": "error", "reason": "invalid_inventory_arguments"}
 
 
-def test_inventory_same_process_cleanup_on_success_and_failure(inventory_db):
+def test_inventory_same_process_cleanup_on_success_and_failure(inventory_db, monkeypatch):
     from product_ops.migrations.assisted_listing_intake.migrate import _inventory_cli
 
     database, engine, role = inventory_db
     dsn = database.url().replace("postgres@", role + "@")
     assert _inventory_cli(dsn, INVENTORY_TENANT, source_id=None, month=None, limit=10000)["status"] == "complete"
-    # A failed transaction, not just a successfully returned report, must release
-    # its own pool. Observe from this process before any interpreter teardown.
+    # Validation and transaction failures must release the pool, observed here
+    # before interpreter teardown could hide a leaked connection.
     with pytest.raises(ValueError):
         _inventory_cli(dsn, "invalid-tenant", source_id=None, month=None, limit=10000)
+    from shared.infrastructure.persistence.postgresql import PostgresEngine
+
+    query_one = PostgresEngine.query_one
+
+    def fail_binding(self, sql, params=()):
+        if "AS snapshot" in sql:
+            raise RuntimeError("synthetic transaction failure: secret DSN")
+        return query_one(self, sql, params)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(PostgresEngine, "query_one", fail_binding)
+        with pytest.raises(RuntimeError, match="synthetic transaction failure"):
+            _inventory_cli(dsn, INVENTORY_TENANT, source_id=None, month=None, limit=10000)
     with database.connect() as connection:
         assert connection.execute("SELECT count(*) FROM pg_stat_activity WHERE usename = %s", (role,)).fetchone()[0] == 0
     # The existing caller-owned engine is unaffected by inventory cleanup.
     assert engine.query_one("SELECT 1 AS n")["n"] == 1
+
+
+def test_inventory_one_consistent_snapshot_across_models(inventory_db, monkeypatch):
+    from product_ops.migrations.assisted_listing_intake.migrate import _inventory_cli
+    from shared.infrastructure.persistence.postgresql import PostgresDocumentStore
+
+    database, engine, role = inventory_db
+    seed_inventory_models(database, engine)
+    original_get = PostgresDocumentStore.get
+    changed = False
+
+    def concurrent_change(self, collection, key):
+        nonlocal changed
+        value = original_get(self, collection, key)
+        if not changed:
+            changed = True
+            with database.connect() as connection:
+                connection.execute("UPDATE intake.intakes SET source_id = NULL WHERE tenant_id = %s", (INVENTORY_TENANT,))
+        return value
+
+    with monkeypatch.context() as patch:
+        patch.setattr(PostgresDocumentStore, "get", concurrent_change)
+        result = _inventory_cli(database.url().replace("postgres@", role + "@"), INVENTORY_TENANT,
+                                source_id="SRC-591", month="2026-07", limit=10000)
+    assert changed
+    assert result["status"] == "complete"  # Native reads retain the pre-update snapshot.
+    assert result["models"]["native_rows"]["counts"] == {"observed": 2, "selected": 1, "excluded": 1, "unknown": 0}
+    # A fresh real CLI snapshot must expose missing native source facts, even
+    # with a source/month selector. It cannot silently turn them into zero.
+    current = run_inventory_cli(database, role, "--source-id", "SRC-591", "--month", "2026-07", expected_exit=1)
+    assert current["models"]["native_rows"]["counts"] == {"observed": 2, "selected": 0, "excluded": 0, "unknown": 2}
+    assert current["models"]["native_rows"]["findings"] == {"MISSING_EVIDENCE:sourceId": 2}
