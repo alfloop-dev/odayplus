@@ -818,6 +818,7 @@ class DeterministicRuntimeHandler(BaseHTTPRequestHandler):
     missing_provider_id = ""
     failed_provider_id = ""
     probe_age_seconds = 0
+    operator_section_meta: dict[str, object] = {}
 
     @classmethod
     def _operator_origin(cls) -> dict[str, object]:
@@ -927,6 +928,7 @@ class DeterministicRuntimeHandler(BaseHTTPRequestHandler):
                                 else "OPERATOR_LIVE_REPOSITORY_UNAVAILABLE"
                             ),
                         },
+                        **self.operator_section_meta,
                     },
                     "today": {"queue": []},
                 }
@@ -2215,6 +2217,131 @@ def test_deterministic_smoke_requires_ready_operator_live_repository_probe() -> 
     # An unavailable repository blocks candidate promotion, but the failure is
     # reported as a failing probe, not as seed exposure.
     assert by_name["smoke:/api/v1/operator/bootstrap:provenance"].ok is True
+
+
+def _degraded_operator_sections() -> dict[str, object]:
+    # Shape emitted by OperatorStateService from OperatorLiveRepository: one
+    # unavailable section degrades the whole bootstrap.
+    return {
+        "sections": {
+            "stores": {"state": "available", "source": "postgresql", "recordCount": 3},
+            "storeOpsIssues": {
+                "state": "unavailable",
+                "source": "store_ops_issue_repository",
+                "recordCount": None,
+                "reasonCode": "OPERATOR_STOREOPSISSUES_UNAVAILABLE",
+                "message": (
+                    "connection to postgresql://odp_app:hunter2-db-pass@10.0.0.5:5432/odp "
+                    "failed: password=hunter2-db-pass api_key='sk-live-abc123' "
+                    "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig "
+                )
+                + "x" * 600,
+            },
+            "interventions": {
+                "state": "degraded",
+                "source": "intervention_store",
+                "recordCount": 1,
+                "reasonCode": "OPERATOR_INTERVENTIONS_PARTIAL",
+                "message": "store s-2: timeout",
+            },
+        },
+        "unavailableSections": ["storeOpsIssues"],
+        "degradedSections": ["interventions"],
+    }
+
+
+def test_deterministic_smoke_records_degraded_operator_sections_and_reason_codes() -> None:
+    DeterministicRuntimeHandler.data_mode = "degraded"
+    DeterministicRuntimeHandler.operator_origin_kind = "degraded"
+    DeterministicRuntimeHandler.operator_section_meta = _degraded_operator_sections()
+    server, url = start_server()
+    try:
+        checks, report = run_smoke(url)
+    finally:
+        server.shutdown()
+        DeterministicRuntimeHandler.data_mode = "live"
+        DeterministicRuntimeHandler.operator_origin_kind = "authoritative"
+        DeterministicRuntimeHandler.operator_section_meta = {}
+
+    bootstrap = report["operator_bootstrap"]
+    assert bootstrap["data_mode"] == "degraded"
+    assert bootstrap["origin_kind"] == "degraded"
+    assert bootstrap["unavailable_sections"] == ["storeOpsIssues"]
+    assert bootstrap["degraded_sections"] == ["interventions"]
+    sections = bootstrap["non_available_sections"]
+    # Available sections are not listed; only the ones that degraded the bootstrap.
+    assert set(sections) == {"storeOpsIssues", "interventions"}
+    assert sections["storeOpsIssues"]["state"] == "unavailable"
+    assert sections["storeOpsIssues"]["reason_code"] == "OPERATOR_STOREOPSISSUES_UNAVAILABLE"
+    assert sections["interventions"] == {
+        "state": "degraded",
+        "reason_code": "OPERATOR_INTERVENTIONS_PARTIAL",
+        "message": "store s-2: timeout",
+    }
+
+    # The pass/fail verdict is unchanged: degraded is still not live.
+    by_name = {check.name: check for check in checks}
+    for name in (
+        "smoke:/api/v1/operator/bootstrap:provenance",
+        "smoke:/api/v1/operator/bootstrap:read_provenance",
+    ):
+        assert by_name[name].ok is False
+        assert "storeOpsIssues:OPERATOR_STOREOPSISSUES_UNAVAILABLE" in by_name[name].detail
+        assert "interventions:OPERATOR_INTERVENTIONS_PARTIAL" in by_name[name].detail
+
+
+def test_deterministic_smoke_masks_suspected_secrets_in_operator_section_messages() -> None:
+    DeterministicRuntimeHandler.data_mode = "degraded"
+    DeterministicRuntimeHandler.operator_origin_kind = "degraded"
+    DeterministicRuntimeHandler.operator_section_meta = _degraded_operator_sections()
+    server, url = start_server()
+    try:
+        _, report = run_smoke(url)
+    finally:
+        server.shutdown()
+        DeterministicRuntimeHandler.data_mode = "live"
+        DeterministicRuntimeHandler.operator_origin_kind = "authoritative"
+        DeterministicRuntimeHandler.operator_section_meta = {}
+
+    message = report["operator_bootstrap"]["non_available_sections"]["storeOpsIssues"]["message"]
+    rendered = json.dumps(report)
+    for leaked in ("hunter2-db-pass", "sk-live-abc123", "eyJhbGciOiJIUzI1NiJ9", "odp_app"):
+        assert leaked not in rendered
+    assert "postgresql://<redacted>@10.0.0.5:5432/odp" in message
+    assert "password=<redacted>" in message
+    assert "api_key=<redacted>" in message
+    assert "Bearer <redacted>" in message
+    assert len(message) <= validator.OPERATOR_SECTION_MESSAGE_MAX_CHARS
+    assert message.endswith("...")
+
+
+def test_deterministic_smoke_live_operator_bootstrap_report_is_unchanged() -> None:
+    DeterministicRuntimeHandler.operator_section_meta = {
+        "sections": {
+            "stores": {"state": "available", "source": "postgresql", "recordCount": 3},
+        },
+        "unavailableSections": [],
+        "degradedSections": [],
+    }
+    server, url = start_server()
+    try:
+        checks, report = run_smoke(url)
+    finally:
+        server.shutdown()
+        DeterministicRuntimeHandler.operator_section_meta = {}
+
+    assert all(check.ok for check in checks)
+    assert set(report["operator_bootstrap"]) == {
+        "status",
+        "data_mode",
+        "data_source",
+        "origin_kind",
+    }
+    by_name = {check.name: check for check in checks}
+    assert by_name["smoke:/api/v1/operator/bootstrap:provenance"].detail == (
+        "data_mode=live data_source=postgresql"
+    )
+    assert "sections=" not in by_name["smoke:/api/v1/operator/bootstrap:read_provenance"].detail
 
 
 def test_workflows_do_not_reference_secrets_in_step_if() -> None:
