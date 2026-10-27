@@ -192,14 +192,17 @@ def test_masked_date_does_not_affect_filter_or_sort_and_source_state_is_unchange
     assert inbox[1] == before
 
 
-@pytest.mark.parametrize("classification", ["HIGHLY_RESTRICTED", "unrecognized-classification"])
+@pytest.mark.parametrize("classification,known", [
+    ("HIGHLY_RESTRICTED", True), ("unrecognized-classification", False),
+])
 @pytest.mark.parametrize("clearance,visible", [
     ("PUBLIC", False), ("INTERNAL", False), ("CONFIDENTIAL", False),
     ("RESTRICTED", False), ("HIGHLY_RESTRICTED", True),
 ])
 def test_highest_or_unknown_classification_does_not_leak_through_filters_at_lower_clearance(
-    inbox, classification, clearance, visible,
+    inbox, classification, known, clearance, visible,
 ):
+    visible = visible and known
     row = inbox[1][0]
     row["sourceId"] = "private-source-only"
     row["fields"] = [{"field_path": "sourceId", "classification": classification,

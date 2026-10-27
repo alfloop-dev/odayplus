@@ -12,21 +12,23 @@
  */
 
 import type { Candidate, Listing, OperatorHeatZone } from "../types";
+import { getResolution, isValidCell } from "h3-js";
 import type {
   CandidateSite as MapCandidateSite,
   HeatZone as MapHeatZone,
   Listing as MapListing,
 } from "./mapTypes";
+import { projectRecordedHeatZone } from "./heatZoneRecordedEvidence";
 
 /** Fallback centroid (Taipei) for records whose heat zone cannot be resolved. */
 const FALLBACK_CENTROID: [number, number] = [121.48, 25.0];
 
 export const OPERATOR_MAP_FRESHNESS = {
-  status: "FRESH",
+  status: "FIXTURE",
   updatedAt: "",
-  modelVersion: "network-ops-local",
+  modelVersion: "network-ops-fixture",
   featureSnapshotTime: "",
-  sourceSnapshotId: "snap-network-ops-local",
+  sourceSnapshotId: "fixture-network-ops",
 };
 
 /**
@@ -46,7 +48,7 @@ function offsetFromZone(
   return [lng + offset * Math.cos(angle), lat + offset * Math.sin(angle)];
 }
 
-/** Derive a canonical HeatZone state from OperatorHeatZone metrics. */
+/** Derive an illustrative state only for an explicitly selected fixture. */
 export function deriveHeatZoneState(zone: OperatorHeatZone): MapHeatZone["state"] {
   if (zone.confidence === null || zone.confidence < 0.7) return "SUPPRESSED_LOW_CONFIDENCE";
   if ((zone.demandGap ?? 0) >= 0.75) return "STILL_EXPANDABLE";
@@ -57,32 +59,35 @@ export function deriveHeatZoneState(zone: OperatorHeatZone): MapHeatZone["state"
 
 /**
  * Convert an OperatorHeatZone to the MapHeatZone type expected by HeatZoneMap.
- * Fields not tracked by the operator layer are synthesised deterministically
- * so that the map renders correctly without requiring API data.
+ * Live data preserves recorded evidence. Only an explicit fixture caller may
+ * synthesize illustrative metrics.
  */
-export function operatorHeatZoneToMapZone(zone: OperatorHeatZone): MapHeatZone {
+export function operatorHeatZoneToMapZone(zone: OperatorHeatZone, allowFixtureMetrics = false): MapHeatZone {
+  if (zone.recordedMap) return zone.recordedMap;
+  if (!allowFixtureMetrics) return projectRecordedHeatZone({}, zone);
+  const indexedCell = isValidCell(zone.id);
   return {
     id: zone.id,
     district: zone.label,
-    // h3 is intentionally invalid so that zoneToFeature falls back to the
-    // centroid-delta polygon – a deterministic, no-network fallback.
-    h3: `h3-${zone.id}`,
-    centroid: zone.centroid ?? FALLBACK_CENTROID,
-    h3Resolution: 9,
+    // API-backed H3 cells use their actual boundary in zoneToFeature.
+    h3: indexedCell ? zone.id : `h3-${zone.id}`,
+    centroid: zone.centroid,
+    h3Resolution: indexedCell ? getResolution(zone.id) : 9,
     score: Math.round((zone.demandGap ?? 0) * 100),
     confidence: zone.confidence,
     state: deriveHeatZoneState(zone),
-    rank: zone.rank ?? 999,
+    rank: zone.rank,
     listings: 0,
     warnings: zone.risks,
     reasons: zone.reasons,
-    modelVersion: "network-ops-local",
-    featureVersion: "operator-proxy-v1",
+    modelVersion: "network-ops-fixture",
+    executionMode: "FIXTURE",
+    featureVersion: "operator-fixture-v1",
     featureSnapshotTime: "",
     predictionOriginTime: "",
     lastScoredAt: "",
-    sourceSnapshotIds: ["snap-network-ops-local"],
-    unmetDemandScore: zone.demandGap ?? 0,
+    sourceSnapshotIds: ["fixture-network-ops"],
+    unmetDemandScore: zone.demandGap,
     formatFitScore: 1 - (zone.competitionIndex ?? 0),
     cannibalizationRisk: zone.cannibalizationRisk === "low" ? 0.1 : zone.cannibalizationRisk === "medium" ? 0.35 : 0.65,
     rentFeasibility: 0.7,
@@ -95,40 +100,6 @@ export function operatorHeatZoneToMapZone(zone: OperatorHeatZone): MapHeatZone {
     dataQualityScore: zone.confidence,
     isMerged: zone.id.startsWith("MZ-"),
     compositionKind: zone.id.startsWith("MZ-") ? "MERGED" : "ATOMIC",
-  };
-}
-
-/** Lossless recorded result mapping; prototype-only measurements stay unknown. */
-export function operatorRecordedHeatZoneToMapZone(zone: OperatorHeatZone): MapHeatZone | null {
-  const evidence = zone.mapEvidence;
-  if (!evidence || zone.centroid === null) return null;
-  return {
-    id: zone.id, district: zone.label, h3: evidence.h3Index, geometry: evidence.geometry,
-    centroid: zone.centroid, h3Resolution: evidence.h3Resolution, score: evidence.score,
-    confidence: evidence.confidence, state: evidence.state, rank: evidence.priorityRank,
-    listings: null, warnings: zone.risks, reasons: zone.reasons,
-    modelVersion: evidence.modelVersion, featureVersion: evidence.featureVersion,
-    featureSnapshotTime: evidence.featureSnapshotTime, predictionOriginTime: evidence.predictionOriginTime,
-    lastScoredAt: evidence.lastScoredAt, sourceSnapshotIds: [...evidence.sourceSnapshotIds],
-    unmetDemandScore: evidence.unmetDemandScore, formatFitScore: evidence.formatFitScore,
-    cannibalizationRisk: evidence.cannibalizationRisk, rentFeasibility: evidence.rentFeasibility,
-    listingAvailability: evidence.listingAvailability, dataQualityScore: null,
-    poiCount: null, competitorCount: null, competitorCapacity: null, medianListingRent: null, existingStoreCount: null,
-  };
-}
-
-/** A timestamp is recorded evidence, not an evaluated freshness policy. */
-export function operatorRecordedMapFreshness(zones: MapHeatZone[]) {
-  const single = (values: string[]) => {
-    const unique = [...new Set(values.filter((value) => value.trim()))];
-    return unique.length === 1 ? unique[0] : "";
-  };
-  return {
-    status: "MISSING",
-    updatedAt: single(zones.map((zone) => zone.lastScoredAt)),
-    modelVersion: single(zones.map((zone) => zone.modelVersion)),
-    featureSnapshotTime: single(zones.map((zone) => zone.featureSnapshotTime)),
-    sourceSnapshotId: single(zones.flatMap((zone) => zone.sourceSnapshotIds)),
   };
 }
 

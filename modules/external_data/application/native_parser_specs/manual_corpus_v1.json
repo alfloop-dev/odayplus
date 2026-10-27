@@ -1,0 +1,73 @@
+{
+  "version": "native-manual-json-corpus/1",
+  "cases": [
+    {
+      "name": "typed-core",
+      "fields": {
+        "address": "  台北市 Ａ 路　18 號  ",
+        "rent": 25000.0,
+        "areaPing": 12.5
+      },
+      "expected_normalized": {
+        "address": "台北市 A 路 18 號",
+        "rent": 25000.0,
+        "areaPing": 12.5
+      },
+      "expected_errors": []
+    },
+    {
+      "name": "canonical-floor",
+      "fields": {
+        "address": "  台北市 Ａ 路　18 號  ",
+        "rent": 25000.0,
+        "areaPing": 12.5,
+        "floor": " b1 "
+      },
+      "expected_normalized": {
+        "address": "台北市 A 路 18 號",
+        "rent": 25000.0,
+        "areaPing": 12.5,
+        "floor": "B1"
+      },
+      "expected_errors": []
+    },
+    {
+      "name": "ambiguous-floor",
+      "fields": {
+        "address": "  台北市 Ａ 路　18 號  ",
+        "rent": 25000.0,
+        "areaPing": 12.5,
+        "floor": "多樓層"
+      },
+      "expected_normalized": {
+        "address": "台北市 A 路 18 號",
+        "rent": 25000.0,
+        "areaPing": 12.5
+      },
+      "expected_errors": [
+        {
+          "field_path": "floor",
+          "code": "FLOOR_NOT_CANONICAL"
+        }
+      ]
+    },
+    {
+      "name": "normalization-invalid-address",
+      "fields": {
+        "address": "＜script＞",
+        "rent": 25000.0,
+        "areaPing": 12.5
+      },
+      "expected_normalized": {
+        "rent": 25000.0,
+        "areaPing": 12.5
+      },
+      "expected_errors": [
+        {
+          "field_path": "address",
+          "code": "ADDRESS_NOT_CANONICAL"
+        }
+      ]
+    }
+  ]
+}

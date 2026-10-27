@@ -100,7 +100,7 @@ def restore_traffic_argument(description: dict[str, Any]) -> str:
     if len({revision for revision, _ in targets}) != len(targets):
         raise ValueError("Cloud Run traffic snapshot contains duplicate active revisions")
 
-    return ",".join(f"{revision}={percent}" for revision, percent in targets)
+    return ",".join(f"{revision}={percent}" for revision, percent in sorted(targets))
 
 
 def main() -> int:

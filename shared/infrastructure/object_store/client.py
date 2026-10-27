@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import urllib.parse
 import urllib.request
+from time import monotonic
 from typing import Any, Protocol
 
 from shared.infrastructure.object_store.workload_identity import MetadataObjectStoreCredentials
@@ -416,6 +418,7 @@ class GcsObjectStore:
             raise OSError(f"GCS head failed: {exc}") from exc
 
     def list_objects(self, tenant_id: str, bucket: str) -> list[str]:
+        """Return the complete tenant inventory within one configured timeout."""
         self._enforce_residency(tenant_id, bucket)
         token = self._get_token()
         prefix = f"tenants/{tenant_id}/"
@@ -425,19 +428,47 @@ class GcsObjectStore:
             f"{urllib.parse.quote(bucket, safe='')}/o"
             f"?prefix={urllib.parse.quote(prefix, safe='')}"
         )
-        request = urllib.request.Request(
-            endpoint,
-            method="GET",
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        keys: list[str] = []
+        seen_tokens: set[str] = set()
+        page_token: str | None = None
         try:
-            with self._opener.open(request, timeout=self._timeout_seconds) as response:
-                body = json.loads(response.read().decode("utf-8"))
-                items = body.get("items", [])
-                return [item["name"] for item in items if "name" in item]
+            if not math.isfinite(self._timeout_seconds) or self._timeout_seconds <= 0:
+                raise ValueError("A finite positive GCS inventory timeout is required")
+            deadline = monotonic() + self._timeout_seconds
+
+            def remaining_seconds() -> float:
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("GCS inventory total deadline exceeded")
+                return remaining
+
+            while True:
+                page_url = endpoint
+                if page_token is not None:
+                    page_url += "&pageToken=" + urllib.parse.quote(page_token, safe="")
+                request = urllib.request.Request(
+                    page_url, method="GET", headers={"Authorization": f"Bearer {token}"},
+                )
+                with self._opener.open(request, timeout=remaining_seconds()) as response:
+                    body = json.loads(response.read().decode("utf-8"))
+                remaining_seconds()
+                if not isinstance(body, dict) or not isinstance(body.get("items", []), list):
+                    raise ValueError("Invalid GCS object inventory")
+                for item in body.get("items", []):
+                    if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+                        raise ValueError("Invalid GCS object name")
+                    self._enforce_tenant_prefix(tenant_id, item["name"])
+                    keys.append(item["name"])
+                remaining_seconds()
+                if "nextPageToken" not in body:
+                    return keys
+                page_token = body["nextPageToken"]
+                if not isinstance(page_token, str) or not page_token or page_token in seen_tokens:
+                    raise ValueError("Invalid or repeated GCS continuation token")
+                seen_tokens.add(page_token)
         except urllib.error.HTTPError as exc:
-            if exc.code == 404:
-                return []
             raise OSError(f"GCS list failed: {exc.read().decode('utf-8')}") from exc
+        except ResidencyDeniedError:
+            raise
         except Exception as exc:
             raise OSError(f"GCS list failed: {exc}") from exc

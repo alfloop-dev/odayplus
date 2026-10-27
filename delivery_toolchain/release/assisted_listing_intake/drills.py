@@ -22,11 +22,17 @@ import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
-from delivery_toolchain.release.assisted_listing_intake.config import (
+from modules.listing.application.intake_release_governance import (
     EXPECTED_FLAG_KEYS,
     ReleaseConfig,
+)
+from modules.listing.domain.intake_states import (
+    IntakeAggregate,
+    IntakeStage,
+    IntakeStateMachine,
+    TransitionContext,
 )
 
 STAGING_TENANT_A = "00000000-0000-0000-0000-0000000000a1"
@@ -69,12 +75,11 @@ def _table_checksums(conn: sqlite3.Connection) -> dict[str, str]:
     return checksums
 
 
-def _svc_context(tenant_id: str, key: str, role: str = "SVC_INTAKE"):
-    """Stage-appropriate service principal — the state machine enforces
-    per-stage role segregation (SVC_INTAKE cannot start parsing, etc.)."""
+def _svc_context(tenant_id: str, key: str, role: str = "SVC_INTAKE", *, actor_id: str = "svc-release-drill"):
+    """Local role fixture, never a current identity or human approval receipt."""
     from modules.listing.domain.intake_states import Actor, PrincipalRole, TransitionContext
 
-    actor = Actor(actor_id="svc-release-drill", role=PrincipalRole(role), tenant_id=tenant_id)
+    actor = Actor(actor_id=actor_id, role=PrincipalRole(role), tenant_id=tenant_id)
     return TransitionContext(actor=actor, idempotency_key=key, correlation_id=f"corr-{key}")
 
 
@@ -319,20 +324,16 @@ def run_migration_reconciliation(workdir: Path, *, rows_per_tenant: int = 8) -> 
 def run_shadow_drill(config: ReleaseConfig, workdir: Path, *, volume: int = 24) -> dict[str, Any]:
     """Shadow processing canary drill (runbook §4 Phase 4) at drill volume.
 
-    Runs the target intake path side by side without external events or
-    candidate creation, and measures every ``shadow_acceptance`` metric in
-    the canary plan against real state-machine, snapshot, audit-chain, and
-    outbox behavior. Legacy stays authoritative: nothing here writes to a
-    production surface.
+    Runs a local fixture workflow without external events or candidate
+    creation, and measures ``shadow_acceptance`` metrics against state-machine,
+    snapshot, audit-chain and outbox components. This does not execute or
+    qualify the native PostgreSQL stage owners. Legacy stays authoritative;
+    nothing here writes to a production surface.
     """
 
     from modules.external_data.application.source_snapshots import (
         SourcePolicyViolation,
         SourceSnapshotService,
-    )
-    from modules.listing.application.intake_workflow import (
-        InMemoryIntakeRepository,
-        IntakeWorkflowService,
     )
     from shared.audit.events import AuditEvent
     from shared.domain.events import DomainEvent
@@ -396,6 +397,8 @@ def run_shadow_drill(config: ReleaseConfig, workdir: Path, *, volume: int = 24) 
             retrieval_ctx = _svc_context(STAGING_TENANT_A, f"shadow-r-{index}", role="SVC_RETRIEVAL")
             parser_ctx = _svc_context(STAGING_TENANT_A, f"shadow-p-{index}", role="SVC_PARSER")
             matcher_ctx = _svc_context(STAGING_TENANT_A, f"shadow-m-{index}", role="SVC_MATCHER")
+            reviewer_ctx = _svc_context(STAGING_TENANT_A, f"shadow-review-{index}",
+                role="EXPANSION_MANAGER", actor_id="synthetic-reviewer")
             begun = time.perf_counter()
             workflow.submit_intake(
                 intake_id, STAGING_TENANT_A, "SRC-591", f"https://591.com.tw/shadow-{index}.html", context
@@ -428,7 +431,7 @@ def run_shadow_drill(config: ReleaseConfig, workdir: Path, *, volume: int = 24) 
                 workflow.route_review_from_matching(intake_id, [f"L-A-{index}", f"L-B-{index}"], matcher_ctx)
                 ambiguous_review_routed += 1
             else:
-                workflow.resolve_match(intake_id, "NEW", None, matcher_ctx)
+                workflow.resolve_match(intake_id, "NEW", None, reviewer_ctx)
             latencies.append(time.perf_counter() - begun)
             audit("shadow_pipeline_completed", f"intake/{intake_id}", f"corr-shadow-{index}")
             bundle.outbox_repository.save(
@@ -449,8 +452,8 @@ def run_shadow_drill(config: ReleaseConfig, workdir: Path, *, volume: int = 24) 
                     aggregate_version=1,
                     partition_key=STAGING_TENANT_A,
                     correlation_id=_drill_uuid(f"corr-shadow-{index}"),
-                    producer="release-shadow-drill",
-                    schema_ref="docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml",
+                    producer="listing_intake_service",
+                    schema_ref="#/payloads/IntakeStateChangedV1",
                 )
             )
             outbox_expected += 1
@@ -706,8 +709,8 @@ def run_killswitch_rollback(config: ReleaseConfig, workdir: Path) -> dict[str, A
                 aggregate_version=index + 1,
                 partition_key=STAGING_TENANT_A,
                 correlation_id=_drill_uuid(f"corr-ks-{index}"),
-                producer="release-killswitch-drill",
-                schema_ref="docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml",
+                producer="listing_intake_service",
+                schema_ref="#/payloads/IntakeStateChangedV1",
             )
             bundle.outbox_repository.save(event)
             outbox_events.append(event)
@@ -728,16 +731,20 @@ def run_killswitch_rollback(config: ReleaseConfig, workdir: Path) -> dict[str, A
         audit_before = len(bundle.audit_log.list_events())
         snapshots_before = len(snapshot_manifest)
 
-        # Staging-scope registry: enable the shadow/write flags with a real
-        # dual approval so the kill switch has live flags to disable. This is
-        # a drill-scoped in-memory registry — the production manifest on disk
-        # stays untouched and disabled.
+        # Explicit synthetic units/approvers for this in-memory drill only.
+        # Production flags and actual release/source approvals are unchanged.
         registry: FeatureFlagRegistry = build_intake_flag_registry(config)
+        from shared.auth.feature_flags import FlagScopeBinding
+
         staging_flag_keys = ("assisted_intake_v1_shadow", "assisted_intake_v1_write")
         for key in staging_flag_keys:
-            registry.enable(key, approvals=frozenset({"drill-approver-1", "drill-approver-2"}))
+            configured = registry.configure_scope(key, (FlagScopeBinding(STAGING_TENANT_A, "SRC-591"),),
+                configuration_version=registry.get(key).configuration_version)
+            registry.enable(key, approvals=frozenset({"drill-approver-1", "drill-approver-2"}),
+                            configuration_version=configured.configuration_version)
         flags_enabled_before = [
-            k for k in EXPECTED_FLAG_KEYS if registry.is_enabled(k, on=datetime.now(UTC).date())
+            k for k in EXPECTED_FLAG_KEYS if registry.is_enabled(k, on=datetime.now(UTC).date(),
+                tenant_id=STAGING_TENANT_A, source_id="SRC-591")
         ]
 
         # --- Trigger: real checksum-mismatch detection (TRG-CHECKSUM) -----
@@ -753,14 +760,15 @@ def run_killswitch_rollback(config: ReleaseConfig, workdir: Path) -> dict[str, A
         for key in EXPECTED_FLAG_KEYS:
             registry.disable(key)
         flags_disabled = [
-            k for k in EXPECTED_FLAG_KEYS if not registry.is_enabled(k, on=datetime.now(UTC).date())
+            k for k in EXPECTED_FLAG_KEYS if not registry.is_enabled(k, on=datetime.now(UTC).date(),
+                tenant_id=STAGING_TENANT_A, source_id="SRC-591")
         ]
         kill_switch_engaged = len(flags_disabled) == len(EXPECTED_FLAG_KEYS)
 
         def guarded_enqueue() -> bool:
-            """Post-kill-switch intake boundary: reject new work while the
-            write flag is down (the API/worker boundary consults the flag)."""
-            if not registry.is_enabled("assisted_intake_v1_write", on=datetime.now(UTC).date()):
+            """Local drill checkpoint, not proof of API/worker write adoption."""
+            if not registry.is_enabled("assisted_intake_v1_write", on=datetime.now(UTC).date(),
+                tenant_id=STAGING_TENANT_A, source_id="SRC-591"):
                 return False
             bundle.job_queue.enqueue(  # pragma: no cover - unreachable while disarmed
                 JobRequest(job_type="assisted-listing-intake", payload={}, idempotency_key="ks-blocked"),
@@ -776,6 +784,8 @@ def run_killswitch_rollback(config: ReleaseConfig, workdir: Path) -> dict[str, A
                 "step": 1,
                 "action": "disable per-tenant/source flags and stop new Cloud Tasks",
                 "flags_enabled_before": flags_enabled_before,
+                "synthetic_authority_unit": {"tenant_id": STAGING_TENANT_A, "source_id": "SRC-591"},
+                "product_write_authority_qualified": False,
                 "flags_disabled": flags_disabled,
                 "new_enqueue_refused": enqueue_refused,
                 "active_jobs_unchanged": queue_before_stop == queue_after_stop,
@@ -1254,9 +1264,9 @@ def run_write_canary(
 ) -> dict[str, Any]:
     """Execute the tenant/source write-canary ladder in strict order.
 
-    Staging-surrogate units (1–2) run real write flows through the intake
-    state machine — assisted-entry-only first, then one approved retrieval
-    source. Production units (3–7) transition only on their exact entry
+    Staging-surrogate units (1–2) run the local fixture state machine —
+    assisted-entry-only first, then a fixture retrieval source. They do not
+    qualify the native PostgreSQL workflow. Production units (3–7) transition only on their exact entry
     gates: while any required §12 approval is pending or live staging
     runtime evidence is unrecorded they must come out BLOCKED, and once
     the gates genuinely pass a production unit is CLEARED to execute in
@@ -1267,10 +1277,6 @@ def run_write_canary(
     """
 
     from modules.external_data.application.source_snapshots import SourceSnapshotService
-    from modules.listing.application.intake_workflow import (
-        InMemoryIntakeRepository,
-        IntakeWorkflowService,
-    )
     from modules.listing.domain.intake_states import IntakeStage
     from shared.infrastructure.object_store.client import InMemoryObjectStore
 
@@ -1367,7 +1373,7 @@ def run_write_canary(
                 ladder_halted = True
             continue
 
-        # Execute a staging-surrogate unit with real write flows.
+        # Execute a local fixture unit; live native execution needs its own evidence.
         object_store = InMemoryObjectStore()
         workflow = IntakeWorkflowService(InMemoryIntakeRepository())
         snapshots = SourceSnapshotService(
@@ -1381,7 +1387,8 @@ def run_write_canary(
                 context = _svc_context(STAGING_TENANT_A, f"canary1-{index}")
                 steward_ctx = _svc_context(STAGING_TENANT_A, f"canary1-s-{index}", role="DATA_STEWARD")
                 parser_ctx = _svc_context(STAGING_TENANT_A, f"canary1-p-{index}", role="SVC_PARSER")
-                matcher_ctx = _svc_context(STAGING_TENANT_A, f"canary1-m-{index}", role="SVC_MATCHER")
+                reviewer_ctx = _svc_context(STAGING_TENANT_A, f"canary1-review-{index}",
+                    role="EXPANSION_MANAGER", actor_id="synthetic-reviewer")
                 workflow.submit_intake(intake_id, STAGING_TENANT_A, "SRC-MANUAL", None, context)
                 workflow.start_identity_check(intake_id, context)
                 workflow.start_source_policy_evaluation(intake_id, context)
@@ -1390,7 +1397,7 @@ def run_write_canary(
                     intake_id, {"rent": 42000 + index, "address": f"drill unit1 {index}"}, steward_ctx
                 )
                 workflow.complete_parsing(intake_id, f"PR-CAN1-{index:04d}", parser_ctx)
-                final = workflow.resolve_match(intake_id, "NEW", None, matcher_ctx)
+                final = workflow.resolve_match(intake_id, "NEW", None, reviewer_ctx)
                 if final.stage == IntakeStage.READY:
                     completed += 1
         else:
@@ -1406,7 +1413,8 @@ def run_write_canary(
                 context = _svc_context(STAGING_TENANT_A, f"canary2-{index}")
                 retrieval_ctx = _svc_context(STAGING_TENANT_A, f"canary2-r-{index}", role="SVC_RETRIEVAL")
                 parser_ctx = _svc_context(STAGING_TENANT_A, f"canary2-p-{index}", role="SVC_PARSER")
-                matcher_ctx = _svc_context(STAGING_TENANT_A, f"canary2-m-{index}", role="SVC_MATCHER")
+                reviewer_ctx = _svc_context(STAGING_TENANT_A, f"canary2-review-{index}",
+                    role="EXPANSION_MANAGER", actor_id="synthetic-reviewer")
                 workflow.submit_intake(
                     intake_id, STAGING_TENANT_A, "SRC-591", f"https://591.com.tw/can-{index}.html", context
                 )
@@ -1431,7 +1439,7 @@ def run_write_canary(
                 )
                 workflow.start_parsing_from_retrieval(intake_id, snapshot_id, retrieval_ctx)
                 workflow.complete_parsing(intake_id, f"PR-CAN2-{index:04d}", parser_ctx)
-                final = workflow.resolve_match(intake_id, "NEW", None, matcher_ctx)
+                final = workflow.resolve_match(intake_id, "NEW", None, reviewer_ctx)
                 if final.stage == IntakeStage.READY:
                     completed += 1
 
@@ -1557,3 +1565,489 @@ def run_uat(workdir: Path, *, report_path: Path | None = None, spec: str = "test
         "roles_note": "Spec exercises operator/manager role flows against the running product (see spec file for role fixtures).",
         "passed": passed,
     }
+
+
+# Local compatibility fixtures only; product modules must use their durable owners.
+class IntakeRepository(Protocol):
+    def get_by_id(self, intake_id: str) -> IntakeAggregate | None:
+        ...
+
+    def save(self, intake: IntakeAggregate) -> None:
+        ...
+
+
+class InMemoryIntakeRepository:
+    def __init__(self) -> None:
+        self._store: dict[str, IntakeAggregate] = {}
+
+    def get_by_id(self, intake_id: str) -> IntakeAggregate | None:
+        return self._store.get(intake_id)
+
+    def save(self, intake: IntakeAggregate) -> None:
+        self._store[intake.id] = intake
+
+
+class IntakeWorkflowService:
+    """Orchestrates intake stage transitions and emits audit event info."""
+
+    def __init__(self, repository: IntakeRepository) -> None:
+        self.repository = repository
+        self.emitted_events: list[dict[str, Any]] = []
+
+    def _record_event(self, event_type: str, intake_id: str, tenant_id: str, correlation_id: str | None, payload: dict[str, Any]) -> None:
+        self.emitted_events.append({
+            "event_type": event_type,
+            "intake_id": intake_id,
+            "tenant_id": tenant_id,
+            "correlation_id": correlation_id,
+            "payload": payload,
+        })
+
+    def submit_intake(self, intake_id: str, tenant_id: str, source_id: str, canonical_url: str | None, context: TransitionContext) -> IntakeAggregate:
+        # State Machine Validation for None -> SUBMITTED
+        IntakeStateMachine.transition(None, IntakeStage.SUBMITTED, context)
+
+        intake = IntakeAggregate(
+            id=intake_id,
+            tenant_id=tenant_id,
+            stage=IntakeStage.SUBMITTED,
+            version=1,
+            created_by=context.actor.actor_id,
+            source_id=source_id,
+            canonical_url=canonical_url,
+            owner_id=context.actor.actor_id,
+            idempotency_key=context.idempotency_key,
+        )
+        self.repository.save(intake)
+
+        self._record_event(
+            "intake.submitted.v1",
+            intake_id,
+            tenant_id,
+            context.correlation_id,
+            {"url": canonical_url, "source_id": source_id}
+        )
+        return intake
+
+    def start_identity_check(self, intake_id: str, context: TransitionContext) -> IntakeAggregate:
+        intake = self.repository.get_by_id(intake_id)
+        if not intake:
+            raise ValueError(f"Intake {intake_id} not found")
+
+        IntakeStateMachine.transition(intake, IntakeStage.CHECKING_IDENTITY, context)
+        self.repository.save(intake)
+
+        self._record_event(
+            "intake.identity_check_started.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {"canonical_url": intake.canonical_url}
+        )
+        return intake
+
+    def resolve_identity_exact(self, intake_id: str, context: TransitionContext) -> IntakeAggregate:
+        intake = self.repository.get_by_id(intake_id)
+        if not intake:
+            raise ValueError(f"Intake {intake_id} not found")
+
+        IntakeStateMachine.transition(intake, IntakeStage.READY, context)
+        self.repository.save(intake)
+
+        self._record_event(
+            "intake.resolved.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {"outcome": "EXACT_MATCH"}
+        )
+        return intake
+
+    def start_source_policy_evaluation(self, intake_id: str, context: TransitionContext) -> IntakeAggregate:
+        intake = self.repository.get_by_id(intake_id)
+        if not intake:
+            raise ValueError(f"Intake {intake_id} not found")
+
+        IntakeStateMachine.transition(intake, IntakeStage.CHECKING_SOURCE_POLICY, context)
+        self.repository.save(intake)
+
+        self._record_event(
+            "intake.source_policy_started.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {"source_id": intake.source_id}
+        )
+        return intake
+
+    def approve_retrieval(self, intake_id: str, policy: str, context: TransitionContext) -> IntakeAggregate:
+        intake = self.repository.get_by_id(intake_id)
+        if not intake:
+            raise ValueError(f"Intake {intake_id} not found")
+
+        IntakeStateMachine.transition(intake, IntakeStage.RETRIEVING, context)
+        intake.policy = policy
+        self.repository.save(intake)
+
+        self._record_event(
+            "intake.retrieval_approved.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {"policy": policy}
+        )
+        return intake
+
+    def require_assisted_entry(self, intake_id: str, context: TransitionContext) -> IntakeAggregate:
+        intake = self.repository.get_by_id(intake_id)
+        if not intake:
+            raise ValueError(f"Intake {intake_id} not found")
+
+        IntakeStateMachine.transition(intake, IntakeStage.AWAITING_ASSISTED_ENTRY, context)
+        self.repository.save(intake)
+
+        self._record_event(
+            "intake.assisted_entry_required.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {}
+        )
+        return intake
+
+    def quarantine_policy(self, intake_id: str, reason: str, context: TransitionContext) -> IntakeAggregate:
+        intake = self.repository.get_by_id(intake_id)
+        if not intake:
+            raise ValueError(f"Intake {intake_id} not found")
+
+        IntakeStateMachine.transition(intake, IntakeStage.QUARANTINED, context)
+        intake.evidence["quarantine_reason"] = reason
+        self.repository.save(intake)
+
+        self._record_event(
+            "intake.quarantined.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {"reason": reason, "stage_before": "CHECKING_SOURCE_POLICY"}
+        )
+        return intake
+
+    def start_parsing_from_retrieval(self, intake_id: str, snapshot_id: str, context: TransitionContext) -> IntakeAggregate:
+        intake = self.repository.get_by_id(intake_id)
+        if not intake:
+            raise ValueError(f"Intake {intake_id} not found")
+
+        IntakeStateMachine.transition(intake, IntakeStage.PARSING, context)
+        intake.evidence["snapshot_id"] = snapshot_id
+        self.repository.save(intake)
+
+        self._record_event(
+            "snapshot.created.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {"snapshot_id": snapshot_id}
+        )
+        self._record_event(
+            "intake.parsing_started.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {"snapshot_id": snapshot_id}
+        )
+        return intake
+
+    def fail_retrieval(self, intake_id: str, error_code: str, context: TransitionContext) -> IntakeAggregate:
+        intake = self.repository.get_by_id(intake_id)
+        if not intake:
+            raise ValueError(f"Intake {intake_id} not found")
+
+        IntakeStateMachine.transition(intake, IntakeStage.FAILED, context)
+        intake.evidence["error_code"] = error_code
+        self.repository.save(intake)
+
+        self._record_event(
+            "intake.processing_failed.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {"error_code": error_code, "stage_before": "RETRIEVING"}
+        )
+        return intake
+
+    def quarantine_retrieval(self, intake_id: str, reason: str, context: TransitionContext) -> IntakeAggregate:
+        intake = self.repository.get_by_id(intake_id)
+        if not intake:
+            raise ValueError(f"Intake {intake_id} not found")
+
+        IntakeStateMachine.transition(intake, IntakeStage.QUARANTINED, context)
+        intake.evidence["quarantine_reason"] = reason
+        self.repository.save(intake)
+
+        self._record_event(
+            "intake.quarantined.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {"reason": reason, "stage_before": "RETRIEVING"}
+        )
+        return intake
+
+    def complete_assisted_entry(self, intake_id: str, corrections: dict[str, Any], context: TransitionContext) -> IntakeAggregate:
+        intake = self.repository.get_by_id(intake_id)
+        if not intake:
+            raise ValueError(f"Intake {intake_id} not found")
+
+        IntakeStateMachine.transition(intake, IntakeStage.PARSING, context)
+        intake.evidence["corrections"] = corrections
+        self.repository.save(intake)
+
+        self._record_event(
+            "intake.assisted_entry_completed.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {"corrections": corrections}
+        )
+        return intake
+
+    def complete_parsing(self, intake_id: str, parser_run_id: str, context: TransitionContext) -> IntakeAggregate:
+        intake = self.repository.get_by_id(intake_id)
+        if not intake:
+            raise ValueError(f"Intake {intake_id} not found")
+
+        IntakeStateMachine.transition(intake, IntakeStage.MATCHING, context)
+        intake.evidence["parser_run_id"] = parser_run_id
+        self.repository.save(intake)
+
+        self._record_event(
+            "parser.run_completed.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {"parser_run_id": parser_run_id}
+        )
+        self._record_event(
+            "intake.matching_started.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {}
+        )
+        return intake
+
+    def route_review_from_parsing(self, intake_id: str, warnings: list[str], context: TransitionContext) -> IntakeAggregate:
+        intake = self.repository.get_by_id(intake_id)
+        if not intake:
+            raise ValueError(f"Intake {intake_id} not found")
+
+        IntakeStateMachine.transition(intake, IntakeStage.NEEDS_REVIEW, context)
+        intake.evidence["warnings"] = warnings
+        self.repository.save(intake)
+
+        self._record_event(
+            "intake.review_required.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {"warnings": warnings}
+        )
+        return intake
+
+    def fail_parsing(self, intake_id: str, error_code: str, context: TransitionContext) -> IntakeAggregate:
+        intake = self.repository.get_by_id(intake_id)
+        if not intake:
+            raise ValueError(f"Intake {intake_id} not found")
+
+        IntakeStateMachine.transition(intake, IntakeStage.FAILED, context)
+        intake.evidence["error_code"] = error_code
+        self.repository.save(intake)
+
+        self._record_event(
+            "intake.processing_failed.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {"error_code": error_code, "stage_before": "PARSING"}
+        )
+        return intake
+
+    def resolve_match(self, intake_id: str, outcome: str, target_listing_id: str | None, context: TransitionContext) -> IntakeAggregate:
+        intake = self.repository.get_by_id(intake_id)
+        if not intake:
+            raise ValueError(f"Intake {intake_id} not found")
+
+        IntakeStateMachine.transition(intake, IntakeStage.READY, context)
+        intake.evidence["match_outcome"] = outcome
+        intake.evidence["target_listing_id"] = target_listing_id
+        self.repository.save(intake)
+
+        self._record_event(
+            "match.decided.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {"outcome": outcome, "target_listing_id": target_listing_id}
+        )
+        self._record_event(
+            "intake.resolved.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {}
+        )
+        return intake
+
+    def route_review_from_matching(self, intake_id: str, candidates: list[str], context: TransitionContext) -> IntakeAggregate:
+        intake = self.repository.get_by_id(intake_id)
+        if not intake:
+            raise ValueError(f"Intake {intake_id} not found")
+
+        IntakeStateMachine.transition(intake, IntakeStage.NEEDS_REVIEW, context)
+        intake.evidence["match_candidates"] = candidates
+        self.repository.save(intake)
+
+        self._record_event(
+            "match.review_required.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {"candidates": candidates}
+        )
+        return intake
+
+    def quarantine_matching(self, intake_id: str, reason: str, context: TransitionContext) -> IntakeAggregate:
+        intake = self.repository.get_by_id(intake_id)
+        if not intake:
+            raise ValueError(f"Intake {intake_id} not found")
+
+        IntakeStateMachine.transition(intake, IntakeStage.QUARANTINED, context)
+        intake.evidence["quarantine_reason"] = reason
+        self.repository.save(intake)
+
+        self._record_event(
+            "intake.quarantined.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {"reason": reason, "stage_before": "MATCHING"}
+        )
+        return intake
+
+    def decide_review(self, intake_id: str, decision_action: str, reason: str, context: TransitionContext) -> IntakeAggregate:
+        intake = self.repository.get_by_id(intake_id)
+        if not intake:
+            raise ValueError(f"Intake {intake_id} not found")
+
+        IntakeStateMachine.transition(intake, IntakeStage.READY, context)
+        intake.evidence["review_decision"] = decision_action
+        intake.evidence["review_reason"] = reason
+        self.repository.save(intake)
+
+        self._record_event(
+            "match.decided.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {"decision_action": decision_action, "reason": reason}
+        )
+        self._record_event(
+            "intake.resolved.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {}
+        )
+        return intake
+
+    def quarantine_review(self, intake_id: str, reason: str, context: TransitionContext) -> IntakeAggregate:
+        intake = self.repository.get_by_id(intake_id)
+        if not intake:
+            raise ValueError(f"Intake {intake_id} not found")
+
+        IntakeStateMachine.transition(intake, IntakeStage.QUARANTINED, context)
+        intake.evidence["quarantine_reason"] = reason
+        self.repository.save(intake)
+
+        self._record_event(
+            "intake.quarantined.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {"reason": reason, "stage_before": "NEEDS_REVIEW"}
+        )
+        return intake
+
+    def reopen_quarantine_policy(self, intake_id: str, context: TransitionContext) -> IntakeAggregate:
+        intake = self.repository.get_by_id(intake_id)
+        if not intake:
+            raise ValueError(f"Intake {intake_id} not found")
+
+        IntakeStateMachine.transition(intake, IntakeStage.CHECKING_SOURCE_POLICY, context)
+        self.repository.save(intake)
+
+        self._record_event(
+            "intake.reopened.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {"reason": context.reason, "stage_before": "QUARANTINED", "stage_after": "CHECKING_SOURCE_POLICY"}
+        )
+        return intake
+
+    def reopen_quarantine_review(self, intake_id: str, context: TransitionContext) -> IntakeAggregate:
+        intake = self.repository.get_by_id(intake_id)
+        if not intake:
+            raise ValueError(f"Intake {intake_id} not found")
+
+        IntakeStateMachine.transition(intake, IntakeStage.NEEDS_REVIEW, context)
+        self.repository.save(intake)
+
+        self._record_event(
+            "intake.reopened.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {"reason": context.reason, "stage_before": "QUARANTINED", "stage_after": "NEEDS_REVIEW"}
+        )
+        return intake
+
+    def replay_failed_job(self, intake_id: str, target: IntakeStage, context: TransitionContext) -> IntakeAggregate:
+        intake = self.repository.get_by_id(intake_id)
+        if not intake:
+            raise ValueError(f"Intake {intake_id} not found")
+
+        # target must be RETRIEVING or PARSING
+        if target not in {IntakeStage.RETRIEVING, IntakeStage.PARSING}:
+            raise ValueError(f"Invalid replay target state {target}")
+
+        IntakeStateMachine.transition(intake, target, context)
+        self.repository.save(intake)
+
+        self._record_event(
+            "job.replay_requested.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {"replay_target": target.value}
+        )
+        return intake
+
+    def cancel_intake(self, intake_id: str, context: TransitionContext) -> IntakeAggregate:
+        intake = self.repository.get_by_id(intake_id)
+        if not intake:
+            raise ValueError(f"Intake {intake_id} not found")
+
+        IntakeStateMachine.transition(intake, IntakeStage.CANCELLED, context)
+        intake.is_cancelled = True
+        self.repository.save(intake)
+
+        self._record_event(
+            "intake.cancelled.v1",
+            intake_id,
+            intake.tenant_id,
+            context.correlation_id,
+            {"reason": context.reason}
+        )
+        return intake

@@ -631,6 +631,19 @@ export function OperatorConsole({
     return false;
   }, [clearAuthenticatedRows, fixturesAllowed]);
 
+  // All mounted workspace reads share the current Console account/persona lease.
+  const createAuthenticatedReadGuard = useCallback((readCurrent: () => boolean) => {
+    const sequence = bootstrapSequence.current;
+    const subject = bootstrapAccount.current;
+    const persona = bootstrapPersona.current;
+    const current = () => readCurrent() && sequence === bootstrapSequence.current
+      && subject === bootstrapAccount.current && persona === bootstrapPersona.current
+      && (bootstrapAuthMode !== "authenticated" || persona?.roleId === activeRoleId)
+      && (shellDataStatus === "ready" || bootstrapAuthMode === "fixture")
+      && !(bootstrapRoleIntent.current?.subject === subject && bootstrapRoleIntent.current.roleId !== persona?.roleId);
+    return () => pinAuthenticatedRead(subject, current);
+  }, [activeRoleId, bootstrapAuthMode, shellDataStatus, pinAuthenticatedRead]);
+
   useEffect(() => {
     if (!hasHydratedPreferences) return;
     const adopted = bootstrapAdoptedRole.current;
@@ -819,9 +832,9 @@ export function OperatorConsole({
           if (resolvedRoleId !== activeRoleId) bootstrapAdoptedRole.current = { subject, roleId: resolvedRoleId, reloadToken: shellReloadToken };
           setActiveRoleId(resolvedRoleId);
           const requestedWorkspace = workspaceIntent.current;
-          const actualRole = getRecord(getRecord(getRecord(payload)?.meta)?.role);
-          if (isWorkspaceId(requestedWorkspace) && Array.isArray(actualRole?.allowedWorkspaces)
-            && actualRole.allowedWorkspaces.includes(requestedWorkspace)) setActiveWorkspaceId(requestedWorkspace);
+          const actualNavigation = getRecord(getRecord(payload)?.navigation);
+          if (isWorkspaceId(requestedWorkspace) && Array.isArray(actualNavigation?.allowedWorkspaces)
+            && actualNavigation.allowedWorkspaces.includes(requestedWorkspace)) setActiveWorkspaceId(requestedWorkspace);
           else setActiveWorkspaceId(DEFAULT_WORKSPACE_ID);
         }
         // Explicit isolated POC may read a real admitted API envelope without
@@ -924,7 +937,7 @@ export function OperatorConsole({
       .then(([{ createOdpApiClient }, { loadNetworkFindAreasBindings }]) => {
         if (!current()) throw superseded();
         const client = createOdpApiClient({
-          baseUrl: `${window.location.origin}/api/v1`,
+          baseUrl: window.location.origin,
           defaultHeaders: getSecurityHeaders(activeRoleId),
           fetchImpl: async (input, init) => {
             if (!await pinAuthenticatedRead(subject, current)) throw superseded();
@@ -1406,14 +1419,7 @@ export function OperatorConsole({
                 <ShellNotificationCenter
                   scopeKey={JSON.stringify([bootstrapSequence.current, bootstrapAccount.current, bootstrapPersona.current?.roleId, activeRoleId])}
                   headers={getSecurityHeaders(activeRoleId)}
-                  createAuthenticatedReadGuard={(readCurrent) => {
-                    const sequence = bootstrapSequence.current;
-                    const subject = bootstrapAccount.current;
-                    const persona = bootstrapPersona.current;
-                    const current = () => readCurrent() && sequence === bootstrapSequence.current
-                      && subject === bootstrapAccount.current && persona === bootstrapPersona.current;
-                    return () => pinAuthenticatedRead(subject, current);
-                  }}
+                  createAuthenticatedReadGuard={createAuthenticatedReadGuard}
                   allowFixtureFallback={fixturesAllowed && bootstrapAuthMode === "fixture" && bootstrapAccount.current === null}
                   fixtureRows={liveNotifications}
                   onConfirmedUnreadCount={setConfirmedNotificationCount}
@@ -1527,14 +1533,7 @@ export function OperatorConsole({
             scopeKey={JSON.stringify([bootstrapSequence.current, bootstrapAccount.current, bootstrapPersona.current?.roleId, activeRoleId])}
             expectedSubjectId={bootstrapAccount.current}
             headers={getSecurityHeaders(activeRoleId)}
-            createAuthenticatedReadGuard={(readCurrent) => {
-              const sequence = bootstrapSequence.current;
-              const subject = bootstrapAccount.current;
-              const persona = bootstrapPersona.current;
-              const current = () => readCurrent() && sequence === bootstrapSequence.current
-                && subject === bootstrapAccount.current && persona === bootstrapPersona.current;
-              return () => pinAuthenticatedRead(subject, current);
-            }}
+            createAuthenticatedReadGuard={createAuthenticatedReadGuard}
             allowFixtureFallback={fixturesAllowed && bootstrapAuthMode === "fixture" && bootstrapAccount.current === null}
             fixtureRows={liveNotifications}
             onConfirmedUnreadCount={setConfirmedNotificationCount}
@@ -1546,14 +1545,7 @@ export function OperatorConsole({
           <ShellTaskCenter
             scopeKey={JSON.stringify([bootstrapSequence.current, bootstrapAccount.current, bootstrapPersona.current, activeRoleId])}
             headers={operatorSecurityHeaders(activeRoleId)}
-            createAuthenticatedReadGuard={(readCurrent) => {
-              const sequence = bootstrapSequence.current;
-              const subject = bootstrapAccount.current;
-              const persona = bootstrapPersona.current;
-              const current = () => readCurrent() && sequence === bootstrapSequence.current
-                && subject === bootstrapAccount.current && persona === bootstrapPersona.current;
-              return () => pinAuthenticatedRead(subject, current);
-            }}
+            createAuthenticatedReadGuard={createAuthenticatedReadGuard}
             onConfirmedActiveCount={setConfirmedTaskCount}
             allowFixtureData={fixturesAllowed && bootstrapAuthMode === "fixture"}
           />
@@ -1573,14 +1565,7 @@ export function OperatorConsole({
           <DesignStoreOpsWorkspace
             activeRoleId={activeRoleId}
             forecastScopeKey={JSON.stringify([bootstrapSequence.current, bootstrapAccount.current, bootstrapPersona.current, activeRoleId])}
-            createAuthenticatedReadGuard={(readCurrent) => {
-              const sequence = bootstrapSequence.current;
-              const subject = bootstrapAccount.current;
-              const persona = bootstrapPersona.current;
-              const current = () => readCurrent() && sequence === bootstrapSequence.current
-                && subject === bootstrapAccount.current && persona === bootstrapPersona.current;
-              return () => pinAuthenticatedRead(subject, current);
-            }}
+            createAuthenticatedReadGuard={createAuthenticatedReadGuard}
             initialIssueId={selectedEntityId ?? undefined}
             initialTabId={activeTabId}
             issues={liveIssues}
@@ -1589,16 +1574,7 @@ export function OperatorConsole({
         ) : activeWorkspaceId === "network" ? (
           <NetworkFindAreasWorkspace
             activeRoleId={activeRoleId}
-            createAuthenticatedReadGuard={(readCurrent) => {
-              // Capture the owner before HTTP starts; never adopt a later cookie
-              // subject, persona, or A→B→A epoch for an older Network response.
-              const sequence = bootstrapSequence.current;
-              const subject = bootstrapAccount.current;
-              const persona = bootstrapPersona.current;
-              const current = () => readCurrent() && sequence === bootstrapSequence.current
-                && subject === bootstrapAccount.current && persona === bootstrapPersona.current;
-              return () => pinAuthenticatedRead(subject, current);
-            }}
+            createAuthenticatedReadGuard={createAuthenticatedReadGuard}
             allowedTabIds={fixturesAllowed ? undefined : shellEnvelope.navigation.allowedTabs?.network ?? []}
             onReviewDecisionConfirmed={async () => {
               try { await refreshOperatorEnvelope(); }
@@ -1620,12 +1596,7 @@ export function OperatorConsole({
           // GovernanceWorkspace renders its own Package 10 page header.
           <GovernanceWorkspace
             canonicalMonitoringScopeKey={JSON.stringify([bootstrapSequence.current, bootstrapAccount.current, bootstrapPersona.current, activeRoleId])}
-            createCanonicalMonitoringReadGuard={(readCurrent) => {
-              const sequence = bootstrapSequence.current, subject = bootstrapAccount.current, persona = bootstrapPersona.current;
-              const current = () => readCurrent() && sequence === bootstrapSequence.current
-                && subject === bootstrapAccount.current && persona === bootstrapPersona.current;
-              return () => pinAuthenticatedRead(subject, current);
-            }}
+            createCanonicalMonitoringReadGuard={createAuthenticatedReadGuard}
             onDecisionConfirmed={async () => {
               try { await refreshOperatorEnvelope(); }
               catch { showToast("核決已保存；Today 資料尚未重新核對，請重新整理。"); }

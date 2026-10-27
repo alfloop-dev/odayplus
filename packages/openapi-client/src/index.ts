@@ -234,14 +234,30 @@ export type ExternalDataFreshnessResponse = {
 
 /**
  * Raw heatzone score row returned by GET /heatzones.
- * Shape mirrors HeatZoneBatchScoreResult.to_dict().
+ * Score producer fields mirror the baseline and V3 to_dict() responses.
+ * V3 may abstain, leaving the overall score null.
  */
 export type HeatZoneScore = {
-  /** H3 hex index used as a stable identifier. */
+  /** Entity identity used by candidate heat_zone_id relationships. */
+  heat_zone_id: string;
+  /** Geometry identity; baseline and V3 entities may share a cell. */
   h3_index: string;
-  score: number;
-  rank: number;
-  unmet_demand: number;
+  score: number | null;
+  priority_rank: number;
+  unmet_demand_score: number;
+  /** Older producer aliases, when present. */
+  rank?: number;
+  unmet_demand?: number;
+  format_fit_score?: number;
+  cannibalization_risk_score?: number;
+  rent_feasibility_score?: number;
+  listing_availability_score?: number;
+  model_version?: string;
+  execution_mode?: string;
+  is_shadow?: boolean;
+  abstained?: boolean;
+  feature_version?: string;
+  source_snapshot_ids?: string[];
   confidence: number | null;
   state: string;
   [key: string]: unknown;
@@ -1086,28 +1102,28 @@ export class OdpApiClient {
   /**
    * List heatzone scores from the most recent batch scoring run.
    * Returns an empty `items` array when no scoring job has been run yet.
-   * Corresponds to GET /heatzones.
+   * Corresponds to GET /api/v1/heatzones (also available through the Web BFF).
    */
   listHeatzones(options: { limit?: number } = {}): Promise<ListResponse<HeatZoneScore>> {
-    return this.request<ListResponse<HeatZoneScore>>("/heatzones", {
+    return this.request<ListResponse<HeatZoneScore>>("/api/v1/heatzones", {
       query: options.limit !== undefined ? { limit: String(options.limit) } : undefined,
     });
   }
 
   /**
    * List candidate sites that have passed hard-rule checks.
-   * Corresponds to GET /listings/candidates.
+   * Corresponds to GET /api/v1/listings/candidates.
    */
   listCandidates(): Promise<{ candidates: CandidateSiteCard[] }> {
-    return this.request<{ candidates: CandidateSiteCard[] }>("/listings/candidates");
+    return this.request<{ candidates: CandidateSiteCard[] }>("/api/v1/listings/candidates");
   }
 
   /**
    * List the latest SiteScore report per candidate site.
-   * Corresponds to GET /sitescore/reports.
+   * Corresponds to GET /api/v1/sitescore/reports.
    */
   listSiteScoreReports(): Promise<ListResponse<SiteScoreReportSummary>> {
-    return this.request<ListResponse<SiteScoreReportSummary>>("/sitescore/reports");
+    return this.request<ListResponse<SiteScoreReportSummary>>("/api/v1/sitescore/reports");
   }
 
   listNetplanScenarios(): Promise<ListResponse<NetPlanScenarioSummary>> {

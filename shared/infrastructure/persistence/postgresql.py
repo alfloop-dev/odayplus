@@ -37,6 +37,7 @@ _PRAGMA_TABLE_INFO = re.compile(
     r"^\s*PRAGMA\s+table_info\(\s*([a-zA-Z_][a-zA-Z0-9_.]*)\s*\)\s*;?\s*$",
     re.IGNORECASE,
 )
+_QMARK_SQL_TOKEN = re.compile(r"'(?:''|[^'])*(?:'|$)|\"(?:\"\"|[^\"])*(?:\"|$)|\?")
 _REQUIRED_RELATIONS = (
     "odp_runtime.durable_sequences",
     "odp_runtime.durable_audit_events",
@@ -204,15 +205,13 @@ class PostgresEngine:
                 self._local.depth -= 1
             return
 
-        # Reserve the same process lock used by repository ``engine.lock``
-        # before borrowing a connection or acquiring any database locks. Keep
-        # it through the actual outer commit/rollback and pool return. A short
-        # audit-only reservation is insufficient: an earlier row lock or a
-        # later document/queue write can otherwise invert the two lock orders.
+        # Keep process and database locks in the same order for the whole root,
+        # including commit/rollback, while retaining the actual root witness.
         with self._lock._lock:
             with self._pool.connection() as connection:
-                with connection.transaction():
+                with connection.transaction() as root_transaction:
                     self._local.connection = connection
+                    self._local.root_transaction = root_transaction
                     self._local.depth = 1
                     try:
                         connection.execute(
@@ -221,6 +220,7 @@ class PostgresEngine:
                         yield self
                     finally:
                         self._local.connection = None
+                        self._local.root_transaction = None
                         self._local.depth = 0
 
     def execute(
@@ -390,6 +390,10 @@ def _build_pool(
                 "autocommit": False,
                 "row_factory": dict_row,
             },
+            # An idle socket may have been closed by the server without the
+            # client observing it. Reject it before application work begins;
+            # never reconnect or replay a transaction that has already started.
+            check=ConnectionPool.check_connection,
             open=True,
         )
     except Exception as exc:
@@ -417,30 +421,10 @@ def _validate_database_url(database_url: str) -> str:
 
 
 def _convert_qmark_placeholders(sql: str) -> str:
-    """Convert SQLite qmark parameters without touching quoted SQL text."""
-
-    converted: list[str] = []
-    quote: str | None = None
-    index = 0
-    while index < len(sql):
-        char = sql[index]
-        if quote is not None:
-            converted.append(char)
-            if char == quote:
-                if index + 1 < len(sql) and sql[index + 1] == quote:
-                    converted.append(sql[index + 1])
-                    index += 1
-                else:
-                    quote = None
-        elif char in {"'", '"'}:
-            quote = char
-            converted.append(char)
-        elif char == "?":
-            converted.append("%s")
-        else:
-            converted.append(char)
-        index += 1
-    return "".join(converted)
+    """Convert qmark parameters while preserving quoted SQL, including escapes."""
+    return _QMARK_SQL_TOKEN.sub(
+        lambda token: "%s" if token[0] == "?" else token[0], sql,
+    )
 
 
 def _normalize_row(row: Any) -> dict[str, Any]:

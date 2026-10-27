@@ -289,6 +289,8 @@ def test_create_app_injects_live_repository_for_production_postgresql(
         DurableAssistedIntakeStore,
     )
     from shared.infrastructure.persistence.audit_log import DurableAuditLog
+    from shared.infrastructure.persistence.job_queue import DurableJobQueue
+    from shared.infrastructure.persistence.outbox import DurableOutboxRepository
 
     engine = _ProductionStubEngine()
     bundle = replace(
@@ -296,6 +298,8 @@ def test_create_app_injects_live_repository_for_production_postgresql(
         mode="postgresql",
         engine=engine,
         audit_log=DurableAuditLog(engine),
+        job_queue=DurableJobQueue(engine),
+        outbox_repository=DurableOutboxRepository(engine),
         assisted_intake_store=DurableAssistedIntakeStore(SimpleNamespace(engine=engine)),
     )
     app = create_app(

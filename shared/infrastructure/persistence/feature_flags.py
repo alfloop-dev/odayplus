@@ -12,7 +12,15 @@ from datetime import date
 from typing import Any
 
 from shared.audit import AuditEvent
-from shared.auth.feature_flags import DEFAULT_FLAGS, FeatureFlag, FeatureFlagRegistry, Readiness
+from shared.auth.feature_flags import (
+    ASSISTED_INTAKE_FLAG_SCOPES,
+    DEFAULT_FLAGS,
+    FeatureFlag,
+    FeatureFlagRegistry,
+    FlagScope,
+    FlagScopeBinding,
+    Readiness,
+)
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 
 COLLECTION = "auth.platform_feature_flags"
@@ -47,7 +55,8 @@ class FeatureFlagOperationDisabled(PermissionError):
 
 
 def require_operation_feature_flag(key: str, *, owner: Any, engine: Any = None,
-                                   queue: Any = None, durable_required: bool = False) -> None:
+                                   queue: Any = None, durable_required: bool = False,
+                                   tenant_id: str | None = None, source_id: str | None = None) -> None:
     """Read the explicitly bound owner; never substitute a process-global policy.
 
     Durable operations require the same SQL owner and queue used by their
@@ -58,7 +67,7 @@ def require_operation_feature_flag(key: str, *, owner: Any, engine: Any = None,
         owner = require_durable_flag_owner(owner, engine, queue=queue)
     elif not isinstance(owner, FeatureFlagRegistry):
         raise FeatureFlagStoreUnavailable("Operation feature flag owner is unavailable")
-    if not owner.is_enabled(key, on=date.today()):
+    if not owner.is_enabled(key, on=date.today(), tenant_id=tenant_id, source_id=source_id):
         raise FeatureFlagOperationDisabled("FEATURE_FLAG_DISABLED")
 
 
@@ -108,9 +117,10 @@ class DurableFeatureFlagRegistry:
     def all(self) -> tuple[FeatureFlag, ...]:
         return tuple(self.read_versioned()[0].values())
 
-    def is_enabled(self, key: str, *, on: date | None = None) -> bool:
+    def is_enabled(self, key: str, *, on: date | None = None,
+                   tenant_id: str | None = None, source_id: str | None = None) -> bool:
         flag = self.get(key)
-        return flag is not None and flag.is_active(on or date.today())
+        return flag is not None and flag.is_active(on or date.today(), tenant_id=tenant_id, source_id=source_id)
 
     def expired(self, *, on: date) -> tuple[FeatureFlag, ...]:
         return tuple(flag for flag in self.all() if flag.is_expired(on))
@@ -119,6 +129,7 @@ class DurableFeatureFlagRegistry:
         self, operation: str, key: str, *, actor: str, correlation_id: str,
         audit_log: Any, queue: Any = None, flag: FeatureFlag | None = None,
         reason: str | None = None, risk_acknowledged: bool | None = None,
+        configuration_version: int | None = None, bindings: tuple[FlagScopeBinding, ...] | None = None,
     ) -> FlagMutationResult:
         """CAS a private policy copy and its true audit, or commit neither.
 
@@ -148,6 +159,7 @@ class DurableFeatureFlagRegistry:
                     current, version = self.read_versioned()
                     before = current.get(key)
                     policy = FeatureFlagRegistry(current)
+                    release_evidence = None
                     if operation == "register":
                         if before is not None:
                             raise FeatureFlagAlreadyExists("feature flag already exists")
@@ -156,10 +168,30 @@ class DurableFeatureFlagRegistry:
                         policy.register(flag)
                         updated = flag
                     elif operation == "approve":
-                        updated = policy.add_approval(key, actor)
+                        updated = policy.add_approval(key, actor, configuration_version=configuration_version)
                     elif operation == "enable":
                         # Only the latest stored approvals enter the original rule.
-                        updated = policy.enable(key)
+                        updated = policy.enable(key, configuration_version=configuration_version)
+                        if key in ASSISTED_INTAKE_FLAG_SCOPES:
+                            # Only the two canonical GETs consume rollout policy
+                            # today. An enabled write/shadow/event/promotion bit
+                            # must not falsely attest an unwired cutover.
+                            if key != "assisted_intake_v1_read":
+                                raise FeatureFlagOperationDisabled("INTAKE_FLAG_CONSUMER_NOT_INTEGRATED")
+                            from modules.listing.application.intake_release_governance import (
+                                IntakeFlagActivationDenied,
+                                require_intake_flag_activation,
+                            )
+                            try:
+                                release_evidence = require_intake_flag_activation()
+                            except IntakeFlagActivationDenied:
+                                raise
+                            except (OSError, ValueError) as exc:
+                                raise FeatureFlagStoreUnavailable("Intake release authority is unavailable") from exc
+                    elif operation == "configure_scope":
+                        if bindings is None:
+                            raise ValueError("Explicit scope bindings are required")
+                        updated = policy.configure_scope(key, bindings, configuration_version=configuration_version)
                     elif operation == "disable":
                         updated = policy.disable(key)
                     else:
@@ -180,6 +212,7 @@ class DurableFeatureFlagRegistry:
                             "after": updated.to_dict(), "reason": reason,
                             "riskAcknowledged": risk_acknowledged,
                             "flag_state_version": changed,
+                            **({"release_authority": release_evidence} if release_evidence is not None else {}),
                         },
                     )
                     context = audit_log.transactional_worm_sink(delivery) if delivery else nullcontext()
@@ -196,15 +229,7 @@ class DurableFeatureFlagRegistry:
 
     @staticmethod
     def _encode(flags: dict[str, FeatureFlag]) -> dict[str, Any]:
-        return {"schema_version": 1, "flags": {
-            key: {
-                "key": flag.key, "owner": flag.owner, "enabled": flag.enabled,
-                "readiness": flag.readiness.value, "high_risk": flag.high_risk,
-                "expires_on": flag.expires_on.isoformat() if flag.expires_on else None,
-                "description": flag.description, "approved_by": sorted(flag.approved_by),
-            }
-            for key, flag in flags.items()
-        }}
+        return {"schema_version": 1, "flags": {key: flag.to_record() for key, flag in flags.items()}}
 
     @staticmethod
     def _decode(value: Any) -> dict[str, FeatureFlag]:
@@ -236,11 +261,21 @@ class DurableFeatureFlagRegistry:
                 expiry = row.get("expires_on")
                 if expiry is not None and not isinstance(expiry, str):
                     raise ValueError("Invalid platform flag expiry")
+                scope = FlagScope(row.get("scope", FlagScope.GLOBAL))
+                if key in DEFAULT_FLAGS and scope != DEFAULT_FLAGS[key].scope:
+                    raise ValueError("Original global flag scope cannot be changed")
+                if scope != FlagScope.GLOBAL and not {"bindings", "configuration_version"}.issubset(row):
+                    raise ValueError("Incomplete scoped feature flag configuration")
+                raw_bindings = row.get("bindings", [])
+                if not isinstance(raw_bindings, list):
+                    raise ValueError("Invalid feature flag scope bindings")
                 result[key] = FeatureFlag(
                     key=key, owner=row["owner"], enabled=row["enabled"],
                     readiness=readiness, high_risk=row["high_risk"],
                     expires_on=date.fromisoformat(expiry) if expiry is not None else None,
                     description=row["description"], approved_by=frozenset(approvals),
+                    scope=scope, bindings=tuple(FlagScopeBinding.from_dict(binding) for binding in raw_bindings),
+                    configuration_version=row.get("configuration_version", 1),
                 )
             return result
         except (KeyError, TypeError, ValueError) as exc:

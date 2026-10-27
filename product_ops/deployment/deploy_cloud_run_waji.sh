@@ -513,35 +513,40 @@ PY
 gcloud auth configure-docker "${REGISTRY_HOST}" --quiet
 
 build_publish_sign() {
-  local name="$1"
-  local image="$2"
-  local dockerfile="$3"
-  if [ "${ODP_DEPLOY_BY_DIGEST:-false}" = "true" ] || [ "${ODP_SKIP_BUILD:-false}" = "true" ]; then
-    echo "Deploy-by-digest: skipping build for ${name} image (${image})."
+  local name="$1" binding="$2" dockerfile="$3"
+  local image="${!binding}" digest_ref
+  shift 3
+  if [ "${ODP_DEPLOY_BY_DIGEST:-false}" = "true" ]; then
+    digest_ref="$(resolve_image_digest "${image}")" || return 1
+    printf -v "${binding}" '%s' "${digest_ref}"
+    echo "Deploy-by-digest: skipping build for ${name} image (${digest_ref})."
     return 0
   fi
-  echo "Building and publishing ${name} image..."
-  docker build \
-    --platform linux/amd64 \
-    --label "org.opencontainers.image.revision=${ODAY_RELEASE_SHA}" \
-    --label "com.oday-plus.data-binding=live" \
-    -t "${image}" \
-    -f "${dockerfile}" \
-    .
-  docker push "${image}"
-
-  if command -v cosign >/dev/null 2>&1; then
-    cosign sign --yes "${image}"
-    CI=true ./delivery_toolchain/security/sign_images.sh verify "${image}"
-  else
-    echo "Error: cosign is required for a production deployment." >&2
-    exit 1
+  if [ "${ODP_SKIP_BUILD:-false}" != "true" ]; then
+    echo "Building and publishing ${name} image..."
+    docker build --platform linux/amd64 \
+      --label "org.opencontainers.image.revision=${ODAY_RELEASE_SHA}" \
+      --label "com.oday-plus.data-binding=live" "$@" -t "${image}" -f "${dockerfile}" . || return 1
+    docker push "${image}" || return 1
   fi
+  digest_ref="$(resolve_image_digest "${image}")" || {
+    echo "Error: cannot resolve the immutable ${name} image from Artifact Registry." >&2
+    return 1
+  }
+  if ! command -v cosign >/dev/null 2>&1; then
+    echo "Error: cosign is required to verify the immutable image." >&2
+    return 1
+  fi
+  if [ "${ODP_SKIP_BUILD:-false}" != "true" ]; then
+    cosign sign --yes "${digest_ref}" || return 1
+  fi
+  CI=true ./delivery_toolchain/security/sign_images.sh verify "${digest_ref}" || return 1
+  printf -v "${binding}" '%s' "${digest_ref}"
 }
 
-build_publish_sign "API" "${API_IMAGE}" "infra/docker/api.Dockerfile"
-build_publish_sign "worker" "${WORKER_IMAGE}" "infra/docker/worker.Dockerfile"
-build_publish_sign "scheduler" "${SCHEDULER_IMAGE}" "infra/docker/scheduler.Dockerfile"
+build_publish_sign "API" API_IMAGE "infra/docker/api.Dockerfile"
+build_publish_sign "worker" WORKER_IMAGE "infra/docker/worker.Dockerfile"
+build_publish_sign "scheduler" SCHEDULER_IMAGE "infra/docker/scheduler.Dockerfile"
 
 API_SECRET_BINDINGS="ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}"
 API_SECRET_BINDINGS+=",ODP_AUTH_PRINCIPAL_MAP=${ODP_AUTH_PRINCIPAL_MAP_SECRET}"
@@ -596,6 +601,7 @@ capture_latest_execution() {
 capture_job_proof() {
   local kind="$1"
   local job="$2"
+  local image="$3"
   local description_file="${JOB_REPORT_DIR}/${kind}-job.json"
   local execution_file="${JOB_REPORT_DIR}/${kind}-execution.json"
   gcloud run jobs describe "${job}" \
@@ -608,13 +614,23 @@ capture_job_proof() {
     --job-description="${description_file}" \
     --execution="${execution_file}" \
     --expected-sha="${ODAY_RELEASE_SHA}" \
+    --expected-image="${image}" \
+    --expected-job="projects/${GCP_PROJECT}/locations/${GCP_REGION}/jobs/${job}" \
     --output="${JOB_REPORT_DIR}/${kind}-validation.json"
 }
 
 execute_job() {
   local kind="$1"
   local job="$2"
+  local image
+  case "${kind}" in
+    migration) image="${WORKER_IMAGE}" ;;
+    scheduler) image="${SCHEDULER_IMAGE}" ;;
+    worker) image="${WORKER_IMAGE}" ;;
+    *) return 1 ;;
+  esac
   shift 2
+  verify_release_job "${job}" "${image}" "${ODAY_RELEASE_SHA}" || return 1
   echo "Executing ${kind} Cloud Run Job..."
   if ! gcloud run jobs execute "${job}" \
     --region="${GCP_REGION}" \
@@ -628,7 +644,7 @@ execute_job() {
     echo "Error: ${kind} Cloud Run Job failed; deployment stopped." >&2
     return 1
   fi
-  capture_job_proof "${kind}" "${job}"
+  capture_job_proof "${kind}" "${job}" "${image}"
 }
 
 write_public_egress_probe_receipt() {
@@ -827,8 +843,8 @@ run_public_egress_probe() {
 echo "Recording the existing API/Web traffic before any runtime mutation..."
 capture_service_traffic "${API_SERVICE}" "${API_TRAFFIC_SNAPSHOT}"
 capture_service_traffic "${WEB_SERVICE}" "${WEB_TRAFFIC_SNAPSHOT}"
-capture_scheduler_trigger "${SCHEDULER_SCHEDULE_NAME}" "${SCHEDULER_TRIGGER_SNAPSHOT}"
-capture_scheduler_trigger "${WORKER_SCHEDULE_NAME}" "${WORKER_TRIGGER_SNAPSHOT}"
+capture_scheduler_trigger "${SCHEDULER_SCHEDULE_NAME}" "${SCHEDULER_TRIGGER_SNAPSHOT}" with-job-binding
+capture_scheduler_trigger "${WORKER_SCHEDULE_NAME}" "${WORKER_TRIGGER_SNAPSHOT}" with-job-binding
 OLD_API_URL="$(service_snapshot_url "${API_TRAFFIC_SNAPSHOT}")"
 OLD_WEB_URL="$(service_snapshot_url "${WEB_TRAFFIC_SNAPSHOT}")"
 ROLLBACK_ARMED=true
@@ -981,40 +997,14 @@ if [ "${ODP_EXTERNAL_PROVIDER_MODE:-}" = "disabled" ]; then
   run_public_egress_probe
 fi
 
-upsert_scheduler_trigger() {
-  local trigger_name="$1"
-  local target_job="$2"
-  local cron="$3"
-  local target_uri="https://run.googleapis.com/v2/projects/${GCP_PROJECT}/locations/${GCP_REGION}/jobs/${target_job}:run"
-  local action="create"
-  if gcloud scheduler jobs describe "${trigger_name}" \
-    --location="${GCP_REGION}" \
-    --project="${GCP_PROJECT}" >/dev/null 2>&1; then
-    action="update"
-  fi
-  local header_arg="--headers=Content-Type=application/json"
-  if [ "${action}" = "update" ]; then
-    header_arg="--update-headers=Content-Type=application/json"
-  fi
-  gcloud scheduler jobs "${action}" http "${trigger_name}" \
-    --location="${GCP_REGION}" \
-    --project="${GCP_PROJECT}" \
-    --schedule="${cron}" \
-    --time-zone="${ODP_SCHEDULER_TIME_ZONE}" \
-    --uri="${target_uri}" \
-    --http-method=POST \
-    --message-body="{}" \
-    "${header_arg}" \
-    --oauth-service-account-email="${ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT}" \
-    --oauth-token-scope="https://www.googleapis.com/auth/cloud-platform" \
-    --quiet
-}
-
 # The scheduler must persist an enqueue receipt. The worker must either leave a
 # terminal success receipt or prove that the durable queue is drained; a
 # same-minute scheduler idempotency replay may legitimately leave no new work.
 # Wrapper exit codes make retry-queued work retryable by Cloud Run and make
 # FAILED/CANCELLED/DLQ non-zero.
+SCHEDULER_ROLLBACK_ARMED=true
+pause_scheduler_trigger "${SCHEDULER_SCHEDULE_NAME}"
+pause_scheduler_trigger "${WORKER_SCHEDULE_NAME}"
 execute_job "scheduler" "${SCHEDULER_CANDIDATE_JOB}"
 execute_job "worker" "${WORKER_CANDIDATE_JOB}" \
   --args="product_ops/deployment/cloud_run_job_entrypoint.py,worker,--max-jobs,1"
@@ -1075,27 +1065,12 @@ if payload["ODP_AUTH_OIDC_ENABLED"] == "true":
 json.dump(payload, open(sys.argv[1], "w", encoding="utf-8"), sort_keys=True)
 PY
 
-if [ "${ODP_DEPLOY_BY_DIGEST:-false}" = "true" ] || [ "${ODP_SKIP_BUILD:-false}" = "true" ]; then
-  echo "Deploy-by-digest: skipping build for Web image (${WEB_IMAGE})."
-else
-  echo "Building and publishing Web image..."
-  docker build \
-    --platform linux/amd64 \
-    --build-arg "ODP_API_BASE_URL=${API_URL}" \
-    --build-arg "ODAY_RELEASE_SHA=${ODAY_RELEASE_SHA}" \
-    --build-arg "ODP_REQUIRE_LIVE_DATA=${ODP_REQUIRE_LIVE_DATA}" \
-    --build-arg "ODP_DATA_BINDING_MODE=${ODP_DATA_BINDING_MODE}" \
-    --build-arg "ODP_PRODUCT_MODE=${ODP_PRODUCT_MODE}" \
-    --label "org.opencontainers.image.revision=${ODAY_RELEASE_SHA}" \
-    --label "com.oday-plus.data-binding=live" \
-    -t "${WEB_IMAGE}" \
-    -f infra/docker/web.Dockerfile \
-    .
-  docker push "${WEB_IMAGE}"
-
-  cosign sign --yes "${WEB_IMAGE}"
-  CI=true ./delivery_toolchain/security/sign_images.sh verify "${WEB_IMAGE}"
-fi
+build_publish_sign "Web" WEB_IMAGE "infra/docker/web.Dockerfile" \
+  --build-arg "ODP_API_BASE_URL=${API_URL}" \
+  --build-arg "ODAY_RELEASE_SHA=${ODAY_RELEASE_SHA}" \
+  --build-arg "ODP_REQUIRE_LIVE_DATA=${ODP_REQUIRE_LIVE_DATA}" \
+  --build-arg "ODP_DATA_BINDING_MODE=${ODP_DATA_BINDING_MODE}" \
+  --build-arg "ODP_PRODUCT_MODE=${ODP_PRODUCT_MODE}"
 
 echo "Deploying immutable Web candidate without production traffic..."
 # A first release creates the service, and Cloud Run rejects the no-traffic flag
@@ -1195,15 +1170,18 @@ run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py s
   --timeout "${CANDIDATE_SMOKE_TIMEOUT_SECONDS:-60}" \
   --output "${SMOKE_REPORT}"
 
-SCHEDULER_ROLLBACK_ARMED=true
 upsert_scheduler_trigger \
   "${SCHEDULER_SCHEDULE_NAME}" \
   "${SCHEDULER_CANDIDATE_JOB}" \
-  "${ODP_SCHEDULER_CRON}"
+  "${SCHEDULER_IMAGE}" "${ODP_SCHEDULER_CRON}" \
+  "${ODP_SCHEDULER_TIME_ZONE}" "${ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT}" \
+  "${SCHEDULER_TRIGGER_SNAPSHOT}" "${ODAY_RELEASE_SHA}"
 upsert_scheduler_trigger \
   "${WORKER_SCHEDULE_NAME}" \
   "${WORKER_CANDIDATE_JOB}" \
-  "${ODP_WORKER_CRON}"
+  "${WORKER_IMAGE}" "${ODP_WORKER_CRON}" \
+  "${ODP_SCHEDULER_TIME_ZONE}" "${ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT}" \
+  "${WORKER_TRIGGER_SNAPSHOT}" "${ODAY_RELEASE_SHA}"
 promote_service_traffic "${API_SERVICE}" "${API_REVISION}"
 if [ "${WEB_SERVICE_PRESENCE}" = "absent" ]; then
   echo "Promotion: opening the first-release Web service to public invocation..."
@@ -1316,6 +1294,18 @@ run_locked_python delivery_toolchain/e2e/check_live_e2e_gate.py \
   --output "${LIVE_E2E_REPORT}"
 fi
 
+# Both one-shot reports and the promoted live gate have passed. Prior PAUSED
+# triggers remain PAUSED. A new trigger stays PAUSED unless explicitly enabled.
+for resume_mode in verify-only resume; do
+  resume_scheduler_trigger "${SCHEDULER_SCHEDULE_NAME}" "${SCHEDULER_CANDIDATE_JOB}" \
+    "${SCHEDULER_IMAGE}" "${ODP_SCHEDULER_CRON}" "${ODP_SCHEDULER_TIME_ZONE}" \
+    "${ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT}" "${SCHEDULER_TRIGGER_SNAPSHOT}" \
+    "${ODAY_RELEASE_SHA}" scheduler "${JOB_REPORT_DIR}/scheduler-validation.json" "${ODP_NEW_SCHEDULER_STATE:-PAUSED}" "${resume_mode}"
+  resume_scheduler_trigger "${WORKER_SCHEDULE_NAME}" "${WORKER_CANDIDATE_JOB}" \
+    "${WORKER_IMAGE}" "${ODP_WORKER_CRON}" "${ODP_SCHEDULER_TIME_ZONE}" \
+    "${ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT}" "${WORKER_TRIGGER_SNAPSHOT}" \
+    "${ODAY_RELEASE_SHA}" worker "${JOB_REPORT_DIR}/worker-validation.json" "${ODP_NEW_SCHEDULER_STATE:-PAUSED}" "${resume_mode}"
+done
 DEPLOYMENT_COMMITTED=true
 
 echo "=== Cloud Run deployment passed all live-data gates ==="

@@ -4,8 +4,7 @@ These exercise the ordered migration under
 ``infra/db/migrations/assisted_listing_intake/`` against a real PostgreSQL 16
 server (see ``tests/conftest.py`` for provisioning). They prove clean install,
 catalog constraints, the downgrade boundary, and that the production migration
-reproduces the approved ODP-SD-INTAKE-001 four-artifact DDL stack without dropping
-any approved constraint.
+reproduces the declared contract DDL stack without dropping original constraints.
 
 Run locally with the bundled server::
 
@@ -20,6 +19,7 @@ expression; they skip cleanly when no PostgreSQL 16 is reachable.
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -92,6 +92,8 @@ def test_migration_reproduces_reviewed_contract_artifacts_byte_for_byte() -> Non
         "002_consistency.sql",
         "003_promotion_state.sql",
         "004_tenant_rls_lineage.sql",
+        "005_decision_service_actor.sql",
+        "006_workflow_schedule.sql",
     ]
     # Every ordered migration file must be a byte-for-byte copy of the artifact
     # it converts, so no approved constraint can be dropped or altered in transit.
@@ -104,6 +106,90 @@ def test_ordered_migration_files_exist_and_are_nonempty() -> None:
     for path in (*intake.ordered_upgrade_paths(), intake.downgrade_path()):
         assert path.is_file(), path
         assert path.stat().st_size > 0, path
+
+
+@live
+def test_five_step_workflow_upgrade_retains_rows_unknowns_and_original_receipts(intake_blank_db):
+    db = intake_blank_db
+    tenant, actor, iid, aid, sid, correlation = (str(uuid4()) for _ in range(6))
+    with db.connect() as conn:
+        for _, sql in intake.upgrade_statements()[:5]:
+            conn.execute(intake._without_transaction_control(sql))
+        conn.execute("CREATE SCHEMA odp_runtime")
+        conn.execute("CREATE TABLE odp_runtime.assisted_intake_schema_migrations "
+                     "(migration_name text PRIMARY KEY,manifest_sha256 char(64) NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())")
+        for count in (4, 5):
+            conn.execute("INSERT INTO odp_runtime.assisted_intake_schema_migrations VALUES (%s,%s,now())",
+                         (f"001-00{count}", intake.manifest_checksum(intake.migration_steps()[:count])))
+        conn.execute("INSERT INTO intake.intakes (intake_id,tenant_id,submitter_subject_id,intake_method,processing_state,correlation_id) "
+                     "VALUES (%s,%s,%s,'MANUAL','SUBMITTED',%s)", (iid, tenant, actor, correlation))
+        conn.execute("INSERT INTO workflow.assignments (assignment_id,tenant_id,intake_id,status,queue_key,due_at) "
+                     "VALUES (%s,%s,%s,'UNASSIGNED','synthetic-old-queue','2026-10-13T04:00:00Z')", (aid, tenant, iid))
+        conn.execute("INSERT INTO workflow.sla_instances (sla_instance_id,tenant_id,intake_id,policy_version,state,started_at,due_at) "
+                     "VALUES (%s,%s,%s,'synthetic-old-policy','ON_TRACK','2026-10-13T00:00:00Z','2026-10-13T04:00:00Z')",
+                     (sid, tenant, iid))
+        receipts = conn.execute("SELECT * FROM odp_runtime.assisted_intake_schema_migrations ORDER BY migration_name").fetchall()
+        old_assignment = conn.execute("SELECT row_to_json(a) FROM workflow.assignments a").fetchone()[0]
+        old_sla = conn.execute("SELECT row_to_json(s) FROM workflow.sla_instances s").fetchone()[0]
+    upgraded = intake.apply_upgrade_to_database(db.url())
+    assert intake.apply_upgrade_to_database(db.url()) == upgraded
+    with db.connect() as conn:
+        assert conn.execute("SELECT * FROM odp_runtime.assisted_intake_schema_migrations WHERE migration_name<>'001-006' ORDER BY migration_name").fetchall() == receipts
+        assert conn.execute("SELECT manifest_sha256 FROM odp_runtime.assisted_intake_schema_migrations WHERE migration_name='001-006'").fetchone() == (upgraded.manifest_sha256,)
+        assert conn.execute("SELECT row_to_json(a) FROM workflow.assignments a").fetchone()[0] == old_assignment
+        current = conn.execute("SELECT row_to_json(s) FROM workflow.sla_instances s").fetchone()[0]
+        assert all(current.pop(key) is None for key in ("assignment_id", "calendar_version", "due_soon_at", "breach_at"))
+        assert current == old_sla
+
+
+@live
+@pytest.mark.parametrize("damage", ["drop_column", "default", "type", "drop_fk", "wrong_fk"])
+def test_recorded_workflow_schedule_drift_is_refused_without_repair(intake_blank_db, damage):
+    db = intake_blank_db
+    intake.apply_upgrade_to_database(db.url())
+    with db.connect() as conn:
+        statements = {
+            "drop_column": ["ALTER TABLE workflow.sla_instances DROP COLUMN calendar_version"],
+            "default": ["ALTER TABLE workflow.sla_instances ALTER COLUMN calendar_version SET DEFAULT 'tampered'"],
+            "type": ["ALTER TABLE workflow.sla_instances ALTER COLUMN calendar_version TYPE varchar(128)"],
+            "drop_fk": ["ALTER TABLE workflow.sla_instances DROP CONSTRAINT fk_sla_assignment_intake_tenant"],
+            "wrong_fk": ["ALTER TABLE workflow.sla_instances DROP CONSTRAINT fk_sla_assignment_intake_tenant",
+                         "ALTER TABLE workflow.sla_instances ADD CONSTRAINT fk_sla_assignment_intake_tenant "
+                         "FOREIGN KEY (assignment_id) REFERENCES workflow.assignments(assignment_id)"],
+        }
+        for sql in statements[damage]:
+            conn.execute(sql)
+        receipts = conn.execute("SELECT * FROM odp_runtime.assisted_intake_schema_migrations ORDER BY migration_name").fetchall()
+        columns_sql = ("SELECT attname,atttypid,attnotnull,atthasdef FROM pg_attribute WHERE "
+                       "attrelid='workflow.sla_instances'::regclass AND attnum>0 AND NOT attisdropped ORDER BY attnum")
+        constraints_sql = ("SELECT conname,pg_get_constraintdef(oid) FROM pg_constraint WHERE "
+                           "conrelid IN ('workflow.sla_instances'::regclass,'workflow.assignments'::regclass) ORDER BY conname")
+        columns, constraints = conn.execute(columns_sql).fetchall(), conn.execute(constraints_sql).fetchall()
+    with pytest.raises(intake.AssistedIntakeSchemaError):
+        intake.apply_upgrade_to_database(db.url())
+    with db.connect() as conn:
+        assert conn.execute(columns_sql).fetchall() == columns
+        assert conn.execute(constraints_sql).fetchall() == constraints
+        assert conn.execute("SELECT * FROM odp_runtime.assisted_intake_schema_migrations ORDER BY migration_name").fetchall() == receipts
+
+
+@live
+def test_sla_cannot_bind_an_assignment_of_another_intake_in_the_same_tenant(intake_db):
+    from psycopg import errors
+
+    tenant, actor, first, second, aid = (str(uuid4()) for _ in range(5))
+    with intake_db.connect() as conn:
+        for iid in (first, second):
+            conn.execute("INSERT INTO intake.intakes (intake_id,tenant_id,submitter_subject_id,intake_method,processing_state,correlation_id) "
+                         "VALUES (%s,%s,%s,'MANUAL','SUBMITTED',%s)", (iid, tenant, actor, str(uuid4())))
+        conn.execute("INSERT INTO workflow.assignments (assignment_id,tenant_id,intake_id,status,queue_key) "
+                     "VALUES (%s,%s,%s,'UNASSIGNED','synthetic-other-intake')", (aid, tenant, second))
+        with pytest.raises(errors.ForeignKeyViolation) as error, conn.transaction():
+            conn.execute("INSERT INTO workflow.sla_instances (tenant_id,intake_id,assignment_id,policy_version,state,started_at,due_at) "
+                         "VALUES (%s,%s,%s,'synthetic-policy','ON_TRACK','2026-10-13T00:00:00Z','2026-10-13T04:00:00Z')",
+                         (tenant, first, aid))
+        assert error.value.diag.constraint_name == "fk_sla_assignment_intake_tenant"
+        assert conn.execute("SELECT count(*) FROM workflow.sla_instances").fetchone()[0] == 0
 
 
 # --------------------------------------------------------------------------- #

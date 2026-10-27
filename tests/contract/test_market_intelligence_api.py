@@ -1918,17 +1918,16 @@ def test_production_create_app_gates_only_market_intelligence_without_binding(
     tmp_path: Path,
 ) -> None:
     """A missing platform binding must not take down production app composition."""
-    from types import SimpleNamespace
 
     from apps.api.oday_api.main import create_app
     from shared.infrastructure.persistence.factory import _durable_bundle
+    from tests.production_composition_binding import bind_offline_score_participants
 
     monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
     monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
 
     durable = _durable_bundle(tmp_path / "market-intelligence-gate.sqlite3")
-    durable.engine.is_production = True
-    bundle = replace(durable, mode="postgresql", assisted_intake_store=SimpleNamespace())
+    bundle = bind_offline_score_participants(durable)
 
     try:
         # Composition succeeds: the binding gates only the routes that consume it.

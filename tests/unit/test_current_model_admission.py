@@ -234,7 +234,7 @@ def released_pg_model(intake_blank_db, tmp_path, monkeypatch):
             engine, worm_sink=LocalAppendOnlyWormSink(tmp_path / "local-worm")
         ),
     )
-    enable_model_publish(service, tenant_id='tenant-modeling')
+    enable_model_publish(service, tenant_id="tenant-modeling")
     model = release_fixtures.prepare_candidate(
         service,
         "1.0.0",
@@ -301,6 +301,24 @@ def test_actual_pg_approved_release_metadata_receipt_stable_and_held_read_no_rev
     with pytest.raises(CurrentModelAdmissionChanged):
         with port.guard(first, tenant_id="local-test-tenant"):
             pass
+
+
+@pytest.mark.requires_live_env
+@_postgres
+def test_actual_pg_remote_artifact_digest_must_match_the_durable_approved_model(released_pg_model):
+    _, repository, adapter, _, port, decision = released_pg_model
+    receipt = _read(port)
+    current = repository.get_alias(decision.model_name, ModelAlias.PRODUCTION)
+    approved_digest = current.monitoring_config["artifact_sha256"]
+    assert receipt["artifact_sha256"] == approved_digest
+    adapter.client.set_model_version_tag(
+        decision.model_name, receipt["registry_version"],
+        PREFIX + "artifact_sha256", "sha256:" + "b" * 64,
+    )
+    with pytest.raises(CurrentModelAdmissionChanged):
+        _read(port)
+    assert repository.get_alias(decision.model_name, ModelAlias.PRODUCTION) == current
+    assert repository.get_release_revision(decision.model_name) == 1
 
 
 @pytest.mark.parametrize(

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import base64
+import copy
 import json
+import os
 import subprocess
 import sys
+from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -15,19 +19,12 @@ from product_ops.deployment.bluegreen_release import (
     ReleaseState,
     SchedulerTarget,
     ServiceTarget,
-    atomic_traffic_switch,
     capture_data_platform_pointer,
     capture_traffic_snapshot,
-    execute_bluegreen_switch,
-    execute_rollback,
     get_tagged_target_from_description,
     main,
-    pause_all_schedulers,
     resolve_tagged_target,
     restore_data_platform_pointer,
-    restore_traffic_from_snapshot,
-    resume_schedulers,
-    switch_job_digests,
 )
 
 TRAFFIC_HELPER = Path(__file__).resolve().parents[2] / "product_ops/deployment/cloud_run_traffic.py"
@@ -60,7 +57,7 @@ def test_release_state_json_roundtrip() -> None:
         api_traffic_snapshot_path="/tmp/api.json",
         web_traffic_snapshot_path="/tmp/web.json",
         scheduler_states={"job1": "ENABLED"},
-        scheduler_digests={"job1": "sha256:abc"},
+        scheduler_snapshots={"job1": "scheduler-0.json"},
         data_platform_pointer={"selector_label": "v1", "snapshot_id": "s1"},
         data_platform_pointer_snapshot_path="/tmp/dp.json",
         switch_completed_at="2026-08-24T12:00:00Z",
@@ -71,7 +68,7 @@ def test_release_state_json_roundtrip() -> None:
     assert loaded.release_id == "rel-001"
     assert loaded.blue_api_revision == "api-blue"
     assert loaded.green_api_revision == "api-green"
-    assert loaded.scheduler_digests == {"job1": "sha256:abc"}
+    assert loaded.scheduler_snapshots == {"job1": "scheduler-0.json"}
     assert loaded.data_platform_pointer_snapshot_path == "/tmp/dp.json"
     assert loaded.switch_completed_at == "2026-08-24T12:00:00Z"
     assert loaded.rollback_completed_at == "2026-08-24T12:30:00Z"
@@ -363,122 +360,10 @@ def test_capture_traffic_snapshot_records_a_first_release_as_absent(
     assert exists.stdout.strip() == "false"
 
 
-@patch("product_ops.deployment.bluegreen_release._run_gcloud")
-def test_restore_refuses_an_absent_snapshot_instead_of_claiming_a_rollback(
-    mock_gcloud: MagicMock, tmp_path: Path
-) -> None:
-    svc = ServiceTarget(service="odp-api", project="p", region="r")
-    snapshot = tmp_path / "api.json"
-    snapshot.write_text(
-        json.dumps({"exists": False, "service": "odp-api", "schema_version": 1}),
-        encoding="utf-8",
-    )
-
-    res = restore_traffic_from_snapshot(svc, snapshot)
-
-    assert res.success is False
-    assert "initial release" in res.message
-    mock_gcloud.assert_not_called()
 
 
-@patch("product_ops.deployment.bluegreen_release._run_gcloud")
-def test_atomic_traffic_switch(mock_gcloud: MagicMock) -> None:
-    svc = ServiceTarget(service="odp-api", project="p", region="r")
-
-    # Empty green revision
-    res_empty = atomic_traffic_switch(svc, "")
-    assert res_empty.success is False
-
-    # Dry run
-    res_dry = atomic_traffic_switch(svc, "api-green-1", dry_run=True)
-    assert res_dry.success is True
-    assert res_dry.dry_run is True
-
-    # Gcloud failure
-    mock_gcloud.return_value = subprocess.CompletedProcess(
-        [], 1, stdout="", stderr="permission denied"
-    )
-    res_fail = atomic_traffic_switch(svc, "api-green-1")
-    assert res_fail.success is False
-    assert "permission denied" in res_fail.message
-
-    # Gcloud success
-    mock_gcloud.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
-    res_ok = atomic_traffic_switch(svc, "api-green-1")
-    assert res_ok.success is True
-    mock_gcloud.assert_called_with(
-        [
-            "run",
-            "services",
-            "update-traffic",
-            "odp-api",
-            "--project=p",
-            "--region=r",
-            "--to-revisions=api-green-1=100",
-            "--quiet",
-        ],
-        dry_run=False,
-    )
 
 
-@patch("product_ops.deployment.bluegreen_release.subprocess.run")
-@patch("product_ops.deployment.bluegreen_release._run_gcloud")
-def test_restore_traffic_from_snapshot(
-    mock_gcloud: MagicMock, mock_subproc: MagicMock, tmp_path: Path
-) -> None:
-    svc = ServiceTarget(service="odp-api", project="p", region="r")
-    snap_file = tmp_path / "snap.json"
-
-    # Missing snapshot file
-    res_missing = restore_traffic_from_snapshot(svc, snap_file)
-    assert res_missing.success is False
-    assert "not found" in res_missing.message
-
-    snap_file.write_text('{"status": {}}', encoding="utf-8")
-
-    # Helper fails
-    mock_subproc.return_value = subprocess.CompletedProcess([], 1, stdout="", stderr="helper error")
-    res_helper_fail = restore_traffic_from_snapshot(svc, snap_file)
-    assert res_helper_fail.success is False
-    assert "Failed to compute restore-arg" in res_helper_fail.message
-
-    # Helper returns empty
-    mock_subproc.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
-    res_empty_arg = restore_traffic_from_snapshot(svc, snap_file)
-    assert res_empty_arg.success is False
-    assert "Empty traffic restore argument" in res_empty_arg.message
-
-    # Dry run with valid helper output
-    mock_subproc.return_value = subprocess.CompletedProcess(
-        [], 0, stdout="rev-blue=100\n", stderr=""
-    )
-    res_dry = restore_traffic_from_snapshot(svc, snap_file, dry_run=True)
-    assert res_dry.success is True
-    assert res_dry.dry_run is True
-
-    # Gcloud failure
-    mock_gcloud.return_value = subprocess.CompletedProcess([], 1, stdout="", stderr="gcloud fail")
-    res_gcloud_fail = restore_traffic_from_snapshot(svc, snap_file)
-    assert res_gcloud_fail.success is False
-    assert "gcloud fail" in res_gcloud_fail.message
-
-    # Gcloud success
-    mock_gcloud.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
-    res_ok = restore_traffic_from_snapshot(svc, snap_file)
-    assert res_ok.success is True
-    mock_gcloud.assert_called_with(
-        [
-            "run",
-            "services",
-            "update-traffic",
-            "odp-api",
-            "--project=p",
-            "--region=r",
-            "--to-revisions=rev-blue=100",
-            "--quiet",
-        ],
-        dry_run=False,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -486,157 +371,8 @@ def test_restore_traffic_from_snapshot(
 # ---------------------------------------------------------------------------
 
 
-@patch("product_ops.deployment.bluegreen_release._run_gcloud")
-def test_pause_and_resume_schedulers(mock_gcloud: MagicMock) -> None:
-    targets = [
-        SchedulerTarget(job_name="job-1", project="p", location="l"),
-        SchedulerTarget(job_name="job-2", project="p", location="l"),
-    ]
-
-    # Empty targets
-    assert pause_all_schedulers([]).success is True
-    assert resume_schedulers([]).success is True
-
-    # Dry run
-    assert pause_all_schedulers(targets, dry_run=True).dry_run is True
-    assert resume_schedulers(targets, dry_run=True).dry_run is True
-
-    # Pause success
-    mock_gcloud.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
-    res_pause = pause_all_schedulers(targets)
-    assert res_pause.success is True
-    assert "Paused 2 scheduler(s)" in res_pause.message
-
-    # Pause partial failure
-    mock_gcloud.side_effect = [
-        subprocess.CompletedProcess([], 0, stdout="", stderr=""),
-        subprocess.CompletedProcess([], 1, stdout="", stderr="job-2 not found"),
-    ]
-    res_pause_fail = pause_all_schedulers(targets)
-    assert res_pause_fail.success is False
-    assert "Failed to pause 1/2" in res_pause_fail.message
-
-    # Resume success
-    mock_gcloud.side_effect = None
-    mock_gcloud.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
-    res_resume = resume_schedulers(targets)
-    assert res_resume.success is True
-    assert "Resumed 2 scheduler(s)" in res_resume.message
-
-    # Resume partial failure
-    mock_gcloud.side_effect = [
-        subprocess.CompletedProcess([], 1, stdout="", stderr="job-1 locked"),
-        subprocess.CompletedProcess([], 0, stdout="", stderr=""),
-    ]
-    res_resume_fail = resume_schedulers(targets)
-    assert res_resume_fail.success is False
-    assert "Failed to resume 1/2" in res_resume_fail.message
 
 
-@patch("product_ops.deployment.bluegreen_release._run_gcloud")
-def test_switch_job_digests(mock_gcloud: MagicMock) -> None:
-    targets = [
-        SchedulerTarget(job_name="sync-job", project="p", location="l"),
-    ]
-
-    # Empty digest
-    res_empty = switch_job_digests(targets, "")
-    assert res_empty.success is False
-
-    # Empty targets
-    res_no_targets = switch_job_digests([], "sha256:green")
-    assert res_no_targets.success is True
-
-    # Dry run
-    res_dry = switch_job_digests(targets, "sha256:green", dry_run=True)
-    assert res_dry.success is True
-    assert res_dry.dry_run is True
-
-    # Describe failure
-    mock_gcloud.return_value = subprocess.CompletedProcess(
-        [], 1, stdout="", stderr="describe error"
-    )
-    res_desc_fail = switch_job_digests(targets, "sha256:green")
-    assert res_desc_fail.success is False
-
-    # Missing or malformed bodies must fail closed instead of replacing the
-    # body with a digest-only payload.
-    for malformed_job in (
-        {"httpTarget": {}},
-        {"httpTarget": {"body": "not-json"}},
-        {"httpTarget": {"body": json.dumps(["not", "an", "object"])}},
-    ):
-        mock_gcloud.return_value = subprocess.CompletedProcess(
-            [], 0, stdout=json.dumps(malformed_job), stderr=""
-        )
-        res_malformed = switch_job_digests(targets, "sha256:green")
-        assert res_malformed.success is False
-        assert res_malformed.details["switched"] == []
-        assert res_malformed.details["failures"]
-
-    # Idempotent skip: body already has target digest
-    current_body = json.dumps({"image_digest": "sha256:green", "env": "prod"})
-    b64_body = base64.b64encode(current_body.encode("utf-8")).decode("ascii")
-    mock_gcloud.return_value = subprocess.CompletedProcess(
-        [], 0, stdout=json.dumps({"httpTarget": {"body": b64_body}}), stderr=""
-    )
-    res_skip = switch_job_digests(targets, "sha256:green")
-    assert res_skip.success is True
-    assert "sync-job" in res_skip.details["skipped"]
-    assert len(res_skip.details["switched"]) == 0
-
-    # Normal update from old digest to new digest (with base64 body)
-    old_body = json.dumps({"image_digest": "sha256:blue", "env": "prod"})
-    old_b64 = base64.b64encode(old_body.encode("utf-8")).decode("ascii")
-    mock_gcloud.side_effect = [
-        # Describe
-        subprocess.CompletedProcess(
-            [], 0, stdout=json.dumps({"httpTarget": {"body": old_b64}}), stderr=""
-        ),
-        # Update
-        subprocess.CompletedProcess([], 0, stdout="", stderr=""),
-    ]
-    res_update = switch_job_digests(targets, "sha256:green")
-    assert res_update.success is True
-    assert "sync-job" in res_update.details["switched"]
-
-    # Raw JSON string body instead of base64
-    mock_gcloud.side_effect = [
-        subprocess.CompletedProcess(
-            [],
-            0,
-            stdout=json.dumps(
-                {"httpTarget": {"body": json.dumps({"image_digest": "sha256:blue"})}}
-            ),
-            stderr="",
-        ),
-        subprocess.CompletedProcess([], 0, stdout="", stderr=""),
-    ]
-    res_raw_json = switch_job_digests(targets, "sha256:green")
-    assert res_raw_json.success is True
-
-    # Dict body
-    mock_gcloud.side_effect = [
-        subprocess.CompletedProcess(
-            [],
-            0,
-            stdout=json.dumps({"httpTarget": {"body": {"image_digest": "sha256:blue"}}}),
-            stderr="",
-        ),
-        subprocess.CompletedProcess([], 0, stdout="", stderr=""),
-    ]
-    res_dict = switch_job_digests(targets, "sha256:green")
-    assert res_dict.success is True
-
-    # Update command failure
-    mock_gcloud.side_effect = [
-        subprocess.CompletedProcess(
-            [], 0, stdout=json.dumps({"httpTarget": {"body": old_b64}}), stderr=""
-        ),
-        subprocess.CompletedProcess([], 1, stdout="", stderr="update failed"),
-    ]
-    res_update_fail = switch_job_digests(targets, "sha256:green")
-    assert res_update_fail.success is False
 
 
 # ---------------------------------------------------------------------------
@@ -701,106 +437,8 @@ def test_capture_and_restore_data_platform_pointer(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@patch("product_ops.deployment.bluegreen_release.resume_schedulers")
-@patch("product_ops.deployment.bluegreen_release.switch_job_digests")
-@patch("product_ops.deployment.bluegreen_release.atomic_traffic_switch")
-def test_execute_bluegreen_switch(
-    mock_traffic: MagicMock,
-    mock_switch_digests: MagicMock,
-    mock_resume_sched: MagicMock,
-) -> None:
-    api_target = ServiceTarget(service="api", project="p", region="r")
-    web_target = ServiceTarget(service="web", project="p", region="r")
-    sched_targets = [SchedulerTarget(job_name="j1", project="p", location="r")]
-    state = ReleaseState(release_id="rel-1")
-
-    # Success full sequence
-    mock_traffic.return_value = OperationResult(success=True, operation="traffic", message="ok")
-    mock_switch_digests.return_value = OperationResult(
-        success=True, operation="digests", message="ok"
-    )
-    mock_resume_sched.return_value = OperationResult(success=True, operation="sched", message="ok")
-
-    results = execute_bluegreen_switch(
-        api_target=api_target,
-        web_target=web_target,
-        green_api_revision="api-green",
-        green_web_revision="web-green",
-        scheduler_targets=sched_targets,
-        green_job_digest="sha256:green",
-        release_state=state,
-    )
-    assert len(results) == 4
-    assert all(r.success for r in results)
-    assert state.switch_completed_at != ""
-
-    # API traffic failure -> aborts early
-    state.switch_completed_at = ""
-    mock_traffic.side_effect = [
-        OperationResult(success=False, operation="api_traffic", message="api switch failed"),
-    ]
-    results_api_fail = execute_bluegreen_switch(
-        api_target=api_target,
-        web_target=web_target,
-        green_api_revision="api-green",
-        green_web_revision="web-green",
-        scheduler_targets=sched_targets,
-        green_job_digest="sha256:green",
-        release_state=state,
-    )
-    assert len(results_api_fail) == 1
-    assert results_api_fail[0].success is False
-    assert state.switch_completed_at == ""
 
 
-@patch("product_ops.deployment.bluegreen_release.restore_data_platform_pointer")
-@patch("product_ops.deployment.bluegreen_release.switch_job_digests")
-@patch("product_ops.deployment.bluegreen_release.restore_traffic_from_snapshot")
-@patch("product_ops.deployment.bluegreen_release.pause_all_schedulers")
-def test_execute_rollback(
-    mock_pause: MagicMock,
-    mock_restore_traffic: MagicMock,
-    mock_switch_digests: MagicMock,
-    mock_restore_ptr: MagicMock,
-    tmp_path: Path,
-) -> None:
-    api_target = ServiceTarget(service="api", project="p", region="r")
-    web_target = ServiceTarget(service="web", project="p", region="r")
-    sched_targets = [SchedulerTarget(job_name="j1", project="p", location="r")]
-    api_snap = tmp_path / "api-snap.json"
-    web_snap = tmp_path / "web-snap.json"
-    ptr_snap = tmp_path / "dp-snap.json"
-    state = ReleaseState(
-        release_id="rel-1",
-        api_traffic_snapshot_path=str(api_snap),
-        web_traffic_snapshot_path=str(web_snap),
-        data_platform_pointer_snapshot_path=str(ptr_snap),
-    )
-
-    mock_pause.return_value = OperationResult(success=True, operation="pause", message="ok")
-    mock_restore_traffic.return_value = OperationResult(
-        success=True, operation="restore_traffic", message="ok"
-    )
-    mock_switch_digests.return_value = OperationResult(
-        success=True, operation="digests", message="ok"
-    )
-    mock_restore_ptr.return_value = OperationResult(
-        success=True, operation="restore_ptr", message="ok"
-    )
-
-    results = execute_rollback(
-        api_target=api_target,
-        web_target=web_target,
-        api_snapshot_path=api_snap,
-        web_snapshot_path=web_snap,
-        scheduler_targets=sched_targets,
-        blue_job_digest="sha256:blue",
-        data_platform_pointer_path=ptr_snap,
-        release_state=state,
-    )
-    assert len(results) == 5
-    assert all(r.success for r in results)
-    assert state.rollback_completed_at != ""
 
 
 # ---------------------------------------------------------------------------
@@ -808,129 +446,12 @@ def test_execute_rollback(
 # ---------------------------------------------------------------------------
 
 
-@patch("product_ops.deployment.bluegreen_release.capture_traffic_snapshot")
-@patch("product_ops.deployment.bluegreen_release.capture_data_platform_pointer")
-def test_cli_capture_state(
-    mock_cap_ptr: MagicMock, mock_cap_traffic: MagicMock, tmp_path: Path
-) -> None:
-    mock_cap_traffic.return_value = OperationResult(success=True, operation="cap", message="ok")
-    mock_cap_ptr.return_value = OperationResult(success=True, operation="ptr", message="ok")
-
-    code = main(
-        [
-            "--project=my-p",
-            "--region=asia-east1",
-            "capture-state",
-            "--api-service=api",
-            "--web-service=web",
-            "--output-dir",
-            str(tmp_path),
-            "--release-id=rel-001",
-            "--selector-label=v1",
-            "--snapshot-id=s1",
-            "--namespace=dp",
-        ]
-    )
-    assert code == 0
-    state_file = tmp_path / "release-state.json"
-    assert state_file.exists()
-    # Paths are relative to the state file so the uploaded artifact directory
-    # is a complete rollback input wherever it is downloaded.
-    state = json.loads(state_file.read_text(encoding="utf-8"))
-    assert state["api_traffic_snapshot_path"] == "api-traffic.json"
-    assert state["web_traffic_snapshot_path"] == "web-traffic.json"
-    assert state["data_platform_pointer_snapshot_path"] == "data-platform-pointer.json"
 
 
-@patch("product_ops.deployment.bluegreen_release.capture_traffic_snapshot")
-@patch("product_ops.deployment.bluegreen_release.capture_data_platform_pointer")
-def test_cli_capture_state_dry_run_preserves_existing_release_state(
-    mock_cap_ptr: MagicMock, mock_cap_traffic: MagicMock, tmp_path: Path
-) -> None:
-    mock_cap_traffic.return_value = OperationResult(success=True, operation="cap", message="ok")
-    mock_cap_ptr.return_value = OperationResult(success=True, operation="ptr", message="ok")
-    state_file = tmp_path / "release-state.json"
-    existing_state = ReleaseState(
-        release_id="previous-release",
-        blue_api_revision="api-blue",
-        blue_web_revision="web-blue",
-    ).to_json()
-    state_file.write_text(existing_state, encoding="utf-8")
-
-    code = main(
-        [
-            "--dry-run",
-            "--project=my-p",
-            "--region=asia-east1",
-            "capture-state",
-            "--api-service=api",
-            "--web-service=web",
-            "--output-dir",
-            str(tmp_path),
-            "--release-id=rel-001",
-            "--selector-label=v1",
-            "--snapshot-id=s1",
-            "--namespace=dp",
-        ]
-    )
-    assert code == 0
-    assert state_file.read_text(encoding="utf-8") == existing_state
-    assert not (tmp_path / "api-traffic.json").exists()
-    assert not (tmp_path / "web-traffic.json").exists()
 
 
-@patch("product_ops.deployment.bluegreen_release.execute_bluegreen_switch")
-def test_cli_switch(mock_switch: MagicMock, tmp_path: Path) -> None:
-    state_file = tmp_path / "release-state.json"
-    state_file.write_text(ReleaseState(release_id="rel-1").to_json(), encoding="utf-8")
-
-    mock_switch.return_value = [OperationResult(success=True, operation="sw", message="ok")]
-    code = main(
-        [
-            "--project=my-p",
-            "--region=asia-east1",
-            "switch",
-            "--api-service=api",
-            "--web-service=web",
-            "--green-api-revision=api-g",
-            "--green-web-revision=web-g",
-            "--green-job-digest=sha256:g",
-            "--scheduler-jobs",
-            "job1",
-            "job2",
-            "--state-file",
-            str(state_file),
-        ]
-    )
-    assert code == 0
 
 
-@patch("product_ops.deployment.bluegreen_release.execute_rollback")
-def test_cli_rollback(mock_rb: MagicMock, tmp_path: Path) -> None:
-    state_file = tmp_path / "release-state.json"
-    state = ReleaseState(
-        release_id="rel-1",
-        api_traffic_snapshot_path=str(tmp_path / "api.json"),
-        web_traffic_snapshot_path=str(tmp_path / "web.json"),
-    )
-    state_file.write_text(state.to_json(), encoding="utf-8")
-
-    mock_rb.return_value = [OperationResult(success=True, operation="rb", message="ok")]
-    code = main(
-        [
-            "--project=my-p",
-            "--region=asia-east1",
-            "rollback",
-            "--api-service=api",
-            "--web-service=web",
-            "--blue-job-digest=sha256:b",
-            "--scheduler-jobs",
-            "job1",
-            "--state-file",
-            str(state_file),
-        ]
-    )
-    assert code == 0
 
 
 @patch("product_ops.deployment.bluegreen_release.resolve_tagged_target")
@@ -964,36 +485,8 @@ def test_cli_pause_schedulers(mock_pause: MagicMock) -> None:
     assert code == 0
 
 
-@patch("product_ops.deployment.bluegreen_release.resume_schedulers")
-def test_cli_resume_schedulers(mock_resume: MagicMock) -> None:
-    mock_resume.return_value = OperationResult(success=True, operation="resume", message="ok")
-    code = main(
-        [
-            "--project=my-p",
-            "--region=asia-east1",
-            "resume-schedulers",
-            "--jobs",
-            "job1",
-            "job2",
-        ]
-    )
-    assert code == 0
 
 
-@patch("product_ops.deployment.bluegreen_release.switch_job_digests")
-def test_cli_switch_digests(mock_switch: MagicMock) -> None:
-    mock_switch.return_value = OperationResult(success=True, operation="switch", message="ok")
-    code = main(
-        [
-            "--project=my-p",
-            "--region=asia-east1",
-            "switch-digests",
-            "--jobs",
-            "job1",
-            "--digest=sha256:green",
-        ]
-    )
-    assert code == 0
 
 
 @patch("product_ops.deployment.bluegreen_release.capture_data_platform_pointer")
@@ -1031,69 +524,797 @@ def test_cli_restore_pointer(mock_rest: MagicMock, tmp_path: Path) -> None:
     assert code == 0
 
 
-@patch("product_ops.deployment.bluegreen_release.execute_rollback")
-def test_cli_rollback_resolves_snapshots_next_to_the_downloaded_state_file(
-    mock_rb: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The release artifact is downloaded somewhere else than the runner wrote it."""
 
-    downloaded = tmp_path / "production-bluegreen-prerelease-state"
-    downloaded.mkdir()
-    state_file = downloaded / "release-state.json"
-    state_file.write_text(
-        ReleaseState(
-            release_id="odp-abcdefabcdef",
-            api_traffic_snapshot_path="api-traffic.json",
-            web_traffic_snapshot_path="web-traffic.json",
-            data_platform_pointer_snapshot_path="data-platform-pointer.json",
-        ).to_json(),
-        encoding="utf-8",
+
+
+
+# Stateful gcloud double: both public entrypoints run the actual shared shell
+# owner and actual data/readback contracts. No cloud resources are contacted.
+FAKE_RELEASE_GCLOUD = r"""#!/usr/bin/env python3
+import base64, json, os, sys
+from pathlib import Path
+args = sys.argv[1:]
+path = Path(os.environ["RELEASE_CLOUD_STATE"])
+data = json.loads(path.read_text())
+with Path(os.environ["RELEASE_CLOUD_LOG"]).open("a") as stream:
+    stream.write(json.dumps(args) + "\n")
+def save():
+    for trigger in data["triggers"].values():
+        if trigger.get("description") == "":
+            trigger.pop("description")
+        retry = trigger.get("retryConfig", {})
+        if retry.get("retryCount") == 0:
+            retry.pop("retryCount")
+        if retry.get("maxRetryDuration") == "0s":
+            retry.pop("maxRetryDuration")
+    path.write_text(json.dumps(data))
+def flag(name, default=None):
+    prefix = "--" + name + "="
+    return next((arg[len(prefix):] for arg in args if arg.startswith(prefix)), default)
+control = data.setdefault("control", {})
+if control.get("fail_once") and " ".join(args).startswith(control["fail_once"]):
+    del control["fail_once"]
+    save()
+    sys.exit(17)
+if args[:4] == ["artifacts", "docker", "images", "describe"]:
+    print(data["artifact_digests"][args[4]])
+elif args[:3] == ["run", "jobs", "execute"]:
+    pass
+elif args[:4] == ["run", "jobs", "executions", "describe"]:
+    print(json.dumps(data["executions"][args[4]]))
+elif args[:3] == ["run", "jobs", "describe"]:
+    print(json.dumps(data["jobs"][args[3]]))
+elif args[:3] == ["run", "services", "list"]:
+    name = flag("filter").split("metadata.name=", 1)[1]
+    if name in data["services"]:
+        print(name)
+elif args[:3] == ["run", "services", "describe"]:
+    print(json.dumps(data["services"][args[3]]))
+elif args[:3] == ["run", "services", "delete"]:
+    data["services"].pop(args[3], None)
+    save()
+elif args[:3] == ["run", "services", "update-traffic"]:
+    if args[3] == os.environ.get("OFFLINE_ROLLBACK_SERVICE"):
+        with Path(os.environ["OFFLINE_ROLLBACK_EVENTS"]).open("a") as stream:
+            stream.write("rollback\n")
+    service = data["services"][args[3]]
+    service["status"]["traffic"] = [
+        {"revisionName": revision, "percent": int(percent)}
+        for revision, percent in (target.split("=") for target in flag("to-revisions").split(","))
+    ]
+    save()
+elif args[:3] == ["scheduler", "jobs", "list"]:
+    name = flag("filter").split("/jobs/", 1)[1]
+    if name in data["triggers"]:
+        print("projects/" + os.environ["GCP_PROJECT"] + "/locations/" + os.environ["GCP_REGION"] + "/jobs/" + name)
+elif args[:3] == ["scheduler", "jobs", "describe"]:
+    if control.get("fail_describe_purpose") in os.environ.get("ODP_TEST_GCLOUD_PURPOSE", "").split():
+        print("gcloud describe error", file=sys.stderr)
+        sys.exit(19)
+    print(json.dumps(data["triggers"][args[3]]))
+elif args[:3] == ["scheduler", "jobs", "delete"]:
+    data["triggers"].pop(args[3], None)
+    save()
+elif args[:3] in (["scheduler", "jobs", "pause"], ["scheduler", "jobs", "resume"]):
+    if not (args[2] == "pause" and control.get("ignore_pause")):
+        data["triggers"][args[3]]["state"] = "PAUSED" if args[2] == "pause" else "ENABLED"
+    save()
+    if args[2] == "resume" and control.get("lose_resume_response") == args[3]:
+        control.pop("lose_resume_response")
+        save()
+        sys.exit(17)
+elif args[:3] in (["scheduler", "jobs", "create"], ["scheduler", "jobs", "update"]):
+    name = args[4]
+    if args[2] == "create":
+        data["triggers"][name] = {
+            "name": "projects/" + os.environ["GCP_PROJECT"] + "/locations/" + os.environ["GCP_REGION"] + "/jobs/" + name,
+            "state": "ENABLED", "httpTarget": {},
+            "retryConfig": {"minBackoffDuration": "5s", "maxBackoffDuration": "3600s", "maxDoublings": 5},
+            "attemptDeadline": "180s",
+        }
+    value = data["triggers"][name]
+    target = value["httpTarget"]
+    for option, key in (("schedule", "schedule"), ("time-zone", "timeZone"),
+                        ("attempt-deadline", "attemptDeadline"), ("description", "description")):
+        if flag(option) is not None:
+            value[key] = flag(option)
+    for option, key in (("uri", "uri"), ("http-method", "httpMethod")):
+        if flag(option) is not None:
+            target[key] = flag(option)
+    if flag("message-body") is not None:
+        target["body"] = base64.b64encode(flag("message-body").encode()).decode()
+    if "--clear-headers" in args:
+        target["headers"] = {}
+    for option in ("headers", "update-headers"):
+        if flag(option) is not None:
+            target.setdefault("headers", {}).update(dict(pair.split("=", 1) for pair in flag(option).split(",")))
+    for auth, token, extra in (("oauth", "oauthToken", "scope"), ("oidc", "oidcToken", "audience")):
+        if flag(auth + "-service-account-email") is not None:
+            target.pop("oidcToken" if auth == "oauth" else "oauthToken", None)
+            target[token] = {"serviceAccountEmail": flag(auth + "-service-account-email")}
+            option = auth + "-token-" + ("scope" if auth == "oauth" else "audience")
+            if flag(option) is not None:
+                target[token][extra] = flag(option)
+    retry = value.setdefault("retryConfig", {})
+    for option, key in (("max-retry-attempts", "retryCount"), ("max-retry-duration", "maxRetryDuration"),
+                        ("min-backoff", "minBackoffDuration"), ("max-backoff", "maxBackoffDuration"),
+                        ("max-doublings", "maxDoublings")):
+        if flag(option) is not None:
+            retry[key] = int(flag(option)) if key in ("retryCount", "maxDoublings") else flag(option)
+    if control.get("drift_trigger") == name and flag("message-body") is not None:
+        target["uri"] += "-drift"
+        control.pop("drift_trigger")
+    save()
+else:
+    raise SystemExit("unhandled fake gcloud command: " + repr(args))
+"""
+
+RELEASE_SHA = "a" * 40
+IMAGES = {kind: f"registry/{kind}@sha256:" + digit * 64
+          for kind, digit in (("worker", "b"), ("scheduler", "c"))}
+
+
+def _job(kind: str, name: str, *, old: bool = False) -> dict:
+    sha = "d" * 40 if old else RELEASE_SHA
+    return {
+        "metadata": {"name": name, "labels": {"oday-release-sha": sha}},
+        "spec": {"template": {"spec": {"template": {"spec": {"containers": [{
+            "image": f"registry/{kind}@sha256:" + "e" * 64 if old else IMAGES["worker" if kind == "migration" else kind],
+            "args": ["product_ops/deployment/cloud_run_job_entrypoint.py", "migrate" if kind == "migration" else kind],
+            "env": [{"name": "ODP_PRODUCTION_PROVIDER_IDS", "value": "admin_boundary.official_dataset"},
+                    {"name": "ODAY_DATABASE_URL", "valueFrom": {
+                        "secretKeyRef": {"name": "database", "key": "latest"}}},
+                    {"name": "ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN", "valueFrom": {
+                        "secretKeyRef": {"name": "boundary-token", "key": "latest"}}}],
+        }]}}}}},
+    }
+
+
+def _trigger(kind: str, state: str) -> dict:
+    return {
+        "name": f"projects/p/locations/r/jobs/{kind}-trigger",
+        "schedule": "17 * * * *", "timeZone": "Asia/Taipei", "state": state,
+        "attemptDeadline": "180s",
+        "retryConfig": {"minBackoffDuration": "5s",
+                        "maxBackoffDuration": "3600s", "maxDoublings": 5},
+        "httpTarget": {
+            "uri": f"https://run.googleapis.com/v2/projects/p/locations/r/jobs/{kind}-old:run",
+            "httpMethod": "POST", "body": "e30=",
+            "headers": {"Content-Type": "application/json", "X-Owner": "ops"},
+            "oauthToken": {"serviceAccountEmail": "scheduler@example.test",
+                           "scope": "https://www.googleapis.com/auth/cloud-platform"},
+        },
+    }
+
+
+def offline_scheduler_resume_context(
+    directory: Path, *, project: str, region: str, release_sha: str,
+    worker_job: str, scheduler_job: str, worker_trigger: str, scheduler_trigger: str,
+) -> dict[str, str]:
+    """OFFLINE external tools for callers that execute the real resume owner.
+
+    Both one-shot reports come from the existing production jobs-smoke
+    producer. The shared gcloud double keeps Job/execution/trigger state;
+    this setup does not claim cloud or business acceptance evidence.
+    """
+    from product_ops.deployment import validate_cloud_run_live_deployment as validator
+    from product_ops.deployment.cloud_scheduler_trigger import candidate_snapshot
+
+    directory.mkdir(parents=True, exist_ok=True)
+    tools = directory / "bin"
+    tools.mkdir()
+    gcloud = tools / "gcloud"
+    gcloud.write_text(f"#!{sys.executable}\n" + FAKE_RELEASE_GCLOUD.split("\n", 1)[1])
+    gcloud.chmod(0o755)
+    root = Path(__file__).resolve().parents[2]
+    state = {"jobs": {}, "executions": {}, "triggers": {}, "services": {}, "control": {}}
+    env = {
+        "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}", "GCP_PROJECT": project, "GCP_REGION": region,
+        "RELEASE_CLOUD_STATE": str(directory / "cloud.json"), "RELEASE_CLOUD_LOG": str(directory / "gcloud.jsonl"),
+        "JOB_REPORT_DIR": str(directory), "ODP_SCHEDULER_TIME_ZONE": "Asia/Taipei",
+        "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT": "scheduler@example.test",
+        "ODP_JOB_VALIDATOR": str(root / "product_ops/deployment/validate_cloud_run_live_deployment.py"),
+        "ODP_SCHEDULER_HELPER": str(root / "product_ops/deployment/cloud_scheduler_trigger.py"),
+        "ODP_TRAFFIC_HELPER": str(root / "product_ops/deployment/cloud_run_traffic.py"),
+        "OFFLINE_RELEASE_OWNER": str(root / "product_ops/deployment/cloud_run_release_traffic.sh"),
+    }
+    from product_ops.deployment.cloud_run_traffic import restore_traffic_argument
+    for kind in ("api", "web"):
+        service = "offline-" + kind
+        snapshot = {
+            "schema_version": 1, "kind": "cloud-run-service-traffic-snapshot", "exists": True,
+            "service": service, "status": {"url": f"https://{service}.example",
+                "traffic": [{"revisionName": service + "-old", "percent": 100}]},
+        }
+        assert restore_traffic_argument(snapshot) == service + "-old=100"
+        path = directory / f"{kind}-traffic-before.json"
+        path.write_text(json.dumps(snapshot))
+        current = copy.deepcopy(snapshot)
+        current["status"]["traffic"] = [{"revisionName": service + "-new", "percent": 100}]
+        state["services"][service] = current
+        env.update({kind.upper() + "_SERVICE": service, kind.upper() + "_TRAFFIC_SNAPSHOT": str(path)})
+    for kind, job_name, trigger_name, prior_state in (
+        ("worker", worker_job, worker_trigger, "ENABLED"),
+        ("scheduler", scheduler_job, scheduler_trigger, "PAUSED"),
+    ):
+        before = _trigger(kind, prior_state)
+        before["name"] = f"projects/{project}/locations/{region}/jobs/{trigger_name}"
+        before["httpTarget"]["uri"] = f"https://run.googleapis.com/v2/projects/{project}/locations/{region}/jobs/{kind}-old:run"
+        previous_job = _job(kind, kind + "-old", old=True)
+        before["jobBinding"] = validator.cloud_run_job_binding(
+            previous_job, expected_job=f"projects/{project}/locations/{region}/jobs/{kind}-old",
+            expected_sha="", expected_image="", record=True,
+        )
+        state["jobs"][kind + "-old"] = previous_job
+        snapshot = directory / f"{kind}-before.json"
+        snapshot.write_text(json.dumps(before))
+        state["triggers"][trigger_name] = candidate_snapshot(
+            before, trigger=trigger_name, project=project, location=region, job=job_name,
+            cron=before["schedule"], time_zone=before["timeZone"], service_account="scheduler@example.test",
+        )
+        job = _job(kind, job_name)
+        job["metadata"]["labels"]["oday-release-sha"] = release_sha
+        execution_name = job_name + "-proof"
+        execution = {
+            "metadata": {"name": execution_name, "labels": {"run.googleapis.com/job": job_name}},
+            "spec": {"template": {"spec": {"containers": [{"image": IMAGES[kind]}]}}},
+            "status": {"succeededCount": 1, "failedCount": 0,
+                       "conditions": [{"type": "Completed", "status": "True"}]},
+        }
+        checks, report = validator.cloud_run_job_checks(
+            kind=kind, job_description=job, execution=execution, expected_sha=release_sha,
+            expected_image=IMAGES[kind], expected_job=f"projects/{project}/locations/{region}/jobs/{job_name}",
+            release_provider_ids="admin_boundary.official_dataset",
+        )
+        assert all(check.ok for check in checks), [check for check in checks if not check.ok]
+        report.update(schema_version=1, ok=True, checks=[asdict(check) for check in checks],
+                      generated_at=datetime.now(UTC).isoformat())
+        (directory / f"{kind}-validation.json").write_text(json.dumps(report))
+        state["jobs"][job_name] = job
+        state["executions"][execution_name] = execution
+        env.update({kind.upper() + "_IMAGE": IMAGES[kind], kind.upper() + "_CANDIDATE_JOB": job_name,
+                    kind.upper() + "_SCHEDULE_NAME": trigger_name, "ODP_" + kind.upper() + "_CRON": before["schedule"],
+                    kind.upper() + "_TRIGGER_SNAPSHOT": str(snapshot)})
+    (directory / "cloud.json").write_text(json.dumps(state))
+    return env
+
+
+@pytest.fixture
+def release_cloud(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake = fake_bin / "gcloud"
+    fake.write_text(FAKE_RELEASE_GCLOUD, encoding="utf-8")
+    fake.chmod(0o755)
+    path = tmp_path / "cloud.json"
+    data = {
+        "jobs": {f"{kind}-{version}": _job(kind, f"{kind}-{version}", old=version == "old")
+                 for kind in ("worker", "scheduler", "migration") for version in ("old", "new")},
+        "triggers": {f"{kind}-trigger": _trigger(kind, state)
+                     for kind, state in (("worker", "ENABLED"), ("scheduler", "PAUSED"))},
+        "services": {
+            name: {"status": {"url": f"https://{name}.run.app",
+                             "traffic": [{"revisionName": f"{name}-old", "percent": 100}]}}
+            for name in ("api", "web")
+        },
+        "control": {},
+        "executions": {},
+    }
+    path.write_text(json.dumps(data))
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("RELEASE_CLOUD_STATE", str(path))
+    monkeypatch.setenv("RELEASE_CLOUD_LOG", str(tmp_path / "calls.jsonl"))
+    return {"path": path, "tmp": tmp_path, "baseline": copy.deepcopy(data)}
+
+
+def _cloud_data(cloud: dict) -> dict:
+    return json.loads(cloud["path"].read_text())
+
+
+def _set_cloud(cloud: dict, data: dict) -> None:
+    cloud["path"].write_text(json.dumps(data))
+
+
+def _calls(cloud: dict) -> list[list[str]]:
+    path = cloud["tmp"] / "calls.jsonl"
+    return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+def _capture(cloud: dict, *, dry_run: bool = False) -> Path:
+    directory = cloud["tmp"] / "snapshot"
+    args = ["--project=p", "--region=r", "capture-state", "--release-id=release",
+            "--release-sha=" + RELEASE_SHA, "--api-service=api", "--web-service=web",
+            "--scheduler-jobs", "worker-trigger", "scheduler-trigger", "--output-dir", str(directory)]
+    assert main((["--dry-run"] if dry_run else []) + args) == 0
+    return directory / "release-state.json"
+
+
+def _switch(state: Path, *, new_state: str = "PAUSED") -> int:
+    args = ["--project=p", "--region=r", "switch", "--state-file", str(state),
+            "--api-service=api", "--web-service=web", "--green-api-revision=api-new",
+            "--green-web-revision=web-new", "--time-zone=Asia/Taipei",
+            "--service-account=scheduler@example.test", "--new-trigger-state=" + new_state]
+    for kind in ("worker", "scheduler"):
+        args += [f"--{kind}-trigger={kind}-trigger", f"--{kind}-job={kind}-new",
+                 f"--{kind}-image={IMAGES[kind]}", f"--{kind}-cron=17 * * * *"]
+    return main(args)
+
+
+def _receipt(cloud: dict, kind: str) -> Path:
+    from product_ops.deployment import validate_cloud_run_live_deployment as validator
+    job = _cloud_data(cloud)["jobs"][f"{kind}-new"]
+    execution = {
+        "metadata": {"name": f"{kind}-new-execution", "labels": {"run.googleapis.com/job": f"{kind}-new"}},
+        "spec": {"template": {"spec": {"containers": [{"image": IMAGES[kind]}]}}},
+        "status": {"succeededCount": 1, "failedCount": 0,
+                   "conditions": [{"type": "Completed", "status": "True"}]},
+    }
+    data = _cloud_data(cloud)
+    data["executions"][f"{kind}-new-execution"] = execution
+    _set_cloud(cloud, data)
+    checks, report = validator.cloud_run_job_checks(
+        kind=kind, job_description=job, execution=execution, expected_sha=RELEASE_SHA,
+        expected_image=IMAGES[kind], expected_job=f"projects/p/locations/r/jobs/{kind}-new",
+        release_provider_ids="admin_boundary.official_dataset",
     )
-    elsewhere = tmp_path / "operator-cwd"
-    elsewhere.mkdir()
-    monkeypatch.chdir(elsewhere)
-    mock_rb.return_value = [OperationResult(success=True, operation="rb", message="ok")]
+    assert all(check.ok for check in checks), [check for check in checks if not check.ok]
+    report.update(ok=True, schema_version=1, generated_at=datetime.now(UTC).isoformat(),
+                  checks=[asdict(check) for check in checks])
+    path = cloud["tmp"] / f"{kind}-validation.json"
+    path.write_text(json.dumps(report))
+    return path
 
-    code = main(
-        [
-            "--dry-run",
-            "--project=my-p",
-            "--region=asia-east1",
-            "rollback",
-            "--api-service=api",
-            "--web-service=web",
-            "--state-file",
-            str(state_file),
-        ]
+
+def _resume(cloud: dict, state: Path) -> int:
+    return main(["--project=p", "--region=r", "resume-schedulers", "--state-file", str(state),
+                 "--api-service=api", "--web-service=web",
+                 "--worker-receipt", str(cloud["tmp"] / "worker-validation.json"),
+                 "--scheduler-receipt", str(cloud["tmp"] / "scheduler-validation.json")])
+
+
+def _rollback(state: Path) -> int:
+    return main(["--project=p", "--region=r", "rollback", "--state-file", str(state),
+                 "--api-service=api", "--web-service=web"])
+
+
+def test_capture_populates_portable_scheduler_snapshots_and_real_old_images(release_cloud: dict) -> None:
+    state_path = _capture(release_cloud)
+    state = json.loads(state_path.read_text())
+    assert state["scheduler_states"] == {"worker-trigger": "ENABLED", "scheduler-trigger": "PAUSED"}
+    assert "scheduler_digests" not in state
+    for relative in state["scheduler_snapshots"].values():
+        assert not Path(relative).is_absolute()
+        snapshot = json.loads((state_path.parent / relative).read_text())
+        assert snapshot["jobBinding"]["job_image"].endswith("@sha256:" + "e" * 64)
+        assert snapshot["httpTarget"]["body"] == "e30="
+    assert all(call[:3] in (["run", "services", "list"], ["run", "services", "describe"],
+                           ["run", "jobs", "describe"], ["scheduler", "jobs", "list"],
+                           ["scheduler", "jobs", "describe"]) for call in _calls(release_cloud))
+
+
+def test_switch_stays_paused_then_receipt_resume_preserves_original_paused(release_cloud: dict) -> None:
+    state = _capture(release_cloud)
+    assert _switch(state) == 0
+    data = _cloud_data(release_cloud)
+    assert {value["state"] for value in data["triggers"].values()} == {"PAUSED"}
+    assert not any(call[:3] == ["scheduler", "jobs", "resume"] for call in _calls(release_cloud))
+    for kind in ("worker", "scheduler"):
+        target = data["triggers"][f"{kind}-trigger"]["httpTarget"]
+        assert target["uri"].endswith(f"/jobs/{kind}-new:run")
+        assert base64.b64decode(target["body"]) == b"{}"
+        assert target["headers"]["X-Owner"] == "ops"
+        _receipt(release_cloud, kind)
+    assert _resume(release_cloud, state) == 0
+    data = _cloud_data(release_cloud)
+    assert data["triggers"]["worker-trigger"]["state"] == "ENABLED"
+    assert data["triggers"]["scheduler-trigger"]["state"] == "PAUSED"
+
+
+@pytest.mark.parametrize("damage", ["missing", "failed", "old-schema", "wrong-release", "wrong-image", "wrong-job", "failed-check"])
+def test_unproven_receipt_cannot_resume(release_cloud: dict, damage: str) -> None:
+    state = _capture(release_cloud)
+    assert _switch(state) == 0
+    for kind in ("worker", "scheduler"):
+        _receipt(release_cloud, kind)
+    path = release_cloud["tmp"] / "worker-validation.json"
+    receipt = json.loads(path.read_text())
+    if damage == "missing":
+        path.unlink()
+    else:
+        if damage == "failed":
+            receipt["ok"] = False
+        elif damage == "old-schema":
+            receipt.pop("job_image")
+        elif damage == "wrong-release":
+            receipt["expected_sha"] = "f" * 40
+        elif damage == "wrong-image":
+            receipt["job_image"] = IMAGES["scheduler"]
+        elif damage == "wrong-job":
+            receipt["execution_job_name"] = "another-job"
+        else:
+            receipt["checks"][0]["ok"] = False
+        path.write_text(json.dumps(receipt))
+    assert _resume(release_cloud, state) == 1
+    assert {value["state"] for value in _cloud_data(release_cloud)["triggers"].values()} == {"PAUSED"}
+    assert not any(call[:3] == ["scheduler", "jobs", "resume"] for call in _calls(release_cloud))
+
+
+@pytest.mark.parametrize("drift", ["image", "uri", "cron", "oauth", "original-paused-enabled", "execution-image", "execution-failed"])
+def test_resume_fresh_readback_rejects_drift(release_cloud: dict, drift: str) -> None:
+    state = _capture(release_cloud)
+    assert _switch(state) == 0
+    for kind in ("worker", "scheduler"):
+        _receipt(release_cloud, kind)
+    data = _cloud_data(release_cloud)
+    trigger = data["triggers"]["worker-trigger"]
+    if drift == "image":
+        data["jobs"]["worker-new"]["spec"]["template"]["spec"]["template"]["spec"]["containers"][0]["image"] = IMAGES["scheduler"]
+    elif drift == "uri":
+        trigger["httpTarget"]["uri"] = trigger["httpTarget"]["uri"].replace("worker-new", "scheduler-new")
+    elif drift == "cron":
+        trigger["schedule"] = "3 * * * *"
+    elif drift == "oauth":
+        trigger["httpTarget"]["oauthToken"]["serviceAccountEmail"] = "other@example.test"
+    elif drift == "original-paused-enabled":
+        data["triggers"]["scheduler-trigger"]["state"] = "ENABLED"
+    elif drift == "execution-image":
+        data["executions"]["worker-new-execution"]["spec"]["template"]["spec"]["containers"][0]["image"] = IMAGES["scheduler"]
+    else:
+        data["executions"]["worker-new-execution"]["status"]["failedCount"] = 1
+    _set_cloud(release_cloud, data)
+    assert _resume(release_cloud, state) == 1
+    assert not any(call[:3] == ["scheduler", "jobs", "resume"] for call in _calls(release_cloud))
+
+
+def test_job_image_mismatch_blocks_switch_before_mutation(release_cloud: dict) -> None:
+    state = _capture(release_cloud)
+    data = _cloud_data(release_cloud)
+    data["jobs"]["worker-new"]["spec"]["template"]["spec"]["template"]["spec"]["containers"][0]["image"] = IMAGES["scheduler"]
+    _set_cloud(release_cloud, data)
+    assert _switch(state) == 1
+    assert _cloud_data(release_cloud)["triggers"] == release_cloud["baseline"]["triggers"]
+    assert not any(call[:3] == ["scheduler", "jobs", "pause"] for call in _calls(release_cloud))
+
+
+def test_partial_switch_failure_restores_both_traffic_and_trigger_snapshots(release_cloud: dict) -> None:
+    state = _capture(release_cloud)
+    data = _cloud_data(release_cloud)
+    data["control"]["fail_once"] = "run services update-traffic web"
+    _set_cloud(release_cloud, data)
+    assert _switch(state) == 1
+    data = _cloud_data(release_cloud)
+    assert data["services"] == release_cloud["baseline"]["services"]
+    assert data["triggers"] == release_cloud["baseline"]["triggers"]
+
+
+def test_manual_rollback_uses_downloaded_scheduler_and_traffic_snapshots(release_cloud: dict) -> None:
+    import shutil
+    state = _capture(release_cloud)
+    assert _switch(state) == 0
+    downloaded = release_cloud["tmp"] / "downloaded"
+    shutil.copytree(state.parent, downloaded)
+    shutil.rmtree(state.parent)
+    assert _rollback(downloaded / state.name) == 0
+    data = _cloud_data(release_cloud)
+    assert data["services"] == release_cloud["baseline"]["services"]
+    assert data["triggers"] == release_cloud["baseline"]["triggers"]
+
+
+@pytest.mark.parametrize("first_state", ["PAUSED", "ENABLED"])
+def test_first_create_bootstraps_get_without_body_then_pauses_before_post(release_cloud: dict, first_state: str) -> None:
+    data = _cloud_data(release_cloud)
+    data["triggers"] = {}
+    _set_cloud(release_cloud, data)
+    state = _capture(release_cloud)
+    assert json.loads(state.read_text())["scheduler_states"] == {
+        "worker-trigger": "ABSENT", "scheduler-trigger": "ABSENT"}
+    assert _switch(state, new_state=first_state) == 0
+    calls = _calls(release_cloud)
+    for kind in ("worker", "scheduler"):
+        name = f"{kind}-trigger"
+        create_index = next(i for i, call in enumerate(calls) if call[:5] == ["scheduler", "jobs", "create", "http", name])
+        create = calls[create_index]
+        assert "--http-method=GET" in create
+        assert not any(arg.startswith("--message-body") for arg in create)
+        pause_index = next(i for i, call in enumerate(calls) if i > create_index and call[:4] == ["scheduler", "jobs", "pause", name])
+        post_index = next(i for i, call in enumerate(calls) if i > pause_index and call[:5] == ["scheduler", "jobs", "update", "http", name])
+        assert any(call[:4] == ["scheduler", "jobs", "describe", name] for call in calls[pause_index + 1:post_index])
+        _receipt(release_cloud, kind)
+    assert _resume(release_cloud, state) == 0
+    assert {trigger["state"] for trigger in _cloud_data(release_cloud)["triggers"].values()} == {first_state}
+    assert _rollback(state) == 0
+    assert not _cloud_data(release_cloud)["triggers"]
+
+
+def test_dry_capture_preserves_existing_state_and_never_calls_cloud(release_cloud: dict) -> None:
+    directory = release_cloud["tmp"] / "snapshot"
+    directory.mkdir()
+    path = directory / "release-state.json"
+    path.write_text("preserve existing state")
+    _capture(release_cloud, dry_run=True)
+    assert path.read_text() == "preserve existing state"
+    assert not _calls(release_cloud)
+
+
+def test_partial_resume_failure_compensates_through_captured_snapshots(release_cloud: dict) -> None:
+    data = _cloud_data(release_cloud)
+    data["triggers"]["scheduler-trigger"]["state"] = "ENABLED"
+    release_cloud["baseline"] = copy.deepcopy(data)
+    _set_cloud(release_cloud, data)
+    state = _capture(release_cloud)
+    assert _switch(state) == 0
+    for kind in ("worker", "scheduler"):
+        _receipt(release_cloud, kind)
+    data = _cloud_data(release_cloud)
+    data["control"]["fail_once"] = "scheduler jobs resume scheduler-trigger"
+    _set_cloud(release_cloud, data)
+    assert _resume(release_cloud, state) == 1
+    data = _cloud_data(release_cloud)
+    assert data["services"] == release_cloud["baseline"]["services"]
+    assert data["triggers"] == release_cloud["baseline"]["triggers"]
+
+
+def test_post_install_readback_drift_restores_snapshots(release_cloud: dict) -> None:
+    state = _capture(release_cloud)
+    data = _cloud_data(release_cloud)
+    data["control"]["drift_trigger"] = "worker-trigger"
+    _set_cloud(release_cloud, data)
+    assert _switch(state) == 1
+    data = _cloud_data(release_cloud)
+    assert data["services"] == release_cloud["baseline"]["services"]
+    assert data["triggers"] == release_cloud["baseline"]["triggers"]
+
+
+def test_bootstrap_never_installs_post_without_paused_readback(release_cloud: dict) -> None:
+    data = _cloud_data(release_cloud)
+    data["triggers"] = {}
+    data["control"]["ignore_pause"] = True
+    _set_cloud(release_cloud, data)
+    state = _capture(release_cloud)
+    assert _switch(state) == 1
+    assert not _cloud_data(release_cloud)["triggers"]
+    assert not any("--http-method=POST" in call for call in _calls(release_cloud))
+
+
+def test_first_release_rollback_deletes_previously_absent_services_and_triggers(release_cloud: dict) -> None:
+    data = _cloud_data(release_cloud)
+    data["triggers"] = {}
+    data["services"] = {}
+    _set_cloud(release_cloud, data)
+    state = _capture(release_cloud)
+    data = _cloud_data(release_cloud)
+    data["services"] = copy.deepcopy(release_cloud["baseline"]["services"])
+    _set_cloud(release_cloud, data)
+    assert _switch(state) == 0
+    assert _rollback(state) == 0
+    assert not _cloud_data(release_cloud)["services"]
+    assert not _cloud_data(release_cloud)["triggers"]
+
+
+def test_old_digest_cli_is_removed_and_incomplete_state_refuses_recovery(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit):
+        main(["--project=p", "--region=r", "switch-digests", "--jobs=j", "--digest=d"])
+    state = tmp_path / "release-state.json"
+    state.write_text(ReleaseState(release_id="legacy").to_json())
+    assert _rollback(state) == 1
+
+
+@pytest.mark.parametrize("damage", ["uri-job", "binding-job", "trigger", "project", "location", "swapped-files"])
+def test_snapshot_identity_mismatch_refuses_switch_and_downloaded_rollback_before_mutation(release_cloud: dict, damage: str) -> None:
+    state_path = _capture(release_cloud)
+    state = json.loads(state_path.read_text())
+    worker_path = state_path.parent / state["scheduler_snapshots"]["worker-trigger"]
+    payload = json.loads(worker_path.read_text())
+    if damage == "swapped-files":
+        state["scheduler_snapshots"]["worker-trigger"] = state["scheduler_snapshots"]["scheduler-trigger"]
+        state_path.write_text(json.dumps(state))
+    else:
+        if damage == "uri-job":
+            payload["httpTarget"]["uri"] = payload["httpTarget"]["uri"].replace("worker-old", "scheduler-old")
+        elif damage == "binding-job":
+            payload["jobBinding"]["job_name"] = "scheduler-old"
+        elif damage == "trigger":
+            payload["name"] = payload["name"].replace("worker-trigger", "scheduler-trigger")
+        elif damage == "project":
+            payload["name"] = payload["name"].replace("projects/p/", "projects/foreign/")
+            payload["httpTarget"]["uri"] = payload["httpTarget"]["uri"].replace("projects/p/", "projects/foreign/")
+        else:
+            payload["name"] = payload["name"].replace("locations/r/", "locations/foreign/")
+            payload["httpTarget"]["uri"] = payload["httpTarget"]["uri"].replace("locations/r/", "locations/foreign/")
+        worker_path.write_text(json.dumps(payload))
+    assert _switch(state_path) == 1
+    assert _rollback(state_path) == 1
+    assert _cloud_data(release_cloud)["triggers"] == release_cloud["baseline"]["triggers"]
+    assert not any(call[:3] in (["scheduler", "jobs", "pause"], ["scheduler", "jobs", "update"],
+                               ["run", "services", "update-traffic"]) for call in _calls(release_cloud))
+
+
+def test_snapshot_binding_accepts_the_exact_v2_job_resource_name(release_cloud: dict) -> None:
+    state_path = _capture(release_cloud)
+    state = json.loads(state_path.read_text())
+    for relative in state["scheduler_snapshots"].values():
+        path = state_path.parent / relative
+        payload = json.loads(path.read_text())
+        payload["jobBinding"]["job_name"] = "projects/p/locations/r/jobs/" + payload["jobBinding"]["job_name"]
+        path.write_text(json.dumps(payload))
+    assert _switch(state_path) == 0
+    assert _rollback(state_path) == 0
+
+
+def test_actual_deploy_resume_loop_checks_both_receipts_before_any_resume(release_cloud: dict) -> None:
+    data = _cloud_data(release_cloud)
+    data["triggers"]["scheduler-trigger"]["state"] = "ENABLED"
+    _set_cloud(release_cloud, data)
+    state_path = _capture(release_cloud)
+    assert _switch(state_path) == 0
+    for kind in ("worker", "scheduler"):
+        _receipt(release_cloud, kind)
+    receipt_path = release_cloud["tmp"] / "worker-validation.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt["ok"] = False
+    receipt_path.write_text(json.dumps(receipt))
+    root = Path(__file__).resolve().parents[2]
+    script = (root / "product_ops/deployment/deploy_cloud_run_waji.sh").read_text()
+    start = script.index("for resume_mode in verify-only resume; do")
+    end = script.index("DEPLOYMENT_COMMITTED=true", start)
+    state = json.loads(state_path.read_text())
+    env = {**os.environ, "GCP_PROJECT": "p", "GCP_REGION": "r", "ODAY_RELEASE_SHA": RELEASE_SHA,
+           "ODP_SCHEDULER_TIME_ZONE": "Asia/Taipei", "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT": "scheduler@example.test",
+           "JOB_REPORT_DIR": str(release_cloud["tmp"])}
+    for kind in ("worker", "scheduler"):
+        prefix = kind.upper()
+        env.update({f"{prefix}_SCHEDULE_NAME": f"{kind}-trigger", f"{prefix}_CANDIDATE_JOB": f"{kind}-new",
+                    f"{prefix}_IMAGE": IMAGES[kind], f"ODP_{prefix}_CRON": "17 * * * *",
+                    f"{prefix}_TRIGGER_SNAPSHOT": str(state_path.parent / state["scheduler_snapshots"][f"{kind}-trigger"])})
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", 'source "$1"; eval "$2"', "deploy-resume-test",
+         str(root / "product_ops/deployment/cloud_run_release_traffic.sh"), script[start:end]],
+        cwd=root, env=env, capture_output=True, text=True, check=False,
     )
-
-    assert code == 0
-    kwargs = mock_rb.call_args.kwargs
-    assert kwargs["api_snapshot_path"] == downloaded.resolve() / "api-traffic.json"
-    assert kwargs["web_snapshot_path"] == downloaded.resolve() / "web-traffic.json"
-    assert kwargs["data_platform_pointer_path"] == downloaded.resolve() / "data-platform-pointer.json"
-    # The recorded state stays relative after a rollback rewrites it.
-    assert json.loads(state_file.read_text(encoding="utf-8"))["api_traffic_snapshot_path"] == "api-traffic.json"
+    assert result.returncode != 0
+    assert not any(call[:3] == ["scheduler", "jobs", "resume"] for call in _calls(release_cloud))
+    assert {trigger["state"] for trigger in _cloud_data(release_cloud)["triggers"].values()} == {"PAUSED"}
 
 
-@patch("product_ops.deployment.bluegreen_release.execute_rollback")
-def test_cli_rollback_refuses_a_state_without_traffic_snapshots(
-    mock_rb: MagicMock, tmp_path: Path
-) -> None:
-    state_file = tmp_path / "release-state.json"
-    state_file.write_text(ReleaseState(release_id="rel-1").to_json(), encoding="utf-8")
-
-    code = main(
-        [
-            "--project=my-p",
-            "--region=asia-east1",
-            "rollback",
-            "--api-service=api",
-            "--web-service=web",
-            "--state-file",
-            str(state_file),
-        ]
+def test_actual_deploy_execute_job_checks_image_before_one_shot(release_cloud: dict) -> None:
+    root = Path(__file__).resolve().parents[2]
+    script = (root / "product_ops/deployment/deploy_cloud_run_waji.sh").read_text()
+    function = script[script.index("execute_job() {"):script.index("write_public_egress_probe_receipt() {")]
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", 'source "$1"; eval "$2"; execute_job scheduler scheduler-new',
+         "deploy-one-shot-test", str(root / "product_ops/deployment/cloud_run_release_traffic.sh"), function],
+        cwd=root, env={**os.environ, "GCP_PROJECT": "p", "GCP_REGION": "r", "ODAY_RELEASE_SHA": RELEASE_SHA,
+                       "SCHEDULER_IMAGE": IMAGES["worker"]},
+        capture_output=True, text=True, check=False,
     )
+    assert result.returncode != 0
+    assert not any(call[:3] == ["run", "jobs", "execute"] for call in _calls(release_cloud))
 
-    assert code == 1
-    mock_rb.assert_not_called()
+
+@pytest.mark.parametrize("kind", ["migration", "worker", "scheduler"])
+def test_actual_deploy_execute_job_uses_the_image_deployed_for_each_kind(release_cloud: dict, kind: str) -> None:
+    root = Path(__file__).resolve().parents[2]
+    script = (root / "product_ops/deployment/deploy_cloud_run_waji.sh").read_text()
+    function = script[script.index("execute_job() {"):script.index("write_public_egress_probe_receipt() {")]
+    proof = release_cloud["tmp"] / "captured-proof"
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c",
+         'source "$1"; eval "$2"; capture_job_proof() { printf "%s\\n" "$*" >"$PROOF_PATH"; }; execute_job "$3" "$3-new"',
+         "deploy-one-shot-test", str(root / "product_ops/deployment/cloud_run_release_traffic.sh"), function, kind],
+        cwd=root, env={**os.environ, "GCP_PROJECT": "p", "GCP_REGION": "r", "ODAY_RELEASE_SHA": RELEASE_SHA,
+                       "SCHEDULER_IMAGE": IMAGES["scheduler"], "WORKER_IMAGE": IMAGES["worker"],
+                       "API_IMAGE": "registry/api@sha256:" + "f" * 64, "PROOF_PATH": str(proof)},
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    expected = IMAGES["worker" if kind == "migration" else kind]
+    assert proof.read_text().strip() == f"{kind} {kind}-new {expected}"
+    assert any(call[:4] == ["run", "jobs", "execute", kind + "-new"] for call in _calls(release_cloud))
+
+
+def test_successful_resume_and_lost_response_replay_are_idempotent(release_cloud: dict) -> None:
+    state = _capture(release_cloud)
+    assert _switch(state) == 0
+    for kind in ("worker", "scheduler"):
+        _receipt(release_cloud, kind)
+    data = _cloud_data(release_cloud)
+    data["control"]["lose_resume_response"] = "worker-trigger"
+    _set_cloud(release_cloud, data)
+    assert _resume(release_cloud, state) == 0
+    completed = _cloud_data(release_cloud)
+    calls = len(_calls(release_cloud))
+    assert _resume(release_cloud, state) == 0
+    assert _cloud_data(release_cloud) == completed
+    assert not any(call[:3] in (["scheduler", "jobs", "pause"], ["scheduler", "jobs", "resume"])
+                   for call in _calls(release_cloud)[calls:])
+
+
+def test_resume_keeps_original_error_and_failed_pause_compensation() -> None:
+    from product_ops.deployment.bluegreen_release import resume_schedulers
+    targets = [SchedulerTarget(kind + "-trigger", "p", "r", kind=kind) for kind in ("worker", "scheduler")]
+    state = ReleaseState(release_id="release", switch_completed_at="completed",
+                         scheduler_snapshots={target.job_name: "saved.json" for target in targets},
+                         scheduler_bindings={target.job_name: {} for target in targets})
+    original = OperationResult(False, "receipt", "original receipt failure")
+    compensation = OperationResult(False, "pause_all_schedulers", "actual pause failure")
+    with patch("product_ops.deployment.bluegreen_release._run_release_helper", return_value=original), \
+         patch("product_ops.deployment.bluegreen_release.pause_all_schedulers", return_value=compensation):
+        result = resume_schedulers(targets, release_state=state, state_dir=Path("/unused"),
+                                   receipts={target.job_name: Path("/unused/receipt.json") for target in targets})
+    assert result.message == "original receipt failure"
+    assert result.details["pause_compensation"]["message"] == "actual pause failure"
+    assert result.details["pause_compensation"]["success"] is False
+    assert result.details["mutation_started"] is True
+
+
+def test_scheduler_recovery_snapshot_keeps_config_and_rejects_actual_secrets() -> None:
+    from product_ops.deployment.cloud_scheduler_trigger import recovery_snapshot
+    snapshot = _trigger("worker", "ENABLED")
+    snapshot.update(status={"debug": "irrelevant"}, lastAttemptTime="provider timestamp", userUpdateTime="provider metadata")
+    recovered = recovery_snapshot(snapshot)
+    assert recovered["httpTarget"] == snapshot["httpTarget"]
+    assert recovered["retryConfig"] == snapshot["retryConfig"]
+    assert not {"status", "lastAttemptTime", "userUpdateTime"}.intersection(recovered)
+    snapshot["httpTarget"]["headers"]["Authorization"] = "Bearer actual-secret-value"
+    with pytest.raises(ValueError, match="sensitive"):
+        recovery_snapshot(snapshot)
+
+
+def test_rollback_checks_paused_configuration_before_resuming_previous_enabled_trigger(release_cloud: dict) -> None:
+    state_path = _capture(release_cloud)
+    assert _switch(state_path) == 0
+    data = _cloud_data(release_cloud)
+    data["control"]["drift_trigger"] = "worker-trigger"
+    _set_cloud(release_cloud, data)
+    previous_calls = len(_calls(release_cloud))
+    assert _rollback(state_path) == 1
+    assert not any(call[:4] == ["scheduler", "jobs", "resume", "worker-trigger"]
+                   for call in _calls(release_cloud)[previous_calls:])
+    assert _cloud_data(release_cloud)["triggers"]["worker-trigger"]["state"] == "PAUSED"
+
+
+@pytest.mark.parametrize("skip_build", ["false", "true"])
+def test_actual_tag_build_entrypoint_pins_and_verifies_the_same_runtime_images(release_cloud: dict, skip_build: str) -> None:
+    root = Path(__file__).resolve().parents[2]
+    script = (root / "product_ops/deployment/deploy_cloud_run_waji.sh").read_text()
+    first = script[script.index("build_publish_sign() {"):script.index("API_SECRET_BINDINGS=")]
+    web_start = script.index('build_publish_sign "Web"')
+    web = script[web_start:script.index('echo "Deploying immutable Web candidate', web_start)]
+    expected = {"API": "registry/api@sha256:" + "f" * 64, "WORKER": IMAGES["worker"],
+                "SCHEDULER": IMAGES["scheduler"], "WEB": "registry/web@sha256:" + "a" * 64}
+    data = _cloud_data(release_cloud)
+    data["artifact_digests"] = {f"registry/{name.lower()}:release": image.split("@", 1)[1]
+                                for name, image in expected.items()}
+    _set_cloud(release_cloud, data)
+    fake_tool = '#!/usr/bin/env bash\nprintf "%s %s\\n" "${0##*/}" "$*" >>"${SUPPLY_CHAIN_LOG}"\n'
+    for name in ("docker", "cosign"):
+        path = release_cloud["tmp"] / "bin" / name
+        path.write_text(fake_tool)
+        path.chmod(0o755)
+    verify = release_cloud["tmp"] / "delivery_toolchain/security/sign_images.sh"
+    verify.parent.mkdir(parents=True)
+    verify.write_text(fake_tool)
+    verify.chmod(0o755)
+    log = release_cloud["tmp"] / "supply-chain.log"
+    env = {**os.environ, "SUPPLY_CHAIN_LOG": str(log), "ODAY_RELEASE_SHA": RELEASE_SHA,
+           "ODP_DEPLOY_BY_DIGEST": "false", "ODP_SKIP_BUILD": skip_build,
+           "API_URL": "https://api.example.test", "ODP_REQUIRE_LIVE_DATA": "true",
+           "ODP_DATA_BINDING_MODE": "live", "ODP_PRODUCT_MODE": "production", "GCP_PROJECT": "p", "GCP_REGION": "r",
+           "ODP_JOB_VALIDATOR": str(root / "product_ops/deployment/validate_cloud_run_live_deployment.py")}
+    env.update({name + "_IMAGE": f"registry/{name.lower()}:release" for name in expected})
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c",
+         'source "$1"; eval "$2"; eval "$3"; verify_release_job worker-new "$WORKER_IMAGE" "$ODAY_RELEASE_SHA"; printf "%s\\n" "$API_IMAGE" "$WORKER_IMAGE" "$SCHEDULER_IMAGE" "$WEB_IMAGE"',
+         "tag-entrypoint-test", str(root / "product_ops/deployment/cloud_run_release_traffic.sh"), first, web],
+        cwd=release_cloud["tmp"], env=env, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[-4:] == list(expected.values())
+    supply_chain = log.read_text().splitlines()
+    for image in expected.values():
+        assert "sign_images.sh verify " + image in supply_chain
+        assert ("cosign sign --yes " + image in supply_chain) is (skip_build == "false")
+    assert not any(call[:2] == ["run", "deploy"] for call in _calls(release_cloud))
+    workflow = (root / ".github/workflows/deploy-dev.yml").read_text()
+    assert "resolve_image_digest() {" not in workflow
+    assert "source product_ops/deployment/cloud_run_release_traffic.sh" in workflow

@@ -224,11 +224,11 @@ def test_concurrent_runs_create_exactly_one_admin(identity_db: Any) -> None:
         ({"ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT": "tomorrow"}, "BOOTSTRAP_EXPIRY_MALFORMED"),
         ({"ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT": "2026-10-04T00:00:00"}, "BOOTSTRAP_EXPIRY_MALFORMED"),
         (
-            {"ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT": (datetime.now(UTC) - timedelta(seconds=1)).isoformat()},
+            {"ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT": timedelta(seconds=-1)},
             "BOOTSTRAP_SECRET_EXPIRED",
         ),
         (
-            {"ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT": (datetime.now(UTC) + timedelta(hours=73)).isoformat()},
+            {"ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT": timedelta(hours=73)},
             "BOOTSTRAP_EXPIRY_TOO_LONG",
         ),
         ({"ODP_IDENTITY_BOOTSTRAP_TENANT_ID": "tenant-default"}, "BOOTSTRAP_INPUT_MALFORMED"),
@@ -239,11 +239,15 @@ def test_concurrent_runs_create_exactly_one_admin(identity_db: Any) -> None:
     ],
 )
 def test_malformed_missing_or_expired_input_fails_closed_without_echoing_secret(
-    overrides: dict[str, str], code: str
+    overrides: dict[str, str | timedelta], code: str
 ) -> None:
-    env = _env(**overrides)
+    now = datetime.now(UTC)
+    env = _env(**{
+        key: (now + value).isoformat() if isinstance(value, timedelta) else value
+        for key, value in overrides.items()
+    })
     with pytest.raises(BootstrapRefused) as exc:
-        request_from_env(env)
+        request_from_env(env, now=now)
     assert exc.value.code == code
     secret = env["ODP_IDENTITY_BOOTSTRAP_SECRET"]
     if secret:

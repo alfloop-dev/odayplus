@@ -72,6 +72,9 @@ def publication(tmp_path: Path):
     helper = tmp_path / "delivery_toolchain/security/sign_images.sh"
     helper.parent.mkdir(parents=True)
     helper.symlink_to(ROOT / "delivery_toolchain/security/sign_images.sh")
+    release_owner = tmp_path / "product_ops/deployment/cloud_run_release_traffic.sh"
+    release_owner.parent.mkdir(parents=True)
+    release_owner.symlink_to(ROOT / "product_ops/deployment/cloud_run_release_traffic.sh")
     sbom = tmp_path / "sbom.json"
     sbom.write_text('{}\n', encoding="utf-8")
     env = dict(

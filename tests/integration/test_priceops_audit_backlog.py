@@ -304,7 +304,7 @@ def test_arriving_committed_delivery_during_observation_is_counted_without_clock
     def pause(statement, params=()):
         nonlocal paused
         rows = original(statement, params)
-        if statement.startswith("SELECT event_id FROM durable_audit_events WHERE") and not paused:
+        if statement.startswith("SELECT * FROM durable_audit_events WHERE") and not paused:
             paused = True
             reading.set()
             assert resume.wait(10)
@@ -324,4 +324,90 @@ def test_arriving_committed_delivery_during_observation_is_counted_without_clock
         assert health.pending == 7 and not health.blocked
     finally:
         resume.set()
+        other.close()
+
+
+@pytest.mark.parametrize("method", ["inspect", "all_tenants"])
+def test_settled_history_does_not_add_per_event_database_round_trips(case, monkeypatch, method):
+    from shared.audit.events import AuditEvent
+
+    drain(case)
+    observed_counts = []
+    original_query = case.engine.query
+    original_query_one = case.engine.query_one
+
+    for history in (8, 32):
+        for index in range(history):
+            with case.engine.transaction():
+                if getattr(case.engine, "dialect", "") != "postgresql":
+                    case.engine.execute("BEGIN IMMEDIATE")
+                with case.audit.transactional_worm_sink(case.delivery):
+                    event = case.audit.record(AuditEvent(
+                        event_type="synthetic.audit.scale", actor="synthetic-actor",
+                        action="synthetic-write", resource=f"synthetic-record-{history}-{index}",
+                        outcome="succeeded", correlation_id=f"synthetic-scale-{history}-{index}",
+                        metadata={"tenant_id": TENANT},
+                    ))
+            job = case.queue.get_by_idempotency_key("durable-audit:" + TENANT + ":" + event.event_id)
+            assert job is not None
+            case.delivery.deliver(job)
+
+        queries = []
+
+        def count_query(sql, params=(), _queries=queries):
+            _queries.append(sql)
+            return original_query(sql, params)
+
+        def count_query_one(sql, params=(), _queries=queries):
+            _queries.append(sql)
+            return original_query_one(sql, params)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(case.engine, "query", count_query)
+            patch.setattr(case.engine, "query_one", count_query_one)
+            health = case.checker.inspect(TENANT) if method == "inspect" else case.checker.all_tenants()
+        assert health.pending == 0 and not health.blocked
+        observed_counts.append(len(queries))
+
+    assert observed_counts[1] <= observed_counts[0]
+    assert case.audit.verify_chain().ok
+
+
+
+def test_intent_document_key_must_match_the_committed_event(case):
+    intent, event, _ = first_delivery(case)
+    case.delivery.store.put(COLLECTION, "unrelated-document-key", intent)
+    case.engine.execute(
+        "DELETE FROM durable_documents WHERE collection = ? AND doc_id = ?",
+        (case.delivery.store._collection(COLLECTION), event.event_id),
+    )
+    with pytest.raises(AuditBacklogUnavailable):
+        case.checker.inspect(TENANT)
+
+
+
+def test_refresh_cannot_hide_facts_deleted_during_observation(case, monkeypatch):
+    _, event, job = first_delivery(case)
+    other = case.open_engine()
+    original_query = case.engine.query
+    removed = False
+
+    def remove_after_read(statement, params=()):
+        nonlocal removed
+        rows = original_query(statement, params)
+        if statement.startswith("SELECT * FROM durable_audit_events WHERE") and not removed:
+            removed = True
+            with other.transaction():
+                other.execute("DELETE FROM durable_jobs WHERE job_id = ?", (job.job_id,))
+                other.execute("DELETE FROM durable_documents WHERE collection = ? AND doc_id = ?",
+                              (case.delivery.store._collection(COLLECTION), event.event_id))
+                other.execute("DELETE FROM durable_audit_events WHERE event_id = ?", (event.event_id,))
+        return rows
+
+    monkeypatch.setattr(case.engine, "query", remove_after_read)
+    try:
+        with pytest.raises(AuditBacklogUnavailable):
+            case.checker.inspect(TENANT)
+        assert removed
+    finally:
         other.close()

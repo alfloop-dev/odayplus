@@ -5,6 +5,7 @@ import type { ComponentProps } from "react";
 import type { ApiBinding } from "../../../../src/lib/api/binding";
 import { NetworkFindAreasWorkspace as Workspace } from "../../NetworkFindAreasWorkspace";
 import { NETWORK_TAB_IDS } from "../networkUrlState";
+import { CanonicalIntakeCasePicker } from "../intake/CanonicalIntakeCasePicker";
 
 // Existing route/data-gate cases explicitly model all read grants. The
 // principal-projection cases below provide their exact bootstrap metadata.
@@ -27,13 +28,16 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(navigation.search),
 }));
 
-const radarProps = vi.hoisted(() => ({ calls: [] as Array<Record<string, unknown>> }));
+const radarProps = vi.hoisted(() => ({ calls: [] as Array<Record<string, unknown>>, showNativePicker: false }));
 const reviewPanelControl = vi.hoisted(() => ({ latest: null as unknown }));
 
 vi.mock("../ListingRadarPanel", () => ({
   ListingRadarPanel: (props: Record<string, unknown>) => {
     radarProps.calls.push(props);
-    return <div data-testid="listing-radar-panel">Listing Radar</div>;
+    const context = props.canonicalIntakeReadContext as ComponentProps<typeof CanonicalIntakeCasePicker>["context"] | undefined;
+    return <div data-testid="listing-radar-panel">Listing Radar
+      {radarProps.showNativePicker && context ? <CanonicalIntakeCasePicker context={context} /> : null}
+    </div>;
   },
 }));
 
@@ -162,6 +166,7 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     navigation.search = "ws=network&tab=radar";
     navigation.push.mockReset();
     radarProps.calls.length = 0;
+    radarProps.showNativePicker = false;
     reviewPanelControl.latest = null;
     window.history.replaceState(null, "", "/operator?ws=network&tab=radar");
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
@@ -176,6 +181,69 @@ describe("NetworkFindAreasWorkspace route and gate behavior", () => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
+
+  it.each(["query HTTP", "query JSON", "role", "tenant"] as const)(
+    "keeps one native URL command bound to its actual account/context across a %s change", async (change) => {
+      // Real picker, original native client and command hook; only the declared
+      // local API transport and external account lease are engineering premises.
+      radarProps.showNativePicker = true;
+      const beforeTenant = sessionStorage.getItem("oday.operator.tenant");
+      let finish!: () => void;
+      const writes: RequestInit[] = [];
+      const receipt = { intake_id: "00000000-0000-0000-0000-000000000095", intake_method: "URL",
+        processing_state: "SUBMITTED", version: 1, submitted_at: "2026-10-19T08:00:00Z",
+        correlation_id: "00000000-0000-0000-0000-000000000096",
+        transition_id: "00000000-0000-0000-0000-000000000097",
+        audit_event_id: "00000000-0000-0000-0000-000000000098",
+        outbox_event_id: "00000000-0000-0000-0000-000000000099" };
+      vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const path = new URL(String(input), window.location.origin).pathname;
+        if (path === "/api/v1/canonical-intakes" && init?.method === "POST") {
+          writes.push(init);
+          if (change === "query JSON") {
+            const response = new Response(JSON.stringify(receipt), { status: 201 });
+            response.json = () => new Promise(resolve => { finish = () => resolve(receipt); });
+            return Promise.resolve(response);
+          }
+          return new Promise<Response>(resolve => { finish = () => resolve(new Response(JSON.stringify(receipt), { status: 201 })); });
+        }
+        if (path === "/api/v1/canonical-intakes") return Promise.resolve(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }));
+        return Promise.resolve(forbiddenResponse("isolated-native-command", path));
+      }));
+      const guard = (current: () => boolean) => async () => current();
+      let role: "expansion-manager" | "expansion-staff" = "expansion-manager";
+      const view = render(<NetworkFindAreasWorkspace allowedTabIds={["radar"]} activeRoleId={role} createAuthenticatedReadGuard={guard} />);
+      try {
+        fireEvent.click(await screen.findByRole("button", { name: "選取收件／比對案件" }));
+        fireEvent.click(await screen.findByRole("button", { name: "從網址建立正式收件" }));
+        fireEvent.change(screen.getByTestId("intake-url-input"), { target: { value: "https://source.example/same-native-command" } });
+        fireEvent.change(screen.getByLabelText("正式收件範圍"), { target: { value: "0" } });
+        fireEvent.change(screen.getByLabelText("送件原因"), { target: { value: "保留同一已送出指令及正式回執" } });
+        fireEvent.click(screen.getByTestId("intake-submit-button"));
+        await waitFor(() => { expect(writes).toHaveLength(1); expect(finish).toBeDefined(); });
+        const key = new Headers(writes[0].headers).get("idempotency-key");
+        expect(key).toBeTruthy();
+        if (change.startsWith("query")) {
+          navigation.search = "ws=network&tab=radar&search=changed-inbox-query";
+          window.history.replaceState(null, "", `/operator?${navigation.search}`);
+        } else if (change === "role") role = "expansion-staff";
+        else sessionStorage.setItem("oday.operator.tenant", "different-observed-tenant");
+        view.rerender(<NetworkFindAreasWorkspace allowedTabIds={["radar"]} activeRoleId={role} createAuthenticatedReadGuard={guard} />);
+        if (change.startsWith("query")) {
+          expect(screen.getByTestId("intake-add-dialog")).toBeVisible();
+          expect(screen.getByTestId("intake-submit-button")).toBeDisabled();
+        } else expect(screen.queryByTestId("canonical-intake-case-picker")).not.toBeInTheDocument();
+        await act(async () => finish());
+        if (change.startsWith("query")) expect(await screen.findByText(/正式收件 .*已送出/)).toHaveTextContent(receipt.intake_id);
+        else expect(screen.queryByText(/正式收件 .*已送出/)).not.toBeInTheDocument();
+        expect(writes).toHaveLength(1);
+        expect(new Headers(writes[0].headers).get("idempotency-key")).toBe(key);
+      } finally {
+        if (beforeTenant === null) sessionStorage.removeItem("oday.operator.tenant");
+        else sessionStorage.setItem("oday.operator.tenant", beforeTenant);
+      }
+    },
+  );
 
   it.each([
     ["response", "URL"], ["JSON", "URL"],

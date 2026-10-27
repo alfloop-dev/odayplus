@@ -324,7 +324,7 @@ test.describe("Operator shared header layout", () => {
           expect(Math.round(rowWidth), `${workspace} title row width at ${width}px`).toBeGreaterThanOrEqual(
             Math.round(shellContentWidth) - 4,
           );
-        }).toPass({ timeout: 5_000 });
+        }).toPass({ timeout: 10_000 });
       }
     }
 

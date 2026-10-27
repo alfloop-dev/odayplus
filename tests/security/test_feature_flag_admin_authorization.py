@@ -17,7 +17,7 @@ from modules.opsboard.auth import (
     encode_compact_jwt,
 )
 from shared.audit import InMemoryAuditLog
-from shared.auth.feature_flags import FeatureFlag, FeatureFlagRegistry
+from shared.auth.feature_flags import FeatureFlag, FeatureFlagRegistry, FlagScope, FlagScopeBinding
 
 KEY = "unit.high-risk"
 BASE = "/api/v1/admin/feature-flags"
@@ -188,8 +188,36 @@ def test_public_effective_policy_read_is_preserved(authorized_flags):
     assert response.status_code == 200
     assert response.json() == {
         "status": "ok", "count": 1,
-        "flags": [context.registry.get(KEY).to_dict()],
+        "flags": [context.registry.get(KEY).to_dict(include_bindings=False)],
     }
+
+
+def test_public_projection_omits_real_scope_units_but_authenticated_admin_can_review_them(authorized_flags):
+    context = authorized_flags
+    tenant = "00000000-0000-0000-0000-000000000111"
+    key = "synthetic.scoped-private"
+    flag = FeatureFlag(key=key, owner="synthetic-owner", scope=FlagScope.TENANT_SOURCE,
+                       bindings=(FlagScopeBinding(tenant, "synthetic-private-source"),), high_risk=True)
+    context.registry.register(flag)
+    public = context.client.get("/api/v1/feature-flags")
+    assert public.status_code == 200
+    assert all("bindings" not in item for item in public.json()["flags"])
+    assert tenant not in public.text and "synthetic-private-source" not in public.text
+    admin = context.client.get(BASE + "/" + key, headers=_headers("admin-a"))
+    assert admin.status_code == 200
+    assert admin.json()["flag"]["bindings"] == [{"tenant_id": tenant, "source_id": "synthetic-private-source"}]
+
+
+@pytest.mark.parametrize("scope,high_risk", [("global", True), ("per-tenant", False)])
+def test_registration_cannot_downgrade_intake_scope_or_risk(authorized_flags, scope, high_risk):
+    context = authorized_flags
+    before = context.registry.all()
+    response = context.client.post(BASE, headers=_headers("admin-a"), json={
+        "key": "assisted_intake_v1_read", "owner": "synthetic-owner", "scope": scope,
+        "high_risk": high_risk, **COMMAND_PROOF,
+    })
+    assert response.status_code == 422
+    assert context.registry.all() == before
 
 
 def test_unknown_signed_subject_and_header_roles_do_not_grant_administration(

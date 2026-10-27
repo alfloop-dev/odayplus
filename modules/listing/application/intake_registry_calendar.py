@@ -367,9 +367,7 @@ class RegistryIntakeWorkflowPolicy:
         _actor, actor_roles = self._account(actor_id, scope)
         _owner, owner_roles = self._account(owner_subject_id, scope)
         managers = {Role.SITE_REVIEWER, Role.DATA_OWNER, Role.EXECUTIVE}
-        if not actor_roles & managers and not (
-            actor_id == owner_subject_id and Role.EXPANSION_USER in actor_roles
-        ):
+        if not actor_roles & managers:
             raise PermissionError("Actor cannot assign this workflow")
         return self._assignment_plan(
             policy,

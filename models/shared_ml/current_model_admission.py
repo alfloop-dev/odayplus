@@ -19,6 +19,7 @@ from models.shared_ml.production_runtime import (
     ProductionModelApprovalError,
     ProductionModelLineageError,
     ProductionModelRegistryError,
+    _normalize_sha256,
 )
 from models.shared_ml.registry import ModelAlias, ModelStage
 
@@ -128,6 +129,7 @@ class CurrentModelAdmissionPort:
             "model_stage": current.stage.value,
             "model_aliases": sorted(alias.value for alias in current.aliases),
             "artifact_uri": current.artifact_uri,
+            "artifact_sha256": _normalize_sha256(current.artifact_sha256 or ""),
             "dataset_snapshot_id": current.dataset_snapshot_id,
             "feature_schema_version": current.feature_schema_version,
             "label_version": current.label_version,

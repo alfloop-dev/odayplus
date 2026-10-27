@@ -128,7 +128,8 @@ def create_operator_store_ops_router(
                     "Store Ops scoped PostgreSQL repositories are not configured"
                 )
             bound_tenant = getattr(document_store, "tenant_id", None)
-            if bound_tenant is not None and bound_tenant != tenant_id:
+            repository_tenant = getattr(repository, "tenant_id", None)
+            if any(value is not None and value != tenant_id for value in (bound_tenant, repository_tenant)):
                 raise StoreOpsLiveDataUnavailable("Store Ops repository belongs to another tenant")
             scoped_store = (
                 document_store

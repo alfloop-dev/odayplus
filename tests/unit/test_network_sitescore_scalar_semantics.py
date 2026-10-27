@@ -33,6 +33,22 @@ def test_canonical_report_preserves_confidence_without_inventing_scalar_score():
     assert card["band"] == report.m12.to_dict()
 
 
+def test_missing_financial_result_stays_null_in_card_batch_and_compare():
+    report = replace(_report("CS-PARTIAL", 0.99, SiteScoreRecommendation.WAIT),
+        payback_period=None, payback_p50_months=None, rent_reasonableness=None,
+        key_negative_factors=("financial_inputs_unavailable",))
+    card = NetworkScoringService._scorecard_from_report(report)
+    assert card["payback"] is None
+    assert card["band"] == report.m12.to_dict()
+    assert card["conditions"] == ["financial_inputs_unavailable"]
+    service = NetworkScoringService(initial_state={"scores": {card["id"]: card},
+        "compareSet": [card["id"]]}, seed_fixtures=False)
+    assert service._batch_results([card])[0]["payback"] is None
+    compared = service._compare([card])
+    payback = next(row for row in compared["metrics"] if row["key"] == "payback")
+    assert payback["values"][0]["text"] == "—"
+
+
 @pytest.mark.parametrize("confidence", [0.0, 0.73])
 def test_confidence_measurement_status_distinguishes_absence_from_measured_zero(confidence):
     measured = _report("CS-SYNTHETIC-CONFIDENCE", confidence, SiteScoreRecommendation.WAIT)

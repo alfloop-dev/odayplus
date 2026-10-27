@@ -80,9 +80,9 @@ def native_scope_pg(monkeypatch):
         assert connection.execute("SELECT oid FROM pg_database WHERE datname=%s", (name,)).fetchone() is None
         connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
         oid = connection.execute("SELECT oid FROM pg_database WHERE datname=%s", (name,)).fetchone()[0]
-    _record("create-" + name, {"name": name, "oid": oid, "originalDatabaseConnected": False})
-    database = IntakeDatabase(server=server, dbname=name)
     try:
+        _record("create-" + name, {"name": name, "oid": oid, "originalDatabaseConnected": False})
+        database = IntakeDatabase(server=server, dbname=name)
         _upgrade(database, "head")
         apply_upgrade_to_database(database.url())
         with database.connect() as connection:
@@ -127,6 +127,38 @@ def native_scope_pg(monkeypatch):
             assert connection.execute("SELECT oid FROM pg_database WHERE datname=%s", (name,)).fetchone() is None
         _record("drop-" + name, {"name": name, "oid": oid, "normalDrop": True,
                                "terminateOrForce": False, "remainingConnections": 0})
+
+
+def test_create_evidence_failure_normally_drops_its_owned_database(request, monkeypatch, record_property):
+    import sys
+
+    from tests.conftest import IntakePgServer
+
+    servers, created = [], []
+    connect, record = IntakePgServer.connect, _record
+
+    def observe_connect(server, *args, **kwargs):
+        if not any(server is known for known in servers):
+            servers.append(server)
+        return connect(server, *args, **kwargs)
+
+    def fail_create_record(label, facts):
+        if label.startswith("create-"):
+            receipt = {"name": facts["name"], "oid": facts["oid"]}
+            created.append(receipt)
+            record_property("evidence_failure_owned_database", json.dumps(receipt))
+            raise OSError("synthetic-native-scope-evidence-write-fault")
+        return record(label, facts)
+
+    monkeypatch.setattr(IntakePgServer, "connect", observe_connect)
+    monkeypatch.setattr(sys.modules[__name__], "_record", fail_create_record)
+    with pytest.raises(OSError, match="synthetic-native-scope-evidence-write-fault"):
+        request.getfixturevalue("native_scope_pg")
+    assert len(created) == len(servers) == 1
+    assert created[0]["name"].startswith("odp_native_scope_author_")
+    with servers[0].connect("postgres") as connection:
+        assert connection.execute("SELECT oid FROM pg_database WHERE datname=%s", (created[0]["name"],)).fetchone() is None
+        assert connection.execute("SELECT count(*) FROM pg_stat_activity WHERE datname=%s", (created[0]["name"],)).fetchone()[0] == 0
 
 
 def _scope(bundle, actor, *, modules=None, clearance="CONFIDENTIAL", area=None):

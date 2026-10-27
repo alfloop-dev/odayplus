@@ -57,6 +57,8 @@ import { ReviewPanel, resolveEffectiveReviews } from "./network/ReviewPanel";
 import { hasRecordedReviewReport, inspectReviewsReadProjection, isReviewPending } from "./network/networkReviewProjection";
 import { NetworkShell } from "./network/NetworkShell";
 import { projectCandidateWorkflow } from "./network/networkWorkflowProjection";
+import { useCandidateScoreJobs } from "./network/useCandidateScoreJobs";
+import { CandidateWorkflowFacts } from "./network/CandidateWorkflowFacts";
 import { projectCandidateNativeWorkflow, resolveCandidateReviewTarget } from "./network/candidateNativeWorkflowProjection";
 import { hasNetworkListingsRenderShape, hasNetworkScoringRenderShape, hasCanonicalScoreSession, hasScoreExecutionContext, hasScoreExecutionReceipt, scoreExecutionCommandReceiptMatches, hasVerifiedCurrentScoreAdmission, readId, readObject } from "./network/networkReadValidation";
 import { FindAreasPanel } from "./network/FindAreasPanel";
@@ -170,6 +172,8 @@ export type NetworkFindAreasWorkspaceCallbacks = {
 type NetworkReadSessionGuard = () => Promise<boolean>;
 
 export type NetworkFindAreasWorkspaceProps = {
+  /** Existing injectable transport; Console account authority comes from its shared guard. */
+  fetchImpl?: typeof fetch;
   heatZones?: OperatorHeatZone[];
   listings?: Listing[];
   candidates?: Candidate[];
@@ -478,14 +482,14 @@ async function readNetworkSnapshot<T>(
   path: string,
   headers: Record<string, string>,
   correlationId: string,
-  sessionGuard?: NetworkReadSessionGuard,
+  sessionGuard?: NetworkReadSessionGuard, transport: typeof fetch = fetch,
 ): Promise<NetworkRead<T>> {
   // A superseded lease is not a current owner's HTTP failure. Consumers
   // discard it before touching any snapshot, error, or loading state.
   const unowned = (): NetworkRead<T> => ({ ok: false, superseded: true });
   try {
     if (sessionGuard && !await sessionGuard()) return unowned();
-    const response = await fetch(path, {
+    const response = await transport(path, {
       cache: "no-store",
       headers: {
         ...headers,
@@ -521,13 +525,13 @@ async function readNetworkSnapshot<T>(
 
 function fetchNetworkReviewsSnapshot(
   readHeaders: Record<string, string>,
-  sessionGuard?: NetworkReadSessionGuard,
+  sessionGuard?: NetworkReadSessionGuard, transport: typeof fetch = fetch,
 ): Promise<NetworkRead<NetworkReviewsSnapshot>> {
   return readNetworkSnapshot(
     "network-reviews",
     "/api/v1/operator/network-reviews",
     readHeaders,
-    "corr-r4-007-reviews-read", sessionGuard,
+    "corr-r4-007-reviews-read", sessionGuard, transport
   );
 }
 
@@ -539,7 +543,7 @@ function fetchNetworkSnapshot(
   selectedHeatZoneId: string | null,
   lens: NetworkFindAreasLens,
   roleId: OperatorRoleId,
-  sessionGuard?: NetworkReadSessionGuard,
+  sessionGuard?: NetworkReadSessionGuard, transport: typeof fetch = fetch,
 ): Promise<NetworkRead<NetworkListingsSnapshot>> {
   const params = new URLSearchParams({ lens });
   if (selectedHeatZoneId) params.set("selectedHeatZoneId", selectedHeatZoneId);
@@ -547,25 +551,25 @@ function fetchNetworkSnapshot(
     "network-listings",
     `/api/v1/operator/network-listings?${params.toString()}`,
     operatorSecurityHeaders(roleId),
-    `corr-r4-005-read-${selectedHeatZoneId ?? "initial"}-${lens}`, sessionGuard,
+    `corr-r4-005-read-${selectedHeatZoneId ?? "initial"}-${lens}`, sessionGuard, transport
   );
 }
 
-function fetchNetworkScoringSnapshot(roleId: OperatorRoleId, sessionGuard?: NetworkReadSessionGuard): Promise<NetworkRead<NetworkScoringSnapshot>> {
+function fetchNetworkScoringSnapshot(roleId: OperatorRoleId, sessionGuard?: NetworkReadSessionGuard, transport: typeof fetch = fetch): Promise<NetworkRead<NetworkScoringSnapshot>> {
   return readNetworkSnapshot(
     "network-scoring",
     "/api/v1/operator/network-scoring",
     operatorSecurityHeaders(roleId),
-    "corr-r4-006-scoring-read", sessionGuard,
+    "corr-r4-006-scoring-read", sessionGuard, transport
   );
 }
 
-function fetchNetworkRebalanceSnapshot(roleId: OperatorRoleId, sessionGuard?: NetworkReadSessionGuard): Promise<NetworkRead<NetworkRebalanceSnapshot>> {
+function fetchNetworkRebalanceSnapshot(roleId: OperatorRoleId, sessionGuard?: NetworkReadSessionGuard, transport: typeof fetch = fetch): Promise<NetworkRead<NetworkRebalanceSnapshot>> {
   return readNetworkSnapshot(
     "network-rebalance",
     "/api/v1/operator/network-rebalance",
     operatorSecurityHeaders(roleId),
-    "corr-r4-008-rebalance-read", sessionGuard,
+    "corr-r4-008-rebalance-read", sessionGuard, transport
   );
 }
 
@@ -652,6 +656,7 @@ export function isNetworkIntakeDetailRoute(
 }
 
 export function NetworkFindAreasWorkspace({
+  fetchImpl = fetch,
   activeLens,
   activeRoleId = DEFAULT_OPERATOR_ROLE_ID,
   allowedTabIds,
@@ -708,18 +713,45 @@ export function NetworkFindAreasWorkspace({
   }, []);
   const readGuardFactory = useRef(createAuthenticatedReadGuard);
   readGuardFactory.current = createAuthenticatedReadGuard;
-  function snapshotReadGuard(): NetworkReadSessionGuard | undefined {
+  const snapshotReadGuard = useCallback((bindLocation = true): NetworkReadSessionGuard => {
     const context = navigationContext.current;
     const locationVersion = navigationLocation.current.version;
-    return readGuardFactory.current?.(() => navigationLocation.current.mounted
-      && context === navigationContext.current && locationVersion === navigationLocation.current.version);
-  }
+    const current = () => navigationLocation.current.mounted
+      && context === navigationContext.current
+      && (!bindLocation || locationVersion === navigationLocation.current.version);
+    const authenticated = readGuardFactory.current?.(current);
+    return async () => current() && (!authenticated || await authenticated()) && current();
+  }, []);
+
+  // The existing native command packet belongs to the account/context, not
+  // an inbox query. Job polls retain their own location key and cancellation.
+  const nativeReadFetch = useMemo<typeof fetch>(() => {
+    const current = snapshotReadGuard(false);
+    const requireCurrent = async () => {
+      if (!await current()) throw new Error("Network read account or persona changed");
+    };
+    const guardBody = (response: Response): Response => {
+      const json = response.json.bind(response);
+      const text = response.text.bind(response);
+      const clone = response.clone.bind(response);
+      response.json = async () => { await requireCurrent(); const body: unknown = await json(); await requireCurrent(); return body; };
+      response.text = async () => { await requireCurrent(); const body = await text(); await requireCurrent(); return body; };
+      response.clone = () => guardBody(clone());
+      return response;
+    };
+    return async (input, init) => {
+      await requireCurrent();
+      const response = await fetchImpl(input, init);
+      await requireCurrent();
+      return guardBody(response);
+    };
+  }, [snapshotReadGuard, fetchImpl, navigationContextKey, createAuthenticatedReadGuard]);
   const [networkNavigationGeneration, setNetworkNavigationGeneration] = useState<number | null>(null);
   const [scoringNavigationGeneration, setScoringNavigationGeneration] = useState<number | null>(null);
   const [rebalanceNavigationGeneration, setRebalanceNavigationGeneration] = useState<number | null>(null);
   const [reviewsNavigationGeneration, setReviewsNavigationGeneration] = useState<number | null>(null);
   const [navigationError, setNavigationError] = useState<string | null>(null);
-  const NETWORK_OPERATOR_HEADERS = useMemo(() => operatorSecurityHeaders(activeRoleId), [activeRoleId]);
+  const NETWORK_OPERATOR_HEADERS = useMemo(() => operatorSecurityHeaders(activeRoleId), [activeRoleId, navigationContextKey]);
   const candidatesProp = candidatesInput ?? (fixturesAllowed ? CANDIDATE_FIXTURES : EMPTY_CANDIDATES);
   const heatZonesProp = heatZonesInput ?? (fixturesAllowed ? HEAT_ZONE_FIXTURES : EMPTY_HEAT_ZONES);
   const listings = listingsInput ?? (fixturesAllowed ? LISTING_FIXTURES : EMPTY_LISTINGS);
@@ -960,8 +992,8 @@ export function NetworkFindAreasWorkspace({
     const { buildHeatZoneCompositionClient } = await import(
       "./network/heatZoneCompositionClient"
     );
-    return buildHeatZoneCompositionClient(activeRoleId);
-  }, [activeRoleId]);
+    return buildHeatZoneCompositionClient(activeRoleId, fetchImpl);
+  }, [activeRoleId, fetchImpl]);
 
   const reloadProposals = useCallback(async () => {
     try {
@@ -1163,7 +1195,7 @@ export function NetworkFindAreasWorkspace({
     const locationEpoch = navigationLocation.current.version;
     const receipt = heatZoneSnapshotReceipt(generation, navigationLocationKey, locationEpoch);
     async function load() {
-      const read = await fetchNetworkSnapshot(effectiveSelectedId || null, effectiveLens, activeRoleId, snapshotReadGuard());
+      const read = await fetchNetworkSnapshot(effectiveSelectedId || null, effectiveLens, activeRoleId, snapshotReadGuard(), fetchImpl);
       if ("superseded" in read) return;
       if (sequence !== networkReadSequence.current) return;
       const snapshot = read.ok ? read.snapshot : null;
@@ -1219,7 +1251,7 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [activeRoleId, canReadListings, effectiveLens, effectiveSelectedId, fixturesAllowed, heatZoneRequestId, navigationContextKey, navigationLocationKey]);
+  }, [activeRoleId, canReadListings, effectiveLens, effectiveSelectedId, fixturesAllowed, heatZoneRequestId, navigationContextKey, navigationLocationKey, fetchImpl]);
 
   useEffect(() => {
     if (!canReadScoring) {
@@ -1232,7 +1264,7 @@ export function NetworkFindAreasWorkspace({
     const generation = navigationContext.current.generation;
     const sequence = ++scoringReadSequence.current;
     async function loadScoring() {
-      const read = await fetchNetworkScoringSnapshot(activeRoleId, snapshotReadGuard());
+      const read = await fetchNetworkScoringSnapshot(activeRoleId, snapshotReadGuard(), fetchImpl);
       if ("superseded" in read) return;
       if (sequence !== scoringReadSequence.current) return;
       const snapshot = read.ok ? read.snapshot : null;
@@ -1265,7 +1297,7 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [activeRoleId, canReadScoring, fixturesAllowed, navigationContextKey, navigationLocationKey]);
+  }, [activeRoleId, canReadScoring, fixturesAllowed, navigationContextKey, navigationLocationKey, fetchImpl]);
 
   useEffect(() => {
     if (!canReadRebalance) {
@@ -1278,7 +1310,7 @@ export function NetworkFindAreasWorkspace({
     let cancelled = false;
     const generation = navigationContext.current.generation;
     async function loadRebalance() {
-      const read = await fetchNetworkRebalanceSnapshot(activeRoleId, snapshotReadGuard());
+      const read = await fetchNetworkRebalanceSnapshot(activeRoleId, snapshotReadGuard(), fetchImpl);
       if ("superseded" in read) return;
       const snapshot = read.ok ? read.snapshot : null;
       if (!cancelled && generation === navigationContext.current.generation && snapshot) {
@@ -1314,7 +1346,7 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [activeRoleId, canReadRebalance, fixturesAllowed, navigationContextKey, navigationLocationKey]);
+  }, [activeRoleId, canReadRebalance, fixturesAllowed, navigationContextKey, navigationLocationKey, fetchImpl]);
 
   const applyReviewsSnapshot = useCallback((snapshot: NetworkReviewsSnapshot, generation: number, sequence: number) => {
     if (!navigationLocation.current.mounted || generation !== navigationContext.current.generation
@@ -1353,7 +1385,7 @@ export function NetworkFindAreasWorkspace({
     setReviewSubmitting(false);
     setReviewsLoadState(fixturesAllowed ? "fixture" : "loading");
     async function loadReviews() {
-      const read = await fetchNetworkReviewsSnapshot(reviewIdentity.readHeaders, snapshotReadGuard());
+      const read = await fetchNetworkReviewsSnapshot(reviewIdentity.readHeaders, snapshotReadGuard(), fetchImpl);
       if ("superseded" in read) return;
       const snapshot = read.ok ? read.snapshot : null;
       if (!cancelled && snapshot) {
@@ -1370,7 +1402,7 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [applyReviewsSnapshot, canReadReviews, fixturesAllowed, reviewIdentity, navigationLocationKey]);
+  }, [applyReviewsSnapshot, canReadReviews, fixturesAllowed, reviewIdentity, navigationLocationKey, fetchImpl]);
 
   // Decide using the current review identity and reload the authoritative queue.
   // Returns false so the dialog
@@ -1398,7 +1430,7 @@ export function NetworkFindAreasWorkspace({
         .split(/[、,]/)
         .map((value) => value.trim())
         .filter(Boolean);
-      const response = await fetch(`/api/v1/operator/network-reviews/${reviewId}/decide`, {
+      const response = await fetchImpl(`/api/v1/operator/network-reviews/${reviewId}/decide`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1420,7 +1452,7 @@ export function NetworkFindAreasWorkspace({
         setReviewError(`review decision failed (${response.status})`);
         return false;
       }
-      const read = await fetchNetworkReviewsSnapshot(reviewIdentity.readHeaders, snapshotReadGuard());
+      const read = await fetchNetworkReviewsSnapshot(reviewIdentity.readHeaders, snapshotReadGuard(), fetchImpl);
       if ("superseded" in read) return false;
       if (!isCurrent()) return false;
       if (read.ok) {
@@ -1491,7 +1523,7 @@ export function NetworkFindAreasWorkspace({
     const read = async (path: string, init?: RequestInit, ownsRead: () => boolean = current): Promise<unknown> => {
       await subject();
       if (!ownsRead()) throw new Error(`正式資料讀取已被新的讀取取代；${session.correlation}`);
-      const response = await fetch(path, { cache: "no-store", signal: AbortSignal.timeout(20_000), ...init });
+      const response = await fetchImpl(path, { cache: "no-store", signal: AbortSignal.timeout(20_000), ...init });
       await subject();
       if (!ownsRead()) throw new Error(`正式資料讀取已被新的讀取取代；${session.correlation}`);
       const value: unknown = await response.json();
@@ -1576,7 +1608,7 @@ export function NetworkFindAreasWorkspace({
   const reloadScoringSnapshot = useCallback(async () => {
     const generation = navigationContext.current.generation;
     const sequence = ++scoringReadSequence.current;
-    const read = await fetchNetworkScoringSnapshot(activeRoleId, snapshotReadGuard());
+    const read = await fetchNetworkScoringSnapshot(activeRoleId, snapshotReadGuard(), fetchImpl);
     if ("superseded" in read) return;
     if (!navigationLocation.current.mounted || sequence !== scoringReadSequence.current
       || navigationContextKey !== navigationContext.current.key || generation !== navigationContext.current.generation) return;
@@ -1594,7 +1626,7 @@ export function NetworkFindAreasWorkspace({
       setScoringLoadFailure(read.failure);
       setScoringLoadState("error");
     }
-  }, [activeRoleId, fixturesAllowed, navigationContextKey]);
+  }, [activeRoleId, fixturesAllowed, navigationContextKey, fetchImpl]);
 
   async function postScoringAction(
     path: string,
@@ -1604,7 +1636,7 @@ export function NetworkFindAreasWorkspace({
   ) {
     setBusyCandidateId(busyId);
     try {
-      const response = await fetch(`/api/v1/operator/network-scoring/${path}`, {
+      const response = await fetchImpl(`/api/v1/operator/network-scoring/${path}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1630,7 +1662,7 @@ export function NetworkFindAreasWorkspace({
 
   async function readCanonicalScoreSubject(isCurrent: () => boolean): Promise<string | null> {
     try {
-      const response = await fetch("/auth/session", { cache: "no-store", headers: { accept: "application/json" } });
+      const response = await fetchImpl("/auth/session", { cache: "no-store", headers: { accept: "application/json" } });
       if (!isCurrent()) return null;
       const session: unknown = await response.json();
       if (!isCurrent()) return null;
@@ -1673,7 +1705,7 @@ export function NetworkFindAreasWorkspace({
         return;
       }
       executionSubjectIntent.current = actorSubjectId;
-      const contextResponse = await fetch(`/api/v1/operator/network-scoring/candidates/${encodeURIComponent(candidateId)}/execution-context`,
+      const contextResponse = await fetchImpl(`/api/v1/operator/network-scoring/candidates/${encodeURIComponent(candidateId)}/execution-context`,
         { cache: "no-store", headers: NETWORK_OPERATOR_HEADERS });
       if (!isCurrent()) return;
       const context: unknown = await contextResponse.json();
@@ -1712,7 +1744,7 @@ export function NetworkFindAreasWorkspace({
       };
       const key = executionKey.current;
       const path = retry ? `execution-requests/${encodeURIComponent(retry.executionRequestId)}/retry` : `candidates/${encodeURIComponent(candidateId)}/score`;
-      const response = await fetch(`/api/v1/operator/network-scoring/${path}`, {
+      const response = await fetchImpl(`/api/v1/operator/network-scoring/${path}`, {
         method: "POST", headers: { "Content-Type": "application/json", ...NETWORK_OPERATOR_HEADERS,
           "Idempotency-Key": key.key, "X-Correlation-Id": key.correlation, "If-Actor-Match": key.actorSubjectId }, body: JSON.stringify(body),
       });
@@ -1755,7 +1787,7 @@ export function NetworkFindAreasWorkspace({
       && locationVersion === navigationLocation.current.version && sequence === executionSequence.current;
     async function poll() {
       try {
-        const response = await fetch(`/api/v1/operator/network-scoring/execution-requests/${encodeURIComponent(requestId)}`, { headers: NETWORK_OPERATOR_HEADERS });
+        const response = await fetchImpl(`/api/v1/operator/network-scoring/execution-requests/${encodeURIComponent(requestId)}`, { headers: NETWORK_OPERATOR_HEADERS });
         if (!isCurrent()) return;
         const value: unknown = await response.json();
         if (!isCurrent()) return;
@@ -1777,7 +1809,7 @@ export function NetworkFindAreasWorkspace({
     }
     timer = setTimeout(poll, 1000);
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
-  }, [scoreExecution, navigationContextKey, navigationLocationKey, NETWORK_OPERATOR_HEADERS, reloadScoringSnapshot]);
+  }, [scoreExecution, navigationContextKey, navigationLocationKey, NETWORK_OPERATOR_HEADERS, reloadScoringSnapshot, fetchImpl]);
 
   useEffect(() => {
     if (activeTab !== 3 || !workflowCandidateId || scoringSnapshot?.source !== "canonical" || scoringLoadState !== "ready") return;
@@ -1787,7 +1819,7 @@ export function NetworkFindAreasWorkspace({
     const sequence = executionSequence.current;
     async function restore() {
       try {
-        const response = await fetch(`/api/v1/operator/network-scoring/candidates/${encodeURIComponent(workflowCandidateId!)}/execution-context`, { headers: NETWORK_OPERATOR_HEADERS });
+        const response = await fetchImpl(`/api/v1/operator/network-scoring/candidates/${encodeURIComponent(workflowCandidateId!)}/execution-context`, { headers: NETWORK_OPERATOR_HEADERS });
         if (cancelled || !navigationLocation.current.mounted || sequence !== executionSequence.current || generation !== navigationContext.current.generation || locationVersion !== navigationLocation.current.version) return;
         const value: unknown = await response.json();
         if (cancelled || !navigationLocation.current.mounted || sequence !== executionSequence.current || generation !== navigationContext.current.generation || locationVersion !== navigationLocation.current.version) return;
@@ -1798,7 +1830,7 @@ export function NetworkFindAreasWorkspace({
     }
     restore();
     return () => { cancelled = true; };
-  }, [activeTab, workflowCandidateId, scoringSnapshot?.source, scoringLoadState, navigationContextKey, navigationLocationKey, NETWORK_OPERATOR_HEADERS]);
+  }, [activeTab, workflowCandidateId, scoringSnapshot?.source, scoringLoadState, navigationContextKey, navigationLocationKey, NETWORK_OPERATOR_HEADERS, fetchImpl]);
 
   async function scoreAllCandidates(candidateIds?: string[]) {
     // An empty candidateIds list means "every candidate" server-side, so a
@@ -1822,7 +1854,7 @@ export function NetworkFindAreasWorkspace({
 
   async function reloadRebalanceSnapshot() {
     const generation = navigationContext.current.generation;
-    const read = await fetchNetworkRebalanceSnapshot(activeRoleId, snapshotReadGuard());
+    const read = await fetchNetworkRebalanceSnapshot(activeRoleId, snapshotReadGuard(), fetchImpl);
     if ("superseded" in read || generation !== navigationContext.current.generation) return;
     if (read.ok) {
       setRebalanceSnapshot(read.snapshot);
@@ -1904,7 +1936,7 @@ export function NetworkFindAreasWorkspace({
               reason: "Move scenario selected for Govern approval; relocation remains unexecuted.",
             };
 
-      const response = await fetch(endpoint, {
+      const response = await fetchImpl(endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1954,7 +1986,7 @@ export function NetworkFindAreasWorkspace({
     const busyKey = `${storeId}:select-scenario:${scenarioId}`;
     setBusyRebalanceAction(busyKey);
     try {
-      const response = await fetch(`/api/v1/operator/network-rebalance/stores/${storeId}/scenarios/${scenarioId}/select`, {
+      const response = await fetchImpl(`/api/v1/operator/network-rebalance/stores/${storeId}/scenarios/${scenarioId}/select`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -2106,7 +2138,7 @@ export function NetworkFindAreasWorkspace({
   async function reloadNetworkSnapshot() {
     const generation = navigationContext.current.generation;
     const sequence = ++networkReadSequence.current;
-    const read = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens, activeRoleId, snapshotReadGuard());
+    const read = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens, activeRoleId, snapshotReadGuard(), fetchImpl);
     if ("superseded" in read) return;
     if (!navigationLocation.current.mounted || sequence !== networkReadSequence.current
       || navigationContextKey !== navigationContext.current.key || generation !== navigationContext.current.generation) return;
@@ -2147,8 +2179,8 @@ export function NetworkFindAreasWorkspace({
       // These are reads under the current authenticated principal. Cached
       // relations are previews, not permission to bypass destination reads.
       const [read, scoringRead] = await Promise.all([
-        fetchNetworkSnapshot(effectiveSelectedId || null, effectiveLens, activeRoleId, snapshotReadGuard()),
-        target.kind === "candidate" ? fetchNetworkScoringSnapshot(activeRoleId, snapshotReadGuard()) : Promise.resolve(null),
+        fetchNetworkSnapshot(effectiveSelectedId || null, effectiveLens, activeRoleId, snapshotReadGuard(), fetchImpl),
+        target.kind === "candidate" ? fetchNetworkScoringSnapshot(activeRoleId, snapshotReadGuard(), fetchImpl) : Promise.resolve(null),
       ]);
       if ("superseded" in read || scoringRead && "superseded" in scoringRead) return;
       if (!isCurrentIntent() || networkSequence !== networkReadSequence.current
@@ -2247,7 +2279,7 @@ export function NetworkFindAreasWorkspace({
   async function readListingWriteSubject(): Promise<string | null> {
     if (fixturesAllowed) return operatorSubjectId(activeRoleId) || null;
     try {
-      const response = await fetch("/auth/session", { cache: "no-store", headers: { accept: "application/json" } });
+      const response = await fetchImpl("/auth/session", { cache: "no-store", headers: { accept: "application/json" } });
       if (!response.ok) return null;
       const session: unknown = await response.json();
       return readObject(session) && typeof session.subject === "string" && session.subject.trim() ? session.subject : null;
@@ -2288,7 +2320,7 @@ export function NetworkFindAreasWorkspace({
         return;
       }
       if (actorSubjectId) session.verifiedActorSubjectId = actorSubjectId;
-      const fresh = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens, activeRoleId, snapshotReadGuard());
+      const fresh = await fetchNetworkSnapshot(effectiveSelectedId, effectiveLens, activeRoleId, snapshotReadGuard(), fetchImpl);
       if ("superseded" in fresh) return;
       if (!current()) return;
       const admitted = fresh.ok && (inspectNetworkListingsSnapshot(fresh.snapshot) === "ready"
@@ -2360,7 +2392,7 @@ export function NetworkFindAreasWorkspace({
   }
 
   async function submissionRead(session: NonNullable<typeof submissionSession.current>, path: string, init?: RequestInit): Promise<unknown> {
-    const response = await fetch(path, { cache: "no-store", ...init });
+    const response = await fetchImpl(path, { cache: "no-store", ...init });
     await submissionSubject(session);
     const value: unknown = await response.json();
     await submissionSubject(session);
@@ -2483,14 +2515,11 @@ export function NetworkFindAreasWorkspace({
     }
   }
 
-  const workflowProjection = projectCandidateWorkflow({
-    selection: { id: workflowCandidateId, invalid: isCandidateWorkflowTab(activeTab) && !overrideApplies && urlCandidateSelection.invalid },
-    currentGeneration: navigationContext.current.generation,
-    network: { snapshot: networkSnapshot, status: networkLoadState, generation: networkNavigationGeneration },
-    scoring: { snapshot: scoringSnapshot, status: fixturesAllowed && scoringWorkflowProvenance === "unknown" ? "error" : scoringLoadState, generation: scoringNavigationGeneration },
-    // Use only the admitted review read from the current access generation.
-    reviews: { snapshot: reviewsSnapshot, status: reviewsLoadState, generation: reviewsNavigationGeneration },
-  });
+  const scoreJobRead = useCandidateScoreJobs(isCandidateWorkflowTab(activeTab)
+    && scoringWorkflowProvenance === "canonical" && scoringLoadState === "ready" ? scoringSnapshot : null,
+    NETWORK_OPERATOR_HEADERS, JSON.stringify([navigationContextKey, navigationLocationKey]),
+    navigationContext.current.generation, `${scoreExecution?.executionRequestId}:${scoreExecution?.actualVersion}`, reloadScoringSnapshot, nativeReadFetch);
+
   // Both snapshots are masked to the current access generation above. A prior
   // fixture read cannot survive a role/tenant change or a failed current read.
   const useFixtureWorkflow = fixturesAllowed && scoringWorkflowProvenance === "fixture"
@@ -2501,6 +2530,17 @@ export function NetworkFindAreasWorkspace({
     network: { snapshot: networkSnapshot, status: networkLoadState, generation: networkNavigationGeneration },
     scoring: { snapshot: scoringSnapshot, status: scoringWorkflowProvenance === "canonical" ? scoringLoadState : "error", generation: scoringNavigationGeneration },
     reviews: { snapshot: reviewsSnapshot, status: reviewsLoadState, generation: reviewsNavigationGeneration },
+    jobs: scoreJobRead,
+  });
+  const workflowProjection = projectCandidateWorkflow({
+    selection: { id: workflowCandidateId, invalid: isCandidateWorkflowTab(activeTab) && !overrideApplies && urlCandidateSelection.invalid },
+    currentGeneration: navigationContext.current.generation,
+    network: { snapshot: networkSnapshot, status: networkLoadState, generation: networkNavigationGeneration },
+    scoring: { snapshot: scoringSnapshot, status: fixturesAllowed && scoringWorkflowProvenance === "unknown" ? "error" : scoringLoadState, generation: scoringNavigationGeneration },
+    // Use only the admitted review read from the current access generation.
+    reviews: { snapshot: reviewsSnapshot, status: reviewsLoadState, generation: reviewsNavigationGeneration },
+    jobs: scoreJobRead,
+    nativeWorkflow: workflowCandidateId ? nativeWorkflow?.[workflowCandidateId] : undefined,
   });
   const submissionCandidates = canOfferReviewSubmission(activeRoleId)
     ? reviewSubmissionOffers(networkSnapshot, scoringSnapshot, reviewsSnapshot, nativeWorkflow) : {};
@@ -2582,6 +2622,9 @@ export function NetworkFindAreasWorkspace({
     <ListingRadarPanel
       activeRoleId={activeRoleId}
       busyListingId={busyListingId}
+      canonicalIntakeReadContext={!fixturesAllowed && canReadListings ? {
+        fetchImpl: nativeReadFetch, contextKey: navigationContextKey, headers: NETWORK_OPERATOR_HEADERS,
+      } : undefined}
       intakeDetailOpen={intakeDetailOpen}
       listings={listingsEffective}
       listingsReadFailure={listingsReadFailure}
@@ -2688,6 +2731,7 @@ export function NetworkFindAreasWorkspace({
         tabCounts={tabCounts}
         tabs={networkTabs}
       >
+        {!useFixtureWorkflow && <CandidateWorkflowFacts read={workflowProjection.candidateId ? nativeWorkflow?.[workflowProjection.candidateId] : undefined} />}
         {activeTabGateState ? (
           <>
             <OperatorDataUnavailableGate

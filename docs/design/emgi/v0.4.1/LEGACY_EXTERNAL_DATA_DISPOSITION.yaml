@@ -330,6 +330,7 @@ classification:
       include:
         - "config/**"
         - "README.md"
+        - "AGENTS.md"
         - "pyproject.toml"
         - "package.json"
         - "package-lock.json"

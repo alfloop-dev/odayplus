@@ -1,6 +1,6 @@
 import React from "react";
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AddListingFromUrlDialog } from "../AddListingFromUrlDialog";
 import type { IntakeApiError } from "../intakeClient";
@@ -53,7 +53,7 @@ describe("AddListingFromUrlDialog", () => {
     expect(screen.getByTestId("intake-add-error")).toHaveTextContent("請確認網址格式");
   });
 
-  it("triggers onSubmit with valid URL and selected heat zone", () => {
+  it("triggers onSubmit with valid URL and selected heat zone", async () => {
     render(
       <AddListingFromUrlDialog
         busy={false}
@@ -70,7 +70,7 @@ describe("AddListingFromUrlDialog", () => {
     const submitBtn = screen.getByTestId("intake-submit-button");
 
     fireEvent.change(input, { target: { value: "https://www.591.com.tw/rent-detail-1234567.html" } });
-    fireEvent.click(submitBtn);
+    await act(async () => { fireEvent.click(submitBtn); });
 
     expect(mockOnSubmit).toHaveBeenCalledWith({
       url: "https://www.591.com.tw/rent-detail-1234567.html",
@@ -100,7 +100,7 @@ describe("AddListingFromUrlDialog", () => {
     expect(submitBtn).toHaveTextContent("送出中…（防止重複送出）");
   });
 
-  it("locks rapid repeated submissions before the parent busy state updates", () => {
+  it("locks rapid repeated submissions before the parent busy state updates", async () => {
     let resolveSubmit: (() => void) | undefined;
     const pendingSubmit = vi.fn(
       () => new Promise<void>((resolve) => {
@@ -126,7 +126,7 @@ describe("AddListingFromUrlDialog", () => {
 
     expect(pendingSubmit).toHaveBeenCalledTimes(1);
     expect(submitButton).toBeDisabled();
-    resolveSubmit?.();
+    await act(async () => resolveSubmit?.());
   });
 
   it("leaves source policy authority with the server", () => {
@@ -177,7 +177,7 @@ describe("AddListingFromUrlDialog", () => {
     expect(openExisting).toHaveBeenCalledWith("IN-999");
   });
 
-  it("shows only the supplied native zones and submits the actual selected ID", () => {
+  it("shows only the supplied native zones and submits the actual selected ID", async () => {
     render(<AddListingFromUrlDialog busy={false} error={null} onClose={mockOnClose} onSubmit={mockOnSubmit}
       submitterLabel="展店經理" heatZoneOptions={{ state: "ready", options: [
         { id: "native-zone-b", label: "伺服器區域 B" }, { id: "native-zone-c", label: "伺服器區域 C" },
@@ -187,11 +187,11 @@ describe("AddListingFromUrlDialog", () => {
     expect(screen.queryByText(/信義松仁生活圈|板橋府中商圈/)).not.toBeInTheDocument();
     fireEvent.change(select, { target: { value: "native-zone-c" } });
     fireEvent.change(screen.getByTestId("intake-url-input"), { target: { value: "https://example.com/native-listing" } });
-    fireEvent.click(screen.getByTestId("intake-submit-button"));
+    await act(async () => { fireEvent.click(screen.getByTestId("intake-submit-button")); });
     expect(mockOnSubmit).toHaveBeenCalledWith({ url: "https://example.com/native-listing", heatZoneId: "native-zone-c" });
   });
 
-  it.each(["loading", "error", "ready"] as const)("keeps the optional form usable with %s empty options and no stale zone", state => {
+  it.each(["loading", "error", "ready"] as const)("keeps the optional form usable with %s empty options and no stale zone", async state => {
     render(<AddListingFromUrlDialog busy={false} defaultHeatZoneId="stale-not-authorized" error={null}
       heatZoneOptions={{ state, options: [] }} onClose={mockOnClose} onSubmit={mockOnSubmit} submitterLabel="展店經理" />);
     const select = screen.getByTestId("intake-area-select");
@@ -200,7 +200,7 @@ describe("AddListingFromUrlDialog", () => {
     expect(within(select).getAllByRole("option")).toHaveLength(1);
     expect(screen.getByTestId("intake-area-note")).toHaveTextContent(state === "loading" ? "載入中" : state === "error" ? "無法取得" : "沒有可選區域");
     fireEvent.change(screen.getByTestId("intake-url-input"), { target: { value: "https://example.com/native-listing" } });
-    fireEvent.click(screen.getByTestId("intake-submit-button"));
+    await act(async () => { fireEvent.click(screen.getByTestId("intake-submit-button")); });
     expect(mockOnSubmit).toHaveBeenCalledWith({ url: "https://example.com/native-listing", heatZoneId: "" });
   });
 

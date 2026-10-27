@@ -37,6 +37,7 @@ test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
     }
     // Navigate to the operator console and activate the Network workspace.
     await page.goto("/operator");
+    await expect(page.getByTestId("operator-envelope-source")).toHaveText("operator-shell-api-envelope", { timeout: 15_000 });
     // Click the Network tab in the workspace navigation.
     const networkTab = page.getByRole("navigation", { name: "Operator workspaces" })
       .getByRole("button", { name: /network/i });
@@ -45,7 +46,7 @@ test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
     // Wait for the Network Find Areas workspace to mount.
     await expect(
       page.getByTestId("network-find-areas-workspace"),
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 15_000 });
     if (unavailableRead) await unavailableRead;
   });
 
@@ -83,9 +84,7 @@ test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
     // Either listings table or empty state.
     const table = page.getByTestId("network-listing-table");
     const empty = page.getByText(/No listings sourced yet/i);
-    const hasTable = await table.isVisible().catch(() => false);
-    const hasEmpty = await empty.isVisible().catch(() => false);
-    expect(hasTable || hasEmpty).toBe(true);
+    await expect(table.or(empty)).toBeVisible();
   });
 
   test("Candidate Pipeline tab renders without crash", async ({ page }) => {
@@ -94,9 +93,7 @@ test.describe("ODP-FIN-FE-002 Network Find Areas API binding", () => {
     await expect(page.getByTestId("network-panel-candidates")).toBeVisible();
     const table = page.getByTestId("network-candidate-table");
     const empty = page.getByText(/No candidates yet/i);
-    const hasTable = await table.isVisible().catch(() => false);
-    const hasEmpty = await empty.isVisible().catch(() => false);
-    expect(hasTable || hasEmpty).toBe(true);
+    await expect(table.or(empty)).toBeVisible();
   });
 
   test("SiteScore Lab tab renders without crash", async ({ page }) => {

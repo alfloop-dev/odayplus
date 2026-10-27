@@ -28,7 +28,7 @@ describe("exact authorized workflow read projection", () => {
       sitescoreRunId: "run-second", modelVersion: "model-second", datasetSnapshotId: "snapshot" });
     expect(step(result, "sitescore").state).toBe("completed");
     expect(result.steps).toHaveLength(6);
-    expect(result.currentJob).toBe("unknown"); expect(result.executionAdmission).toBe("unknown");
+    expect(result.currentJob).toBeNull(); expect(result.executionAdmission).toBe("unknown");
     expect(result.nextAction).not.toContain("執行");
   });
 
@@ -110,7 +110,7 @@ describe("exact authorized workflow read projection", () => {
     expect(result.reason).toBe("failed_candidate_with_historical_report");
     expect(result.report?.reportId).toBe("report-second");
     expect(result.notice).toContain("評分失敗"); expect(result.notice).toContain("先前已保存報告");
-    expect(result.currentJob).toBe("unknown"); expect(result.executionAdmission).toBe("unknown");
+    expect(result.currentJob).toBeNull(); expect(result.executionAdmission).toBe("unknown");
   });
 
   it("keeps a different snapshot explicit instead of fabricating a fresh score", () => {
@@ -132,7 +132,13 @@ describe("exact authorized workflow read projection", () => {
       { id: "current-review", candidateId: "second", reportId: "report-second", reportVersion: 3, canonicalDecisionStatus: "PENDING_REVIEW" },
     ];
     const result = projectCandidateWorkflow(value);
-    expect(result.reviewId).toBe("current-review"); expect(step(result, "review").state).toBe("current");
+    expect(result.reviewId).toBe("current-review"); expect(step(result, "review").state).toBe("blocked");
+    const verified = projectCandidateWorkflow({ ...value, nativeWorkflow: {
+      candidateId: "second", availability: "recorded", stage: "pendingreview", lifecycle: "scored", reason: "Shared strict graph verified",
+      review: { candidateId: "second", listingId: "listing-second", reviewId: "current-review", reportId: "report-second", reportVersion: 3,
+        latestReportId: "report-second", latestReportVersion: 3, relation: "current", generation: 4 },
+    } });
+    expect(step(verified, "review").state).toBe("current");
   });
 
   it.each(["DRAFT", "SYSTEM_RECOMMENDED", "PENDING_REVIEW", "APPROVED", "REJECTED"])("preserves documented canonical decision %s", (status) => {
@@ -140,6 +146,7 @@ describe("exact authorized workflow read projection", () => {
     const result = projectCandidateWorkflow(value);
     expect(result.reviewId).toBe("current");
     expect(step(result, "review").summary).toContain(status);
+    expect(step(result, "review").state).toBe("blocked");
     expect(result.reviewReason).toBe("exact_report_decision_available");
   });
 

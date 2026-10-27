@@ -24,6 +24,8 @@ CLASSIFICATIONS = {"PUBLIC", "INTERNAL", "CONFIDENTIAL", "RESTRICTED"}
 
 
 def field_lineage(intake: Mapping[str, Any], field_path: str) -> dict[str, Any]:
+    if _name(field_path) in {"batchid", "rowindex", "sourcerowindex"}:
+        raise ValueError("Correction cannot change batch provenance")
     matches = [value for value in intake.get("fields", []) if value.get("field_path") == field_path]
     if len(matches) > 1:
         raise ValueError("Duplicate correction field lineage")

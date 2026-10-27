@@ -1177,7 +1177,13 @@ def test_build_once_job_exists_and_precedes_deploy() -> None:
         f"inputs.{name} == ''" in build_if
         for name in ("api_image", "web_image", "worker_image", "scheduler_image")
     )
-    assert "gcloud artifacts docker images describe" in "\n".join(build_runs)
+    build_text = "\n".join(build_runs)
+    assert "source product_ops/deployment/cloud_run_release_traffic.sh" in build_text
+    assert "resolve_image_digest()" not in build_text
+    assert "resolve_image_digest" in build_text
+    assert "gcloud artifacts docker images describe" in (
+        ROOT / "product_ops/deployment/cloud_run_release_traffic.sh"
+    ).read_text(encoding="utf-8")
     assert "GITHUB_OUTPUT" in "\n".join(build_runs)
     assert set(jobs["build"]["outputs"]) == {
         "api_image",
@@ -1541,6 +1547,8 @@ case "$1 $2 $3" in
     exit 0 ;;
   "run services describe")
     cat "${FAKE_DESCRIBE_DIR}/$4.json"; exit 0 ;;
+  "scheduler jobs list")
+    exit 0 ;;
   "sql backups create")
     [ -n "${FAKE_BACKUP_CREATE_FAIL:-}" ] && { echo "operation failed" >&2; exit 1; }
     for arg in "$@"; do
@@ -1629,6 +1637,8 @@ def fake_cloud(tmp_path: Path) -> dict[str, object]:
         "GCP_CLOUD_SQL_INSTANCE": "oday-prod:asia-east1:oday-prod-sql",
         "API_SERVICE": "odp-api",
         "WEB_SERVICE": "odp-web",
+        "WORKER_SCHEDULE_NAME": "worker-trigger",
+        "SCHEDULER_SCHEDULE_NAME": "scheduler-trigger",
     }
     return {"env": env, "tmp": tmp_path, "receipts": receipts, "describe_dir": describe_dir}
 
@@ -2137,7 +2147,7 @@ def test_the_build_phase_signs_and_attests_every_published_image() -> None:
         jobs["build"], "Build, publish, sign, and attest immutable container images"
     )["run"]
 
-    assert 'sign_images.sh sign "${tagged}"' in run
+    assert 'sign_images.sh sign "${digest_ref}"' in run
     assert 'sign_images.sh attest "${digest_ref}" "${SBOM_PATH}"' in run
     helper = (ROOT / "delivery_toolchain/security/sign_images.sh").read_text(encoding="utf-8")
     assert 'cosign_with_oidc_retry sign --yes "${IMAGE}"' in helper

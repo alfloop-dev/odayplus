@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { GeoJsonLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
 import DeckGL from "@deck.gl/react";
-import { cellToBoundary, isValidCell } from "h3-js";
+import { zoneToFeature } from "./heatZoneRecordedEvidence.ts";
 import * as maplibregl from "maplibre-gl";
 import type { CandidateSite, HeatZone, Listing } from "./mapTypes.ts";
 import { isOperatorProductionMode } from "../operatorDataMode.ts";
@@ -43,7 +43,7 @@ type MapStateFixture = "normal" | "loading" | "empty" | "error" | "partial" | "n
 export type HeatZoneLensScore = {
   id: string;
   label: string;
-  points: number;
+  points: number | null;
 };
 
 export type HeatZoneMapProps = {
@@ -84,6 +84,8 @@ const defaultLayers: LayerState = {
 };
 
 const stateFill: Record<HeatZone["state"], [number, number, number, number]> = {
+  UNKNOWN: [113, 128, 150, 72],
+  ABSTAINED: [113, 128, 150, 72],
   UNTOUCHED: [49, 130, 206, 72],
   PARTIALLY_ABSORBED: [49, 130, 206, 92],
   SATURATED: [113, 128, 150, 72],
@@ -155,7 +157,7 @@ export function HeatZoneMap({
   );
   const geometryZones = useMemo(() => {
     const ids = new Set(zoneFeatures.map((feature) => feature.properties.id));
-    return zones.filter((zone) => ids.has(zone.id));
+    return zones.filter((zone) => ids.has(zone.id) && zone.centroid !== null);
   }, [zoneFeatures, zones]);
   const missingGeometryCount = zones.length - geometryZones.length;
   const geometryHidden = boundaryConfig.stateFixture === "empty" || boundaryConfig.stateFixture === "no-geometry";
@@ -547,7 +549,7 @@ export function HeatZoneMap({
         >
           {caption
             ? `${caption} · ${liveTiles ? `底圖 ${boundaryConfig.attribution || "已設定圖磚"}` : "示意底圖（離線）· 座標為 POC 示意"}`
-            : `資料 ${freshness.status} · 快照 ${freshness.sourceSnapshotId} · 模型 ${freshness.modelVersion}`}
+            : `資料 ${freshness.status} · 快照 ${freshness.sourceSnapshotId || "未知"} · 模型 ${freshness.modelVersion || "未知"}`}
           {candidates.some((candidate) => candidate.coordinates === null) ? (
             <span data-testid="map-unlocated-candidates" role="status">
               <br />{candidates.filter((candidate) => candidate.coordinates === null).length} 個候選點尚無已驗證座標，未顯示地圖標記；可在候選點清單查看。
@@ -718,7 +720,7 @@ function EvidenceDefinitionList({ freshness, zone }: { freshness: Freshness; zon
     <dl className={styles.evidenceGrid}>
       <div>
         <dt>Score</dt>
-        <dd>{zone.score}</dd>
+        <dd>{zone.score ?? "未評估"}</dd>
       </div>
       <div>
         <dt>State</dt>
@@ -735,16 +737,20 @@ function EvidenceDefinitionList({ freshness, zone }: { freshness: Freshness; zon
       <div>
         <dt>Freshness</dt>
         <dd>
-          {freshness.status} · {freshness.sourceSnapshotId}
+          {freshness.status} · {freshness.sourceSnapshotId || "未知"}
         </dd>
       </div>
       <div>
         <dt>Model version</dt>
-        <dd>{zone.modelVersion}</dd>
+        <dd>{zone.modelVersion || "未知"}</dd>
+      </div>
+      <div>
+        <dt>評估模式</dt>
+        <dd>{zone.executionMode || "未知"}</dd>
       </div>
       <div>
         <dt>Feature snapshot</dt>
-        <dd>{zone.featureSnapshotTime}</dd>
+        <dd>{zone.featureSnapshotTime || "未知"}</dd>
       </div>
     </dl>
   );
@@ -843,7 +849,7 @@ function buildDeckLayers({
           characterSet: "auto",
           fontFamily: "\"Noto Sans TC\", \"PingFang TC\", \"Microsoft JhengHei\", sans-serif",
           fontWeight: 700,
-          getPosition: (zone) => zone.centroid,
+          getPosition: (zone) => zone.centroid!,
           getText: (zone) => {
             const lens = lensScoreById.get(zone.id);
             return lens ? `${lens.label} ${lens.points}` : zone.id;
@@ -862,7 +868,7 @@ function buildDeckLayers({
           id: "odp-heatzone-labels",
           data: zones,
           visible: visible.freshness,
-          getPosition: (zone) => zone.centroid,
+          getPosition: (zone) => zone.centroid!,
           getText: (zone) => `${zone.id}\n${zone.score} / ${zone.confidence != null ? zone.confidence.toFixed(2) : "N/A"}`,
           getColor: [23, 37, 84, 255],
           getSize: 13,
@@ -969,7 +975,7 @@ function nearestPickHref(
   if (listing) return pickHref("odp-listing-points", listing, layers);
 
   const zone = layers.h3
-    ? nearestProjected(zones, point, map, (item) => item.centroid, directPickRadius.zone)
+    ? nearestProjected(zones, point, map, (item) => item.centroid!, directPickRadius.zone)
     : undefined;
   if (zone) {
     return pickHref(
@@ -1008,45 +1014,7 @@ declare global {
   }
 }
 
-function zoneToFeature(zone: HeatZone, allowFixtureGeometry: boolean): ZoneFeature | null {
-  // A canonical owner explicitly declaring no geometry is authoritative.
-  // Do not substitute a derivation from its H3 reference over that null.
-  if (zone.geometry === null) return null;
-  if (zone.geometry) return { type: "Feature", geometry: zone.geometry, properties: zone };
-  if (zone.h3 && isValidCell(zone.h3)) {
-    try {
-      const ring = cellToBoundary(zone.h3, true);
-      if (ring && ring.length > 0) {
-        return {
-          type: "Feature",
-          geometry: { type: "Polygon", coordinates: [[...ring, ring[0]]] },
-          properties: zone,
-        };
-      }
-    } catch {
-      // Only an explicit fixture may fall through to illustrative geometry.
-    }
-  }
 
-  if (!allowFixtureGeometry) return null;
-
-  const [lng, lat] = zone.centroid;
-  const delta = 0.012;
-  return {
-    type: "Feature",
-    geometry: {
-      type: "Polygon",
-      coordinates: [[
-        [lng - delta, lat - delta],
-        [lng + delta, lat - delta],
-        [lng + delta, lat + delta],
-        [lng - delta, lat + delta],
-        [lng - delta, lat - delta],
-      ]],
-    },
-    properties: zone,
-  };
-}
 
 function confidenceBand(confidence: number | null): "high" | "medium" | "low" {
   if (confidence === null) return "low";
@@ -1057,7 +1025,7 @@ function confidenceBand(confidence: number | null): "high" | "medium" | "low" {
 
 function fitToZones(map: maplibregl.Map, zones: HeatZone[]) {
   const bounds = new maplibregl.LngLatBounds();
-  zones.forEach((zone) => bounds.extend(zone.centroid));
+  zones.forEach((zone) => { if (zone.centroid !== null) bounds.extend(zone.centroid); });
   if (!bounds.isEmpty()) {
     map.fitBounds(bounds, { padding: 80, maxZoom: 11, duration: 0 });
   }
@@ -1101,19 +1069,20 @@ const LENS_TIER_SOLID: Array<[number, [number, number, number]]> = [
   [0, [180, 35, 24]],
 ];
 
-function lensTierRgb(points: number): [number, number, number] {
+function lensTierRgb(points: number | null): [number, number, number] {
+  if (points === null) return [113, 128, 150];
   return (LENS_TIER_SOLID.find(([floor]) => points >= floor) ?? LENS_TIER_SOLID[LENS_TIER_SOLID.length - 1])[1];
 }
 
-function lensTierHex(points: number): string {
+function lensTierHex(points: number | null): string {
   return `#${lensTierRgb(points).map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
 }
 
-function lensTierFill(points: number): [number, number, number, number] {
+function lensTierFill(points: number | null): [number, number, number, number] {
   return [...lensTierRgb(points), 92];
 }
 
-function lensTierSolid(points: number): [number, number, number, number] {
+function lensTierSolid(points: number | null): [number, number, number, number] {
   return [...lensTierRgb(points), 240];
 }
 

@@ -33,8 +33,11 @@ from tests.integration._authz import auth_headers
 
 # PriceOps view/create/approve/execute is held by the pricing manager; reuse the
 # shared bundle rather than hand-rolling headers that drift from the RBAC matrix.
-WRITE_HEADERS = auth_headers(Role.PRICING_MANAGER)
-REVIEWER_HEADERS = auth_headers(Role.PRICING_MANAGER, subject="independent-pricing-reviewer")
+WRITE_HEADERS = {**auth_headers(Role.PRICING_MANAGER), "x-tenant-id": "tenant-a"}
+REVIEWER_HEADERS = {
+    **auth_headers(Role.PRICING_MANAGER, subject="independent-pricing-reviewer"),
+    "x-tenant-id": "tenant-a",
+}
 
 
 def _plan_body(plan_id: str = "PLAN-IDEM-1", *, tenant_id: str = "tenant-a") -> dict[str, Any]:
@@ -532,18 +535,27 @@ def test_list_plans_last_page_reports_no_more() -> None:
 def test_list_plans_filters_by_tenant() -> None:
     client = _client()
     _create_plan(client, "PLAN-TENANT-A")
-    client.post(
+    created = client.post(
         "/api/v1/priceops/plans",
         json=_plan_body("PLAN-TENANT-B", tenant_id="tenant-b"),
-        headers=WRITE_HEADERS,
+        headers={**WRITE_HEADERS, "x-tenant-id": "tenant-b"},
     )
+    assert created.status_code == 201, created.text
 
     page = client.get(
-        "/api/v1/priceops/plans", params={"tenant_id": "tenant-b"}, headers=WRITE_HEADERS
+        "/api/v1/priceops/plans", params={"tenant_id": "tenant-b"},
+        headers={**WRITE_HEADERS, "x-tenant-id": "tenant-b"},
     ).json()
 
     assert page["total"] == 1
     assert {row["tenant_id"] for row in page["items"]} == {"tenant-b"}
+
+    other = client.get(
+        "/api/v1/priceops/plans", params={"tenant_id": "tenant-a"},
+        headers={**WRITE_HEADERS, "x-tenant-id": "tenant-b"},
+    ).json()
+    assert other["total"] == 0
+    assert other["items"] == []
 
 
 def test_list_plans_default_response_stays_backward_compatible() -> None:

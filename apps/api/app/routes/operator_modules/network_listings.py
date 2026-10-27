@@ -25,6 +25,7 @@ from modules.external_data.security import contains_sensitive_submission_materia
 from modules.listing.application.intake_authorization import (
     authorize_intake_action,
     collection_rows_are_scope_projected,
+    has_recorded_legal_hold,
     intake_resource_in_scope,
     mask_intake,
     mask_listing,
@@ -361,7 +362,7 @@ def create_network_listings_sub_router(
             principal = get_principal(request)
             operator_role_id = get_operator_role_id(request)
             listing = active_service(request)._listing(listing_id)
-            has_legal_hold = listing.get("hasLegalHold") or listing.get("legalHold") or False
+            has_legal_hold = has_recorded_legal_hold(listing)
             first_actor_id = listing.get("submitter") or listing.get("owner")
             actor = operator_actor(principal)
 
@@ -430,7 +431,7 @@ def create_network_listings_sub_router(
                     risk_acknowledged=body.riskAcknowledged,
                     risk_summary=body.riskSummary,
                     first_actor_id=resource.get("proposer") or resource.get("submitter"),
-                    has_legal_hold=resource.get("hasLegalHold") is True or resource.get("legalHold") is True,
+                    has_legal_hold=has_recorded_legal_hold(resource),
                     operator_role_id=operator_role_id, audit_log=audit_log,
                     correlation_id=x_correlation_id,
                 )
@@ -494,8 +495,8 @@ def create_network_listings_sub_router(
                 # Archive has retention semantics distinct from intake cancel.
                 # Its hold/terminal guards run in the listing write owner.
                 authorize_intake_action(
-                    principal, "cancel", resource=resource,
-                    has_legal_hold=resource.get("hasLegalHold") is True or resource.get("legalHold") is True,
+                    principal, "archive", resource=resource,
+                    has_legal_hold=has_recorded_legal_hold(resource),
                     operator_role_id=operator_role_id, audit_log=audit_log,
                     correlation_id=x_correlation_id,
                 )

@@ -7,34 +7,23 @@ blocked, surrogates rejected as production) or reports drift and fails.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import os
 from datetime import UTC, date, datetime
 from typing import Any
 
-from delivery_toolchain.release.assisted_listing_intake.config import (
+from modules.listing.application.intake_release_governance import (
     EXPECTED_FLAG_KEYS,
-    PRODUCTION_CANARY_UNITS,
-    REQUIRED_LIVE_TARGETS,
     ReleaseConfig,
 )
 from shared.auth.feature_flags import (
     DUAL_APPROVAL_MINIMUM,
     FeatureFlag,
     FeatureFlagRegistry,
-    Readiness,
 )
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
-
-
-def _json_evidence_value(value: Any) -> str:
-    if isinstance(value, (date, datetime)):
-        return value.isoformat()
-    raise TypeError(f"Unsupported live evidence value: {type(value).__name__}")
 
 
 def build_intake_flag_registry(config: ReleaseConfig) -> FeatureFlagRegistry:
@@ -48,130 +37,9 @@ def build_intake_flag_registry(config: ReleaseConfig) -> FeatureFlagRegistry:
     registry = FeatureFlagRegistry()
     for entry in config.feature_flags["flags"]:
         registry.register(
-            FeatureFlag(
-                key=entry["key"],
-                owner=entry["owner"],
-                enabled=bool(entry["enabled"]),
-                readiness=Readiness(entry.get("readiness", "experimental")),
-                high_risk=bool(entry.get("high_risk", True)),
-                description=entry.get("description", ""),
-                approved_by=frozenset(entry.get("approved_by", ())),
-            )
+            FeatureFlag.from_dict(entry)
         )
     return registry
-
-
-def check_release_authority(config: ReleaseConfig) -> dict[str, Any]:
-    """Evaluate the §12 approval register. Pending rows keep cutover blocked."""
-
-    gates = config.release_authority["gates"]
-    pending = [g["owner"] for g in gates if g["status"] != "approved"]
-    rows = [
-        {
-            "owner": g["owner"],
-            "status": g["status"],
-            "approval_scope": g.get("approval_scope"),
-            "fail_closed_effect": g.get("fail_closed_effect"),
-            "approver": g.get("approver"),
-            "approved_at": g.get("approved_at"),
-            "evidence_ref": g.get("evidence_ref"),
-        }
-        for g in gates
-    ]
-    return {
-        "checked_at": _now(),
-        "register": str(config.infra_dir / "release_authority.yaml"),
-        "gates": rows,
-        "pending_owners": pending,
-        "all_approved": not pending,
-        "cutover_blocked": bool(pending),
-        "fail_closed_effects_active": [
-            g["fail_closed_effect"] for g in rows if g["status"] != "approved"
-        ],
-    }
-
-
-def check_live_runtime_evidence(config: ReleaseConfig) -> dict[str, Any]:
-    """Evaluate the governed live runtime evidence register.
-
-    The register is already schema-validated fail-closed at load time
-    (``_validate_live_evidence``): this check surfaces its state as gate
-    facts. ``recorded`` is true only when a human release authority
-    attested every required live target with its own evidence reference.
-    Production canary units may pass only via a recorded live result here.
-    """
-
-    record = config.live_evidence
-    recorded = bool(record.get("recorded"))
-    targets = {t.get("target"): t for t in record.get("targets", [])}
-    canary_units = {
-        int(u["unit"]): {
-            "passed": bool(u.get("passed")),
-            "completed_at": u.get("completed_at"),
-            "evidence_ref": u.get("evidence_ref"),
-        }
-        for u in (record.get("canary_units") or [])
-    }
-    evidence_digest = hashlib.sha256(
-        json.dumps(
-            {
-                "recorded": recorded,
-                "recorded_by": record.get("recorded_by"),
-                "recorded_at": record.get("recorded_at"),
-                "evidence_ref": record.get("evidence_ref"),
-                "error_budget_intact": record.get("error_budget_intact"),
-                "targets": targets,
-                "canary_units": canary_units,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-            default=_json_evidence_value,
-        ).encode()
-    ).hexdigest()
-    missing_canary_units = [
-        unit for unit in PRODUCTION_CANARY_UNITS if unit not in canary_units
-    ]
-    failed_canary_units = [
-        unit
-        for unit in PRODUCTION_CANARY_UNITS
-        if canary_units.get(unit, {}).get("passed") is False
-    ]
-    production_canary_complete = (
-        recorded
-        and record.get("error_budget_intact") is True
-        and not missing_canary_units
-        and not failed_canary_units
-    )
-    return {
-        "checked_at": _now(),
-        "register": str(config.infra_dir / "live_runtime_evidence.yaml"),
-        "evidence_digest": evidence_digest,
-        "recorded": recorded,
-        "recorded_by": record.get("recorded_by"),
-        "recorded_at": record.get("recorded_at"),
-        "evidence_ref": record.get("evidence_ref"),
-        "error_budget_intact": bool(record.get("error_budget_intact"))
-        if recorded
-        else None,
-        "required_targets": list(REQUIRED_LIVE_TARGETS),
-        "targets": {
-            name: {
-                "status": entry.get("status"),
-                "completed_at": entry.get("completed_at"),
-                "evidence_ref": entry.get("evidence_ref"),
-            }
-            for name, entry in targets.items()
-        },
-        "canary_units": canary_units,
-        "production_canary_complete": production_canary_complete,
-        "missing_canary_units": missing_canary_units,
-        "failed_canary_units": failed_canary_units,
-        "missing_targets": [
-            t
-            for t in REQUIRED_LIVE_TARGETS
-            if targets.get(t, {}).get("status") != "completed"
-        ],
-    }
 
 
 def check_feature_flags(config: ReleaseConfig) -> dict[str, Any]:
@@ -200,9 +68,12 @@ def check_feature_flags(config: ReleaseConfig) -> dict[str, Any]:
                 "enabled": bool(flag.enabled) if flag else None,
                 "active": active,
                 "high_risk": bool(flag.high_risk) if flag else None,
+                "scope": flag.scope.value if flag else None,
             }
         )
-        if active:
+        # Context-free queries correctly deny scoped eligibility. This proof
+        # must still detect a stored enabled flag, even with no request scope.
+        if flag and flag.enabled:
             enabled_flags.append(key)
 
     # Proof 2: enabled-without-dual-approval must be rejected at load time.
@@ -216,7 +87,8 @@ def check_feature_flags(config: ReleaseConfig) -> dict[str, Any]:
     enable_rejections = {}
     for key in EXPECTED_FLAG_KEYS:
         try:
-            registry.enable(key, approvals=frozenset({"solo-approver"}))
+            registry.enable(key, approvals=frozenset({"solo-approver"}),
+                            configuration_version=registry.get(key).configuration_version)
             enable_rejections[key] = False
         except PermissionError:
             enable_rejections[key] = True

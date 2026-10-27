@@ -846,6 +846,65 @@ def handle_store_ops_materialize(job: JobRecord, persistence: PersistenceBundle)
     )
 
 
+def handle_identity_execution(job: JobRecord, persistence: PersistenceBundle) -> None:
+    from apps.api.oday_api.security.dependencies import default_boundary
+    from modules.listing.application.identity_delivery import run_identity_delivery
+
+    run_identity_delivery(job, persistence.canonical_identity_graph(identity_service_boundary=default_boundary))
+
+
+def handle_native_intake_start(job: JobRecord, persistence: PersistenceBundle) -> None:
+    from modules.listing.application.native_intake_start import run_native_intake_start_delivery
+
+    run_native_intake_start_delivery(job, persistence.canonical_intake_start())
+
+
+def handle_native_intake_identity(job: JobRecord, persistence: PersistenceBundle) -> None:
+    from modules.listing.application.native_intake_identity import (
+        run_native_intake_identity_delivery,
+    )
+
+    run_native_intake_identity_delivery(job, persistence.canonical_intake_identity())
+
+
+def handle_native_intake_source_policy_recheck(job: JobRecord, persistence: PersistenceBundle) -> None:
+    from modules.listing.application.native_intake_source_policy_recheck import (
+        run_native_intake_source_policy_recheck_delivery,
+    )
+
+    run_native_intake_source_policy_recheck_delivery(job, persistence.canonical_intake_source_policy_recheck())
+
+
+def handle_native_intake_retrieval(job: JobRecord, persistence: PersistenceBundle) -> None:
+    from modules.listing.application.native_intake_retrieval import (
+        run_native_intake_retrieval_delivery,
+    )
+
+    run_native_intake_retrieval_delivery(job, persistence.canonical_intake_retrieval())
+
+
+def handle_native_intake_assisted_entry(job: JobRecord, persistence: PersistenceBundle) -> None:
+    from modules.listing.application.native_intake_assisted_entry import (
+        run_native_intake_assisted_entry_delivery,
+    )
+
+    run_native_intake_assisted_entry_delivery(job, persistence.canonical_intake_assisted_entry())
+
+
+def handle_native_intake_parser(job: JobRecord, persistence: PersistenceBundle) -> None:
+    from modules.listing.application.native_intake_parser import run_native_intake_parser_delivery
+
+    run_native_intake_parser_delivery(job, persistence.canonical_intake_parser())
+
+
+def handle_native_intake_source_policy(job: JobRecord, persistence: PersistenceBundle) -> None:
+    from modules.listing.application.native_intake_source_policy import (
+        run_native_intake_source_policy_delivery,
+    )
+
+    run_native_intake_source_policy_delivery(job, persistence.canonical_intake_source_policy())
+
+
 def build_default_registry() -> JobRegistry:
     """The registry the runtime worker uses by default."""
     from apps.worker.assisted_listing_intake.worker import (
@@ -869,15 +928,14 @@ def build_default_registry() -> JobRegistry:
     from modules.sitescore.application.score_delivery import SITESCORE_EXECUTION_JOB_TYPE
     from shared.audit.canonical_delivery import JOB_TYPE as CANONICAL_AUDIT_JOB_TYPE
     from shared.audit.durable_delivery import JOB_TYPE as DURABLE_AUDIT_JOB_TYPE
+    from shared.infrastructure.persistence.listing_search_delivery import (
+        JOB_TYPE as LISTING_SEARCH_JOB_TYPE,
+    )
     from shared.infrastructure.persistence.netplan_outcomes import (
         DUE_JOB_TYPE as NETPLAN_OUTCOME_DUE_JOB_TYPE,
     )
 
     registry = JobRegistry()
-    from shared.infrastructure.persistence.listing_search_delivery import (
-        JOB_TYPE as LISTING_SEARCH_JOB_TYPE,
-    )
-
     registry.register(FORECAST_JOB_TYPE, handle_forecast)
     registry.register(LISTING_SEARCH_JOB_TYPE, handle_listing_search_match)
     registry.register(EXTERNAL_FETCH_JOB_TYPE, handle_external_fetch)
@@ -889,7 +947,16 @@ def build_default_registry() -> JobRegistry:
     registry.register(CANONICAL_AUDIT_JOB_TYPE, handle_canonical_audit_delivery)
     registry.register(DURABLE_AUDIT_JOB_TYPE, handle_durable_audit_delivery)
     registry.register("retained-evidence-delivery", handle_retained_evidence_delivery)
+
     registry.register(STORE_OPS_MATERIALIZE_JOB_TYPE, handle_store_ops_materialize)
+    registry.register("identity-execution", handle_identity_execution)
+    registry.register("native-intake-start", handle_native_intake_start)
+    registry.register("native-intake-identity", handle_native_intake_identity)
+    registry.register("native-intake-source-policy", handle_native_intake_source_policy)
+    registry.register("native-intake-source-policy-recheck", handle_native_intake_source_policy_recheck)
+    registry.register("native-intake-retrieval", handle_native_intake_retrieval)
+    registry.register("native-intake-assisted-entry", handle_native_intake_assisted_entry)
+    registry.register("native-intake-parser", handle_native_intake_parser)
     registry.register(NETPLAN_OUTCOME_DUE_JOB_TYPE, handle_netplan_outcome_due)
     return registry
 

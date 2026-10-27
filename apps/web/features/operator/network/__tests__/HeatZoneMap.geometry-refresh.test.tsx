@@ -151,7 +151,8 @@ describe("map viewport follows a real geometry replacement", () => {
     const features = maps.instances[0].getSource("odp-local-heatzones").data.features;
     const ring = cellToBoundary(valid.h3, true);
     expect(features.map((feature: any) => feature.properties.id)).toEqual([valid.id]);
-    expect(features[0].geometry.coordinates).toEqual([[...ring, ring[0]]]);
+    expect(features[0].geometry.coordinates).toEqual([ring]);
+    expect(ring[0]).toEqual(ring[ring.length - 1]);
     expect(maps.layers.find((layer) => layer.props.id === "odp-heatzone-labels").props.data).toEqual([valid]);
     expect(screen.getByTestId("map-geometry-unavailable")).toBeInTheDocument();
   });

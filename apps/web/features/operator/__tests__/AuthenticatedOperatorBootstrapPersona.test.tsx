@@ -1,8 +1,9 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OperatorConsole, operatorBootstrapRetryPolicy } from "../OperatorConsole";
 import type { NetworkFindAreasWorkspaceProps } from "../NetworkFindAreasWorkspace";
+import "../NetworkFindAreasWorkspace";
 
 const confirmedRefreshControl = vi.hoisted(() => ({ enabled: false, invoked: 0 }));
 let canonicalHistoryBefore: { url: string; state: unknown } | null = null;
@@ -68,9 +69,8 @@ function failingRead<T>() {
   return { promise, reject };
 }
 const delays = [...operatorBootstrapRetryPolicy.delaysMs];
-// Resolve the conditional lazy module as a fixture prerequisite, within the
-// original default hook deadline; no read/assertion timeout is increased.
-beforeAll(async () => { await import("../NetworkFindAreasWorkspace"); });
+// Resolve the real module during fixture collection, as other routing controls do.
+// Read/assertion deadlines remain unchanged; fresh-browser startup is a separate gate.
 beforeEach(() => { window.sessionStorage.clear(); confirmedRefreshControl.enabled = false; confirmedRefreshControl.invoked = 0; operatorBootstrapRetryPolicy.delaysMs = delays.map(() => 0); vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true"); });
 afterEach(() => {
   if (confirmedRefreshControl.enabled) {
@@ -90,6 +90,7 @@ function mount(config: Config = {}) {
   let actor = config.actor ?? A;
   let role = config.role ?? "expansion-manager";
   let boots = 0;
+  const bootstrapObservations: { subject: string; roleHint: string | null; serverRole: string }[] = [];
   let sessionOverride = config.session;
   let sessionStatus = config.sessionStatus ?? 200;
   if (config.storedRole) window.sessionStorage.setItem("oday.operator.role", config.storedRole);
@@ -98,6 +99,7 @@ function mount(config: Config = {}) {
     if (url === "/auth/session") return json(sessionOverride ?? { subject: actor, expiresAt: Math.floor(Date.now() / 1000) + 3600 }, sessionStatus);
     if (url === "/api/v1/operator/bootstrap") {
       boots += 1;
+      bootstrapObservations.push({ subject: actor, roleHint: new Headers(init?.headers).get("X-Operator-Role"), serverRole: role });
       if (boots === 1 && config.firstBootstrap) return config.firstBootstrap;
       if (boots === 2 && config.refresh) return config.refresh;
       const hint = new Headers(init?.headers).get("X-Operator-Role");
@@ -124,7 +126,7 @@ function mount(config: Config = {}) {
     window.history.replaceState(null, "", "/operator?ws=network&tab=areas");
   }
   const view = render(<OperatorConsole searchParams={{ ws: config.workspace ?? "today" }} />);
-  return { fetch, view, setAccount: (next: string, nextRole = role) => { actor = next; role = nextRole; }, setSession: (value: unknown, status = 200) => { sessionOverride = value; sessionStatus = status; }, boots: () => boots };
+  return { fetch, view, bootstrapObservations, setAccount: (next: string, nextRole = role) => { actor = next; role = nextRole; }, setSession: (value: unknown, status = 200) => { sessionOverride = value; sessionStatus = status; }, boots: () => boots };
 }
 function bootstrapCalls(fetch: ReturnType<typeof vi.fn>) { return fetch.mock.calls.filter(([url]) => String(url) === "/api/v1/operator/bootstrap"); }
 
@@ -242,17 +244,20 @@ describe("authenticated bootstrap persona ownership", () => {
     expect(screen.queryByText("Account A current row")).not.toBeInTheDocument();
     expect(new Headers(bootstrapCalls(fetch).at(-1)?.[1]?.headers).has("X-Operator-Role")).toBe(false);
   });
-  it.each(["HTTP", "JSON"])("cookie-only rotation rejects late A Network binding %s without any UI reload", async (boundary) => {
+  it.each(["HTTP", "JSON", "ERROR_JSON"])("cookie-only rotation rejects late A Network binding %s without any UI reload", async (boundary) => {
     const pending = deferred<Response>(); const body = deferred<unknown>(); const reading = deferred<boolean>();
-    const late = json({}); late.json = () => { reading.resolve(true); return body.promise; };
+    const late = json({}, boundary === "ERROR_JSON" ? 403 : 200);
+    const deferredBody = () => { reading.resolve(true); return body.promise; };
+    late.json = deferredBody;
+    if (boundary === "ERROR_JSON") { const clone = json({}, 403); clone.json = deferredBody; late.clone = () => clone; }
     const { setAccount, fetch } = mount({ workspace: "network", canonicalNetwork: (actor) =>
       actor === A ? boundary === "HTTP" ? pending.promise : late : json(canonicalNetworkSnapshot("Current B binding")) });
     await screen.findByRole("button", { name: /展店經理/ });
-    if (boundary === "JSON") await reading.promise;
+    if (boundary !== "HTTP") await reading.promise;
     else await waitFor(() => expect(fetch.mock.calls.some(([url]) => new URL(String(url), window.location.origin).pathname === "/api/v1/operator/network-listings")).toBe(true));
     setAccount(B);
     await act(async () => { if (boundary === "HTTP") pending.resolve(json(canonicalNetworkSnapshot("Old A binding")));
-      else body.resolve(canonicalNetworkSnapshot("Old A binding")); });
+      else body.resolve(boundary === "ERROR_JSON" ? { error: { code: "forbidden", message: "Old A binding", correlation_id: "unit-old-A" } } : canonicalNetworkSnapshot("Old A binding")); });
     await waitFor(() => expect(bootstrapCalls(fetch).length).toBeGreaterThan(1));
     expect(new Headers(bootstrapCalls(fetch).at(-1)?.[1]?.headers).has("X-Operator-Role")).toBe(false);
     expect(screen.queryByText("Old A binding")).not.toBeInTheDocument();
@@ -299,7 +304,7 @@ describe("authenticated bootstrap persona ownership", () => {
   it.each(["HTTP", "JSON"])("cookie-only rotation rejects late A post-decision refresh %s without UI reload", async (boundary) => {
     const pending = deferred<Response>(); const body = deferred<unknown>(); const reading = deferred<boolean>();
     const late = json({}); late.json = () => { reading.resolve(true); return body.promise; };
-    const { setAccount, fetch } = mount({ decision: true, refresh: boundary === "HTTP" ? pending.promise : late });
+    const { setAccount, fetch, bootstrapObservations } = mount({ decision: true, refresh: boundary === "HTTP" ? pending.promise : late });
     await screen.findByText("Account A current row"); await invokeConfirmedNetworkRefreshControl();
     if (boundary === "JSON") await reading.promise;
     else await waitFor(() => expect(bootstrapCalls(fetch)).toHaveLength(2));
@@ -309,7 +314,12 @@ describe("authenticated bootstrap persona ownership", () => {
     await screen.findByText("Account B current row");
     expect(screen.queryByText("Late refreshed A current row")).not.toBeInTheDocument();
     expect(screen.queryByText("Account A current row")).not.toBeInTheDocument();
-    expect(new Headers(bootstrapCalls(fetch).at(-1)?.[1]?.headers).has("X-Operator-Role")).toBe(false);
+    const recoveryRequest = bootstrapObservations.find((request) => request.subject === B);
+    expect(recoveryRequest).toBeDefined();
+    expect(recoveryRequest?.roleHint).toBeNull();
+    for (const request of bootstrapObservations.filter((request) => request.subject === B)) {
+      if (request.roleHint !== null) expect(request.roleHint).toBe(request.serverRole);
+    }
   });
 
   it("a current same-account post-decision refresh still applies validated API data", async () => {

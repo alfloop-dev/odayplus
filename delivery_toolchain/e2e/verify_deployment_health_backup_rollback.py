@@ -164,6 +164,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "compose_file": COMPOSE_FILE,
         "diagnostics_dir": str(diagnostics_dir),
     }
+    primary_failure = False
 
     try:
         initial_cleanup = run(
@@ -226,6 +227,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             secret_values=env_secrets,
         )
         restore = restore_backup(compose, env, timeout=DEFAULT_RESTORE_TIMEOUT, secret_values=env_secrets)
+        report["rollback"] = {
+            "probe_store_id": probe_store_id,
+            "probe_case_id": probe_case["case_id"],
+            "restore": restore,
+        }
+        for name, proof in (("backup", backup), ("restore", restore)):
+            digest = proof.get("sha256")
+            size = proof.get("size_bytes")
+            if (
+                not isinstance(digest, str)
+                or len(digest) != 64
+                or any(char not in "0123456789abcdef" for char in digest)
+                or type(size) is not int
+                or size <= 0
+            ):
+                raise RuntimeError(f"backup/restore integrity: invalid {name} SHA-256 or size")
+        if backup["sha256"] != restore["sha256"] or backup["size_bytes"] != restore["size_bytes"]:
+            raise RuntimeError("backup/restore integrity: restored file differs from the recorded backup")
+        report["rollback"]["backup_matches_restore"] = True
         run(
             compose + ["up", "-d", "api", "web", "worker"],
             env=env,
@@ -241,48 +261,46 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not has_store(restored_cases, "e2e-store-taipei-001"):
             raise RuntimeError("seed AVM case is missing after restore")
 
-        report["rollback"] = {
-            "probe_store_id": probe_store_id,
-            "probe_case_id": probe_case["case_id"],
+        report["rollback"].update({
             "case_count_before_probe": len(before_cases),
             "case_count_after_probe": len(after_probe_cases),
             "case_count_after_restore": len(restored_cases),
             "probe_removed": True,
             "seed_case_preserved": True,
-            "restore": restore,
-        }
+        })
         report["unsupported_or_documented"] = {
             "model_artifact_rollback": "not mutated by this deployment drill; Learning Hub alias rollback is covered by PV-007 product E2E",
             "policy_rollback": "policy files are immutable in the image for this E2E stack; image rollback is represented by redeploying the previous image tag",
             "remote_staging_rollout": "not configured because ODP_STAGING_DEPLOY_URL/host variables are placeholders",
         }
         report["result"] = "passed"
-        final_report = write_report(diagnostics_dir, report, secret_values=env_secrets)
-        print(json.dumps(final_report, indent=2, sort_keys=True))
-        return 0
-    except Exception as exc:
+    except (Exception, KeyboardInterrupt) as exc:
+        primary_failure = True
         report["result"] = "failed"
-        report["error"] = sanitize_text(str(exc), secret_values=env_secrets)
-        write_report(diagnostics_dir, report, secret_values=env_secrets)
+        report["error"] = sanitize_text(str(exc) or type(exc).__name__, secret_values=env_secrets)
         raise
     finally:
-        run(
-            compose + ["ps"],
-            env=env,
-            capture=True,
-            check=False,
-            timeout=DEFAULT_DIAGNOSTICS_TIMEOUT,
-            secret_values=env_secrets,
-        ).write_to(diagnostics_dir / "compose-ps.txt")
-        run(
-            compose + ["logs", "--no-color", "--tail=200"],
-            env=env,
-            capture=True,
-            check=False,
-            timeout=DEFAULT_DIAGNOSTICS_TIMEOUT,
-            secret_values=env_secrets,
-        ).write_to(diagnostics_dir / "compose-tail.log")
-        if not args.keep_stack and os.environ.get("ODP_E2E_KEEP_STACK") != "1":
+        finalization_errors: list[str] = []
+        for arguments, filename in (
+            (["ps"], "compose-ps.txt"),
+            (["logs", "--no-color", "--tail=200"], "compose-tail.log"),
+        ):
+            try:
+                run(
+                    compose + arguments,
+                    env=env,
+                    capture=True,
+                    check=False,
+                    timeout=DEFAULT_DIAGNOSTICS_TIMEOUT,
+                    secret_values=env_secrets,
+                ).write_to(diagnostics_dir / filename)
+            except OSError as exc:
+                error = sanitize_text(f"diagnostic {filename} write failed: {exc}", secret_values=env_secrets)
+                report.setdefault("diagnostic_errors", []).append(error)
+                finalization_errors.append(error)
+        if args.keep_stack or os.environ.get("ODP_E2E_KEEP_STACK") == "1":
+            report["cleanup"] = {"result": "skipped", "reason": "keep-stack"}
+        else:
             final_cleanup = run(
                 compose + ["down", "--remove-orphans", "--volumes"],
                 env=env,
@@ -290,7 +308,42 @@ def main(argv: Sequence[str] | None = None) -> int:
                 timeout=args.cleanup_timeout,
                 secret_values=env_secrets,
             )
-            final_cleanup.write_to(diagnostics_dir / "compose-cleanup.txt")
+            cleanup_errors: list[str] = []
+            if final_cleanup.returncode != 0 or final_cleanup.timed_out:
+                cleanup_errors.append(sanitize_text(
+                    f"final cleanup failed: {final_cleanup.diagnostic_text()}",
+                    secret_values=env_secrets,
+                ))
+            try:
+                final_cleanup.write_to(diagnostics_dir / "compose-cleanup.txt")
+            except OSError as exc:
+                cleanup_errors.append(sanitize_text(f"final cleanup diagnostic write failed: {exc}", secret_values=env_secrets))
+            report["cleanup"] = {
+                "result": "failed" if cleanup_errors else "passed",
+                "returncode": final_cleanup.returncode,
+                "timed_out": final_cleanup.timed_out,
+            }
+            if cleanup_errors:
+                report["cleanup"]["error"] = "; ".join(cleanup_errors)
+                finalization_errors.extend(cleanup_errors)
+        if finalization_errors and report["result"] == "passed":
+            report["result"] = "failed"
+            report["error"] = finalization_errors[0]
+        try:
+            final_report = write_report(diagnostics_dir, report, secret_values=env_secrets)
+        except OSError as exc:
+            error = sanitize_text(f"DR report write failed: {exc}", secret_values=env_secrets)
+            if not primary_failure:
+                raise RuntimeError(error) from exc
+            try:
+                print(error, file=sys.stderr)
+            except OSError:
+                pass  # Preserve the primary failure even if its diagnostics cannot be written.
+
+    if finalization_errors:
+        raise RuntimeError(report["error"])
+    print(json.dumps(final_report, indent=2, sort_keys=True))
+    return 0
 
 
 class CommandResult:

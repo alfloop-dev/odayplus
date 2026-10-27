@@ -248,6 +248,86 @@ def _snapshot(store):
     )
 
 
+def _initial_request(journey, *, actor=MANAGER):
+    client, store, _, _, _, _ = journey
+    response = client.post(
+        "/api/v1/intakes/url",
+        json={"original_url": "https://example.invalid/initial-assignment",
+              "scope": {"tenant_id": TENANT}},
+        headers={**_headers(actor), "Idempotency-Key": "synthetic-initial-" + str(uuid4())},
+    )
+    assert response.status_code == 202, response.text
+    intake_id = response.json()["intake_id"]
+    body = {"owner_subject_id": TARGET, "owner_role": "expansion-staff",
+            "due_at": "2026-10-13T02:30:00Z", "reason": "Synthetic initial routing"}
+    headers = {**_headers(actor), "Idempotency-Key": "synthetic-assignment-" + str(uuid4()),
+               "If-Match": f'W/"{store.intakes[intake_id]["version"]}"'}
+    return intake_id, body, headers
+
+
+def test_initial_assignment_records_the_domain_transition_with_original_identity(journey):
+    _, store, intake_id, assignment_id, _, _ = journey
+    assignment = store.assignments[assignment_id]
+    history = assignment.get("transition_history", [])
+    assert len(history) == 1
+    assert {key: history[0][key] for key in
+            ("from_status", "to_status", "version_after", "actor_subject_id", "reason")} == {
+        "from_status": "UNASSIGNED", "to_status": "ASSIGNED", "version_after": 2,
+        "actor_subject_id": MANAGER, "reason": "Synthetic initial routing",
+    }
+    assert store.intakes[intake_id]["assignment_id"] == assignment_id
+    assert assignment["version"] == 2
+    assert store.workflow_audits[assignment["audit_event_id"]]["action"] == "assignment.assign"
+
+
+def test_staff_cannot_directly_assign_its_own_unassigned_intake(journey):
+    client, store, _, _, _, _ = journey
+    intake_id, body, headers = _initial_request(journey, actor=TARGET)
+    before = _snapshot(store)
+    response = client.put(f"/api/v1/intakes/{intake_id}/assignment", json=body, headers=headers)
+    assert response.status_code == 403, response.text
+    assert _snapshot(store) == before
+
+
+@pytest.mark.parametrize("revocation", ["target_disabled", "target_role", "actor_disabled", "policy_approval"])
+def test_initial_assignment_replay_rechecks_current_actor_target_and_policy(journey, revocation):
+    from tests.intake_registry_fixture import APPROVER
+
+    client, store, _, _, identities, _ = journey
+    intake_id, body, headers = _initial_request(journey)
+    path = f"/api/v1/intakes/{intake_id}/assignment"
+    first = client.put(path, json=body, headers=headers)
+    assert first.status_code == 200, first.text
+    before = _snapshot(store)
+    replay = client.put(path, json=body, headers=headers)
+    assert replay.status_code == 200 and replay.json() == first.json(), replay.text
+    assert replay.headers["etag"] == first.headers["etag"]
+    assert _snapshot(store) == before
+    if revocation == "target_role":
+        identities.set_account_roles(TARGET, {Role.SITE_REVIEWER})
+    else:
+        actor = {"target_disabled": TARGET, "actor_disabled": MANAGER,
+                 "policy_approval": APPROVER}[revocation]
+        identities.save_account(replace(identities.find_account_by_id(actor), status="disabled"))
+    rejected = client.put(path, json=body, headers=headers)
+    assert rejected.status_code == (503 if revocation == "policy_approval" else 403), rejected.text
+    assert _snapshot(store) == before
+
+
+def test_initial_assignment_audit_failure_rolls_back_all_workflow_and_replay(journey, monkeypatch):
+    client, store, _, _, _, _ = journey
+    intake_id, body, headers = _initial_request(journey)
+    before = _snapshot(store)
+
+    def fail_audit(*args, **kwargs):
+        raise RuntimeError("Synthetic initial assignment audit unavailable")
+
+    monkeypatch.setattr(intake_assignment_commands, "record_workflow_change", fail_audit)
+    with pytest.raises(RuntimeError, match="Synthetic initial assignment audit unavailable"):
+        client.put(f"/api/v1/intakes/{intake_id}/assignment", json=body, headers=headers)
+    assert _snapshot(store) == before
+
+
 def test_claim_transfer_accept_complete_and_sla_are_audited_atomic_and_replayable(journey):
     client, store, iid, aid, _, _ = journey
     r = _action(journey, "claim", key="synthetic-original-claim")
@@ -276,6 +356,8 @@ def test_claim_transfer_accept_complete_and_sla_are_audited_atomic_and_replayabl
     accepted = _action(journey, "claim", actor=TARGET)
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["version"] == transferred.json()["version"] + 2
+    assert store.assignments[aid]["claimed_by"] == TARGET
+    assert store.assignments[aid]["claimed_at"] == AT.isoformat().replace("+00:00", "Z")
     snapshot = _snapshot(store)
     incomplete = _action(journey, "complete", actor=TARGET)
     assert incomplete.status_code == 409 and "WORK_INCOMPLETE" in incomplete.text
@@ -314,6 +396,35 @@ def test_claim_transfer_accept_complete_and_sla_are_audited_atomic_and_replayabl
         == r.json()
     )
     assert _snapshot(store) == snapshot
+
+
+def test_completed_assignment_rejects_reassignment_as_state_conflict_without_mutations(journey):
+    client, store, iid, aid, _, _ = journey
+    assert _action(journey, "claim").status_code == 200
+    _cancel(journey)
+    completed = _action(journey, "complete")
+    assert completed.status_code == 200, completed.text
+    assert store.assignments[aid]["status"] == "COMPLETED"
+    before = _snapshot(store)
+
+    response = client.put(
+        f"/api/v1/intakes/{iid}/assignment",
+        json={
+            "owner_subject_id": OWNER,
+            "owner_role": "expansion-staff",
+            "due_at": "2026-10-13T02:30:00Z",
+            "reason": "Synthetic attempt to reassign completed work",
+        },
+        headers={
+            **_headers(),
+            "Idempotency-Key": "synthetic-completed-reassignment",
+            "If-Match": f'W/"{store.intakes[iid]["version"]}"',
+        },
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "WORKFLOW_STATE_DENIED"
+    assert _snapshot(store) == before
 
 
 @pytest.mark.parametrize(

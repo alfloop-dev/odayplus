@@ -10,6 +10,7 @@ from uuid import uuid4
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from psycopg import errors
@@ -102,8 +103,61 @@ def _bundle(database, monkeypatch):
     return build_persistence(mode="postgresql")
 
 
+def test_native_submission_uses_the_existing_sql_workflow_policy_and_current_approver(intake_blank_db, monkeypatch):
+    from apps.api.app.routes import canonical_intakes
+    from shared.audit import InMemoryAuditLog
+    from shared.auth import Principal, Scope
+    from tests.intake_workflow_fixture import seed_synthetic_intake_read_flag
+
+    db = intake_blank_db
+    _upgrade(db, "head")
+    apply_upgrade_to_database(db.url())
+    with db.connect() as conn:
+        _seed_identities(conn)
+        _insert_policy(conn, _workflow_row())
+        _insert_policy(conn, _calendar_row())
+        _insert_policy(conn, _audit_retention_row())
+    bundle = _bundle(db, monkeypatch)
+    try:
+        seed_synthetic_intake_read_flag(bundle.feature_flag_registry, TENANT)
+        monkeypatch.setattr(canonical_intakes, "principal_from_headers", lambda _: Principal(
+            MANAGER, frozenset({Role.SITE_REVIEWER}), Scope(tenant_id=TENANT),
+        ))
+        app = FastAPI()
+        app.state.persistence_bundle, app.state.audit_log = bundle, InMemoryAuditLog()
+        app.include_router(listings.create_assisted_intake_router(bundle.assisted_intake_store), prefix="/api/v1")
+        with TestClient(app) as client:
+            body = {"intake_method": "MANUAL", "scope": {}, "reason": "Explicit synthetic SQL native routing"}
+            created = client.post("/api/v1/canonical-intakes", json=body,
+                headers={"Idempotency-Key": "synthetic-native-real-registry-001"})
+            assert created.status_code == 201, created.text
+            iid = created.json()["intake_id"]
+            selected = client.get("/api/v1/canonical-intakes/" + iid)
+            assert selected.status_code == 200, selected.text
+            workflow = selected.json()["workflow"]
+            assert workflow["policy_version"] == _workflow_row().policy_version_id
+            assert workflow["calendar_version"] == _calendar_row().policy_version_id
+            assert workflow["queue_key"] == _workflow_row().parameters["queue_key"]
+            assert workflow["owner_subject_id"] is None
+            bundle.assisted_intake_store.refresh(TENANT)
+            assert iid not in bundle.assisted_intake_store.intakes
+            tables = ("intake.intakes", "workflow.assignments", "workflow.sla_instances",
+                      "workflow.assignment_transitions", "workflow.sla_transitions", "audit.audit_events", "workflow.outbox_events")
+            with db.connect() as conn:
+                conn.execute("UPDATE identity.accounts SET status='disabled' WHERE account_id=%s", (APPROVER,))
+                before = [conn.execute("SELECT count(*) FROM " + table).fetchone()[0] for table in tables]
+            rejected = client.post("/api/v1/canonical-intakes", json=body,
+                headers={"Idempotency-Key": "synthetic-native-real-registry-002"})
+            assert rejected.status_code == 503, rejected.text
+            with db.connect() as conn:
+                assert [conn.execute("SELECT count(*) FROM " + table).fetchone()[0] for table in tables] == before
+    finally:
+        bundle.engine.close()
+
+
 def test_expand_migration_preserves_registry_rows_and_rejects_unknown_kind(intake_blank_db):
     db = intake_blank_db
+    migration_head = ScriptDirectory.from_config(Config("infra/db/migrations/alembic.ini")).get_current_head()
     _upgrade(db, "0022")
     with db.connect() as conn:
         _seed_identities(conn)
@@ -116,7 +170,7 @@ def test_expand_migration_preserves_registry_rows_and_rejects_unknown_kind(intak
     with db.connect() as conn:
         assert (
             conn.execute("SELECT version_num FROM public.oday_plus_alembic_version").fetchone()[0]
-            == "0024"
+            == migration_head
         )
         assert (
             conn.execute(
@@ -430,19 +484,21 @@ def test_assignment_transitions_and_sla_completion_are_durable_atomic_and_replay
         )
         assert submitted.status_code == 202, submitted.text
         iid = submitted.json()["intake_id"]
-        assigned = client.put(
-            f"/api/v1/intakes/{iid}/assignment",
-            json={
+        assignment_body = {
                 "owner_subject_id": OWNER,
                 "owner_role": "expansion-staff",
                 "due_at": "2026-10-13T02:30:00Z",
                 "reason": "Synthetic SQL assignment",
-            },
-            headers={
+            }
+        assignment_headers = {
                 **headers(MANAGER),
                 "Idempotency-Key": "synthetic-pg-assign",
                 "If-Match": 'W/"1"',
-            },
+            }
+        assigned = client.put(
+            f"/api/v1/intakes/{iid}/assignment",
+            json=assignment_body,
+            headers=assignment_headers,
         )
         assert assigned.status_code == 200, assigned.text
         aid = assigned.json()["assignment_id"]
@@ -465,6 +521,29 @@ def test_assignment_transitions_and_sla_completion_are_durable_atomic_and_replay
         store.refresh(TENANT)
         assert store.assignments[aid]["status"] == "CLAIMED"
         assert claimed.json()["audit_event_id"] in store.workflow_audits
+        if failure is None:
+            # A restart and later claim retain the original receipt, while
+            # current SQL target authorization still governs access to it.
+            fields = ("intakes", "assignments", "slas", "workflow_audits", "workflow_outbox", "replays")
+            before_replay = deepcopy(tuple(getattr(store, field) for field in fields))
+            replayed = client.put(
+                f"/api/v1/intakes/{iid}/assignment",
+                json=assignment_body, headers=assignment_headers,
+            )
+            assert replayed.status_code == 200, replayed.text
+            assert replayed.json() == assigned.json()
+            assert replayed.headers["etag"] == assigned.headers["etag"]
+            with db.connect() as conn:
+                conn.execute("UPDATE identity.accounts SET status='disabled' WHERE account_id=%s", (OWNER,))
+            revoked_replay = client.put(
+                f"/api/v1/intakes/{iid}/assignment",
+                json=assignment_body, headers=assignment_headers,
+            )
+            assert revoked_replay.status_code == 403, revoked_replay.text
+            store.refresh(TENANT)
+            assert tuple(getattr(store, field) for field in fields) == before_replay
+            with db.connect() as conn:
+                conn.execute("UPDATE identity.accounts SET status='active' WHERE account_id=%s", (OWNER,))
 
         def directory():
             return client.get(

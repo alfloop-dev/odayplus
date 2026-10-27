@@ -1,5 +1,7 @@
 "use client";
 
+import { recordedMapFreshness } from "./heatZoneRecordedEvidence";
+
 import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import type { OperatorRoleId } from "../navigation";
@@ -15,8 +17,6 @@ import {
   operatorCandidateToMapSite,
   operatorHeatZoneToMapZone,
   operatorListingToMapListing,
-  operatorRecordedHeatZoneToMapZone,
-  operatorRecordedMapFreshness,
 } from "./heatZoneMapAdapters";
 import { GeocoderSearchPanel } from "./geocoder";
 import type { GeocodeAuditEvent } from "./geocoder";
@@ -97,16 +97,17 @@ export function FindAreasPanel({
   selectedZone,
   viewModel,
 }: FindAreasPanelProps) {
+  const fixtureMap = fixturesAllowed && !heatZones.some((zone) => zone.recordedMap);
   const mapZones = useMemo<MapHeatZone[]>(
-    () => fixturesAllowed ? heatZones.map(operatorHeatZoneToMapZone)
+    () => fixturesAllowed ? heatZones.map((zone) => operatorHeatZoneToMapZone(zone, fixtureMap))
       : heatZones.flatMap((zone) => {
-        const recorded = operatorRecordedHeatZoneToMapZone(zone);
+        const recorded = zone.recordedMap;
         return recorded ? [recorded] : [];
       }),
     [fixturesAllowed, heatZones],
   );
-  const mapFreshness = useMemo(() => fixturesAllowed ? OPERATOR_MAP_FRESHNESS
-    : operatorRecordedMapFreshness(mapZones), [fixturesAllowed, mapZones]);
+  const mapFreshness = useMemo(() => fixtureMap ? OPERATOR_MAP_FRESHNESS
+    : recordedMapFreshness(mapZones), [fixtureMap, mapZones]);
   const mapListings = useMemo<MapListing[]>(
     () => listings.map((l, i) => operatorListingToMapListing(l, heatZones, i, fixturesAllowed)),
     [listings, heatZones, fixturesAllowed],
@@ -117,11 +118,11 @@ export function FindAreasPanel({
   );
   const lensScores = useMemo<HeatZoneLensScore[]>(
     () =>
-      viewModel.zones.flatMap((zone) => zone.lensPoints === null ? [] : [{
+      viewModel.zones.map((zone) => ({
         id: zone.id,
         label: zone.label.replace(ZONE_NAME_SUFFIX, ""),
         points: zone.lensPoints,
-      }]),
+      })),
     [viewModel.zones],
   );
   const selectedMapZoneId = selectedZone?.id ?? heatZones[0]?.id ?? "";
@@ -194,7 +195,7 @@ export function FindAreasPanel({
 
       <div className={styles.center}>
         <div className={styles.mapFrame} data-testid="find-areas-map-frame">
-          {!fixturesAllowed && heatZones.some((zone) => !zone.mapEvidence) ? (
+          {!fixturesAllowed && heatZones.some((zone) => !zone.recordedMap || zone.recordedMap.geometry === null || zone.recordedMap.centroid === null) ? (
             <p data-testid="find-areas-map-geometry-unavailable" role="status">
               地圖 geometry 尚未可用；列表仍可用於審查。
             </p>
@@ -202,7 +203,7 @@ export function FindAreasPanel({
           <HeatZoneMap
             caption={`HeatZone Lens：${lensName}`}
             candidates={mapCandidates}
-            dataSource={fixturesAllowed ? "fixture" : "api"}
+            dataSource={fixtureMap ? "fixture" : "api"}
             freshness={mapFreshness}
             layerQuery={FIND_AREAS_MAP_LAYERS}
             lensScores={lensScores}
@@ -274,7 +275,7 @@ export function FindAreasPanel({
                   aria-label={`${lensName} ${selectedZone.lensPoints === null ? "未評估" : `${selectedZone.lensPoints} 分`}`}
                   className={selectedZone.lensPoints === null ? undefined : styles.bigScore}
                   data-testid="find-areas-zone-score"
-                  data-tier={selectedZone.lensTier ?? undefined}
+                  data-tier={selectedZone.lensTier ?? "unknown"}
                 >
                   {selectedZone.lensPoints ?? "未評估"}
                 </span>

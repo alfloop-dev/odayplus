@@ -13,6 +13,7 @@ class IntakeStage(StrEnum):
     CHECKING_SOURCE_POLICY = "CHECKING_SOURCE_POLICY"
     RETRIEVING = "RETRIEVING"
     AWAITING_ASSISTED_ENTRY = "AWAITING_ASSISTED_ENTRY"
+    AWAITING_SOURCE_AUTHORIZATION = "AWAITING_SOURCE_AUTHORIZATION"
     PARSING = "PARSING"
     MATCHING = "MATCHING"
     NEEDS_REVIEW = "NEEDS_REVIEW"
@@ -110,6 +111,7 @@ class DenialCode(StrEnum):
     SELF_REVIEW_DENIED = "SELF_REVIEW_DENIED"
     RISK_ACKNOWLEDGEMENT_REQUIRED = "RISK_ACKNOWLEDGEMENT_REQUIRED"
     SOURCE_POLICY_DENIED = "SOURCE_POLICY_DENIED"
+    SOURCE_POLICY_RECHECK_NOT_VERIFIED = "SOURCE_POLICY_RECHECK_NOT_VERIFIED"
     LEGAL_HOLD_CONFLICT = "LEGAL_HOLD_CONFLICT"
     RESIDENCY_DENIED = "RESIDENCY_DENIED"
     EXPORT_APPROVAL_REQUIRED = "EXPORT_APPROVAL_REQUIRED"
@@ -145,6 +147,8 @@ class TransitionContext:
     second_actor: Actor | None = None
     purpose: str | None = None
     current_time: datetime = field(default_factory=lambda: datetime.now(UTC))
+    source_policy_recheck_verified: bool = False
+    identity_confirmation_verified: bool = False
 
 
 # Aggregates
@@ -155,7 +159,7 @@ class IntakeAggregate:
     stage: IntakeStage
     version: int
     created_by: str
-    source_id: str
+    source_id: str | None  # Native SUBMITTED Intakes have not resolved a source yet.
     canonical_url: str | None = None
     policy: str | None = None
     is_cancelled: bool = False
@@ -301,10 +305,14 @@ class IntakeStateMachine(BaseStateMachine):
         IntakeStage.CHECKING_SOURCE_POLICY: {
             IntakeStage.RETRIEVING,
             IntakeStage.AWAITING_ASSISTED_ENTRY,
+            IntakeStage.AWAITING_SOURCE_AUTHORIZATION,
             IntakeStage.QUARANTINED
         },
+        # A later authorization command must re-evaluate current source policy.
+        # No direct retrieval, supplied-evidence or automatic resume is granted.
+        IntakeStage.AWAITING_SOURCE_AUTHORIZATION: {IntakeStage.CANCELLED, IntakeStage.CHECKING_SOURCE_POLICY},
         IntakeStage.RETRIEVING: {IntakeStage.PARSING, IntakeStage.FAILED, IntakeStage.QUARANTINED},
-        IntakeStage.AWAITING_ASSISTED_ENTRY: {IntakeStage.PARSING, IntakeStage.CANCELLED},
+        IntakeStage.AWAITING_ASSISTED_ENTRY: {IntakeStage.PARSING, IntakeStage.CANCELLED, IntakeStage.CHECKING_SOURCE_POLICY},
         IntakeStage.PARSING: {IntakeStage.MATCHING, IntakeStage.NEEDS_REVIEW, IntakeStage.FAILED},
         IntakeStage.MATCHING: {IntakeStage.READY, IntakeStage.NEEDS_REVIEW, IntakeStage.QUARANTINED},
         IntakeStage.NEEDS_REVIEW: {IntakeStage.READY, IntakeStage.QUARANTINED, IntakeStage.CANCELLED},
@@ -367,21 +375,17 @@ class IntakeStateMachine(BaseStateMachine):
                         DenialCode.ROLE_DENIED,
                         f"Role {role} is not authorized to resolve identity."
                     )
-            elif source == IntakeStage.MATCHING:
-                if role not in {PrincipalRole.SVC_MATCHER, PrincipalRole.DATA_STEWARD, PrincipalRole.EXPANSION_MANAGER, PrincipalRole.EMERGENCY_ADMIN}:
+            elif source in {IntakeStage.MATCHING, IntakeStage.NEEDS_REVIEW}:
+                # Matcher proposals do not confirm a human case. The existing
+                # service-owned exact-identity transition is handled above.
+                confirmed_executor = role == PrincipalRole.SVC_INTAKE and context.identity_confirmation_verified is True
+                if not confirmed_executor and role not in {PrincipalRole.DATA_STEWARD, PrincipalRole.EXPANSION_MANAGER, PrincipalRole.EMERGENCY_ADMIN}:
                     raise DomainValidationError(
                         DenialCode.ROLE_DENIED,
                         f"Role {role} is not authorized to resolve match to READY."
                     )
-            elif source == IntakeStage.NEEDS_REVIEW:
-                # Needs independent review if high-risk or segregation rule applies
-                if role not in {PrincipalRole.EXPANSION_MANAGER, PrincipalRole.DATA_STEWARD, PrincipalRole.EMERGENCY_ADMIN}:
-                    raise DomainValidationError(
-                        DenialCode.ROLE_DENIED,
-                        f"Role {role} is not authorized to decide review to READY."
-                    )
                 # Proposer-reviewer segregation
-                if entity.owner_id and context.actor.actor_id == entity.owner_id:
+                if source == IntakeStage.NEEDS_REVIEW and entity.owner_id and context.actor.actor_id == entity.owner_id:
                     raise DomainValidationError(
                         DenialCode.SELF_REVIEW_DENIED,
                         "Proposer cannot approve own submission."
@@ -391,6 +395,20 @@ class IntakeStateMachine(BaseStateMachine):
             if source == IntakeStage.CHECKING_IDENTITY:
                 if role not in {PrincipalRole.SVC_INTAKE, PrincipalRole.EMERGENCY_ADMIN}:
                     raise DomainValidationError(DenialCode.ROLE_DENIED, "Only system or admin can evaluate policy.")
+            elif source == IntakeStage.AWAITING_SOURCE_AUTHORIZATION:
+                if role not in {PrincipalRole.SVC_INTAKE, PrincipalRole.EMERGENCY_ADMIN}:
+                    raise DomainValidationError(DenialCode.ROLE_DENIED, "Only the verified service can recheck source policy.")
+                if (context.source_policy_recheck_verified is not True or not context.causation_id
+                        or not context.idempotency_key or not context.reason.strip()):
+                    raise DomainValidationError(DenialCode.SOURCE_POLICY_RECHECK_NOT_VERIFIED,
+                                                "A current verified recheck command is required.")
+            elif source == IntakeStage.AWAITING_ASSISTED_ENTRY:
+                if role not in {PrincipalRole.SVC_INTAKE, PrincipalRole.EMERGENCY_ADMIN}:
+                    raise DomainValidationError(DenialCode.ROLE_DENIED, "Only the verified service can recheck source policy.")
+                if (context.source_policy_recheck_verified is not True or not context.causation_id
+                        or not context.idempotency_key or not context.reason.strip()):
+                    raise DomainValidationError(DenialCode.SOURCE_POLICY_RECHECK_NOT_VERIFIED,
+                                                "A current verified recheck command is required.")
             elif source == IntakeStage.QUARANTINED:
                 if role not in {PrincipalRole.DATA_STEWARD, PrincipalRole.EMERGENCY_ADMIN}:
                     raise DomainValidationError(DenialCode.ROLE_DENIED, "Only steward or admin can reopen quarantine.")
@@ -411,9 +429,9 @@ class IntakeStateMachine(BaseStateMachine):
                 if entity.owner_id and role == PrincipalRole.EXPANSION_STAFF and context.actor.actor_id != entity.owner_id:
                     raise DomainValidationError(DenialCode.OWNERSHIP_REQUIRED, "Staff can only replay own failures.")
 
-        elif target == IntakeStage.AWAITING_ASSISTED_ENTRY:
+        elif target in {IntakeStage.AWAITING_ASSISTED_ENTRY, IntakeStage.AWAITING_SOURCE_AUTHORIZATION}:
             if role not in {PrincipalRole.SVC_INTAKE, PrincipalRole.EMERGENCY_ADMIN}:
-                raise DomainValidationError(DenialCode.ROLE_DENIED, "Fallback to assisted entry must be system-initiated.")
+                raise DomainValidationError(DenialCode.ROLE_DENIED, "Source-policy waiting decisions must be system-initiated.")
 
         elif target == IntakeStage.QUARANTINED:
             # Section 2 transitions to Quarantined
@@ -584,18 +602,26 @@ class IdentityDecisionStateMachine(BaseStateMachine):
         role = context.actor.role
 
         if target == IdentityGraphState.APPROVED:
-            if source == IdentityGraphState.PROPOSED:
-                if role not in {PrincipalRole.SVC_MATCHER, PrincipalRole.DATA_STEWARD, PrincipalRole.EMERGENCY_ADMIN}:
-                    raise DomainValidationError(DenialCode.ROLE_DENIED, "Only system or steward can approve exact matches.")
+            routine = entity.decision_type in {"CREATE", "REVISE"}
+            if routine:
+                # A routine confirmation records this manager's own decision.
+                # It is not a second signature on a MERGE/SPLIT proposal.
+                # Steward-only data-quality confirmation needs an explicitly
+                # governed case; an ordinary NEW/REVISION is not that grant.
+                if role != PrincipalRole.EXPANSION_MANAGER:
+                    raise DomainValidationError(DenialCode.ROLE_DENIED, "Routine confirmation requires a manager.")
+            elif source == IdentityGraphState.PROPOSED:
+                if role not in {PrincipalRole.DATA_STEWARD, PrincipalRole.EMERGENCY_ADMIN}:
+                    raise DomainValidationError(DenialCode.ROLE_DENIED, "Matcher proposals require independent approval.")
             elif source == IdentityGraphState.PENDING_REVIEW:
                 if role not in {PrincipalRole.EXPANSION_MANAGER, PrincipalRole.DATA_STEWARD, PrincipalRole.EMERGENCY_ADMIN}:
                     raise DomainValidationError(DenialCode.ROLE_DENIED, "Approval requires manager or steward.")
-                # Proposer / Reviewer segregation
-                if entity.proposer_id and context.actor.actor_id == entity.proposer_id:
-                    raise DomainValidationError(
-                        DenialCode.SELF_REVIEW_DENIED,
-                        "Proposer cannot approve own identity decision."
-                    )
+            # Skipping PENDING_REVIEW cannot bypass proposer/reviewer separation.
+            if not routine and entity.proposer_id and context.actor.actor_id == entity.proposer_id:
+                raise DomainValidationError(
+                    DenialCode.SELF_REVIEW_DENIED,
+                    "Proposer cannot approve own identity decision."
+                )
 
         elif target == IdentityGraphState.PENDING_REVIEW:
             if source == IdentityGraphState.PROPOSED:

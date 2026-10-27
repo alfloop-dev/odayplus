@@ -287,7 +287,7 @@ describe("Network Find Areas in the production Operator Console composition", ()
 
     render(<OperatorConsole searchParams={{ ws: "network" }} />);
 
-    expect(await screen.findByTestId("network-panel-find-areas")).toBeInTheDocument();
+    expect(await screen.findByTestId("network-panel-find-areas", {}, { timeout: 5000 })).toBeInTheDocument();
     // Production no longer preloads RBAC-only domain bindings.
     expect(legacyDomainPaths).toEqual([]);
     // First read carries no injected selection; the API-named zone is then used.

@@ -2338,14 +2338,16 @@ from tests.integration.dev_smoke_remote_journal_cases import (  # noqa: E402, F4
 )
 
 
-@pytest.mark.parametrize("fault", ["none", "gate-red", "source-loss", "context", "shell-exit"])
+@pytest.mark.parametrize("fault", [
+    "none", "gate-red", "source-loss", "context", "shell-exit", "shell-exit-restore-failure",
+])
 def test_foreground_rollout_real_socket_shell_boundary_and_remote_lifecycle(
     remote_binding: Any, monkeypatch: Any, tmp_path: Any, fault: str,
 ) -> None:
     """Actual shell hook + socket + PG/router + sealed box; OFFLINE gate spy.
 
-    The harness supplies a simulated pre-promotion/rollback layer, not Cloud Run
-    traffic proof. It runs the exact hook/commit tail from the canonical shell.
+    Pre-promotion and cloud tools are OFFLINE doubles, not Cloud Run proof.
+    The cleanup/EXIT handler and hook/commit tail are the exact shipped shell.
     """
     import os
     import subprocess
@@ -2356,13 +2358,28 @@ def test_foreground_rollout_real_socket_shell_boundary_and_remote_lifecycle(
         ForegroundDevSmokeRollout,
         ProvisioningRefused,
     )
+    from tests.ops.test_bluegreen_release import offline_scheduler_resume_context
     s, web, journal, binding, github, _, plan, args = remote_binding
     config = _foreground_gate_template(binding, args)
     root = Path(__file__).resolve().parents[2]
     source = (root / "product_ops/deployment/deploy_cloud_run_waji.sh").read_text()
     hook = source[source.rindex('if [ -n "${ODP_DEV_SMOKE_FOREGROUND_FD:-}" ]; then'):]
+    exit_start = source.index("cleanup() {")
+    exit_end = source.index("trap handle_deployment_exit EXIT", exit_start)
+    actual_exit = source[exit_start : exit_end + len("trap handle_deployment_exit EXIT")]
     calls = tmp_path / "shell-calls"
     report = tmp_path / "gate.json"
+    release_tools = offline_scheduler_resume_context(
+        tmp_path / "release-tools", project="offline-project", region="asia-east1", release_sha=config.expected_sha,
+        worker_job="offline-worker", scheduler_job="offline-scheduler",
+        worker_trigger="offline-worker-schedule", scheduler_trigger="offline-schedule",
+    )
+    release_tools.update(OFFLINE_ROLLBACK_SERVICE="offline-api", OFFLINE_ROLLBACK_EVENTS=str(calls))
+    if fault == "shell-exit-restore-failure":
+        state_path = Path(release_tools["RELEASE_CLOUD_STATE"])
+        cloud = json.loads(state_path.read_text())
+        cloud["control"]["fail_once"] = "scheduler jobs update http offline-schedule"
+        state_path.write_text(json.dumps(cloud))
     env = {
         "PATH": os.environ["PATH"], "ODAY_RELEASE_SHA": config.expected_sha,
         "MANIFEST_DIGEST": config.expected_manifest_digest, "ODP_DEPLOY_ENV": "dev",
@@ -2378,14 +2395,22 @@ def test_foreground_rollout_real_socket_shell_boundary_and_remote_lifecycle(
     if fault == "context":
         env["LIVE_E2E_API_URL"] = "https://foreign.example.invalid"
     harness = '''set -euo pipefail
+source "$OFFLINE_RELEASE_OWNER"
 DEPLOYMENT_COMMITTED=false
-trap 'status=$?; if [ "$status" -ne 0 ] && [ "$DEPLOYMENT_COMMITTED" != true ]; then printf "restore-api-web-schedulers\\n" >> "$SHELL_CALLS"; fi; exit "$status"' EXIT
+ROLLBACK_ARMED=true
+SCHEDULER_ROLLBACK_ARMED=true
+API_ENV_FILE="$JOB_REPORT_DIR/api.env"
+WEB_ENV_FILE="$JOB_REPORT_DIR/web.env"
+API_CANDIDATE_DESCRIPTION="$JOB_REPORT_DIR/api-candidate.json"
+WEB_CANDIDATE_DESCRIPTION="$JOB_REPORT_DIR/web-candidate.json"
+''' + actual_exit + '''
 printf 'promote-api\\npromote-web\\n' >> "$SHELL_CALLS"
 ''' + hook
-    if fault == "shell-exit":
+    if fault in {"shell-exit", "shell-exit-restore-failure"}:
         harness = harness.replace("DEPLOYMENT_COMMITTED=true", "exit 31\nDEPLOYMENT_COMMITTED=true")
     original_popen = subprocess.Popen
     children = []
+    shell_errors = tmp_path / "shell-stderr"
 
     def run(command: Any, **kwargs: Any) -> Any:
         if command == ["git", "rev-parse", "HEAD"]:
@@ -2400,8 +2425,13 @@ printf 'promote-api\\npromote-web\\n' >> "$SHELL_CALLS"
         assert all(secret not in json.dumps(child_env) + json.dumps(command)
                    for secret in (args["admin_password"], args["new_password"]))
         assert "GH_TOKEN" not in child_env and "GITHUB_TOKEN" not in child_env
-        child = original_popen(["/bin/bash", "-c", harness], **kwargs,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Keep the product's credential filtering intact. Only the spawned
+        # offline tool boundary receives the same shared readback fixture.
+        child_env.update(release_tools)
+        assert all(secret not in json.dumps(child_env) for secret in (args["admin_password"], args["new_password"]))
+        with shell_errors.open("w") as stderr:
+            child = original_popen(["/bin/bash", "-c", harness], **kwargs,
+                                   stdout=subprocess.DEVNULL, stderr=stderr)
         children.append(child)
         return child
 
@@ -2435,12 +2465,32 @@ printf 'promote-api\\npromote-web\\n' >> "$SHELL_CALLS"
     else:
         with pytest.raises(ProvisioningRefused, match="PROVISIONING_ROLLOUT_RECOVERY_REQUIRED"):
             runner.execute(plan, **kwargs)
-        assert calls.read_text().splitlines() == ["promote-api", "promote-web", "restore-api-web-schedulers"]
+        assert calls.read_text().splitlines() == ["promote-api", "promote-web", "rollback"]
         assert children[0].returncode != 0
+        if fault in {"shell-exit", "shell-exit-restore-failure"}:
+            assert children[0].returncode == 31
     assert all(child.poll() is not None for child in children)
     assert len(github.uploads) == int(fault != "context")
     assert _q(s, "SELECT count(*) FROM identity.accounts") == [(1 if fault == "context" else 2,)]
     assert s.audit.verify_chain().ok
+    cloud = json.loads(Path(release_tools["RELEASE_CLOUD_STATE"]).read_text())
+    if fault == "shell-exit-restore-failure":
+        assert "fail_once" not in cloud["control"]
+        assert "Error: one or more Cloud Scheduler trigger restores failed." in shell_errors.read_text()
+        tool_calls = [json.loads(line) for line in Path(release_tools["RELEASE_CLOUD_LOG"]).read_text().splitlines()]
+        restored = [call[4] for call in tool_calls if call[:4] == ["scheduler", "jobs", "update", "http"]]
+        assert restored[0] == "offline-schedule" and restored[1:] == ["offline-worker-schedule"] * 2
+    for kind, trigger in (("worker", "offline-worker-schedule"), ("scheduler", "offline-schedule")):
+        target = cloud["triggers"][trigger]
+        assert target["state"] == ("ENABLED" if kind == "worker" else "PAUSED")
+        candidate = fault == "none" or (fault == "shell-exit-restore-failure" and kind == "scheduler")
+        job = f"offline-{kind}" if candidate else f"{kind}-old"
+        assert target["httpTarget"]["uri"].endswith(f"/jobs/{job}:run")
+    for kind in ("api", "web"):
+        service = "offline-" + kind
+        assert cloud["services"][service]["status"]["traffic"] == [
+            {"revisionName": service + ("-new" if fault == "none" else "-old"), "percent": 100}
+        ]
 
 
 @pytest.mark.parametrize("fault", ["environment", "password-env", "token-env", "bash-env", "dirty", "head"])

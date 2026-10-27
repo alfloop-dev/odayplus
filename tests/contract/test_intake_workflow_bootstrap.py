@@ -132,7 +132,13 @@ def test_assignment_uses_initial_id_and_policy_schedule_not_unchecked_body_deadl
     assert len(store.assignments) == len(store.slas) == 1
     assert store.slas[initial["sla_instance_id"]]["due_at"] == response.json()["due_at"]
     assert response.json()["audit_event_id"] in store.workflow_audits
-    assert len(store.workflow_audits) == 5
+    assert len(store.workflow_audits) == 6
+    # Initial assignment changes both its task and the parent Intake. Each
+    # resource retains its own audit, just as the other assignment commands do.
+    assigned = [row for row in store.workflow_audits.values()
+                if row["action"] == "assignment.assign"]
+    assert {row["resource_type"] for row in assigned} == {"assignment", "intake"}
+    assert len(assigned) == 2
 
 
 def test_bootstrap_outbox_envelopes_and_payloads_match_reviewed_catalog():

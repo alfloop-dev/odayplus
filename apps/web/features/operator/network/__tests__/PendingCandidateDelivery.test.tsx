@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildNetworkFindAreasViewModel } from "../../networkFindAreasViewModel";
 import { CandidatePanel } from "../CandidatePanel";
 import { ComparePanel } from "../ComparePanel";
-import { operatorCandidateToMapSite, operatorRecordedHeatZoneToMapZone, operatorRecordedMapFreshness } from "../heatZoneMapAdapters";
+import { operatorCandidateToMapSite, operatorHeatZoneToMapZone } from "../heatZoneMapAdapters";
+import { recordedMapFreshness } from "../heatZoneRecordedEvidence";
 import { loadNetworkFindAreasBindings } from "../networkFindAreasLoader";
 import { SiteScorePanel } from "../SiteScorePanel";
 import type { ScoreCard } from "../networkScoringTypes";
@@ -145,17 +146,17 @@ describe("Canonical HeatZone map evidence delivery", () => {
     expect(heatZones.state).toBe("ready");
     const row = heatZones.items[0];
     expect(row).toMatchObject({ id: recordedHeatZone.heat_zone_id, rank: 3, demandGap: null, competitionIndex: null, cannibalizationRisk: null, confidence: 0, risks: ["Recorded warning"] });
-    expect(row.mapEvidence).toMatchObject({ geometry: null, h3Index: recordedHeatZone.h3_index,
-      h3Resolution: 9, score: 0, priorityRank: 3, unmetDemandScore: 0, formatFitScore: 0,
+    expect(row.recordedMap).toMatchObject({ geometry: null, h3: recordedHeatZone.h3_index,
+      h3Resolution: 9, score: 0, rank: 3, unmetDemandScore: 0, formatFitScore: 0,
       modelVersion: "owner-model-v1", featureVersion: "owner-features-v1",
       lastScoredAt: recordedHeatZone.last_scored_at, sourceSnapshotIds: ["owner-source-1"] });
     expect(row.centroid).not.toEqual([0, 0]);
-    const map = operatorRecordedHeatZoneToMapZone(row)!;
+    const map = operatorHeatZoneToMapZone(row)!;
     expect(map).toMatchObject({ h3: recordedHeatZone.h3_index, geometry: null, score: 0,
       state: "UNTOUCHED", modelVersion: "owner-model-v1", sourceSnapshotIds: ["owner-source-1"],
       listings: null, poiCount: null, competitorCount: null, competitorCapacity: null,
       medianListingRent: null, existingStoreCount: null, dataQualityScore: null });
-    expect(operatorRecordedMapFreshness([map])).toEqual({ status: "MISSING",
+    expect(recordedMapFreshness([map])).toEqual({ status: "UNKNOWN",
       updatedAt: recordedHeatZone.last_scored_at, modelVersion: recordedHeatZone.model_version,
       featureSnapshotTime: recordedHeatZone.feature_snapshot_time, sourceSnapshotId: "owner-source-1" });
   });
@@ -164,16 +165,16 @@ describe("Canonical HeatZone map evidence delivery", () => {
     const raw: Record<string, unknown> = { ...recordedHeatZone };
     delete raw.geometry;
     const { heatZones } = await loadNetworkFindAreasBindings(heatZoneClient(raw));
-    expect(heatZones.items[0].mapEvidence?.geometry).toBeNull();
+    expect(heatZones.items[0].recordedMap?.geometry).toBeNull();
   });
 
   it("preserves an actual polygon and never changes the recorded model/source/time", async () => {
     const geometry = { type: "Polygon", coordinates: [[[121.5, 25], [121.51, 25], [121.5, 25.01], [121.5, 25]]] };
     const { heatZones } = await loadNetworkFindAreasBindings(heatZoneClient({ ...recordedHeatZone, geometry }));
-    expect(heatZones.items[0].mapEvidence?.geometry).toEqual(geometry);
-    expect(heatZones.items[0].mapEvidence?.sourceSnapshotIds).toEqual(recordedHeatZone.source_snapshot_ids);
-    expect(heatZones.items[0].mapEvidence?.modelVersion).toBe(recordedHeatZone.model_version);
-    expect(heatZones.items[0].mapEvidence?.featureSnapshotTime).toBe(recordedHeatZone.feature_snapshot_time);
+    expect(heatZones.items[0].recordedMap?.geometry).toEqual(geometry);
+    expect(heatZones.items[0].recordedMap?.sourceSnapshotIds).toEqual(recordedHeatZone.source_snapshot_ids);
+    expect(heatZones.items[0].recordedMap?.modelVersion).toBe(recordedHeatZone.model_version);
+    expect(heatZones.items[0].recordedMap?.featureSnapshotTime).toBe(recordedHeatZone.feature_snapshot_time);
   });
 
   it.each([
@@ -182,7 +183,7 @@ describe("Canonical HeatZone map evidence delivery", () => {
   ])("keeps malformed native evidence from becoming map authority (%j)", async (invalid) => {
     const { heatZones } = await loadNetworkFindAreasBindings(heatZoneClient({ ...recordedHeatZone, ...invalid }));
     expect(heatZones.state).toBe("ready");
-    expect(heatZones.items[0].mapEvidence).toBeUndefined();
+    expect(heatZones.items[0].recordedMap).toBeUndefined();
   });
 
   it.each([
@@ -191,20 +192,21 @@ describe("Canonical HeatZone map evidence delivery", () => {
     { type: "Polygon", coordinates: [[[0, 0], [1, 0], [0, 1], [1, 1]]] },
   ])("keeps invalid polygon geometry null without discarding genuine source metadata (%j)", async (geometry) => {
     const { heatZones } = await loadNetworkFindAreasBindings(heatZoneClient({ ...recordedHeatZone, geometry }));
-    expect(heatZones.items[0].mapEvidence?.geometry).toBeNull();
-    expect(heatZones.items[0].mapEvidence?.sourceSnapshotIds).toEqual(["owner-source-1"]);
+    expect(heatZones.items[0].recordedMap?.geometry).toBeNull();
+    expect(heatZones.items[0].recordedMap?.sourceSnapshotIds).toEqual(["owner-source-1"]);
   });
 });
 
 describe("Recorded HeatZone lenses keep unknown observations unavailable", () => {
   it("does not turn missing competition/risk/traffic/life/demand-heat into favorable native lenses", async () => {
-    const { heatZones } = await loadNetworkFindAreasBindings(heatZoneClient(recordedHeatZone));
     for (const activeLens of ["competition", "traffic", "life", "demand"] as const) {
+      const input = activeLens === "demand" ? { ...recordedHeatZone, unmet_demand_score: null } : recordedHeatZone;
+      const { heatZones } = await loadNetworkFindAreasBindings(heatZoneClient(input));
       const view = buildNetworkFindAreasViewModel({ fixturesAllowed: false, activeLens,
         heatZones: heatZones.items, listings: [], candidates: [] });
       expect(view.selectedZone).toMatchObject({ competitionIndex: null, competitionLabel: "未知",
         cannibalizationRisk: null, cannibalizationLabel: "未評估", trafficScore: null, lifeScore: null,
-        demandGap: null, lensScore: null, lensPoints: null, lensTier: null, overallPoints: 0,
+        demandGap: null, lensScore: null, lensPoints: null, lensTier: null, overallPoints: activeLens === "demand" ? null : 0,
         mapX: null, mapY: null, mapSize: null, mapTone: null });
       expect(view.mapPoints).toEqual([]);
       const competition = view.compare.metrics.find((metric) => metric.key === "competition")!;
@@ -215,13 +217,13 @@ describe("Recorded HeatZone lenses keep unknown observations unavailable", () =>
 
   it("keeps true measured zero distinct from unknown without borrowing prototype scores", async () => {
     const { heatZones } = await loadNetworkFindAreasBindings(heatZoneClient(recordedHeatZone));
-    for (const activeLens of ["fit", "rent", "unmet", "confidence"] as const) {
+    for (const activeLens of ["fit", "rent", "unmet", "demand", "confidence"] as const) {
       const view = buildNetworkFindAreasViewModel({ fixturesAllowed: false, activeLens,
         heatZones: heatZones.items, listings: [], candidates: [] });
       expect(view.selectedZone).toMatchObject({ lensPoints: 0, lensScore: 0, lensLabel: "0%", confidence: 0, overallPoints: 0 });
     }
     const measured = await loadNetworkFindAreasBindings(heatZoneClient({ ...recordedHeatZone,
-      competition_index: 0, demand_gap: 0 }));
+      competition_index: 0, competitor_pressure_score: 0, demand_gap: 0 }));
     const view = buildNetworkFindAreasViewModel({ fixturesAllowed: false, activeLens: "competition",
       heatZones: measured.heatZones.items, listings: [], candidates: [] });
     expect(view.selectedZone).toMatchObject({ competitionIndex: 0, competitionLabel: "0%", lensPoints: 100, demandGap: 0 });

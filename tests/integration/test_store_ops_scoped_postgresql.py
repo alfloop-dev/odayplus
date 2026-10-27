@@ -624,3 +624,63 @@ def test_postgresql_gcs_recovery_failures_stay_pending_and_retry_safely(case, gc
     assert case["repo"]._store.get(COLLECTION, delivery["event"].event_id)["status"] == "delivered"
     assert case["repo"].get_state() == original_state
     assert gcs_worm_server.objects == original_objects
+
+
+def test_materializer_interleave_retries_current_scoped_cas_and_same_key_replays(case, monkeypatch):
+    from shared.infrastructure.persistence.postgresql import PostgresEngine
+
+    engine = PostgresEngine(case["db"].url(), bootstrap=False, validate_schema=False)
+    other = DurableStoreOpsRepository(PostgresDocumentStore(engine)).for_tenant(case["tenant"])
+    original = PostgresDocumentStore.compare_and_put
+    collection = case["repo"]._store._collection("opsboard.store_ops.state")
+    before = other.get_state()
+    hidden = deepcopy(next(row for row in before["issues"] if row["id"] == case["hidden_issue"]))
+    main_attempts = []
+    interleaved = False
+
+    def competing_projection(documents, name, doc_id, value, *, expected_version):
+        nonlocal interleaved
+        current_request = (
+            documents.engine is case["bundle"].engine
+            and name == collection and doc_id == "default"
+        )
+        if current_request and not interleaved:
+            # A real competing commit makes the original expected version
+            # stale. Never simulate a database CAS refusal by returning None.
+            interleaved = True
+            current, version = other.read_versioned_state()
+            next(row for row in current["stores"] if row["id"] == case["store"])["riskScore"] = 77
+            assert other.compare_and_save_state(current, expected_version=version)
+        result = original(documents, name, doc_id, value, expected_version=expected_version)
+        if current_request:
+            main_attempts.append((expected_version, result))
+        return result
+
+    monkeypatch.setattr(PostgresDocumentStore, "compare_and_put", competing_projection)
+    try:
+        accepted = _transition(case)
+        assert accepted.status_code == 200, accepted.text
+        assert interleaved and len(main_attempts) == 2
+        assert main_attempts[0][1] is None
+        assert main_attempts[1][0] == main_attempts[0][0] + 1
+        assert main_attempts[1][1] is not None
+        current = other.get_state()
+        assert next(row for row in current["stores"] if row["id"] == case["store"])["riskScore"] == 77
+        issue = next(row for row in current["issues"] if row["id"] == case["issue"])
+        assert issue["status"] == "triaged"
+        assert len(issue["workflowRecords"]) == 1
+        assert next(row for row in current["issues"] if row["id"] == case["hidden_issue"]) == hidden
+        assert current["evidence"] == before["evidence"]
+        assert len(current["auditEvents"]) == 1
+        assert current["nextAuditOrdinal"] == before["nextAuditOrdinal"] + 1
+        state_before_replay, version_before_replay = other.read_versioned_state()
+        retried = _transition(case)
+        assert retried.status_code == 200, retried.text
+        assert retried.json()["idempotentReplay"] is True
+        assert other.read_versioned_state() == (state_before_replay, version_before_replay)
+        assert len(main_attempts) == 2
+        events = [event for event in case["bundle"].audit_log.list_events(tenant_id=case["tenant"])
+                  if event.event_type == "operator.store_ops.issue_transition"]
+        assert len(events) == 1
+    finally:
+        engine.close()

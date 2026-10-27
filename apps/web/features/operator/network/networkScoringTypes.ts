@@ -52,7 +52,9 @@ export type CurrentScoreAdmission = {
   addressId: string;
   checkedAt: string | null;
   currentInputs: { state: "verified" | "blocked" | "unverified"; reasonCode: string | null };
-  source: CurrentScoreAdmission["currentInputs"];
+  source: CurrentScoreAdmission["currentInputs"] & {
+    jobId?: string; intakeId?: string; promotionDecisionId?: string;
+  };
   pit: CurrentScoreAdmission["currentInputs"];
   model: CurrentScoreAdmission["currentInputs"];
 };
@@ -84,7 +86,23 @@ export type CandidateReviewReadTarget = {
   generation: number;
   relation: "current" | "historical";
 };
-export type CandidateNativeStage = "needdata" | "ready" | "evaluated" | "pendingreview" | "approved" | "rejected" | "onhold";
+export type CandidateNativeStage = "needdata" | "ready" | "scoring" | "evaluated" | "pendingreview" | "approved" | "rejected" | "onhold";
+export type CandidateReadAvailability = "recorded" | "absent" | "unavailable" | "conflict";
+export type CandidateDataReadinessRead = {
+  availability: Exclude<CandidateReadAvailability, "absent">;
+  state: string | null; passed: boolean | null; reason: string;
+};
+export type CandidateScoreReportRead = {
+  availability: CandidateReadAvailability;
+  reportId: string | null; reportVersion: number | null;
+  sitescoreRunId: string | null; modelVersion: string | null; reason: string;
+};
+export type CandidateReviewDecisionRead = {
+  availability: CandidateReadAvailability;
+  decisionId: string | null; decisionVersion: number | null;
+  status: string | null; networkAction: string | null; approvalId: string | null;
+  reportId: string | null; reportVersion: number | null; reason: string;
+};
 export type CandidateNativeWorkflowRead = {
   candidateId: string;
   stage: CandidateNativeStage | null;
@@ -92,6 +110,10 @@ export type CandidateNativeWorkflowRead = {
   lifecycle: string | null;
   reason: string;
   review: CandidateReviewReadTarget | null;
+  scoreJob?: import("./candidateScoreJobs").CandidateScoreJobRead;
+  dataReadiness?: CandidateDataReadinessRead;
+  scoreReport?: CandidateScoreReportRead;
+  reviewDecision?: CandidateReviewDecisionRead;
 };
 export type CandidateNativeWorkflowReads = Readonly<Record<string, CandidateNativeWorkflowRead>>;
 
@@ -106,6 +128,7 @@ export type ScoringCandidate = {
   modelVersion: string | null;
   datasetSnapshotId: string;
   stage: string;
+  canonicalSiteStatus?: string | null;
   gate: ScoringGate;
   scored: boolean;
   score: number | null;

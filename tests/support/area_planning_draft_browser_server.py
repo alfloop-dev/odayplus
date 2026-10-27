@@ -16,8 +16,10 @@ from psycopg.conninfo import conninfo_to_dict
 
 from modules.heatzone.domain.scoring import HeatZoneScoreResult, HeatZoneState
 from modules.heatzone.workers import HeatZoneBatchScoreResult
+from modules.listing.domain.models import CandidateSiteDraft, ListingDedupKey
 from modules.opsboard.application.network_listings import NetworkListingService
 from shared.auth import DataClassification, Role, Scope
+from shared.domain.models import AddressLocation, CandidateSite, Listing
 from shared.identity.credential_service import CredentialService
 from shared.identity.store import Account
 from shared.infrastructure.persistence import PostgresDocumentStore
@@ -100,16 +102,61 @@ def setup():
         bundle.heatzone_store_for_tenant(TENANT).put(HeatZoneBatchScoreResult(
             job_id=str(uuid4()), tenant_id=TENANT, status="succeeded", scores=(score,), completed_at=now))
         state = DurableOperatorDomainStateRepository(PostgresDocumentStore(bundle.engine), "network-listings")
-        # Start from the actual unseeded aggregate shape; no business/financial
-        # verdict is synthesized by adding the required empty collections.
-        aggregate = NetworkListingService(seed_fixtures=False, tenant_id=TENANT).export_state()
-        aggregate.update({"listings": [{"id": listing, "tenantId": TENANT, "heatZoneId": zone,
-            "status": "candidate", "address": "Declared synthetic address", "candidateId": candidate}],
-            "candidates": [{"id": candidate, "listingId": listing, "tenantId": TENANT,
-                "heatZoneId": zone, "title": "Synthetic area candidate", "address": "Declared synthetic address",
-                "status": "draft", "score": None, "recommendation": None, "modelVersion": None,
-                "datasetSnapshotId": None, "missingData": [], "createdBy": MANAGER}]})
-        state.save(TENANT, aggregate)
+        # The normal Network reader rebuilds this projection from canonical
+        # records. Keep the area owner's snapshot on that same read path.
+        repository = bundle.listing_repository_for_tenant(TENANT)
+        metadata = bundle.operator_intake_repository_for_tenant(TENANT)
+        address = AddressLocation(
+            address_id=str(uuid4()), tenant_id=TENANT,
+            raw_address="Declared synthetic address " + listing,
+            normalized_address="Declared synthetic address " + listing,
+        )
+        record = Listing(
+            listing_id=listing, tenant_id=TENANT, address_id=address.address_id,
+            source_id="synthetic-area-browser", source_listing_id=listing,
+            listing_status="candidate",
+        )
+        draft = CandidateSiteDraft(
+            listing=record, address=address, heat_zone_id=zone,
+            candidate_site=CandidateSite(
+                candidate_site_id=candidate, listing_id=listing,
+                address_id=address.address_id, site_status="draft", created_by=MANAGER,
+            ),
+        )
+        with bundle.engine.transaction():
+            repository.save_listing(record, address, ListingDedupKey(
+                source_id=record.source_id, source_listing_id=listing,
+                normalized_address=address.normalized_address,
+                rent_amount=record.rent_amount, area_ping=record.area_ping,
+            ))
+            repository.save_candidate(draft)
+            metadata.save_listing_metadata(listing, {"heatZoneId": zone})
+            metadata.save_candidate_metadata(candidate, {"title": "Synthetic area candidate"})
+            aggregate = NetworkListingService(
+                listing_repository=repository, intake_repository=metadata,
+                seed_fixtures=False, tenant_id=TENANT,
+            ).export_state()
+            projected = next(row for row in aggregate["candidates"] if row["id"] == candidate)
+            projected_listing = next(row for row in aggregate["listings"] if row["id"] == listing)
+            assert (projected["listingId"], projected["heatZoneId"]) == (listing, zone)
+            assert (projected_listing["tenantId"], projected_listing["heatZoneId"]) == (TENANT, zone)
+            assert projected["title"] == "Synthetic area candidate"
+            assert all(projected[key] is None for key in (
+                "score", "recommendation", "modelVersion", "datasetSnapshotId",
+            ))
+            assert repository.get_listing(listing).tenant_id == TENANT
+            persisted = [row for row in repository.list_candidates()
+                         if row.candidate_site.candidate_site_id == candidate]
+            assert len(persisted) == 1
+            retained = persisted[0]
+            assert (retained.listing.listing_id, retained.listing.tenant_id,
+                    retained.address.address_id, retained.address.tenant_id,
+                    retained.candidate_site.listing_id, retained.candidate_site.address_id,
+                    retained.candidate_site.created_by, retained.heat_zone_id) == (
+                listing, TENANT, address.address_id, TENANT,
+                listing, address.address_id, MANAGER, zone,
+            )
+            state.save(TENANT, aggregate)
         return {"scope": SCOPE, "zone_id": zone, "candidate_id": candidate,
                 "tenant_id": TENANT, "manager_username": MANAGER,
                 "foreign_username": _foreign_actor, "viewer_username": _viewer_actor}

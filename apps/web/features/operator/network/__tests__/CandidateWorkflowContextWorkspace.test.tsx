@@ -3,13 +3,11 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NetworkFindAreasWorkspace as GrantedReadNetworkWorkspace } from "../../NetworkFindAreasWorkspace";
 
-// Explicit read-grant fixture: shell projects listing and SiteScore read families.
-// This is a renderer premise, not a real Principal/production permission grant.
-const NETWORK_READ_FIXTURE_TABS = ["areas", "radar", "candidates", "score", "compare", "review"] as const;
-function NetworkFindAreasWorkspace(props: import("../../NetworkFindAreasWorkspace").NetworkFindAreasWorkspaceProps) {
-  return <GrantedReadNetworkWorkspace allowedTabIds={NETWORK_READ_FIXTURE_TABS} {...props} />;
+// Explicit synthetic bootstrap tabs for these component controls. Backend
+// scope/role denials and read revalidation assertions remain authoritative.
+function NetworkFindAreasWorkspace(props: Parameters<typeof GrantedReadNetworkWorkspace>[0]) {
+  return <GrantedReadNetworkWorkspace allowedTabIds={["areas", "radar", "candidates", "score", "compare", "review"]} {...props} />;
 }
-
 
 const nav = vi.hoisted(() => ({ pathname: "/operator", search: "ws=network&tab=candidates&candidate=second", push: vi.fn() }));
 vi.mock("next/navigation", () => ({
@@ -78,11 +76,13 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("exact report-aware workflow context", () => {
-  it("joins the current generation canonical review for the exact second candidate and report", async () => {
+  it("keeps an exact review link readable without treating legacy approval envelopes as a verified human workflow", async () => {
     nav.search = "ws=network&tab=review&candidate=second";
     const fetchMock = reads(200, () => json(canonicalReviews()));
     render(<NetworkFindAreasWorkspace activeRoleId="expansion-manager" />);
-    await waitFor(() => expect(screen.getByTestId("network-step-review")).toHaveAttribute("data-state", "current"));
+    await screen.findByTestId("review-card-review-second");
+    await waitFor(() => expect(screen.getByTestId("network-step-review")).toHaveAttribute("data-state", "blocked"));
+    expect(screen.getByTestId("network-step-review")).toHaveTextContent("人工流程未核驗");
     expect(screen.getByTestId("network-step-review")).toHaveAttribute("title", expect.stringContaining("review-second"));
     expect(screen.getByTestId("review-btn-go-review-second")).toBeEnabled();
     expect(screen.queryByTestId("review-btn-go-review-first")).not.toBeInTheDocument();

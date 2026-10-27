@@ -1,10 +1,23 @@
-import type { AssistedIntake } from "@oday-plus/openapi-client";
+import type { AssistedIntake, SlaState } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
 
-export type SlaStatusState = "ON_TRACK" | "DUE_SOON" | "OVERDUE" | "BREACHED" | "PAUSED" | "UNAVAILABLE";
+export type SlaStatusState = SlaState | "UNAVAILABLE";
+
+// Both existing read models can supply these facts; neither needs to invent a
+// complete AssistedIntake or derive workflow state for this presentation.
+type AssignmentSlaRecord = Pick<AssistedIntake,
+  "owner" | "ownerSubjectId" | "assignmentId" | "assignmentStatus" | "slaInstanceId" | "slaState" | "dueAt"> & {
+    assignedOwner?: string | null;
+    assignedQueue?: string | null;
+    target_owner_role?: string | null;
+    slaDueAt?: string | null;
+    assignmentHistory?: WorkflowHistoryItem[] | null;
+    slaHistory?: WorkflowHistoryItem[] | null;
+  };
+type WorkflowHistoryItem = Partial<Record<"timestamp" | "occurredAt" | "action" | "type" | "note" | "reason" | "description", string | null>>;
 
 export interface AssignmentSlaSummaryProps {
-  record: AssistedIntake;
+  record: AssignmentSlaRecord;
   busy?: boolean;
   onClaim?: () => void;
   onOpenTransfer?: () => void;
@@ -19,26 +32,9 @@ export interface AssignmentSlaSummaryProps {
   className?: string;
 }
 
-export function computeSlaState(record: AssistedIntake): SlaStatusState {
-  if ((record as any).isSlaPaused || (record as any).slaState === "PAUSED") {
-    return "PAUSED";
-  }
-  if ((record as any).slaState === "BREACHED" || (record as any).isBreached) {
-    return "BREACHED";
-  }
-
-  const dueAt = (record as any).dueAt || (record as any).slaDueAt;
-  if (!dueAt) {
-    return (record as any).slaState === "ON_TRACK" ? "ON_TRACK" : "UNAVAILABLE";
-  }
-
-  const dueTime = new Date(dueAt).getTime();
-  const now = Date.now();
-  const diffMinutes = Math.floor((dueTime - now) / (1000 * 60));
-
-  if (diffMinutes < 0) return "OVERDUE";
-  if (diffMinutes <= 60) return "DUE_SOON";
-  return "ON_TRACK";
+export function computeSlaState(record: AssignmentSlaRecord): SlaStatusState {
+  const state = record.slaState;
+  return state && Object.hasOwn(SLA_STATE_MAP, state) ? state as SlaStatusState : "UNAVAILABLE";
 }
 
 /** SLA status display details with text AND icon/pattern for WCAG compliance */
@@ -76,8 +72,14 @@ export const SLA_STATE_MAP: Record<
     pattern: "[⏸ PAUSED]",
     toneClass: "info",
   },
+  COMPLETED: {
+    label: "已完成 (Completed)",
+    icon: "✓",
+    pattern: "[✓ COMPLETED]",
+    toneClass: "good",
+  },
   UNAVAILABLE: {
-    label: "UNAVAILABLE",
+    label: "狀態未提供",
     icon: "?",
     pattern: "[? UNAVAILABLE]",
     toneClass: "neutral",
@@ -108,19 +110,20 @@ export function AssignmentSlaSummary({
   const slaState = computeSlaState(record);
   const slaInfo = SLA_STATE_MAP[slaState];
 
-  const currentOwner = record.owner || (record as any).assignedOwner || "UNAVAILABLE";
-  const assignedQueue = (record as any).assignedQueue || (record as any).target_owner_role || "UNAVAILABLE";
+  const currentOwner = record.owner || record.assignedOwner || (record.assignmentStatus === "UNASSIGNED"
+    ? "尚未指派" : record.ownerSubjectId ? "已指派（姓名未提供）" : "未提供");
+  const assignedQueue = record.assignedQueue || record.target_owner_role || "未提供";
   const assignmentId = record.assignmentId || "UNAVAILABLE";
   const assignmentStatus = record.assignmentStatus || "UNAVAILABLE";
   const assignmentStatusKnown = [
     "UNASSIGNED", "ASSIGNED", "TRANSFERRED", "ESCALATED", "CLAIMED", "COMPLETED",
   ].includes(assignmentStatus);
   const slaInstanceId = record.slaInstanceId || "UNAVAILABLE";
-  const dueAtString = (record as any).dueAt || (record as any).slaDueAt || null;
-  const formattedDueAt = dueAtString ? new Date(dueAtString).toLocaleString("zh-TW") : "UNAVAILABLE";
+  const dueAtString = record.dueAt || record.slaDueAt || null;
+  const formattedDueAt = dueAtString ? new Date(dueAtString).toLocaleString("zh-TW") : "未提供";
 
   const isPaused = slaState === "PAUSED";
-  const historyItems: any[] = (record as any).assignmentHistory || (record as any).slaHistory || [];
+  const historyItems = record.assignmentHistory || record.slaHistory || [];
 
   return (
     <div
@@ -139,7 +142,6 @@ export function AssignmentSlaSummary({
             {currentOwner}
           </div>
           <div style={{ fontSize: "10.5px", color: "#475569" }}>佇列：{assignedQueue}</div>
-          <div style={{ fontSize: "10.5px", color: "#475569" }}>Assignment ID：{assignmentId}</div>
           <div style={{ fontSize: "10.5px", color: "#475569" }}>Assignment Status：{assignmentStatus}</div>
         </div>
 
@@ -157,7 +159,6 @@ export function AssignmentSlaSummary({
             </span>
           </div>
           <div style={{ fontSize: "10.5px", color: "#475569" }}>到期時間：{formattedDueAt}</div>
-          <div style={{ fontSize: "10.5px", color: "#475569" }}>SLA Instance ID：{slaInstanceId}</div>
         </div>
       </div>
 

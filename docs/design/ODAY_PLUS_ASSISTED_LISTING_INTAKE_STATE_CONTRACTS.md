@@ -36,11 +36,15 @@ stateDiagram-v2
     CHECKING_IDENTITY --> CHECKING_SOURCE_POLICY
     CHECKING_SOURCE_POLICY --> RETRIEVING: approved retrieval
     CHECKING_SOURCE_POLICY --> AWAITING_ASSISTED_ENTRY: permitted fallback
+    CHECKING_SOURCE_POLICY --> AWAITING_SOURCE_AUTHORIZATION: account access pending
+    AWAITING_SOURCE_AUTHORIZATION --> CHECKING_SOURCE_POLICY: verified recheck worker
+    AWAITING_SOURCE_AUTHORIZATION --> CANCELLED: explicit settled-wait cancellation
     CHECKING_SOURCE_POLICY --> QUARANTINED: blocked or unknown
     RETRIEVING --> PARSING: snapshot committed
     RETRIEVING --> FAILED: retry exhausted
     RETRIEVING --> QUARANTINED: policy/auth violation
     AWAITING_ASSISTED_ENTRY --> PARSING: operator input committed
+    AWAITING_ASSISTED_ENTRY --> CHECKING_SOURCE_POLICY: verified recheck worker
     PARSING --> MATCHING: valid output
     PARSING --> NEEDS_REVIEW: partial or low confidence
     PARSING --> FAILED: parser failure exhausted
@@ -68,23 +72,62 @@ stateDiagram-v2
 | `CHECKING_IDENTITY` | `CHECKING_SOURCE_POLICY` | Orchestrator / `source_policy.evaluate` | No exact identity | Intake version | Source host and policy version; `intake.source_policy_started.v1` | `FAILED` on transient platform error | Reopenable |
 | `CHECKING_SOURCE_POLICY` | `RETRIEVING` | Policy service / `source.retrieve` | Policy=`APPROVED_RETRIEVAL`, approval unexpired, kill switch off | Policy decision ID + version | Policy decision; `intake.retrieval_approved.v1` | `QUARANTINED` if policy changes | Reopenable |
 | `CHECKING_SOURCE_POLICY` | `AWAITING_ASSISTED_ENTRY` | Policy service / `intake.assisted_entry` | Policy permits fallback; no raw credentials requested | Policy decision ID | Policy result; `intake.assisted_entry_required.v1` | `QUARANTINED` if fallback prohibited | Reopenable |
+| `CHECKING_SOURCE_POLICY` | `AWAITING_SOURCE_AUTHORIZATION` | Policy service / `intake.await_source_authorization` | Current valid source policy is `AUTH_REQUIRED`; no separate current manual-entry approval | Policy decision ID + job fences | Source policy snapshot; `intake.source_authorization_required.v1`; existing `intake.state_changed` | Existing blocked/unknown policy routes to `QUARANTINED` | Waiting; no automatic resume |
 | `CHECKING_SOURCE_POLICY` | `QUARANTINED` | Policy service / `intake.quarantine` | `SOURCE_BLOCKED`, `POLICY_UNKNOWN`, expired license, prohibited source | Policy decision ID | Quarantine reason; `intake.quarantined.v1` | Fail closed | Reopenable by steward/policy |
 | `RETRIEVING` | `PARSING` | Retrieval worker / `snapshot.create` | GCS object written, checksum verified, metadata committed | Job fence + snapshot natural key | Snapshot ID/checksum; `snapshot.created.v1`, `intake.parsing_started.v1` | Stay `RETRIEVING` and retry before budget | Reopenable |
 | `RETRIEVING` | `FAILED` | Retrieval worker / `job.fail` | Retryable attempts/time budget exhausted | Job attempt token | Error code/checkpoint; `intake.processing_failed.v1` | None | Reopenable by replay authority |
 | `RETRIEVING` | `QUARANTINED` | Retrieval/policy / `intake.quarantine` | Auth wall, prohibited content, policy revoked | Intake version | Retrieval evidence; `intake.quarantined.v1` | Fail closed | Reopenable |
-| `AWAITING_ASSISTED_ENTRY` | `PARSING` | Expansion staff / `intake.correct` | Required fields or approved HTML snapshot provided; reason for identity/commercial correction | If-Match + idempotency | Correction set; `intake.assisted_entry_completed.v1` | `422 CORRECTION_INVALID` | Reopenable |
+| `AWAITING_ASSISTED_ENTRY` | `PARSING` | Expansion staff, manager or data steward / `intake.correct` | Required fields or approved HTML snapshot provided; reason for identity/commercial correction | If-Match + idempotency | Correction set; `intake.assisted_entry_completed.v1`; `intake.state_changed`; native JSON evidence also emits `snapshot.manual_entry_created` | `422 CORRECTION_INVALID` | Reopenable |
 | `PARSING` | `MATCHING` | Parser worker / `parser.execute` | Active parser release, schema compatible, required output valid | Parser run ID + snapshot ID | Parser run/output lineage; `parser.run_completed.v1`, `intake.matching_started.v1` | `FAILED` or `NEEDS_REVIEW` | Reopenable |
 | `PARSING` | `NEEDS_REVIEW` | Parser worker / `intake.route_review` | Partial output or confidence below field threshold | Parser run ID | Field confidence warnings; `intake.review_required.v1` | None | Reopenable |
 | `PARSING` | `FAILED` | Parser worker / `job.fail` | Non-retryable parser defect or retry exhaustion | Job fence | Error/checkpoint; `intake.processing_failed.v1` | None | Reopenable |
-| `MATCHING` | `READY` | Matcher or reviewer / `identity.decide` | Outcome NEW, EXACT_DUPLICATE, or unambiguous REVISION; persistence transaction committed | Match case version; decision idempotency | Match case/decision; `match.decided.v1`, `intake.resolved.v1` | `NEEDS_REVIEW` on conflict | Terminal |
+| `MATCHING` | `READY` | Established identity-resolution service or independent executor after authorized human confirmation | Unambiguous EXACT_DUPLICATE follows the established service flow; NEW/REVISION require the existing UI confirmation and a committed executor transaction; matcher proposal alone cannot resolve the Intake | Match case version; existing confirmation/execution idempotency | Match evidence, confirmation and execution receipts; existing audit/outbox contract | `NEEDS_REVIEW` on conflict | Terminal |
 | `MATCHING` | `NEEDS_REVIEW` | Matcher / `identity.review` | `POSSIBLE_MATCH` or contradictory evidence | Match case ID/version | Candidates/evidence; `match.review_required.v1` | None | Reopenable |
 | `MATCHING` | `QUARANTINED` | Matcher/steward / `intake.quarantine` | Invalid/unsafe identity evidence | Match case version | Reason/evidence; `intake.quarantined.v1` | Fail closed | Reopenable |
-| `NEEDS_REVIEW` | `READY` | Expansion manager or data steward / `identity.decide` | Authorized explicit human decision; second actor where required | If-Match + decision idempotency | Decision before/after/reason; `match.decided.v1`, `intake.resolved.v1` | `409 REVIEW_CONFLICT` | Terminal |
+| `NEEDS_REVIEW` | `READY` | Expansion manager or data steward; independent executor after verified human confirmation / `identity.decide` | Authorized explicit human decision; second actor where required; current source/account authority and observed candidate/resource versions | If-Match + decision idempotency + observed versions | Decision before/after/reason; actual prior state retained; `match.decided.v1`, `intake.resolved.v1` | `409 REVIEW_CONFLICT` | Terminal |
 | `NEEDS_REVIEW` | `QUARANTINED` | Manager/steward / `intake.quarantine` | Quarantine reason selected | If-Match + idempotency | Decision reason; `intake.quarantined.v1` | No optimistic update | Reopenable |
 | `QUARANTINED` | `CHECKING_SOURCE_POLICY` | Data steward / `intake.reopen` | Policy defect corrected or approval renewed | If-Match + second review for high risk | Reopen reason/policy; `intake.reopened.v1` | Remain quarantined | Reopenable |
 | `QUARANTINED` | `NEEDS_REVIEW` | Data steward / `intake.reopen` | Data defect correctable; evidence preserved | If-Match | Reopen reason; `intake.reopened.v1` | Remain quarantined | Reopenable |
 | `FAILED` | `RETRIEVING` or `PARSING` | Data steward/operator / `job.replay` | Retry checkpoint exists, source policy still permits, retry budget authorized | Replay key + job fence | Replay receipt; `job.replay_requested.v1` | Remain failed | Reopenable |
-| `SUBMITTED`,`AWAITING_ASSISTED_ENTRY`,`NEEDS_REVIEW` | `CANCELLED` | Submitter/manager / `intake.cancel` | No executed identity/promotion decision | If-Match + idempotency | Cancel reason; `intake.cancelled.v1` | `409 CANNOT_CANCEL` | Terminal |
+| `AWAITING_SOURCE_AUTHORIZATION` | `CHECKING_SOURCE_POLICY` | Verified recheck service / `intake.recheck_source_policy` | Current SQL DATA_OWNER requester; unchanged input; proven current wait and original identity; both live job fences | Separate request ID and signed recheck job; Intake CAS | Request/admission/completion audits; closed state event; both jobs SUCCEEDED | Failed recheck leaves wait/cancelled state unchanged | Policy service independently re-evaluates current registry |
+| `AWAITING_ASSISTED_ENTRY` | `CHECKING_SOURCE_POLICY` | Verified recheck service / `intake.recheck_source_policy` | Current SQL DATA_OWNER requester; unchanged input; proven current native assisted wait; no pending or active assisted completion; both live job fences | Separate request ID, current If-Match, signed recheck job and Intake CAS | Audited waiting context, original identity, request/admission/completion and exact state event | Failed recheck leaves the wait unchanged | Classifier independently selects assisted entry, source-account wait, retrieval or quarantine under current registry facts |
+| `SUBMITTED`,`AWAITING_ASSISTED_ENTRY`,`AWAITING_SOURCE_AUTHORIZATION`,`NEEDS_REVIEW` | `CANCELLED` | Submitter/manager / `intake.cancel` | No executed identity/promotion decision | If-Match + idempotency | Cancel reason; `intake.cancelled.v1` | `409 CANNOT_CANCEL` | Terminal |
+
+### 2.1 AUTH_REQUIRED routing decision (2026-10-16)
+
+Product selected: permit manual entry only when the source has a separate explicit approval; otherwise wait for account authorization. Generic legal/license approval does not authorize manual entry. `AUTH_REQUIRED` remains the recorded source policy even when manual entry is permitted.
+
+A current manual-entry approval requires all three source-registry fields: nonblank `assisted_entry_approval_ref`, canonical nonzero human `assisted_entry_approved_by`, and aware future `assisted_entry_review_expires_at`. The effective permission expires at the earlier of the ordinary source review and this separate review. Missing, malformed, expired or revoked approval permits only waiting. Existing kill switch, disabled source, ambiguous host or invalid ordinary source approval retains its existing quarantine result. No row is backfilled with approval.
+
+The generic PostgreSQL platform profile may omit the optional Assisted Listing Intake context. Migration `0027` skips only when both `intake.source_registry` and `intake.intakes` are absent; a partial installation is an error. It creates no optional tables or approvals. If the context is installed later, explicitly apply `000034_native_intake_auth_wait.sql` after its baseline and before activating native source-policy work. The runtime schema check continues to reject an unpatched context.
+
+`AWAITING_SOURCE_AUTHORIZATION` commits with the Intake version, transition, canonical audit, state-change outbox and both completed policy jobs. Completing the policy evaluation does not complete the Intake. This state grants no retrieval or supplied-evidence permission and collects no password, token or cookie. Replaying a completed evaluation returns only its original historical receipt. A source-registry update alone cannot resume the Intake. Explicit current-authority re-evaluation is defined below. Operator presentation and live source activation remain separate work.
+
+`POST /canonical-intakes/{intake_id}/cancel` cancels only a settled `AWAITING_SOURCE_AUTHORIZATION` Intake whose recorded source policy remains `AUTH_REQUIRED`. The current submitter, manager or steward must pass the existing tenant, scope and ownership checks; no display persona or administrator role alone grants cancellation. An explicit reason, positive weak `If-Match` version and idempotency key are required. All native Intake jobs must have succeeded with settled physical delivery, including the source-policy job; any associated match case or promotion decision blocks this narrow command. The same SERIALIZABLE transaction writes the versioned cancellation, transition, canonical `intake.cancelled.v1` audit, existing `intake.state_changed` event and durable idempotency receipt. Replays reauthorize the current caller and row and return only the historical cancellation receipt. Cancellation preserves source approvals, policy history, evidence and job receipts; it grants no retrieval, supplied-evidence permission or automatic resume. Other states retain their existing cancellation interfaces.
+
+
+### 2.2 Explicit source-policy recheck
+
+`POST /canonical-intakes/{intake_id}/source-policy-rechecks` returns a durable `202 REQUESTED` receipt with the unchanged native authorization-wait or assisted-wait version. It requires a safe explicit reason, positive weak `If-Match` and idempotency key. Both the verified HTTP principal and current active SQL identity must hold DATA_OWNER, the tenant/native scope, listing module and CONFIDENTIAL clearance. Identity reads borrow the owning SERIALIZABLE transaction through a connection-shaped read-only proxy; they never check out a second connection, commit, close or substitute a default scope. The request transaction persists its audit, closed request event and durable receipt. New requests bind the exact waiting state and recorded source-policy state in the canonical request audit; legacy requests without these fields retain only the authorization-wait/AUTH_REQUIRED interpretation. Historical replay reauthorizes the current caller without resuming or readmitting work. Pending requests and active jobs in either command family exclude competing requests and admissions under the same Intake lock, across all waiting versions.
+
+The separate `native-intake-source-policy-recheck` worker uses the `intake_policy_recheck` aggregate and its own signing key, tenant allowlist and at most 15-second total admitted budget, including queue/retries. Both configuration variables are unset by default. The partition admission entrypoint is `python -m apps.worker.oday_worker.native_intake_source_policy_recheck --tenant-id UUID --limit 25`; using it requires separately configured runtime policy and does not install a schedule. The real default worker locks physical delivery, business job and Intake in that order. It rechecks current SQL requester authority and unchanged input before atomically advancing either proven wait to CHECKING_SOURCE_POLICY, preserving the audited prior AUTH_REQUIRED or ASSISTED_ENTRY_ONLY label, and committing transition, audit, state event, result and both succeeded jobs. The FSM requires SVC_INTAKE or EMERGENCY_ADMIN and unconditionally requires a server-only verified recheck flag, causation, idempotency and nonempty reason; emergency authority does not bypass that proof. Revocation, cancelled/input-changed Intake or budget failure produces an accurate failed/retrying delivery while preserving Intake state. Failed rechecks permit a later authorized request with a new key after work settles.
+
+A completed recheck proves a past command. Its bounded read-only verifier binds its own request, admission, signed delivery, accepted attempt/fences, transition, audit and state event directly to the original identity/start/submission chain. It never recursively verifies a previous policy result. The child source-policy job accepts only proven identity or recheck producers and independently checks current source policy. The original identity path still requires NULL policy state; only the proven recheck path permits its exact audited AUTH_REQUIRED or ASSISTED_ENTRY_ONLY label as pending input. Separate current manual approval permits assisted entry, missing approval returns to authorization wait, and retrieval requires the source's own current APPROVED_RETRIEVAL policy. Registry changes and historical receipts alone never resume work. Source/account activation, credential collection, formal numeric approvals and end-to-end SLO approval remain separate.
+
+
+### 2.3 Explicit assisted-entry completion
+
+`POST /api/v1/canonical-intakes/{intake_id}/assisted-entry-completions` requires the shared If-Match and idempotency headers, typed fields, reason and risk acknowledgement. Both the authenticated caller and current active SQL identity must hold the command's tenant, five-axis resource scope, listing module and `intake.correct` permission; staff may act only on their own Intake. The exact Intake must be in a proven `AWAITING_ASSISTED_ENTRY` source-policy wait. `AUTH_REQUIRED` permits this command only with separate, explicit, current manual-entry approval; otherwise account authorization remains pending.
+
+The request transaction records the human command, audit, request event and initial `PROPOSED` corrections. It applies no identity decision and grants no independent-review authority. The native command accepts typed JSON fields; it does not accept raw HTML or request source credentials. Its separately configured worker rechecks the current human, source approval, runtime policy and signing key at admission, acceptance, every storage operation and final commit. It retains the original timeout and attempt limits and owns both physical and business leases and fences.
+
+Successful final SQL atomically records the verified `MANUAL_ENTRY` JSON snapshot metadata, links only the original unreviewed proposals without changing their values or review status, transitions the Intake from `AWAITING_ASSISTED_ENTRY` to `PARSING` under its real human initiator, and settles both jobs. It persists `intake.assisted_entry_completed.v1`, `intake.state_changed` and `snapshot.manual_entry_created` in the same transaction. Historical success proves this completed command and confers no current authorization. After authorization loss, a still-owned worker may settle only its jobs with the required audit and terminal proof; it cannot mutate Intake or human evidence on that basis. Unreaped IO remains unresolved.
+
+### 2.4 Explicit withdrawal of a pending native command
+
+`POST /api/v1/canonical-intakes/{intake_id}/assisted-entry-completions/{request_id}/cancel` and `POST /api/v1/canonical-intakes/{intake_id}/source-policy-rechecks/{request_id}/cancel` require the shared If-Match and idempotency headers, a nonempty reason and the corresponding command family's current caller authorization. Receipts bind the original request, Intake, tenant, actor, audit and cancellation event; failures retain that family's public error codes.
+
+A request without an admitted job is recorded as `WITHDRAWN` by its canonical cancellation audit and event. Admission may skip it only after verifying the complete withdrawal proof and absence of both jobs. For admitted active work, the receipt is `CANCELLATION_REQUESTED`: the command records the flag, and its current fenced owner must settle the business job and physical delivery consistently as cancelled. Neither path changes Intake processing state, applies or removes the original proposals, or treats a cancellation event alone as proof that active work has settled. The events are `intake.assisted_entry_request_cancelled` and `intake.source_policy_recheck_cancelled`, each ordered by tenant and Intake and retained for 30 days.
 
 ## 3. Listing lifecycle
 
@@ -140,6 +183,8 @@ stateDiagram-v2
     EXECUTING --> EXECUTED: serializable graph transaction committed
     EXECUTING --> FAILED: transaction rolled back
     EXECUTED --> REVERSAL_PENDING: unmerge/reversal requested
+    EXECUTED --> APPROVED: fresh human Intake confirmation after proven graph repair
+    EXECUTED --> PENDING_REVIEW: fresh human duplicate proposal after proven graph repair
     REVERSAL_PENDING --> REVERSED: compensating graph transaction committed
     REVERSAL_PENDING --> REJECTED
     FAILED --> PENDING_REVIEW: retry authorized
@@ -156,10 +201,25 @@ stateDiagram-v2
 | `PENDING_REVIEW` | `REJECTED` | Reviewer / `identity.decide` | Reason required | If-Match | Decision; `match.rejected.v1` | Conflict leaves pending | Terminal |
 | `APPROVED` | `EXECUTING` | Identity service / `identity.execute` | Decision not expired/reversed; all target versions match | Decision ID as idempotency key | Execution plan; `identity.execution_started.v1` | Return approved for retry | Reopenable |
 | `EXECUTING` | `EXECUTED` | Identity service / `identity.execute` | Serializable transaction closes prior edges, creates effective edges/redirects, updates resolution indexes, writes audit/outbox | Row locks + aggregate versions | Edge/redirect receipts; `identity.resolution_changed.v1` | Full SQL rollback | Reopenable via reversal |
+| `EXECUTED` | `APPROVED` or `PENDING_REVIEW` | Fresh authorized human / existing Intake confirmation | Case is POSSIBLE_MATCH; original Intake remains NEEDS_REVIEW and unresolved; current case version proves a completed independently reviewed MERGE/SPLIT via its execution job, immutable audit and match.decided event; unchanged original parser evidence and current source/field/resource authority verified | Current case If-Match + new confirmation key | New CREATE/REVISE approval or independently reviewed DUPLICATE proposal through the same executor; original graph decision stays EXECUTED | Conflict leaves prior execution and Intake unchanged | Case continuation only; never reopens the prior decision |
 | `EXECUTING` | `FAILED` | Identity service / `identity.execute` | Transaction/dependency failure | Attempt token | Failure receipt; `identity.execution_failed.v1` | No partial graph visible | Reopenable |
 | `EXECUTED` | `REVERSAL_PENDING` | Steward/manager / `identity.unmerge` | Original decision/evidence available; no unresolved dependent mutation; reason/risk ack | Graph version + reversal key | Reversal plan; `identity.reversal_requested.v1` | `409 DEPENDENCY_CONFLICT` | Reopenable |
 | `REVERSAL_PENDING` | `REVERSED` | Independent reviewer + identity service / `identity.unmerge` | Second actor approval; cycle-free replacement graph | Serializable transaction + fencing | Superseding edges/redirect closure; `identity.resolution_reversed.v1` | Full rollback; remain pending | Terminal |
 | `FAILED` | `PENDING_REVIEW` | Data steward / `identity.retry` | Root cause resolved | If-Match + replay key | Retry receipt; `identity.execution_retry_requested.v1` | Remain failed | Reopenable |
+
+A pending POSSIBLE_MATCH/QUARANTINED case may receive explicit human context
+before any formal decision exists. This is a versioned evidence append through
+the existing case owner and permission boundary, without a state transition.
+The original outcome, confidence, proposer, signals, candidate IDs/ranks and
+evidence are preserved. New candidates carry their observed target versions,
+human confidence and added-at case version. `append_to_case` binds the exact
+case ID/version; the command also binds the Intake version, current scope,
+reason, acknowledgement and idempotency key. Candidate append, case version,
+`match.manual_context_added.v1` canonical audit/delivery and receipt are one
+transaction. Any accepted/proposed decision prevents amendment. A fresh read
+supplies the complete extended context to the original planning/review/executor.
+
+NEW and REVISION reuse the existing authorized UI confirmation and independent persistence executor. They are matching outcomes, not new MERGE/SPLIT decision types. The matcher owns proposals only; it cannot approve its own proposal, write effective Listing/Property identity, or make an Intake READY from a proposal. The unambiguous EXACT_DUPLICATE exception belongs to the established resolution service. These requirements describe the intended flow and do not attest that the unfinished native matcher is wired or enabled.
 
 ## 5. Assignment and SLA
 
@@ -214,6 +274,31 @@ stateDiagram-v2
 High-impact decisions (`MERGE`, `SPLIT`, `UNMERGE`, identity-affecting correction, quarantine release, promotion, purge, legal-hold release) require proposer/reviewer segregation. Self-review returns `403 SELF_REVIEW_DENIED`. Emergency administration may only restore availability, never approve a business outcome; it requires incident ID, two-person authorization, 24-hour expiry, and retrospective governance review.
 
 ## 7. Candidate promotion and SiteScore saga
+
+Canonical reads keep CandidateSite's persisted lifecycle separate from data
+readiness, score jobs, immutable reports and human decisions. The SiteScore
+read API exposes the actual `canonicalSiteStatus`; its canonical `stage` is
+that recorded value, or explicit `unknown`, never a model GO/REJECT or a report
+existence flag. Reads do not rewrite the stored lifecycle.
+
+The existing candidate workflow projection joins the already-authorized
+candidate, scoring, job and review reads for the same access generation and
+exact candidate/Listing/report identities. It exposes `dataReadiness`,
+`scoreJob`, `scoreReport` and `reviewDecision` independently. A review denial
+does not erase an otherwise authorized Gate, job receipt or saved report.
+Report availability is historical evidence, not current job success; generic
+APPROVED is not a human GO. Human outcome display retains the existing strict
+Decision/independent Approval/frozen-report proof. That verified human outcome
+takes precedence in the primary workflow display; otherwise an active or
+failed job, a saved report and current data readiness remain distinct facts.
+Unknown, denied and conflicting reads cannot supply a successful state, a
+retry permission or a missing producer. Conflicting lifecycle/job reads require
+a fresh read; they do not overwrite either persisted record.
+
+The existing `CandidateWorkflowFacts` renders these shared observations once.
+Candidate details do not add a second state summary. The navigation stepper
+uses the same verified native human relation for progress; an exact review-row
+link alone permits navigation, not a claim of human approval or pending review.
 
 ```mermaid
 stateDiagram-v2

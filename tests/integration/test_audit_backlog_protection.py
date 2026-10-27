@@ -246,6 +246,17 @@ def _operator_case(bundle):
     state = NetworkListingService(tenant_id=source.TENANT).export_state()
     for listing in state["listings"]:
         listing["submitter"] = source.OWNER
+    # The aggregate is a presentation snapshot. Fresh mutation authorization
+    # reads the actual resource repository, so persist the controlled rows too.
+    NetworkListingService(
+        bundle.listing_repository_for_tenant(source.TENANT), repository,
+        initial_state=state, seed_fixtures=True, tenant_id=source.TENANT,
+    )
+    for listing in state["listings"]:
+        # Custody belongs to its producer metadata, not the presentation copy.
+        repository.save_listing_metadata(listing["id"], {
+            **repository.get_listing_metadata(listing["id"]), "has_legal_hold": False,
+        })
     state_repository = DurableOperatorDomainStateRepository(documents, "network-listings")
     state_repository.save(source.TENANT, state)
     app = FastAPI()

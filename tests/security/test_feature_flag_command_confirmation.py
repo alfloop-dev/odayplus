@@ -30,6 +30,51 @@ from tests.security.test_feature_flag_admin_authorization import (
 PROOF = {"reason": "  Verified operational reason  ", "riskAcknowledged": True}
 
 
+def test_scoped_http_commands_bind_review_to_current_configuration_and_keep_kill_switch(confirmation_case):
+    context = confirmation_case
+    key = "synthetic.scope-version"
+    tenant_a, tenant_b = "00000000-0000-0000-0000-000000000111", "00000000-0000-0000-0000-000000000222"
+    created = context.client.post(BASE, headers=_headers("admin-a"), json={
+        "key": key, "owner": "synthetic-owner", "scope": "per-tenant", "high_risk": True,
+        "bindings": [{"tenant_id": tenant_a}], **PROOF,
+    })
+    assert created.status_code == 200, created.text
+    path = BASE + "/" + key
+    missing_version = context.client.post(path + "/approve", headers=_headers("admin-a"), json=PROOF)
+    assert missing_version.status_code == 409
+    first = context.client.post(path + "/approve", headers=_headers("admin-a"),
+                                json={**PROOF, "configuration_version": 1})
+    assert first.status_code == 200
+    configured = context.client.post(path + "/scope", headers=_headers("admin-b"),
+        json={**PROOF, "configuration_version": 1, "bindings": [{"tenant_id": tenant_b}]})
+    assert configured.status_code == 200, configured.text
+    assert configured.json()["flag"]["configuration_version"] == 2
+    assert configured.json()["flag"]["approved_by"] == [] and configured.json()["flag"]["enabled"] is False
+    before_stale = _state(context)
+    for operation in ("scope", "approve", "enable"):
+        body = {**PROOF, "configuration_version": 1}
+        if operation == "scope":
+            body["bindings"] = [{"tenant_id": tenant_a}]
+        stale = context.client.post(path + "/" + operation, headers=_headers("admin-a"), json=body)
+        assert stale.status_code == 409, stale.text
+    assert _state(context) == before_stale
+    for actor in ("admin-a", "admin-b"):
+        approved = context.client.post(path + "/approve", headers=_headers(actor),
+                                        json={**PROOF, "configuration_version": 2})
+        assert approved.status_code == 200
+    enabled = context.client.post(path + "/enable", headers=_headers("admin-a"),
+                                  json={**PROOF, "configuration_version": 2})
+    assert enabled.status_code == 200, enabled.text
+    assert enabled.json()["flag"]["enabled"] is True and enabled.json()["flag"]["is_active"] is False
+    assert context.registry.is_enabled(key, tenant_id=tenant_b)
+    assert not context.registry.is_enabled(key, tenant_id=tenant_a)
+    stopped = context.client.post(path + "/disable", headers=_headers("admin-a"), json=PROOF)
+    assert stopped.status_code == 200
+    assert stopped.json()["flag"]["configuration_version"] == 3 and not context.registry.is_enabled(key, tenant_id=tenant_b)
+    assert context.client.post(path + "/approve", headers=_headers("admin-b"),
+        json={**PROOF, "configuration_version": 2}).status_code == 409
+
+
 def _mounted_client(owner, audit):
     app = _test_app(owner, audit, boundary=dependencies.default_boundary())
     install_error_handlers(app)

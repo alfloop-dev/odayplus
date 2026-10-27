@@ -25,7 +25,7 @@ with tempfile.TemporaryDirectory() as directory:
   engine.close()
 print(json.dumps(results))
 `;
-const actual = JSON.parse(execFileSync(resolve(root, ".venv/bin/python"), ["-c", producer], { cwd: root, encoding: "utf8" })) as Record<string, NetworkReviewsSnapshot>;
+const actual = JSON.parse(execFileSync(process.env.ODP_TEST_PYTHON ?? resolve(root, ".venv/bin/python"), ["-c", producer], { cwd: root, encoding: "utf8" })) as Record<string, NetworkReviewsSnapshot>;
 
 describe("canonical action evidence from actual durable producers", () => {
   it.each(["GO", "WAIT", "RETURN", "REJECT"])("admits %s using its stored action and own Approval identity", (action) => {

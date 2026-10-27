@@ -91,7 +91,7 @@ export type SiteScoreReportSummaryContract = {
   m6: Interval;
   m12: Interval;
   mature?: Interval;
-  paybackPeriod: Interval;
+  paybackPeriod: Interval | null;
   /** Recorded 0..1 score; null means unavailable, not measured zero. */
   rentReasonableness: number | null;
   cannibalizationRisk: RiskLevel;

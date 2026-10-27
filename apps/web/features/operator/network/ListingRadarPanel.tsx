@@ -10,6 +10,8 @@ import { OperatorDataUnavailableGate } from "../OperatorDataUnavailableGate";
 import styles from "../networkFindAreas.module.css";
 import type { IntakeHeatZoneOptions } from "./intake/AddListingFromUrlDialog";
 import { AssistedIntakeSection } from "./intake/AssistedIntakeSection";
+import { CanonicalIntakeCasePicker } from "./intake/CanonicalIntakeCasePicker";
+import type { CanonicalIntakeReadContext } from "./intake/canonicalIntakeReadClient";
 import { MERGE_DENIED_NOTE, canMergeListing } from "./listingPermissions";
 import { resolveListingAction, type ListingWriteContext } from "./listingActions";
 import { resolveListingNavigation, type ListingNavigation, type ListingNavigationTarget } from "./listingNavigation";
@@ -49,6 +51,7 @@ export function toTargetListingData(listing: NetworkListingDetail) {
 export function ListingRadarPanel({
   activeRoleId,
   busyListingId,
+  canonicalIntakeReadContext,
   intakeDetailOpen = false,
   listings,
   listingsReadFailure = null,
@@ -66,6 +69,7 @@ export function ListingRadarPanel({
 }: {
   activeRoleId: OperatorRoleId;
   busyListingId?: string | null;
+  canonicalIntakeReadContext?: CanonicalIntakeReadContext;
   /**
    * True while the canonical intake detail owns the page. Package 10 puts the
    * detail immediately below the global topbar, so the Network compliance strip
@@ -162,6 +166,8 @@ export function ListingRadarPanel({
         heatZoneOptions={heatZoneOptions}
         targetListings={listings.map(toTargetListingData)}
       />
+
+      {!intakeDetailOpen && canonicalIntakeReadContext ? <CanonicalIntakeCasePicker context={canonicalIntakeReadContext} /> : null}
 
       {navigationError ? <p role="alert">{navigationError}</p> : null}
       {listingsReadFailure ? (

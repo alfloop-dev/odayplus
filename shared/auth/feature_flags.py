@@ -16,6 +16,7 @@ from dataclasses import dataclass, replace
 from datetime import date
 from enum import StrEnum
 from typing import Any
+from uuid import UUID
 
 
 class Readiness(StrEnum):
@@ -32,6 +33,60 @@ class Readiness(StrEnum):
 DUAL_APPROVAL_MINIMUM = 2
 
 
+class FlagScope(StrEnum):
+    GLOBAL = "global"
+    TENANT = "per-tenant"
+    TENANT_SOURCE = "per-tenant-per-source"
+    TENANT_EVENTS = "global-per-tenant"
+
+
+# The existing release manifest is checked against this same runtime contract.
+# These are not defaults: adding a key must not invalidate an older global SQL
+# record or activate an Intake surface during bootstrap.
+ASSISTED_INTAKE_FLAG_SCOPES = {
+    "assisted_intake_v1_read": FlagScope.TENANT,
+    "assisted_intake_v1_shadow": FlagScope.TENANT_SOURCE,
+    "assisted_intake_v1_write": FlagScope.TENANT_SOURCE,
+    "assisted_intake_v1_events": FlagScope.TENANT_EVENTS,
+    "assisted_intake_v1_promotion": FlagScope.TENANT,
+}
+
+
+class FeatureFlagConfigurationConflict(ValueError):
+    """The actor did not confirm the current scope configuration."""
+
+
+@dataclass(frozen=True, order=True)
+class FlagScopeBinding:
+    """An exact tenant or tenant/source unit, never two Cartesian lists."""
+
+    tenant_id: str
+    source_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.tenant_id, str):
+            raise ValueError("A scope binding requires an explicit tenant UUID")
+        try:
+            object.__setattr__(self, "tenant_id", str(UUID(self.tenant_id)))
+        except (ValueError, AttributeError) as exc:
+            raise ValueError("A scope binding requires an explicit tenant UUID") from exc
+        if self.source_id is not None and (
+            not isinstance(self.source_id, str) or not self.source_id.strip()
+            or self.source_id != self.source_id.strip() or self.source_id == "*"
+            or any(ord(char) < 32 for char in self.source_id)
+        ):
+            raise ValueError("A source binding requires an exact source identifier")
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> FlagScopeBinding:
+        if not isinstance(value, dict) or set(value) - {"tenant_id", "source_id"}:
+            raise ValueError("Invalid feature flag scope binding")
+        return cls(tenant_id=value["tenant_id"], source_id=value.get("source_id"))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"tenant_id": self.tenant_id, "source_id": self.source_id}
+
+
 @dataclass(frozen=True)
 class FeatureFlag:
     """A single feature flag and its governance metadata."""
@@ -44,10 +99,42 @@ class FeatureFlag:
     expires_on: date | None = None
     description: str = ""
     approved_by: frozenset[str] = frozenset()
+    scope: FlagScope = FlagScope.GLOBAL
+    bindings: tuple[FlagScopeBinding, ...] = ()
+    configuration_version: int = 1
 
     def __post_init__(self) -> None:
-        if not self.owner:
+        if not isinstance(self.key, str) or not self.key.strip():
+            raise ValueError("A feature flag requires an explicit key")
+        if not isinstance(self.owner, str) or not self.owner.strip():
             raise ValueError(f"feature flag {self.key!r} must declare an owner")
+        if type(self.enabled) is not bool or type(self.high_risk) is not bool:
+            raise ValueError("Feature flag state and risk must be booleans")
+        object.__setattr__(self, "readiness", Readiness(self.readiness))
+        if not isinstance(self.description, str) or (self.expires_on is not None and type(self.expires_on) is not date):
+            raise ValueError("Invalid feature flag metadata")
+        if isinstance(self.approved_by, str) or any(
+            not isinstance(actor, str) or not actor.strip() for actor in self.approved_by
+        ):
+            raise ValueError("Feature flag approvals require explicit actors")
+        object.__setattr__(self, "approved_by", frozenset(self.approved_by))
+        object.__setattr__(self, "scope", FlagScope(self.scope))
+        bindings = tuple(self.bindings)
+        if any(not isinstance(binding, FlagScopeBinding) for binding in bindings):
+            raise ValueError("Feature flag bindings must be explicit scope units")
+        if len(set(bindings)) != len(bindings):
+            raise ValueError("Duplicate feature flag scope binding")
+        object.__setattr__(self, "bindings", tuple(sorted(bindings, key=lambda b: (b.tenant_id, b.source_id or ""))))
+        if type(self.configuration_version) is not int or self.configuration_version < 1:
+            raise ValueError("Invalid feature flag configuration version")
+        if self.scope == FlagScope.GLOBAL and bindings:
+            raise ValueError("A global flag cannot contain tenant bindings")
+        for binding in bindings:
+            if (self.scope == FlagScope.TENANT_SOURCE) != (binding.source_id is not None):
+                raise ValueError("Feature flag binding does not match its scope")
+        expected_scope = ASSISTED_INTAKE_FLAG_SCOPES.get(self.key)
+        if expected_scope is not None and (self.scope != expected_scope or self.high_risk is not True):
+            raise ValueError("Intake flag scope and high-risk governance cannot be downgraded")
         # High-risk surfaces must fail safe: they can only be enabled together
         # with a recorded dual approval (SA-04 §3). This blocks both
         # enabled-by-default config and un-approved runtime enables.
@@ -56,17 +143,31 @@ class FeatureFlag:
                 f"high-risk flag {self.key!r} cannot be enabled without "
                 f">= {DUAL_APPROVAL_MINIMUM} approvals"
             )
+        if self.enabled and self.scope != FlagScope.GLOBAL and not bindings:
+            raise ValueError("A scoped flag cannot be enabled without explicit bindings")
 
     def is_expired(self, on: date) -> bool:
         return self.expires_on is not None and on >= self.expires_on
 
-    def is_active(self, on: date) -> bool:
-        """Effective state: enabled AND not expired."""
+    def is_active(self, on: date, *, tenant_id: str | None = None, source_id: str | None = None) -> bool:
+        """Effective state for an explicit resource unit; global stays compatible."""
 
-        return self.enabled and not self.is_expired(on)
+        if not self.enabled or self.is_expired(on):
+            return False
+        if self.scope == FlagScope.GLOBAL:
+            return True
+        if not isinstance(tenant_id, str):
+            return False
+        try:
+            tenant = str(UUID(tenant_id))
+        except (ValueError, AttributeError):
+            return False
+        return any(binding.tenant_id == tenant and (
+            self.scope != FlagScope.TENANT_SOURCE or binding.source_id == source_id
+        ) for binding in self.bindings)
 
-    def to_dict(self, on: date | None = None) -> dict[str, Any]:
-        check_date = on or date.today()
+    def to_record(self) -> dict[str, Any]:
+        """The configuration serialized by SQL, administration and command audit."""
         return {
             "key": self.key,
             "owner": self.owner,
@@ -76,28 +177,47 @@ class FeatureFlag:
             "expires_on": self.expires_on.isoformat() if self.expires_on else None,
             "description": self.description,
             "approved_by": list(sorted(self.approved_by)),
+            "scope": self.scope.value,
+            "bindings": [binding.to_dict() for binding in self.bindings],
+            "configuration_version": self.configuration_version,
+        }
+
+    def to_dict(self, on: date | None = None, *, include_bindings: bool = True) -> dict[str, Any]:
+        check_date = on or date.today()
+        value = {
+            **self.to_record(),
             "is_active": self.is_active(check_date),
             "is_expired": self.is_expired(check_date),
         }
+        if not include_bindings:
+            value.pop("bindings")
+        return value
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> FeatureFlag:
-        expires_on = date.fromisoformat(d["expires_on"]) if d.get("expires_on") else None
+        raw_expiry = d.get("expires_on")
+        expires_on = raw_expiry if type(raw_expiry) is date else date.fromisoformat(raw_expiry) if raw_expiry else None
         readiness_val = d.get("readiness", Readiness.EXPERIMENTAL)
         try:
             readiness = Readiness(readiness_val)
         except ValueError:
             readiness = Readiness.EXPERIMENTAL
-        approved_by = frozenset(d.get("approved_by", []))
+        approvals = d.get("approved_by", [])
+        if not isinstance(approvals, (list, tuple, set, frozenset)):
+            raise ValueError("Feature flag approvals require an actor collection")
+        approved_by = frozenset(approvals)
         return cls(
             key=d["key"],
             owner=d["owner"],
-            enabled=bool(d.get("enabled", False)),
+            enabled=d.get("enabled", False),
             readiness=readiness,
-            high_risk=bool(d.get("high_risk", False)),
+            high_risk=d.get("high_risk", False),
             expires_on=expires_on,
             description=d.get("description", ""),
             approved_by=approved_by,
+            scope=FlagScope(d.get("scope", FlagScope.GLOBAL)),
+            bindings=tuple(FlagScopeBinding.from_dict(value) for value in d.get("bindings", ())),
+            configuration_version=d.get("configuration_version", 1),
         )
 
 
@@ -116,7 +236,8 @@ class FeatureFlagRegistry:
     def all(self) -> tuple[FeatureFlag, ...]:
         return tuple(self._flags.values())
 
-    def is_enabled(self, key: str, *, on: date | None = None) -> bool:
+    def is_enabled(self, key: str, *, on: date | None = None,
+                   tenant_id: str | None = None, source_id: str | None = None) -> bool:
         """True only when the flag exists, is enabled, and is not expired.
 
         Unknown flags are treated as disabled (deny by default).
@@ -124,12 +245,14 @@ class FeatureFlagRegistry:
 
         check_date = on or date.today()
         flag = self._flags.get(key)
-        return flag is not None and flag.is_active(check_date)
+        return flag is not None and flag.is_active(check_date, tenant_id=tenant_id, source_id=source_id)
 
-    def enable(self, key: str, *, approvals: frozenset[str] = frozenset()) -> FeatureFlag:
+    def enable(self, key: str, *, approvals: frozenset[str] = frozenset(),
+               configuration_version: int | None = None) -> FeatureFlag:
         """Enable a flag, enforcing dual approval for high-risk flags."""
 
         flag = self._require(key)
+        self._require_configuration(flag, configuration_version)
         effective_approvals = flag.approved_by | approvals
         if flag.high_risk and len(effective_approvals) < DUAL_APPROVAL_MINIMUM:
             raise PermissionError(
@@ -142,18 +265,39 @@ class FeatureFlagRegistry:
 
     def disable(self, key: str) -> FeatureFlag:
         flag = self._require(key)
-        updated = replace(flag, enabled=False, approved_by=frozenset())
+        updated = replace(flag, enabled=False, approved_by=frozenset(),
+                          configuration_version=flag.configuration_version + (flag.scope != FlagScope.GLOBAL))
         self._flags[key] = updated
         return updated
 
-    def add_approval(self, key: str, approver: str) -> FeatureFlag:
+    def add_approval(self, key: str, approver: str, *, configuration_version: int | None = None) -> FeatureFlag:
         flag = self._require(key)
+        self._require_configuration(flag, configuration_version)
         if not approver or not approver.strip():
             raise ValueError("approver cannot be empty")
         new_approvals = flag.approved_by | {approver.strip()}
         updated = replace(flag, approved_by=new_approvals)
         self._flags[key] = updated
         return updated
+
+    def configure_scope(self, key: str, bindings: tuple[FlagScopeBinding, ...], *,
+                        configuration_version: int | None) -> FeatureFlag:
+        flag = self._require(key)
+        if flag.scope == FlagScope.GLOBAL:
+            raise ValueError("Global flags have no tenant scope to configure")
+        self._require_configuration(flag, configuration_version)
+        updated = replace(flag, bindings=bindings, enabled=False, approved_by=frozenset(),
+                          configuration_version=flag.configuration_version + 1)
+        if updated.bindings == flag.bindings:
+            return flag
+        self._flags[key] = updated
+        return updated
+
+    @staticmethod
+    def _require_configuration(flag: FeatureFlag, version: int | None) -> None:
+        if ((flag.scope != FlagScope.GLOBAL and version is None)
+                or (version is not None and (type(version) is not int or version != flag.configuration_version))):
+            raise FeatureFlagConfigurationConflict("Feature flag scope configuration changed or was not confirmed")
 
     def expired(self, *, on: date) -> tuple[FeatureFlag, ...]:
         """Flags past their expiry date (input for the expiry-check job)."""

@@ -329,7 +329,7 @@ else:
                     status_code=503, detail="CANONICAL_EVIDENCE_DOWNLOAD_ADMISSION_REQUIRED"
                 )
             record = owned_record(export_id, principal)
-            if record.sensitive or record.data_classification.lower() in {
+            if record.sensitive or record.data_classification.strip().lower() in {
                 "restricted", "highly_restricted", "secret", "top_secret",
             }:
                 raise HTTPException(

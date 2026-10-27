@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -10,7 +10,14 @@ from shared.audit.integrity import sha256_hex
 from shared.audit.platform_flag_delivery import COLLECTION as DELIVERY_COLLECTION
 from shared.audit.platform_flag_delivery import PlatformFlagAuditDelivery
 from shared.audit.worm import AuditWormReceipt
-from shared.auth.feature_flags import DEFAULT_FLAGS, FeatureFlag
+from shared.auth.feature_flags import (
+    ASSISTED_INTAKE_FLAG_SCOPES,
+    DEFAULT_FLAGS,
+    FeatureFlag,
+    FeatureFlagConfigurationConflict,
+    FlagScope,
+    FlagScopeBinding,
+)
 from shared.infrastructure.persistence.audit_log import DurableAuditLog
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.engine import SqliteEngine
@@ -19,12 +26,217 @@ from shared.infrastructure.persistence.feature_flags import (
     DOCUMENT,
     DurableFeatureFlagRegistry,
     FeatureFlagAlreadyExists,
+    FeatureFlagOperationDisabled,
     FeatureFlagStoreUnavailable,
 )
 from shared.infrastructure.persistence.job_queue import DurableJobQueue
 from shared.jobs.queue import NonRetryableJobError
 
 KEY = "high_risk.priceops.execute"
+
+
+SCOPED_KEY = "assisted_intake_v1_read"
+SCOPED_TENANT_A = "00000000-0000-0000-0000-000000000111"
+SCOPED_TENANT_B = "00000000-0000-0000-0000-000000000222"
+
+
+def _register_scoped_read(registry, audit):
+    registry.execute("register", SCOPED_KEY, actor="synthetic-config-owner", correlation_id="synthetic-scope-create",
+        audit_log=audit, flag=FeatureFlag(key=SCOPED_KEY, owner="synthetic-scope-owner", high_risk=True,
+            scope=FlagScope.TENANT, bindings=(FlagScopeBinding(SCOPED_TENANT_A),)))
+
+
+def test_old_global_records_read_without_repair_or_new_implicit_intake_defaults(tmp_path):
+    engine, owner, _ = _owner(tmp_path / "old-global.sqlite")
+    try:
+        raw, _ = owner.store.get_versioned(COLLECTION, DOCUMENT)
+        for entry in raw["flags"].values():
+            for field in ("scope", "bindings", "configuration_version"):
+                entry.pop(field)
+        owner.store.put(COLLECTION, DOCUMENT, raw)
+        before = owner.store.get_versioned(COLLECTION, DOCUMENT)
+        assert {flag.key for flag in owner.all()} == set(DEFAULT_FLAGS)
+        assert all(flag.scope == FlagScope.GLOBAL for flag in owner.all())
+        assert owner.get(SCOPED_KEY) is None
+        assert owner.store.get_versioned(COLLECTION, DOCUMENT) == before
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize("field", ["bindings", "configuration_version", "scope", "high_risk"])
+def test_partial_or_downgraded_scoped_record_is_unavailable_and_never_reinitialized(tmp_path, field):
+    engine, owner, audit = _owner(tmp_path / "partial-scope.sqlite")
+    try:
+        _register_scoped_read(owner, audit)
+        raw, _ = owner.store.get_versioned(COLLECTION, DOCUMENT)
+        raw["flags"][SCOPED_KEY].pop(field)
+        owner.store.put(COLLECTION, DOCUMENT, raw)
+        before = owner.store.get_versioned(COLLECTION, DOCUMENT)
+        with pytest.raises(FeatureFlagStoreUnavailable):
+            owner.is_enabled(SCOPED_KEY, tenant_id=SCOPED_TENANT_A)
+        with pytest.raises(FeatureFlagStoreUnavailable):
+            owner.initialize_defaults()
+        assert owner.store.get_versioned(COLLECTION, DOCUMENT) == before
+    finally:
+        engine.close()
+
+
+def test_scope_change_between_approval_read_and_cas_does_not_approve_a_new_configuration(tmp_path, monkeypatch):
+    path = tmp_path / "scope-cas.sqlite"
+    a, first, audit_a = _owner(path)
+    b, second, audit_b = _owner(path)
+    try:
+        _register_scoped_read(first, audit_a)
+        original = first.store.compare_and_put
+        interleaved = []
+
+        def reconfigure(collection, document, value, *, expected_version):
+            if expected_version is not None and not interleaved:
+                interleaved.append(True)
+                second.execute("configure_scope", SCOPED_KEY, actor="synthetic-b", correlation_id="scope-race",
+                    audit_log=audit_b, configuration_version=1, bindings=(FlagScopeBinding(SCOPED_TENANT_B),))
+            return original(collection, document, value, expected_version=expected_version)
+
+        monkeypatch.setattr(first.store, "compare_and_put", reconfigure)
+        with pytest.raises(FeatureFlagConfigurationConflict):
+            first.execute("approve", SCOPED_KEY, actor="synthetic-a", correlation_id="stale-review",
+                          audit_log=audit_a, configuration_version=1)
+        current = first.get(SCOPED_KEY)
+        assert interleaved == [True] and current.configuration_version == 2
+        assert current.bindings == (FlagScopeBinding(SCOPED_TENANT_B),)
+        assert not current.approved_by and not current.enabled
+        assert not any(event.correlation_id == "stale-review" for event in audit_a.list_events())
+        assert len(first.store.list_items(COLLECTION)) == 1
+    finally:
+        a.close()
+        b.close()
+
+
+def test_two_flag_approvals_cannot_substitute_for_governed_release_authority(tmp_path):
+    engine, owner, audit = _owner(tmp_path / "pending-intake-activation.sqlite")
+    try:
+        _register_scoped_read(owner, audit)
+        for actor in ("synthetic-a", "synthetic-b"):
+            owner.execute("approve", SCOPED_KEY, actor=actor, correlation_id="synthetic-review-" + actor,
+                          audit_log=audit, configuration_version=1)
+        before, events = owner.read_versioned(), audit.list_events()
+        with pytest.raises(PermissionError, match="INTAKE_RELEASE_AUTHORITY_REQUIRED"):
+            owner.execute("enable", SCOPED_KEY, actor="synthetic-a", correlation_id="rejected-activation",
+                          audit_log=audit, configuration_version=1)
+        assert owner.read_versioned() == before and audit.list_events() == events
+        assert not owner.is_enabled(SCOPED_KEY, tenant_id=SCOPED_TENANT_A)
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize("timestamp", ["2026-07-23T00:00:00Z", date(2026, 7, 23), datetime(2026, 7, 23, tzinfo=UTC)])
+def test_scoped_activation_uses_the_original_governance_owner_and_records_its_evidence(tmp_path, monkeypatch, timestamp):
+    import shutil
+
+    import yaml
+
+    from modules.listing.application import intake_release_governance as governance
+    from tests.ops.test_assisted_listing_intake_release import (
+        _approve_all_authority,
+        _record_live_evidence,
+    )
+
+    # These are isolated synthetic attestations, never repository approvals.
+    infra = tmp_path / "synthetic-governance"
+    shutil.copytree(governance.INFRA_DIR, infra)
+    _approve_all_authority(infra)
+    _record_live_evidence(infra)
+    authority_path = infra / "release_authority.yaml"
+    authority = yaml.safe_load(authority_path.read_text())
+    for row in authority["gates"]:
+        row["approved_at"] = timestamp
+    authority_path.write_text(yaml.safe_dump(authority))
+    live_path = infra / "live_runtime_evidence.yaml"
+    live = yaml.safe_load(live_path.read_text())
+    live["recorded_at"] = timestamp
+    for row in live["targets"]:
+        row["completed_at"] = timestamp
+    live_path.write_text(yaml.safe_dump(live))
+    monkeypatch.setattr(governance, "INFRA_DIR", infra)
+    engine, owner, audit = _owner(tmp_path / "admitted-scope.sqlite")
+    try:
+        _register_scoped_read(owner, audit)
+        for actor in ("synthetic-a", "synthetic-b"):
+            owner.execute("approve", SCOPED_KEY, actor=actor, correlation_id="synthetic-review-" + actor,
+                          audit_log=audit, configuration_version=1)
+        result = owner.execute("enable", SCOPED_KEY, actor="synthetic-a", correlation_id="synthetic-activation",
+                               audit_log=audit, configuration_version=1)
+        assert result.flag.enabled and owner.is_enabled(SCOPED_KEY, tenant_id=SCOPED_TENANT_A)
+        assert not owner.is_enabled(SCOPED_KEY, tenant_id=SCOPED_TENANT_B)
+        evidence = audit.list_events()[-1].metadata["release_authority"]
+        assert len(evidence["approvals"]) == 9 and len(evidence["live_evidence_digest"]) == 64
+        assert evidence["recorded_by"] == "release-authority@example.com"
+        assert isinstance(evidence["recorded_at"], str)
+        assert all(isinstance(row["approved_at"], str) for row in evidence["approvals"])
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize("location,field", [
+    ("authority", "approver"), ("live", "recorded_at"),
+    ("target", "evidence_ref"), ("canary", "completed_at"),
+])
+def test_malformed_governance_cannot_change_scoped_flag_version_or_audit(tmp_path, monkeypatch, location, field):
+    import shutil
+
+    import yaml
+
+    from modules.listing.application import intake_release_governance as governance
+    from tests.ops.test_assisted_listing_intake_release import (
+        _approve_all_authority,
+        _live_unit,
+        _record_live_evidence,
+    )
+
+    infra = tmp_path / "malformed-synthetic-governance"
+    shutil.copytree(governance.INFRA_DIR, infra)
+    _approve_all_authority(infra)
+    _record_live_evidence(infra, canary_units=[_live_unit(3)])
+    path = infra / ("release_authority.yaml" if location == "authority" else "live_runtime_evidence.yaml")
+    document = yaml.safe_load(path.read_text())
+    target = (document["gates"][0] if location == "authority" else document["targets"][0] if location == "target"
+              else document["canary_units"][0] if location == "canary" else document)
+    target[field] = True
+    path.write_text(yaml.safe_dump(document))
+    monkeypatch.setattr(governance, "INFRA_DIR", infra)
+    engine, owner, audit = _owner(tmp_path / "malformed-activation.sqlite")
+    try:
+        _register_scoped_read(owner, audit)
+        for actor in ("synthetic-a", "synthetic-b"):
+            owner.execute("approve", SCOPED_KEY, actor=actor, correlation_id="synthetic-review-" + actor,
+                          audit_log=audit, configuration_version=1)
+        before, events = owner.read_versioned(), audit.list_events()
+        with pytest.raises(FeatureFlagStoreUnavailable, match="release authority is unavailable"):
+            owner.execute("enable", SCOPED_KEY, actor="synthetic-a", correlation_id="synthetic-rejected-malformed",
+                          audit_log=audit, configuration_version=1)
+        assert owner.read_versioned() == before and audit.list_events() == events
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize("key", [key for key in ASSISTED_INTAKE_FLAG_SCOPES if key != SCOPED_KEY])
+def test_unintegrated_intake_consumers_cannot_be_declared_enabled(tmp_path, key):
+    engine, owner, audit = _owner(tmp_path / "unintegrated-consumer.sqlite")
+    try:
+        scope = ASSISTED_INTAKE_FLAG_SCOPES[key]
+        owner.execute("register", key, actor="synthetic-config-owner", correlation_id="synthetic-create",
+            audit_log=audit, flag=FeatureFlag(key=key, owner="synthetic-owner", high_risk=True, scope=scope,
+                bindings=(FlagScopeBinding(SCOPED_TENANT_A, "synthetic-source" if scope == FlagScope.TENANT_SOURCE else None),)))
+        for actor in ("synthetic-a", "synthetic-b"):
+            owner.execute("approve", key, actor=actor, correlation_id="synthetic-review-" + actor,
+                          audit_log=audit, configuration_version=1)
+        before, events = owner.read_versioned(), audit.list_events()
+        with pytest.raises(FeatureFlagOperationDisabled, match="INTAKE_FLAG_CONSUMER_NOT_INTEGRATED"):
+            owner.execute("enable", key, actor="synthetic-a", correlation_id="synthetic-rejected",
+                          audit_log=audit, configuration_version=1)
+        assert owner.read_versioned() == before and audit.list_events() == events
+    finally:
+        engine.close()
 
 
 COMMAND_PROOF = {"reason": "Synthetic operational command reason", "riskAcknowledged": True}

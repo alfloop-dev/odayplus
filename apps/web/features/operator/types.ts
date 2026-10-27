@@ -321,27 +321,8 @@ export type OperatorHeatZone = {
   reasons: string[];
   risks: string[];
   nextStep: string;
-  /** Recorded native HeatZone result; absent on the older operator projection. */
-  mapEvidence?: {
-    h3Index: string;
-    h3Resolution: number;
-    geometry: GeoJSON.Polygon | null;
-    score: number;
-    priorityRank: number;
-    state: "UNTOUCHED" | "PARTIALLY_ABSORBED" | "SATURATED" | "UNDER_REALIZED" | "STILL_EXPANDABLE" | "SUPPRESSED_LOW_CONFIDENCE";
-    confidence: number;
-    unmetDemandScore: number;
-    formatFitScore: number;
-    cannibalizationRisk: number;
-    rentFeasibility: number;
-    listingAvailability: number;
-    modelVersion: string;
-    featureVersion: string;
-    featureSnapshotTime: string;
-    predictionOriginTime: string;
-    lastScoredAt: string;
-    sourceSnapshotIds: string[];
-  };
+  /** One shared projection of the recorded native result. */
+  recordedMap?: import("./network/mapTypes").HeatZone;
 };
 
 export type ListingSource = {

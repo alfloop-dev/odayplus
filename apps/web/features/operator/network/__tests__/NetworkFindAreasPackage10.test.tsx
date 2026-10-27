@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { operatorHeatZoneToMapZone } from "../heatZoneMapAdapters";
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -75,6 +79,21 @@ function lastPushedParams() {
   return new URL(String(navigation.push.mock.calls.at(-1)?.[0]), "http://local").searchParams;
 }
 
+const actualPythonSnapshot = (() => {
+  const root = existsSync(resolve(process.cwd(), "shared")) ? process.cwd() : resolve(process.cwd(), "../..");
+  // The real server projection consumes explicit synthetic native facts;
+  // no hand-written UI DTO can conceal a producer/consumer name mismatch.
+  return JSON.parse(execFileSync(process.env.ODP_TEST_PYTHON ?? resolve(root, ".venv/bin/python"), ["-c", `
+import json
+from tests.unit.test_operator_canonical_heat_zones import TENANT,zone_result,source,principal
+from modules.opsboard.application.network_listings import NetworkListingService
+from modules.opsboard.application.network_heat_zones import project_canonical_heat_zones
+row=zone_result('native-snapshot-zone')
+snapshot=NetworkListingService(seed_fixtures=False,tenant_id=TENANT).snapshot()
+print(json.dumps(project_canonical_heat_zones(snapshot,source([row.to_dict()]),principal=principal(),selected_id=None)))
+`], { cwd: root, encoding: "utf8" }));
+})();
+
 const LENS_LABELS = [
   "需求熱度",
   "Oday G2 適配",
@@ -99,6 +118,24 @@ describe("Network Find Areas — Package 10 content", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+  });
+
+  it.each([false, true])("reads the actual Python canonical snapshot through the existing workspace without legacy HeatZone access (fixtures=%s)", async fixturesAllowed => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", fixturesAllowed ? "false" : "true");
+    try {
+      const transport = vi.fn(async (input: RequestInfo | URL) => String(input).includes("/operator/network-listings")
+        ? Response.json(actualPythonSnapshot) : Response.json({}, { status: 403 }));
+      render(<NetworkFindAreasWorkspace activeRoleId="expansion-manager" allowedTabIds={["areas"]} fetchImpl={transport} />);
+      await waitFor(() => expect(mapProps.last?.zones).toEqual([expect.objectContaining({
+        id: "native-snapshot-zone", h3: "8929a1d4d67ffff", score: 60,
+        state: "STILL_EXPANDABLE", modelVersion: "synthetic-recorded-test-v1", geometry: null,
+      })]));
+      expect(mapProps.last?.dataSource).toBe("api");
+      expect(mapProps.last?.freshness).toMatchObject({ status: "UNKNOWN", modelVersion: "synthetic-recorded-test-v1" });
+      expect(mapProps.last?.lensScores).toEqual([{ id: "native-snapshot-zone", label: "Synthetic Native zone", points: 60 }]);
+      expect(screen.getByTestId("find-areas-zone-detail")).toHaveTextContent("HeatZone 綜合 60");
+      expect(transport.mock.calls.every(([input]) => !String(input).includes("/api/v1/heatzones"))).toBe(true);
+    } finally { vi.unstubAllEnvs(); }
   });
 
   it.each(["current-api-zone", "zone-withheld", "fixture-source", "forbidden", "native-unavailable", "invalid-availability"])(
@@ -522,7 +559,7 @@ describe("Find Areas does not promote prototype map facts into production", () =
     expect(mapProps.last?.dataSource).toBe("api");
     expect(mapProps.last?.zones).toEqual([]);
     expect(mapProps.last?.freshness).toEqual({
-      status: "MISSING", updatedAt: "", modelVersion: "", featureSnapshotTime: "", sourceSnapshotId: "",
+      status: "UNKNOWN", updatedAt: "", modelVersion: "", featureSnapshotTime: "", sourceSnapshotId: "",
     });
     expect(screen.getByTestId("find-areas-map-geometry-unavailable")).toHaveTextContent("地圖 geometry 尚未可用；列表仍可用於審查。");
     for (const zone of viewModel.rankedZones) {
@@ -537,13 +574,14 @@ describe("Find Areas does not promote prototype map facts into production", () =
     await waitFor(() => expect(mapProps.last?.productionMode).toBe(false));
     expect(mapProps.last?.dataSource).toBe("fixture");
     expect((mapProps.last?.zones as Array<{ h3: string }>)[0].h3).toBe(`h3-${fixtures.HEAT_ZONE_FIXTURES[0].id}`);
-    expect(mapProps.last?.freshness).toMatchObject({ status: "FRESH", modelVersion: "network-ops-local" });
+    expect(mapProps.last?.freshness).toMatchObject({ status: "FIXTURE", modelVersion: "network-ops-fixture" });
     expect(screen.queryByTestId("find-areas-map-geometry-unavailable")).toBeNull();
   });
 
   it("passes recorded native metadata and explicit null geometry without promoting the timestamp to FRESH", async () => {
-    const row: OperatorHeatZone = { ...fixtures.HEAT_ZONE_FIXTURES[0], mapEvidence: {
-      h3Index: "8928308280fffff", h3Resolution: 9, geometry: null, score: 0, priorityRank: 1,
+    const row: OperatorHeatZone = { ...fixtures.HEAT_ZONE_FIXTURES[0], recordedMap: {
+      ...operatorHeatZoneToMapZone(fixtures.HEAT_ZONE_FIXTURES[0]),
+      h3: "8928308280fffff", h3Resolution: 9, geometry: null, score: 0, rank: 1,
       state: "UNTOUCHED", confidence: 0, unmetDemandScore: 0, formatFitScore: 0,
       cannibalizationRisk: 0, rentFeasibility: 0, listingAvailability: 0,
       modelVersion: "recorded-owner-model", featureVersion: "recorded-owner-features",
@@ -553,11 +591,11 @@ describe("Find Areas does not promote prototype map facts into production", () =
     renderPanel(false, [row]);
     await waitFor(() => expect(mapProps.last?.zones).toHaveLength(1));
     expect(mapProps.last?.zones).toEqual([expect.objectContaining({
-      id: row.id, h3: row.mapEvidence!.h3Index, geometry: null, score: 0,
+      id: row.id, h3: row.recordedMap!.h3, geometry: null, score: 0,
       modelVersion: "recorded-owner-model", sourceSnapshotIds: ["recorded-owner-source"], poiCount: null,
     })]);
-    expect(mapProps.last?.freshness).toMatchObject({ status: "MISSING", modelVersion: "recorded-owner-model",
-      featureSnapshotTime: row.mapEvidence!.featureSnapshotTime, sourceSnapshotId: "recorded-owner-source" });
+    expect(mapProps.last?.freshness).toMatchObject({ status: "UNKNOWN", modelVersion: "recorded-owner-model",
+      featureSnapshotTime: row.recordedMap!.featureSnapshotTime, sourceSnapshotId: "recorded-owner-source" });
   });
 
   it("shows an unavailable recorded lens as plain text without a favorable score tier", async () => {
@@ -568,9 +606,9 @@ describe("Find Areas does not promote prototype map facts into production", () =
     const card = screen.getByRole("button", { name: "Missing row 未評估" });
     expect(card.querySelector("[data-tier]")).toBeNull();
     expect(screen.getByTestId("find-areas-zone-score")).toHaveTextContent("未評估");
-    expect(screen.getByTestId("find-areas-zone-score")).not.toHaveAttribute("data-tier");
+    expect(screen.getByTestId("find-areas-zone-score")).toHaveAttribute("data-tier", "unknown");
     expect(screen.getByTestId("find-areas-zone-detail")).toHaveTextContent("HeatZone 綜合 未評估");
-    expect(mapProps.last?.lensScores).toEqual([]);
+    expect(mapProps.last?.lensScores).toEqual([{ id: row.id, label: row.label, points: null }]);
   });
 
 });

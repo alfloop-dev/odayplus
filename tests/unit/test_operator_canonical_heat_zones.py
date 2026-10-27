@@ -84,9 +84,14 @@ def test_native_projection_selects_recorded_first_zone_and_preserves_other_rows_
     assert [row["id"] for row in actual["heatZones"]] == [first.heat_zone_id, second.heat_zone_id]
     row = actual["heatZones"][0]
     assert row["demandGap"] is row["competitionIndex"] is row["cannibalizationRisk"] is None
-    assert row["mapEvidence"]["geometry"] is None
-    assert row["mapEvidence"]["sourceSnapshotIds"] == list(first.source_snapshot_ids)
-    assert row["mapEvidence"]["score"] == first.score
+    assert row["recordedMap"]["geometry"] is None
+    assert row["recordedMap"]["sourceSnapshotIds"] == list(first.source_snapshot_ids)
+    assert row["recordedMap"]["score"] == first.score
+    assert "mapEvidence" not in row
+    assert row["recordedMap"]["id"] == row["id"]
+    assert row["recordedMap"]["h3"] == first.h3_index
+    assert row["recordedMap"]["rank"] == first.priority_rank
+    assert row["recordedMap"]["poiCount"] is None
     assert actual["listings"] == original["listings"] and actual["counts"]["listings"] == 1
     selected = project_canonical_heat_zones(
         original,
@@ -140,6 +145,8 @@ def test_missing_aggregate_axis_is_not_inferred_from_principal_or_visible_listin
         "no-lineage",
         "bad-h3",
         "bad-time",
+        "abstained-numeric",
+        "abstained-null",
         "row-tenant",
         "seed",
         "nested-fixture",
@@ -168,6 +175,11 @@ def test_unavailable_invalid_or_nonproduction_source_never_restores_legacy_zone(
         row["h3_index"] = "h3-demo"
     elif bad == "bad-time":
         row["last_scored_at"] = "2026-10-16"
+    elif bad in {"abstained-numeric", "abstained-null"}:
+        # This existing source is V2 HeatZoneScoreResult, whose enum has no
+        # ABSTAINED. A V3 result cannot silently become an operational V2 row.
+        row["state"] = "ABSTAINED"
+        row["score"] = 55 if bad == "abstained-numeric" else None
     elif bad == "row-tenant":
         row["scope"] = {"tenant_id": str(uuid4())}
     elif bad == "seed":
